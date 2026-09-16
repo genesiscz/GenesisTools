@@ -1,15 +1,17 @@
 import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import type { NativeSessionSource } from "../types";
 import {
+    codexProjectionCachePath,
     createCodexHistoryOperations,
     readCodexMetadata,
     readCodexProjectionFingerprint,
+    readCodexProjectionIndex,
     readCodexRecords,
     scanCodexRecords,
 } from "./codex";
@@ -486,6 +488,66 @@ test("projection fingerprints detect same-count mutations and ignore other threa
     expect(afterChild).not.toBe(before);
     expect(afterChild).toContain('"count":1');
     expect(afterChild).toContain('"revision":2');
+});
+
+test("the projection index equals the per-thread fingerprints and reuses its stamped cache until the database moves", async () => {
+    const home = mkdtempSync(join(tmpdir(), "gt-codex-projection-index-"));
+    const root = join(home, "sessions");
+    mkdirSync(root);
+    const path = join(root, `rollout-${CHILD_ID}.jsonl`);
+    writeFileSync(
+        path,
+        line({
+            type: "session_meta",
+            payload: { id: CHILD_ID, cwd: "/projects/child", history_mode: "paginated" },
+        })
+    );
+    const projectionPath = join(home, "thread_history_1.sqlite");
+    const projection = new Database(projectionPath);
+    projection.run("PRAGMA journal_mode = WAL");
+    projection.run(
+        "CREATE TABLE thread_items (thread_id TEXT, rollout_ordinal INTEGER, created_at_ms INTEGER, item_json TEXT, updated_at_ordinal INTEGER)"
+    );
+    projection.run("INSERT INTO thread_items VALUES (?, 1, 1788257400000, ?, 1)", [
+        CHILD_ID,
+        '{"type":"agentMessage"}',
+    ]);
+    projection.run("INSERT INTO thread_items VALUES (?, 2, 1788257400001, ?, 3)", [
+        CHILD_ID,
+        '{"type":"agentMessage"}',
+    ]);
+    projection.run("INSERT INTO thread_items VALUES (?, 1, 1788257400000, ?, 1)", [
+        PARENT_ID,
+        '{"type":"agentMessage"}',
+    ]);
+    const source: NativeSessionSource<"codex"> = {
+        kind: "codex",
+        root,
+        sourceHome: home,
+        filePath: path,
+        dataPaths: [path],
+        metadataPaths: [projectionPath],
+    };
+    const issues: string[] = [];
+
+    const perThread = await readCodexProjectionFingerprint(source);
+    const first = readCodexProjectionIndex([projectionPath], (issue) => issues.push(issue));
+    expect(await readCodexProjectionFingerprint(source, { nativeId: CHILD_ID, projection: first })).toBe(perThread);
+    expect(first.get(PARENT_ID)).toEqual([{ database: 0, count: 1, ordinal: 1, revision: 1 }]);
+    expect(existsSync(codexProjectionCachePath())).toBe(true);
+
+    // Same stamp: the cached parts come back without the database being opened.
+    const cached = readCodexProjectionIndex([projectionPath], (issue) => issues.push(issue));
+    expect(cached).toEqual(first);
+
+    projection.run("UPDATE thread_items SET updated_at_ordinal = 9 WHERE thread_id = ? AND rollout_ordinal = 2", [
+        CHILD_ID,
+    ]);
+    const moved = readCodexProjectionIndex([projectionPath], (issue) => issues.push(issue));
+    projection.close();
+
+    expect(moved.get(CHILD_ID)).toEqual([{ database: 0, count: 2, ordinal: 2, revision: 9 }]);
+    expect(issues).toEqual([]);
 });
 
 test("metadata bounds Unicode fields without retaining huge tool output", async () => {

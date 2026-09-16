@@ -14,7 +14,6 @@ import { HistorySyncRepository } from "@genesiscz/utils/agent-sessions/sync-repo
 import type { HistorySourceRecord, NativeSessionReader } from "@genesiscz/utils/agent-sessions/types";
 import { SafeJSON } from "@genesiscz/utils/json";
 import type {
-    BenchmarkCounters,
     BenchmarkInvocationResult,
     BenchmarkOperation,
     BenchmarkVariant,
@@ -86,9 +85,9 @@ async function assertCandidateSourceState(expected: CandidateSourceState): Promi
     }
 }
 
-type CandidateCounters = Pick<
-    BenchmarkCounters,
-    "sourceBytesRead" | "candidates" | "metadataReads" | "sourceHydrations" | "transactions"
+type CandidateCounters = Record<
+    "sourceBytesRead" | "candidates" | "metadataReads" | "sourceHydrations" | "transactions",
+    number
 >;
 
 function resetCounters(counters: CandidateCounters): void {

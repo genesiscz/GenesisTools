@@ -134,13 +134,14 @@ async function nativeRows(
     // provider-filtered load must never compact it (see `loadPins`).
     const pins = await loadPins({ readOnly: true, provider: alias });
     const service = openHistoryService({ provider: PROVIDER_ALIASES[alias] });
+    const cutoff = options.hours === undefined ? undefined : (options.now ?? Date.now()) - options.hours * 3_600_000;
     const { metadata } = await service.catalog({
         excludeAgents: true,
         ...(options.limit === undefined ? {} : { limit: options.limit }),
+        ...(cutoff === undefined ? {} : { mtimeFrom: cutoff }),
     });
     // One config read for the whole listing, not one per grok row.
     const grokLookup = alias === "grok" ? await grokAccountNameLookup() : () => undefined;
-    const cutoff = options.hours === undefined ? undefined : (options.now ?? Date.now()) - options.hours * 3_600_000;
     const rows: AgentSessionRow[] = [];
 
     for (const record of metadata) {

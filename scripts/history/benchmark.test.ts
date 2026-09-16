@@ -74,7 +74,11 @@ describe("compact history benchmark matrix", () => {
         ]);
         expect(report.measurements.filter((measurement) => measurement.phase === "warm-service")).toHaveLength(120);
         const warmServiceSummaries = report.summaries.filter((summary) => summary.phase === "warm-service");
-        expect(warmServiceSummaries.every((summary) => summary.samples === 30 && summary.p95Ms >= 0)).toBe(true);
+        expect(
+            warmServiceSummaries.every(
+                (summary) => summary.samples === 30 && summary.p95Ms !== "unavailable" && summary.p95Ms >= 0
+            )
+        ).toBe(true);
         expect(calls.slice(4, 8)).toEqual([
             "baseline:metadata-list",
             "candidate:metadata-list",

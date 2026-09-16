@@ -65,6 +65,14 @@ export async function synchronizeHistory(options: {
     signal?: AbortSignal;
     /** A query may discover once and refresh only conservative content candidates. */
     discovery?: Awaited<ReturnType<NativeSessionReader<string>["discover"]>>;
+    /**
+     * `repository.generation(providerId)` read immediately BEFORE `discovery` was taken.
+     *
+     * With it, a caller's walk can be reused for the write pass when no other writer
+     * reserved a generation in between. Without it the full walk always runs, so an older
+     * caller simply keeps the old cost.
+     */
+    discoveryGeneration?: number;
     metadataSources?: ReadonlySet<string>;
 }): Promise<{
     report: NativeIndexSyncResult;
@@ -161,9 +169,22 @@ export async function synchronizeHistory(options: {
     // A writer reserves its generation BEFORE a fresh discovery so an older optimistic
     // observation cannot overwrite metadata committed by a concurrent newer discovery.
     const generation = repository.begin({ providerId, roots });
-    const discovery = await prof.measureAsync("sync.discover-full", () =>
-        reader.discover(roots, { ...options.scope, signal })
-    );
+    // The second walk exists so an older optimistic observation cannot overwrite metadata
+    // committed by a concurrent newer discovery. When `begin` claims exactly one more than
+    // the generation the caller discovered under, no other writer reserved one in between,
+    // and the caller's walk is already that fresh. It costs 72 ms on this machine, on every
+    // listing, for a directory tree that was walked milliseconds earlier.
+    const callerWalkIsCurrent =
+        options.discovery !== undefined &&
+        options.discoveryGeneration !== undefined &&
+        generation === options.discoveryGeneration + 1;
+    if (callerWalkIsCurrent) {
+        prof.mark("sync.discover-full-skipped");
+    }
+
+    const discovery = callerWalkIsCurrent
+        ? observed
+        : await prof.measureAsync("sync.discover-full", () => reader.discover(roots, { ...options.scope, signal }));
     const previousSources = repository.sources(providerId);
     const issues: NativeSourceIssue[] = discovery.issues.filter(
         (issue) =>

@@ -6,7 +6,12 @@ import { profiler } from "@genesiscz/utils/profile";
 import { type HistoryDiscoveryOptions, walkSourceRoots } from "../source-discovery";
 import { asRecord, type JsonRecord, type JsonValue, scanJsonlRecords, text } from "../source-scan";
 import type { AgentSession, NativeSessionSource, NativeSourceIssue } from "../types";
-import { parseCodexHeaderRow, readCodexProjectionFingerprint } from "./codex";
+import {
+    type CodexProjectionIndex,
+    parseCodexHeaderRow,
+    readCodexProjectionFingerprint,
+    readCodexProjectionIndex,
+} from "./codex";
 
 interface CodexDiscoveryHeader {
     nativeId: string;
@@ -161,14 +166,18 @@ async function readSessionIndex(options: {
     return values;
 }
 
-function readStateMetadata(options: {
+/**
+ * Every thread's state row from a home's `state*.sqlite` files, one read per database. The
+ * per-rollout form opened each database and ran a PRAGMA plus a lookup per file: 364 opens on
+ * this machine for every listing. The metadata and the fingerprint a thread gets are the same.
+ */
+function readStateIndex(options: {
     paths: string[];
-    nativeId: string;
     root: string;
     issues: NativeSourceIssue[];
     incompleteRoots: Set<string>;
-}): IndexedMetadata | undefined {
-    let result: IndexedMetadata | undefined;
+}): Map<string, IndexedMetadata> {
+    const index = new Map<string, IndexedMetadata>();
     for (const path of options.paths.filter(
         (candidate) => /state(?:_\d+)?\.sqlite$/.test(candidate) && !candidate.endsWith("-wal")
     )) {
@@ -185,23 +194,30 @@ function readStateMetadata(options: {
             if (selected.length === 0) {
                 continue;
             }
-            const row = database
-                .query(`SELECT ${selected.join(", ")} FROM threads WHERE id = ? LIMIT 1`)
-                .get(options.nativeId) as JsonRecord | null;
-            if (!row) {
-                continue;
+            const rows = database.query(`SELECT id, ${selected.join(", ")} FROM threads`).all() as JsonRecord[];
+            for (const row of rows) {
+                const nativeId = text(row.id);
+                if (!nativeId) {
+                    continue;
+                }
+                // The selected columns only, in SELECT order: the fingerprint must equal the one
+                // the per-thread `SELECT ${selected} ... WHERE id = ?` produced.
+                const picked: JsonRecord = {};
+                for (const name of selected) {
+                    picked[name] = row[name];
+                }
+                index.set(nativeId, {
+                    metadata: {
+                        sessionId: nativeId,
+                        ...(text(picked.title) ? { title: text(picked.title) } : {}),
+                        ...(text(picked.cwd) ? { cwd: text(picked.cwd) } : {}),
+                        ...(nativeDate(picked.updated_at) ? { mtime: nativeDate(picked.updated_at) } : {}),
+                        ...(nativeDate(picked.created_at) ? { createdAt: nativeDate(picked.created_at) } : {}),
+                        ...(picked.archived === undefined ? {} : { archived: Boolean(picked.archived) }),
+                    },
+                    fingerprint: SafeJSON.stringify(picked, { strict: true }),
+                });
             }
-            result = {
-                metadata: {
-                    sessionId: options.nativeId,
-                    ...(text(row.title) ? { title: text(row.title) } : {}),
-                    ...(text(row.cwd) ? { cwd: text(row.cwd) } : {}),
-                    ...(nativeDate(row.updated_at) ? { mtime: nativeDate(row.updated_at) } : {}),
-                    ...(nativeDate(row.created_at) ? { createdAt: nativeDate(row.created_at) } : {}),
-                    ...(row.archived === undefined ? {} : { archived: Boolean(row.archived) }),
-                },
-                fingerprint: SafeJSON.stringify(row, { strict: true }),
-            };
         } catch {
             options.issues.push({ path, message: "Codex state metadata read failed" });
             options.incompleteRoots.add(options.root);
@@ -209,7 +225,7 @@ function readStateMetadata(options: {
             database?.close();
         }
     }
-    return result;
+    return index;
 }
 
 function mergeMetadata(
@@ -252,6 +268,8 @@ export async function discoverCodexHistorySources(
     const incompleteRoots = new Set<string>();
     const pathsByHome = new Map<string, string[]>();
     const indexByHome = new Map<string, Map<string, IndexedMetadata>>();
+    const stateByHome = new Map<string, Map<string, IndexedMetadata>>();
+    const projectionByHome = new Map<string, CodexProjectionIndex>();
     const sources: Array<NativeSessionSource<"codex">> = [];
 
     for (const file of walked.files) {
@@ -298,20 +316,14 @@ export async function discoverCodexHistorySources(
             }
         }
 
-        // Opens a fresh read-only SQLite handle per rollout, in a sequential loop: gated, because
-        // on a home with thousands of rollouts one line per file would drown the phase view.
-        const readState = () =>
-            readStateMetadata({
-                paths: metadataPaths,
-                nativeId: header.nativeId,
-                root: file.root,
-                issues,
-                incompleteRoots,
-            });
-        const state =
-            profiler.detail === "all"
-                ? profiler.scope("agent-sessions").measure("discover.codex-state-sqlite", readState)
-                : readState();
+        let stateIndex = stateByHome.get(home);
+        if (!stateIndex) {
+            const paths = metadataPaths;
+            const readState = () => readStateIndex({ paths, root: file.root, issues, incompleteRoots });
+            stateIndex = profiler.scope("agent-sessions").measure("discover.codex-state-sqlite", readState);
+            stateByHome.set(home, stateIndex);
+        }
+        const state = stateIndex.get(header.nativeId);
         const indexed = sessionIndex.get(header.nativeId);
         const metadata = mergeMetadata(header, state, indexed, basename(file.root) === "archived_sessions");
         const source: NativeSessionSource<"codex"> = {
@@ -326,8 +338,22 @@ export async function discoverCodexHistorySources(
         };
         let projection: string | undefined;
         if (header.historyMode === "paginated") {
+            let projectionIndex = projectionByHome.get(home);
+            if (!projectionIndex) {
+                const paths = metadataPaths;
+                const readProjection = () =>
+                    readCodexProjectionIndex(paths, (path) => {
+                        issues.push({ path, message: "Projection fingerprint read failed" });
+                        incompleteRoots.add(file.root);
+                    });
+                projectionIndex = profiler
+                    .scope("agent-sessions")
+                    .measure("discover.codex-projection-sqlite", readProjection);
+                projectionByHome.set(home, projectionIndex);
+            }
             projection = await readCodexProjectionFingerprint(source, {
                 nativeId: header.nativeId,
+                projection: projectionIndex,
                 onIssue: (issue) => {
                     issues.push(issue);
                     incompleteRoots.add(file.root);

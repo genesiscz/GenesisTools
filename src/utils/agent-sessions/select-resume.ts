@@ -1,3 +1,4 @@
+import * as p from "@clack/prompts";
 import { isInteractive } from "@genesiscz/utils/cli";
 import { logger } from "@genesiscz/utils/logger";
 import { canonicalPath } from "@genesiscz/utils/paths";
@@ -103,15 +104,63 @@ function dedupeSessions(sessions: AgentSession[]): AgentSession[] {
     });
 }
 
-/** Resolve within one provider; native ID, metadata, then transcript content. */
-export async function selectResumeSession(options: {
+interface SelectResumeOptions {
     adapter: AgentSessionAdapter;
     query: string;
     filters?: AgentSearchFilters;
     interactive?: boolean;
     /** Explicit native IDs prefer the selected launch home over retained source backups. */
     preferredHome?: string;
-}): Promise<AgentSession | undefined> {
+}
+
+/**
+ * Resolve within one provider; native ID, metadata, then transcript content.
+ *
+ * The spinner lives HERE, not at the caller. The search and the picker share one function, and
+ * a caller that wraps the whole call in its own spinner keeps that spinner animating while the
+ * table picker is on screen. The two then redraw the same lines: as soon as the picker scrolls
+ * in a short terminal, the spinner frame sits inside the rows, the picker erases the wrong lines
+ * and looks stuck. Only this function knows the moment the search ends and the picker begins.
+ */
+export async function selectResumeSession(options: SelectResumeOptions): Promise<AgentSession | undefined> {
+    const interactive = options.interactive ?? isInteractive();
+    const spinner = interactive ? searchSpinner(options.adapter.kind) : undefined;
+
+    try {
+        return (await resolveResumeSession(options, interactive, spinner)).session;
+    } catch (error) {
+        spinner?.stop("History search failed");
+        throw error;
+    }
+}
+
+interface SearchSpinner {
+    /** Idempotent: the resolver stops it before the picker, the error path stops it after a throw. */
+    stop(message: string): void;
+}
+
+function searchSpinner(kind: string): SearchSpinner {
+    const spinner = p.spinner();
+    let stopped = false;
+    spinner.start(`Searching ${kind} history: index, then transcripts...`);
+
+    return {
+        stop(message) {
+            if (stopped) {
+                return;
+            }
+
+            stopped = true;
+            spinner.stop(message);
+        },
+    };
+}
+
+async function resolveResumeSession(
+    options: SelectResumeOptions,
+    interactive: boolean,
+    spinner: SearchSpinner | undefined
+): Promise<{ session: AgentSession | undefined }> {
     const { adapter, query, filters = {} } = options;
     const DEFAULT_RESUME_MATCHES = 20;
     const trimmed = query.trim();
@@ -158,8 +207,10 @@ export async function selectResumeSession(options: {
     if (!matches.some((session) => identifiesSession(session, trimmed))) {
         // `scope` lifts the limit so exact identity resolution can enumerate everything; the
         // full-text fallback must not inherit that, or it hydrates the whole corpus.
+        // `candidatesOnly`: the picker needs which sessions mention the query, which ripgrep
+        // answers in under a second; placing the matches inside the transcripts took 12 s.
         const hits = await prof.measureAsync(`resume.search.${adapter.kind}`, () =>
-            adapter.search({ ...scope, query, limit: filters.limit ?? DEFAULT_RESUME_MATCHES })
+            adapter.search({ ...scope, query, limit: filters.limit ?? DEFAULT_RESUME_MATCHES, candidatesOnly: true })
         );
 
         matches = dedupeSessions([...matches, ...hits.filter((session) => session.kind === adapter.kind)]);
@@ -170,14 +221,16 @@ export async function selectResumeSession(options: {
     }
     matches = preferHomeCopies(matches, options.preferredHome);
     if (matches.length === 1) {
-        return matches[0];
+        spinner?.stop("1 matching session");
+        return { session: matches[0] };
     }
     // Claude's resume has always printed the candidates before refusing, and the shared path
     // named only the count. A count tells the user the query was too broad and nothing about
     // which query would be narrow enough, so both doors now print the table first.
     const candidates = matches.map(toSessionDisplay);
+    spinner?.stop(`${matches.length} matching sessions`);
 
-    if (!(options.interactive ?? isInteractive())) {
+    if (!interactive) {
         printAmbiguousSessions(candidates);
         throw new Error(
             `Ambiguous ${adapter.kind} resume (${matches.length} matches). Pass a session id from the table above, or use an interactive terminal.`
@@ -190,5 +243,5 @@ export async function selectResumeSession(options: {
         buildSessionTableOpts(candidates, { message: `Resume which ${adapter.kind} session?`, query })
     );
 
-    return picked ? matches[candidates.indexOf(picked)] : undefined;
+    return { session: picked ? matches[candidates.indexOf(picked)] : undefined };
 }

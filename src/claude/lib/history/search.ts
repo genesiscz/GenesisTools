@@ -85,6 +85,10 @@ export interface SessionListingOptions {
     subagentsOnly?: boolean;
     /** Max results (default: unlimited) */
     limit?: number;
+    /** Only sessions whose file mtime is at or after this epoch ms: refreshes and reads the window alone. */
+    mtimeFrom?: number;
+    /** With `mtimeFrom`: also the N newest sessions by mtime, whatever their age. */
+    newest?: number;
     /** Progress callback: (processed, total, currentFile) */
     onProgress?: (processed: number, total: number, currentFile: string) => void;
 }
@@ -126,6 +130,8 @@ export async function getSessionListing(options: SessionListingOptions = {}): Pr
             excludeAgents: !subagentsOnly && excludeSubagents,
             agentsOnly: subagentsOnly,
             limit,
+            mtimeFrom: options.mtimeFrom,
+            newest: options.newest,
         })
     );
     const subagentCount = all.filter((metadata) => metadata.isSubagent).length;

@@ -7,7 +7,7 @@ import { haystackMatch } from "./match";
 import { validateHistoryFilters } from "./native-match";
 import { historyPathUnderRoot, historyProjectMatches } from "./project-scope";
 import type { CachedHistoryMetadata } from "./repository";
-import { historyCandidates } from "./search-candidates";
+import { historyCandidates, matchSnippets } from "./search-candidates";
 import {
     listingIndexSlice,
     listingPassesDate,
@@ -363,12 +363,25 @@ export class HistoryService {
             project: filters.project,
             signal: filters.signal,
         };
+        // Read BEFORE the walk: `synchronizeHistory` reuses this walk for its write pass only
+        // when `begin` claims exactly one more than this, which proves no other writer
+        // reserved a generation in between.
+        const discoveryGeneration = this.options.repository.generation(this.options.providerId);
         const discovery = await this.options.reader.discover(this.options.roots, scope);
         const candidates = await historyCandidates({ sources: discovery.sources, filters: { signal: filters.signal } });
-        const selected = listingIndexSlice(candidates, filters.limit);
+        // A windowed listing refreshes the window and its top-up only; everything older is read
+        // as indexed. Old sessions do not change, and refreshing all of them was the cost.
+        const windowed =
+            filters.mtimeFrom === undefined
+                ? candidates
+                : listingIndexSlice(candidates).filter(
+                      (candidate, index) => candidate.mtime >= (filters.mtimeFrom ?? 0) || index < (filters.newest ?? 0)
+                  );
+        const selected = listingIndexSlice(windowed, filters.limit);
         return synchronizeHistory({
             ...this.options,
             discovery,
+            discoveryGeneration,
             scope,
             signal: filters.signal,
             metadataSources: new Set(selected.map((candidate) => candidate.source.filePath)),
@@ -384,9 +397,28 @@ export class HistoryService {
             excludeAgents: false,
             agentsOnly: false,
         };
-        const metadata = this.options.repository.metadata
-            .listMetadata({ providerId: this.options.providerId, orderBy: "firstTimestamp" })
-            .filter((entry) => metadataInScope(entry, scoped));
+        const { repository, providerId } = this.options;
+        const inScope = (entry: CachedHistoryMetadata) => metadataInScope(entry, scoped);
+        const metadata = repository.metadata
+            .listMetadata({ providerId, orderBy: "firstTimestamp", mtimeFrom: filters.mtimeFrom, withUserText: false })
+            .filter(inScope);
+
+        if (filters.mtimeFrom !== undefined && filters.newest) {
+            // The top-up: the newest rows by mtime whatever their age, read with a bound instead
+            // of the whole table. Fetched wider than asked because the scope filter runs after.
+            const seen = new Set(metadata.map((entry) => entry.sourceKey));
+            const newest = repository.metadata
+                .listMetadata({
+                    providerId,
+                    orderBy: "mtime",
+                    limit: Math.max(20, filters.newest * 4),
+                    withUserText: false,
+                })
+                .filter((entry) => inScope(entry) && !seen.has(entry.sourceKey))
+                .slice(0, filters.newest);
+            metadata.push(...newest);
+        }
+
         return { metadata, report: synchronized.report, reindexed: synchronized.reindexed };
     }
 
@@ -616,6 +648,8 @@ export class HistoryService {
         }
 
         const scope = { agentsOnly: filters.agentsOnly, excludeAgents: filters.excludeAgents, signal: filters.signal };
+        // Read BEFORE the walk; see `refreshListing`.
+        const discoveryGeneration = this.options.repository.generation(this.options.providerId);
         const discovery = await reader.discover(this.options.roots, scope);
         const rawCandidates = metadataOnly
             ? undefined
@@ -630,6 +664,7 @@ export class HistoryService {
             signal: filters.signal,
             scope,
             discovery,
+            discoveryGeneration,
             metadataSources: contentCandidates
                 ? new Set(contentCandidates.map((candidate) => candidate.source.filePath))
                 : undefined,
@@ -776,6 +811,64 @@ export class HistoryService {
                   .slice(0, relevanceParseCap(mains.length, filters.limit))
                   .concat(agents.slice(0, relevanceParseCap(agents.length, filters.limit)))
             : mains.concat(agents);
+
+        // A resume picker needs to know WHICH sessions mention the query, and ripgrep has just
+        // answered that. Parsing every candidate transcript to place the matches cost 12 s for
+        // eleven large sessions (4 s of JSON.parse, 2 s of commit-hash regexes) and produced
+        // nothing the picker shows, so the candidates' metadata rows ARE the results here.
+        if (filters.candidatesOnly) {
+            const cap = filters.limit ?? planned.length;
+
+            for (const candidate of planned) {
+                if (results.length >= cap) {
+                    break;
+                }
+
+                const rows = metadataFor(candidate.source);
+                const metadata =
+                    rows.find((row) => row.nativeId === candidate.source.metadata?.sessionId) ??
+                    (rows.length === 1 ? rows[0] : undefined);
+
+                if (!metadata || !metadataInScope(metadata, scoped)) {
+                    continue;
+                }
+
+                const result = resultFromMetadata(metadata, reader.kind);
+                result.relevanceScore = candidate.matchCount;
+                results.push(result);
+            }
+
+            // The snippet the picker shows, from one ripgrep pass over the chosen files.
+            if (filters.query && results.length > 0) {
+                const snippets = await matchSnippets({
+                    files: results.map((result) => result.metadata.filePath),
+                    query: filters.query,
+                    signal: filters.signal,
+                });
+                const identifierOnly = new Set<string>();
+
+                for (const result of results) {
+                    const snippet = snippets.get(result.metadata.filePath);
+                    result.matchedText = snippet?.text;
+
+                    if (snippet?.identifierOnly) {
+                        identifierOnly.add(result.metadata.filePath);
+                    }
+                }
+
+                // The candidate gate counts a hit inside a uuid or a commit hash the same as a
+                // hit in what the user wrote, so a short query like `7404` offered 20 sessions
+                // where 11 really mention it. These are not dropped — ripgrep saw at most
+                // SNIPPET_HITS_PER_FILE windows, so "no prose hit" is evidence, not proof — but
+                // they sort last, behind every session whose match is real text.
+                const prose = results.filter((result) => !identifierOnly.has(result.metadata.filePath));
+                const rest = results.filter((result) => identifierOnly.has(result.metadata.filePath));
+
+                return { results: [...prose, ...rest], issues };
+            }
+
+            return { results, issues };
+        }
 
         const scanCandidate = async ({
             source,

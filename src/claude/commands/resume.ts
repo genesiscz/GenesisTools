@@ -7,11 +7,12 @@ import { createClaudeAdapter } from "@genesiscz/utils/agent-sessions/native-adap
 import { selectResumeSession } from "@genesiscz/utils/agent-sessions/select-resume";
 import {
     buildSessionTableOpts,
+    displayProjectName,
     printAmbiguousSessions,
     type SessionDisplayItem,
     toSessionDisplay,
 } from "@genesiscz/utils/agent-sessions/session-display";
-import type { AgentSession, AgentSessionAdapter } from "@genesiscz/utils/agent-sessions/types";
+import type { AgentSessionAdapter } from "@genesiscz/utils/agent-sessions/types";
 import { findClaudeCommand } from "@genesiscz/utils/claude";
 import { isInteractive } from "@genesiscz/utils/cli";
 import { env } from "@genesiscz/utils/env";
@@ -249,7 +250,7 @@ export async function selectClaudeResumeSession({
     if (candidates.length === 1) {
         const s = candidates[0];
         p.log.info(
-            `${pc.bold(s.name)} ${pc.dim(s.sessionId.slice(0, 8))} ${pc.magenta(s.branch)} ${s.project ? pc.blue(s.project) : ""}`
+            `${pc.bold(s.name)} ${pc.dim(s.sessionId.slice(0, 8))} ${pc.magenta(s.branch)} ${s.project ? pc.blue(displayProjectName(s)) : ""}`
         );
         return s;
     }
@@ -352,28 +353,20 @@ export async function pickSessionForResume(
         // A short listing is annoying; a session resume cannot find is the one that costs an
         // evening, because the user knows the conversation exists.
         await warnUnresolvedIdentities(adapter, "claude");
-        const spinner = p.spinner();
-        spinner.start("Searching Claude history: index, then transcripts...");
-        let session: AgentSession | undefined;
-
-        try {
-            session = await selectResumeSession({
-                adapter,
-                query,
-                filters: {
-                    cwd: opts.allProjects ? undefined : (opts.cwd ?? process.cwd()),
-                    all: Boolean(opts.allProjects),
-                    limit: opts.limit ?? 20,
-                    excludeAgents: true,
-                },
-                ...(opts.interactive === undefined ? {} : { interactive: opts.interactive }),
-                preferredHome: effectiveClaudeHome(),
-            });
-            spinner.stop(session ? "1 matching session" : "cancelled");
-        } catch (error) {
-            spinner.stop("History search failed");
-            throw error;
-        }
+        // The search spinner belongs to `selectResumeSession`: it must stop before the picker
+        // opens, and only that function knows when.
+        const session = await selectResumeSession({
+            adapter,
+            query,
+            filters: {
+                cwd: opts.allProjects ? undefined : (opts.cwd ?? process.cwd()),
+                all: Boolean(opts.allProjects),
+                limit: opts.limit ?? 20,
+                excludeAgents: true,
+            },
+            ...(opts.interactive === undefined ? {} : { interactive: opts.interactive }),
+            preferredHome: effectiveClaudeHome(),
+        });
 
         if (!session) {
             throw new Error("Cancelled");
@@ -386,7 +379,7 @@ export async function pickSessionForResume(
         // something they typed.
         p.log.info(
             `${pc.bold(selected.name)} ${pc.dim(selected.sessionId.slice(0, 8))} ${pc.magenta(selected.branch)} ${
-                selected.project ? pc.blue(selected.project) : ""
+                selected.project ? pc.blue(displayProjectName(selected)) : ""
             }`
         );
         assertClaudeResumeHome({ session: selected });

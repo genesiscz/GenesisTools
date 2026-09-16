@@ -4,7 +4,17 @@ import { out } from "@genesiscz/utils/logger";
 import { createBoxTable, renderCliHeader, truncateDisplay } from "@genesiscz/utils/table";
 import type { Command } from "commander";
 import pc from "picocolors";
-import { type AgentSessionRow, listAgentSessionRows } from "../../lib/sessions/agent-session-rows";
+import {
+    type AgentSessionRow,
+    type AgentSessionRowsOptions,
+    listAgentSessionRows,
+} from "../../lib/sessions/agent-session-rows";
+import {
+    cacheIsUsable,
+    readSessionRowsCache,
+    sessionRowsCacheKey,
+    writeSessionRowsCache,
+} from "../../lib/sessions/rows-cache";
 
 interface SessionsOptions {
     provider?: string[] | boolean;
@@ -12,6 +22,7 @@ interface SessionsOptions {
     min?: string;
     limit?: string;
     json?: boolean;
+    fresh?: boolean;
 }
 
 function positiveInt(value: string | undefined): number | undefined {
@@ -68,6 +79,7 @@ export function registerAiUsageSessionsCommand(usage: Command): void {
         .option("--min <n>", "Top up with older sessions until at least N rows (Claude only)")
         .option("--limit <n>", "Cap the rows returned, newest first across every provider")
         .option("--json", "Emit the rows as JSON")
+        .option("--fresh", "Recompute instead of reading the daemon's cached answer (--json only)")
         // `tools ai usage` declares --provider and --json itself, so commander attaches them to
         // the PARENT when they are typed after `sessions`. Without the merge every flag was
         // silently dropped and the command always printed every provider as a table.
@@ -89,15 +101,46 @@ export function registerAiUsageSessionsCommand(usage: Command): void {
                 return;
             }
 
-            const rows = await listAgentSessionRows({
+            const listing: AgentSessionRowsOptions = {
                 ...(named.length > 0 ? { providers: named as AccountProviderAlias[] } : {}),
                 ...(positiveInt(opts.hours) === undefined ? {} : { hours: positiveInt(opts.hours) }),
                 ...(positiveInt(opts.min) === undefined ? {} : { minRows: positiveInt(opts.min) }),
                 ...(positiveInt(opts.limit) === undefined ? {} : { limit: positiveInt(opts.limit) }),
-            });
+            };
+
+            // The cache serves `--json` alone. That is the door Genesis.app polls every 35 s,
+            // and the one whose consumer can read `fetchedAt` and decide for itself; a human
+            // reading the table gets a freshly computed list every time.
+            if (opts.json && !opts.fresh) {
+                const key = sessionRowsCacheKey(listing);
+                const cached = await readSessionRowsCache();
+                const now = Date.now();
+
+                if (cacheIsUsable(cached, key, now)) {
+                    out.result({ fetchedAt: cached.fetchedAt, cached: true, rows: cached.rows });
+
+                    // The stamp tells the daemon this query is still wanted, and it is read
+                    // against an hour, so rewriting the whole file on every 35 s poll would be
+                    // churn for nothing. Bumped at most twice a minute.
+                    if (now - cached.lastRequestedAt > 30_000) {
+                        await writeSessionRowsCache({ ...cached, lastRequestedAt: now });
+                    }
+
+                    return;
+                }
+            }
+
+            const rows = await listAgentSessionRows(listing);
 
             if (opts.json) {
-                out.result({ fetchedAt: Date.now(), rows });
+                const now = Date.now();
+                await writeSessionRowsCache({
+                    query: listing,
+                    fetchedAt: now,
+                    lastRequestedAt: now,
+                    rows,
+                });
+                out.result({ fetchedAt: now, cached: false, rows });
                 return;
             }
 
