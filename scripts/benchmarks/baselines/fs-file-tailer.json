@@ -1,0 +1,21 @@
+{
+    "name": "fs-file-tailer",
+    "capturedAt": "2026-09-16T16:38:52.472Z",
+    "commit": "0d077f1c9",
+    "loadAvg": [
+        19.09033203125,
+        65.40966796875,
+        103.1982421875
+    ],
+    "hostname": "MacBook-Pro-2262.local",
+    "metrics": {
+        "idleCpuPercent": 0.28443999999999997,
+        "idleCpuTimeMs": 14.222,
+        "idleRssBytes": 51478528,
+        "idleFsCalls": 0,
+        "appendLatencyMs": 300.1068335000018,
+        "linesPerSec": 396.93485570721776,
+        "linesReceived": 1000
+    },
+    "notes": "runs=3 warmup=1 idleWindowMs=5000 batches=10 linesPerBatch=100 | commit 0d077f1c9 | uptime 18:38  up 4 days,  2:01, 35 users, load averages: 19.09 65.41 103.20"
+}

@@ -7,6 +7,10 @@ export function setFileWatcher(filePath: string, watcher: FSWatcher): void {
     fileWatchers.set(filePath, watcher);
 }
 
+export function hasFileWatcher(filePath: string): boolean {
+    return fileWatchers.has(filePath);
+}
+
 export function closeFileWatcher(filePath: string): void {
     fileWatchers.get(filePath)?.close();
     fileWatchers.delete(filePath);
