@@ -542,6 +542,18 @@ describe("structure", () => {
         expect(json.html()).toContain('"xxxx…"');
         await json.unmount();
     });
+
+    test("JsonView marks a back-reference instead of recursing, and prints a Date instead of {}", async () => {
+        const payload: { name: string; when: Date; self?: unknown } = {
+            name: "root",
+            when: new Date("2026-09-16T12:00:00Z"),
+        };
+        payload.self = payload;
+        const dom = await mountDom(<JsonView value={payload} open={3} />);
+        expect(dom.html()).toContain("[circular]");
+        expect(dom.html()).toContain('"2026-09-16T12:00:00.000Z"');
+        await dom.unmount();
+    });
 });
 
 describe("viz", () => {

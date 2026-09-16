@@ -239,8 +239,8 @@ export function Heatmap({
                     <thead>
                         <tr>
                             <th />
-                            {cols.map((col) => (
-                                <th key={col} className="px-1 pb-1 font-normal text-dim">
+                            {cols.map((col, c) => (
+                                <th key={`${c}-${col}`} className="px-1 pb-1 font-normal text-dim">
                                     {col}
                                 </th>
                             ))}
@@ -248,7 +248,8 @@ export function Heatmap({
                     </thead>
                     <tbody>
                         {rows.map((row, r) => (
-                            <tr key={row}>
+                            // The index is in every key: two rows or two columns may share a label.
+                            <tr key={`${r}-${row}`}>
                                 <th className="pr-2 text-left font-normal text-dim">{row}</th>
                                 {cols.map((col, c) => {
                                     const value = values[r]?.[c];
@@ -256,7 +257,7 @@ export function Heatmap({
                                     if (typeof value !== "number") {
                                         return (
                                             <td
-                                                key={col}
+                                                key={`${c}-${col}`}
                                                 className="h-7 min-w-8 rounded bg-panel/40"
                                                 title={`${row} / ${col}: no data`}
                                             />
@@ -267,7 +268,7 @@ export function Heatmap({
 
                                     return (
                                         <td
-                                            key={col}
+                                            key={`${c}-${col}`}
                                             title={`${row} / ${col}: ${fmt(value)}`}
                                             className="h-7 min-w-8 rounded px-1 text-center"
                                             style={{

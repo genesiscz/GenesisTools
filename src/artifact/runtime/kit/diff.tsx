@@ -235,19 +235,21 @@ export function DiffView({
     title,
     wrap = false,
 }: DiffViewProps) {
+    // The two strings, not the tuple: a `labels` literal is a new identity on every render,
+    // and the memo keyed on it re-parsed the whole patch each time the parent re-rendered.
+    const oldName = labels?.[0] ?? "before";
+    const newName = labels?.[1] ?? "after";
     const files = useMemo((): DiffFile[] => {
         if (patch !== undefined) {
             return parsePatch(patch).map(diffFileFromPatch);
         }
-
-        const [oldName, newName] = labels ?? ["before", "after"];
 
         return [
             diffFileFromPatch(
                 structuredPatch(oldName, newName, before ?? "", after ?? "", undefined, undefined, { context })
             ),
         ];
-    }, [before, after, patch, labels, context]);
+    }, [before, after, patch, oldName, newName, context]);
     const added = files.reduce((n, f) => n + f.added, 0);
     const removed = files.reduce((n, f) => n + f.removed, 0);
     const showNames = patch !== undefined || Boolean(title);

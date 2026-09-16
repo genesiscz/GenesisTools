@@ -343,6 +343,8 @@ interface JsonNodeProps {
     depth: number;
     open: number;
     maxString: number;
+    /** Objects from the root down to this node; a back-reference renders as a marker instead of recursing forever. */
+    ancestors: readonly object[];
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -355,11 +357,24 @@ function countLabel(count: number, list: boolean): string {
     return `${count} ${count === 1 ? noun : `${noun}s`}`;
 }
 
-function JsonNode({ name, value, depth, open, maxString }: JsonNodeProps) {
+function JsonNode({ name, value, depth, open, maxString, ancestors }: JsonNodeProps) {
     const label = name !== undefined ? <span className="hljs-attr">{name}</span> : null;
     const sep = name !== undefined ? <span className="text-dim">: </span> : null;
 
-    if (isRecord(value)) {
+    if (isRecord(value) && !(value instanceof Date)) {
+        // React's work loop is iterative, so a cycle does not overflow the stack: it renders
+        // fibers until memory runs out and the page never paints.
+        if (ancestors.includes(value)) {
+            return (
+                <div className="py-px">
+                    <span className="inline-block w-4" />
+                    {label}
+                    {sep}
+                    <span className="text-dim">[circular]</span>
+                </div>
+            );
+        }
+
         const list = Array.isArray(value);
         const entries = list ? value.map((v, i): [string, unknown] => [String(i), v]) : Object.entries(value);
         const [openBracket, closeBracket] = list ? ["[", "]"] : ["{", "}"];
@@ -377,6 +392,8 @@ function JsonNode({ name, value, depth, open, maxString }: JsonNodeProps) {
                 </div>
             );
         }
+
+        const next = [...ancestors, value];
 
         return (
             <details open={depth < open} className="group">
@@ -403,6 +420,7 @@ function JsonNode({ name, value, depth, open, maxString }: JsonNodeProps) {
                             depth={depth + 1}
                             open={open}
                             maxString={maxString}
+                            ancestors={next}
                         />
                     ))}
                 </div>
@@ -412,7 +430,11 @@ function JsonNode({ name, value, depth, open, maxString }: JsonNodeProps) {
 
     let rendered: ReactNode;
 
-    if (typeof value === "string") {
+    if (value instanceof Date) {
+        // An object with no enumerable keys, so the record branch would have shown `{}`.
+        const iso = Number.isNaN(value.getTime()) ? "Invalid Date" : value.toISOString();
+        rendered = <span className="hljs-string">"{iso}"</span>;
+    } else if (typeof value === "string") {
         const cut = value.length > maxString ? `${value.slice(0, maxString)}…` : value;
         rendered = (
             <span className="hljs-string" title={value.length > maxString ? value : undefined}>
@@ -443,7 +465,7 @@ export function JsonView({ value, name, open = 2, maxString = 160, className }: 
         <div
             className={`hljs my-3 overflow-x-auto rounded-card border border-line bg-canvas/80 p-3 font-mono text-[0.8rem] leading-relaxed ${className ?? ""}`}
         >
-            <JsonNode name={name} value={value} depth={0} open={open} maxString={maxString} />
+            <JsonNode name={name} value={value} depth={0} open={open} maxString={maxString} ancestors={[]} />
         </div>
     );
 }
