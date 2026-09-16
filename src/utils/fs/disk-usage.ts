@@ -16,17 +16,31 @@ import {
     utimesSync,
     writeSync,
 } from "node:fs";
+import { createRequire } from "node:module";
 import { basename, dirname, join, resolve, sep } from "node:path";
 import { formatBytes } from "@genesiscz/utils/format";
 import { sha256FilesParallel } from "@genesiscz/utils/fs/parallel-sha256";
 import { logger } from "@genesiscz/utils/logger";
 import { CloneUnsupportedError, cloneFile, getCloneId, getFsType, getPrivateSize } from "@genesiscz/utils/macos/apfs";
-import {
-    GetattrlistbulkUnsupportedError,
-    isGetattrlistbulkSupported,
-    iterDir,
-} from "@genesiscz/utils/macos/getattrlistbulk";
+import type * as GetattrlistbulkModule from "@genesiscz/utils/macos/getattrlistbulk";
 import { Stopwatch } from "@genesiscz/utils/Stopwatch";
+
+/**
+ * lazy: saves 36 ms cold import (scripts/benchmarks/startup/import-cost, 2026-09-16) —
+ * `bun:ffi` plus the binding module, paid by every importer of this file. The history
+ * discovery reader imports `bytesEqualStreaming` from here and never walks anything.
+ *
+ * A `require`, not an `await import`: `walkFiles` is a SYNC generator, so there is no point
+ * in it where a promise can be awaited.
+ */
+const esmRequire = createRequire(import.meta.url);
+let getattrlistbulk: typeof GetattrlistbulkModule | undefined;
+
+function bulkWalker(): typeof GetattrlistbulkModule {
+    getattrlistbulk ??= esmRequire("@genesiscz/utils/macos/getattrlistbulk") as typeof GetattrlistbulkModule;
+
+    return getattrlistbulk;
+}
 
 export interface WalkEntry {
     path: string;
@@ -223,7 +237,7 @@ export function* walkFiles(root: string, opts: WalkOptions = {}): Generator<Walk
     // probe is lazy and memoized — it must never run at module load, where
     // it would tax every importer of this module (import-time syscalls
     // against an arbitrary directory cost up to seconds; see PROBE_DIR).
-    if (isGetattrlistbulkSupported()) {
+    if (bulkWalker().isGetattrlistbulkSupported()) {
         try {
             const bulkChildren: Array<{ name: string; kind: "file" | "dir" | "symlink" }> = [];
             const fileEntries: Array<{
@@ -235,7 +249,7 @@ export function* walkFiles(root: string, opts: WalkOptions = {}): Generator<Walk
                 privateSize: bigint;
             }> = [];
             const subdirs: string[] = [];
-            for (const e of iterDir(root)) {
+            for (const e of bulkWalker().iterDir(root)) {
                 if (e.errorCode !== 0) {
                     opts.onError?.({ path: join(root, e.name), errno: `errno=${e.errorCode}` });
                     continue;
@@ -306,7 +320,7 @@ export function* walkFiles(root: string, opts: WalkOptions = {}): Generator<Walk
             // on. readdirSync gets its own attempt below — a persistent
             // condition still surfaces through the same onError, and a
             // transient one heals instead of undercounting.
-            if (err instanceof GetattrlistbulkUnsupportedError) {
+            if (err instanceof bulkWalker().GetattrlistbulkUnsupportedError) {
                 logger.debug({ root }, "walkFiles: ENOTSUP, falling back to readdir+stat");
             } else {
                 logger.debug({ root, errno: errnoOf(err) }, "walkFiles: bulk open failed, falling back to readdir");
