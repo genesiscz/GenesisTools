@@ -201,18 +201,21 @@ export async function injectLeadAssignment(opts: {
     const waitMs = opts.waitMs ?? 4000;
     const deadline = Date.now() + waitMs;
 
-    // Wait for TUI ready-ish
+    // Wait for the pane to look like a started TUI. Both halves used to be synchronous, so this
+    // held the event loop for the whole 4 s: no timer fired and Ctrl-C was not delivered until it
+    // returned. The capture is a real process either way, but nothing else has to stop for it.
     while (Date.now() < deadline) {
-        const cap = Bun.spawnSync([tmux, "capture-pane", "-t", opts.tmuxTarget, "-p"], {
+        const cap = Bun.spawn([tmux, "capture-pane", "-t", opts.tmuxTarget, "-p"], {
             stdout: "pipe",
             stderr: "pipe",
         });
-        const text = cap.stdout.toString();
+        const [text] = await Promise.all([new Response(cap.stdout).text(), cap.exited]);
+
         if (/bypass permissions|for agents|❯|Not logged in|Claude Code/.test(text)) {
             break;
         }
 
-        Bun.sleepSync(250);
+        await Bun.sleep(250);
     }
 
     const body = opts.prompt.trim();
