@@ -28,14 +28,47 @@ const DEFERRED_KINDS = new Set([
     "class_body",
 ]);
 
-/** A `static { … }` block inside a class body does run at evaluation time. */
+/** `static x = …` (TS `public_field_definition`, JS `field_definition`). */
+function isStaticField(node: SgNode): boolean {
+    const kind = String(node.kind());
+
+    if (kind !== "field_definition" && kind !== "public_field_definition") {
+        return false;
+    }
+
+    return node.children().some((child) => child.kind() === "static");
+}
+
+/** Class members whose initializers run when the class is evaluated. */
+function isStaticClassEval(node: SgNode): boolean {
+    return String(node.kind()) === "class_static_block" || isStaticField(node);
+}
+
+function staticFieldValue(node: SgNode): SgNode | null {
+    const kids = node.children();
+    let afterEq = false;
+
+    for (const child of kids) {
+        if (afterEq) {
+            return child;
+        }
+
+        if (child.kind() === "=") {
+            afterEq = true;
+        }
+    }
+
+    return null;
+}
+
+/** A `static { … }` block or `static x = …` field runs at evaluation time; methods and instance fields do not. */
 function runsAtModuleScope(node: SgNode): boolean {
     let insideStatic = false;
 
     for (const ancestor of node.ancestors()) {
         const kind = String(ancestor.kind());
 
-        if (kind === "class_static_block") {
+        if (isStaticClassEval(ancestor)) {
             insideStatic = true;
             continue;
         }
@@ -51,6 +84,17 @@ function runsAtModuleScope(node: SgNode): boolean {
     }
 
     return true;
+}
+
+/** `await import()` that itself runs at module scope blocks evaluation. */
+function isAwaitedAtModuleScope(call: SgNode): boolean {
+    for (const ancestor of call.ancestors()) {
+        if (String(ancestor.kind()) === "await_expression") {
+            return runsAtModuleScope(ancestor);
+        }
+    }
+
+    return false;
 }
 
 function field(node: SgNode, name: string): SgNode | null {
@@ -437,6 +481,44 @@ function collectSideEffects(statement: SgNode, into: SideEffect[]): void {
 
     if (kind === "for_statement" || kind === "for_in_statement" || kind === "while_statement") {
         into.push({ kind: "call", line: lineOf(statement), text: squash(statement.text()) });
+        return;
+    }
+
+    if (kind === "class_declaration" || kind === "abstract_class_declaration") {
+        const body = statement.children().find((child) => child.kind() === "class_body");
+
+        if (!body) {
+            return;
+        }
+
+        for (const child of body.children()) {
+            const childKind = String(child.kind());
+
+            if (childKind === "class_static_block") {
+                collectSideEffects(child, into);
+                continue;
+            }
+
+            if (isStaticField(child)) {
+                const value = staticFieldValue(child);
+
+                if (value) {
+                    const effect = classifyValue(value);
+
+                    if (effect) {
+                        into.push(effect);
+                    }
+                }
+            }
+        }
+
+        return;
+    }
+
+    if (kind === "class_static_block") {
+        for (const child of statement.children()) {
+            collectSideEffects(child, into);
+        }
     }
 }
 
@@ -548,6 +630,7 @@ export function parseModule(source: string, file: string): ParsedModule {
 
         const dynamic = callee === "import";
         const deferred = dynamic || !runsAtModuleScope(call);
+        const awaited = dynamic && isAwaitedAtModuleScope(call);
         imports.push({
             specifier,
             kind: dynamic || deferred ? "dynamic" : "require",
@@ -555,6 +638,7 @@ export function parseModule(source: string, file: string): ParsedModule {
             names: ["*"],
             locals: [],
             line: lineOf(call),
+            ...(awaited ? { awaited: true } : {}),
         });
     }
 

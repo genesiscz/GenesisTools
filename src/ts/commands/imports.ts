@@ -37,6 +37,36 @@ function number(value: string | undefined, fallback: number): number {
     return Number.isNaN(parsed) ? fallback : parsed;
 }
 
+/** Reject 0 / negatives / NaN on CLI flags. `undefined` means the caller already printed and should stop. */
+export function parsePositive(value: string | undefined, fallback: number, flag: string): number | undefined {
+    if (value === undefined) {
+        return fallback;
+    }
+
+    const parsed = Number.parseFloat(value);
+
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+        out.error(`${flag} must be a positive number, got ${value}`);
+        process.exitCode = 1;
+        return undefined;
+    }
+
+    return parsed;
+}
+
+function jsonEnvelope<T extends object>(
+    session: AnalysisSession,
+    extra: T
+): T & { entry: string; timedOut: boolean; unmeasured: number; planned: number } {
+    return {
+        entry: session.result.entry,
+        timedOut: session.result.timedOut,
+        unmeasured: session.result.unmeasured,
+        planned: session.result.planned,
+        ...extra,
+    };
+}
+
 /**
  * A file is one entry. A directory is its `index.ts`, or every top-level source file when there
  * is none. A `tsconfig*.json` stands for its directory. Test and declaration files never count.
@@ -86,16 +116,23 @@ async function sessionsFor(input: string, options: SharedOptions, toolName: stri
         return [];
     }
 
+    const runs = parsePositive(options.runs, DEFAULT_RUNS, "--runs");
+    const timeoutSec = parsePositive(options.timeout, DEFAULT_TIMEOUT_MS / 1000, "--timeout");
+
+    if (runs === undefined || timeoutSec === undefined) {
+        return [];
+    }
+
     const sessions: AnalysisSession[] = [];
 
     for (const entry of entries) {
-        logger.info({ entry, runs: number(options.runs, DEFAULT_RUNS) }, "ts: analyzing entry");
+        logger.info({ entry, runs }, "ts: analyzing entry");
         sessions.push(
             await analyzeEntry({
                 entry,
                 root: rootFor(entry),
-                runs: Math.max(1, Math.floor(number(options.runs, DEFAULT_RUNS))),
-                timeoutMs: number(options.timeout, DEFAULT_TIMEOUT_MS / 1000) * 1000,
+                runs: Math.max(1, Math.floor(runs)),
+                timeoutMs: timeoutSec * 1000,
                 walkPackages: options.walkPackages === true,
                 includeDynamic: options.includeDynamic === true,
                 slowMs: DEFAULT_SLOW_MS,
@@ -191,7 +228,7 @@ export function registerImportsCommands(parent: Command): void {
         }
 
         if (options.json) {
-            out.result(sessions.length === 1 ? sessions[0].result : sessions.map((session) => session.result));
+            out.result(sessions.map((session) => session.result));
             return;
         }
 
@@ -229,12 +266,15 @@ export function registerImportsCommands(parent: Command): void {
         const sessions = await sessionsFor(input, options, "tools ts imports lazy");
         const minMs = number(options.minMs, 0.5);
 
+        if (sessions.length === 0) {
+            return;
+        }
+
         if (options.json) {
             out.result(
-                sessions.map((session) => ({
-                    entry: session.result.entry,
-                    candidates: findLazyCandidates(session.graph, session.self),
-                }))
+                sessions.map((session) =>
+                    jsonEnvelope(session, { candidates: findLazyCandidates(session.graph, session.self) })
+                )
             );
             return;
         }
@@ -254,12 +294,15 @@ export function registerImportsCommands(parent: Command): void {
         const sessions = await sessionsFor(input, options, "tools ts imports barrels");
         const minMs = number(options.minMs, 0.5);
 
+        if (sessions.length === 0) {
+            return;
+        }
+
         if (options.json) {
             out.result(
-                sessions.map((session) => ({
-                    entry: session.result.entry,
-                    waste: findBarrelWaste(session.graph, session.self),
-                }))
+                sessions.map((session) =>
+                    jsonEnvelope(session, { waste: findBarrelWaste(session.graph, session.self) })
+                )
             );
             return;
         }
@@ -278,17 +321,27 @@ export function registerImportsCommands(parent: Command): void {
     ).action(async (input: string, options: SharedOptions) => {
         const sessions = await sessionsFor(input, options, "tools ts imports cycles");
 
+        if (sessions.length === 0) {
+            return;
+        }
+
         if (options.json) {
             out.result(
-                sessions.map((session) => ({
-                    entry: session.result.entry,
-                    cycles: findCycles(session.graph, session.self),
-                }))
+                sessions.map((session) =>
+                    jsonEnvelope(session, {
+                        cycles: findCycles(session.graph, session.self).map((cycle) => ({
+                            members: cycle.members,
+                            edges: cycle.edges,
+                            selfMs: cycle.selfMs,
+                        })),
+                    })
+                )
             );
             return;
         }
 
         for (const session of sessions) {
+            warnWorker(session);
             renderCycles(findCycles(session.graph, session.self), session.result.entry);
         }
     });

@@ -85,6 +85,9 @@ async function importOne(index: number, file: string): Promise<void> {
 
         if (raced === HUNG) {
             record(index, performance.now() - started, "hang", `no settle in ${MODULE_TIMEOUT_MS} ms`);
+            // ES module evaluation cannot be cancelled; staying in this process would charge later
+            // self times for the hung work and leave later imports waiting on "evaluating".
+            realExit(0);
             return;
         }
 

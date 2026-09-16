@@ -2,12 +2,13 @@ import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { resolveEntries } from "../commands/imports";
+import { PROFILER_SCOPE_NAMES } from "@genesiscz/utils/profile";
+import { parsePositive, resolveEntries } from "../commands/imports";
 import { computeTotals } from "./analyze";
 import { attribute, isBarrel, nativeSignals } from "./attribute";
 import { findBarrelWaste } from "./barrels";
 import { findCycles } from "./cycles";
-import { buildGraph, labelFor, packageNameOf, postOrder, reachableFrom } from "./graph";
+import { buildGraph, isLoadTimeEdge, isMeasuredEdge, labelFor, packageNameOf, postOrder, reachableFrom } from "./graph";
 import { findLazyCandidates } from "./lazy";
 import type { WorkerSample } from "./measure";
 import { parseModule } from "./parse";
@@ -107,10 +108,10 @@ describe("parseModule", () => {
 
     it("knows which imported bindings are touched at module scope", () => {
         const parsed = parseModule(
-            'import { a, b, c, d } from "./m";\nconst v = a.x;\nfunction f() { return b(); }\nexport { c };\nclass K { static { d(); } m() { b(); } }',
+            'import { a, b, c, d, e } from "./m";\nconst v = a.x;\nfunction f() { return b(); }\nexport { c };\nclass K { static { d(); } static x = e(); m() { b(); } }',
             "probe.ts"
         );
-        expect([...parsed.moduleScopeUses].sort()).toEqual(["a", "c", "d"]);
+        expect([...parsed.moduleScopeUses].sort()).toEqual(["a", "c", "d", "e"]);
         expect([...parsed.reexportedLocals]).toEqual(["c"]);
     });
 
@@ -135,6 +136,24 @@ describe("parseModule", () => {
         ]);
     });
 
+    it("treats class static fields and static blocks as module-scope work", () => {
+        const parsed = parseModule(
+            [
+                "class K {",
+                "    static { setInterval(() => {}, 1); }",
+                "    static x = setTimeout(() => {}, 1);",
+                "    y = setImmediate(() => {});",
+                "    m() { queueMicrotask(() => {}); }",
+                "}",
+            ].join("\n"),
+            "probe.ts"
+        );
+        expect(parsed.sideEffects.map((effect) => [effect.kind, effect.line])).toEqual([
+            ["timer", 2],
+            ["timer", 3],
+        ]);
+    });
+
     it("records re-exports, declared export names and dynamic imports", () => {
         const parsed = parseModule(
             'export * from "./x";\nexport { y as yy } from "./y";\nexport const { p, q } = obj;\nexport function f() {}\nexport default f;\nconst m = () => import("./lazy");\nconst r = require("./cjs");',
@@ -143,8 +162,33 @@ describe("parseModule", () => {
         expect(parsed.reexports.map((site) => site.names)).toEqual([["*"], ["y"]]);
         expect([...parsed.exportNames].sort()).toEqual(["default", "f", "p", "q"]);
         expect(parsed.imports.find((site) => site.specifier === "./lazy")?.kind).toBe("dynamic");
+        expect(parsed.imports.find((site) => site.specifier === "./lazy")?.awaited).toBeUndefined();
         expect(parsed.imports.find((site) => site.specifier === "./cjs")?.kind).toBe("require");
         expect(parsed.localExports).toBe(2);
+    });
+
+    it("marks module-scope await import() as awaited and function-scope import() as not", () => {
+        const parsed = parseModule(
+            'const m = await import("./heavy");\nexport async function later() { return import("./fn"); }',
+            "probe.ts"
+        );
+        expect(parsed.imports.find((site) => site.specifier === "./heavy")).toMatchObject({
+            kind: "dynamic",
+            awaited: true,
+        });
+        expect(parsed.imports.find((site) => site.specifier === "./fn")).toMatchObject({ kind: "dynamic" });
+        expect(parsed.imports.find((site) => site.specifier === "./fn")?.awaited).toBeUndefined();
+        const heavy = parsed.imports.find((site) => site.specifier === "./heavy");
+        const fn = parsed.imports.find((site) => site.specifier === "./fn");
+
+        if (!heavy || !fn) {
+            throw new Error("expected both import() sites");
+        }
+
+        expect(isLoadTimeEdge(heavy)).toBe(true);
+        expect(isLoadTimeEdge(fn)).toBe(false);
+        expect(isMeasuredEdge(fn, false)).toBe(false);
+        expect(isMeasuredEdge(fn, true)).toBe(true);
     });
 });
 
@@ -183,9 +227,36 @@ describe("buildGraph", () => {
         ).toBe(false);
     });
 
-    it("follows dynamic imports when asked", () => {
+    it("follows dynamic imports when asked, without treating them as load-time", () => {
         const graph = buildGraph({ entry: join(root, "entry.ts"), root, includeDynamic: true });
-        expect(reachableFrom(graph, join(root, "entry.ts")).has(join(root, "dyn.ts"))).toBe(true);
+        expect(graph.nodes.get(join(root, "dyn.ts"))?.parsed).toBeDefined();
+        expect(postOrder(graph, join(root, "entry.ts"))).toContain(join(root, "dyn.ts"));
+        expect(reachableFrom(graph, join(root, "entry.ts")).has(join(root, "dyn.ts"))).toBe(false);
+    });
+
+    it("walks a module that was first seen as a dynamic placeholder once a static import reaches it", () => {
+        write("dyn-first.ts", 'export async function load() { return import("./shared"); }');
+        write("stat-later.ts", 'import { x } from "./shared";\nexport const y = x;');
+        write("shared.ts", 'import { leaf } from "./leaf";\nexport const x = leaf;');
+        write("leaf.ts", "export const leaf = 1;");
+        write("mix-entry.ts", 'import "./dyn-first";\nimport "./stat-later";');
+        const graph = buildGraph({ entry: join(root, "mix-entry.ts"), root });
+        expect(graph.nodes.get(join(root, "shared.ts"))?.parsed).toBeDefined();
+        expect(reachableFrom(graph, join(root, "mix-entry.ts")).has(join(root, "leaf.ts"))).toBe(true);
+    });
+
+    it("follows module-scope await import() as a load-time edge without --include-dynamic", () => {
+        write("await-heavy.ts", "export const n = 1;");
+        write("await-entry.ts", 'const mod = await import("./await-heavy");\nexport const v = mod;');
+        const graph = buildGraph({ entry: join(root, "await-entry.ts"), root });
+        expect(graph.nodes.get(join(root, "await-heavy.ts"))?.parsed).toBeDefined();
+        expect(reachableFrom(graph, join(root, "await-entry.ts")).has(join(root, "await-heavy.ts"))).toBe(true);
+    });
+
+    it("stores unresolved specifiers with repo-relative labels", () => {
+        write("unresolved-entry.ts", 'import { x } from "./no-such-module";\nexport const y = 1;');
+        const graph = buildGraph({ entry: join(root, "unresolved-entry.ts"), root });
+        expect(graph.unresolved).toEqual([{ from: "unresolved-entry.ts", specifier: "./no-such-module", line: 1 }]);
     });
 
     it("names packages from their node_modules path", () => {
@@ -312,8 +383,38 @@ describe("companion analyses", () => {
         const cycles = findCycles(graph, samples({ "cyc/x.ts": 0, "cyc/y.ts": 4 }));
         expect(cycles).toHaveLength(1);
         expect(cycles[0].members).toEqual(["cyc/x.ts", "cyc/y.ts"]);
+        expect([...cycles[0].memberIds].sort()).toEqual([join(root, "cyc/x.ts"), join(root, "cyc/y.ts")].sort());
         expect(cycles[0].selfMs).toBe(4);
         expect(cycles[0].edges).toHaveLength(2);
+    });
+
+    it("does not report a deferred import() cycle even with --include-dynamic", () => {
+        write("dyn-cyc/a.ts", 'export async function go() { return import("./b"); }\nexport const a = 1;');
+        write("dyn-cyc/b.ts", 'export async function go() { return import("./a"); }\nexport const b = 1;');
+        write("dyn-cyc/entry.ts", 'import { a } from "./a";\nexport const v = a;');
+        const graph = buildGraph({ entry: join(root, "dyn-cyc/entry.ts"), root, includeDynamic: true });
+        expect(graph.nodes.get(join(root, "dyn-cyc/b.ts"))?.parsed).toBeDefined();
+        expect(findCycles(graph)).toEqual([]);
+    });
+
+    it("does not count a mixed barrel's own module as waste when the importer uses a local export", () => {
+        write("mix-barrel/index.ts", 'export const local = 1;\nexport { a } from "./a";\nexport { b } from "./b";');
+        write("mix-barrel/a.ts", "export function a() { return 1; }");
+        write("mix-barrel/b.ts", "export function b() { return 2; }");
+        write("mix-entry-local.ts", 'import { local, a } from "./mix-barrel";\nexport const v = local + a();');
+        const graph = buildGraph({ entry: join(root, "mix-entry-local.ts"), root });
+        const self = samples({ "mix-barrel/index.ts": 5, "mix-barrel/a.ts": 1, "mix-barrel/b.ts": 2 });
+        const waste = findBarrelWaste(graph, self);
+        expect(waste).toHaveLength(1);
+        expect(waste[0]).toMatchObject({
+            importer: "mix-entry-local.ts",
+            barrel: "mix-barrel/index.ts",
+            used: ["local", "a"],
+            usedTargets: ["mix-barrel/a.ts"],
+            unusedTargets: ["mix-barrel/b.ts"],
+            wastedModules: 1,
+            wastedMs: 2,
+        });
     });
 });
 
@@ -328,5 +429,25 @@ describe("resolveEntries", () => {
         expect(resolveEntries(join(root, "many"))).toEqual([join(root, "many/one.ts")]);
         expect(resolveEntries(join(root, "many/tsconfig.json"))).toEqual([join(root, "many/one.ts")]);
         expect(resolveEntries(join(root, "missing"))).toEqual([]);
+    });
+});
+
+describe("parsePositive", () => {
+    it("rejects zero, negatives and non-numeric strings", () => {
+        const previous = process.exitCode;
+        process.exitCode = 0;
+        expect(parsePositive(undefined, 60, "--timeout")).toBe(60);
+        expect(parsePositive("25", 60, "--timeout")).toBe(25);
+        expect(parsePositive("0", 60, "--timeout")).toBeUndefined();
+        expect(parsePositive("-1", 60, "--timeout")).toBeUndefined();
+        expect(parsePositive("abc", 3, "--runs")).toBeUndefined();
+        expect(process.exitCode).toBe(1);
+        process.exitCode = previous ?? 0;
+    });
+});
+
+describe("profiler scope", () => {
+    it("registers ts so PROFILE=ts and --scopes can name it", () => {
+        expect(PROFILER_SCOPE_NAMES).toContain("ts");
     });
 });

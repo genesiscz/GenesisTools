@@ -9,7 +9,7 @@ import {
 import pc from "picocolors";
 import type { BarrelWaste } from "./barrels";
 import type { ImportCycle } from "./cycles";
-import { startupEdges } from "./graph";
+import { isLoadTimeEdge, measuredEdges } from "./graph";
 import type { LazyCandidate } from "./lazy";
 import type { AnalysisResult, AnalyzedModule, Finding, ImportGraph } from "./types";
 
@@ -80,7 +80,6 @@ function shortWhy(module: AnalyzedModule): string {
         "side-effects": "module-scope work",
         "large-subtree": `${module.descendants} modules under it`,
         barrel: "barrel",
-        "unused-reexports": "unused re-exports",
         "exits-on-import": "exits on import",
         "import-error": "import failed",
         cycle: module.cycle?.paidBy === module.label ? "carries an import cycle" : "in an import cycle",
@@ -118,7 +117,7 @@ function renderTree(result: AnalysisResult, graph: ImportGraph, options: RenderA
 
     for (const list of graph.edges.values()) {
         for (const edge of list) {
-            if (edge.site.kind === "dynamic") {
+            if (edge.site.kind === "dynamic" && !isLoadTimeEdge(edge.site)) {
                 lazyTargets.add(edge.to);
             }
         }
@@ -148,7 +147,7 @@ function renderTree(result: AnalysisResult, graph: ImportGraph, options: RenderA
         }
 
         shown.add(id);
-        const children = startupEdges(graph, id)
+        const children = measuredEdges(graph, id)
             .map((edge) => edge.to)
             .filter((child, index, all) => all.indexOf(child) === index)
             .map((child) => ({ id: child, total: byId.get(idToLabel(child))?.totalMs ?? 0 }))
@@ -200,7 +199,7 @@ function renderTree(result: AnalysisResult, graph: ImportGraph, options: RenderA
 
         for (const list of graph.edges.values()) {
             for (const edge of list) {
-                if (edge.site.kind === "dynamic") {
+                if (edge.site.kind === "dynamic" && !isLoadTimeEdge(edge.site)) {
                     const from = graph.nodes.get(edge.from)?.label ?? edge.from;
                     dynamic.push(`${from}:${edge.site.line} → ${graph.nodes.get(edge.to)?.label ?? edge.to}`);
                 }

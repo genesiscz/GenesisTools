@@ -1,5 +1,5 @@
 import { isBarrel } from "./attribute";
-import { reachableFrom, resolveSpecifier, startupEdges } from "./graph";
+import { exclusiveFrom, loadTimeEdges, reachableFrom, resolveSpecifier } from "./graph";
 import type { WorkerSample } from "./measure";
 import type { GraphNode, ImportGraph } from "./types";
 
@@ -132,7 +132,7 @@ export function findBarrelWaste(graph: ImportGraph, self: Map<string, WorkerSamp
             continue;
         }
 
-        for (const edge of startupEdges(graph, importer)) {
+        for (const edge of loadTimeEdges(graph, importer)) {
             const barrel = graph.nodes.get(edge.to);
 
             if (!barrel?.parsed || !isBarrel(barrel)) {
@@ -145,10 +145,13 @@ export function findBarrelWaste(graph: ImportGraph, self: Map<string, WorkerSamp
 
             const targets = targetsFor(graph, barrel, edge.site.names);
             const usedTargets = new Set<string>();
+            let usesOwn = false;
 
-            for (const target of targets.values()) {
+            for (const [name, target] of targets) {
                 if (target) {
                     usedTargets.add(target);
+                } else if (barrel.parsed.exportNames.has(name)) {
+                    usesOwn = true;
                 }
             }
 
@@ -172,6 +175,14 @@ export function findBarrelWaste(graph: ImportGraph, self: Map<string, WorkerSamp
 
             const needed = new Set<string>();
 
+            if (usesOwn) {
+                needed.add(edge.to);
+
+                for (const id of reachableFrom(graph, edge.to, undefined, { skipReexports: true })) {
+                    needed.add(id);
+                }
+            }
+
             for (const target of usedTargets) {
                 needed.add(target);
 
@@ -180,18 +191,10 @@ export function findBarrelWaste(graph: ImportGraph, self: Map<string, WorkerSamp
                 }
             }
 
-            // Whatever the barrel's own code (not its re-exports) imports still runs when the
-            // importer bypasses the barrel only if that code is used; a pure barrel has none.
-            const withoutThisImport = reachableFrom(graph, graph.entry, { from: importer, to: edge.to });
+            const exclusive = exclusiveFrom(graph, graph.entry, { from: importer, to: edge.to }, needed);
             let wastedMs = 0;
-            let wastedModules = 0;
 
-            for (const id of [edge.to, ...reachableFrom(graph, edge.to)]) {
-                if (needed.has(id) || withoutThisImport.has(id)) {
-                    continue;
-                }
-
-                wastedModules++;
+            for (const id of exclusive) {
                 wastedMs += self.get(id)?.ms ?? 0;
             }
 
@@ -202,7 +205,7 @@ export function findBarrelWaste(graph: ImportGraph, self: Map<string, WorkerSamp
                 used: edge.site.names,
                 usedTargets: [...usedTargets].map((id) => graph.nodes.get(id)?.label ?? id),
                 unusedTargets: unusedTargets.map((id) => graph.nodes.get(id)?.label ?? id),
-                wastedModules,
+                wastedModules: exclusive.size,
                 wastedMs,
             });
         }
