@@ -47,22 +47,32 @@ import { logger, out } from "@genesiscz/utils/logger";
 import { Command } from "commander";
 
 /**
- * One entry per subcommand tree, imported only when that tree is the one being
- * run. Importing all ten eagerly cost ~230 ms and ~68 MB on EVERY invocation —
- * `tools macos clones measure` was loading Mail, Calendar, Reminders, Messages
- * and DarwinKit before it did any work. Measured: `macos clones config --list`,
- * which scans nothing, took ~350 ms / 126 MB against `tools du` at ~124 ms / 55 MB.
+ * lazy: saves ~180 ms cold import and ~57 MB RSS on every recognised subcommand
+ * (tools ts imports analyze, 2026-09-16) — importing all ten trees eagerly made
+ * `tools macos clones measure` pay for Mail, Calendar, Reminders and Messages
+ * before it did any work.
+ *
+ * Per-tree import cost of the old eager list, measured: mail 237 ms,
+ * voice-memos 169 ms, clones 90 ms, messages 69 ms, calendar 37 ms,
+ * reminders 35 ms, permissions 29 ms, swap 26 ms, sleep 23 ms, control 6 ms.
+ * Mail alone was 237 ms of a 284 ms tree, so this is about the SUBCOMMANDS;
+ * making DarwinKit (23 ms) lazy on its own measured no improvement at all.
  *
  * Help and an unknown subcommand still need every description, so those load
- * the lot; only a recognised subcommand takes the fast path.
+ * the lot and are deliberately no faster; only a recognised subcommand takes
+ * the fast path. Insertion order below is the order `--help` prints, so it
+ * mirrors the original registerX sequence rather than being sorted.
  */
 const REGISTRARS: Record<string, () => Promise<(program: Command) => void>> = {
+    // Insertion order IS the order `--help` lists them in, so this mirrors the
+    // original sequence of registerX calls rather than sorting alphabetically:
+    // `permissions` sat third and a diff of `tools macos --help` caught it moving.
     calendar: async () => (await import("@app/macos/commands/calendar/index")).registerCalendarCommand,
     clones: async () => (await import("@app/macos/commands/clones/index")).registerClonesCommand,
+    permissions: async () => (await import("@app/macos/commands/permissions/index")).registerPermissionsCommand,
     control: async () => (await import("@app/macos/commands/control/index")).registerControlCommand,
     mail: async () => (await import("@app/macos/commands/mail/index")).registerMailCommand,
     messages: async () => (await import("@app/macos/commands/messages/index")).registerMessagesCommand,
-    permissions: async () => (await import("@app/macos/commands/permissions/index")).registerPermissionsCommand,
     reminders: async () => (await import("@app/macos/commands/reminders/index")).registerRemindersCommand,
     sleep: async () => (await import("@app/macos/commands/sleep/index")).registerSleepCommand,
     swap: async () => (await import("@app/macos/commands/swap/index")).registerSwapCommand,
