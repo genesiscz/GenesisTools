@@ -179,6 +179,7 @@ describe("--top ranking", () => {
         const proc = Bun.spawn(["bun", join(import.meta.dir, "test-runtime-guard.ts"), logPath, "--top"], {
             stdout: "pipe",
             stderr: "pipe",
+            env: process.env,
         });
         const [out, code] = await Promise.all([new Response(proc.stdout).text(), proc.exited]);
 
