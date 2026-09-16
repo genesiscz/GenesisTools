@@ -22,6 +22,12 @@
 	<string>13.0</string>
 	<key>NSHighResolutionCapable</key>
 	<true/>
+	<!-- Default our notifications to Alerts, not Banners. A Banner fades after a few seconds, which
+	     is wrong for a notification whose point is that you click it: the action buttons and the
+	     attachment thumbnail are gone before you reach them. The user can still override this per
+	     app in System Settings > Notifications. -->
+	<key>NSUserNotificationAlertStyle</key>
+	<string>alert</string>
 	<!-- macOS 13 reads the pre-14 keys; PermissionsModel calls requestAccess(to:) there. -->
 	<key>NSCalendarsUsageDescription</key>
 	<string>You ran a command that reads or writes events: tools macos calendar (list, search, add, update, delete) or tools todo sync. Nothing is read outside those commands.</string>
