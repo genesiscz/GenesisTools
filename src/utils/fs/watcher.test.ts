@@ -1,9 +1,17 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { mkdtempSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { skip } from "@genesiscz/utils/test/skip";
-import { createWatcher, isTransientError, type WatcherEvent, type WatcherSubscription } from "./watcher";
+import {
+    createWatcher,
+    isTransientError,
+    type WatcherEvent,
+    type WatcherSubscription,
+    waitForPath,
+    watchPath,
+} from "./watcher";
 
 let tempDir: string;
 let sub: WatcherSubscription | null = null;
@@ -314,5 +322,102 @@ describe("isTransientError", () => {
 
     test("returns false for undefined", () => {
         expect(isTransientError(undefined)).toBe(false);
+    });
+});
+
+describe("watchPath / waitForPath", () => {
+    /** The notification reply writer's shape: write a temp file, then rename it into place. */
+    function atomicWrite(target: string, content: string): void {
+        const tmp = `${target}.${Math.random().toString(36).slice(2)}.tmp`;
+        writeFileSync(tmp, content);
+        renameSync(tmp, target);
+    }
+
+    test("sees a file that does not exist yet land by atomic rename, twice, then an in-place write", async () => {
+        const target = join(tempDir, "reply.json");
+        const seen: WatcherEvent[] = [];
+        let expected = 0;
+        let notify: (() => void) | null = null;
+        const next = () =>
+            new Promise<void>((resolve, reject) => {
+                expected = seen.length + 1;
+                notify = resolve;
+                setTimeout(() => reject(new Error(`no event; saw ${SafeJSON.stringify(seen)}`)), 5000);
+            });
+
+        sub = watchPath(target, (events) => {
+            seen.push(...events);
+
+            if (seen.length >= expected && notify) {
+                notify();
+                notify = null;
+            }
+        });
+
+        await Bun.sleep(50);
+        let pending = next();
+        atomicWrite(target, "1");
+        await pending;
+        expect(seen[seen.length - 1]).toEqual({ type: "create", path: target });
+
+        // The inode changes on every rename; a file-bound watcher goes deaf here, this one must not.
+        pending = next();
+        atomicWrite(target, "2");
+        await pending;
+        expect(seen[seen.length - 1].path).toBe(target);
+        expect(seen[seen.length - 1].type).not.toBe("delete");
+
+        pending = next();
+        writeFileSync(target, "3");
+        await pending;
+        expect(seen.every((event) => event.path === target)).toBe(true);
+        expect(seen.some((event) => event.type === "update" || event.type === "create")).toBe(true);
+    });
+
+    test("ignores sibling files and reports a delete", async () => {
+        const target = join(tempDir, "only-me.txt");
+        writeFileSync(target, "x");
+        const seen: WatcherEvent[] = [];
+        let notify: (() => void) | null = null;
+        const gone = new Promise<void>((resolve) => {
+            notify = resolve;
+        });
+
+        sub = watchPath(target, (events) => {
+            seen.push(...events);
+
+            if (events.some((event) => event.type === "delete") && notify) {
+                notify();
+            }
+        });
+
+        await Bun.sleep(50);
+        writeFileSync(join(tempDir, "sibling.txt"), "noise");
+        await Bun.sleep(100);
+        // FSEvents may still deliver the pre-arm write of `target` itself; what must never
+        // arrive is anything about the sibling.
+        expect(seen.every((event) => event.path === target)).toBe(true);
+        rmSync(target);
+        await gone;
+        expect(seen[seen.length - 1]).toEqual({ type: "delete", path: target });
+    });
+
+    test("waitForPath resolves at once for an existing file, true on arrival, false on timeout or abort", async () => {
+        const existing = join(tempDir, "here.txt");
+        writeFileSync(existing, "x");
+        expect(await waitForPath(existing, { timeoutMs: 10 })).toBe(true);
+
+        const later = join(tempDir, "nested", "later.txt");
+        const arrival = waitForPath(later, { timeoutMs: 5000 });
+        await Bun.sleep(50);
+        atomicWrite(later, "landed");
+        expect(await arrival).toBe(true);
+
+        expect(await waitForPath(join(tempDir, "never.txt"), { timeoutMs: 30 })).toBe(false);
+
+        const controller = new AbortController();
+        const aborted = waitForPath(join(tempDir, "never2.txt"), { signal: controller.signal });
+        controller.abort();
+        expect(await aborted).toBe(false);
     });
 });

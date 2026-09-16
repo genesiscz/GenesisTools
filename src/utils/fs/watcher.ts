@@ -1,6 +1,11 @@
-import { resolve } from "node:path";
-import { logger } from "@genesiscz/utils/logger";
+import { existsSync, type FSWatcher, mkdirSync, watch } from "node:fs";
+import { basename, dirname, resolve } from "node:path";
 import type { AsyncSubscription, Event } from "@parcel/watcher";
+
+// No static import of the logger here. `tools ts imports analyze src/utils/fs/watcher.ts` put
+// 17.8 ms of this module's 19 ms import cost on `@genesiscz/utils/logger` (its prompt backend
+// pulls @clack/prompts and comment-json), and the logger is used on exactly one line, inside a
+// callback that runs only when a circuit breaker trips.
 
 export interface WatcherEvent {
     type: "create" | "update" | "delete";
@@ -162,9 +167,10 @@ export async function createWatcher(
 
                 if (consecutiveErrors >= maxErrors) {
                     isActive = false;
-                    subscription
-                        .unsubscribe()
-                        .catch((err) => logger.warn({ err }, "[watcher] circuit-breaker unsubscribe failed"));
+                    subscription.unsubscribe().catch(async (err) => {
+                        const { logger } = await import("@genesiscz/utils/logger");
+                        logger.warn({ err }, "[watcher] circuit-breaker unsubscribe failed");
+                    });
                 }
 
                 return;
@@ -226,4 +232,165 @@ export async function createWatcher(
     };
 
     return handle;
+}
+
+export interface WatchPathOptions {
+    /** Collect events for N ms and fire once. Default: 0 (fire per event). */
+    debounceMs?: number;
+}
+
+export interface WaitForPathOptions {
+    /** Give up after this long. Default: no deadline. */
+    timeoutMs?: number;
+    /** Abort early; resolves `false` like a timeout. */
+    signal?: AbortSignal;
+}
+
+/**
+ * Watch ONE path (a file that may not exist yet) with `node:fs`, no native addon.
+ *
+ * The watch is attached to the parent DIRECTORY, never to the file. A file watcher is bound to an
+ * inode, so the first write-temp-then-rename swaps the inode out from under it and it goes deaf
+ * (measured 2026-09-16: a second rename produced no event at all). A directory watcher reports
+ * every entry by name, so both renames and later in-place writes arrive as events for `basename`.
+ *
+ * Costs about 0.5 ms to arm against roughly 5 to 8 ms for loading `@parcel/watcher` plus its first
+ * subscribe, which is why single-path waits do not go through `createWatcher`. The parent
+ * directory must exist; it is created if it does not. Not recursive, not cross-directory: for a
+ * tree, use `createWatcher`.
+ */
+export function watchPath(path: string, callback: WatcherCallback, opts?: WatchPathOptions): WatcherSubscription {
+    const resolvedPath = resolve(path);
+    const dir = dirname(resolvedPath);
+    const name = basename(resolvedPath);
+    const debounceMs = opts?.debounceMs ?? 0;
+    mkdirSync(dir, { recursive: true });
+
+    let isActive = true;
+    let pending: WatcherEvent | null = null;
+    let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+    let consecutiveErrors = 0;
+
+    const fire = async () => {
+        debounceTimer = null;
+        const event = pending;
+        pending = null;
+
+        if (!event || !isActive) {
+            return;
+        }
+
+        try {
+            await callback([event]);
+            consecutiveErrors = 0;
+        } catch (err) {
+            consecutiveErrors++;
+            const { logger } = await import("@genesiscz/utils/logger");
+            logger.warn({ err, path: resolvedPath }, "[watcher] watchPath callback failed");
+        }
+    };
+
+    const watcher: FSWatcher = watch(dir, { persistent: true }, (eventType, filename) => {
+        if (!isActive || filename === null || filename.toString() !== name) {
+            return;
+        }
+
+        // `rename` covers create, delete and the atomic rename-into-place; the file's presence
+        // afterwards says which. `change` is an in-place write.
+        const exists = existsSync(resolvedPath);
+        const type: WatcherEvent["type"] = eventType === "change" ? "update" : exists ? "create" : "delete";
+        pending = { type, path: resolvedPath };
+
+        if (debounceMs === 0) {
+            void fire();
+            return;
+        }
+
+        if (debounceTimer) {
+            clearTimeout(debounceTimer);
+        }
+
+        debounceTimer = setTimeout(fire, debounceMs);
+    });
+
+    watcher.on("error", (err) => {
+        consecutiveErrors++;
+        void import("@genesiscz/utils/logger").then(({ logger }) =>
+            logger.warn({ err, path: resolvedPath }, "[watcher] watchPath fs.watch error")
+        );
+    });
+
+    return {
+        async unsubscribe() {
+            if (!isActive) {
+                return;
+            }
+
+            isActive = false;
+
+            if (debounceTimer) {
+                clearTimeout(debounceTimer);
+                debounceTimer = null;
+            }
+
+            pending = null;
+            watcher.close();
+        },
+
+        get active() {
+            return isActive;
+        },
+
+        get errorCount() {
+            return consecutiveErrors;
+        },
+    };
+}
+
+/**
+ * Resolve `true` as soon as `path` exists, `false` on timeout or abort. Never throws, never polls:
+ * one `watchPath` subscription plus one timer. The path existing before the call resolves at once;
+ * a file landing between the existence check and the watch being armed is caught by a second
+ * check after arming.
+ */
+export async function waitForPath(path: string, opts?: WaitForPathOptions): Promise<boolean> {
+    const resolvedPath = resolve(path);
+
+    if (existsSync(resolvedPath)) {
+        return true;
+    }
+
+    if (opts?.signal?.aborted) {
+        return false;
+    }
+
+    let settle: (appeared: boolean) => void = () => {};
+    const outcome = new Promise<boolean>((resolvePromise) => {
+        settle = resolvePromise;
+    });
+
+    const subscription = watchPath(resolvedPath, (events) => {
+        if (events.some((event) => event.type !== "delete")) {
+            settle(true);
+        }
+    });
+
+    if (existsSync(resolvedPath)) {
+        settle(true);
+    }
+
+    const timer = opts?.timeoutMs === undefined ? null : setTimeout(() => settle(false), opts.timeoutMs);
+    const onAbort = () => settle(false);
+    opts?.signal?.addEventListener("abort", onAbort, { once: true });
+
+    try {
+        return await outcome;
+    } finally {
+        if (timer) {
+            clearTimeout(timer);
+        }
+
+        opts?.signal?.removeEventListener("abort", onAbort);
+        await subscription.unsubscribe();
+    }
 }

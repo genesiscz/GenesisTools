@@ -1,6 +1,7 @@
-import { existsSync, mkdirSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, dirname, join } from "node:path";
+import { join } from "node:path";
+import { waitForPath } from "@genesiscz/utils/fs/watcher";
 import { logger } from "@genesiscz/utils/logger";
 import { genesisAppDir } from "@genesiscz/utils/macos/genesis-app";
 import { genesisAppRpc, isGenesisAppRpcAvailable } from "@genesiscz/utils/macos/genesis-app-rpc";
@@ -457,51 +458,13 @@ export async function askNotification(
 /**
  * Resolve once `path` exists, or when the deadline passes. Never throws, never spins.
  *
- * Uses the repo's `createWatcher` (`@parcel/watcher`, FSEvents on macOS) rather than a hand-rolled
- * `fs.watch`, so this inherits its transient-error handling and native-resource cleanup. Not faster
- * — both land on FSEvents — but it is the one watching convention here, and the default 2 s debounce
- * is dropped to 50 ms because a human answer should not sit in a buffer.
+ * `waitForPath` arms a `node:fs` watch on the parent directory (about 0.5 ms) instead of loading
+ * the `@parcel/watcher` addon (5 to 8 ms plus a subscribe) to wait for one file, and the directory
+ * watch survives the app's write-temp-then-rename, which a file-bound watcher does not. There is no
+ * debounce: a human answer should not sit in a buffer.
  */
 async function waitForFile(path: string, timeoutMs: number): Promise<void> {
-    if (existsSync(path)) {
-        return;
-    }
-
-    const dir = dirname(path);
-    const name = basename(path);
-    mkdirSync(dir, { recursive: true });
-
-    const { createWatcher } = await import("@genesiscz/utils/fs/watcher");
-
-    let settle: () => void = () => {};
-    const landed = new Promise<void>((resolve) => {
-        settle = resolve;
-    });
-
-    const subscription = await createWatcher(
-        dir,
-        (events) => {
-            // The app writes a temp file and renames it, so the final name appearing is the signal.
-            if (events.some((event) => basename(event.path) === name)) {
-                settle();
-            }
-        },
-        { debounceMs: 50 }
-    );
-
-    // The file can land between the existsSync above and the watcher being armed.
-    if (existsSync(path)) {
-        settle();
-    }
-
-    const timer = setTimeout(settle, timeoutMs);
-
-    try {
-        await landed;
-    } finally {
-        clearTimeout(timer);
-        await subscription.unsubscribe();
-    }
+    await waitForPath(path, { timeoutMs });
 }
 
 /**
