@@ -107,6 +107,27 @@ async function sessionsFor(input: string, options: SharedOptions, toolName: stri
 }
 
 function warnWorker(session: AnalysisSession): void {
+    // First, and loudly: a killed worker leaves a partial results file, and a ranking built from
+    // it looks exactly like a complete one. Silence here is how `tools ts imports` spent months
+    // printing a confident table for two workers that had both been killed at 60 s.
+    if (session.result.timedOut) {
+        out.log.warn(
+            `A measure worker was killed at --timeout. ${session.result.unmeasured} of ${session.result.planned} planned module(s) have no sample, and every number below is from a PARTIAL run. Raise --timeout, or look for a "hang" row: a module that never settles is usually an entrypoint whose import awaits something (a prompt, a server, a lock).`
+        );
+    } else if (session.result.unmeasured > 0) {
+        out.log.warn(
+            `${session.result.unmeasured} of ${session.result.planned} planned module(s) have no sample; their subtree totals are lower bounds.`
+        );
+    }
+
+    const hung = session.result.modules.filter((module) => module.importError?.startsWith("hang:"));
+
+    if (hung.length > 0) {
+        out.log.warn(
+            `${hung.length} module(s) never settled during import and were given up on. First: ${hung[0].label}. Their self time is the deadline, not a measurement.`
+        );
+    }
+
     const errors = session.result.modules.filter(
         (module) => module.importError && !module.importError.startsWith("exit ")
     );
@@ -175,6 +196,7 @@ export function registerImportsCommands(parent: Command): void {
         }
 
         for (const session of sessions) {
+            warnWorker(session);
             renderAnalysis(session.result, {
                 graph: session.graph,
                 minMs: number(options.minMs, 0.5),
@@ -182,7 +204,6 @@ export function registerImportsCommands(parent: Command): void {
                 top: Math.max(1, Math.floor(number(options.top, 15))),
                 slowMs: DEFAULT_SLOW_MS,
             });
-            warnWorker(session);
         }
 
         if (sessions.length > 1) {
@@ -219,8 +240,8 @@ export function registerImportsCommands(parent: Command): void {
         }
 
         for (const session of sessions) {
-            renderLazy(findLazyCandidates(session.graph, session.self), session.result.entry, minMs);
             warnWorker(session);
+            renderLazy(findLazyCandidates(session.graph, session.self), session.result.entry, minMs);
         }
     });
 
@@ -244,8 +265,8 @@ export function registerImportsCommands(parent: Command): void {
         }
 
         for (const session of sessions) {
-            renderBarrels(findBarrelWaste(session.graph, session.self), session.result.entry, minMs);
             warnWorker(session);
+            renderBarrels(findBarrelWaste(session.graph, session.self), session.result.entry, minMs);
         }
     });
 

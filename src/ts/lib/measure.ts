@@ -10,6 +10,11 @@ const WORKER = join(import.meta.dir, "measure-worker.ts");
 
 export interface MeasureOptions {
     graph: ImportGraph;
+    /**
+     * Deadline for ONE import inside the worker. Defaults to a third of `timeoutMs`, so a run
+     * survives a few hanging modules instead of being killed by the first.
+     */
+    moduleTimeoutMs?: number;
     /** Post-order module ids (children first). Only "file" and "package" nodes are importable. */
     order: string[];
     /** Fresh processes per mode; the minimum per module is kept. */
@@ -22,7 +27,11 @@ export interface MeasureOptions {
 
 export interface WorkerSample {
     ms: number;
-    status: "ok" | "exit" | "error";
+    /**
+     * `hang`: the import had not settled after the per-module deadline. Its `ms` is the deadline,
+     * not a measurement, so it is a LOWER BOUND and must never be presented as a self time.
+     */
+    status: "ok" | "exit" | "error" | "hang";
     message?: string;
 }
 
@@ -53,7 +62,7 @@ function parseResults(text: string): Map<number, WorkerSample> {
 
         samples.set(parsedIndex, {
             ms: parsedMs,
-            status: status === "exit" || status === "error" ? status : "ok",
+            status: status === "exit" || status === "error" || status === "hang" ? status : "ok",
             message,
         });
     }
@@ -67,6 +76,7 @@ async function runWorker(options: {
     mode: "each" | "cold";
     cwd: string;
     timeoutMs: number;
+    moduleTimeoutMs: number;
 }): Promise<{ samples: Map<number, WorkerSample>; stderr: string; timedOut: boolean }> {
     writeFileSync(options.outPath, "");
     logger.debug({ mode: options.mode, plan: options.planPath, worker: WORKER }, "ts: spawning measure worker");
@@ -82,6 +92,7 @@ async function runWorker(options: {
             GT_TS_PLAN: options.planPath,
             GT_TS_OUT: options.outPath,
             GT_TS_MODE: options.mode,
+            GT_TS_MODULE_MS: String(options.moduleTimeoutMs),
             // A module that reads these at import time would otherwise open prompts or colour.
             FORCE_COLOR: "0",
             NO_COLOR: "1",
@@ -128,6 +139,7 @@ export async function measureGraph(options: MeasureOptions): Promise<MeasureResu
     const planPath = join(dir, "plan.txt");
     writeFileSync(planPath, `${importable.join("\n")}\n`);
 
+    const moduleTimeoutMs = options.moduleTimeoutMs ?? Math.max(1_000, Math.floor(options.timeoutMs / 3));
     const self = new Map<string, WorkerSample>();
     let cold: WorkerSample | undefined;
     let stderr = "";
@@ -141,6 +153,7 @@ export async function measureGraph(options: MeasureOptions): Promise<MeasureResu
                 mode: "each",
                 cwd: options.cwd,
                 timeoutMs: options.timeoutMs,
+                moduleTimeoutMs,
             })
         );
         timedOut = timedOut || each.timedOut;
@@ -157,6 +170,7 @@ export async function measureGraph(options: MeasureOptions): Promise<MeasureResu
                 mode: "cold",
                 cwd: options.cwd,
                 timeoutMs: options.timeoutMs,
+                moduleTimeoutMs,
             })
         );
         timedOut = timedOut || coldRun.timedOut;

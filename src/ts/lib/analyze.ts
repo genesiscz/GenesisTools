@@ -27,7 +27,15 @@ function importErrorOf(sample: WorkerSample | undefined): string | undefined {
         return undefined;
     }
 
-    return sample.status === "exit" ? `exit ${sample.message ?? "0"}` : (sample.message ?? "error");
+    if (sample.status === "exit") {
+        return `exit ${sample.message ?? "0"}`;
+    }
+
+    if (sample.status === "hang") {
+        return `hang: ${sample.message ?? "never settled"}`;
+    }
+
+    return sample.message ?? "error";
 }
 
 /**
@@ -101,6 +109,14 @@ export async function analyzeEntry(options: AnalyzeOptions): Promise<AnalysisSes
         })
     );
     const order = postOrder(graph, graph.entry);
+    // The plan the worker is given. Only these can be "missing a sample": a dynamic-import
+    // target is a graph node and never a plan line, so counting graph nodes reported a
+    // permanent 16 on dev-dashboard and would have made the partial-run warning noise.
+    const planned = order.filter((id) => {
+        const kind = graph.nodes.get(id)?.kind;
+
+        return kind === "file" || kind === "package";
+    });
     const measured = await measureGraph({
         graph,
         order,
@@ -165,6 +181,12 @@ export async function analyzeEntry(options: AnalyzeOptions): Promise<AnalysisSes
             edges,
             unresolved: graph.unresolved,
             workerStderr: measured.stderr,
+            // A killed worker leaves whatever it had already written, and a ranking built from
+            // that looks exactly like a complete one. The renderer says so out loud rather than
+            // letting a partial table be read as the answer.
+            timedOut: measured.timedOut,
+            unmeasured: planned.filter((id) => !measured.self.has(id)).length,
+            planned: planned.length,
         },
     };
 }

@@ -148,4 +148,10 @@ export interface AnalysisResult {
     edges: Array<{ from: string; to: string; kind: ImportKind; names: string[]; line: number }>;
     unresolved: ImportGraph["unresolved"];
     workerStderr: string;
+    /** A worker was killed at `--timeout`. Every number below is from a PARTIAL run. */
+    timedOut: boolean;
+    /** Modules in the worker's plan that came back with no sample. Zero on a healthy run. */
+    unmeasured: number;
+    /** How many modules the worker was asked to import. Dynamic targets are not among them. */
+    planned: number;
 }

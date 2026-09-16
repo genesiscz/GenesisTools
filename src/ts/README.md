@@ -49,7 +49,9 @@ Things the measurement is honest about:
 
 - **Import cycles.** The whole cycle evaluates when its first member is imported, so that member's self time is the cycle's and the others read near zero. Cycle members carry a `⇄` mark, and the "Why" section names which member paid.
 - **A module that calls `process.exit()` while being imported** (a CLI entrypoint that parses argv at module scope) is reported as `exits-on-import`; the worker catches the exit, records the time, and keeps going.
-- **A module that never resolves** (a top-level await on a prompt, say) is killed after `--timeout` seconds. Everything measured before it survives, because the worker appends one line per module as it goes.
+- **A module that never resolves** (a top-level await on a prompt, say) is given up on after its own deadline, a third of `--timeout`, and reported as a `hang` row. The run continues, so one bad module costs one deadline instead of the whole measurement. `--timeout` stays as the backstop for a module that blocks the event loop synchronously, and everything measured before a kill survives, because the worker appends one line per module as it goes.
+- **The worker runs an entrypoint with `--help` in argv**, not with an empty one. Commander runs its DEFAULT action for an empty argv, and a default action that opens a prompt never returns: `tools ai` used to have both of its workers killed at 60 s for exactly that, and the table was then built from a partial results file with nothing on screen saying so. `--help` is also the argv that loads every subcommand tree, which is what a cost analysis of an entrypoint wants.
+- **A partial run says so.** When a worker is killed, or a planned module comes back with no sample, a warning is printed ABOVE the table naming how many of the plan are missing; `--json` carries `timedOut`, `planned` and `unmeasured`.
 - **A package's self time depends on what is already warm.** `@parcel/watcher` measures about 4.5 ms in the children-first plan, where `node:fs` and friends are already loaded, and about 7.5 ms imported alone in an empty process. Both are real; the tool reports the marginal one.
 
 ## Reading `analyze`
