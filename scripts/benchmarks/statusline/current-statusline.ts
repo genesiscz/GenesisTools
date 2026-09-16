@@ -20,7 +20,7 @@
  *
  * WHY INTERLEAVED ROUNDS. `--runs 100` is split into `--rounds` batches and the
  * repos are cycled round-robin, so a load spike lands on every arm instead of
- * turning into "col-fe is slow". The per-round raw `times` arrays are merged and
+ * turning into "the client repo is slow". The per-round raw `times` arrays are merged and
  * the statistics are computed here rather than taken from any single hyperfine
  * summary. This is convention 5 in `scripts/benchmarks/README.md`.
  *
@@ -46,6 +46,7 @@ import { chmodSync, mkdirSync, readdirSync, statSync } from "node:fs";
 import { homedir, loadavg } from "node:os";
 import { join } from "node:path";
 import { type BaselineMetrics, compareToBaseline, formatComparison, recordBaseline } from "@app/benchmark/lib";
+import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
 import { stripAnsi } from "@genesiscz/utils/string";
@@ -98,11 +99,29 @@ interface RepoTarget {
 }
 
 const PROJECTS_DIR = join(homedir(), "Tresors", "Projects");
+
+/**
+ * The two repos every clone has, plus whatever `STATUSLINE_BENCH_REPOS` names as
+ * `name=path,name=path`. The baseline was recorded with `client-repo` (a large client
+ * checkout) and `vault` (the notes vault) added that way; their real names stay out of git.
+ */
+function extraReposFromEnv(): RepoTarget[] {
+    const raw = env.getProcessEnv().STATUSLINE_BENCH_REPOS ?? "";
+
+    return raw
+        .split(",")
+        .map((entry) => entry.trim())
+        .filter((entry) => entry.includes("="))
+        .map((entry) => {
+            const at = entry.indexOf("=");
+            return { name: entry.slice(0, at).trim(), path: entry.slice(at + 1).trim() };
+        });
+}
+
 const DEFAULT_REPOS: RepoTarget[] = [
     { name: "GenesisTools", path: join(PROJECTS_DIR, "GenesisTools") },
     { name: "GenesisClaude", path: join(PROJECTS_DIR, "GenesisClaude") },
-    { name: "col-fe", path: join(PROJECTS_DIR, "CEZ", "col-fe") },
-    { name: "GenesisBrain", path: join(PROJECTS_DIR, "GenesisBrain") },
+    ...extraReposFromEnv(),
 ];
 
 interface TranscriptChoice {

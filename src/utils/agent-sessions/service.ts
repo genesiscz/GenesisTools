@@ -801,7 +801,7 @@ export class HistoryService {
 
         // A resume picker needs to know WHICH sessions mention the query, and ripgrep has just
         // answered that. Parsing every candidate transcript to place the matches cost 12 s for
-        // eleven col-fe sessions (4 s of JSON.parse, 2 s of commit-hash regexes) and produced
+        // eleven large sessions (4 s of JSON.parse, 2 s of commit-hash regexes) and produced
         // nothing the picker shows, so the candidates' metadata rows ARE the results here.
         if (filters.candidatesOnly) {
             const cap = filters.limit ?? planned.length;
