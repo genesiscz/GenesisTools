@@ -2,12 +2,12 @@ import { basename } from "node:path";
 import { killPidAction } from "@app/doctor/analyzers/processes";
 import { Analyzer } from "@app/doctor/lib/analyzer";
 import { labelForProcess } from "@app/doctor/lib/process-labels";
-import { run } from "@app/doctor/lib/run";
 import { classifyProcess } from "@app/doctor/lib/safety";
 import type { Action, AnalyzerCategory, AnalyzerContext, Finding } from "@app/doctor/lib/types";
+import { capture, parseCpuTime } from "@genesiscz/utils/process/ps";
 
-/** `ps -o cputime`: `[[dd-]hh:]mm:ss.ss`, the CPU time the process has consumed so far. */
-const CPUTIME = /^(?:(?:(\d+)-)?(\d+):)?(\d+):(\d+(?:\.\d+)?)$/;
+export { parseCpuTime };
+
 const PS_LINE = /^\s*(\d+)\s+(\S+)\s+(.*)$/;
 const GENESIS_FACE = /GenesisTools\.app\/Contents\/MacOS\/GenesisTools(?:\s+--(?:rpc|window)\b|\s*$)/;
 const GENESIS_TOOL = /\/GenesisTools\/(?:src|scripts)\/|\/\.genesis-tools\/bin\/gt-/;
@@ -36,21 +36,6 @@ export interface CpuSpinOptions {
 }
 
 export type ProcessOwner = "genesis-face" | "genesis-tool" | null;
-
-export function parseCpuTime(raw: string): number | null {
-    const match = raw.match(CPUTIME);
-
-    if (!match) {
-        return null;
-    }
-
-    const days = Number(match[1] ?? 0);
-    const hours = Number(match[2] ?? 0);
-    const minutes = Number(match[3]);
-    const seconds = Number(match[4]);
-
-    return Math.round((((days * 24 + hours) * 60 + minutes) * 60 + seconds) * 1000);
-}
 
 /** Output of `ps -axo pid=,cputime=,command=`, keyed by pid. Lines that do not parse are skipped. */
 export function parseCpuTimeSamples(raw: string): Map<number, CpuTimeSample> {
@@ -223,7 +208,7 @@ export class CpuSpinAnalyzer extends Analyzer {
     }
 
     private async sample(): Promise<Map<number, CpuTimeSample> | null> {
-        const res = await run("ps", ["-axo", "pid=,cputime=,command="]);
+        const res = await capture("ps", ["-axo", "pid=,cputime=,command="], { timeoutMs: 5_000 });
 
         if (res.status !== 0) {
             return null;

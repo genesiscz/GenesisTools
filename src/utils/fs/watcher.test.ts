@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, realpathSync, renameSync, rmSync, watch, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, renameSync, rmSync, watch, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -408,7 +408,9 @@ describe("watchPath / waitForPath", () => {
         writeFileSync(existing, "x");
         expect(await waitForPath(existing, { timeoutMs: 10 })).toBe(true);
 
-        const later = join(tempDir, "nested", "later.txt");
+        const nestedDir = join(tempDir, "nested");
+        mkdirSync(nestedDir);
+        const later = join(nestedDir, "later.txt");
         const arrival = waitForPath(later, { timeoutMs: 5000 });
         await Bun.sleep(50);
         atomicWrite(later, "landed");
@@ -431,7 +433,9 @@ describe("watchPath / waitForPath", () => {
         const throwaway = watch(tempDir, () => {});
         throwaway.close();
 
-        const target = join(tempDir, "deaf", "reply.json");
+        const deafDir = join(tempDir, "deaf");
+        mkdirSync(deafDir);
+        const target = join(deafDir, "reply.json");
         const startedAt = performance.now();
         const arrival = waitForPath(target, { timeoutMs: 4000, pollMs: 40 });
         await Bun.sleep(30);
@@ -439,6 +443,12 @@ describe("watchPath / waitForPath", () => {
 
         expect(await arrival).toBe(true);
         expect(performance.now() - startedAt).toBeLessThan(2000);
+    });
+
+    test("watchPath throws when the parent directory does not exist", () => {
+        expect(() => watchPath(join(tempDir, "missing", "x.txt"), () => {})).toThrow(
+            /watchPath: parent directory does not exist/
+        );
     });
 });
 

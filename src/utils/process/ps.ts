@@ -106,36 +106,95 @@ export function captureSync(command: string, args: string[], options?: { timeout
 export async function capture(
     command: string,
     args: string[],
-    options?: { timeoutMs?: number }
+    options?: { timeoutMs?: number; cwd?: string; env?: NodeJS.ProcessEnv }
 ): Promise<CaptureResult> {
-    const proc = Bun.spawn([command, ...args], { stdin: "ignore", stdout: "pipe", stderr: "pipe" });
-    let timedOut = false;
+    const proc = Bun.spawn([command, ...args], {
+        stdin: "ignore",
+        stdout: "pipe",
+        stderr: "pipe",
+        cwd: options?.cwd,
+        env: options?.env,
+    });
     const timeoutMs = options?.timeoutMs;
-    const timer =
-        timeoutMs === undefined
-            ? null
-            : setTimeout(() => {
-                  timedOut = true;
-                  proc.kill("SIGKILL");
-              }, timeoutMs);
+    const streams = Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text()]);
+    void streams.catch(() => {});
 
-    try {
-        const [stdout, stderr] = await Promise.all([
-            new Response(proc.stdout).text(),
-            new Response(proc.stderr).text(),
-        ]);
+    if (timeoutMs === undefined) {
+        const [stdout, stderr] = await streams;
         await proc.exited;
 
-        if (timedOut) {
-            log.warn({ command, args, timeoutMs }, "child was killed on timeout; its output is partial");
+        return { stdout, stderr, status: proc.exitCode };
+    }
+
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+    const timedOut = await new Promise<boolean>((resolve) => {
+        timeoutId = setTimeout(() => resolve(true), timeoutMs);
+        void proc.exited.then(() => resolve(false));
+    });
+
+    if (timeoutId !== undefined) {
+        clearTimeout(timeoutId);
+    }
+
+    if (timedOut) {
+        proc.kill("SIGKILL");
+        log.warn({ command, args, timeoutMs }, "child was killed on timeout; its output is partial");
+
+        return { stdout: "", stderr: "", status: null };
+    }
+
+    const [stdout, stderr] = await streams;
+
+    return { stdout, stderr, status: proc.exitCode };
+}
+
+/**
+ * Parse a POSIX `ps -o time` / `cputime` cell into milliseconds.
+ *
+ * macOS prints `mm:ss.cc` (and `hh:mm:ss` past an hour), Linux prints
+ * `[[dd-]hh:]mm:ss`, and both use a leading `dd-` for multi-day processes.
+ * Returns null for anything it does not recognise, so a caller can tell a
+ * parse failure apart from a genuine zero.
+ */
+export function parseCpuTime(raw: string): number | null {
+    const text = raw.trim();
+
+    if (text.length === 0) {
+        return null;
+    }
+
+    const dashIndex = text.indexOf("-");
+    let days = 0;
+    let rest = text;
+
+    if (dashIndex > 0) {
+        days = Number(text.slice(0, dashIndex));
+        rest = text.slice(dashIndex + 1);
+    }
+
+    if (!Number.isFinite(days)) {
+        return null;
+    }
+
+    const parts = rest.split(":");
+
+    if (parts.length > 3) {
+        return null;
+    }
+
+    let seconds = 0;
+
+    for (const part of parts) {
+        const value = Number(part);
+
+        if (!Number.isFinite(value)) {
+            return null;
         }
 
-        return { stdout, stderr, status: timedOut ? null : proc.exitCode };
-    } finally {
-        if (timer !== null) {
-            clearTimeout(timer);
-        }
+        seconds = seconds * 60 + value;
     }
+
+    return Math.round((days * 86_400 + seconds) * 1000);
 }
 
 export function parsePsLine(line: string): PsRow | null {

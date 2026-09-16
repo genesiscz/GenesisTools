@@ -200,6 +200,14 @@ describe("no-sub-100ms-interval", () => {
         expect(rules("setInterval(tick, opts.pollMs);")).toEqual([]);
         expect(rules("// lint-rules-ignore: spinner frame rate\nsetInterval(spin, 80);")).toEqual([]);
     });
+
+    test("a delay bound to a sub-100 ms constant is still a violation", () => {
+        expect(rules("const ms = 10;\nsetInterval(tick, ms);")).toContain("no-sub-100ms-interval");
+        expect(rules("const DEFAULT_TICK_MS = 10;\nsetInterval(tick, DEFAULT_TICK_MS);")).toContain(
+            "no-sub-100ms-interval"
+        );
+        expect(rules("const ms = 200;\nsetInterval(tick, ms);")).toEqual([]);
+    });
 });
 
 describe("no-sync-poll-loop", () => {

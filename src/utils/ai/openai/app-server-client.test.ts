@@ -1,4 +1,6 @@
 import { describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { AppServerClient, type AppServerProcess, appServerCommand } from "./app-server-client";
 
@@ -237,17 +239,21 @@ test("a wedged stdin never blocks the app-server from being killed", async () =>
 });
 
 describe("appServerCommand", () => {
-    test("puts the hook-trust bypass before the subcommand, where codex parses it as a global flag", () => {
-        expect(appServerCommand("/opt/codex", { bypassHookTrust: true, config: ["sandbox_mode=read-only"] })).toEqual([
+    test("stays fail-closed: argv never contains the hook-trust bypass", () => {
+        expect(appServerCommand("/opt/codex", { config: ["sandbox_mode=read-only"] })).toEqual([
             "/opt/codex",
-            "--dangerously-bypass-hook-trust",
             "app-server",
             "-c",
             "sandbox_mode=read-only",
         ]);
+        expect(appServerCommand("/opt/codex", {})).toEqual(["/opt/codex", "app-server"]);
+        expect(appServerCommand("/opt/codex", {}).includes("--dangerously-bypass-hook-trust")).toBe(false);
     });
 
-    test("omits the flag by default", () => {
-        expect(appServerCommand("/opt/codex", {})).toEqual(["/opt/codex", "app-server"]);
+    test("the Codex daemon does not pass --dangerously-bypass-hook-trust", () => {
+        const source = readFileSync(join(import.meta.dir, "../../../codex/daemon.ts"), "utf8");
+
+        expect(source).not.toContain("bypassHookTrust");
+        expect(source).not.toContain("--dangerously-bypass-hook-trust");
     });
 });
