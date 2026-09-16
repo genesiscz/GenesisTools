@@ -198,6 +198,7 @@ describe("no-sub-100ms-interval", () => {
 
     test("a computed delay is not judged, and a suppression names the reason", () => {
         expect(rules("setInterval(tick, opts.pollMs);")).toEqual([]);
+        expect(rules("setInterval(tick, 60 * 60 * 1000);")).toEqual([]);
         expect(rules("// lint-rules-ignore: spinner frame rate\nsetInterval(spin, 80);")).toEqual([]);
     });
 
