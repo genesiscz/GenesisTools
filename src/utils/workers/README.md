@@ -87,8 +87,9 @@ The design is assembled from prior art rather than invented:
 - **graphile-worker** — the LISTEN/NOTIFY shape that `watchSqliteChanges` reproduces for SQLite,
   which has no such channel.
 
-Longer notes: the `pool.ts` header, commit `0278633cb`, and the vault note
-`GenesisBrain/Dev/TypeScript/2026-09-16 Async worker pools and on-demand scaling in TypeScript.md`.
+Longer notes: the `pool.ts` header, commit `0278633cb`, and the note
+`<vault>/Dev/TypeScript/2026-09-16 Async worker pools and on-demand scaling in TypeScript.md` in
+the Obsidian vault.
 
 ## Tests
 

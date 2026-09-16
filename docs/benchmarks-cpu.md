@@ -37,6 +37,37 @@ now; the Swift fixes below make the waits finite.
 | `tools ai usage sessions --hours 24 --min 10`, the window (DECISION 4) | `bun --cpu-prof`, `PROFILE=claude-history`, JSON row diff | every call refreshed metadata for all 12,322 Claude sessions and decoded every row, then kept 53 in JavaScript: catalog 282 ms, discover-full 220 ms, sampled CPU 2521 ms, direct call 0.93 s user | `mtimeFrom` + `newest` reach the refresh and the SQL (`idx_session_metadata_provider_mtime`): catalog 91 ms, discover-full 72 ms, metadata parse 42 ms to 6 ms, sampled CPU 1374 ms, direct call 0.74 s user; the 53 rows are byte-identical |
 | `cr … --resume 7404` snippet | probe with the real Claude adapter | hydrated search 16.7 s for 11 hits; snippet = the first 1200 chars of the matched record (often a table, not the hit) | ripgrep gate + one ripgrep pass for the snippet: 0.96 to 1.17 s for 20 hits, snippet centred on the hit, a prose hit preferred over one inside a uuid; the ripgrep gate also counts hits inside ids, which the record-text match did not (11 to 20 candidates) |
 
+## Follow-ups landed 2026-09-16 22:30
+
+| Area | Script | Before | After |
+|---|---|---|---|
+| argv-gated registration for `tools ai` and `tools claude` | `scripts/benchmarks/startup/cli-startup.ts`, 7 runs, median CPU, load 9 to 22 | every subcommand registered all 28 (claude) or 7 (ai) trees before commander read argv: `claude who --help` 0.300 s, `claude history --help` 0.300 s, `ai sessions --help` 0.230 s, `ai usage --help` 0.230 s | one tree per recognised subcommand: 0.200, 0.190, 0.070, 0.190 s. `--help`, no arguments and an unknown subcommand still load everything by design (`claude --help` 0.310 to 0.330 s, `ai --help` 0.220 s unchanged), and their output is byte-identical. Also lazy, each with its measured comment: the ai-proxy ref scanner's config loader and `AiConfigStore` (66 ms and 52 ms, paid on every `tools ai` run just to REGISTER the scanner), `AIConfig` (51.6), the config TUI (59.8), darwinkit NLP (25.5) and classification (26.8), `ensurePackage` (25.6), `ModelManager` (24.6) |
+| `tools ai usage sessions --json`, the resident answer | `scripts/benchmarks/startup/cli-startup.ts`, JSON row diff | every ask walked 3,796 directories and stat'd 12k files: 2.300 s CPU, 1104 ms wall | the `ai-usage-poll` tick writes `~/.genesis-tools/ai/usage-sessions.json` and `--json` reads it when it is under 90 s old and answers the same query: 0.220 s CPU, 204 ms wall, 54 rows byte-identical against `--fresh`. The entry carries the query, so `--hours 1` can never be served rows computed for `--hours 24`; the tick refreshes only while something has asked within the hour |
+| the second discovery walk | four interleaved pairs of 5 runs on `usage sessions --fresh`, load 10 to 14 | `synchronizeHistory` re-walked every root for its write pass, milliseconds after the caller's walk: 1.600 s CPU, 800 ms wall | the caller passes the generation it discovered under; when `begin` claims exactly one more, no other writer intervened and the walk is reused: 1.410 s CPU, 700 ms wall. The profiler shows two `sync.discover-full` spans of 31 ms and 84 ms become `sync.discover-full-skipped` marks. A concurrent writer still forces the full walk (`sync-optimistic.test.ts`) |
+| the listing metadata projection | direct reads against the real index, 12,344 rows, 5 reads, median | `SELECT m.*` carried `all_user_text`, up to 20 KB a session and 27 MB in total, into a list that shows a title and a path: 78 to 82 ms | `listMetadata({ withUserText: false })`, column list read from `PRAGMA table_info` so a new column is carried automatically: 65 to 66 ms. Only `search` matches on that column, and the default is unchanged |
+| the getattrlistbulk walker | `scripts/benchmarks/startup/import-cost.ts` | every importer of `fs/disk-usage.ts` paid for `bun:ffi` and the binding, including the Claude discovery reader, which imports `bytesEqualStreaming` and never walks: 36.5 ms | bound through `createRequire` at the first walk, because `walkFiles` is a sync generator: 20.0 ms. The bulk path is still taken (26 of 26 entries carry an inline clone id) |
+| `cr … --resume 7404`, the gate's incidental hits | probe against the real index | 20 candidates where 11 mention the ticket; the loudest false source was not a uuid but `<total_tokens>14997404 tokens left</total_tokens>`, the running token counter in every transcript, plus base64 blobs and a stackoverflow id | the needle inside a longer alphanumeric run is incidental; those sort last and the 11 prose matches come first. Nothing is dropped, because ripgrep reports a bounded number of windows per file (raised 3 to 8), so "no prose hit among them" is evidence and never proof |
+
+## Verified, no change needed
+
+Three items from the campaign's follow-up list turned out to be already correct. Each is recorded
+here so the next reader does not re-open it.
+
+- **dev-dashboard connected-client polling.** The 2.1% measured on the live server came from a
+  FOCUSED tab. TanStack Query 5.102.8 gates an interval refetch on `focusManager.isFocused()`
+  (`queryObserver.js:163`) unless `refetchIntervalInBackground` is set, and no query in this repo
+  sets it, so an unfocused dashboard tab issues no requests at all. The 28 `refetchInterval` sites
+  are work a watching user asked for.
+- **Idle-skip for the SSE producers and pollers.** `live-events-source.ts` returns early on
+  `sseBroadcaster.subscriberCount() === 0`, `dev-dashboard/lib/live/producers.ts` and
+  `ai-usage-producer.ts` check `hub.subscriberCount(...)`, and `system/poller.ts` checks
+  `lastClientSeenAt` against a 60 s threshold. `port/lib/scanner.ts` only runs while a user is
+  watching, and the indexer's polling watch is the explicit fallback a user configures, whose
+  incremental sync is its own change detection. The remaining waste is the 2 s wake itself, and
+  only an IOKit sleep/wake observer would remove that.
+- **macos-resources RSS.** 145 to 192 MB after the rewrite (memoised windows, headless core).
+  Accepted in exchange for 10470 to 120 spawns a minute; not chased.
+
 ## What the remaining `usage sessions` time is
 
 After the codex fix and the window (decision 4), the profile of one call is, in order: the
@@ -59,6 +90,10 @@ bun scripts/benchmarks/polls/agents-request-wait.ts --compare --runs 3
 bun scripts/benchmarks/statusline/current-statusline.ts --compare --command "tools ai statusline run --claude"
 bun scripts/benchmarks/dashboards/idle-cost.ts --mode preview,static --repeat 5 --compare
 bun scripts/benchmarks/swift/ax-tool-depth.ts --compare
+
+# Startup and import cost (no baseline file: print, change, print again, note `uptime`)
+bun scripts/benchmarks/startup/cli-startup.ts "claude who" 7 bun src/claude/index.ts who --help
+bun scripts/benchmarks/startup/import-cost.ts "@genesiscz/utils/ai/AIConfig.ts"
 ```
 
 Run one script at a time: two benchmarks in flight skew each other, and a load average above
