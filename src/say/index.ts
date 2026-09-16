@@ -29,8 +29,8 @@ import { Command } from "commander";
 import pc from "picocolors";
 import { SayAudioCache } from "./lib/cache";
 import { captureCallerContext } from "./lib/caller";
-import { newCallId, type SayCallOutcome, type SayCallRequest, tryFinishCall, tryRecordCall } from "./lib/calls";
-import { showCallLogs, showCallStats } from "./lib/calls-view";
+import { failedSayOutcome, newCallId, type SayCallRequest, tryRecordCall, withCallLog } from "./lib/calls";
+import { registerCallLogCommands, showCallLogs, showCallStats } from "./lib/calls-view";
 import { speakWithProfile } from "./lib/speak";
 import { getSayStorage } from "./lib/storage";
 
@@ -207,8 +207,6 @@ const program = new Command()
         const effectiveForRun: EffectiveSettings = { ...effective };
         let provider: SayProvider = effective.provider ?? "macos";
         let fallbackFrom: SayProvider | null = null;
-        const finish = (outcome: Omit<SayCallOutcome, "speakerPid">) =>
-            tryFinishCall(request, { ...outcome, speakerPid: process.pid });
 
         // Per-text provider override: route phrases like "Permission needed"
         // to a different provider (typically local macos) regardless of the
@@ -236,76 +234,104 @@ const program = new Command()
             }
         }
 
-        if (provider !== "macos" && !envForProvider(provider)) {
-            if (opts.fallback === false) {
-                finish({ status: "failed", provider, error: `env var for ${provider} is not set` });
-                out.error(pc.red(`[say] env var for ${provider} is not set.`));
-                out.error(pc.dim(suggestCommand("tools say", { add: ["--provider", "macos"] })));
-                process.exit(1);
-            }
-
-            out.error(pc.yellow(`[say] env var for ${provider} is not set — falling back to macos.`));
-            fallbackFrom = provider;
-            provider = "macos";
-
-            if (!isFromCLI(cmd, "voice")) {
-                effectiveForRun.voice = null;
-            }
-
-            if (!isFromCLI(cmd, "model")) {
-                effectiveForRun.model = null;
-            }
-        }
-
         const stream = opts.stream === true ? true : opts.noStream === true ? false : undefined;
         const doneStatus = opts.output ? "written" : "spoken";
+        let exitCode = 0;
 
-        try {
-            const { cacheHit } = await speakCached({ mgr, text, provider, effective: effectiveForRun, opts, stream });
-            finish({ status: doneStatus, provider, voice: effectiveForRun.voice, cacheHit, fallbackFrom });
-        } catch (err) {
-            const message = err instanceof Error ? err.message : String(err);
+        await withCallLog(request, async (setOutcome) => {
+            if (provider !== "macos" && !envForProvider(provider)) {
+                if (opts.fallback === false) {
+                    setOutcome(failedSayOutcome({ provider, error: `env var for ${provider} is not set` }));
+                    out.error(pc.red(`[say] env var for ${provider} is not set.`));
+                    out.error(pc.dim(suggestCommand("tools say", { add: ["--provider", "macos"] })));
+                    exitCode = 1;
+                    return;
+                }
 
-            if (isVoiceNotFoundError(message)) {
-                finish({ status: "failed", provider, voice: effectiveForRun.voice, fallbackFrom, error: message });
-                out.error(pc.red(`[say] TTS failed: ${message}`));
-                await printVoiceList(provider);
-                process.exit(1);
+                out.error(pc.yellow(`[say] env var for ${provider} is not set — falling back to macos.`));
+                fallbackFrom = provider;
+                provider = "macos";
+
+                if (!isFromCLI(cmd, "voice")) {
+                    effectiveForRun.voice = null;
+                }
+
+                if (!isFromCLI(cmd, "model")) {
+                    effectiveForRun.model = null;
+                }
             }
-
-            // Cloud TTS is transient; macos is always available — drop provider-specific voice/model in the retry.
-            if (provider === "macos" || opts.fallback === false) {
-                finish({ status: "failed", provider, voice: effectiveForRun.voice, fallbackFrom, error: message });
-                out.error(pc.red(`[say] TTS failed: ${message}`));
-                process.exit(1);
-            }
-
-            out.error(pc.yellow(`[say] ${provider} failed: ${message.slice(0, 200)}`));
-            out.error(pc.yellow("[say] falling back to macos"));
-
-            const macosRun: EffectiveSettings = { ...effectiveForRun, voice: null, model: null };
 
             try {
                 const { cacheHit } = await speakCached({
                     mgr,
                     text,
-                    provider: "macos",
-                    effective: macosRun,
+                    provider,
+                    effective: effectiveForRun,
                     opts,
                     stream,
                 });
-                finish({ status: doneStatus, provider: "macos", cacheHit, fallbackFrom: provider, error: message });
-            } catch (fallbackErr) {
-                const fmsg = fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr);
-                finish({
-                    status: "failed",
-                    provider: "macos",
-                    fallbackFrom: provider,
-                    error: `${message}; macos: ${fmsg}`,
-                });
-                out.error(pc.red(`[say] macos fallback also failed: ${fmsg}`));
-                process.exit(1);
+                setOutcome({ status: doneStatus, provider, voice: effectiveForRun.voice, cacheHit, fallbackFrom });
+            } catch (err) {
+                const message = err instanceof Error ? err.message : String(err);
+
+                if (isVoiceNotFoundError(message)) {
+                    setOutcome(
+                        failedSayOutcome({ provider, voice: effectiveForRun.voice, fallbackFrom, error: message })
+                    );
+                    out.error(pc.red(`[say] TTS failed: ${message}`));
+                    await printVoiceList(provider);
+                    exitCode = 1;
+                    return;
+                }
+
+                // Cloud TTS is transient; macos is always available — drop provider-specific voice/model in the retry.
+                if (provider === "macos" || opts.fallback === false) {
+                    setOutcome(
+                        failedSayOutcome({ provider, voice: effectiveForRun.voice, fallbackFrom, error: message })
+                    );
+                    out.error(pc.red(`[say] TTS failed: ${message}`));
+                    exitCode = 1;
+                    return;
+                }
+
+                out.error(pc.yellow(`[say] ${provider} failed: ${message.slice(0, 200)}`));
+                out.error(pc.yellow("[say] falling back to macos"));
+
+                const macosRun: EffectiveSettings = { ...effectiveForRun, voice: null, model: null };
+
+                try {
+                    const { cacheHit } = await speakCached({
+                        mgr,
+                        text,
+                        provider: "macos",
+                        effective: macosRun,
+                        opts,
+                        stream,
+                    });
+                    setOutcome({
+                        status: doneStatus,
+                        provider: "macos",
+                        cacheHit,
+                        fallbackFrom: provider,
+                        error: message,
+                    });
+                } catch (fallbackErr) {
+                    const fmsg = fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr);
+                    setOutcome(
+                        failedSayOutcome({
+                            provider: "macos",
+                            fallbackFrom: provider,
+                            error: `${message}; macos: ${fmsg}`,
+                        })
+                    );
+                    out.error(pc.red(`[say] macos fallback also failed: ${fmsg}`));
+                    exitCode = 1;
+                }
             }
+        });
+
+        if (exitCode !== 0) {
+            process.exit(exitCode);
         }
 
         if (opts.save && saveApp && patch) {
@@ -348,36 +374,7 @@ program
         out.println(pc.dim("Download with: tools ai models download <id>"));
     });
 
-program
-    .command("logs")
-    .description("The last N calls: when, which agent and session, which cmux workspace, what was said, what happened")
-    .option("-n, --limit <count>", "How many calls to show", (v: string) => Number.parseInt(v, 10), 100)
-    .option("--attention", "Only calls whose text carries the 'Attention please!!' marker")
-    .option("--grep <text>", "Only calls whose text contains this (case-insensitive)")
-    .option("--since <when>", "Only calls after a duration ago (7d, 24h, 90m) or a date (2026-09-15)")
-    .option("--full", "One detail block per call instead of the table: argv, cwd, process chain, pids, jump command")
-    .option("--json", "Print the records as JSON")
-    .action(
-        async (opts: {
-            limit: number;
-            attention?: boolean;
-            grep?: string;
-            since?: string;
-            full?: boolean;
-            json?: boolean;
-        }) => {
-            await showCallLogs(opts);
-        }
-    );
-
-program
-    .command("stats")
-    .description("Call statistics: outcomes, agents, app profiles, providers, days, hours, top sessions and phrases")
-    .option("--since <when>", "Only calls after a duration ago (7d, 24h, 90m) or a date (2026-09-15)")
-    .option("--json", "Print the aggregates as JSON")
-    .action(async (opts: { since?: string; json?: boolean }) => {
-        await showCallStats(opts);
-    });
+registerCallLogCommands(program);
 
 program
     .command("config")

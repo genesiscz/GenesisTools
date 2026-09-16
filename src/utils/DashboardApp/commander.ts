@@ -12,7 +12,7 @@
  *     attach       --lines <n>
  *     logs         --lines <n>
  *     open         --port <n> --no-qr --no-open --query key=value
- *     install      --force --port <n> --dev (only if launchd.available; --dev only with spawn.previewCmd)
+ *     install      --force --port <n> --preview (only if launchd.available; --preview only with spawn.previewCmd)
  *     uninstall    (only if launchd.available)
  *
  * Global flag on every verb AND the no-verb default:
@@ -220,16 +220,16 @@ export function buildCommanderCommand({ config, ctx }: BuildOptions): Command {
 
         if (config.spawn.previewCmd) {
             installCmd.option(
-                "--dev",
-                "register the watch build (rebuild on save, page reload) instead of the built bundle; HMR is the `dev` verb"
+                "--preview",
+                "register the watch build instead of the built bundle; HMR is the `dev` verb"
             );
         }
 
-        installCmd.action(async (flags: { force?: boolean; port?: string; dev?: boolean }) => {
+        installCmd.action(async (flags: { force?: boolean; port?: string; preview?: boolean }) => {
             await install(ctx, {
                 force: flags.force,
                 port: flags.port ? parsePort(flags.port) : undefined,
-                dev: flags.dev,
+                preview: flags.preview,
             });
         });
         cmd.command("uninstall")

@@ -18,7 +18,9 @@ import {
     listCalls,
     NO_OUTCOME_AFTER_MS,
     recordCall,
+    type SayCallOutcome,
     type SayCallRequest,
+    withCallLog,
 } from "./calls";
 import { agentLabel, parseSince } from "./calls-view";
 
@@ -262,6 +264,74 @@ describe("stats", () => {
         expect(stats.firstTs).toBe(200);
         expect(stats.byAgent[0].count).toBe(1);
         expect(stats.latency).toBeNull();
+    });
+});
+
+describe("withCallLog", () => {
+    test("writes failed when work returns without an outcome", async () => {
+        const finished: SayCallOutcome[] = [];
+        const req = request();
+        await withCallLog(req, async () => "ok", {
+            finish: (_request, outcome) => {
+                finished.push(outcome);
+            },
+        });
+        expect(finished).toEqual([
+            {
+                status: "failed",
+                error: "speaker exited without recording an outcome",
+                speakerPid: process.pid,
+            },
+        ]);
+    });
+
+    test("writes the set outcome on success", async () => {
+        const finished: SayCallOutcome[] = [];
+        const req = request();
+        await withCallLog(
+            req,
+            async (setOutcome) => {
+                setOutcome({ status: "spoken", provider: "macos", cacheHit: false });
+            },
+            {
+                finish: (_request, outcome) => {
+                    finished.push(outcome);
+                },
+            }
+        );
+        expect(finished).toEqual([
+            {
+                status: "spoken",
+                provider: "macos",
+                cacheHit: false,
+                speakerPid: process.pid,
+            },
+        ]);
+    });
+
+    test("still writes failed when work throws", async () => {
+        const finished: SayCallOutcome[] = [];
+        const req = request();
+        await expect(
+            withCallLog(
+                req,
+                async () => {
+                    throw new Error("boom");
+                },
+                {
+                    finish: (_request, outcome) => {
+                        finished.push(outcome);
+                    },
+                }
+            )
+        ).rejects.toThrow("boom");
+        expect(finished).toEqual([
+            {
+                status: "failed",
+                error: "boom",
+                speakerPid: process.pid,
+            },
+        ]);
     });
 });
 

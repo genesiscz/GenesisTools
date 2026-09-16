@@ -86,7 +86,7 @@ export interface DashboardAppConfig {
         /** When set, `up --dev`, `restart --dev` and the `dev` verb use this instead of `cmd` (vite dev + HMR). */
         devCmd?: readonly string[];
         /**
-         * When set, `install --dev` registers this instead of `cmd`: the watch build that rebuilds
+         * When set, `install --preview` registers this instead of `cmd`: the watch build that rebuilds
          * on save and reloads the page, the mode a tunnel-served dashboard ran before `cmd` became
          * a one-off build. Remembered per dashboard, so a later `up` keeps it.
          */
@@ -148,7 +148,7 @@ export interface UpOptions {
     interactive?: boolean;
     /** When true, an already-running instance on our port is stopped without a menu (used by `install`). */
     replaceRunning?: boolean;
-    /** `dev`: `spawn.devCmd` (`up --dev`). `preview`: `spawn.previewCmd` (what `install --dev` registers). */
+    /** `dev`: `spawn.devCmd` (`up --dev`). `preview`: `spawn.previewCmd` (what `install --preview` registers). */
     uiServe?: "dev" | "preview";
 }
 
@@ -156,7 +156,7 @@ export interface InstallOptions {
     force?: boolean;
     port?: number;
     /** Register `spawn.previewCmd` (watch build) instead of `spawn.cmd`; remembered for later `up`s. */
-    dev?: boolean;
+    preview?: boolean;
 }
 
 export interface UpResult {

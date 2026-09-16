@@ -10,6 +10,7 @@ import {
     renderCliSection,
     truncateDisplay,
 } from "@genesiscz/utils/table";
+import type { Command } from "commander";
 import pc from "picocolors";
 import { describeAncestry } from "./caller";
 import {
@@ -559,4 +560,36 @@ export async function showCallStats(opts: StatsViewOptions): Promise<void> {
         stats.topSessions.map((s) => s.workspaceId).filter((id): id is string => id !== null)
     );
     renderStats(stats, names, opts);
+}
+
+/** `tools say logs` / `tools say stats` — keep the commander blocks off the 1.4k-line CLI. */
+export function registerCallLogCommands(program: Command): void {
+    program
+        .command("logs")
+        .description(
+            "The last N calls: when, which agent and session, which cmux workspace, what was said, what happened"
+        )
+        .option("-n, --limit <count>", "How many calls to show", (v: string) => Number.parseInt(v, 10), 100)
+        .option("--attention", "Only calls whose text carries the 'Attention please!!' marker")
+        .option("--grep <text>", "Only calls whose text contains this (case-insensitive)")
+        .option("--since <when>", "Only calls after a duration ago (7d, 24h, 90m) or a date (2026-09-15)")
+        .option(
+            "--full",
+            "One detail block per call instead of the table: argv, cwd, process chain, pids, jump command"
+        )
+        .option("--json", "Print the records as JSON")
+        .action(async (opts: LogsOptions) => {
+            await showCallLogs(opts);
+        });
+
+    program
+        .command("stats")
+        .description(
+            "Call statistics: outcomes, agents, app profiles, providers, days, hours, top sessions and phrases"
+        )
+        .option("--since <when>", "Only calls after a duration ago (7d, 24h, 90m) or a date (2026-09-15)")
+        .option("--json", "Print the aggregates as JSON")
+        .action(async (opts: StatsViewOptions) => {
+            await showCallStats(opts);
+        });
 }

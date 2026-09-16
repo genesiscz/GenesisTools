@@ -317,6 +317,49 @@ export function tryFinishCall(request: SayCallRequest, outcome: SayCallOutcome):
     }
 }
 
+const MISSING_OUTCOME_ERROR = "speaker exited without recording an outcome";
+
+export type SayCallOutcomeDraft = Omit<SayCallOutcome, "speakerPid">;
+
+type SetCallOutcome = (outcome: SayCallOutcomeDraft) => void;
+
+export function failedSayOutcome(fields: Omit<SayCallOutcomeDraft, "status"> & { error: string }): SayCallOutcomeDraft {
+    return { status: "failed", ...fields };
+}
+
+/**
+ * Guarantee one outcome write for a speaker. Work that returns without
+ * `setOutcome` is recorded as failed; a throw is too. `finish` is injectable
+ * so tests can assert the write without opening the on-disk database.
+ */
+export async function withCallLog<T>(
+    request: SayCallRequest,
+    work: (setOutcome: SetCallOutcome) => Promise<T>,
+    opts?: { finish?: (request: SayCallRequest, outcome: SayCallOutcome) => void }
+): Promise<T> {
+    const finish = opts?.finish ?? tryFinishCall;
+
+    let outcome: SayCallOutcomeDraft = {
+        status: "failed",
+        error: MISSING_OUTCOME_ERROR,
+    };
+
+    try {
+        return await work((next) => {
+            outcome = next;
+        });
+    } catch (err) {
+        outcome = {
+            ...outcome,
+            status: "failed",
+            error: err instanceof Error ? err.message : String(err),
+        };
+        throw err;
+    } finally {
+        finish(request, { ...outcome, speakerPid: process.pid });
+    }
+}
+
 export interface ListCallsOptions {
     limit: number;
     attention?: boolean;

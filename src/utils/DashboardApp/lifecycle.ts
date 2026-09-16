@@ -10,13 +10,13 @@ import { closeSync, existsSync, openSync, readSync, statSync } from "node:fs";
 import * as p from "@clack/prompts";
 import { Browser } from "@genesiscz/utils/browser";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
+import { formatDuration } from "@genesiscz/utils/format";
 import { logger, out } from "@genesiscz/utils/logger";
 import { launchdPlistNeedsGenesisApp } from "@genesiscz/utils/macos/genesis-app";
 import { getPortOwner } from "@genesiscz/utils/network";
 import { spawnDashboard } from "@genesiscz/utils/process/spawnDashboard";
 import { isProcessAlive } from "@genesiscz/utils/process-alive";
 import { stripAnsi } from "@genesiscz/utils/string";
-import { terminalLocaleEnvRecord } from "@genesiscz/utils/terminal/locale";
 import pc from "picocolors";
 import {
     DashboardNotReadyError,
@@ -34,9 +34,16 @@ import {
     isLaunchdInstalled,
     plistPath,
     refreshLaunchd,
-    startLaunchd,
     uninstallLaunchd,
 } from "./launchd";
+import {
+    launchdSpawnCmd,
+    persistInstallServeMode,
+    resolveSpawnCmd,
+    runDev,
+    shouldOpenBrowser,
+    spawnEnv,
+} from "./lifecycle-serve";
 import { printDevServerBanner, readLogTail, resetLogFile } from "./logSession";
 import {
     describeConflict,
@@ -88,33 +95,7 @@ export function buildLifecycleContext(config: DashboardAppConfig, resolvedPort: 
     };
 }
 
-export function resolveSpawnCmd(config: DashboardAppConfig, opts: UpOptions = {}): string[] {
-    if (opts.uiServe === "dev" && config.spawn.devCmd) {
-        return [...config.spawn.devCmd];
-    }
-
-    if (opts.uiServe === "preview" && config.spawn.previewCmd) {
-        return [...config.spawn.previewCmd];
-    }
-
-    return [...config.spawn.cmd];
-}
-
-/** The command the launchd plist carries: the mode `install` chose, unless this call names one. */
-function launchdSpawnCmd(config: DashboardAppConfig, opts: UpOptions): string[] {
-    return resolveSpawnCmd(config, { ...opts, uiServe: opts.uiServe ?? readPreferences(config.key).launchdServe });
-}
-
-function spawnEnv(config: DashboardAppConfig): Record<string, string | undefined> {
-    return {
-        ...config.spawn.env,
-        ...terminalLocaleEnvRecord(),
-        // UI and server children alike read their listen address from here: loopback by
-        // default, the registry entry or the per-dashboard preferences file may widen it.
-        DASHBOARD_BIND_HOST: resolveDashboardBindHost(config),
-        ...(config.type === "ui" ? { FORCE_COLOR: "1", BROWSER: "none" } : {}),
-    };
-}
+export { resolveSpawnCmd, shouldOpenBrowser };
 
 export async function up(ctx: LifecycleContext, opts: UpOptions = {}): Promise<UpResult> {
     const { config } = ctx;
@@ -154,7 +135,7 @@ export async function up(ctx: LifecycleContext, opts: UpOptions = {}): Promise<U
     if (config.launchd?.available && !opts.foreground && isLaunchdInstalled(ctx.plistLabel)) {
         if (opts.uiServe) {
             out.warn(
-                `${config.name ?? config.key} runs under launchd; --dev is ignored here. Use \`${config.commandName} dev\` for one foreground run or \`${config.commandName} install --dev\` to change the agent.`
+                `${config.name ?? config.key} runs under launchd; serve-mode flags are ignored here. Use \`${config.commandName} dev\` for one foreground HMR run or \`${config.commandName} install --preview\` to change the agent.`
             );
         }
 
@@ -572,72 +553,8 @@ export async function restart(ctx: LifecycleContext, opts: UpOptions = {}): Prom
     return up(ctx, opts);
 }
 
-/**
- * Run `spawn.devCmd` in the foreground in place of whatever serves the port, and bring that back
- * when the dev server exits: a launchd agent is booted out first and started again afterwards, a
- * background instance is stopped and started again. Ctrl+C is the normal way out.
- */
 export async function dev(ctx: LifecycleContext, opts: UpOptions = {}): Promise<never> {
-    const { config } = ctx;
-    const port = opts.port ?? ctx.port;
-    const devCmd = config.spawn.devCmd;
-
-    if (!devCmd) {
-        throw new Error(`${config.key} does not define a dev command.`);
-    }
-
-    const launchdManaged = Boolean(config.launchd?.available && isLaunchdInstalled(ctx.plistLabel));
-    const wasRunning = launchdManaged || (await status(ctx)).running;
-
-    if (wasRunning) {
-        await down(ctx, { force: true });
-        await waitForPortFree(port, 5_000, { killIfHeld: true, dashboardKey: config.key });
-    }
-
-    const restore = async (): Promise<void> => {
-        if (launchdManaged) {
-            out.log.step(`Starting launchd agent ${ctx.plistLabel} again…`);
-            await waitForPortFree(port, 5_000, { killIfHeld: true, dashboardKey: config.key });
-            await startLaunchd(ctx.plistLabel);
-            const ok = await waitForReady(config.readiness, { port, logFile: ctx.logFile });
-
-            if (ok.ready) {
-                out.log.success(`${config.name ?? config.key} back on http://localhost:${port} · launchd`);
-            } else {
-                out.warn(
-                    `Launchd agent did not come back: ${ok.detail ?? "unknown"}\n  Check: launchctl print gui/$UID/${ctx.plistLabel}\n  Log: ${ctx.logFile}`
-                );
-            }
-
-            return;
-        }
-
-        if (wasRunning) {
-            await up(ctx, { port, open: false, skipInstallPrompt: true });
-        }
-    };
-
-    out.log.step(
-        `${config.name ?? config.key} dev server in the foreground; stop it to bring the installed server back.`
-    );
-    writePid(config.key, process.pid);
-    let exitCode = 1;
-
-    try {
-        exitCode = await spawnDashboard({
-            cmd: [...devCmd],
-            cwd: config.spawn.cwd,
-            env: {
-                ...spawnEnv(config),
-                ...(shouldOpenBrowser(config, opts) ? { DASHBOARD_OPEN_BROWSER: "1" } : {}),
-            },
-        });
-    } finally {
-        clearPid(config.key);
-        await restore();
-    }
-
-    process.exit(exitCode);
+    return runDev({ ctx, opts, down, up, status });
 }
 
 export async function status(ctx: LifecycleContext): Promise<StatusResult> {
@@ -708,9 +625,11 @@ export async function printStatus(ctx: LifecycleContext): Promise<void> {
     lines.push(`${s.key} (${s.type}): ${s.running ? `running · pid ${s.pid}` : "not running"}`);
     lines.push(`  port: ${s.port}`);
     lines.push(`  bind: ${resolveDashboardBindHost(ctx.config)}`);
+
     if (s.running && s.uptimeMs) {
         lines.push(`  uptime: ${formatDuration(s.uptimeMs)}`);
     }
+
     if (s.launchdAvailable) {
         lines.push(`  launchd: ${s.launchdInstalled ? "installed" : "not installed"}`);
     }
@@ -722,19 +641,6 @@ export async function printStatus(ctx: LifecycleContext): Promise<void> {
         lines.push(`  ⚠ ${w.service}: ${w.error}${w.fix ? ` (fix: ${w.fix})` : ""}`);
     }
     out.println(lines.join("\n"));
-}
-
-function formatDuration(ms: number): string {
-    if (ms < 1_000) {
-        return `${ms}ms`;
-    }
-    if (ms < 60_000) {
-        return `${(ms / 1_000).toFixed(1)}s`;
-    }
-    if (ms < 3_600_000) {
-        return `${(ms / 60_000).toFixed(1)}m`;
-    }
-    return `${(ms / 3_600_000).toFixed(1)}h`;
 }
 
 export async function attach(ctx: LifecycleContext, opts: { lines?: number } = {}): Promise<void> {
@@ -806,20 +712,6 @@ export async function logs(ctx: LifecycleContext, opts: { lines?: number; sessio
     }
 }
 
-export function shouldOpenBrowser(config: DashboardAppConfig, opts: UpOptions): boolean {
-    if (config.type !== "ui") {
-        return false;
-    }
-
-    if (opts.open === false) {
-        return false;
-    }
-
-    // Commander's `--no-open` negatable flag defaults `open` to true; per-app
-    // `openBrowser.enabled` is the source of truth (dev-dashboard: false).
-    return config.openBrowser?.enabled ?? false;
-}
-
 async function openBrowserWhenReady(config: DashboardAppConfig, port: number): Promise<void> {
     const browserUrl = resolveDashboardBrowserUrl(config, port);
 
@@ -868,12 +760,11 @@ export async function install(ctx: LifecycleContext, opts: InstallOptions = {}):
         throw new Error(`${config.name ?? config.key}: port ${port} is still in use.`);
     }
 
-    // The chosen mode outlives this call: every later `up` and `restart` rewrites the plist from it.
-    writePreferences(config.key, { launchdServe: opts.dev ? "preview" : undefined });
+    const uiServe = persistInstallServeMode(config.key, opts.preview === true);
     const result = await finishLaunchdStart(ctx, port, {
         open: false,
         skipInstallPrompt: true,
-        ...(opts.dev ? { uiServe: "preview" as const } : {}),
+        ...(uiServe ? { uiServe } : {}),
     });
 
     if (!result.started) {
