@@ -1,9 +1,43 @@
-import { describe, expect, test } from "bun:test";
+import { beforeAll, describe, expect, test } from "bun:test";
+import { parsePatch } from "diff";
 import { DataTable, type DataTableCell, Tabs, tabHash, tabIdFromHash } from "./data";
-import { MdViewer } from "./md";
+import { Mermaid } from "./diagrams";
+import { DiffView, diffFileFromPatch, pairDiffRows } from "./diff";
+import { Md, MdViewer } from "./md";
+import { configureMermaid, type MermaidApi } from "./mermaid-core";
 import { CodeBlock, Collapse, SegmentedControl } from "./primitives";
 import { matchRoute } from "./router";
+import { JsonView, Steps, TreeView, treeFromPaths } from "./structure";
 import { mountDom } from "./test-dom";
+import { Heatmap, Meter, meterTone, Sparkline, sparklinePath } from "./viz";
+
+const mermaidRendered: string[] = [];
+let mermaidFailNext = false;
+const fakeMermaid: MermaidApi = {
+    initialize() {},
+    async render(_id, text) {
+        if (mermaidFailNext) {
+            mermaidFailNext = false;
+            throw new Error("Parse error on line 1");
+        }
+
+        mermaidRendered.push(text);
+
+        return { svg: `<svg data-fake="1"><text>${text.length}</text></svg>` };
+    },
+};
+
+/** Let the async fence hydration (load, then render) settle. */
+async function settle(): Promise<void> {
+    for (let i = 0; i < 3; i += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+}
+
+beforeAll(() => {
+    // Never the CDN in tests: the loader is injected.
+    configureMermaid({ load: async () => fakeMermaid });
+});
 
 describe("Tabs hash round-trip", () => {
     test("an id with a space survives write then read", () => {
@@ -336,5 +370,225 @@ describe("matchRoute", () => {
         expect(matchRoute("/a/:x/b/:y", "/a/one/b/two%20three")).toEqual({ x: "one", y: "two three" });
         expect(matchRoute("/item/:id", "/item/42/extra")).toBeNull();
         expect(matchRoute("/", "/")).toEqual({});
+    });
+});
+
+describe("mermaid in markdown", () => {
+    test("a ```mermaid fence in Md becomes the rendered SVG, other fences stay code", async () => {
+        const dom = await mountDom(<Md>{"```mermaid\ngraph TD; A-->B\n```\n\n```ts\nconst a = 1;\n```\n"}</Md>);
+        await settle();
+
+        expect(dom.container.querySelector(".akit-mermaid svg")).not.toBeNull();
+        expect(dom.container.querySelector("code.language-mermaid")).toBeNull();
+        expect(mermaidRendered.at(-1)).toBe("graph TD; A-->B");
+        // The ts fence is highlighted by the shared renderer and left alone.
+        expect(dom.html()).toContain("hljs-keyword");
+        expect(dom.container.querySelectorAll("pre")).toHaveLength(1);
+
+        await dom.unmount();
+    });
+
+    test("a fence mermaid rejects keeps its source and gets the error above it", async () => {
+        mermaidFailNext = true;
+        const dom = await mountDom(<Md>{"```mermaid\ngraph TD; A--\n```\n"}</Md>);
+        await settle();
+
+        const error = dom.container.querySelector(".akit-mermaid-error");
+        expect(error?.textContent).toBe("mermaid: Parse error on line 1");
+        expect(dom.container.querySelector("code.language-mermaid")?.textContent).toBe("graph TD; A--");
+        expect(dom.container.querySelector("svg")).toBeNull();
+
+        await dom.unmount();
+    });
+
+    test("the Mermaid component renders through the same loader and its toolbar zooms", async () => {
+        const dom = await mountDom(<Mermaid chart="sequenceDiagram\n  A->>B: hi" caption="handshake" />);
+        await settle();
+        await dom.render(<Mermaid chart="sequenceDiagram\n  A->>B: hi" caption="handshake" />);
+
+        expect(dom.container.querySelector(".akit-mermaid svg")).not.toBeNull();
+        expect(dom.html()).toContain("handshake");
+        const zoomIn = [...dom.container.querySelectorAll("button")].find(
+            (b) => b.getAttribute("aria-label") === "zoom in"
+        );
+        await dom.click(zoomIn);
+        expect(dom.html()).toContain("125%");
+
+        await dom.unmount();
+    });
+});
+
+describe("CodeBlock lang", () => {
+    test("a known language highlights the whole block, and per line when lines are marked", async () => {
+        const whole = await mountDom(
+            <CodeBlock copy={false} lang="ts">
+                {"const a = 1;\nlet b = a;"}
+            </CodeBlock>
+        );
+        expect(whole.container.querySelectorAll("pre code.hljs")).toHaveLength(1);
+        expect(whole.html()).toContain("hljs-keyword");
+        expect(whole.container.querySelector("pre")?.textContent).toBe("const a = 1;\nlet b = a;");
+        await whole.unmount();
+
+        const marked = await mountDom(
+            <CodeBlock copy={false} lang="ts" badLines={[2]}>
+                {"const a = 1;\nlet b = a;"}
+            </CodeBlock>
+        );
+        const lines = [...marked.container.querySelectorAll("pre > span")];
+        expect(lines).toHaveLength(2);
+        expect(lines[1].getAttribute("class")).toContain("bg-err/15");
+        expect(lines[1].innerHTML).toContain("hljs-keyword");
+        await marked.unmount();
+    });
+
+    test("an unknown language renders plain text", async () => {
+        const dom = await mountDom(
+            <CodeBlock copy={false} lang="nope">
+                {"<b>raw</b>"}
+            </CodeBlock>
+        );
+        expect(dom.container.querySelector("pre")?.textContent).toBe("<b>raw</b>");
+        expect(dom.container.querySelectorAll("span")).toHaveLength(0);
+        await dom.unmount();
+    });
+});
+
+describe("DiffView", () => {
+    const PATCH = [
+        "--- a/x.ts",
+        "+++ b/x.ts",
+        "@@ -1,3 +1,4 @@",
+        " a",
+        "-b",
+        "+B",
+        " c",
+        "+d",
+        "\\ No newline at end of file",
+    ].join("\n");
+
+    test("a unified patch flattens into numbered rows, skipping the no-newline marker", () => {
+        const file = diffFileFromPatch(parsePatch(PATCH)[0]);
+        expect(file.name).toBe("a/x.ts → b/x.ts");
+        expect(file.added).toBe(2);
+        expect(file.removed).toBe(1);
+        expect(file.hunks[0].rows.map((r) => `${r.kind}:${r.oldNo ?? "-"}/${r.newNo ?? "-"}`)).toEqual([
+            "ctx:1/1",
+            "del:2/-",
+            "add:-/2",
+            "ctx:3/3",
+            "add:-/4",
+        ]);
+    });
+
+    test("split mode pairs a removed line with the added line that replaced it", () => {
+        const rows = diffFileFromPatch(parsePatch(PATCH)[0]).hunks[0].rows;
+        const pairs = pairDiffRows(rows).map((p) => `${p.left?.text ?? "·"}|${p.right?.text ?? "·"}`);
+        expect(pairs).toEqual(["a|a", "b|B", "c|c", "·|d"]);
+    });
+
+    test("before/after renders the counts and tones lines; identical input says so", async () => {
+        const dom = await mountDom(<DiffView before={"a\nb\nc\n"} after={"a\nB\nc\nd\n"} labels={["old", "new"]} />);
+        expect(dom.html()).toContain("+2");
+        expect(dom.html()).toContain("-1");
+        expect(dom.container.querySelectorAll("tr.bg-ok\\/10")).toHaveLength(2);
+        expect(dom.container.querySelectorAll("tr.bg-err\\/10")).toHaveLength(1);
+        await dom.unmount();
+
+        const same = await mountDom(<DiffView before="x" after="x" />);
+        expect(same.html()).toContain("no changes");
+        await same.unmount();
+    });
+});
+
+describe("structure", () => {
+    test("treeFromPaths nests, sorts directories first and decorates leaves", () => {
+        const tree = treeFromPaths([
+            "src/z.ts",
+            { path: "src/lib/a.ts", tone: "ok", badge: "new" },
+            "README.md",
+            "docs/",
+        ]);
+        expect(tree.map((n) => n.label)).toEqual(["docs", "src", "README.md"]);
+        expect(tree[0].children).toEqual([]);
+        const src = tree[1];
+        expect(src.children?.map((n) => n.label)).toEqual(["lib", "z.ts"]);
+        expect(src.children?.[0].children?.[0]).toEqual({ label: "a.ts", tone: "ok", badge: "new" });
+    });
+
+    test("TreeView opens only the levels asked for", async () => {
+        const nodes = treeFromPaths(["a/b/c.ts"]);
+        const dom = await mountDom(<TreeView nodes={nodes} open={1} />);
+        const details = [...dom.container.querySelectorAll("details")];
+        expect(details.map((d) => d.hasAttribute("open"))).toEqual([true, false]);
+        expect(dom.html()).toContain("c.ts");
+        await dom.unmount();
+    });
+
+    test("Steps exposes each status and JsonView counts keys and truncates long strings", async () => {
+        const steps = await mountDom(
+            <Steps
+                steps={[{ label: "lint", status: "done" }, { label: "test", status: "failed" }, { label: "ship" }]}
+            />
+        );
+        expect(
+            [...steps.container.querySelectorAll("[aria-label]")].map((el) => el.getAttribute("aria-label"))
+        ).toEqual(["done", "failed", "pending"]);
+        await steps.unmount();
+
+        const json = await mountDom(<JsonView value={{ a: 1, list: ["x".repeat(10)] }} maxString={4} name="root" />);
+        expect(json.html()).toContain("2 keys");
+        expect(json.html()).toContain("1 item");
+        expect(json.html()).toContain('"xxxx…"');
+        await json.unmount();
+    });
+});
+
+describe("viz", () => {
+    test("meterTone follows the thresholds and the meter exposes its value", async () => {
+        expect(meterTone(50, { warn: 70, err: 90 })).toBe("ok");
+        expect(meterTone(75, { warn: 70, err: 90 })).toBe("warn");
+        expect(meterTone(95, { warn: 70, err: 90 })).toBe("err");
+        expect(meterTone(95, { warn: 70, err: 90 }, "info")).toBe("info");
+
+        const dom = await mountDom(<Meter value={82} label="cache hit" thresholds={{ warn: 70, err: 90 }} />);
+        const meter = dom.container.querySelector('[role="meter"]');
+        expect(meter?.getAttribute("aria-valuenow")).toBe("82");
+        expect(dom.html()).toContain("82%");
+        expect(dom.html()).toContain("bg-warn");
+        await dom.unmount();
+    });
+
+    test("sparklinePath spans the width and the SVG carries an accessible name", async () => {
+        const path = sparklinePath([1, 3, 2], 100, 20);
+        expect(path.startsWith("M1.50,")).toBe(true);
+        expect(path.split(" ")).toHaveLength(3);
+        expect(path.endsWith("L98.50,")).toBe(false);
+        expect(path).toContain("L98.50,");
+
+        const dom = await mountDom(<Sparkline values={[1, 3, 2]} />);
+        expect(dom.container.querySelector("svg")?.getAttribute("aria-label")).toBe("trend of 3 values");
+        await dom.unmount();
+    });
+
+    test("Heatmap shades every numeric cell and leaves a null cell empty", async () => {
+        const dom = await mountDom(
+            <Heatmap
+                rows={["a", "b"]}
+                cols={["1", "2"]}
+                values={[
+                    [0, 10],
+                    [5, null],
+                ]}
+                format={(v) => `${v}x`}
+            />
+        );
+        const cells = [...dom.container.querySelectorAll("tbody td")];
+        expect(cells).toHaveLength(4);
+        expect(cells[1].textContent).toBe("10x");
+        expect(cells[1].getAttribute("style")).toContain("color-mix");
+        expect(cells[3].textContent).toBe("");
+        expect(cells[3].getAttribute("title")).toBe("b / 2: no data");
+        await dom.unmount();
     });
 });

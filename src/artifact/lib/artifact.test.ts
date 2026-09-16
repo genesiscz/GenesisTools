@@ -36,6 +36,7 @@ import {
     scanArtifacts,
 } from "./catalog";
 import { renderMarkdown } from "./markdown";
+import { mdPageExtras } from "./page-extras";
 import { addEntry, loadRegistry, removeEntry, resolveTarget } from "./registry";
 import { findRunning, holdServer, isSignalable, listRunning, recordRunning, removeRunning } from "./running";
 import { runningPath } from "./storage";
@@ -372,6 +373,43 @@ describe("markdown rendering is not a script injection", () => {
     });
 });
 
+describe("markdown fences", () => {
+    test("a known language is highlighted, with the source escaped", () => {
+        const html = renderMarkdown('```ts\nconst a = "<b>";\n```\n');
+        expect(html).toContain('<code class="hljs language-typescript">');
+        expect(html).toContain("hljs-keyword");
+        expect(html).not.toContain("<b>");
+        expect(html).toContain("&lt;b&gt;");
+    });
+
+    test("an unknown language keeps marked's plain escaped block", () => {
+        const html = renderMarkdown("```nope\n<b>x</b>\n```\n");
+        expect(html).toContain('<code class="language-nope">');
+        expect(html).not.toContain("hljs");
+        expect(html).toContain("&lt;b&gt;x&lt;/b&gt;");
+    });
+
+    test("a mermaid fence stays escaped source under the class the hydrators look for", () => {
+        const html = renderMarkdown("```mermaid\ngraph TD; A-->B\n```\n");
+        expect(html).toContain('<code class="language-mermaid">graph TD; A--&gt;B');
+        expect(html).not.toContain("hljs");
+    });
+
+    test("the .md page ships the highlight CSS always and the mermaid hydrator only when a fence needs it", () => {
+        const withFence = mdPageExtras(renderMarkdown("```mermaid\ngraph TD; A-->B\n```\n"));
+        expect(withFence.CODE_CSS).toContain(".hljs-keyword");
+        expect(withFence.SCRIPTS).toContain("hydrateMermaidFences(document);");
+        expect(withFence.SCRIPTS).toContain("cdn.jsdelivr.net/npm/mermaid@");
+        // The hydrator is transpiled TypeScript inlined into a <script>; a stray
+        // close tag inside it would end the script early.
+        expect(withFence.SCRIPTS.split("</script>")).toHaveLength(2);
+
+        const plain = mdPageExtras(renderMarkdown("```ts\nconst a = 1;\n```\n"));
+        expect(plain.SCRIPTS).toBe("");
+        expect(plain.CODE_CSS).toBe(withFence.CODE_CSS);
+    });
+});
+
 describe("cleanHref ownership", () => {
     const listing = { tsx: ["a/report.tsx", "solo.tsx"], html: ["a/report.html"], md: ["a/report.md", "notes.md"] };
 
@@ -541,6 +579,23 @@ describe("build helpers", () => {
         // Theme tokens are inlined, so the page needs no sibling stylesheet.
         expect(html).toContain("--accent:");
         expect(html).not.toContain('<link rel="stylesheet"');
+        // No fence, no hydrator script; the highlight CSS is always there.
+        expect(html).not.toContain("hydrateMermaidFences");
+        expect(html).toContain(".hljs-keyword");
+
+        rmSync(own, { recursive: true, force: true });
+    });
+
+    test("a markdown entry with a mermaid fence carries the inline hydrator", async () => {
+        const own = realpathSync(mkdtempSync(join(tmpdir(), "artifact-md-mermaid-")));
+        writeFileSync(join(own, "flow.md"), "# Flow\n\n```mermaid\ngraph TD; A-->B\n```\n\n```ts\nlet x = 1;\n```\n");
+
+        const result = await buildSingleFile({ dir: own, entry: "flow.md", embedScope: "referenced" });
+        const html = readFileSync(result.outPath, "utf8");
+
+        expect(html).toContain('<code class="language-mermaid">graph TD; A--&gt;B');
+        expect(html).toContain("hydrateMermaidFences(document);");
+        expect(html).toContain('<span class="hljs-keyword">let</span>');
 
         rmSync(own, { recursive: true, force: true });
     });

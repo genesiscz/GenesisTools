@@ -1,10 +1,11 @@
 import type { Token } from "marked";
-import { memo, useEffect, useMemo, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import {
     renderMarkdownInline as renderMarkdownInlineShared,
     renderMarkdown as renderMarkdownShared,
     safeMarked,
 } from "../../lib/markdown";
+import { hydrateMermaidFences } from "./mermaid-core";
 
 /**
  * Thin wrappers, not a re-export. `tools artifact kit` builds its API reference
@@ -43,17 +44,35 @@ export interface MdProps {
     className?: string;
 }
 
-/** Render a markdown string (block-level). */
-export const Md = memo(function Md({ children, className }: MdProps) {
-    const html = useMemo(() => renderMarkdown(children), [children]);
+/**
+ * Rendered markdown body. After every change of `html` the ```mermaid fences
+ * inside it are swapped for their SVG; React leaves the subtree alone while
+ * the string is unchanged, so the swapped nodes survive re-renders.
+ */
+function MdHtml({ html, className }: { html: string; className: string }) {
+    const ref = useRef<HTMLDivElement>(null);
+
+    useEffect(() => {
+        if (ref.current) {
+            void hydrateMermaidFences(ref.current);
+        }
+    }, [html]);
 
     return (
         <div
-            className={`${MD_BODY_CLASS} ${className ?? ""}`}
+            ref={ref}
+            className={className}
             // biome-ignore lint/security/noDangerouslySetInnerHtml: output of the escaping renderer in lib/markdown.ts
             dangerouslySetInnerHTML={{ __html: html }}
         />
     );
+}
+
+/** Render a markdown string (block-level). Fenced code is highlighted; ```mermaid fences render as diagrams. */
+export const Md = memo(function Md({ children, className }: MdProps) {
+    const html = useMemo(() => renderMarkdown(children), [children]);
+
+    return <MdHtml html={html} className={`${MD_BODY_CLASS} ${className ?? ""}`} />;
 });
 
 /** Inline markdown (bold, code, links) with no block wrapper — for table cells and list items. */
@@ -244,11 +263,7 @@ export function MdViewer({ src, source, title, chrome = true, filterPlaceholder 
                 <div className="min-w-0 flex-1">
                     {visible.map((s) => (
                         <section key={s.id} id={s.id} className="scroll-mt-4">
-                            <div
-                                className={MD_BODY_CLASS}
-                                // biome-ignore lint/security/noDangerouslySetInnerHtml: output of the escaping renderer in lib/markdown.ts
-                                dangerouslySetInnerHTML={{ __html: s.html }}
-                            />
+                            <MdHtml html={s.html} className={MD_BODY_CLASS} />
                         </section>
                     ))}
                 </div>

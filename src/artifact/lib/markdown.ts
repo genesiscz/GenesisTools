@@ -1,4 +1,5 @@
 import { Marked, type Tokens } from "marked";
+import { highlightCode } from "./highlight";
 
 /**
  * The ONE markdown renderer for this tool. Artifact folders hold files the user
@@ -46,10 +47,33 @@ function isSafeHref(href: string): boolean {
     }
 }
 
+/** Class marked's default code renderer would emit; the browser hydrators key on it. */
+export const MERMAID_FENCE_CLASS = "language-mermaid";
+
 safeMarked.use({
     renderer: {
         html({ text }: Tokens.HTML | Tokens.Tag) {
             return escapeHtml(text);
+        },
+        code({ text, lang }: Tokens.Code) {
+            const language = (lang ?? "").trim().split(/\s+/)[0]?.toLowerCase() ?? "";
+
+            // A mermaid fence stays source text here. The kit's Md and the
+            // markdown page chrome both swap it for the rendered SVG in the
+            // browser (mermaid-core.ts); without them it reads as code.
+            if (language === "mermaid") {
+                return `<pre><code class="${MERMAID_FENCE_CLASS}">${escapeHtml(text)}</code></pre>\n`;
+            }
+
+            const lit = highlightCode(text, language);
+
+            if (!lit) {
+                const cls = language ? ` class="language-${escapeHtml(language)}"` : "";
+
+                return `<pre><code${cls}>${escapeHtml(text)}</code></pre>\n`;
+            }
+
+            return `<pre><code class="hljs language-${lit.language}">${lit.html}</code></pre>\n`;
         },
         link(token: Tokens.Link) {
             const label = this.parser.parseInline(token.tokens);

@@ -1,0 +1,29 @@
+/* highlight.js token classes on the theme variables, plus the mermaid frame.
+   Restrained on purpose: comments dim, keywords info, strings accent, the rest
+   ink. ok/err are kept for diff additions and deletions, where they carry
+   meaning. styles.css imports this for the kit; page.html inlines the same
+   file for served and built .md pages, so both doors highlight alike. */
+.hljs { color: var(--text); }
+.hljs-comment, .hljs-quote { color: var(--dim); font-style: italic; }
+.hljs-keyword, .hljs-selector-tag, .hljs-built_in, .hljs-doctag, .hljs-meta, .hljs-type, .hljs-tag { color: var(--info); }
+.hljs-string, .hljs-regexp, .hljs-template-tag, .hljs-selector-attr, .hljs-selector-pseudo, .hljs-link { color: var(--accent); }
+.hljs-title, .hljs-section, .hljs-name, .hljs-selector-id, .hljs-selector-class { color: var(--text); font-weight: 600; }
+.hljs-attr, .hljs-attribute, .hljs-symbol, .hljs-bullet, .hljs-number, .hljs-literal, .hljs-variable,
+.hljs-template-variable, .hljs-property, .hljs-params, .hljs-subst, .hljs-operator, .hljs-punctuation { color: var(--text); }
+.hljs-addition { color: var(--ok); background: color-mix(in srgb, var(--ok) 12%, transparent); }
+.hljs-deletion { color: var(--err); background: color-mix(in srgb, var(--err) 12%, transparent); }
+.hljs-emphasis { font-style: italic; }
+.hljs-strong { font-weight: 700; }
+
+.akit-mermaid { margin: 1rem 0; overflow-x: auto; }
+.akit-mermaid svg { display: block; height: auto; max-width: 100%; margin: 0 auto; }
+.akit-mermaid-error {
+    margin: 1rem 0 0.25rem;
+    padding: 0.5rem 0.75rem;
+    border: 1px solid color-mix(in srgb, var(--err) 50%, transparent);
+    border-radius: var(--radius, 10px);
+    background: color-mix(in srgb, var(--err) 10%, transparent);
+    color: var(--err);
+    font: 0.85rem/1.5 var(--font-code);
+    white-space: pre-wrap;
+}

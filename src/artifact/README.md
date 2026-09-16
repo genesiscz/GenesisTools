@@ -58,12 +58,31 @@ Core CJS deps (react, marked) are aliased to the repo's node_modules AND prebund
 - Charts: `DayChart` (bars/lines/stacks over labeled points, log scales, reference markers),
   `DonutChart` — recharts-backed, colored by theme tones; `ChartJs` renders a raw Chart.js v4
   `config` for anything they don't cover
-- Evidence: `CodeBlock` (copy button, `highlightLines`/`badLines`), `FileMark`, `Claim`
-  (`[NN%]` badge), `Quote`, `Callout`, `Badge`, `Chips`, `Note`, `Superseded`
+- Evidence: `CodeBlock` (copy button, `lang` syntax highlighting, `highlightLines`/`badLines`),
+  `FileMark`, `Claim` (`[NN%]` badge), `Quote`, `Callout`, `Badge`, `Chips`, `Note`, `Superseded`
 - Markdown: `Md`, `MdInline`, `MdViewer` (`src` fetches a sibling .md live — TOC + section
-  filter; replaces build-time markdown inlining)
+  filter; replaces build-time markdown inlining). Fenced code is highlighted (highlight.js core
+  + 19 languages, theme-toned); a ```` ```mermaid ```` fence renders as a diagram.
+- Diagrams: `Mermaid` (`chart` = mermaid source; zoom toolbar, copy source, download SVG),
+  `ZoomPane` (scroll + zoom frame for any oversized SVG or image)
+- Diff: `DiffView` (`before`/`after` or a unified `patch`; `unified` or `split`; +/− counts)
+- Structure: `TreeView` + `treeFromPaths` (file trees), `Steps` (status stepper), `Compare`
+  (A vs B columns), `KeyValue` (definition grid), `JsonView` (collapsible JSON), `Figure`
+  (captioned image, click for full size)
+- Viz: `Sparkline` (inline trend), `Meter` (bar with thresholds), `Heatmap` (rows × cols grid)
 - Interactive: `Simulator` (step player), `ParametricSimulator` (sliders/segments/toggles +
   pure `generate(params)` + presets), `SegmentedControl`
+
+### Mermaid is not installed
+
+mermaid 11 is 60+ MB of node_modules, so it is not a dependency of this repo. The browser
+loads the pinned ES module from jsdelivr on first use (`MERMAID_ESM_URL` in
+`runtime/kit/mermaid-core.ts`) and caches it; the first render needs the network, and a
+single-file build renders its diagrams online and shows the fence source offline.
+`configureMermaid({ url })` points at another copy. The same loader hydrates ```` ```mermaid ````
+fences in served and built `.md` pages: `page.html` inlines the transpiled `mermaid-core.ts`
+when the body has a fence. Diagrams run with `securityLevel: "strict"` and take their colors
+from the active theme's tokens.
 
 ## Templates (theme tokens)
 
