@@ -158,6 +158,70 @@ tools control hittest --at x,y [--pretty]            # which element the system 
                                                      #   takes NO --app; answers "is this control really reachable"
 ```
 
+### 🛑 Focus safety: which commands raise the app, which do not
+
+Measured 2026-09-09 while a human worked in another app, and the reason the see/act contract
+exists. Pick from this table instead of measuring it live.
+
+| Command | Raises the target app? | Safe while a human is working? |
+|---|---|---|
+| `see`, `find`, `get`, `attrs`, `list`, `window`, `dump`, `typography` | no | yes — reads only |
+| `press`, `perform` | no | yes — AXPress is position independent |
+| `focus --no-activate` | no | yes |
+| `focus` (without `--no-activate`), `act --action focus` | **yes, on purpose** | only when you mean to raise it |
+| `act` (any non-focus action) | no | yes — it REFUSES when the target is not frontmost |
+| `type`, `set`, `hotkey` (the legacy verbs) | **yes** | **no** |
+
+**The legacy keyboard verbs are unusable while a human is working.** `type` and `set` go through a
+CGEvent clear+type path that raises the app, and `hotkey` used to return `{"ok":true}` while the
+keystroke landed in whatever app was frontmost. Each of them now prints a one-line warning naming
+the replacement. The safe substitutes:
+
+- instead of `type` / `set` → `act --action set --value "…"`, which writes `AXValue` and reads it
+  back with no keystrokes at all
+- instead of `hotkey` → `act --action key --keys …`, which refuses with
+  `wrong frontmost app/window; focus explicitly and refresh` rather than mis-delivering
+- instead of a click that must not raise → `press`, or `act --action click --background`
+
+`--to-pid` on `type` and `hotkey` confines events to one process. A pid with no running process
+now exits non-zero and posts nothing; it used to print `sent cmd,b` and exit 0.
+
+### Drive an app while the user works, end to end
+
+No keyboard commands, nothing raised:
+
+```bash
+tools control snapshot --json > /tmp/before.json        # remember mouse + focus
+tools control see --app Genesis --window-title "Overview" > /tmp/s1.json
+                                                        # read; pick the element index you want
+tools control act --app Genesis --snapshot <token> --element 12 --action press
+tools control act --app Genesis --snapshot <token> --element 7 --action set --value "hello"
+tools control see --app Genesis --window-title "Overview" --since /tmp/s1.json
+                                                        # verify: only what MOVED comes back
+tools control restore --snapshot "$(cat /tmp/before.json)"
+```
+
+🛑 **A dispatched action is not a changed UI.** `act` answers
+`{"refreshRequired":true,"note":"action dispatched; use see to verify the resulting UI"}`. Read it
+back with `see` before believing anything happened.
+
+### Two element vocabularies, and the mapping
+
+`see` / `act` return **raw AX attribute names**; `list` / `find` / `get` return short names. They
+are different paths and must not be mixed in one flow, but when you read output from both:
+
+| `see` / `act` | `list` / `find` / `get` |
+|---|---|
+| `AXIdentifier` | `id` |
+| `AXDescription` | `desc` |
+| `AXValue` | `value` |
+| `AXTitle` | `title` |
+| `AXRole` | `role` |
+| `AXSubrole` | `subrole` |
+
+`see` addresses an element by its **index inside a validated snapshot**; the selector family
+addresses it by `--id` / `--q` / `--role`. An index from one is meaningless to the other.
+
 ### Interaction
 
 ```bash
@@ -174,8 +238,13 @@ tools control hotkey --keys cmd,shift,a [--app <name>]
 ```
 
 `type` and `hotkey` accept `--to-pid <pid>`, confining synthetic events to that one process
-instead of the global HID tap. An invalid pid is rejected, never downgraded to the global tap.
+instead of the global HID tap. An invalid pid is rejected, never downgraded to the global tap
+(verified: `--to-pid 99999` exits 1 with `names no running process. No event was posted.`).
 `window` accepts `--no-raise` and `--action move|resize|minimize|maximize|close|focus`.
+
+⚠️ `dump` and `typography` are **app-wide only**. They take `--app` and nothing else; there is no
+`--window`, `--id`, `--role` or `--q` on either, and passing one exits with
+`unknown option '--window'`.
 
 ### Verification (replaces sleep-guessing)
 
@@ -441,6 +510,13 @@ window. `window.id` is a CG window identity, not an index: refresh the same wind
 `--window-id ID`, because focusing or closing windows reorders indexes. `--window-id` and
 `--window-index` are alternatives, never combined.
 
+**`--window-title <substring>`** is usually what you want instead: a title is what you know, while
+indexes reorder whenever a window is focused or closed, so a title lookup step was needed on every
+run. It matches case-insensitively and **fails loud exactly like `screenshot --window`** — 0 or 2+
+matches exit 1 listing every window with its index, so it can never silently pick the wrong one.
+It resolves to a `--window-index` internally and cannot be combined with `--window-index` or
+`--window-id`.
+
 **Scope.** `--scope chrome` omits web-area descendants, which keeps browser tab and toolbar
 references stable while page content changes. Web-content coordinates need the default
 `window` scope.
@@ -595,9 +671,30 @@ One schema covers sequential automation, timed timelines and recordings:
 ```
 
 ```bash
-tools control run plan.json          # ok/FAIL per step + total
-tools control run plan.json --json   # full results array
+tools control run plan.json                  # ok/FAIL per step + total
+tools control run plan.json --json           # full results array
+tools control run - < plan.json              # read the plan from stdin
+tools control run --plan '{"app":"X","steps":[…]}'   # the plan inline, no temp file
+tools control run plan.json --dry-run        # validate + print the steps, touch no UI
+tools control run plan.json --stop-on-fail   # stop at the first failure, report the rest as skipped
 ```
+
+**Every plan is validated before the first step runs**, so an unknown verb, a missing `do`, a
+missing `app` or a malformed `retries` is reported with its step number and NOTHING is executed.
+That is not a `--dry-run` feature; `--dry-run` only adds "print what would run and stop".
+
+**`--stop-on-fail`** (or `"stopOnFail": true` in the plan) stops at the first failed step. The
+remaining steps still appear in `steps[]` with `skipped after an earlier failure`, and the result
+carries `stoppedAtStep` and `skippedSteps`. Without it a plan whose step 2 failed goes on to act
+on a state it never reached.
+
+**Per-step `retries` and `retryDelayMs`** re-run just that step; `attempts` is reported per step.
+
+**A step can consume an earlier step's result.** Give a step `"saveAs": "<name>"`, then reference
+`{{saved.<name>.<field>}}`; or address it positionally with `{{steps.<n>.result.<field>}}`
+(`{{steps.<n>.ms}}` works too). 🛑 An unresolvable reference does NOT become an empty string — the
+step is refused with `unresolved reference(s): …`, because `--value ""` would look like a
+successful write of nothing.
 
 🛑 **Top-level `ok` is true only when EVERY step passed. `failedSteps` carries the count.
 Never trust `ok` alone without reading `failedSteps`.**
@@ -606,7 +703,12 @@ Fields: `app` (default for all steps, overridable per step), `restore`, `delayMs
 200, per-step `delay`), `exact`, `steps[].do` (any command name), and the same field names as
 the CLI flags (`id`, `role`, `title`, `desc`, `subrole`, `window`, `value`, `text`, `action`,
 `keys`, `direction`, `amount`, `path`). `wait` and `assert` additionally take `timeout`,
-`interval`, `gone`, `for`, `expect`, `contains`.
+`interval`, `gone`, `for`, `expect`, `contains`. Runner-only fields, never passed through as
+flags: `delay`, `atMs`, `retries`, `retryDelayMs`, `saveAs`.
+
+The step verbs now include the visual family — `dump`, `typography`, `hittest`, `draw` and
+`compare-screenshot` — so a plan can end with a visual assertion instead of shelling out after
+the runner has already exited.
 
 Plan steps do NOT carry `see` snapshot guarantees. Never put a token or a `see` index into a
 plan.

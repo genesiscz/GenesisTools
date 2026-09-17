@@ -40,7 +40,121 @@ const KNOWN_STEP_COMMANDS = new Set([
     "snapshot",
     "restore",
     "apps",
+    // The verb set used to be smaller than the CLI, so a plan could act but
+    // never make a VISUAL assertion: it had to shell out to `compare-screenshot`
+    // after the runner had already exited, by which time the UI had moved on.
+    "dump",
+    "typography",
+    "hittest",
+    "draw",
+    "compare-screenshot",
 ]);
+
+/** Fields the runner consumes itself; everything else becomes a `--flag value`. */
+const RUNNER_ONLY_STEP_FIELDS = new Set(["do", "app", "delay", "atMs", "retries", "retryDelayMs", "saveAs"]);
+
+/**
+ * `{{steps.2.result.value}}` / `{{saved.total.value}}` resolved against results
+ * already collected. A step that needs a value another step READ could not get
+ * it before, so "find the id, then press it" meant two runner invocations with
+ * a human in the middle.
+ *
+ * An unresolvable reference is left verbatim on purpose: substituting an empty
+ * string would send `--value ""` and look like a successful write of nothing.
+ */
+export function resolveTemplates(
+    value: string,
+    results: Array<{ result: AxResult; ms?: number }>,
+    saved: Map<string, AxResult>
+): { text: string; unresolved: string[] } {
+    const unresolved: string[] = [];
+
+    const text = value.replace(/\{\{\s*([^}]+?)\s*\}\}/g, (whole, expr: string) => {
+        const parts = expr.split(".");
+        let cursor: unknown;
+
+        if (parts[0] === "steps") {
+            // The documented form is `{{steps.<n>.result.<field>}}`, so the cursor
+            // is the whole ENTRY and `result` is walked like any other segment.
+            // Starting at `.result` consumed that segment twice and every
+            // reference resolved to undefined.
+            const index = Number.parseInt(parts[1] ?? "", 10);
+            cursor = Number.isNaN(index) ? undefined : results[index];
+            parts.splice(0, 2);
+        } else if (parts[0] === "saved") {
+            cursor = saved.get(parts[1] ?? "");
+            parts.splice(0, 2);
+        } else {
+            unresolved.push(whole);
+            return whole;
+        }
+
+        for (const key of parts) {
+            if (cursor == null || typeof cursor !== "object") {
+                cursor = undefined;
+                break;
+            }
+
+            cursor = (cursor as Record<string, unknown>)[key];
+        }
+
+        if (cursor == null || typeof cursor === "object") {
+            unresolved.push(whole);
+            return whole;
+        }
+
+        return String(cursor);
+    });
+
+    return { text, unresolved };
+}
+
+/**
+ * Everything that can be known about a plan WITHOUT touching the UI. It runs
+ * before the first step, because a plan whose step 4 names a verb that does not
+ * exist used to change the app twice and then stop halfway.
+ */
+export function validatePlan(steps: Array<Record<string, unknown>>, planApp: string | undefined): string[] {
+    const problems: string[] = [];
+
+    steps.forEach((step, index) => {
+        const raw = String(step.do ?? "");
+        const cmd = ACTION_ALIASES[raw] ?? raw;
+        const where = `step ${index + 1}`;
+
+        if (!raw) {
+            problems.push(`${where}: missing 'do'`);
+            return;
+        }
+
+        if (!KNOWN_STEP_COMMANDS.has(cmd)) {
+            problems.push(`${where}: unknown step command '${raw}' — valid: ${[...KNOWN_STEP_COMMANDS].join(", ")}`);
+            return;
+        }
+
+        if (!NO_APP_COMMANDS.has(cmd) && !step.app && !planApp) {
+            problems.push(`${where} (${cmd}): missing 'app', and the plan sets no default`);
+        }
+
+        if (step.retries != null && (typeof step.retries !== "number" || step.retries < 0)) {
+            problems.push(`${where} (${cmd}): 'retries' must be a number >= 0`);
+        }
+
+        if (step.saveAs != null && typeof step.saveAs !== "string") {
+            problems.push(`${where} (${cmd}): 'saveAs' must be a string`);
+        }
+    });
+
+    return problems;
+}
+
+interface RunOptions {
+    json?: boolean;
+    pretty?: boolean;
+    plan?: string;
+    stopOnFail?: boolean;
+    dryRun?: boolean;
+}
 
 /** Step line with the failure reason inline — a failing plan must say WHY without --json. */
 function printStep(label: string, result: AxResult, ms: number): void {
@@ -62,7 +176,7 @@ function printStep(label: string, result: AxResult, ms: number): void {
 
 export function registerRunCommand(program: Command): void {
     program
-        .command("run <plan>")
+        .command("run [plan]")
         .description(`Execute a plan file — ONE schema for sequential steps, timed timelines, and recordings.
 
   Plan contract (JSON):
@@ -104,17 +218,37 @@ export function registerRunCommand(program: Command): void {
   its result JSON and ms wall-clock timing.`)
         .option("--json", "raw JSON output")
         .option("--pretty", "indent JSON output (default compact)")
-        .action(async (planPath, opts) => {
-            if (!existsSync(planPath)) {
-                logger.error(`plan file not found: ${planPath}`);
+        .option("--plan <json>", "the plan itself, inline — alternative to a path or to `-`")
+        .option("--stop-on-fail", "stop at the first failed step and report the rest as skipped")
+        .option("--dry-run", "validate every step and resolve nothing else: prints what would run, touches no UI")
+        .action(async (planPath: string | undefined, opts: RunOptions) => {
+            // Three doors to the same plan. An agent holds the plan in memory, so
+            // making a temp file the only way in meant every caller wrote one.
+            let planText: string;
+
+            if (opts.plan) {
+                planText = opts.plan;
+            } else if (planPath === "-") {
+                planText = await Bun.stdin.text();
+            } else if (planPath) {
+                if (!existsSync(planPath)) {
+                    logger.error(`plan file not found: ${planPath}`);
+                    process.exit(1);
+                }
+
+                planText = readFileSync(planPath, "utf-8");
+            } else {
+                logger.error("pass a plan file, `-` to read stdin, or --plan '<json>'");
                 process.exit(1);
             }
-            const plan = SafeJSON.parse(readFileSync(planPath, "utf-8")) as {
+
+            const plan = SafeJSON.parse(planText) as {
                 app?: string;
                 restore?: boolean;
                 delayMs?: number;
                 exact?: boolean;
                 capture?: Record<string, unknown>;
+                stopOnFail?: boolean;
                 actions?: Array<Record<string, unknown>>;
                 steps?: Array<Record<string, unknown>>;
             };
@@ -167,6 +301,45 @@ export function registerRunCommand(program: Command): void {
                 process.exit(1);
             }
 
+            // Before the first action, always — not only under --dry-run. The
+            // whole point is that a plan cannot half-run into a bad verb.
+            const problems = validatePlan(steps, plan.app);
+
+            if (problems.length > 0) {
+                if (opts.json) {
+                    out.println(SafeJSON.stringify({ ok: false, problems }, null, opts.pretty ? 2 : 0));
+                } else {
+                    for (const problem of problems) {
+                        out.println(`  ${pc.red("INVALID")} ${problem}`);
+                    }
+                }
+
+                process.exit(1);
+            }
+
+            if (opts.dryRun) {
+                const planned = steps.map((step, index) => ({
+                    index: index + 1,
+                    do: ACTION_ALIASES[String(step.do)] ?? String(step.do),
+                    app: String(step.app ?? plan.app ?? ""),
+                    step,
+                }));
+
+                if (opts.json) {
+                    out.println(
+                        SafeJSON.stringify({ ok: true, dryRun: true, steps: planned }, null, opts.pretty ? 2 : 0)
+                    );
+                } else {
+                    for (const entry of planned) {
+                        out.println(`  ${pc.dim(String(entry.index))} ${pc.cyan(entry.do)} ${pc.dim(entry.app)}`);
+                    }
+
+                    out.println(`\n${planned.length} step(s) valid; nothing was run.`);
+                }
+
+                process.exit(0);
+            }
+
             const timeline = steps.some((s) => typeof s.atMs === "number");
             const delay = plan.delayMs ?? 200;
             let snapshot: AxResult | null = null;
@@ -176,26 +349,20 @@ export function registerRunCommand(program: Command): void {
             }
 
             const startedAt = performance.now();
-            const results: Array<{ step: Record<string, unknown>; result: AxResult; ms: number }> = [];
-            for (const step of steps) {
-                let cmd = String(step.do ?? "");
-                cmd = ACTION_ALIASES[cmd] ?? cmd;
+            const results: Array<{ step: Record<string, unknown>; result: AxResult; ms: number; attempts?: number }> =
+                [];
+            const saved = new Map<string, AxResult>();
+            const stopOnFail = opts.stopOnFail === true || plan.stopOnFail === true;
+            let stoppedAt = -1;
+
+            for (const [index, step] of steps.entries()) {
+                if (stoppedAt >= 0) {
+                    results.push({ step, result: { ok: false, error: "skipped after an earlier failure" }, ms: 0 });
+                    continue;
+                }
+
+                const cmd = ACTION_ALIASES[String(step.do ?? "")] ?? String(step.do ?? "");
                 const app = String(step.app ?? plan.app ?? "");
-                if (!cmd) {
-                    results.push({ step, result: { ok: false, error: "missing 'do'" }, ms: 0 });
-                    continue;
-                }
-                if (!KNOWN_STEP_COMMANDS.has(cmd)) {
-                    const result: AxResult = {
-                        ok: false,
-                        error: `unknown step command '${cmd}' — valid: ${[...KNOWN_STEP_COMMANDS].join(", ")}`,
-                    };
-                    results.push({ step, result, ms: 0 });
-                    if (!opts.json) {
-                        printStep(cmd, result, 0);
-                    }
-                    continue;
-                }
 
                 if (timeline && typeof step.atMs === "number") {
                     const wait = step.atMs - (performance.now() - startedAt);
@@ -240,34 +407,70 @@ export function registerRunCommand(program: Command): void {
 
                 const args: string[] = [cmd];
                 if (!NO_APP_COMMANDS.has(cmd)) {
-                    if (!app) {
-                        results.push({ step, result: { ok: false, error: "missing 'app'" }, ms: 0 });
-                        continue;
-                    }
                     args.push("--app", app);
                 }
                 if (cmd === "hotkey" && app) {
                     args.push("--app", app);
                 }
+
+                const unresolved: string[] = [];
+
                 for (const [k, v] of Object.entries(step)) {
                     // "_"-prefixed keys are annotations (_label, _foreign), not flags.
-                    if (k === "do" || k === "app" || k === "delay" || k === "atMs" || k.startsWith("_") || v == null) {
+                    if (RUNNER_ONLY_STEP_FIELDS.has(k) || k.startsWith("_") || v == null) {
                         continue;
                     }
-                    args.push(`--${k}`, String(v));
+
+                    const raw = String(v);
+                    const resolved = raw.includes("{{")
+                        ? resolveTemplates(raw, results, saved)
+                        : { text: raw, unresolved: [] };
+                    unresolved.push(...resolved.unresolved);
+                    args.push(`--${k}`, resolved.text);
                 }
                 if (plan.exact) {
                     args.push("--exact");
                 }
 
                 const t0 = performance.now();
-                const result = runAx(args);
+                const maxAttempts = typeof step.retries === "number" ? step.retries + 1 : 1;
+                const retryDelay = typeof step.retryDelayMs === "number" ? step.retryDelayMs : 250;
+                let result: AxResult;
+                let attempts = 0;
+
+                if (unresolved.length > 0) {
+                    // Refuse rather than dispatch a half-substituted flag: sending
+                    // `--value "{{steps.9.result.value}}"` literally would type the
+                    // template into the app and report ok.
+                    result = { ok: false, error: `unresolved reference(s): ${unresolved.join(", ")}` };
+                    attempts = 1;
+                } else {
+                    do {
+                        attempts++;
+
+                        if (attempts > 1 && retryDelay > 0) {
+                            await Bun.sleep(retryDelay);
+                        }
+
+                        result = runAx(args);
+                    } while (!result.ok && attempts < maxAttempts);
+                }
+
                 const ms = Math.round(performance.now() - t0);
-                results.push({ step, result, ms });
+                results.push({ step, result, ms, attempts });
+
+                if (typeof step.saveAs === "string") {
+                    saved.set(step.saveAs, result);
+                }
 
                 if (!opts.json) {
                     const label = step.q ?? step.id ?? step.desc ?? step.subrole ?? step.text ?? cmd;
-                    printStep(String(label), result, ms);
+                    printStep(`${String(label)}${attempts > 1 ? ` (${attempts} attempts)` : ""}`, result, ms);
+                }
+
+                if (!result.ok && stopOnFail) {
+                    stoppedAt = index;
+                    continue;
                 }
 
                 if (!timeline) {
@@ -294,6 +497,8 @@ export function registerRunCommand(program: Command): void {
                             failedSteps,
                             totalSteps: results.length,
                             mode: timeline ? "timeline" : "sequential",
+                            stoppedAtStep: stoppedAt >= 0 ? stoppedAt + 1 : undefined,
+                            skippedSteps: stoppedAt >= 0 ? results.length - stoppedAt - 1 : 0,
                             steps: results,
                             restored: !!plan.restore,
                         },
@@ -304,7 +509,12 @@ export function registerRunCommand(program: Command): void {
             } else {
                 const passed = results.length - failedSteps;
                 const totalMs = results.reduce((s, r) => s + r.ms, 0);
-                out.println(`\n${passed}/${results.length} steps passed, ${totalMs}ms total`);
+                const skipped = stoppedAt >= 0 ? results.length - stoppedAt - 1 : 0;
+                out.println(
+                    `\n${passed}/${results.length} steps passed, ${totalMs}ms total${
+                        skipped > 0 ? `, ${skipped} skipped after step ${stoppedAt + 1} failed` : ""
+                    }`
+                );
             }
             if (failedSteps > 0) {
                 process.exit(1);

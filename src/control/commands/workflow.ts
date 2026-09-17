@@ -30,6 +30,7 @@ interface WorkflowOptions {
     app: string;
     windowIndex?: string;
     windowId?: string;
+    windowTitle?: string;
     depth?: string;
     scope?: string | boolean;
     path?: string;
@@ -161,6 +162,46 @@ export function sinceSnapshot(previousFile: string, current: Record<string, unkn
     };
 }
 
+interface AxWindowRow {
+    title?: string;
+    minimized?: boolean;
+}
+
+/**
+ * Title to AX window index, failing loud on 0 or 2+ matches — the behaviour
+ * `screenshot --window` already has, and the reason `see` could not be driven
+ * from a title before.
+ *
+ * The index is the RAW position in `window --app`'s array, because that is what
+ * `see --window-index` counts. Do not filter the array before indexing it: a
+ * minimized window still occupies its slot.
+ */
+function resolveWindowTitle(app: string, substring: string): { index: number } | { error: string } {
+    const listed = runAx(["window", "--app", app]);
+
+    if (!listed.ok) {
+        return { error: `could not list windows of ${app}: ${String(listed.error)}` };
+    }
+
+    const windows = ((listed as { windows?: AxWindowRow[] }).windows ?? []).map((row, index) => ({
+        index,
+        title: row.title ?? "",
+        minimized: row.minimized === true,
+    }));
+    const needle = substring.toLowerCase();
+    const matches = windows.filter((row) => row.title.toLowerCase().includes(needle));
+    const candidates = windows
+        .map((row) => `  ${row.index}: ${row.title || "(untitled)"}${row.minimized ? " [minimized]" : ""}`)
+        .join("\n");
+
+    if (matches.length === 1) {
+        return { index: (matches[0] as { index: number }).index };
+    }
+
+    const verb = matches.length === 0 ? "no window title contains" : `${matches.length} window titles contain`;
+    return { error: `${verb} "${substring}" in ${app}. Windows:\n${candidates || "  (none)"}` };
+}
+
 export function registerWorkflowCommands(program: Command): void {
     program
         .command("see")
@@ -170,6 +211,10 @@ export function registerWorkflowCommands(program: Command): void {
         .requiredOption("--app <name>", "running app name, bundle ID or PID")
         .option("--window-index <n>", "zero-based AX window index from a see ambiguity result")
         .option("--window-id <id>", "stable CG window ID from a previous see; alternative to --window-index")
+        .option(
+            "--window-title <substring>",
+            "select the window whose title contains this (case-insensitive); 0 or 2+ matches exit 1 with the candidates"
+        )
         .option("--depth <n>", "tree depth, 1–50; refuses truncated trees", "20")
         .option("--scope [name]", "window (default) or chrome (omit web-area descendants for browser controls)")
         .option("--path <png>", "save screenshot here (default: unique temporary PNG)")
@@ -186,6 +231,28 @@ export function registerWorkflowCommands(program: Command): void {
             const args = ["see", "--app", opts.app];
             if (typeof opts.scope === "string") {
                 args.push("--scope", opts.scope);
+            }
+
+            // Titles are what an agent knows; indexes reorder whenever a window is
+            // focused or closed, so every run otherwise needed a title-to-index
+            // step of its own. Resolved through `window --app`, which reports AX
+            // geometry per window and costs far less than a second tree walk.
+            if (opts.windowTitle !== undefined) {
+                if (opts.windowIndex !== undefined || opts.windowId !== undefined) {
+                    logger.error("--window-title cannot be combined with --window-index or --window-id");
+                    process.exitCode = 1;
+                    return;
+                }
+
+                const resolved = resolveWindowTitle(opts.app, opts.windowTitle);
+
+                if ("error" in resolved) {
+                    logger.error(resolved.error);
+                    process.exitCode = 1;
+                    return;
+                }
+
+                args.push("--window-index", String(resolved.index));
             }
 
             for (const [flag, value] of [

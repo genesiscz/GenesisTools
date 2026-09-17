@@ -5,6 +5,53 @@ import pc from "picocolors";
 import { runAx } from "../lib/runner";
 import { addTargetOptions, targetArgs, targetLabel } from "../lib/target";
 
+/**
+ * `--to-pid` was accepted for any integer. Measured 2026-09-09:
+ * `hotkey --keys cmd,b --to-pid 99999` printed `sent cmd,b` and exited 0 with no
+ * such process, and `type --to-pid 99999` printed `typed 1 chars`. Both had
+ * silently fallen back to the GLOBAL tap, so the keystroke went to whatever the
+ * human had focused. The SKILL already claimed "an invalid pid is rejected
+ * rather than downgraded to the global tap"; this makes that true.
+ *
+ * `process.kill(pid, 0)` signals nothing and only asks whether the process
+ * exists: EPERM means it exists and is not ours, which is still a real target.
+ */
+function validateToPid(toPid: string | undefined): string | null {
+    if (toPid == null) {
+        return null;
+    }
+
+    const pid = Number.parseInt(String(toPid), 10);
+
+    if (!Number.isInteger(pid) || pid <= 0) {
+        return `--to-pid ${toPid} is not a process id. No event was posted.`;
+    }
+
+    try {
+        process.kill(pid, 0);
+        return null;
+    } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "EPERM") {
+            return null;
+        }
+
+        return `--to-pid ${pid} names no running process. No event was posted.`;
+    }
+}
+
+/**
+ * The focus-safe path is `see` + `act`, which refuses when the target is not
+ * frontmost instead of typing into the human's window. These verbs predate it
+ * and still post global events, so each run says so once, on stderr, where it
+ * cannot corrupt `--json` on stdout.
+ */
+function noteLegacyKeyboardVerb(verb: string): void {
+    out.log.warn(
+        `\`control ${verb}\` posts global keyboard events and can land in whatever window is frontmost. ` +
+            `The focus-safe replacement is \`control see\` then \`control act\`, which refuses a wrong frontmost window.`
+    );
+}
+
 export function registerInteractCommands(program: Command): void {
     addTargetOptions(
         program
@@ -173,6 +220,14 @@ export function registerInteractCommands(program: Command): void {
         .option("--json", "raw JSON output")
         .option("--pretty", "indent JSON output (default compact)")
         .action((opts) => {
+            noteLegacyKeyboardVerb("type");
+            const pidError = validateToPid(opts.toPid);
+
+            if (pidError) {
+                logger.error(pidError);
+                process.exit(1);
+            }
+
             const axArgs = ["type", "--app", opts.app, "--text", opts.text, ...targetArgs(opts)];
             if (opts.toPid) {
                 axArgs.push("--to-pid", String(opts.toPid));
@@ -219,6 +274,14 @@ export function registerInteractCommands(program: Command): void {
         .option("--json", "raw JSON output")
         .option("--pretty", "indent JSON output (default compact)")
         .action((opts) => {
+            noteLegacyKeyboardVerb("hotkey");
+            const pidError = validateToPid(opts.toPid);
+
+            if (pidError) {
+                logger.error(pidError);
+                process.exit(1);
+            }
+
             const axArgs = ["hotkey", "--keys", opts.keys];
             if (opts.app) {
                 axArgs.push("--app", opts.app);

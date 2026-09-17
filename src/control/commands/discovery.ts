@@ -55,7 +55,9 @@ export function registerDiscoveryCommands(program: Command): void {
 
     program
         .command("dump")
-        .description("Windows + every on-screen element with scroll-clip visibility (measurement JSON)")
+        .description(
+            "APP-WIDE: windows + every on-screen element with scroll-clip visibility (measurement JSON). Takes --app only; there is no window or element targeting."
+        )
         .requiredOption("--app <name>", "app process name")
         .option("--pretty", "indent JSON output (default compact)")
         .action((opts) => {
@@ -71,7 +73,9 @@ export function registerDiscoveryCommands(program: Command): void {
 
     program
         .command("typography")
-        .description("Rendered font name/size and sRGB rgba for every static text — contrast + size checks")
+        .description(
+            "APP-WIDE: rendered font name/size and sRGB rgba for every static text — contrast + size checks. Takes --app only; there is no window or element targeting."
+        )
         .requiredOption("--app <name>", "app process name")
         .option("--pretty", "indent JSON output (default compact)")
         .action((opts) => {
