@@ -39,6 +39,11 @@ export function configFilePath(key: string): string {
     return join(DASHBOARDS_DIR, `${key}.config.json`);
 }
 
+/** Output of a build-once static UI server. Install-owned, never the repo's shared `dist`. */
+export function staticBuildDir(key: string): string {
+    return join(DASHBOARDS_DIR, `${key}.static`);
+}
+
 function ensureDir(file: string): void {
     const dir = dirname(file);
     if (!existsSync(dir)) {

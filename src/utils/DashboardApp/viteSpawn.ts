@@ -8,7 +8,8 @@ export function resolveViteEntry(): string {
     return resolve(PROJECT_ROOT, "node_modules", "vite", "bin", "vite.js");
 }
 
-export type DashboardUiServeMode = "preview" | "dev";
+/** `preview` watches and rebuilds, `dev` is Vite dev + HMR, `static` builds once and serves. */
+export type DashboardUiServeMode = "preview" | "dev" | "static";
 
 export interface ViteDevCmdOptions {
     configPath: string;
@@ -27,8 +28,9 @@ export interface DashboardUiServerCmdOptions {
 }
 
 /**
- * Spawn argv for dashboards that run a Bun front-proxy + internal Vite (dev or preview).
- * Default mode is `preview` (watch build + static preview — better over tunnels).
+ * Spawn argv for dashboards that run a Bun front-proxy + internal Vite (preview, dev or static).
+ * Default mode is `preview` (watch build + vite preview), which a bare `__ui-server` keeps meaning
+ * so a plist installed before the static mode still runs; `static` is what a fresh install registers.
  */
 export function buildDashboardUiServerCmd(opts: DashboardUiServerCmdOptions): string[] {
     const runtime = opts.runtime ?? "bun";
@@ -37,6 +39,10 @@ export function buildDashboardUiServerCmd(opts: DashboardUiServerCmdOptions): st
 
     if (mode === "dev") {
         cmd.push("--dev");
+    }
+
+    if (mode === "static") {
+        cmd.push("--static");
     }
 
     return cmd;

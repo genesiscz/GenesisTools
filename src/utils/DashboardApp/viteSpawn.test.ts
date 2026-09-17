@@ -38,4 +38,13 @@ describe("buildDashboardUiServerCmd", () => {
             "--dev",
         ]);
     });
+
+    test("static mode passes --static, so a build-once server never carries the watch build", () => {
+        expect(buildDashboardUiServerCmd({ serverScript: "/x/index.ts", mode: "static" })).toEqual([
+            "bun",
+            "/x/index.ts",
+            "__ui-server",
+            "--static",
+        ]);
+    });
 });

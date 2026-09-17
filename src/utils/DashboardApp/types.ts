@@ -73,17 +73,24 @@ export interface DashboardAppConfig {
     port?: number;
 
     /**
-     * Dev-server bind address (UI dashboards). Default `127.0.0.1`.
-     * Use `0.0.0.0` when the dashboard must be reachable on LAN or via a tunnel
-     * (e.g. dev-dashboard + cloudflared).
+     * Listen address, UI and server dashboards alike; the child reads it from `DASHBOARD_BIND_HOST`.
+     * Default `127.0.0.1`. `0.0.0.0` only when the dashboard must be reachable on the LAN or through
+     * a tunnel (dev-dashboard + cloudflared). The user overrides either value per machine with
+     * `bindHost` in `~/.genesis-tools/dashboards/<key>.config.json`.
      */
     bindHost?: DashboardBindHost;
 
     /** Spawn instructions for the child process. */
     spawn: {
         cmd: readonly string[];
-        /** When set, `up --dev` / `restart --dev` use this instead of `cmd` (vite dev + HMR). */
+        /** When set, `up --dev`, `restart --dev` and the `dev` verb use this instead of `cmd` (vite dev + HMR). */
         devCmd?: readonly string[];
+        /**
+         * When set, `install --preview` registers this instead of `cmd`: the watch build that rebuilds
+         * on save and reloads the page, the mode a tunnel-served dashboard ran before `cmd` became
+         * a one-off build. Remembered per dashboard, so a later `up` keeps it.
+         */
+        previewCmd?: readonly string[];
         cwd?: string;
         env?: Record<string, string | undefined>;
     };
@@ -141,13 +148,15 @@ export interface UpOptions {
     interactive?: boolean;
     /** When true, an already-running instance on our port is stopped without a menu (used by `install`). */
     replaceRunning?: boolean;
-    /** Use `spawn.devCmd` when the dashboard defines it (`up --dev`). */
-    uiServe?: "dev";
+    /** `dev`: `spawn.devCmd` (`up --dev`). `preview`: `spawn.previewCmd` (what `install --preview` registers). */
+    uiServe?: "dev" | "preview";
 }
 
 export interface InstallOptions {
     force?: boolean;
     port?: number;
+    /** Register `spawn.previewCmd` (watch build) instead of `spawn.cmd`; remembered for later `up`s. */
+    preview?: boolean;
 }
 
 export interface UpResult {
@@ -212,6 +221,8 @@ export interface DashboardApp {
     up(opts?: UpOptions): Promise<UpResult>;
     down(opts?: DownOptions): Promise<DownResult>;
     restart(opts?: UpOptions): Promise<UpResult>;
+    /** Foreground dev server in place of the installed one, which comes back when it exits (needs `spawn.devCmd`). */
+    dev(opts?: UpOptions): Promise<never>;
     status(): Promise<StatusResult>;
     attach(opts?: AttachOptions): Promise<void>;
     logs(opts?: { lines?: number }): Promise<void>;

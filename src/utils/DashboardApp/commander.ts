@@ -7,11 +7,12 @@
  *     up           --foreground --port <n> --force --no-open
  *     down         --force
  *     restart      (same flags as up)
+ *     dev          --port <n> --no-open (only if spawn.devCmd; foreground, the installed server comes back on exit)
  *     status
  *     attach       --lines <n>
  *     logs         --lines <n>
  *     open         --port <n> --no-qr --no-open --query key=value
- *     install      (only if launchd.available)
+ *     install      --force --port <n> --preview (only if launchd.available; --preview only with spawn.previewCmd)
  *     uninstall    (only if launchd.available)
  *
  * Global flag on every verb AND the no-verb default:
@@ -20,6 +21,7 @@
 import { Command } from "commander";
 import {
     attach,
+    dev,
     down,
     install,
     type LifecycleContext,
@@ -149,6 +151,19 @@ export function buildCommanderCommand({ config, ctx }: BuildOptions): Command {
         await restart(ctx, toUpOptions(flags));
     });
 
+    // `dev` — the app's HMR server in place of the installed one, which comes back on exit.
+    if (config.spawn.devCmd) {
+        cmd.command("dev")
+            .description(
+                "Run the Vite dev server (HMR) in the foreground; the installed server comes back when it exits."
+            )
+            .option("-p, --port <n>", "override the default port")
+            .option("--no-open", "do not auto-open the browser")
+            .action(async (flags: { port?: string; open?: boolean }) => {
+                await dev(ctx, { port: flags.port ? parsePort(flags.port) : undefined, open: flags.open });
+            });
+    }
+
     // `status`
     cmd.command("status")
         .description("Print status: pid, port, uptime, dependencies, launchd state.")
@@ -197,16 +212,26 @@ export function buildCommanderCommand({ config, ctx }: BuildOptions): Command {
 
     // `install` / `uninstall` only when the app opts into launchd.
     if (config.launchd?.available) {
-        cmd.command("install")
+        const installCmd = cmd
+            .command("install")
             .description("Register a launchd plist so this dashboard survives reboot and respawns on crash.")
             .option("--force", "kill any conflicting process before installing")
-            .option("-p, --port <n>", "override the default port")
-            .action(async (flags: { force?: boolean; port?: string }) => {
-                await install(ctx, {
-                    force: flags.force,
-                    port: flags.port ? parsePort(flags.port) : undefined,
-                });
+            .option("-p, --port <n>", "override the default port");
+
+        if (config.spawn.previewCmd) {
+            installCmd.option(
+                "--preview",
+                "register the watch build instead of the built bundle; HMR is the `dev` verb"
+            );
+        }
+
+        installCmd.action(async (flags: { force?: boolean; port?: string; preview?: boolean }) => {
+            await install(ctx, {
+                force: flags.force,
+                port: flags.port ? parsePort(flags.port) : undefined,
+                preview: flags.preview,
             });
+        });
         cmd.command("uninstall")
             .description("Remove the launchd plist registered by `install`.")
             .action(async () => {
