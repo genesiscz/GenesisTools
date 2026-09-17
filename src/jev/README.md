@@ -236,3 +236,16 @@ Vercel uses the AI SDK evaluation model and `AI_GATEWAY_API_KEY` (or the existin
 Both providers share boolean/choice/score results, cancellation and zero automatic retries. Native TypeSafe `noul` probabilities are normalized to boolean probabilities. Confidence is retained separately from the probability distribution. `--zdr` is a Gateway-only enforcement option; direct TypeSafe rejects it instead of silently weakening it.
 
 Reusable provider implementations, schema and credential access live in `src/utils/ai/evaluation/`. No model weights are downloaded by either remote provider.
+
+## Control Lab
+
+Open the Control tab in `tools jev dashboard` for read-only fixture comparisons. The same core is available through `tools jev control resolve|judge|replay|fill|assist` and `tools control`.
+
+```sh
+tools jev control replay context --chooser jev --provider typesafe
+tools jev control resolve --app Editor --intent "Show line numbers" --provider typesafe
+tools jev control fill --app Editor --data fields.json --provider typesafe
+tools jev control assist --app Editor --goal "Enable line numbers" --max-steps 3 --provider typesafe
+```
+
+Use `--window-id` when more than one window is present. The Jev namespace is also useful while this module is linked from a feature worktree and the main checkout's `tools control` has not been updated. See `src/control/README.md` for limits and verification contracts.

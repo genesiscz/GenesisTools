@@ -40,10 +40,21 @@ export interface Candidate {
     role: string;
     identifier?: string;
     ancestors: string[];
+    checked?: boolean;
 }
 
 export function elementLabel(row: ObservedElement): string {
     return row.AXTitle || row.AXDescription || row.AXIdentifier || row.role;
+}
+function checkedState(row: ObservedElement): boolean | undefined {
+    if (!["AXCheckBox", "AXRadioButton", "AXSwitch"].includes(row.role)) {
+        return undefined;
+    }
+    return ["1", 1, true].includes(row.AXValue ?? "")
+        ? true
+        : ["0", 0, false].includes(row.AXValue ?? "")
+          ? false
+          : undefined;
 }
 function disabled(row: ObservedElement): boolean {
     return [false, 0, "0", "false"].includes(row.AXEnabled ?? "");
@@ -77,6 +88,7 @@ export function candidatesFor({
                 label: elementLabel(row).slice(0, 300),
                 role: row.role,
                 identifier: row.AXIdentifier,
+                checked: checkedState(row),
                 ancestors: ancestors
                     .map(elementLabel)
                     .slice(-4)
@@ -103,11 +115,11 @@ export function observedEvidence(observation: Observation) {
             role: row.role,
             label: elementLabel(row).slice(0, 300),
             value:
-                (row.valueSettable && ["AXTextField", "AXTextArea", "AXComboBox"].includes(row.role)) ||
-                row.AXSubrole === "AXSecureTextField"
+                ["AXTextField", "AXTextArea", "AXComboBox"].includes(row.role) || row.AXSubrole === "AXSecureTextField"
                     ? "[private input]"
                     : String(row.AXValue ?? "").slice(0, 500),
             enabled: !disabled(row),
+            ...(checkedState(row) === undefined ? {} : { checked: checkedState(row) }),
         }));
 }
 export function sameScope(first: Observation, next: Observation): boolean {

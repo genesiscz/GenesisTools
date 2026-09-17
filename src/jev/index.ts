@@ -6,6 +6,7 @@ import { logger, out } from "@genesiscz/utils/logger";
 import { Command } from "commander";
 import { ZodError } from "zod";
 import { registerArena } from "./commands/arena";
+import { registerControlLabCommands } from "./commands/control";
 import { registerDashboard } from "./commands/dashboard";
 import { registerEvaluation } from "./commands/evaluate";
 import { registerExperiment } from "./commands/experiment";
@@ -18,6 +19,7 @@ registerEvaluation(program);
 registerExperiment(program);
 registerArena(program);
 registerDashboard(program);
+registerControlLabCommands(program);
 
 try {
     await runTool(program, { tool: "jev" });

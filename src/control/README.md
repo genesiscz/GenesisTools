@@ -280,3 +280,16 @@ tools control fill --app Fixture --window-id 42 --data fields.json --provider ty
 Replay accepts a built-in case ID or a labeled JSON fixture. It is always decision-only, with zero native actions. The fixture oracle checks the pipeline using known labels; it is not a model accuracy benchmark. The dashboard Control tab compares exact-label matching, the oracle and Jev. Missing provider cost is shown as unknown, never estimated as free.
 
 Fill accepts an object of 1–20 supplied string values, such as `{"Full name":"Alice Example","City":"Prague"}`. It maps keys to observed writable text fields, keeps the values out of model requests, sets each exact value, reobserves after each attempt, and verifies final readback. Bindings must be unique and one-to-one. Secure inputs, unsupported dropdowns, masked readback and ambiguous fields stop the run. It never presses Submit or types generated text. Use `--max-fields`, `--max-requests`, `--timeout` and Ctrl-C to bound it. Partial progress is returned on failure.
+
+### Bounded tasks
+
+```sh
+tools control assist --app Editor --window-id 42 --goal "Open preferences and enable line numbers" --max-steps 4 --max-requests 10 --provider typesafe
+tools control assist --app Fixture --goal "Enable Show line numbers" --exact-id line-numbers --exact-value 1
+```
+
+Assist admits observed AXPress actions only. Each attempt uses the current native snapshot, then obtains a fresh observation in the same process/window. It stops on abstention, uncertainty, unchanged state, cancellation, deadline or budget exhaustion. A reobserve decision is allowed once. Failed or partially delivered native actions are never retried. Goal completion is reported with an explicit exact or semantic verification basis.
+
+Defaults are 8 action attempts, 20 model requests and 120 seconds. Native commands are individually capped at 10 seconds; Ctrl-C stops the model call/next iteration, with an in-flight synchronous native call allowed to return within its cap. First-use native compilation is separately bounded by the existing two-minute build limit. Text entry belongs to `fill`; arbitrary generated text, shell commands, coordinates and automatic focus changes are not supported.
+
+`bun src/control/scripts/live-smoke.ts --background-only --semantic` runs the real TypeSafe provider against a temporary AppKit fixture. It requires TYPESAFE_API_KEY, Accessibility and Screen Recording, makes paid requests, and terminates only its own verified fixture PID.

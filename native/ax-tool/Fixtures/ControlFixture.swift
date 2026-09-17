@@ -85,6 +85,12 @@ final class ControlFixture: NSObject, NSApplicationDelegate {
             field.frame = NSRect(x: 20, y: 265, width: 290, height: 26)
             field.setAccessibilityIdentifier("input")
             content.addSubview(field)
+            if CommandLine.arguments.contains("--semantic") {
+                let toggle = NSButton(checkboxWithTitle: "Show line numbers", target: nil, action: nil)
+                toggle.frame = NSRect(x: 20, y: 240, width: 290, height: 22)
+                toggle.setAccessibilityIdentifier("line-numbers")
+                content.addSubview(toggle)
+            }
             let disabled = NSButton(title: "Disabled", target: self, action: #selector(increment(_:)))
             disabled.isEnabled = false
             disabled.frame = NSRect(x: 20, y: 210, width: 130, height: 32)

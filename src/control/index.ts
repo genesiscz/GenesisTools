@@ -14,6 +14,7 @@
 import { runTool } from "@genesiscz/utils/cli";
 import { logger } from "@genesiscz/utils/logger";
 import { Command } from "commander";
+import { registerAssistCommand } from "./commands/assist";
 import { registerCaptureCommands } from "./commands/capture";
 import { registerCompareScreenshotCommand } from "./commands/compare-screenshot";
 import { registerCursorCommands } from "./commands/cursor";
@@ -41,6 +42,7 @@ program
     .version("1.0.0");
 
 registerCaptureCommands(program);
+registerAssistCommand(program);
 registerCompareScreenshotCommand(program);
 registerCursorCommands(program);
 registerDiscoveryCommands(program);

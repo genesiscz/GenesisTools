@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { evaluationSchema } from "@genesiscz/utils/ai/evaluation/evaluate";
 import type { EvaluationResponse, Evaluator } from "@genesiscz/utils/ai/evaluation/service";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { assistTask } from "../lib/decision/assist";
 import { admittedChoice, judgeOutcome, resolveIntent } from "../lib/decision/decisions";
 import { fillForm } from "../lib/decision/fill";
 import { replayCases } from "../lib/decision/fixtures";
@@ -390,4 +391,123 @@ test("fill respects action/request caps and cancellation before any write", asyn
         expect(result.status).toBe("stopped");
         expect(fixture.calls).toHaveLength(0);
     }
+});
+
+function taskDriver(options: { unknown?: boolean; noChange?: boolean } = {}) {
+    let value = "0";
+    let calls = 0;
+    let observations = 0;
+    const driver: ControlDriver = {
+        observe: async () => {
+            observations++;
+            return {
+                ok: true,
+                app: "TaskFixture",
+                pid: 1,
+                window: { id: 1, title: "Preferences" },
+                snapshot: `s${calls}`,
+                scope: "window",
+                elements: [
+                    {
+                        index: 0,
+                        depth: 0,
+                        role: "AXCheckBox",
+                        AXTitle: "Show line numbers",
+                        AXIdentifier: "line-numbers",
+                        AXValue: value,
+                        actions: ["AXPress"],
+                    },
+                ],
+            };
+        },
+        act: async () => {
+            calls++;
+            if (!options.noChange) {
+                value = "1";
+            }
+            return options.unknown ? { ok: false, error: "Unknown delivery" } : { ok: true };
+        },
+    };
+    return { driver, calls: () => calls, observations: () => observations };
+}
+test("assist executes once and finishes only after fresh exact completion", async () => {
+    const fixture = taskDriver();
+    const result = await assistTask({
+        driver: fixture.driver,
+        goal: "Enable line numbers",
+        exact: { identifier: "line-numbers", value: "1" },
+        evaluate: chooseField([]),
+        limits: { maxActions: 1, maxRequests: 1 },
+    });
+    expect(result.status).toBe("verified");
+    expect(fixture.calls()).toBe(1);
+    expect(fixture.observations()).toBe(2);
+    expect(result.metrics).toMatchObject({ actions: 1, requests: 1 });
+});
+test("assist does not retry uncertain dispatch or a successful no-op", async () => {
+    for (const options of [{ unknown: true }, { noChange: true }]) {
+        const fixture = taskDriver(options);
+        const result = await assistTask({
+            driver: fixture.driver,
+            goal: "Enable line numbers",
+            exact: { identifier: "line-numbers", value: "1" },
+            evaluate: chooseField([]),
+        });
+        expect(result.status).not.toBe("verified");
+        expect(fixture.calls()).toBe(1);
+        expect(fixture.observations()).toBe(2);
+    }
+});
+test("assist stops on exhausted budgets and cancelled evaluation", async () => {
+    for (const config of [
+        { limits: { maxActions: 0 } },
+        { limits: { maxRequests: 0 } },
+        { signal: AbortSignal.abort() },
+    ]) {
+        const fixture = taskDriver();
+        const result = await assistTask({
+            driver: fixture.driver,
+            goal: "Enable line numbers",
+            exact: { identifier: "line-numbers", value: "1" },
+            evaluate: chooseField([]),
+            ...config,
+        });
+        expect(result.status).toBe("stopped");
+        expect(fixture.calls()).toBe(0);
+    }
+    const fixture = taskDriver();
+    const controller = new AbortController();
+    const cancelled = await assistTask({
+        driver: fixture.driver,
+        goal: "Enable line numbers",
+        exact: { identifier: "line-numbers", value: "1" },
+        signal: controller.signal,
+        evaluate: async (call) => {
+            controller.abort();
+            return chooseField([])(call);
+        },
+    });
+    expect(cancelled.status).toBe("stopped");
+    expect(fixture.calls()).toBe(0);
+});
+
+test("assist does not reverse a toggle when semantic completion stays uncertain", async () => {
+    const fixture = taskDriver();
+    const evaluate: Evaluator = async (call) => {
+        const request = evaluationSchema.parse(call.input);
+        if (request.questions.target) {
+            return chooseField([])(call);
+        }
+        return evaluation({
+            complete: { type: "boolean", probability: 0.7 },
+            sufficient: { type: "boolean", probability: 0.7 },
+            contradicted: { type: "boolean", probability: 0 },
+            witness: { type: "choice", choice: "e0", probabilities: { e0: 1, none: 0 } },
+            counterexample: { type: "choice", choice: "none", probabilities: { e0: 0, none: 1 } },
+        });
+    };
+    const result = await assistTask({ driver: fixture.driver, goal: "Enable line numbers", evaluate });
+    expect(result.status).toBe("stopped");
+    expect(result.reason).toContain("No second toggle");
+    expect(fixture.calls()).toBe(1);
 });

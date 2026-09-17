@@ -2,11 +2,16 @@ import assert from "node:assert/strict";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { createEvaluator } from "@genesiscz/utils/ai/evaluation/service";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
 import { classifyPid } from "@genesiscz/utils/process-identity";
-import { ensureBinary } from "../lib/runner";
+import { assistTask } from "../lib/decision/assist";
+import { judgeOutcome } from "../lib/decision/decisions";
+import { fillForm } from "../lib/decision/fill";
+import { NativeControlDriver } from "../lib/decision/native";
+import { axCommandLine, ensureBinary } from "../lib/runner";
 
 interface Element {
     index: number;
@@ -32,11 +37,12 @@ interface State {
 
 const root = resolve(import.meta.dir, "../../..");
 const backgroundOnly = Bun.argv.includes("--background-only");
+const semantic = Bun.argv.includes("--semantic");
 const verifyPointer = Bun.argv.includes("--verify-pointer");
 
 if (Bun.argv.includes("--help")) {
     out.print(
-        "Usage: bun src/control/scripts/live-smoke.ts [--background-only] [--verify-pointer]\n--background-only avoids focus/keyboard tests and opens the fixture in the background.\n--verify-pointer asserts the physical pointer stays unchanged; keep mouse and keyboard idle during measurement.\nBuilds and opens a temporary two-window test app. Exercises see/act, then terminates only that app. Requires Accessibility and Screen Recording. Uses no Codex, Sky or Peekaboo.\n"
+        "Usage: bun src/control/scripts/live-smoke.ts [--background-only] [--verify-pointer] [--semantic]\n--semantic tests Jev fill/assist/judge with TYPESAFE_API_KEY (paid requests).\n--background-only avoids focus/keyboard tests and opens the fixture in the background.\n--verify-pointer asserts the physical pointer stays unchanged; keep mouse and keyboard idle during measurement.\nBuilds and opens a temporary two-window test app. Exercises see/act, then terminates only that app. Requires Accessibility and Screen Recording. Uses no Codex, Sky or Peekaboo.\n"
     );
     process.exit(0);
 }
@@ -44,7 +50,8 @@ if (Bun.argv.includes("--help")) {
 const native = ensureBinary();
 
 async function command(argv: string[]): Promise<{ exit: number; stdout: string; stderr: string }> {
-    const proc = Bun.spawn(argv, { cwd: root, env: env.getProcessEnv(), stdout: "pipe", stderr: "pipe" });
+    const commandLine = argv[0] === native ? axCommandLine(native, argv.slice(1)) : argv;
+    const proc = Bun.spawn(commandLine, { cwd: root, env: env.getProcessEnv(), stdout: "pipe", stderr: "pipe" });
     const timer = setTimeout(() => proc.kill(), 120_000);
     try {
         const [stdout, stderr, exit] = await Promise.all([
@@ -93,6 +100,7 @@ const launcher = Bun.spawn(
         bundle,
         "--args",
         ...(backgroundOnly ? ["--background"] : []),
+        ...(semantic ? ["--semantic"] : []),
     ],
     {
         env: env.getProcessEnv(),
@@ -188,6 +196,45 @@ try {
     checks.push("multiwindow inspection refuses an implicit selection");
 
     let state = await see();
+    if (semantic) {
+        const evaluate = await createEvaluator({ provider: "typesafe" });
+        const driver = new NativeControlDriver({ app: String(fixturePid), windowId: state.window.id });
+        const filled = await fillForm({ driver, data: { input: "Semantic fixture value" }, evaluate });
+        assert.equal(filled.status, "filled", SafeJSON.stringify(filled));
+        const assisted = await assistTask({
+            driver,
+            goal: "Enable Show line numbers",
+            exact: { identifier: "line-numbers", value: "1" },
+            evaluate,
+            limits: { maxActions: 2, maxRequests: 4, timeoutMs: 30000 },
+        });
+        assert.equal(assisted.status, "verified", SafeJSON.stringify(assisted));
+        const judgment = await judgeOutcome({
+            observation: await driver.observe({}),
+            expect: "The Show line numbers checkbox is enabled (checked).",
+            evaluate,
+        });
+        assert.notEqual(judgment.status, "refuted", SafeJSON.stringify(judgment));
+        assert.equal(judgment.basis, "semantic");
+        const witness = judgment.evaluation?.answers.witness;
+        assert.equal(
+            witness?.type === "choice" ? witness.choice : undefined,
+            `e${(await driver.observe({})).elements.find((row) => row.AXIdentifier === "line-numbers")?.index}`
+        );
+        checks.push(
+            "Direct TypeSafe maps an input, native AX set reads back exactly, bounded assist enables line numbers, semantic judge identifies the observed checkbox (unknown remains valid below the confidence gate)"
+        );
+        out.result({
+            semantic: {
+                fill: filled.metrics,
+                assist: assisted.metrics,
+                judgment: { status: judgment.status, probabilities: judgment.probabilities },
+            },
+        });
+        state = await see();
+        await act(state, find(state, "input").index, "set", ["--value", "seed"]);
+        state = await see();
+    }
     const duplicates = state.elements.filter((element) => element.AXTitle === "Increment");
     assert.equal(duplicates.length, 2);
     assert.ok(duplicates.every((element) => !element.AXIdentifier));
