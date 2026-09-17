@@ -4,7 +4,12 @@ import { presentAuthorizationUrl } from "@genesiscz/utils/ai/oauth/login-ui";
 import { generatePkcePair } from "@genesiscz/utils/ai/oauth/pkce";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
-import { deviceVerificationUrl, pollDeviceTokenResponse, startDeviceFlow } from "@genesiscz/utils/oauth/device-flow";
+import {
+    deviceUserCode,
+    deviceVerificationUrl,
+    pollDeviceTokenResponse,
+    startDeviceFlow,
+} from "@genesiscz/utils/oauth/device-flow";
 import type { DeviceFlowConfig } from "@genesiscz/utils/oauth/types";
 import { discoverMcp } from "./discovery.ts";
 import { mcpFetch, readJsonRecord } from "./fetch.ts";
@@ -34,8 +39,9 @@ export interface LoginOptions {
      * Called with the URL the user has to visit, before it is presented. A caller with
      * no terminal — the gateway — uses it to put the link somewhere reachable, so a
      * banner that already faded or a window closed by accident is not a dead end.
+     * `userCode` is set for device flow when the AS did not send verification_uri_complete.
      */
-    onAuthorizationUrl?: (url: string) => void | Promise<void>;
+    onAuthorizationUrl?: (url: string, userCode?: string) => void | Promise<void>;
 }
 
 export interface LoginResult {
@@ -248,7 +254,7 @@ export async function loginMcpServer(options: LoginOptions): Promise<LoginResult
                 tokenUrl: as.token_endpoint,
             };
             const started = await startDeviceFlow(deviceConfig);
-            await options.onAuthorizationUrl?.(deviceVerificationUrl(started));
+            await options.onAuthorizationUrl?.(deviceVerificationUrl(started), deviceUserCode(started));
             // `started.expires_in` is the device_code's lifetime and only bounds the
             // poll. The access token's own lifetime comes back with the token, and
             // storing the former as the latter expired a live token within minutes.

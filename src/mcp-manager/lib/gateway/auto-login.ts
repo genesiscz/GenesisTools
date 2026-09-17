@@ -14,6 +14,7 @@
  *               every second opens a browser tab every second
  */
 import type { UnifiedMCPServerConfig } from "@app/mcp-manager/utils/providers/types.js";
+import { logger } from "@genesiscz/utils/logger";
 import { serverAuth } from "../auth/policy.ts";
 import { oauthClientPresetFor } from "../auth/presets.ts";
 
@@ -25,14 +26,14 @@ export interface LoginLauncherDeps {
      * is what makes the URL reusable: a banner that fades, a browser window closed by
      * accident, or a second request all need the same link back.
      */
-    login: (server: string, report: (url: string) => void) => Promise<unknown>;
+    login: (server: string, report: (url: string, userCode?: string) => void) => Promise<unknown>;
     notify: (server: string) => Promise<void>;
     /**
      * A login held open by ANOTHER process, if any. The in-flight set above only knows
      * logins this process started; a gateway that restarted while one was waiting for
      * its browser callback would otherwise open a second window on the next request.
      */
-    pending?: (server: string) => { url?: string } | undefined;
+    pending?: (server: string) => { url?: string; userCode?: string } | undefined;
     onError?: (server: string, error: unknown) => void;
     now?: () => number;
     cooldownMs?: number;
@@ -44,6 +45,8 @@ export interface LoginLauncher {
     pending(server: string): boolean;
     /** The last authorization URL this process produced for the server, if any. */
     authorizationUrl(server: string): string | undefined;
+    /** Device-flow user_code, when the AS did not send verification_uri_complete. */
+    userCode(server: string): string | undefined;
 }
 
 const DEFAULT_COOLDOWN_MS = 60_000;
@@ -74,10 +77,27 @@ export function createLoginLauncher(deps: LoginLauncherDeps): LoginLauncher {
     const inFlight = new Set<string>();
     const blockedUntil = new Map<string, number>();
     const authorizationUrls = new Map<string, string>();
+    const userCodes = new Map<string, string>();
+
+    const forgetAuthorization = (server: string): void => {
+        authorizationUrls.delete(server);
+        userCodes.delete(server);
+    };
+
+    const rememberAuthorization = (server: string, url: string, userCode?: string): void => {
+        authorizationUrls.set(server, url);
+
+        if (userCode) {
+            userCodes.set(server, userCode);
+        } else {
+            userCodes.delete(server);
+        }
+    };
 
     return {
         pending: (server) => inFlight.has(server),
         authorizationUrl: (server) => authorizationUrls.get(server) ?? deps.pending?.(server)?.url,
+        userCode: (server) => userCodes.get(server) ?? deps.pending?.(server)?.userCode,
         request(server) {
             if (inFlight.has(server)) {
                 return "in-flight";
@@ -86,10 +106,6 @@ export function createLoginLauncher(deps: LoginLauncherDeps): LoginLauncher {
             const elsewhere = deps.pending?.(server);
 
             if (elsewhere) {
-                if (elsewhere.url) {
-                    authorizationUrls.set(server, elsewhere.url);
-                }
-
                 return "in-flight";
             }
 
@@ -99,15 +115,23 @@ export function createLoginLauncher(deps: LoginLauncherDeps): LoginLauncher {
                 return "cooling-down";
             }
 
+            // A spent URL from a previous attempt must not be echoed while the
+            // replacement login is still producing its own.
+            forgetAuthorization(server);
             inFlight.add(server);
             // Deliberately not awaited: the caller is answering an HTTP request and must
             // not hold it open for the length of a browser login.
             void (async () => {
                 try {
-                    await deps.notify(server);
-                    await deps.login(server, (url) => authorizationUrls.set(server, url));
+                    try {
+                        await deps.notify(server);
+                    } catch (error) {
+                        logger.warn({ server, error }, "gateway login notification failed; continuing with login");
+                    }
+
+                    await deps.login(server, (url, userCode) => rememberAuthorization(server, url, userCode));
                     blockedUntil.delete(server);
-                    authorizationUrls.delete(server);
+                    forgetAuthorization(server);
                 } catch (error) {
                     // A failed login starts the cooldown; a successful one does not, so a
                     // token that expires later can be renewed without waiting this out.

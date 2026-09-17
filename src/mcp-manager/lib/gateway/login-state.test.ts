@@ -28,8 +28,8 @@ afterEach(() => {
 });
 
 describe("pending-login records", () => {
-    test("a record written by a live process reads back with a PidRecord identity", () => {
-        writePendingLogin({
+    test("a record written by a live process reads back with a PidRecord identity", async () => {
+        await writePendingLogin({
             server: SERVER,
             pid: process.pid,
             url: "https://issuer.example/authorize?state=x",
@@ -51,8 +51,8 @@ describe("pending-login records", () => {
         expect(readPendingLogin(SERVER)).toBeUndefined();
     });
 
-    test("a record whose process is dead is stale; read does not delete it", () => {
-        writePendingLogin({ server: SERVER, pid: 2_147_483_000 });
+    test("a record whose process is dead is stale; read does not delete it", async () => {
+        await writePendingLogin({ server: SERVER, pid: 2_147_483_000 });
 
         expect(readPendingLogin(SERVER)).toBeUndefined();
         expect(existsSync(pendingLoginPath(SERVER))).toBe(true);
@@ -60,8 +60,8 @@ describe("pending-login records", () => {
         expect(existsSync(pendingLoginPath(SERVER))).toBe(false);
     });
 
-    test("a live pid holding a different command is foreign; read does not delete it", () => {
-        writePendingLogin({ server: SERVER, pid: process.pid });
+    test("a live pid holding a different command is foreign; read does not delete it", async () => {
+        await writePendingLogin({ server: SERVER, pid: process.pid });
         const path = pendingLoginPath(SERVER);
         const raw = SafeJSON.parse(readFileSync(path, "utf8"), { strict: true }) as Record<string, unknown>;
         writeFileSync(path, SafeJSON.stringify({ ...raw, command: "some-other-program --not-a-login" }));
@@ -72,8 +72,8 @@ describe("pending-login records", () => {
         expect(existsSync(path)).toBe(false);
     });
 
-    test("a matching command with a drifted process start time is foreign", () => {
-        writePendingLogin({ server: SERVER, pid: process.pid });
+    test("a matching command with a drifted process start time is foreign", async () => {
+        await writePendingLogin({ server: SERVER, pid: process.pid });
         const path = pendingLoginPath(SERVER);
         const raw = SafeJSON.parse(readFileSync(path, "utf8"), { strict: true }) as Record<string, unknown>;
         const startedAt = typeof raw.startedAt === "number" ? raw.startedAt : Date.now();
@@ -84,8 +84,8 @@ describe("pending-login records", () => {
         expect(existsSync(path)).toBe(false);
     });
 
-    test("an unreadable record is not trusted and is not deleted by read", () => {
-        writePendingLogin({ server: SERVER, pid: process.pid });
+    test("an unreadable record is not trusted and is not deleted by read", async () => {
+        await writePendingLogin({ server: SERVER, pid: process.pid });
         writeFileSync(pendingLoginPath(SERVER), "{ not json");
 
         expect(readPendingLogin(SERVER)).toBeUndefined();
@@ -94,8 +94,8 @@ describe("pending-login records", () => {
         expect(existsSync(pendingLoginPath(SERVER))).toBe(false);
     });
 
-    test("a record for a different server name is not returned for this one", () => {
-        writePendingLogin({ server: SERVER, pid: process.pid });
+    test("a record for a different server name is not returned for this one", async () => {
+        await writePendingLogin({ server: SERVER, pid: process.pid });
         writeFileSync(
             pendingLoginPath(SERVER),
             SafeJSON.stringify({
@@ -113,5 +113,39 @@ describe("pending-login records", () => {
     test("clear is safe when nothing is pending", () => {
         expect(() => clearPendingLogin(SERVER)).not.toThrow();
         expect(clearStalePendingLogin(SERVER)).toBe(false);
+    });
+
+    test("a URL-less write keeps a same-pid URL the child already stored", async () => {
+        await writePendingLogin({
+            server: SERVER,
+            pid: process.pid,
+            url: "https://issuer.example/authorize",
+            userCode: "ABCD-EFGH",
+        });
+        await writePendingLogin({ server: SERVER, pid: process.pid });
+
+        expect(readPendingLogin(SERVER)).toMatchObject({
+            server: SERVER,
+            url: "https://issuer.example/authorize",
+            userCode: "ABCD-EFGH",
+        });
+    });
+
+    test("clear with an owner pid leaves a record owned by someone else", async () => {
+        await writePendingLogin({ server: SERVER, pid: process.pid, url: "https://issuer.example/authorize" });
+
+        clearPendingLogin(SERVER, process.pid + 1);
+        expect(existsSync(pendingLoginPath(SERVER))).toBe(true);
+
+        clearPendingLogin(SERVER, process.pid);
+        expect(existsSync(pendingLoginPath(SERVER))).toBe(false);
+    });
+
+    test("clearStale does not delete a live record that replaced a stale snapshot", async () => {
+        await writePendingLogin({ server: SERVER, pid: 2_147_483_000 });
+        await writePendingLogin({ server: SERVER, pid: process.pid, url: "https://issuer.example/authorize" });
+
+        expect(clearStalePendingLogin(SERVER)).toBe(false);
+        expect(readPendingLogin(SERVER)?.url).toBe("https://issuer.example/authorize");
     });
 });

@@ -128,7 +128,9 @@ export async function gatewayStatus(): Promise<void> {
     ui.kv("health", health);
     ui.kv("service", supervised ? `launchd ${GATEWAY_LAUNCHD_LABEL}` : "none (dies with the CLI that started it)");
 
-    if (health !== "ok") {
+    if (health === "stranger") {
+        ui.dim(`    port ${listen.port} is held by another process; inspect or release it, then retry`);
+    } else if (health !== "ok") {
         const fix = supervised ? ["gateway", "up"] : ["gateway", "install"];
         ui.dim(`    fix: ${suggestCommand("tools mcp-manager", { replaceCommand: fix })}`);
     }
@@ -181,6 +183,20 @@ export async function gatewayInstall(): Promise<void> {
 
     const config = await readUnifiedConfig();
     const listen = gatewayListen(config);
+    const existing = await gatewayHealth(listen.host, listen.port);
+
+    if (existing === "ok" || existing === "stranger") {
+        logger.error(
+            existing === "ok"
+                ? `a gateway is already listening on ${listen.host}:${listen.port}; stop it before installing launchd`
+                : `port ${listen.port} is in use by another process`
+        );
+        ui.dim(`    ${suggestCommand("tools mcp-manager", { replaceCommand: ["gateway", "status"] })}`);
+        process.exitCode = 1;
+
+        return;
+    }
+
     await installGatewayService();
     ui.ok(`installed ${GATEWAY_LAUNCHD_LABEL}`);
     ui.dim(`    plist ${gatewayPlistPath()}`);

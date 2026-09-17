@@ -43,7 +43,7 @@ export function loginSpawnArgs(server: string, clientName?: string): string[] {
     return args;
 }
 
-async function runLogin(server: string, report: (url: string) => void): Promise<void> {
+async function runLogin(server: string, report: (url: string, userCode?: string) => void): Promise<void> {
     const config = await readUnifiedConfig();
     const unified = config.mcpServers[server];
 
@@ -73,7 +73,7 @@ async function runLogin(server: string, report: (url: string) => void): Promise<
         throw new Error(`auth login ${server} spawned without a pid; see ${logFile}`);
     }
 
-    writePendingLogin({ server, pid: child.pid });
+    await writePendingLogin({ server, pid: child.pid });
     child.unref();
     logger.info({ server, pid: child.pid, logFile }, "gateway spawned a detached MCP login");
 
@@ -113,11 +113,11 @@ async function runLogin(server: string, report: (url: string) => void): Promise<
                     return { done: true };
                 }
 
-                const url = readPendingLogin(server)?.url;
+                const pending = readPendingLogin(server);
 
-                if (url) {
-                    report(url);
-                    await notifyLoginUrl(server, url);
+                if (pending?.url) {
+                    report(pending.url, pending.userCode);
+                    await notifyLoginUrl(server, pending.url, pending.userCode);
 
                     return { done: true };
                 }
@@ -154,10 +154,12 @@ async function notifyLogin(server: string): Promise<void> {
  * way back is a fresh login, which registers another OAuth client and invalidates the
  * window that may still be open. Clicking the body, or the button, re-opens the same one.
  */
-async function notifyLoginUrl(server: string, url: string): Promise<void> {
+async function notifyLoginUrl(server: string, url: string, userCode?: string): Promise<void> {
     await sendNotification({
         title: "MCP login needed",
-        message: `${server} is waiting for you to sign in. Click to open the login page.`,
+        message: userCode
+            ? `${server} is waiting. Open the login page and enter ${userCode}.`
+            : `${server} is waiting for you to sign in. Click to open the login page.`,
         subtitle: new URL(url).host,
         group: "mcp-gateway-login",
         id: notificationId(server),

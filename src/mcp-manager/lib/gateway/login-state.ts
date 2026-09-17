@@ -11,14 +11,35 @@ import { existsSync, mkdirSync, readFileSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
-import { buildPidRecord, inspectPidFile, type PidRecord } from "@genesiscz/utils/process/pidfile";
+import {
+    buildPidRecord,
+    classifyPidRecord,
+    inspectPidFile,
+    type PidRecord,
+    parsePidRecord,
+} from "@genesiscz/utils/process/pidfile";
+import { withFileLock } from "@genesiscz/utils/storage/file-lock";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/storage";
 import { mcpManagerDir } from "../auth/paths.ts";
 
 export interface PendingLogin {
     server: string;
     url?: string;
+    userCode?: string;
     identity: PidRecord;
+}
+
+export interface PendingLoginWrite {
+    server: string;
+    url?: string;
+    userCode?: string;
+    pid?: number;
+}
+
+interface PendingPayload {
+    server: string;
+    url?: string;
+    userCode?: string;
 }
 
 export function pendingLoginDir(): string {
@@ -29,51 +50,104 @@ export function pendingLoginPath(server: string): string {
     return join(pendingLoginDir(), `${encodeURIComponent(server)}.json`);
 }
 
-export function writePendingLogin(state: { server: string; url?: string; pid?: number }): void {
+export async function writePendingLogin(state: PendingLoginWrite): Promise<void> {
     mkdirSync(pendingLoginDir(), { recursive: true, mode: 0o700 });
-    const identity = buildPidRecord(state.pid);
-    const record = {
-        server: state.server,
-        ...(state.url === undefined ? {} : { url: state.url }),
-        ...identity,
-    };
-    atomicWriteFileSync(pendingLoginPath(state.server), `${SafeJSON.stringify(record, null, 2)}\n`, { mode: 0o600 });
+    const path = pendingLoginPath(state.server);
+
+    // Parent spawn and the detached child both write this file. The same-pid URL
+    // merge is only correct if that read-modify-write cannot interleave.
+    await withFileLock(`${path}.lock`, async () => {
+        const identity = buildPidRecord(state.pid);
+        let url = state.url;
+        let userCode = state.userCode;
+
+        if (url === undefined || userCode === undefined) {
+            const existing = readPendingFile(path);
+
+            if (existing?.identity.pid === identity.pid) {
+                url ??= existing.url;
+                userCode ??= existing.userCode;
+            }
+        }
+
+        const record = {
+            server: state.server,
+            ...(url === undefined ? {} : { url }),
+            ...(userCode === undefined ? {} : { userCode }),
+            ...identity,
+        };
+        atomicWriteFileSync(path, `${SafeJSON.stringify(record, null, 2)}\n`, { mode: 0o600 });
+    });
 }
 
-export function clearPendingLogin(server: string): void {
+/**
+ * Remove the pending-login file. When `ownerPid` is set, leave a record owned by
+ * a different process — a completing login must not delete a replacement.
+ */
+export function clearPendingLogin(server: string, ownerPid?: number): void {
     const path = pendingLoginPath(server);
+    const snapshot = readFileIfPresent(path);
 
-    if (existsSync(path)) {
-        unlinkSync(path);
+    if (snapshot === undefined) {
+        return;
     }
+
+    if (ownerPid !== undefined) {
+        const identity = parsePidRecord(snapshot);
+
+        if (!identity || identity.pid !== ownerPid) {
+            logger.info(
+                { server, ownerPid, pid: identity?.pid },
+                "pending-login belongs to another process; not clearing"
+            );
+
+            return;
+        }
+    }
+
+    const current = readFileIfPresent(path);
+
+    if (current !== snapshot) {
+        logger.info({ server, ownerPid }, "pending-login was replaced; not clearing");
+
+        return;
+    }
+
+    unlinkSync(path);
 }
 
 /**
  * Remove a pending-login file whose pid is gone, foreign, or whose payload is unusable.
  * Named so a `read*` cannot be mistaken for a diagnostic that mutates durable state.
+ * Deletes only if the bytes classified as stale are still the bytes on disk.
  */
 export function clearStalePendingLogin(server: string): boolean {
     const path = pendingLoginPath(server);
+    const snapshot = readFileIfPresent(path);
 
-    if (!existsSync(path)) {
+    if (snapshot === undefined) {
         return false;
     }
 
-    const state = inspectPidFile(path);
-
-    if (state.status === "live" || state.status === "unverified") {
-        const payload = readPendingPayload(path);
-
-        if (payload?.server === server) {
-            return false;
-        }
+    if (isLivePending(snapshot, server)) {
+        return false;
     }
 
-    logger.info(
-        { server, status: state.status, pid: "pid" in state ? state.pid : undefined },
-        "pending-login record is stale; removing it"
-    );
-    clearPendingLogin(server);
+    logger.info({ server }, "pending-login record is stale; removing it");
+
+    const current = readFileIfPresent(path);
+
+    if (current === undefined) {
+        return false;
+    }
+
+    if (current !== snapshot) {
+        logger.info({ server }, "pending-login was replaced; not removing");
+
+        return false;
+    }
+
+    unlinkSync(path);
 
     return true;
 }
@@ -96,13 +170,59 @@ export function readPendingLogin(server: string): PendingLogin | undefined {
     return {
         server: payload.server,
         url: payload.url,
+        userCode: payload.userCode,
         identity: state.record,
     };
 }
 
-function readPendingPayload(path: string): { server: string; url?: string } | undefined {
+function isLivePending(snapshot: string, server: string): boolean {
+    const record = parsePidRecord(snapshot);
+
+    if (!record) {
+        return false;
+    }
+
+    const identity = classifyPidRecord(record);
+
+    if (identity.status !== "live" && identity.status !== "unverified") {
+        return false;
+    }
+
+    const payload = parsePendingPayload(snapshot);
+
+    return payload?.server === server;
+}
+
+function readPendingFile(path: string): (PendingPayload & { identity: PidRecord }) | undefined {
+    const raw = readFileIfPresent(path);
+
+    if (raw === undefined) {
+        return undefined;
+    }
+
+    const identity = parsePidRecord(raw);
+    const payload = parsePendingPayload(raw);
+
+    if (!identity || !payload) {
+        return undefined;
+    }
+
+    return { ...payload, identity };
+}
+
+function readPendingPayload(path: string): PendingPayload | undefined {
+    const raw = readFileIfPresent(path);
+
+    if (raw === undefined) {
+        return undefined;
+    }
+
+    return parsePendingPayload(raw);
+}
+
+function parsePendingPayload(raw: string): PendingPayload | undefined {
     try {
-        const parsed: unknown = SafeJSON.parse(readFileSync(path, "utf8"), { strict: true });
+        const parsed: unknown = SafeJSON.parse(raw, { strict: true });
 
         if (!parsed || typeof parsed !== "object") {
             return undefined;
@@ -118,7 +238,25 @@ function readPendingPayload(path: string): { server: string; url?: string } | un
             return undefined;
         }
 
-        return { server: record.server, url: record.url };
+        if (record.userCode !== undefined && typeof record.userCode !== "string") {
+            return undefined;
+        }
+
+        return { server: record.server, url: record.url, userCode: record.userCode };
+    } catch (error) {
+        logger.debug({ error }, "pending-login payload is unreadable");
+
+        return undefined;
+    }
+}
+
+function readFileIfPresent(path: string): string | undefined {
+    if (!existsSync(path)) {
+        return undefined;
+    }
+
+    try {
+        return readFileSync(path, "utf8");
     } catch (error) {
         logger.debug({ path, error }, "pending-login file is unreadable");
 
