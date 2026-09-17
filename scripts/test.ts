@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 import { cpus } from "node:os";
 import { dirname, join } from "node:path";
-import { profileArgs } from "./test-args";
+import { maxRunMs, profileArgs } from "./test-args";
 import { diagnose, lockStamp, STAMP_FILE } from "./test-deps";
 
 /**
@@ -384,30 +384,9 @@ const hasExplicitPaths = args.some((arg) => !arg.startsWith("-"));
  * runner, so fifteen minutes only ever fires on a real stall.
  * `GENESIS_TOOLS_TEST_MAX_MINUTES` raises it, and 0 turns it off.
  */
-const DEFAULT_MAX_MINUTES = 15;
 
 // Set once the tripwire has killed a phase, so finish() withholds the marker.
 let stalled = false;
-
-function maxRunMs(): number {
-    const raw = process.env.GENESIS_TOOLS_TEST_MAX_MINUTES;
-
-    if (raw == null || raw === "") {
-        return DEFAULT_MAX_MINUTES * 60_000;
-    }
-
-    const minutes = Number(raw);
-    if (!Number.isFinite(minutes)) {
-        warn(`GENESIS_TOOLS_TEST_MAX_MINUTES=${raw} is not a number — using ${DEFAULT_MAX_MINUTES}m`);
-        return DEFAULT_MAX_MINUTES * 60_000;
-    }
-
-    if (minutes <= 0) {
-        return 0;
-    }
-
-    return minutes * 60_000;
-}
 
 async function runBunTest(testArgs: string[]): Promise<number> {
     const proc = Bun.spawn(["bun", "test", ...testArgs], {
@@ -415,7 +394,7 @@ async function runBunTest(testArgs: string[]): Promise<number> {
         stdio: ["inherit", "inherit", "inherit"],
         env: testEnv,
     });
-    const ceiling = maxRunMs();
+    const ceiling = maxRunMs(process.env.GENESIS_TOOLS_TEST_MAX_MINUTES, warn);
 
     if (ceiling === 0) {
         return await proc.exited;
