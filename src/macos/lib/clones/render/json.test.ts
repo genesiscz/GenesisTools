@@ -8,7 +8,7 @@ const measure: MeasureReport = {
     nodeModulesMode: false,
     minReal: 10485760,
     tree: [],
-    totals: { logical: 1000, allocated: 38700000000, real: 2100000000, overcount: 18.43 },
+    totals: { logical: 1000, allocated: 38700000000, real: 2100000000, uniqueAllocated: 9800000000, overcount: 18.43 },
     cloneAnalysis: {
         families: 1,
         clonedFiles: 3402,

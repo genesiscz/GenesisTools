@@ -1,6 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { basename, dirname, join, relative, resolve } from "node:path";
+import { scanWithCFfi } from "@app/du/lib/engine";
 import { formatBytes } from "@genesiscz/utils/format";
 import {
     type DiskUsage,
@@ -14,6 +15,7 @@ import { logger } from "@genesiscz/utils/logger";
 import { Stopwatch } from "@genesiscz/utils/Stopwatch";
 import { passesGlobs } from "./filters";
 import { resolveKeepPartners, spawnCacheCommand } from "./keep-partners";
+import { clonesProfile } from "./profile";
 import type { CloneAnalysis, DirNode, MeasureReport } from "./render/types";
 
 const log = logger.child({ component: "clones:orchestrator" });
@@ -31,6 +33,9 @@ export interface BuildMeasureArgs {
      *  default — the probe can take seconds on large caches and is purely
      *  informational (doesn't change reclaim totals). Wire from `--show-partners`. */
     probePartners?: boolean;
+    /** Skip the du extent scan (`--no-unique`). Halves a `measure` on a huge tree,
+     *  at the cost of the one figure that answers "how big is this really". */
+    skipUnique?: boolean;
 }
 
 /** Resolve scan roots: explicit → configured watchedDirs → cwd (spec §1). */
@@ -569,6 +574,60 @@ function sortTree(nodes: DirNode[], by: "overcount" | "real" | "du"): DirNode[] 
     return [...nodes].sort((a, b) => key(b) - key(a)).map((n) => ({ ...n, children: sortTree(n.children, by) }));
 }
 
+/**
+ * Clone-deduped on-disk size, from the `tools du` extent engine.
+ *
+ * PRIVATESIZE alone answers "what does deleting return", which is 0 for a tree
+ * whose files all clone each other — true, and useless as a size. The extent
+ * merge answers "what does this actually occupy". Both are reported; neither is
+ * a substitute for the other. Roots are summed independently, so two roots that
+ * clone-share with each other are counted twice here; that is the same
+ * convention `allocated` already uses for this report.
+ *
+ * 🛑 This is a SECOND full walk of every root, on top of gatherEnrichedRecords.
+ * Measured: 119-204 ms on a 40 k-file tree, and `du clonesize` over 5.8 M files
+ * takes ~195 s, so on a tree that size this roughly doubles a read-only
+ * `measure`. `--no-unique` skips it. See docs/benchmarks-du.md (2026-09-16).
+ *
+ * It also cannot honour include/exclude globs: the du engine prunes by absolute
+ * subtree, not by glob, so a filtered run would report a number computed over a
+ * DIFFERENT file set than `allocated` and the two would silently disagree.
+ * Verified on a Pods tree: excluding one framework subtree moved allocated by
+ * 20,480 B and left uniqueAllocated byte-identical. Filtered runs return null.
+ */
+function measureUniqueAllocated(args: BuildMeasureArgs): number | null {
+    const filtersActive = (args.include?.length ?? 0) > 0 || (args.exclude?.length ?? 0) > 0;
+    if (filtersActive) {
+        log.debug(
+            { roots: args.roots },
+            "include/exclude set; unique size omitted rather than computed over a different file set"
+        );
+        return null;
+    }
+
+    const end = clonesProfile.start("measure.du-engine");
+    try {
+        return measureUniqueAllocatedInner(args.roots);
+    } finally {
+        end();
+    }
+}
+
+function measureUniqueAllocatedInner(roots: string[]): number | null {
+    let total = 0;
+    for (const root of roots) {
+        try {
+            const r = scanWithCFfi({ path: root });
+            total += r.unique_allocated_bytes ?? r.unique_bytes;
+        } catch (err) {
+            log.debug({ err, root }, "du extent engine unavailable; unique size omitted");
+            return null;
+        }
+    }
+
+    return total;
+}
+
 export function buildMeasureReport(args: BuildMeasureArgs): MeasureReport {
     const sw = new Stopwatch();
     const totalsAgg: DiskUsage = {
@@ -630,6 +689,7 @@ export function buildMeasureReport(args: BuildMeasureArgs): MeasureReport {
     }
 
     const totalReal = privateUnknown ? null : totalsAgg.private;
+    const uniqueAllocated = args.skipUnique ? null : measureUniqueAllocated(args);
     const totalOvercount = totalReal !== null && totalReal > 0 ? totalsAgg.allocated / totalReal : null;
     const fs = freeDiskSpace(args.roots[0]);
     const sorted = args.breakdown ? sortTree(tree, args.sort ?? "overcount") : [];
@@ -674,6 +734,7 @@ export function buildMeasureReport(args: BuildMeasureArgs): MeasureReport {
             logical: totalsAgg.logical,
             allocated: totalsAgg.allocated,
             real: totalReal,
+            uniqueAllocated,
             overcount: totalOvercount,
         },
         cloneAnalysis,

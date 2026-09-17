@@ -29,7 +29,13 @@ const measure: MeasureReport = {
             sharedNote: "3,402 files cloned from ~/.bun/install/cache → 0 B real",
         },
     ],
-    totals: { logical: 14_000_000_000, allocated: 14_000_000_000, real: 3_580_000_000, overcount: 3.91 },
+    totals: {
+        logical: 14_000_000_000,
+        allocated: 14_000_000_000,
+        real: 3_580_000_000,
+        uniqueAllocated: 4_200_000_000,
+        overcount: 3.91,
+    },
     cloneAnalysis: {
         families: 2,
         clonedFiles: 3402,

@@ -28,7 +28,13 @@ export interface DirNode {
 export interface MeasureTotals {
     logical: number;
     allocated: number;
+    /** Σ per-file PRIVATESIZE: the floor, what deleting frees while everything else stays.
+     *  Reads 0 for a tree whose files all share with each other, which is correct but not
+     *  the number most people mean by "how big is this". */
     real: number | null;
+    /** Clone-deduped allocated bytes from the du extent engine: what the tree actually
+     *  occupies once shared blocks are counted once. null when the engine could not run. */
+    uniqueAllocated: number | null;
     overcount: number | null;
 }
 

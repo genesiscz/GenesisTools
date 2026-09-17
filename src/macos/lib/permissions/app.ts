@@ -452,7 +452,7 @@ export function staleAppFacePids(psStdout: string, launcherPath: string): string
  * SIGTERM first, then SIGKILL for anyone still alive after {@link STALE_FACE_TERM_GRACE_MS}.
  */
 async function reapStaleAppFaces(step: (message: string) => void): Promise<void> {
-    const launcher = join(genesisAppBundlePath(), "Contents", "MacOS", GENESIS_APP_NAME);
+    const launcher = genesisAppLauncherPath();
     const listing = run(["ps", "-Ao", "pid=,args="]);
 
     if (listing.code !== 0) {
@@ -479,11 +479,15 @@ async function reapStaleAppFaces(step: (message: string) => void): Promise<void>
 
     await Bun.sleep(STALE_FACE_TERM_GRACE_MS);
 
-    const survivors = stale.filter((pid) => isProcessAlive(Number(pid)));
+    // A pid freed during the grace period can be reused, so classify the pids again instead of
+    // trusting liveness alone.
+    const recheck = run(["ps", "-Ao", "pid=,args="]);
+    const stillStale = new Set(recheck.code === 0 ? staleAppFacePids(recheck.stdout, launcher) : []);
+    const survivors = stale.filter((pid) => stillStale.has(pid) && isProcessAlive(Number(pid)));
 
     for (const pid of survivors) {
         try {
-            // pid-verified: live ps listing of stale GenesisTools faces
+            // pid-verified: re-read ps after the grace; still classified as a stale GenesisTools face
             process.kill(Number(pid), "SIGKILL");
             logger.info({ pid }, "escalated stale app-face to SIGKILL");
         } catch (err) {

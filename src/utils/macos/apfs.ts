@@ -91,7 +91,10 @@ function getLibc(): LibcExt | null {
             }
         }
 
-        for (const sName of ["statfs$INODE64", "statfs"]) {
+        // The $INODE64 variant exists only on x86_64; asking for it first on
+        // Apple silicon logs a TypeError stack before the plain symbol binds.
+        const statfsNames = process.arch === "arm64" ? ["statfs", "statfs$INODE64"] : ["statfs$INODE64", "statfs"];
+        for (const sName of statfsNames) {
             try {
                 sym.statfs = dlopen(candidate, { [sName]: statfsSig }).symbols[sName];
                 break;

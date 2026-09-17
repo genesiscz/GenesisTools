@@ -69,6 +69,8 @@ struct NotifyPostParams: Decodable {
 
 struct NotifyReplyParams: Decodable {
     var id: String
+    /// Directory the reply was stamped into at post time. Defaults to `notificationReplyDir()`.
+    var replyDir: String?
     /// Delete the reply after reading it, so a second caller cannot consume the same answer twice.
     var consume: Bool?
 }
@@ -281,6 +283,20 @@ func notificationReplyDir() -> String {
     (genesisHome() as NSString).appendingPathComponent(".genesis-tools/app/replies")
 }
 
+/// Notification ids are path components of the reply file. A slash or `..` would let `notify.reply`
+/// (and the click writer) read or write outside the reply directory, using the app's TCC grants.
+func isSafeNotificationId(_ id: String) -> Bool {
+    if id.isEmpty {
+        return false
+    }
+
+    if id.contains("/") || id.contains("\\") || id.contains("..") {
+        return false
+    }
+
+    return true
+}
+
 /// Fallback when a click arrives without a stamped home in `userInfo` (an old notification,
 /// or a raw `--rpc` that omitted `genesisHome`). Prefers `GENESIS_TOOLS_HOME` when this
 /// process inherited it — the `--rpc` poster does; a Launch Services relaunch does not.
@@ -306,6 +322,11 @@ private func resolvedGenesisHome(_ params: NotifyPostParams) -> String {
 }
 
 private func writeReply(notificationId: String, actionId: String, text: String?, userInfo: [AnyHashable: Any]) {
+    if !isSafeNotificationId(notificationId) {
+        logClick("reply write skipped: unsafe id")
+        return
+    }
+
     let dir: String
     if let stamped = userInfo["replyDir"] as? String, !stamped.isEmpty {
         dir = stamped
@@ -328,10 +349,9 @@ private func writeReply(notificationId: String, actionId: String, text: String?,
     do {
         try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
         let data = try JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys])
-        // Write to a temp name and rename, so a watcher never reads a half-written file.
-        let temp = "\(path).\(UUID().uuidString).tmp"
-        try data.write(to: URL(fileURLWithPath: temp))
-        _ = try FileManager.default.replaceItemAt(URL(fileURLWithPath: path), withItemAt: URL(fileURLWithPath: temp))
+        // .atomic writes a temp file and renames it, so a watcher never reads a half-written file
+        // and the first write does not need an existing original (`replaceItemAt` throws then).
+        try data.write(to: URL(fileURLWithPath: path), options: .atomic)
         logClick("reply written \(path) text=\(text ?? "-")")
     } catch {
         logClick("reply write FAILED for \(notificationId): \(error.localizedDescription)")
@@ -480,7 +500,11 @@ var quitAfterNotificationClick = true
 // MARK: - Methods
 
 private func post(_ params: NotifyPostParams) {
-    let identifier = params.id ?? UUID().uuidString
+    if let supplied = params.id, !supplied.isEmpty, !isSafeNotificationId(supplied) {
+        emitError(code: "params_invalid", message: "notify.post id must not contain a path", exitCode: 64)
+    }
+
+    let identifier = params.id.flatMap { $0.isEmpty ? nil : $0 } ?? UUID().uuidString
     let center = UNUserNotificationCenter.current()
 
     center.getNotificationSettings { settings in
@@ -700,7 +724,18 @@ private func describe(_ value: UNAlertStyle) -> String {
 /// Returns `{answered: false}` rather than an error when there is nothing: "not answered yet" is a
 /// normal state for a question, not a failure, and a caller polls or watches until it flips.
 private func readReply(_ params: NotifyReplyParams) {
-    let path = (notificationReplyDir() as NSString).appendingPathComponent("\(params.id).json")
+    guard isSafeNotificationId(params.id) else {
+        emitError(code: "params_invalid", message: "notify.reply id must not contain a path", exitCode: 64)
+    }
+
+    let dir: String
+    if let replyDir = params.replyDir, !replyDir.isEmpty {
+        dir = replyDir
+    } else {
+        dir = notificationReplyDir()
+    }
+
+    let path = (dir as NSString).appendingPathComponent("\(params.id).json")
 
     guard
         let data = FileManager.default.contents(atPath: path),

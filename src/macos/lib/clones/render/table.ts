@@ -1,4 +1,5 @@
 import { formatBytes } from "@genesiscz/utils/format";
+import { getGetattrlistbulkProbeFailure } from "@genesiscz/utils/macos/getattrlistbulk";
 import { escapeShellArg } from "@genesiscz/utils/string";
 import { formatTable } from "@genesiscz/utils/table";
 import pc from "picocolors";
@@ -70,7 +71,14 @@ export class TableRenderer implements CloneRenderer {
         lines.push(
             pc.bold(
                 `TOTAL  logical ${formatBytes(r.totals.logical)}  du ${formatBytes(r.totals.allocated)}  ` +
-                    `real ${realCell(r.totals.real)}  overcount ${overcountCell(r.totals.overcount)}`
+                    `unique ${realCell(r.totals.uniqueAllocated)}  frees ≥ ${realCell(r.totals.real)}  ` +
+                    `overcount ${overcountCell(r.totals.overcount)}`
+            )
+        );
+        lines.push(
+            pc.dim(
+                "unique = deduped on-disk size (shared blocks counted once) · " +
+                    "frees ≥ = what deleting returns while every clone partner stays"
             )
         );
         lines.push(
@@ -248,6 +256,15 @@ export class TableRenderer implements CloneRenderer {
                         `errors ${r.totals.errors}  reclaimed ${formatBytes(r.totals.bytesReclaimed)}`
                 )
             );
+            const probe = getGetattrlistbulkProbeFailure();
+            if (probe) {
+                lines.push(
+                    pc.yellow(
+                        `note   fast directory walk was OFF for this run: getattrlistbulk probe on ${probe.probeDir} ` +
+                            `failed (errno=${probe.errno ?? "?"}); every walk used readdir+stat instead`
+                    )
+                );
+            }
             if (r.state === "applied") {
                 lines.push(pc.dim(`tools macos clones optimize --rollback --process ${r.id}`));
             }

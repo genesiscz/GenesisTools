@@ -527,6 +527,7 @@ func cmdCaptureScreen() {
         try awaitResult { try await stream.stopCapture() }
     } catch {
         recorder.frameQueue.sync {}
+        errorExit("recording never stopped: \(error.localizedDescription)")
     }
     // Drain the frame queue so the last kept frame is on disk before the sheet is built.
     recorder.frameQueue.sync {}
@@ -587,7 +588,7 @@ func cmdCaptureScreen() {
 private func awaitResult<T>(timeoutSeconds: Double = 30, _ operation: @escaping () async throws -> T) throws -> T {
     let done = DispatchSemaphore(value: 0)
     var outcome: Result<T, Error>?
-    Task {
+    let task = Task {
         do {
             outcome = .success(try await operation())
         } catch {
@@ -596,6 +597,7 @@ private func awaitResult<T>(timeoutSeconds: Double = 30, _ operation: @escaping 
         done.signal()
     }
     if done.wait(timeout: .now() + timeoutSeconds) == .timedOut {
+        task.cancel()
         throw NSError(
             domain: "ax-tool",
             code: 75,

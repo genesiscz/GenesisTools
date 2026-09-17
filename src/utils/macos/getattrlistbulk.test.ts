@@ -1,11 +1,13 @@
-import { describe, expect, it } from "bun:test";
+import { afterEach, describe, expect, it } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+    __resetGetattrlistbulkProbeForTests,
     type BulkEntry,
     GetattrlistbulkUnsupportedError,
+    getGetattrlistbulkProbeFailure,
     isGetattrlistbulkSupported,
     iterDir,
     walkGetattrlistbulk,
@@ -127,5 +129,60 @@ describeOnDarwin("getattrlistbulk", () => {
         }
         expect(caught).not.toBe(null);
         expect(caught instanceof GetattrlistbulkUnsupportedError).toBe(false);
+    });
+});
+
+describeOnDarwin("getattrlistbulk feature probe", () => {
+    const einval = (): Error => {
+        const err = new Error("getattrlistbulk(/var/empty) failed, errno=22");
+        (err as Error & { errno?: number }).errno = 22;
+        return err;
+    };
+
+    afterEach(() => {
+        __resetGetattrlistbulkProbeForTests();
+    });
+
+    it("a one-off non-ENOTSUP error is retried, and the fast path stays on", () => {
+        let calls = 0;
+        __resetGetattrlistbulkProbeForTests((): Iterable<unknown> => {
+            calls++;
+            if (calls === 1) {
+                throw einval();
+            }
+
+            return [];
+        });
+        expect(isGetattrlistbulkSupported()).toBe(true);
+        expect(calls).toBe(2);
+        expect(getGetattrlistbulkProbeFailure()).toBeNull();
+        // memoized: no third probe
+        expect(isGetattrlistbulkSupported()).toBe(true);
+        expect(calls).toBe(2);
+    });
+
+    it("two non-ENOTSUP failures disable the fast path AND record why", () => {
+        let calls = 0;
+        __resetGetattrlistbulkProbeForTests((): Iterable<unknown> => {
+            calls++;
+            throw einval();
+        });
+        expect(isGetattrlistbulkSupported()).toBe(false);
+        expect(calls).toBe(2);
+        const failure = getGetattrlistbulkProbeFailure();
+        expect(failure).not.toBeNull();
+        expect(failure?.errno).toBe(22);
+        expect(failure?.probeDir).toBe("/var/empty");
+    });
+
+    it("ENOTSUP is final on the first probe and is not a recorded failure", () => {
+        let calls = 0;
+        __resetGetattrlistbulkProbeForTests((): Iterable<unknown> => {
+            calls++;
+            throw new GetattrlistbulkUnsupportedError("/var/empty");
+        });
+        expect(isGetattrlistbulkSupported()).toBe(false);
+        expect(calls).toBe(1);
+        expect(getGetattrlistbulkProbeFailure()).toBeNull();
     });
 });

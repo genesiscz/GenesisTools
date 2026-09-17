@@ -58,6 +58,9 @@ tools macos voice-memos list
 
 # Clones (APFS clone-aware disk usage; run bare for the guide)
 tools macos clones
+# Sizes come from the `tools du` extent engine (src/du/lib/engine.ts), so
+# `measure` and `tools du clonesize` cannot drift. This group adds what du
+# deliberately lacks: finding duplicates and writing clones back.
 tools macos clones measure ~/Projects/acme --show-partners
 tools macos clones duplicates ~/Projects/acme --node-modules
 tools macos clones reclaim plan --dir ~/Projects
