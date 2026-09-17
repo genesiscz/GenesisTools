@@ -114,3 +114,20 @@ test("adding a Swift source invalidates a receipt-backed binary", () => {
 
     expect(nativeNeedsBuild({ binary, sourceDir })).toBe(true);
 });
+
+test("changing bundled cursor artwork invalidates native build freshness", () => {
+    const sourceDir = mkdtempSync(join(tmpdir(), "control-build-resource-"));
+    const binary = join(sourceDir, ".build", "release", "ax-tool");
+    mkdirSync(join(sourceDir, "Sources"));
+    mkdirSync(join(sourceDir, "SnapshotSupport", "Resources"), { recursive: true });
+    mkdirSync(join(sourceDir, ".build", "release"), { recursive: true });
+    writeFileSync(join(sourceDir, "Package.swift"), "package");
+    writeFileSync(join(sourceDir, "Sources", "main.swift"), "print(1)");
+    writeFileSync(binary, "compiled");
+    const resource = join(sourceDir, "SnapshotSupport", "Resources", "CuaCursor.json");
+    writeFileSync(resource, "{}");
+    recordNativeBuild({ binary, sourceDir, before: captureNativeSources(sourceDir) });
+    expect(nativeNeedsBuild({ binary, sourceDir })).toBe(false);
+    writeFileSync(resource, '{"changed":true}');
+    expect(nativeNeedsBuild({ binary, sourceDir })).toBe(true);
+});

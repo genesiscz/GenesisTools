@@ -47,7 +47,7 @@ function sourceFiles(sourceDir: string): string[] {
             const path = join(directory, name);
             if (statSync(path).isDirectory()) {
                 visit(path);
-            } else if (path.endsWith(".swift")) {
+            } else if (path.endsWith(".swift") || relative(sourceDir, path).includes("/Resources/")) {
                 files.push(path);
             }
         }

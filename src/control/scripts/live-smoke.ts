@@ -7,6 +7,7 @@ import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
 import { classifyPid } from "@genesiscz/utils/process-identity";
+import { buildPreflightReport, runCapturePlan } from "../lib/capture-runner";
 import { assistTask } from "../lib/decision/assist";
 import { judgeOutcome } from "../lib/decision/decisions";
 import { fillForm } from "../lib/decision/fill";
@@ -30,7 +31,7 @@ interface State {
     error?: string;
     snapshot: string;
     elements: Element[];
-    window: { id: number };
+    window: { id: number; x: number; y: number; width: number; height: number };
     windows?: { index: number }[];
     screenshot: { path: string };
 }
@@ -38,11 +39,12 @@ interface State {
 const root = resolve(import.meta.dir, "../../..");
 const backgroundOnly = Bun.argv.includes("--background-only");
 const semantic = Bun.argv.includes("--semantic");
+const cursorProof = Bun.argv.includes("--cursor-proof");
 const verifyPointer = Bun.argv.includes("--verify-pointer");
 
 if (Bun.argv.includes("--help")) {
     out.print(
-        "Usage: bun src/control/scripts/live-smoke.ts [--background-only] [--verify-pointer] [--semantic]\n--semantic tests Jev fill/assist/judge with TYPESAFE_API_KEY (paid requests).\n--background-only avoids focus/keyboard tests and opens the fixture in the background.\n--verify-pointer asserts the physical pointer stays unchanged; keep mouse and keyboard idle during measurement.\nBuilds and opens a temporary two-window test app. Exercises see/act, then terminates only that app. Requires Accessibility and Screen Recording. Uses no Codex, Sky or Peekaboo.\n"
+        "Usage: bun src/control/scripts/live-smoke.ts [--background-only] [--verify-pointer] [--semantic] [--cursor-proof]\n--cursor-proof records five seconds of native cursor feedback on a disposable fixture (foreground).\n--semantic tests Jev fill/assist/judge with TYPESAFE_API_KEY (paid requests).\n--background-only avoids focus/keyboard tests and opens the fixture in the background.\n--verify-pointer asserts the physical pointer stays unchanged; keep mouse and keyboard idle during measurement.\nBuilds and opens a temporary two-window test app. Exercises see/act, then terminates only that app. Requires Accessibility and Screen Recording. Uses no Codex, Sky or Peekaboo.\n"
     );
     process.exit(0);
 }
@@ -101,6 +103,7 @@ const launcher = Bun.spawn(
         "--args",
         ...(backgroundOnly ? ["--background"] : []),
         ...(semantic ? ["--semantic"] : []),
+        ...(cursorProof ? ["--cursor-proof"] : []),
     ],
     {
         env: env.getProcessEnv(),
@@ -196,6 +199,48 @@ try {
     checks.push("multiwindow inspection refuses an implicit selection");
 
     let state = await see();
+    if (cursorProof) {
+        buildPreflightReport(String(fixturePid));
+        if (!state.elements.some((row) => row.AXIdentifier === "cursor-proof")) {
+            windowIndex = 1;
+            state = await see();
+        }
+        const { x, y, width, height } = state.window;
+        const proof = await runCapturePlan({
+            capture: {
+                backend: "native",
+                mode: "region",
+                region: [x, y, width + 180, height].join(","),
+                duration: 5,
+                activeFps: 15,
+                idleFps: 5,
+                threshold: 0.05,
+                videoOut: join(directory, "cursor-proof.mp4"),
+            },
+            actions: [
+                { atMs: 700, do: "ax-press", app: String(fixturePid), axId: "cursor-proof" },
+                {
+                    atMs: 1900,
+                    do: "ax-set",
+                    app: String(fixturePid),
+                    axId: "cursor-proof-input",
+                    value: "Animated cursor",
+                },
+                { atMs: 3400, do: "ax-press", app: String(fixturePid), axId: "cursor-proof" },
+            ],
+        });
+        assert.equal(proof.captureFailed, false, SafeJSON.stringify(proof));
+        assert.ok(
+            proof.actions.every((action) => action.ok),
+            SafeJSON.stringify(proof)
+        );
+        const proofPath = join(directory, "cursor-proof.json");
+        await Bun.write(proofPath, SafeJSON.stringify(proof, null, 2));
+        out.result({ cursorProof: proofPath, sessionDir: proof.sessionDir, warnings: proof.warnings });
+        checks.push("Cua cursor animation recorded during native press/set/press on the dedicated fixture");
+        windowIndex = 0;
+        state = await see();
+    }
     if (semantic) {
         const evaluate = await createEvaluator({ provider: "typesafe" });
         const driver = new NativeControlDriver({ app: String(fixturePid), windowId: state.window.id });
@@ -235,244 +280,252 @@ try {
         await act(state, find(state, "input").index, "set", ["--value", "seed"]);
         state = await see();
     }
-    const duplicates = state.elements.filter((element) => element.AXTitle === "Increment");
-    assert.equal(duplicates.length, 2);
-    assert.ok(duplicates.every((element) => !element.AXIdentifier));
-    await act(state, duplicates[1].index, "press");
-    const stale = await act(state, duplicates[1].index, "press", [], false);
-    assert.match(stale.error ?? "", /UI changed/);
-    state = await see();
-    assert.equal(find(state, "counter").AXValue, "10");
-    checks.push("anonymous duplicate button resolves exactly; stale replay refuses before increment");
-    const other = await run(
-        ["act", "--app", String(process.pid), "--snapshot", state.snapshot, "--element", "0", "--action", "press"],
-        false
-    );
-    assert.match(other.error ?? "", /different app|launch identity|app not found|running process/);
-    checks.push("wrong app does not receive the action");
-
-    const invalid = await act(state, 99999, "press", [], false);
-    assert.match(invalid.error ?? "", /index outside/);
-    const disabled = state.elements.find((element) => element.AXTitle === "Disabled") as
-        | (Element & { x: number; y: number; width: number; height: number })
-        | undefined;
-    assert.ok(disabled);
-    await act(state, disabled.index, "press", [], false);
-    const disabledCoordinate = await run(
-        [
-            "act",
-            "--app",
-            String(fixturePid),
-            "--snapshot",
-            state.snapshot,
-            "--action",
-            "move",
-            "--background",
-            "--coords",
-            `${disabled.x + disabled.width / 2},${disabled.y + disabled.height / 2}`,
-        ],
-        false
-    );
-    assert.match(disabledCoordinate.error ?? "", /element is disabled/);
-    assert.equal(find(await see(), "counter").AXValue, "10");
-    checks.push("invalid index plus element and cursor coordinate actions refuse a disabled button");
-
-    windowIndex = 1;
-    const second = await see();
-    assert.notEqual(second.window.id, state.window.id);
-    assert.equal(find(second, "counter").AXValue, "0");
-    checks.push("identically titled second window stays untouched");
-    if (!backgroundOnly) {
-        await act(second, 0, "focus");
-    }
-    windowIndex = 0;
-    selectedWindowId = state.window.id;
-    state = await see();
-    const button = state.elements.find((element) => element.AXTitle === "Increment");
-    assert.ok(button);
-    const wrongWindow = await act(state, button.index, "click", [], false);
-    const pointerBeforeResult = await command([native, "snapshot"]);
-    const pointerBefore = SafeJSON.parse(pointerBeforeResult.stdout, { strict: true }) as {
-        mouse: { x: number; y: number };
-        pid: number;
-    };
-    const targetButton = state.elements.find((element) => element.AXTitle === "Increment") as
-        | (Element & { x: number; y: number; width: number; height: number })
-        | undefined;
-    assert.ok(targetButton);
-    await run([
-        "act",
-        "--app",
-        String(fixturePid),
-        "--snapshot",
-        state.snapshot,
-        "--action",
-        "click",
-        "--background",
-        "--coords",
-        `${targetButton.x + targetButton.width / 2},${targetButton.y + targetButton.height / 2}`,
-    ]);
-    const pointerAfterResult = await command([native, "snapshot"]);
-    const pointerAfter = SafeJSON.parse(pointerAfterResult.stdout, { strict: true }) as {
-        mouse: { x: number; y: number };
-        pid: number;
-    };
-    if (verifyPointer) {
-        assert.deepEqual(pointerAfter.mouse, pointerBefore.mouse);
-    }
-    assert.equal(pointerAfter.pid, pointerBefore.pid);
-    state = await see();
-    assert.equal(find(state, "counter").AXValue, "11");
-    if (backgroundOnly) {
-        const stillWrongWindow = await act(state, button.index, "click", [], false);
-        assert.match(stillWrongWindow.error ?? "", /wrong frontmost app\/window/);
-    }
-    checks.push(
-        verifyPointer
-            ? "background coordinate click preserves the idle pointer and foreground app"
-            : "background coordinate click activates the control and preserves the foreground app"
-    );
-    assert.match(wrongWindow.error ?? "", /wrong frontmost app\/window/);
-    checks.push("click refuses when another window of the same app is focused");
-
-    if (backgroundOnly) {
-        await act(state, button.index, "click", ["--background", "--button", "right"]);
+    if (!cursorProof) {
+        const duplicates = state.elements.filter((element) => element.AXTitle === "Increment");
+        assert.equal(duplicates.length, 2);
+        assert.ok(duplicates.every((element) => !element.AXIdentifier));
+        await act(state, duplicates[1].index, "press");
+        const stale = await act(state, duplicates[1].index, "press", [], false);
+        assert.match(stale.error ?? "", /UI changed/);
         state = await see();
-        assert.equal(find(state, "counter").AXValue, "111");
-        checks.push("background right-click delivers the secondary mouse button");
-        const drag = find(state, "drag") as Element & { x: number; y: number; width: number; height: number };
-        await act(state, drag.index, "drag", [
-            "--background",
-            "--to",
-            `${drag.x + drag.width / 2 + 30},${drag.y + drag.height / 2}`,
-        ]);
-        state = await see();
-        assert.equal(find(state, "dragStatus").AXValue, "dragged");
-        checks.push("window-addressed drag delivers down, movement and release");
-        const scrollChild = state.elements.find(
-            (element) => element.role === "AXStaticText" && element.AXValue === "Row 0"
+        assert.equal(find(state, "counter").AXValue, "10");
+        checks.push("anonymous duplicate button resolves exactly; stale replay refuses before increment");
+        const other = await run(
+            ["act", "--app", String(process.pid), "--snapshot", state.snapshot, "--element", "0", "--action", "press"],
+            false
         );
-        assert.ok(scrollChild);
-        const before = state.elements.find((element) => element.role === "AXScrollBar")?.AXValue;
-        await act(state, scrollChild.index, "scroll", ["--background", "--direction", "down", "--pages", "1"]);
-        state = await see();
-        const afterChildPage = state.elements.find((element) => element.role === "AXScrollBar")?.AXValue;
-        assert.notEqual(afterChildPage, before);
-        assertOnePageScrollFraction(afterChildPage);
-        checks.push("background page scroll from a child uses its receiving 160px viewport");
-        await act(state, find(state, "input").index, "select", ["--text", "ee"]);
-        state = await see();
-        assert.equal((find(state, "input") as Element & { AXSelectedText?: string }).AXSelectedText, "ee");
-        checks.push("semantic selection selects the unique observed text");
-    }
+        assert.match(other.error ?? "", /different app|launch identity|app not found|running process/);
+        checks.push("wrong app does not receive the action");
 
-    if (!backgroundOnly) {
-        await act(state, 0, "focus");
-        state = await see();
-        await act(state, find(state, "input").index, "set", ["--value", "checked"]);
-        state = await see();
-        assert.equal(find(state, "input").AXValue, "checked");
-        await act(state, find(state, "input").index, "focus");
-        state = await see();
-        await act(state, find(state, "input").index, "key", ["--keys", "cmd,a"]);
-        state = await see();
-        await act(state, find(state, "input").index, "type", ["--text", "Příliš žluťoučký 🐈"]);
-        state = await see();
-        assert.equal(find(state, "input").AXValue, "Příliš žluťoučký 🐈");
-        checks.push("AX set read-back, explicit focus, targeted key and Unicode typing update only the test input");
-        await act(state, find(state, "input").index, "select", ["--text", "Příliš žluťoučký 🐈"]);
-        state = await see();
-        const pasted = await act(state, find(state, "input").index, "paste", [
-            "--text",
-            "pasted 🐈",
-            "--format",
-            "text",
-        ]);
-        assert.equal((pasted as State & { clipboardRestore?: string }).clipboardRestore, "restored");
-        state = await see();
-        assert.equal(find(state, "input").AXValue, "pasted 🐈");
-        checks.push("paste replaces the selected text and restores the clipboard");
-        await act(state, find(state, "input").index, "select", ["--text", "pasted 🐈"]);
-        state = await see();
-        await act(state, find(state, "input").index, "type", ["--text", "--background"]);
-        state = await see();
-        assert.equal(find(state, "input").AXValue, "--background");
-        checks.push("option-looking text stays literal input and cannot enable background dispatch");
-        const clickButton = state.elements.find((element) => element.AXTitle === "Increment");
-        assert.ok(clickButton);
-        await act(state, clickButton.index, "click");
-        state = await see();
-        assert.equal(find(state, "counter").AXValue, "12");
-        const doubleButton = state.elements.find((element) => element.AXTitle === "Increment");
-        assert.ok(doubleButton);
-        await act(state, doubleButton.index, "click", ["--double"]);
-        state = await see();
-        assert.equal(find(state, "counter").AXValue, "14");
-        const performButton = state.elements.find((element) => element.AXTitle === "Increment");
-        assert.ok(performButton);
-        await act(state, performButton.index, "perform", ["--ax-action", "AXPress"]);
-        state = await see();
-        assert.equal(find(state, "counter").AXValue, "15");
-        checks.push("physical click, double-click and exposed perform action change the expected counter");
+        const invalid = await act(state, 99999, "press", [], false);
+        assert.match(invalid.error ?? "", /index outside/);
+        const disabled = state.elements.find((element) => element.AXTitle === "Disabled") as
+            | (Element & { x: number; y: number; width: number; height: number })
+            | undefined;
+        assert.ok(disabled);
+        await act(state, disabled.index, "press", [], false);
+        const disabledCoordinate = await run(
+            [
+                "act",
+                "--app",
+                String(fixturePid),
+                "--snapshot",
+                state.snapshot,
+                "--action",
+                "move",
+                "--background",
+                "--coords",
+                `${disabled.x + disabled.width / 2},${disabled.y + disabled.height / 2}`,
+            ],
+            false
+        );
+        assert.match(disabledCoordinate.error ?? "", /element is disabled/);
+        assert.equal(find(await see(), "counter").AXValue, "10");
+        checks.push("invalid index plus element and cursor coordinate actions refuse a disabled button");
 
-        const offscreen = state.elements.find((element) => element.AXTitle === "Offscreen");
-        assert.ok(offscreen && !offscreen.visible);
-        const clipped = await act(state, offscreen.index, "click", [], false);
-        assert.match(clipped.error ?? "", /outside.*clip/);
-        const coordinateRow = state.elements.find(
-            (element) => element.role === "AXStaticText" && element.AXValue === "Row 0"
-        ) as (Element & { x: number; y: number; width: number; height: number }) | undefined;
-        assert.ok(coordinateRow);
-        const scrollbar = state.elements.find((element) => element.role === "AXScrollBar");
-        assert.ok(scrollbar);
-        const beforeScroll = scrollbar.AXValue;
-        const pageResult = await command([
-            native,
+        windowIndex = 1;
+        const second = await see();
+        assert.notEqual(second.window.id, state.window.id);
+        assert.equal(find(second, "counter").AXValue, "0");
+        checks.push("identically titled second window stays untouched");
+        if (!backgroundOnly) {
+            await act(second, 0, "focus");
+        }
+        windowIndex = 0;
+        selectedWindowId = state.window.id;
+        state = await see();
+        const button = state.elements.find((element) => element.AXTitle === "Increment");
+        assert.ok(button);
+        const wrongWindow = await act(state, button.index, "click", [], false);
+        const pointerBeforeResult = await command([native, "snapshot"]);
+        const pointerBefore = SafeJSON.parse(pointerBeforeResult.stdout, { strict: true }) as {
+            mouse: { x: number; y: number };
+            pid: number;
+        };
+        const targetButton = state.elements.find((element) => element.AXTitle === "Increment") as
+            | (Element & { x: number; y: number; width: number; height: number })
+            | undefined;
+        assert.ok(targetButton);
+        await run([
             "act",
             "--app",
             String(fixturePid),
             "--snapshot",
             state.snapshot,
             "--action",
-            "scroll",
+            "click",
+            "--background",
             "--coords",
-            `${coordinateRow.x + coordinateRow.width / 2},${coordinateRow.y + coordinateRow.height / 2}`,
-            "--direction",
-            "down",
+            `${targetButton.x + targetButton.width / 2},${targetButton.y + targetButton.height / 2}`,
         ]);
-        const page = SafeJSON.parse(pageResult.stdout, { strict: true }) as State;
-        assert.equal(pageResult.exit, page.ok ? 0 : 1);
-        state = await see();
-        const afterPage = state.elements.find((element) => element.role === "AXScrollBar")?.AXValue;
-        assert.equal(page.ok, true, page.error);
-        assert.notEqual(afterPage, beforeScroll);
-        assertOnePageScrollFraction(afterPage);
-        checks.push("coordinate page scroll uses the receiving 160px viewport");
-        await act(state, find(state, "scroll").index, "scroll", ["--direction", "down", "--pixels", "80"]);
-        state = await see();
-        assert.notEqual(state.elements.find((element) => element.role === "AXScrollBar")?.AXValue, afterPage);
-        assert.equal(find(state, "counter").AXValue, "15");
-        checks.push("offscreen click refuses; explicitly requested pixel scroll changes the viewport");
-
-        const expiredData = SafeJSON.parse(Buffer.from(state.snapshot, "base64").toString("utf8")) as {
-            created: number;
+        const pointerAfterResult = await command([native, "snapshot"]);
+        const pointerAfter = SafeJSON.parse(pointerAfterResult.stdout, { strict: true }) as {
+            mouse: { x: number; y: number };
+            pid: number;
         };
-        expiredData.created = 1;
-        const expiredState = { ...state, snapshot: Buffer.from(SafeJSON.stringify(expiredData)).toString("base64") };
-        const expired = await act(expiredState, 0, "focus", [], false);
-        assert.match(expired.error ?? "", /expired/);
-        checks.push("expired snapshot refuses before focus");
+        if (verifyPointer) {
+            assert.deepEqual(pointerAfter.mouse, pointerBefore.mouse);
+        }
+        assert.equal(pointerAfter.pid, pointerBefore.pid);
+        state = await see();
+        assert.equal(find(state, "counter").AXValue, "11");
+        if (backgroundOnly) {
+            const stillWrongWindow = await act(state, button.index, "click", [], false);
+            assert.match(stillWrongWindow.error ?? "", /wrong frontmost app\/window/);
+        }
+        checks.push(
+            verifyPointer
+                ? "background coordinate click preserves the idle pointer and foreground app"
+                : "background coordinate click activates the control and preserves the foreground app"
+        );
+        assert.match(wrongWindow.error ?? "", /wrong frontmost app\/window/);
+        checks.push("click refuses when another window of the same app is focused");
 
-        const lastShot = state.screenshot.path;
-        const close = state.elements.find((element) => element.AXSubrole === "AXCloseButton");
-        assert.ok(close);
-        await act(state, close.index, "press");
-        const closed = await act(state, 0, "get", [], false);
-        assert.match(closed.error ?? "", /closed|offscreen|missing/);
-        const missing = await run(["see", "--app", String(fixturePid), "--window-id", String(state.window.id)], false);
-        assert.match(missing.error ?? "", /closed|offscreen|missing/);
-        checks.push("closed window token and stable-ID refresh refuse without selecting the remaining window");
-        state.screenshot.path = lastShot;
+        if (backgroundOnly) {
+            await act(state, button.index, "click", ["--background", "--button", "right"]);
+            state = await see();
+            assert.equal(find(state, "counter").AXValue, "111");
+            checks.push("background right-click delivers the secondary mouse button");
+            const drag = find(state, "drag") as Element & { x: number; y: number; width: number; height: number };
+            await act(state, drag.index, "drag", [
+                "--background",
+                "--to",
+                `${drag.x + drag.width / 2 + 30},${drag.y + drag.height / 2}`,
+            ]);
+            state = await see();
+            assert.equal(find(state, "dragStatus").AXValue, "dragged");
+            checks.push("window-addressed drag delivers down, movement and release");
+            const scrollChild = state.elements.find(
+                (element) => element.role === "AXStaticText" && element.AXValue === "Row 0"
+            );
+            assert.ok(scrollChild);
+            const before = state.elements.find((element) => element.role === "AXScrollBar")?.AXValue;
+            await act(state, scrollChild.index, "scroll", ["--background", "--direction", "down", "--pages", "1"]);
+            state = await see();
+            const afterChildPage = state.elements.find((element) => element.role === "AXScrollBar")?.AXValue;
+            assert.notEqual(afterChildPage, before);
+            assertOnePageScrollFraction(afterChildPage);
+            checks.push("background page scroll from a child uses its receiving 160px viewport");
+            await act(state, find(state, "input").index, "select", ["--text", "ee"]);
+            state = await see();
+            assert.equal((find(state, "input") as Element & { AXSelectedText?: string }).AXSelectedText, "ee");
+            checks.push("semantic selection selects the unique observed text");
+        }
+
+        if (!backgroundOnly) {
+            await act(state, 0, "focus");
+            state = await see();
+            await act(state, find(state, "input").index, "set", ["--value", "checked"]);
+            state = await see();
+            assert.equal(find(state, "input").AXValue, "checked");
+            await act(state, find(state, "input").index, "focus");
+            state = await see();
+            await act(state, find(state, "input").index, "key", ["--keys", "cmd,a"]);
+            state = await see();
+            await act(state, find(state, "input").index, "type", ["--text", "Příliš žluťoučký 🐈"]);
+            state = await see();
+            assert.equal(find(state, "input").AXValue, "Příliš žluťoučký 🐈");
+            checks.push("AX set read-back, explicit focus, targeted key and Unicode typing update only the test input");
+            await act(state, find(state, "input").index, "select", ["--text", "Příliš žluťoučký 🐈"]);
+            state = await see();
+            const pasted = await act(state, find(state, "input").index, "paste", [
+                "--text",
+                "pasted 🐈",
+                "--format",
+                "text",
+            ]);
+            assert.equal((pasted as State & { clipboardRestore?: string }).clipboardRestore, "restored");
+            state = await see();
+            assert.equal(find(state, "input").AXValue, "pasted 🐈");
+            checks.push("paste replaces the selected text and restores the clipboard");
+            await act(state, find(state, "input").index, "select", ["--text", "pasted 🐈"]);
+            state = await see();
+            await act(state, find(state, "input").index, "type", ["--text", "--background"]);
+            state = await see();
+            assert.equal(find(state, "input").AXValue, "--background");
+            checks.push("option-looking text stays literal input and cannot enable background dispatch");
+            const clickButton = state.elements.find((element) => element.AXTitle === "Increment");
+            assert.ok(clickButton);
+            await act(state, clickButton.index, "click");
+            state = await see();
+            assert.equal(find(state, "counter").AXValue, "12");
+            const doubleButton = state.elements.find((element) => element.AXTitle === "Increment");
+            assert.ok(doubleButton);
+            await act(state, doubleButton.index, "click", ["--double"]);
+            state = await see();
+            assert.equal(find(state, "counter").AXValue, "14");
+            const performButton = state.elements.find((element) => element.AXTitle === "Increment");
+            assert.ok(performButton);
+            await act(state, performButton.index, "perform", ["--ax-action", "AXPress"]);
+            state = await see();
+            assert.equal(find(state, "counter").AXValue, "15");
+            checks.push("physical click, double-click and exposed perform action change the expected counter");
+
+            const offscreen = state.elements.find((element) => element.AXTitle === "Offscreen");
+            assert.ok(offscreen && !offscreen.visible);
+            const clipped = await act(state, offscreen.index, "click", [], false);
+            assert.match(clipped.error ?? "", /outside.*clip/);
+            const coordinateRow = state.elements.find(
+                (element) => element.role === "AXStaticText" && element.AXValue === "Row 0"
+            ) as (Element & { x: number; y: number; width: number; height: number }) | undefined;
+            assert.ok(coordinateRow);
+            const scrollbar = state.elements.find((element) => element.role === "AXScrollBar");
+            assert.ok(scrollbar);
+            const beforeScroll = scrollbar.AXValue;
+            const pageResult = await command([
+                native,
+                "act",
+                "--app",
+                String(fixturePid),
+                "--snapshot",
+                state.snapshot,
+                "--action",
+                "scroll",
+                "--coords",
+                `${coordinateRow.x + coordinateRow.width / 2},${coordinateRow.y + coordinateRow.height / 2}`,
+                "--direction",
+                "down",
+            ]);
+            const page = SafeJSON.parse(pageResult.stdout, { strict: true }) as State;
+            assert.equal(pageResult.exit, page.ok ? 0 : 1);
+            state = await see();
+            const afterPage = state.elements.find((element) => element.role === "AXScrollBar")?.AXValue;
+            assert.equal(page.ok, true, page.error);
+            assert.notEqual(afterPage, beforeScroll);
+            assertOnePageScrollFraction(afterPage);
+            checks.push("coordinate page scroll uses the receiving 160px viewport");
+            await act(state, find(state, "scroll").index, "scroll", ["--direction", "down", "--pixels", "80"]);
+            state = await see();
+            assert.notEqual(state.elements.find((element) => element.role === "AXScrollBar")?.AXValue, afterPage);
+            assert.equal(find(state, "counter").AXValue, "15");
+            checks.push("offscreen click refuses; explicitly requested pixel scroll changes the viewport");
+
+            const expiredData = SafeJSON.parse(Buffer.from(state.snapshot, "base64").toString("utf8")) as {
+                created: number;
+            };
+            expiredData.created = 1;
+            const expiredState = {
+                ...state,
+                snapshot: Buffer.from(SafeJSON.stringify(expiredData)).toString("base64"),
+            };
+            const expired = await act(expiredState, 0, "focus", [], false);
+            assert.match(expired.error ?? "", /expired/);
+            checks.push("expired snapshot refuses before focus");
+
+            const lastShot = state.screenshot.path;
+            const close = state.elements.find((element) => element.AXSubrole === "AXCloseButton");
+            assert.ok(close);
+            await act(state, close.index, "press");
+            const closed = await act(state, 0, "get", [], false);
+            assert.match(closed.error ?? "", /closed|offscreen|missing/);
+            const missing = await run(
+                ["see", "--app", String(fixturePid), "--window-id", String(state.window.id)],
+                false
+            );
+            assert.match(missing.error ?? "", /closed|offscreen|missing/);
+            checks.push("closed window token and stable-ID refresh refuse without selecting the remaining window");
+            state.screenshot.path = lastShot;
+        }
     }
     out.result({ ok: true, checks, screenshot: state.screenshot.path, directory });
 } finally {

@@ -259,8 +259,25 @@ export function runAxWithBoundary({
     }
 }
 
+let cursorFeedbackEnabled = true;
+export function setCursorFeedbackEnabled(enabled: boolean): void {
+    cursorFeedbackEnabled = enabled;
+}
 export function runAx(args: string[], timeoutMs = 10_000): AxResult {
-    return runAxWithBoundary({ args, timeoutMs, boundary: DEFAULT_AX_RUN_BOUNDARY });
+    const mutating = [
+        "act",
+        "set",
+        "press",
+        "perform",
+        "focus",
+        "click",
+        "type",
+        "scroll",
+        "hotkey",
+        "window",
+    ].includes(args[0]);
+    const nativeArgs = !cursorFeedbackEnabled && mutating ? [...args, "--no-cursor"] : args;
+    return runAxWithBoundary({ args: nativeArgs, timeoutMs, boundary: DEFAULT_AX_RUN_BOUNDARY });
 }
 
 export function getBinaryPath(): string {

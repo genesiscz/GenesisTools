@@ -91,6 +91,16 @@ final class ControlFixture: NSObject, NSApplicationDelegate {
                 toggle.setAccessibilityIdentifier("line-numbers")
                 content.addSubview(toggle)
             }
+            if CommandLine.arguments.contains("--cursor-proof"), index == 0 {
+                let proof = NSButton(checkboxWithTitle: "Cursor proof", target: nil, action: nil)
+                proof.frame = NSRect(x: 20, y: 240, width: 130, height: 22)
+                proof.setAccessibilityIdentifier("cursor-proof")
+                content.addSubview(proof)
+                let proofInput = NSTextField(string: "")
+                proofInput.frame = NSRect(x: 170, y: 237, width: 145, height: 26)
+                proofInput.setAccessibilityIdentifier("cursor-proof-input")
+                content.addSubview(proofInput)
+            }
             let disabled = NSButton(title: "Disabled", target: self, action: #selector(increment(_:)))
             disabled.isEnabled = false
             disabled.frame = NSRect(x: 20, y: 210, width: 130, height: 32)

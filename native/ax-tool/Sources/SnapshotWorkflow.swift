@@ -433,6 +433,13 @@ func cmdAct(appName _: String) {
         windowFocused: windowFocused, inputFocused: inputFocused, operation: operation)
     do {
     try dispatchSnapshotAction(context: context) {
+    if !["get", "click", "move", "drag", "scroll"].contains(action) {
+        let frame = tree.frames[elementIndex]
+        let center = CGPoint(x: frame.midX, y: frame.midY)
+        if frame.width > 0, frame.height > 0, window.bounds.contains(center) {
+            ActionCursor.emit(action, point: center, background: frontmostPid() != pid)
+        }
+    }
     switch action {
     case "get":
         jsonOutput(["ok": true, "element": tree.rows[elementIndex].filter { $0.key != "identity" }, "windowId": window.id])
@@ -648,6 +655,7 @@ func cmdAct(appName _: String) {
             let factory = try WindowEventFactory(windowID: Int(window.id), bounds: window.bounds)
             if action == "move" {
                 let event = try factory.mouse(type: .mouseMoved, point: point, clickCount: 0)
+                ActionCursor.emit("move", point: point, background: background, target: rawCoords == nil ? "ax" : "pixel")
                 event.postToPid(pid)
                 Thread.sleep(forTimeInterval: 0.05)
             } else if action == "scroll" {
@@ -685,6 +693,7 @@ func cmdAct(appName _: String) {
                     }
                     try validateScrollViewportUnchanged(expected: viewport.observed, current: refreshed.observed)
                 }
+                ActionCursor.emit("scroll", point: point, background: background, target: rawCoords == nil ? "ax" : "pixel")
                 event.postToPid(pid)
                 Thread.sleep(forTimeInterval: 0.1)
             } else if action == "drag" {
@@ -705,7 +714,10 @@ func cmdAct(appName _: String) {
                 try factory.drag(start: point, points: points, stepDelay: duration / Double(steps),
                                  verify: {
                                      _ = try verifyPoint($0, pin: WindowEventFactory.dragVerifyTarget(point: $0, start: point))
-                                 }, post: { $0.postToPid(pid) })
+                                 }, post: {
+                                     ActionCursor.emit("drag", point: $0.location, background: background, target: rawCoords == nil ? "ax" : "pixel")
+                                     $0.postToPid(pid)
+                                 })
                 Thread.sleep(forTimeInterval: 0.05)
             } else {
                 let button = workflowArgument("--button") ?? "left"
@@ -723,6 +735,7 @@ func cmdAct(appName _: String) {
                         down.setIntegerValueField(.mouseEventButtonNumber, value: 2)
                         up.setIntegerValueField(.mouseEventButtonNumber, value: 2)
                     }
+                    ActionCursor.emit("click", point: point, background: background, target: rawCoords == nil ? "ax" : "pixel")
                     down.postToPid(pid)
                     Thread.sleep(forTimeInterval: 0.03)
                     up.postToPid(pid)

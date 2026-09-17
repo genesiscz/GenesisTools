@@ -10,7 +10,7 @@ let package = Package(
     platforms: [.macOS(.v13)],
     targets: [
         .executableTarget(name: "ax-tool", dependencies: ["SnapshotSupport"], path: "Sources"),
-        .target(name: "SnapshotSupport", path: "SnapshotSupport"),
+        .target(name: "SnapshotSupport", path: "SnapshotSupport", resources: [.copy("Resources")]),
         .testTarget(name: "SnapshotSupportTests", dependencies: ["SnapshotSupport"], path: "Tests"),
     ]
 )

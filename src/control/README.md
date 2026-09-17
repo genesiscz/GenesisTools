@@ -293,3 +293,24 @@ Assist admits observed AXPress actions only. Each attempt uses the current nativ
 Defaults are 8 action attempts, 20 model requests and 120 seconds. Native commands are individually capped at 10 seconds; Ctrl-C stops the model call/next iteration, with an in-flight synchronous native call allowed to return within its cap. First-use native compilation is separately bounded by the existing two-minute build limit. Text entry belongs to `fill`; arbitrary generated text, shell commands, coordinates and automatic focus changes are not supported.
 
 `bun src/control/scripts/live-smoke.ts --background-only --semantic` runs the real TypeSafe provider against a temporary AppKit fixture. It requires TYPESAFE_API_KEY, Accessibility and Screen Recording, makes paid requests, and terminates only its own verified fixture PID.
+
+### Animated action cursor
+
+Applicable mutations show the bundled MIT-licensed Cua Default 2.0.0 vector cursor: cyan fill, white outline, soft glow, gentle float, animated action marks and a fading GenesisTools badge with foreground/background and AX/pixel context. Movement glides between resolved targets. Drag feedback follows delivered gesture points.
+
+This covers snapshot press/click/move/drag/set/perform/focus/scroll/type/key/select/paste, named software cursors, Jev fill/assist, and legacy targeted mutations and window actions. Targetless typing/hotkeys animate at the last known cursor location; they never invent a new target. Read-only commands stay quiet.
+
+The click-through native overlay never moves the physical pointer or activates a target app. It is best-effort feedback, not proof of action success. Core Animation drives motion without an idle rendering timer. The helper fades and exits after 20 seconds without actions, with a ten-minute absolute lifetime; a future action starts it again. Invalid or refused native targets retain all existing admission checks.
+
+```sh
+tools control act ... --no-cursor
+tools control cursor hide
+GENESIS_CONTROL_CURSOR=off tools control ...
+GENESIS_CONTROL_CURSOR_MOTION=off tools control ...
+```
+
+Reduced Motion follows the macOS accessibility setting; the environment override forces still artwork. `--no-cursor` also works on `tools jev control` commands. The artwork and Inter font are bundled assets, not AI models; there are no runtime downloads. Provenance, original source archive, licenses and the offline regeneration script are in `native/ax-tool/CursorAssets`.
+
+The same complete command set is available through `tools jev control` while using the linked Jev worktree. For example, `tools jev control cursor hide` and `tools jev control act … --no-cursor`.
+
+Visual proof: `bun src/control/scripts/live-smoke.ts --cursor-proof` records five seconds of native press/set/press feedback on a disposable fixture. It is separate from `--background-only --verify-pointer`, which checks pointer and foreground invariants without the recording's foreground text entry.

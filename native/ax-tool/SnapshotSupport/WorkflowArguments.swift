@@ -28,7 +28,7 @@ public struct WorkflowArguments {
                 "--keys", "--coords", "--button", "--to", "--duration", "--pages", "--pixels", "--range", "--prefix",
                 "--suffix", "--selection", "--format", "--path",
             ]
-            flagOptions = ["--background", "--double", "--refresh"]
+            flagOptions = ["--background", "--double", "--refresh", "--no-cursor"]
         default:
             throw WorkflowArgumentError.invalid("unknown workflow command \(command)")
         }

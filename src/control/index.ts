@@ -14,23 +14,7 @@
 import { runTool } from "@genesiscz/utils/cli";
 import { logger } from "@genesiscz/utils/logger";
 import { Command } from "commander";
-import { registerAssistCommand } from "./commands/assist";
-import { registerCaptureCommands } from "./commands/capture";
-import { registerCompareScreenshotCommand } from "./commands/compare-screenshot";
-import { registerCursorCommands } from "./commands/cursor";
-import { registerDecisionCommands } from "./commands/decision";
-import { registerDiscoveryCommands } from "./commands/discovery";
-import { registerDrawCommand } from "./commands/draw";
-import { registerFillCommand } from "./commands/fill";
-import { registerInteractCommands } from "./commands/interact";
-import { registerOsascriptCommand } from "./commands/osascript";
-import { registerPermissionsCommands } from "./commands/permissions";
-import { registerRecordPlanCommand } from "./commands/record-plan";
-import { registerReplayCommand } from "./commands/replay";
-import { registerRunCommand } from "./commands/run";
-import { registerStateCommands } from "./commands/state";
-import { registerVerifyCommands } from "./commands/verify";
-import { registerWorkflowCommands } from "./commands/workflow";
+import { registerControlCommands } from "./commands";
 
 const program = new Command();
 
@@ -41,23 +25,7 @@ program
     )
     .version("1.0.0");
 
-registerCaptureCommands(program);
-registerAssistCommand(program);
-registerCompareScreenshotCommand(program);
-registerCursorCommands(program);
-registerDiscoveryCommands(program);
-registerDecisionCommands(program);
-registerOsascriptCommand(program);
-registerPermissionsCommands(program);
-registerDrawCommand(program);
-registerInteractCommands(program);
-registerFillCommand(program);
-registerRecordPlanCommand(program);
-registerRunCommand(program);
-registerReplayCommand(program);
-registerStateCommands(program);
-registerVerifyCommands(program);
-registerWorkflowCommands(program);
+registerControlCommands(program);
 
 try {
     await runTool(program, { tool: "control" });

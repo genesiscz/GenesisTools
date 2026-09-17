@@ -1,0 +1,38 @@
+import type { Command } from "commander";
+import { registerAssistCommand } from "./assist";
+import { registerCaptureCommands } from "./capture";
+import { registerCompareScreenshotCommand } from "./compare-screenshot";
+import { registerCursorCommands } from "./cursor";
+import { registerDecisionCommands } from "./decision";
+import { registerDiscoveryCommands } from "./discovery";
+import { registerDrawCommand } from "./draw";
+import { registerFillCommand } from "./fill";
+import { registerInteractCommands } from "./interact";
+import { registerOsascriptCommand } from "./osascript";
+import { registerPermissionsCommands } from "./permissions";
+import { registerRecordPlanCommand } from "./record-plan";
+import { registerReplayCommand } from "./replay";
+import { registerRunCommand } from "./run";
+import { registerStateCommands } from "./state";
+import { registerVerifyCommands } from "./verify";
+import { registerWorkflowCommands } from "./workflow";
+
+export function registerControlCommands(program: Command): void {
+    registerCaptureCommands(program);
+    registerAssistCommand(program);
+    registerCompareScreenshotCommand(program);
+    registerCursorCommands(program);
+    registerDiscoveryCommands(program);
+    registerDecisionCommands(program);
+    registerOsascriptCommand(program);
+    registerPermissionsCommands(program);
+    registerDrawCommand(program);
+    registerInteractCommands(program);
+    registerFillCommand(program);
+    registerRecordPlanCommand(program);
+    registerRunCommand(program);
+    registerReplayCommand(program);
+    registerStateCommands(program);
+    registerVerifyCommands(program);
+    registerWorkflowCommands(program);
+}

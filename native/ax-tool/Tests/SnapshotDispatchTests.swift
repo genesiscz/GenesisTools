@@ -132,3 +132,39 @@ final class SnapshotDispatchTests: XCTestCase {
         XCTAssertEqual(result, "observed")
     }
 }
+
+final class CursorFeedbackTests: XCTestCase {
+    func testOnlyActionVerbsHaveFeedback() {
+        for verb in ["get", "see", "list", "find", "screenshot", "snapshot", "judge", "resolve", "replay"] {
+            XCTAssertNil(CursorFeedbackEvent.semantic(verb), verb)
+        }
+        for verb in ["press", "click", "move", "drag", "scroll", "set", "type", "key", "paste", "select", "perform", "focus", "hotkey", "window"] {
+            XCTAssertNotNil(CursorFeedbackEvent.semantic(verb), verb)
+        }
+    }
+    func testCoordinatesAndPayloadAreBounded() {
+        XCTAssertTrue(CursorFeedbackEvent(action: "click", point: CGPoint(x: -1200, y: 500)).valid)
+        XCTAssertTrue(CursorFeedbackEvent(action: "key", point: nil).valid)
+        XCTAssertFalse(CursorFeedbackEvent(action: "shell", point: .zero).valid)
+        XCTAssertFalse(CursorFeedbackEvent(action: "click", point: CGPoint(x: CGFloat.infinity, y: 1)).valid)
+        let desktop = CGRect(x: -1920, y: -1080, width: 3840, height: 2160)
+        XCTAssertEqual(CursorMotion.viewPoint(CGPoint(x: -100, y: 400), desktop: desktop, primaryTop: 1080),
+                       CGPoint(x: 1820, y: 400))
+    }
+    func testMovementEndsAtTheTargetAndReducedMotionDoesNotGlide() {
+        let from = CGPoint(x: -50, y: 10), to = CGPoint(x: 800, y: 400)
+        let points = CursorMotion.points(from: from, to: to)
+        XCTAssertEqual(points.first, from)
+        XCTAssertEqual(points.last, to)
+        XCTAssertEqual(CursorMotion.points(from: from, to: to, reduced: true), [to])
+        XCTAssertLessThanOrEqual(CursorMotion.duration(from: from, to: to), 0.65)
+        XCTAssertTrue(points.allSatisfy { $0.x.isFinite && $0.y.isFinite })
+    }
+    func testBundledArtworkHasAllTwelveCuaSemanticStates() throws {
+        let artwork = try CuaCursorArtwork()
+        XCTAssertEqual(artwork.actionNames.count, 12)
+        for action in artwork.actionNames {
+            XCTAssertFalse(artwork.layer(action: action, reduced: true).sublayers?.isEmpty ?? true)
+        }
+    }
+}
