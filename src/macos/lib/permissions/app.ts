@@ -11,6 +11,7 @@ import {
     genesisAppDir,
     genesisAppLauncherPath,
 } from "@genesiscz/utils/macos/genesis-app";
+import { isProcessAlive } from "@genesiscz/utils/process-alive";
 import { withFileLock } from "@genesiscz/utils/storage";
 
 export const APP_SOURCE_DIR = resolve(import.meta.dirname, "../../GenesisTools");
@@ -434,15 +435,6 @@ export function staleAppFacePids(psStdout: string, launcherPath: string): string
     return stale;
 }
 
-function pidIsAlive(pid: number): boolean {
-    try {
-        process.kill(pid, 0);
-        return true;
-    } catch {
-        return false;
-    }
-}
-
 /**
  * Kill app-face processes left over from the bundle this install just replaced.
  *
@@ -478,6 +470,7 @@ async function reapStaleAppFaces(step: (message: string) => void): Promise<void>
 
     for (const pid of stale) {
         try {
+            // pid-verified: live ps listing of stale GenesisTools faces
             process.kill(Number(pid), "SIGTERM");
         } catch (err) {
             logger.debug({ err, pid }, "stale app-face already gone at SIGTERM");
@@ -486,10 +479,11 @@ async function reapStaleAppFaces(step: (message: string) => void): Promise<void>
 
     await Bun.sleep(STALE_FACE_TERM_GRACE_MS);
 
-    const survivors = stale.filter((pid) => pidIsAlive(Number(pid)));
+    const survivors = stale.filter((pid) => isProcessAlive(Number(pid)));
 
     for (const pid of survivors) {
         try {
+            // pid-verified: live ps listing of stale GenesisTools faces
             process.kill(Number(pid), "SIGKILL");
             logger.info({ pid }, "escalated stale app-face to SIGKILL");
         } catch (err) {
