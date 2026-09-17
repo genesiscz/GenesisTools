@@ -31,6 +31,18 @@ export {
     type TimelineEntry,
     type TimelineProps,
 } from "./data";
+export { Mermaid, type MermaidProps, ZoomPane, type ZoomPaneProps } from "./diagrams";
+export {
+    type DiffFile,
+    type DiffHunk,
+    type DiffRow,
+    type DiffRowKind,
+    type DiffSplitRow,
+    DiffView,
+    type DiffViewProps,
+    diffFileFromPatch,
+    pairDiffRows,
+} from "./diff";
 export {
     MD_BODY_CLASS,
     Md,
@@ -41,6 +53,16 @@ export {
     renderMarkdown,
     renderMarkdownInline,
 } from "./md";
+export {
+    configureMermaid,
+    hydrateMermaidFences,
+    loadMermaid,
+    MERMAID_ESM_URL,
+    type MermaidApi,
+    type MermaidRenderResult,
+    type MermaidSource,
+    renderMermaidSvg,
+} from "./mermaid-core";
 export {
     Badge,
     type BadgeProps,
@@ -109,3 +131,37 @@ export {
     type SimulatorProps,
     type SimValue,
 } from "./simulator";
+export {
+    Compare,
+    type CompareItem,
+    type CompareProps,
+    Figure,
+    type FigureProps,
+    JsonView,
+    type JsonViewProps,
+    KeyValue,
+    type KeyValueItem,
+    type KeyValueProps,
+    STEP_TONE,
+    type StepItem,
+    type StepStatus,
+    Steps,
+    type StepsProps,
+    type TreeNode,
+    type TreePath,
+    TreeView,
+    type TreeViewProps,
+    treeFromPaths,
+} from "./structure";
+export {
+    Heatmap,
+    type HeatmapProps,
+    heatShare,
+    Meter,
+    type MeterProps,
+    type MeterThresholds,
+    meterTone,
+    Sparkline,
+    type SparklineProps,
+    sparklinePath,
+} from "./viz";

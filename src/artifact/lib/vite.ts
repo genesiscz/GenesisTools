@@ -3,6 +3,7 @@ import { join, resolve } from "node:path";
 import tailwindcss from "@tailwindcss/vite";
 import viteReact from "@vitejs/plugin-react";
 import type { Plugin, PluginOption } from "vite";
+import { HLJS_LANGUAGES } from "./highlight";
 
 /** GenesisTools repo root (this file lives at src/artifact/lib/). */
 export const REPO_ROOT = resolve(__dirname, "../../..");
@@ -68,6 +69,8 @@ export function baseResolve(): { alias: Record<string, string> } {
             "react-dom": join(REPO_ROOT, "node_modules", "react-dom"),
             "react-is": join(REPO_ROOT, "node_modules", "react-is"),
             "chart.js": join(REPO_ROOT, "node_modules", "chart.js"),
+            diff: join(REPO_ROOT, "node_modules", "diff"),
+            "highlight.js": join(REPO_ROOT, "node_modules", "highlight.js"),
             marked: join(REPO_ROOT, "node_modules", "marked"),
             recharts: join(REPO_ROOT, "node_modules", "recharts"),
         },
@@ -90,6 +93,9 @@ export function baseOptimizeDeps(): { include: string[] } {
             "marked",
             "recharts",
             "chart.js",
+            "diff",
+            "highlight.js/lib/core",
+            ...HLJS_LANGUAGES.map((lang) => `highlight.js/lib/languages/${lang}`),
         ],
     };
 }

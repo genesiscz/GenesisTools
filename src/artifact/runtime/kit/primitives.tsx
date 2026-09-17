@@ -1,4 +1,5 @@
 import { type ReactNode, useId, useState } from "react";
+import { highlightCode } from "../../lib/highlight";
 import { Md } from "./md";
 
 export type Tone = "ok" | "warn" | "err" | "info" | "neutral";
@@ -246,6 +247,8 @@ export interface CodeBlockProps {
     children: string;
     /** Shown as a small header row when set. */
     label?: string;
+    /** Syntax highlighting (`ts`, `swift`, `bash`, `json`, `sql`, …). Unknown names render plain. */
+    lang?: string;
     wrap?: boolean;
     /** Copy-to-clipboard button (default on — cited code exists to be copied). */
     copy?: boolean;
@@ -255,10 +258,28 @@ export interface CodeBlockProps {
     badLines?: number[];
 }
 
-/** Preformatted code / log block with copy + line marking. */
-export function CodeBlock({ children, label, wrap = false, copy = true, highlightLines, badLines }: CodeBlockProps) {
+/** Escaped, highlighted HTML for one line or the whole block; null when `lang` is unknown. */
+function litHtml(code: string, lang: string | undefined): string | null {
+    return lang ? (highlightCode(code, lang)?.html ?? null) : null;
+}
+
+/**
+ * Preformatted code / log block with copy, line marking and optional syntax
+ * highlighting. Marked blocks highlight line by line, so a construct that
+ * spans lines (a block comment) may lose its color past the first line.
+ */
+export function CodeBlock({
+    children,
+    label,
+    lang,
+    wrap = false,
+    copy = true,
+    highlightLines,
+    badLines,
+}: CodeBlockProps) {
     const [copied, setCopied] = useState(false);
     const marked = (highlightLines?.length ?? 0) + (badLines?.length ?? 0) > 0;
+    const wholeHtml = marked ? null : litHtml(children, lang);
     const onCopy = (): void => {
         // navigator.clipboard is undefined in non-secure contexts (plain http
         // on a non-loopback host) — the property access itself would throw.
@@ -294,22 +315,42 @@ export function CodeBlock({ children, label, wrap = false, copy = true, highligh
             <pre
                 className={`overflow-x-auto bg-canvas/80 p-3 font-mono text-[0.82rem] leading-relaxed text-ink/90 ${wrap ? "whitespace-pre-wrap" : ""}`}
             >
-                {marked
-                    ? children.split("\n").map((line, i) => {
-                          const no = i + 1;
-                          const cls = badLines?.includes(no)
-                              ? "block bg-err/15 text-err"
-                              : highlightLines?.includes(no)
-                                ? "block bg-accent/10"
-                                : "block";
+                {marked ? (
+                    children.split("\n").map((line, i) => {
+                        const no = i + 1;
+                        const cls = badLines?.includes(no)
+                            ? "block bg-err/15 text-err"
+                            : highlightLines?.includes(no)
+                              ? "block bg-accent/10"
+                              : "block";
+                        const lineHtml = line ? litHtml(line, lang) : null;
 
-                          return (
-                              <span key={no} className={cls}>
-                                  {line || " "}
-                              </span>
-                          );
-                      })
-                    : children}
+                        if (lineHtml !== null) {
+                            return (
+                                <span
+                                    key={no}
+                                    className={`${cls} hljs`}
+                                    // biome-ignore lint/security/noDangerouslySetInnerHtml: highlight.js output, escaped by the highlighter
+                                    dangerouslySetInnerHTML={{ __html: lineHtml }}
+                                />
+                            );
+                        }
+
+                        return (
+                            <span key={no} className={cls}>
+                                {line || " "}
+                            </span>
+                        );
+                    })
+                ) : wholeHtml !== null ? (
+                    <code
+                        className="hljs"
+                        // biome-ignore lint/security/noDangerouslySetInnerHtml: highlight.js output, escaped by the highlighter
+                        dangerouslySetInnerHTML={{ __html: wholeHtml }}
+                    />
+                ) : (
+                    children
+                )}
             </pre>
         </div>
     );

@@ -5,6 +5,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { build as viteBuild } from "vite";
 import { renderMarkdown } from "./markdown";
+import { mdPageExtras } from "./page-extras";
 import { escapeHtml, loadTemplate, loadThemeCss, renderTemplate, resolveTemplateDir } from "./templates";
 import { basePlugins, baseResolve, cacheDirFor, RUNTIME_DIR } from "./vite";
 
@@ -520,7 +521,9 @@ createRoot(document.getElementById("root") as HTMLElement).render(React.createEl
 
 /**
  * Render a markdown entry into the template's page chrome, theme CSS inlined.
- * No bundler runs: the output is already one self-contained HTML file.
+ * No bundler runs: the output is already one self-contained HTML file. A
+ * ```mermaid fence ships with the inline hydrator, which fetches mermaid from
+ * its CDN on open, so that one part of the page needs the network.
  */
 function buildMdEntry(dir: string, entryAbs: string, templateDir: string): string {
     const rendered = renderMarkdown(readFileSync(entryAbs, "utf8"));
@@ -529,6 +532,7 @@ function buildMdEntry(dir: string, entryAbs: string, templateDir: string): strin
         TITLE: escapeHtml(relative(dir, entryAbs).split(sep).join("/")),
         CONTENT: rendered,
         THEME: loadThemeCss(templateDir),
+        ...mdPageExtras(rendered),
     });
 }
 

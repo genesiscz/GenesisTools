@@ -5,6 +5,10 @@
    explicitly or every kit-only utility silently drops from the build. */
 @source "./kit";
 
+/* Syntax-highlight tokens and the mermaid frame, shared with the markdown page
+   chrome (page.html inlines the same file). */
+@import "./code-theme.css";
+
 /* Fallback tokens (graphite) — the active template's theme.css, imported by the
    tsx entry AFTER this file, overrides these on :root. */
 :root {

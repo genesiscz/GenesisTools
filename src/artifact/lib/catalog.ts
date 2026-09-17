@@ -5,6 +5,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import type { Plugin } from "vite";
 import { renderMarkdown } from "./markdown";
+import { mdPageExtras } from "./page-extras";
 import { encodeHrefPath, escapeHtml, loadTemplate, loadThemeCss, renderTemplate, themeCssPath } from "./templates";
 import { RUNTIME_DIR } from "./vite";
 
@@ -411,6 +412,7 @@ export function artifactServePlugin({ dir, templateDir, urlBase = "" }: ServePlu
                             TITLE: escapeHtml(relative(dir, file)),
                             CONTENT: rendered,
                             THEME: loadThemeCss(templateDir),
+                            ...mdPageExtras(rendered),
                         })
                     );
                 };

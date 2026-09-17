@@ -32,6 +32,11 @@ const KIT_FILES = [
     "md.tsx",
     "simulator.tsx",
     "router.tsx",
+    "diagrams.tsx",
+    "mermaid-core.ts",
+    "diff.tsx",
+    "structure.tsx",
+    "viz.tsx",
     "index.ts",
 ];
 
