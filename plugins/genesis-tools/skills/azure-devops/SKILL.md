@@ -401,6 +401,7 @@ tools azure-devops history search --assigned-to "Martin" --wiql --current  # Cur
 tools azure-devops history search --assigned-to "Martin"           # Local cached history search
 tools azure-devops history search --assigned-to "Martin" --min-time 2h     # Min time filter
 tools azure-devops history search --state Active --since 2024-12-01 --wiql # State + date range (--since/--until aliases for --from/--to)
+tools azure-devops history search --assigned-to "Prášil" --wiql --current --exclude-state Closed --all-projects  # Open items of someone outside the team, in every project
 
 tools azure-devops history sync                   # Bulk sync history for cached work items (per-item mode)
 tools azure-devops history sync --force           # Force re-sync all
@@ -417,12 +418,16 @@ tools azure-devops history sync --batch           # Use batch reporting API inst
 | "how long was #123 in Active" | `history show 123 --state Active` |
 | "time Martin spent on #456" | `history show 456 --assigned-to Martin` |
 | "all work in last 2 months" | `history search --assigned-to "Martin" --from 2024-12-01 --wiql` |
+| "everything assigned to X that is not Closed" | `history search --assigned-to "X" --wiql --current --exclude-state Closed --all-projects` |
 
 ### Features
 
 - **@me support**: `--assigned-to @me` or `--assigned-to-me` uses WIQL `@Me` macro (auto-enables WIQL)
 - **--current flag**: Uses `=` instead of `EVER` for current assignment
 - **Fuzzy user matching**: "Martin" matches "Martin Novak (QK)", diacritics normalized
+- **Names outside the team**: when no team member matches, `--current` falls back to `[System.AssignedTo] CONTAINS '<name>'`, which finds deactivated accounts and people in no team. Without `--current` the name is used verbatim as the exact display name, because ADO rejects `EVER … CONTAINS` on identity fields
+- **--exclude-state**: `[System.State] NOT IN (...)`, the way to ask for "everything not Closed" (implies `--wiql`)
+- **--all-projects**: drops `[System.TeamProject] = @project`. A person's items in another project of the organization are invisible without it (implies `--wiql`); the table gains a Project column and each URL points at the item's own project
 - **Cache stats**: Local search shows data date range and last sync time
 - **Per-item sync** (default): Targeted API calls per work item, faster for <200 items
 - **Batch sync** (`--batch`): Uses reporting API, better for 500+ items
