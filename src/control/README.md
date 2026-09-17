@@ -267,3 +267,16 @@ Targets come from observed AXPress actions or writable text fields, with ancesto
 Judging reports verified/refuted/unknown, evidence IDs, probabilities and its semantic or exact basis. A button label is not completion evidence. Conflicting failure evidence blocks success. Exact ID/value readback does not call the model. A semantic verdict is a model judgment, not independent proof of hidden application state.
 
 Requests contain window/candidate labels and redacted observation text; writable input values stay local. The model cannot construct action arguments or bypass native snapshot freshness and app/window validation.
+
+### Replay and structured form filling
+
+```sh
+tools control replay --list
+tools control replay context --chooser jev --provider typesafe
+tools control replay completed --chooser mock
+tools control fill --app Fixture --window-id 42 --data fields.json --provider typesafe
+```
+
+Replay accepts a built-in case ID or a labeled JSON fixture. It is always decision-only, with zero native actions. The fixture oracle checks the pipeline using known labels; it is not a model accuracy benchmark. The dashboard Control tab compares exact-label matching, the oracle and Jev. Missing provider cost is shown as unknown, never estimated as free.
+
+Fill accepts an object of 1–20 supplied string values, such as `{"Full name":"Alice Example","City":"Prague"}`. It maps keys to observed writable text fields, keeps the values out of model requests, sets each exact value, reobserves after each attempt, and verifies final readback. Bindings must be unique and one-to-one. Secure inputs, unsupported dropdowns, masked readback and ambiguous fields stop the run. It never presses Submit or types generated text. Use `--max-fields`, `--max-requests`, `--timeout` and Ctrl-C to bound it. Partial progress is returned on failure.

@@ -1,9 +1,13 @@
 import { expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
+import { evaluationSchema } from "@genesiscz/utils/ai/evaluation/evaluate";
 import type { EvaluationResponse, Evaluator } from "@genesiscz/utils/ai/evaluation/service";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { admittedChoice, judgeOutcome, resolveIntent } from "../lib/decision/decisions";
+import { fillForm } from "../lib/decision/fill";
 import { replayCases } from "../lib/decision/fixtures";
+import type { ControlDriver } from "../lib/decision/native";
 import { candidatesFor, type Observation } from "../lib/decision/observation";
 import { replayControl } from "../lib/decision/replay";
 
@@ -266,4 +270,124 @@ test("replay exact matching exposes semantic misses instead of borrowing fixture
     expect(result.metrics.correctTarget).toBe(false);
     expect(result.metrics.abstained).toBe(true);
     expect(result.metrics.costUsd).toBe(0);
+});
+
+function formDriver(options: { failWrite?: boolean; corruptReadback?: boolean; wrongWindow?: boolean } = {}) {
+    let state: Observation = {
+        ok: true,
+        app: "FormFixture",
+        pid: 20,
+        window: { id: 30, title: "Profile" },
+        snapshot: "s0",
+        scope: "window",
+        elements: [
+            {
+                index: 0,
+                depth: 0,
+                role: "AXTextField",
+                AXIdentifier: "name",
+                AXTitle: "Full name",
+                AXValue: "",
+                valueSettable: true,
+            },
+            {
+                index: 1,
+                depth: 0,
+                role: "AXTextField",
+                AXIdentifier: "city",
+                AXTitle: "City",
+                AXValue: "",
+                valueSettable: true,
+            },
+        ],
+    };
+    const calls: Array<Parameters<ControlDriver["act"]>[0]> = [];
+    let observations = 0;
+    const driver: ControlDriver = {
+        observe: async () => {
+            observations++;
+            return structuredClone(state);
+        },
+        act: async (call) => {
+            calls.push(call);
+            expect(call.observation.snapshot).toBe(state.snapshot);
+            const row = state.elements.find((item) => item.index === call.candidate.element);
+            if (row) {
+                row.AXValue = options.corruptReadback ? "wrong" : (call.value ?? "1");
+            }
+            state = {
+                ...state,
+                snapshot: `s${calls.length}`,
+                elements: state.elements.reverse().map((item, index) => ({ ...item, index })),
+                window: { ...state.window, id: options.wrongWindow ? 99 : state.window.id },
+            };
+            return options.failWrite ? { ok: false, error: "Unknown dispatch outcome" } : { ok: true };
+        },
+    };
+    return { driver, calls, observations: () => observations };
+}
+function chooseField(captured: string[]): Evaluator {
+    return async (call) => {
+        const input = evaluationSchema.parse(call.input);
+        captured.push(SafeJSON.stringify(input));
+        const target = input.questions.target;
+        if (target.type !== "choice") {
+            throw new Error("Expected choice");
+        }
+        const criteria = Object.keys(target.criteria);
+        const choice = criteria.find((key) => key !== "abstain") ?? "abstain";
+        return evaluation({
+            target: {
+                type: "choice",
+                choice,
+                probabilities: Object.fromEntries(criteria.map((key) => [key, key === choice ? 1 : 0])),
+            },
+        });
+    };
+}
+test("fill keeps exact values local, reobserves reordered fields and verifies all final values", async () => {
+    const fixture = formDriver();
+    const captured: string[] = [];
+    const result = await fillForm({
+        driver: fixture.driver,
+        data: { name: "Private Person", city: "Private City" },
+        evaluate: chooseField(captured),
+    });
+    expect(result.status).toBe("filled");
+    expect(result.filled.map((field) => field.binding)).toEqual(["id:name", "id:city"]);
+    expect(fixture.calls.map((call) => call.value)).toEqual(["Private Person", "Private City"]);
+    expect(fixture.observations()).toBe(3);
+    expect(captured.join("")).not.toContain("Private Person");
+    expect(captured.join("")).not.toContain("Private City");
+    expect(fixture.calls.every((call) => call.candidate.action === "set")).toBe(true);
+});
+test("fill stops after uncertain dispatch, bad readback or window changes without retry", async () => {
+    for (const options of [{ failWrite: true }, { corruptReadback: true }, { wrongWindow: true }]) {
+        const fixture = formDriver(options);
+        const result = await fillForm({
+            driver: fixture.driver,
+            data: { name: "First", city: "Second" },
+            evaluate: chooseField([]),
+        });
+        expect(result.status).not.toBe("filled");
+        expect(fixture.calls).toHaveLength(1);
+        expect(fixture.observations()).toBe(2);
+    }
+});
+test("fill respects action/request caps and cancellation before any write", async () => {
+    for (const config of [
+        { limits: { maxActions: 0 } },
+        { limits: { maxRequests: 0 } },
+        { signal: AbortSignal.abort() },
+    ]) {
+        const fixture = formDriver();
+        const result = await fillForm({
+            driver: fixture.driver,
+            data: { name: "First" },
+            evaluate: chooseField([]),
+            ...config,
+        });
+        expect(result.status).toBe("stopped");
+        expect(fixture.calls).toHaveLength(0);
+    }
 });

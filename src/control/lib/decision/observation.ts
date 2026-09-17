@@ -103,7 +103,8 @@ export function observedEvidence(observation: Observation) {
             role: row.role,
             label: elementLabel(row).slice(0, 300),
             value:
-                row.valueSettable || row.AXSubrole === "AXSecureTextField"
+                (row.valueSettable && ["AXTextField", "AXTextArea", "AXComboBox"].includes(row.role)) ||
+                row.AXSubrole === "AXSecureTextField"
                     ? "[private input]"
                     : String(row.AXValue ?? "").slice(0, 500),
             enabled: !disabled(row),
