@@ -1,3 +1,4 @@
+import type { EvaluationProviderId } from "@genesiscz/utils/ai/evaluation/types";
 import { logger } from "@genesiscz/utils/logger";
 import { z } from "zod";
 import { circuitCache } from "./cache";
@@ -20,11 +21,13 @@ export const arenaSimulationSchema = z
 export async function simulateArena({
     input,
     signal,
+    provider,
     load = (tierId, signal) => circuitCache.load({ tierId, signal }),
     decide = decideArena,
 }: {
     input: unknown;
     signal?: AbortSignal;
+    provider?: EvaluationProviderId;
     load?: (tierId: string, signal?: AbortSignal) => Promise<{ graph: CircuitGraph }>;
     decide?: typeof decideArena;
 }) {
@@ -45,7 +48,7 @@ export async function simulateArena({
             lastDecision = arena.state.elapsed;
             attempts++;
             try {
-                const decision = await decide({ observation: arena.observe(), signal: combined });
+                const decision = await decide({ observation: arena.observe(), signal: combined, provider });
                 arena.setDecision(decision);
                 decisions.push({ elapsed: arena.state.elapsed, decision });
             } catch (error) {

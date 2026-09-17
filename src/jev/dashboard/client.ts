@@ -1,4 +1,10 @@
+import type { EvaluationProviderId } from "@genesiscz/utils/ai/evaluation/types";
 import { SafeJSON } from "@genesiscz/utils/json";
+
+let provider: EvaluationProviderId = "vercel";
+export function selectProvider(value: EvaluationProviderId) {
+    provider = value;
+}
 
 export async function api<T>({
     route,
@@ -11,7 +17,7 @@ export async function api<T>({
 }): Promise<T> {
     const response = await fetch(`/api/jev${route}`, {
         method: body === undefined ? "GET" : "POST",
-        headers: { "Content-Type": "application/json", "X-Jev-Request": "1" },
+        headers: { "Content-Type": "application/json", "X-Jev-Request": "1", "X-Jev-Provider": provider },
         body: body === undefined ? undefined : SafeJSON.stringify(body),
         signal,
     });

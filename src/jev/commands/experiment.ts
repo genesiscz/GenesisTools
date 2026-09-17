@@ -1,3 +1,4 @@
+import { selectedProvider } from "@genesiscz/utils/ai/evaluation/cli";
 import { out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
 import { compileExperiment } from "../lib/compiler";
@@ -35,7 +36,9 @@ export function registerExperiment(program: Command): void {
     lab.command("step")
         .argument("<file>")
         .description("Ask Jev to choose one next token")
-        .action(async (file: string) => out.result(await stepExperiment({ input: await readInput(file) })));
+        .action(async (file: string) =>
+            out.result(await stepExperiment({ input: await readInput(file), provider: selectedProvider(program) }))
+        );
     lab.command("run")
         .argument("<file>")
         .description("Run up to maxSteps; emit each decision as JSON")
@@ -44,7 +47,11 @@ export function registerExperiment(program: Command): void {
             const cancel = () => controller.abort();
             process.once("SIGINT", cancel);
             try {
-                for await (const step of runExperiment({ input: await readInput(file), signal: controller.signal })) {
+                for await (const step of runExperiment({
+                    input: await readInput(file),
+                    signal: controller.signal,
+                    provider: selectedProvider(program),
+                })) {
                     out.result(step);
                 }
             } finally {

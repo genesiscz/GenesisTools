@@ -1,3 +1,4 @@
+import type { EvaluationProviderId } from "@genesiscz/utils/ai/evaluation/types";
 import { z } from "zod";
 import { evaluateRequest } from "../service";
 import { ARENA_ACTIONS, type ArenaDecision, type ArenaObservation } from "./types";
@@ -35,10 +36,12 @@ export const arenaObservationSchema = z
 export async function decideArena({
     observation,
     signal,
+    provider,
     evaluate = evaluateRequest,
 }: {
     observation: unknown;
     signal?: AbortSignal;
+    provider?: EvaluationProviderId;
     evaluate?: typeof evaluateRequest;
 }): Promise<ArenaDecision> {
     const state: ArenaObservation = arenaObservationSchema.parse(observation);
@@ -71,6 +74,7 @@ export async function decideArena({
             },
         },
         timeoutMs: 8000,
+        provider,
         signal,
     });
     const action = response.answers.action;

@@ -1,3 +1,4 @@
+import { selectedProvider } from "@genesiscz/utils/ai/evaluation/cli";
 import { suggestEnumFlag } from "@genesiscz/utils/cli";
 import { out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
@@ -27,7 +28,9 @@ export function registerArena(program: Command): void {
         .command("decide")
         .argument("<file>")
         .description("Ask Jev for one action from an arena observation JSON")
-        .action(async (file: string) => out.result(await decideArena({ observation: await readInput(file) })));
+        .action(async (file: string) =>
+            out.result(await decideArena({ observation: await readInput(file), provider: selectedProvider(program) }))
+        );
     arena
         .command("simulate")
         .description("Run the same arena engine without rendering; human mode supplies no movement")
@@ -72,6 +75,7 @@ export function registerArena(program: Command): void {
                                 decisionEvery: Number(options.jevEvery),
                             },
                             signal: controller.signal,
+                            provider: selectedProvider(program),
                         })
                     );
                 } finally {

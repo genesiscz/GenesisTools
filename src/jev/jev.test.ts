@@ -3,6 +3,8 @@ import { mkdtemp, rm, stat } from "node:fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { saveProviderKey } from "@genesiscz/utils/ai/evaluation/auth";
+import { TypeSafeEvaluationProvider } from "@genesiscz/utils/ai/evaluation/providers";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import type { Experimental_EvaluationModel } from "ai";
@@ -790,4 +792,107 @@ describe("Unconstrained mode regressions", () => {
         },
         30000
     );
+});
+
+describe("TypeSafe SDK adapter", () => {
+    test("translates boolean questions, preserves distributions and disables retries", async () => {
+        const requests: Array<{ url: string; init?: RequestInit }> = [];
+        const provider = new TypeSafeEvaluationProvider({
+            apiKey: "fixture-key",
+            fetch: Object.assign(
+                async (url: RequestInfo | URL, init?: RequestInit) => {
+                    requests.push({ url: String(url), init });
+                    return Response.json({
+                        model: "jev-latest",
+                        answers: {
+                            refundRequested: { type: "noul", noul: 0.9 },
+                            route: {
+                                type: "choice",
+                                choice: "billing",
+                                probabilities: { billing: 0.9, shipping: 0.05, technical: 0.05 },
+                                confidence: 0.88,
+                            },
+                            urgency: {
+                                type: "score",
+                                score: 1.1,
+                                probabilities: { "0": 0.1, "1": 0.7, "2": 0.2 },
+                                confidence: 0.8,
+                            },
+                        },
+                        usage: { input_tokens: 20, output_tokens: 4 },
+                    });
+                },
+                { preconnect: fetch.preconnect }
+            ),
+        });
+        const result = await provider.evaluate({ input: demoInput });
+        expect(result.answers.refundRequested).toEqual({ type: "boolean", probability: 0.9 });
+        expect(result.answers.urgency).toMatchObject({ score: 1.1 });
+        expect(result.providerMetadata?.typesafe?.confidence).toMatchObject({ route: 0.88 });
+        expect(result.usage.totalTokens).toBe(24);
+        expect(requests).toHaveLength(1);
+        expect(requests[0].url).toBe("https://api.typesafe.ai/v1/systemone");
+        const sent = SafeJSON.parse(String(requests[0].init?.body));
+        expect(sent).toMatchObject({ questions: { refundRequested: { type: "noul" } } });
+        expect(requests[0].init?.signal).toBeInstanceOf(AbortSignal);
+    });
+
+    test("rejects out-of-set answers and never retries a failed request", async () => {
+        let calls = 0;
+        const provider = new TypeSafeEvaluationProvider({
+            apiKey: "fixture-key",
+            fetch: Object.assign(
+                async () => {
+                    calls++;
+                    return Response.json({ error: "busy" }, { status: 503 });
+                },
+                { preconnect: fetch.preconnect }
+            ),
+        });
+        await expect(provider.evaluate({ input: demoInput })).rejects.toThrow();
+        expect(calls).toBe(1);
+        await expect(provider.evaluate({ input: demoInput, zeroDataRetention: true })).rejects.toThrow(
+            "Zero Data Retention"
+        );
+        expect(calls).toBe(1);
+        const aborted = AbortSignal.abort();
+        await expect(provider.evaluate({ input: demoInput, signal: aborted })).rejects.toThrow();
+        expect(calls).toBe(1);
+        const invalid = new TypeSafeEvaluationProvider({
+            apiKey: "fixture-key",
+            fetch: Object.assign(
+                async () =>
+                    Response.json({
+                        model: "jev-latest",
+                        answers: {
+                            target: { type: "choice", choice: "invented", probabilities: { seen: 1 }, confidence: 1 },
+                        },
+                        usage: { input_tokens: 1, output_tokens: 1 },
+                    }),
+                { preconnect: fetch.preconnect }
+            ),
+        });
+        await expect(
+            invalid.evaluate({
+                input: {
+                    state: "fixture",
+                    questions: { target: { type: "choice", instructions: "Choose", criteria: { seen: "Seen" } } },
+                },
+            })
+        ).rejects.toThrow();
+    });
+
+    test("saving either provider preserves the other credential", async () => {
+        await env.testing.withOverrides(
+            { AI_GATEWAY_API_KEY: "", TYPESAFE_API_KEY: "", VERCEL_OIDC_TOKEN: "" },
+            async () => {
+                await saveApiKey("gateway-fixture");
+                await saveProviderKey({ provider: "typesafe", apiKey: "typesafe-fixture" });
+                expect(await resolveApiKey("vercel")).toBe("gateway-fixture");
+                expect(await resolveApiKey("typesafe")).toBe("typesafe-fixture");
+                await saveApiKey("gateway-updated");
+                expect(await resolveApiKey("typesafe")).toBe("typesafe-fixture");
+            }
+        );
+    });
 });

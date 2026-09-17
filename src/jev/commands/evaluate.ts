@@ -1,3 +1,5 @@
+import { selectedProvider } from "@genesiscz/utils/ai/evaluation/cli";
+import type { EvaluationProviderId } from "@genesiscz/utils/ai/evaluation/types";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
@@ -23,13 +25,13 @@ function evaluationOptions(command: Command): Command {
         .option("--zdr", "Require Zero Data Retention (Vercel Pro or Enterprise)");
 }
 
-async function run(input: unknown, options: Options): Promise<void> {
+async function run(input: unknown, options: Options & { provider: EvaluationProviderId }): Promise<void> {
     const timeoutMs = Number(options.timeout);
     if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 300000) {
         throw new Error("--timeout must be an integer from 1 to 300000 milliseconds.");
     }
 
-    out.result(await evaluateRequest({ input, timeoutMs, zeroDataRetention: options.zdr }));
+    out.result(await evaluateRequest({ input, timeoutMs, zeroDataRetention: options.zdr, provider: options.provider }));
 }
 
 export function registerEvaluation(program: Command): void {
@@ -44,7 +46,7 @@ export function registerEvaluation(program: Command): void {
             return;
         }
 
-        await run(demoInput, options);
+        await run(demoInput, { ...options, provider: selectedProvider(program) });
     });
     evaluationOptions(
         program
@@ -58,16 +60,21 @@ export function registerEvaluation(program: Command): void {
         }
 
         const state = options.state ?? (await Bun.stdin.text());
-        await run({ state, questions: { answer: { type: "boolean", instructions: question } } }, options);
+        await run(
+            { state, questions: { answer: { type: "boolean", instructions: question } } },
+            { ...options, provider: selectedProvider(program) }
+        );
     });
     evaluationOptions(
         program
             .command("run")
             .description("Evaluate a JSON/JSONC request")
             .argument("<file>", "Input file or - for stdin")
-    ).action(async (file: string, options: Options) => run(await readInput(file), options));
+    ).action(async (file: string, options: Options) =>
+        run(await readInput(file), { ...options, provider: selectedProvider(program) })
+    );
     program
         .command("status")
         .description("Read credential availability and gateway credit balance")
-        .action(async () => out.result(await gatewayStatus()));
+        .action(async () => out.result(await gatewayStatus(selectedProvider(program))));
 }

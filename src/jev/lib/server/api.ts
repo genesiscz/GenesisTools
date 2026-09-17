@@ -1,5 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { StringDecoder } from "node:string_decoder";
+import { evaluationProviderSchema } from "@genesiscz/utils/ai/evaluation/types";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import type { Plugin } from "vite";
@@ -91,9 +92,10 @@ export function jevApiPlugin(): Plugin {
                 res.once("close", disconnect);
                 const handle = async () => {
                     const route = req.url?.split("?")[0];
+                    const provider = evaluationProviderSchema.parse(req.headers["x-jev-provider"] ?? "vercel");
                     logger.debug({ route, method: req.method }, "Jev dashboard API request");
                     if (req.method === "GET" && route === "/status") {
-                        return gatewayStatus();
+                        return gatewayStatus(provider);
                     }
 
                     if (req.method === "GET" && route === "/arena/circuits") {
@@ -118,12 +120,12 @@ export function jevApiPlugin(): Plugin {
                     }
 
                     if (route === "/arena/decide") {
-                        return decideArena({ observation: body, signal: controller.signal });
+                        return decideArena({ observation: body, signal: controller.signal, provider });
                     }
 
                     if (route === "/evaluate") {
                         const options = evaluateBody.parse(body);
-                        return evaluateRequest({ ...options, signal: controller.signal });
+                        return evaluateRequest({ ...options, signal: controller.signal, provider });
                     }
 
                     if (route === "/experiment/state") {
@@ -132,7 +134,7 @@ export function jevApiPlugin(): Plugin {
                     }
 
                     if (route === "/experiment/step") {
-                        return stepExperiment({ input: body, signal: controller.signal });
+                        return stepExperiment({ input: body, signal: controller.signal, provider });
                     }
 
                     if (route === "/experiment/compile") {

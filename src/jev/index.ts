@@ -1,5 +1,6 @@
 #!/usr/bin/env bun
 
+import { addProviderOption } from "@genesiscz/utils/ai/evaluation/cli";
 import { runTool } from "@genesiscz/utils/cli";
 import { logger, out } from "@genesiscz/utils/logger";
 import { Command } from "commander";
@@ -11,6 +12,7 @@ import { registerExperiment } from "./commands/experiment";
 import { registerLogin } from "./commands/login";
 
 const program = new Command().name("tools jev").description("Jev evaluation tools and local experiment workbench");
+addProviderOption(program);
 registerLogin(program);
 registerEvaluation(program);
 registerExperiment(program);

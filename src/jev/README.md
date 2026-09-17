@@ -220,3 +220,19 @@ of the global `tools` executable, which may still point at the main checkout.
 
 References: [Vercel evaluation docs](https://vercel.com/docs/ai-gateway/modalities/evaluation)
 and [AI Gateway keys](https://vercel.com/docs/ai-gateway/authentication-and-byok/api-keys).
+
+## Providers
+
+Every paid Jev command accepts `--provider vercel|typesafe` (default: Vercel). The dashboard provider selector applies to the playground, editor, compiler experiment, fly arena and Control Lab.
+
+```sh
+tools jev login --provider typesafe
+tools jev demo --provider typesafe
+tools jev ask "Was a refund issued?" --state "The agent issued a full refund." --provider vercel
+```
+
+Vercel uses the AI SDK evaluation model and `AI_GATEWAY_API_KEY` (or the existing saved key / Vercel OIDC token). Direct TypeSafe uses the official Vercel AI SDK provider `@ai-sdk/typesafe-ai` and `TYPESAFE_API_KEY` or its separately saved key. Login preserves the other provider's credential. Direct TypeSafe status checks local credential availability; it does not claim to validate the key or report a credit balance.
+
+Both providers share boolean/choice/score results, cancellation and zero automatic retries. Native TypeSafe `noul` probabilities are normalized to boolean probabilities. Confidence is retained separately from the probability distribution. `--zdr` is a Gateway-only enforcement option; direct TypeSafe rejects it instead of silently weakening it.
+
+Reusable provider implementations, schema and credential access live in `src/utils/ai/evaluation/`. No model weights are downloaded by either remote provider.

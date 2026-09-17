@@ -1,3 +1,4 @@
+import type { EvaluationProviderId } from "@genesiscz/utils/ai/evaluation/types";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { experimentRequestSchema, type ProgramState } from "./experiment-contract";
 import { generationMode } from "./generation";
@@ -24,10 +25,12 @@ type Evaluate = typeof evaluateRequest;
 export async function stepExperiment({
     input,
     signal,
+    provider,
     evaluate = evaluateRequest,
 }: {
     input: unknown;
     signal?: AbortSignal;
+    provider?: EvaluationProviderId;
     evaluate?: Evaluate;
 }): Promise<ExperimentStep> {
     signal?.throwIfAborted();
@@ -75,6 +78,7 @@ export async function stepExperiment({
             },
         },
         signal,
+        provider,
         zeroDataRetention: request.zeroDataRetention,
     });
     signal?.throwIfAborted();
@@ -109,7 +113,15 @@ export async function stepExperiment({
     };
 }
 
-export async function* runExperiment({ input, signal }: { input: unknown; signal?: AbortSignal }) {
+export async function* runExperiment({
+    input,
+    signal,
+    provider,
+}: {
+    input: unknown;
+    signal?: AbortSignal;
+    provider?: EvaluationProviderId;
+}) {
     let request = experimentRequestSchema.parse(input);
     const deadline = AbortSignal.timeout(300000);
     const combined = signal ? AbortSignal.any([signal, deadline]) : deadline;
@@ -118,7 +130,7 @@ export async function* runExperiment({ input, signal }: { input: unknown; signal
         request.tokens.length < request.maxSteps
     ) {
         combined.throwIfAborted();
-        const step = await stepExperiment({ input: request, signal: combined });
+        const step = await stepExperiment({ input: request, signal: combined, provider });
         yield step;
         request = { ...request, tokens: step.tokens };
     }

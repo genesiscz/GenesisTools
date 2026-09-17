@@ -1,4 +1,5 @@
 import { Badge, Callout, CodeBlock, JsonView, Meter } from "@artifact/kit";
+import { type EvaluationProviderId, evaluationProviderSchema } from "@genesiscz/utils/ai/evaluation/types";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { Button } from "@ui/components/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@ui/components/card";
@@ -27,7 +28,7 @@ import { languages } from "../lib/languages";
 import type { EvaluationResponse } from "../lib/service";
 import { type TypeScriptRequest, typescriptPresets } from "../lib/typescript-grammar";
 import { ArenaLab } from "./ArenaLab";
-import { api, download, errorMessage } from "./client";
+import { api, download, errorMessage, selectProvider } from "./client";
 import "./styles.css";
 
 const DEFAULT_STATE = "The support agent issued a full refund to the customer.";
@@ -349,7 +350,7 @@ function Playground({ advanced = false }: { advanced?: boolean }) {
                         )}
                     </div>
                     <p className="jev-help">
-                        Uses your saved gateway key. Each evaluation makes one paid model request.
+                        Uses the selected provider's saved key. Each evaluation makes one paid model request.
                     </p>
                     <ErrorNotice message={error} />
                 </Panel>
@@ -795,6 +796,7 @@ interface GatewayStatus {
 }
 export default function Dashboard() {
     const [tab, setTab] = useState(() => window.location.hash.slice(1) || "playground");
+    const [provider, setProvider] = useState<EvaluationProviderId>("vercel");
     const [status, setStatus] = useState<GatewayStatus>();
     const [refreshing, setRefreshing] = useState(false);
     const refresh = async () => {
@@ -834,6 +836,21 @@ export default function Dashboard() {
             }}
             rightSlot={
                 <div className="flex items-center gap-2">
+                    <select
+                        aria-label="Evaluation provider"
+                        value={provider}
+                        className="rounded border border-border bg-background px-2 py-1 text-xs"
+                        onChange={(event) => {
+                            const next = evaluationProviderSchema.parse(event.target.value);
+                            selectProvider(next);
+                            setProvider(next);
+                            setStatus(undefined);
+                            void refresh();
+                        }}
+                    >
+                        <option value="vercel">Vercel AI Gateway</option>
+                        <option value="typesafe">TypeSafe API</option>
+                    </select>
                     <span className="hidden sm:inline text-xs text-muted-foreground">
                         {status?.balance
                             ? `${Number(status.balance).toFixed(2)} credits`
@@ -844,7 +861,7 @@ export default function Dashboard() {
                     <Button
                         variant="ghost"
                         size="icon-sm"
-                        aria-label="Refresh gateway status"
+                        aria-label="Refresh provider status"
                         disabled={refreshing}
                         onClick={() => void refresh()}
                     >
@@ -853,7 +870,7 @@ export default function Dashboard() {
                 </div>
             }
         >
-            <div className="jev-page">
+            <div className="jev-page" key={provider}>
                 {status?.error && (
                     <div className="mb-6">
                         <ErrorNotice message={status.error} />
@@ -868,7 +885,10 @@ export default function Dashboard() {
                 )}
                 <footer className="mt-10 flex flex-wrap justify-between gap-2 border-t border-border pt-5 text-xs text-muted-foreground">
                     <span>Local Jev workbench · Powered by tools artifact</span>
-                    <span>Credentials stay on this Mac. Requests go to Vercel AI Gateway.</span>
+                    <span>
+                        Credentials stay on this Mac. Requests go to{" "}
+                        {provider === "vercel" ? "Vercel AI Gateway" : "TypeSafe API"}.
+                    </span>
                 </footer>
             </div>
         </DashboardLayout>
