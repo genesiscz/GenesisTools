@@ -41,7 +41,7 @@ bun -e "
 import { Storage } from './src/utils/storage/storage.ts';
 const s = new Storage('claude-usage');
 await s.atomicConfigUpdate((c) => {
-  c.notificationPollTracker.extraUsageTrackers['reservine:extra_usage'].lastKnownEnabled = true;
+  c.notificationPollTracker.extraUsageTrackers['northwind:extra_usage'].lastKnownEnabled = true;
 });
 "
 

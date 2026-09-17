@@ -327,64 +327,94 @@ async function runOnce(opts: { seconds: number; sampleMs: number; entry: string;
         stderr: "ignore",
     });
 
-    const tuiPid = await resolveTuiPid(child.pid, opts.entry);
-    log.debug({ harnessPid: child.pid, tuiPid, arm: opts.arm }, "TUI started under a pty");
-
-    const seenSpawns = new Map<number, string>();
-    let treeSamples = 0;
-    let processCount = 0;
+    let tuiPid: number | undefined;
+    let stopped = false;
     let sampling = true;
+    let sampler: Promise<void> | undefined;
 
-    const sampler = (async () => {
-        while (sampling) {
-            try {
-                const table = await readPsTree();
-                treeSamples++;
-                processCount = Math.max(processCount, table.size);
+    try {
+        tuiPid = await resolveTuiPid(child.pid, opts.entry);
+        const sampledPid = tuiPid;
+        log.debug({ harnessPid: child.pid, tuiPid: sampledPid, arm: opts.arm }, "TUI started under a pty");
 
-                for (const [pid, entry] of table) {
-                    const binary = spawnBinary(entry.command);
+        const seenSpawns = new Map<number, string>();
+        let treeSamples = 0;
+        let processCount = 0;
 
-                    if (binary === null || seenSpawns.has(pid)) {
-                        continue;
+        sampler = (async () => {
+            while (sampling) {
+                try {
+                    const table = await readPsTree();
+                    treeSamples++;
+                    processCount = Math.max(processCount, table.size);
+
+                    for (const [pid, entry] of table) {
+                        const binary = spawnBinary(entry.command);
+
+                        if (binary === null || seenSpawns.has(pid)) {
+                            continue;
+                        }
+
+                        if (isDescendantOf(pid, sampledPid, table)) {
+                            seenSpawns.set(pid, binary);
+                        }
                     }
-
-                    if (isDescendantOf(pid, tuiPid, table)) {
-                        seenSpawns.set(pid, binary);
-                    }
+                } catch (err) {
+                    log.warn({ err }, "a process-tree sample failed; continuing");
                 }
-            } catch (err) {
-                log.warn({ err }, "a process-tree sample failed; continuing");
+
+                await Bun.sleep(opts.sampleMs);
             }
+        })();
 
-            await Bun.sleep(opts.sampleMs);
+        const sample = await sampleProcess(sampledPid, { windowMs: opts.seconds * 1000 });
+        sampling = false;
+        await sampler;
+        const exitedOnSigint = await stopChild(child, sampledPid);
+        stopped = true;
+        const byBinary: Record<string, number> = {};
+
+        for (const binary of seenSpawns.values()) {
+            byBinary[binary] = (byBinary[binary] ?? 0) + 1;
         }
-    })();
 
-    const sample = await sampleProcess(tuiPid, { windowMs: opts.seconds * 1000 });
-    sampling = false;
-    await sampler;
+        return {
+            arm: opts.arm,
+            sampledPid,
+            cpuPercent: sample.cpuPercent,
+            rssMb: sample.rssBytes / BYTES_PER_MB,
+            spawnsPerMinute: (seenSpawns.size / sample.windowMs) * 60_000,
+            distinctSpawns: seenSpawns.size,
+            treeSamples,
+            processCount,
+            byBinary,
+            exitedOnSigint,
+        };
+    } finally {
+        sampling = false;
 
-    const exitedOnSigint = await stopChild(child, tuiPid);
-    await sweepSurvivors(opts.entry);
-    const byBinary: Record<string, number> = {};
+        if (sampler) {
+            await sampler;
+        }
 
-    for (const binary of seenSpawns.values()) {
-        byBinary[binary] = (byBinary[binary] ?? 0) + 1;
+        if (!stopped) {
+            if (tuiPid !== undefined) {
+                try {
+                    await stopChild(child, tuiPid);
+                } catch (err) {
+                    log.warn({ err, tuiPid }, "cleanup could not stop the TUI");
+                }
+            } else if (child.exitCode === null) {
+                child.kill("SIGKILL");
+            }
+        }
+
+        try {
+            await sweepSurvivors(opts.entry);
+        } catch (err) {
+            log.warn({ err, entry: opts.entry }, "cleanup could not sweep survivors");
+        }
     }
-
-    return {
-        arm: opts.arm,
-        sampledPid: tuiPid,
-        cpuPercent: sample.cpuPercent,
-        rssMb: sample.rssBytes / BYTES_PER_MB,
-        spawnsPerMinute: (seenSpawns.size / sample.windowMs) * 60_000,
-        distinctSpawns: seenSpawns.size,
-        treeSamples,
-        processCount,
-        byBinary,
-        exitedOnSigint,
-    };
 }
 
 const { values } = parseArgs({

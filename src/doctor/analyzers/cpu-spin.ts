@@ -201,7 +201,7 @@ export class CpuSpinAnalyzer extends Analyzer {
                     pid: record.pid,
                     percent: Number(record.percent.toFixed(1)),
                     deltaMs: record.deltaMs,
-                    windowMs: this.windowMs,
+                    windowMs: measuredMs,
                     command: record.command,
                     owner,
                 },

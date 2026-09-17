@@ -14,8 +14,14 @@ if (!label || !repeatsRaw || cmd.length === 0) {
 }
 
 const repeats = Number(repeatsRaw);
+if (!Number.isInteger(repeats) || repeats <= 0) {
+    console.error("repeats must be a positive integer");
+    process.exit(2);
+}
+
 const user: number[] = [];
 const sys: number[] = [];
+const cpuTotals: number[] = [];
 const wall: number[] = [];
 
 for (let i = 0; i < repeats; i++) {
@@ -25,6 +31,11 @@ for (let i = 0; i < repeats; i++) {
     await proc.exited;
     wall.push(performance.now() - started);
 
+    if (proc.exitCode !== 0) {
+        console.error(stderr.slice(-400));
+        throw new Error(`measured command exited ${proc.exitCode}`);
+    }
+
     const userMatch = stderr.match(/^user\s+([\d.]+)$/m);
     const sysMatch = stderr.match(/^sys\s+([\d.]+)$/m);
 
@@ -33,12 +44,29 @@ for (let i = 0; i < repeats; i++) {
         throw new Error("`/usr/bin/time -p` printed no user/sys line");
     }
 
-    user.push(Number(userMatch[1]));
-    sys.push(Number(sysMatch[1]));
+    const userSec = Number(userMatch[1]);
+    const sysSec = Number(sysMatch[1]);
+    user.push(userSec);
+    sys.push(sysSec);
+    cpuTotals.push(userSec + sysSec);
 }
 
-const median = (values: number[]): number => [...values].sort((a, b) => a - b)[Math.floor(values.length / 2)] ?? 0;
-const cpu = median(user) + median(sys);
+const median = (values: number[]): number => {
+    if (values.length === 0) {
+        return 0;
+    }
+
+    const sorted = [...values].sort((a, b) => a - b);
+    const mid = Math.floor(sorted.length / 2);
+
+    if (sorted.length % 2 === 1) {
+        return sorted[mid] ?? 0;
+    }
+
+    return ((sorted[mid - 1] ?? 0) + (sorted[mid] ?? 0)) / 2;
+};
+
+const cpu = median(cpuTotals);
 
 console.log(
     `${label}\tuser ${median(user).toFixed(3)}s\tsys ${median(sys).toFixed(3)}s\tcpu ${cpu.toFixed(3)}s\twall ${median(wall).toFixed(0)}ms\tn=${repeats}`

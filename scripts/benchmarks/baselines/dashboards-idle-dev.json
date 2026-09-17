@@ -1,0 +1,21 @@
+{
+    "name": "dashboards-idle-dev",
+    "capturedAt": "2026-09-16T16:18:03.152Z",
+    "commit": "0d077f1c9",
+    "loadAvg": [
+        45.9443359375,
+        63.5791015625,
+        88.6171875
+    ],
+    "hostname": "MacBook-Pro-2262.local",
+    "metrics": {
+        "idleCpuPercent": 0.083,
+        "rssMb": 162.3,
+        "threads": 29,
+        "childProcesses": 1,
+        "startupMs": 2671,
+        "treeCpuPercent": 0.433,
+        "treeRssMb": 784.1
+    },
+    "notes": "commit 0d077f1c9; median of 5 run(s), 60s window after 10s settle; uptime before: 18:05  up 4 days,  1:27, 37 users, load averages: 155.91 188.67 143.54; uptime after: 18:18  up 4 days,  1:40, 34 users, load averages: 45.94 63.58 88.62"
+}
