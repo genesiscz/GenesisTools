@@ -87,6 +87,12 @@ describe("parseNotificationOptions", () => {
         expect(parsed.value.id).toBe("ask-1");
         expect(parsed.value.actions).toEqual([{ id: "yes", title: "Yes" }]);
     });
+
+    test("rejects an id that would escape the reply directory", () => {
+        expect(parseNotificationOptions({ message: "x", id: "../mail" }).ok).toBe(false);
+        expect(parseNotificationOptions({ message: "x", id: "a/b" }).ok).toBe(false);
+        expect(parseNotificationOptions({ message: "x", id: "" }).ok).toBe(false);
+    });
 });
 
 describe("isGenesisAppRpcAvailable", () => {

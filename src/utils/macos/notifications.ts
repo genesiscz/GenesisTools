@@ -1,6 +1,6 @@
-import { existsSync, mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import { watchFileFeed } from "@genesiscz/utils/fs/file-feed-watcher";
 import { logger } from "@genesiscz/utils/logger";
@@ -431,6 +431,7 @@ export async function readNotificationReply(
     const outcome = await genesisAppRpc<{ answered: boolean } & NotificationReply>("notify.reply", {
         id,
         consume: opts.consume,
+        replyDir: join(genesisAppDir(), "replies"),
     });
 
     if (!outcome.ok || !outcome.result.answered) {
@@ -456,6 +457,14 @@ export async function askNotification(
     opts: NotificationOptions,
     waitOpts: { timeoutMs?: number } = {}
 ): Promise<NotificationReply | null> {
+    const replyDir = join(genesisAppDir(), "replies");
+    mkdirSync(replyDir, { recursive: true });
+
+    if (opts.id) {
+        // A leftover reply for a reused id would satisfy the watch at once.
+        rmSync(join(replyDir, `${opts.id}.json`), { force: true });
+    }
+
     const posted = await postNotification(opts);
 
     if (posted.backend !== NotificationBackend.GenesisApp || !posted.id) {
@@ -464,8 +473,7 @@ export async function askNotification(
     }
 
     const timeoutMs = waitOpts.timeoutMs ?? 5 * 60_000;
-    const replyPath = join(genesisAppDir(), "replies", `${posted.id}.json`);
-    mkdirSync(dirname(replyPath), { recursive: true });
+    const replyPath = join(replyDir, `${posted.id}.json`);
     await watchFileFeed({
         path: replyPath,
         deadlineAt: Date.now() + timeoutMs,
@@ -539,6 +547,11 @@ export async function openNotificationSettings(): Promise<GenesisAppRpcOutcome<{
 
 function optionalString(value: unknown): string | undefined {
     return typeof value === "string" ? value : undefined;
+}
+
+/** Notification ids become reply filenames. A path component would escape the reply directory. */
+export function isSafeNotificationId(id: string): boolean {
+    return id.length > 0 && !id.includes("/") && !id.includes("\\") && !id.includes("..");
 }
 
 function optionalBoolean(value: unknown): boolean | undefined {
@@ -701,6 +714,10 @@ export function parseNotificationOptions(
     const id = optionalString(value.id);
 
     if (id !== undefined) {
+        if (!isSafeNotificationId(id)) {
+            return { ok: false, error: "--payload.id must not contain a path" };
+        }
+
         options.id = id;
     }
 
