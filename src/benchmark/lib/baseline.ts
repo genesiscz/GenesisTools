@@ -42,7 +42,7 @@ export interface BaselineComparison {
     ok: boolean;
     baseline: Baseline | null;
     deltas: Record<string, BaselineDelta>;
-    /** Metrics measured now that the baseline does not carry. */
+    /** Metrics present on only one side of the comparison. */
     missing: string[];
 }
 
@@ -201,6 +201,12 @@ export async function compareToBaseline(input: {
         deltas[metric] = { before, after, pct, ok };
     }
 
+    for (const metric of Object.keys(baseline.metrics)) {
+        if (!(metric in input.metrics)) {
+            missing.push(metric);
+        }
+    }
+
     const ok = missing.length === 0 && Object.values(deltas).every((delta) => delta.ok);
     log.debug({ name: input.name, ok, missing: missing.length }, "baseline comparison finished");
     return { ok, baseline, deltas, missing };
@@ -251,7 +257,7 @@ export function formatComparison(cmp: BaselineComparison): string {
     const lines = [...header, "", table];
 
     if (cmp.missing.length > 0) {
-        lines.push("", `Missing from the baseline: ${cmp.missing.join(", ")}`);
+        lines.push("", `Contract mismatch (present on only one side): ${cmp.missing.join(", ")}`);
     }
 
     lines.push("", cmp.ok ? "PASS — every metric is within tolerance." : "FAIL — see the rows marked REGRESSED.");

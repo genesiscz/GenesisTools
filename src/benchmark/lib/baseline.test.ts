@@ -131,13 +131,26 @@ describe("compareToBaseline", () => {
     test("names a metric the baseline does not carry instead of scoring it", async () => {
         const cmp = await compareToBaseline({
             name: "cmp",
-            metrics: { cpuMs: 100, fsCalls: 12 },
+            metrics: { cpuMs: 100, spawns: 4, throughput: 50, fsCalls: 12 },
             tolerancePct: TOLERANCE,
             dir: DIR,
         });
 
         expect(cmp.missing).toEqual(["fsCalls"]);
         expect(cmp.deltas.fsCalls).toBeUndefined();
+        expect(cmp.ok).toBe(false);
+    });
+
+    test("fails when the current run drops a metric the baseline still carries", async () => {
+        const cmp = await compareToBaseline({
+            name: "cmp",
+            metrics: { cpuMs: 100, spawns: 4 },
+            tolerancePct: TOLERANCE,
+            dir: DIR,
+        });
+
+        expect(cmp.missing).toEqual(["throughput"]);
+        expect(cmp.deltas.throughput).toBeUndefined();
         expect(cmp.ok).toBe(false);
     });
 
@@ -172,7 +185,7 @@ describe("formatComparison", () => {
     test("renders one row per metric plus a verdict", async () => {
         const cmp = await compareToBaseline({
             name: "cmp",
-            metrics: { cpuMs: 130, spawns: 4 },
+            metrics: { cpuMs: 130, spawns: 4, throughput: 50 },
             tolerancePct: TOLERANCE,
             dir: DIR,
         });
