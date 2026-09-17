@@ -68,6 +68,73 @@ tools jev ts compile downloaded-experiment.json
 `experiment` is the main command; `typescript` and `ts` are aliases.
 `tools jev status` reads the configured gateway balance without generating anything.
 
+## Fly arena: MaleCNS + Jev
+
+Open the **Fly arena** tab, collect 12 sugar drops in 60 seconds, and dodge the swatter.
+Play with WASD/arrows and Space to dash, or use the on-screen controls. Pause stops the
+simulation and aborts pending Jev requests; leaving the tab or hiding the page pauses play.
+
+Four controllers share the same seeded game engine:
+
+| Mode | Controller | Downloads / paid requests |
+| --- | --- | --- |
+| You | Keyboard or touch movement | Neither |
+| MaleCNS reflex | Food-seeking baseline plus simulated LC16 → MDN escape output | Selected circuit on first use |
+| Jev policy | Jev chooses forage, turn, dash, or wait from reduced observations | Jev calls only |
+| Jev + MaleCNS | Jev receives neural rates; local escape output can override its action | Both |
+
+Jev runs at a configurable 1–10 second decision interval, with one request in flight and
+at most 30 calls per round. Low probability, failed, or stale decisions fall back to the
+local controller. Responses older than four simulated seconds are discarded. The game
+does not wait for network inference. The CLI's headless simulation awaits each decision
+before advancing simulated time, so its Jev trajectories are not wall-clock browser replays.
+
+The wiring selector keeps the original graph, permutes connection targets with the seed,
+or removes synaptic influence. The latter two are controls, not extra biological models.
+Finished rounds record score, survival, mode, wiring, and seed for comparison; export includes
+decision traces and the circuit manifest. A single game result does not establish a benefit
+from biological wiring.
+
+### Downloads and cache
+
+Opening the dashboard, listing circuits, and playing Human or Jev-only modes never download
+a connectome. Selecting a MaleCNS mode alone does not download it either: **Start** or **Step**
+loads the selected graph. Repeated starts reuse the verified local cache.
+
+| Subset | Neurons | Directed connections | Download |
+| --- | ---: | ---: | ---: |
+| Compact | 1,088 | 71,681 | 1.2 MB |
+| Balanced | 1,788 | 215,329 | 3.5 MB |
+| Standard | 2,888 | 470,170 | 7.7 MB |
+| Expanded | 6,000 | 1,275,994 | 21.2 MB |
+
+Files live under `~/.genesis-tools/jev/cache/male-cns/<pinned-revision>/`.
+The loader verifies the pinned Git blob hash, byte size, and graph counts before publishing
+a cache file atomically. Concurrent loads share one download. Invalid cache entries are
+replaced only when a load is requested. Files are not checked into the repo, and the
+1.1 GB raw connection table is not needed by this arena.
+
+These are real **MaleCNS v1.0 circuit subsets**, not the full CNS. All retained cells and
+edges are simulated in a Web Worker; the activity view samples up to 240 soma positions.
+Input currents, LIF dynamics, transmitter signs, motor readout, food seeking, and flight are
+explicit modelling choices. No learning, whole-fly emulation, or biological performance
+claim is made. See [data attribution and adaptations](lib/arena/NOTICE.md).
+
+### Arena CLI
+
+```sh
+tools jev arena circuits                          # read-only; no download
+tools jev arena load compact                      # explicit first download, then cache hits
+tools jev arena simulate --mode malecns --seconds 10 --seed 42
+tools jev arena simulate --mode malecns --wiring shuffled --seconds 10
+tools jev arena simulate --mode malecns --wiring disconnected --seconds 10
+tools jev arena simulate --mode hybrid --seconds 10   # paid Jev decisions
+tools jev arena decide observation.json           # one decision
+```
+
+`lib/arena/` owns the graph contract/cache, simulator, game rules, policy, and headless runner.
+The CLI, HTTP routes, browser worker, and dashboard use that shared core.
+
 ## Layout
 
 - `commands/`: thin CLI adapters for login, evaluation, experiments, and dashboard startup.

@@ -11,6 +11,7 @@ import {
     Code2,
     Download,
     FlaskConical,
+    Gamepad2,
     Play,
     RefreshCw,
     RotateCcw,
@@ -25,6 +26,7 @@ import { generationMode } from "../lib/generation";
 import { languages } from "../lib/languages";
 import type { EvaluationResponse } from "../lib/service";
 import { type TypeScriptRequest, typescriptPresets } from "../lib/typescript-grammar";
+import { ArenaLab } from "./ArenaLab";
 import { api, download, errorMessage } from "./client";
 import "./styles.css";
 
@@ -824,6 +826,7 @@ export default function Dashboard() {
                 { label: "Playground", href: "playground", icon: <CheckCheck size={15} /> },
                 { label: "Request editor", href: "requests", icon: <Braces size={15} /> },
                 { label: "TypeScript lab", href: "typescript", icon: <Code2 size={15} /> },
+                { label: "Fly arena", href: "arena", icon: <Gamepad2 size={15} /> },
             ]}
             activePath={tab}
             onNavigate={(value) => {
@@ -856,7 +859,13 @@ export default function Dashboard() {
                         <ErrorNotice message={status.error} />
                     </div>
                 )}
-                {tab === "typescript" ? <TypeScriptLab /> : <Playground key={tab} advanced={tab === "requests"} />}
+                {tab === "arena" ? (
+                    <ArenaLab />
+                ) : tab === "typescript" ? (
+                    <TypeScriptLab />
+                ) : (
+                    <Playground key={tab} advanced={tab === "requests"} />
+                )}
                 <footer className="mt-10 flex flex-wrap justify-between gap-2 border-t border-border pt-5 text-xs text-muted-foreground">
                     <span>Local Jev workbench · Powered by tools artifact</span>
                     <span>Credentials stay on this Mac. Requests go to Vercel AI Gateway.</span>

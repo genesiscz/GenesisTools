@@ -4,6 +4,7 @@ import { runTool } from "@genesiscz/utils/cli";
 import { logger, out } from "@genesiscz/utils/logger";
 import { Command } from "commander";
 import { ZodError } from "zod";
+import { registerArena } from "./commands/arena";
 import { registerDashboard } from "./commands/dashboard";
 import { registerEvaluation } from "./commands/evaluate";
 import { registerExperiment } from "./commands/experiment";
@@ -13,6 +14,7 @@ const program = new Command().name("tools jev").description("Jev evaluation tool
 registerLogin(program);
 registerEvaluation(program);
 registerExperiment(program);
+registerArena(program);
 registerDashboard(program);
 
 try {

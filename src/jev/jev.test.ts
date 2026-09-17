@@ -6,6 +6,13 @@ import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import type { Experimental_EvaluationModel } from "ai";
+import { CircuitCache, circuitBlobHash } from "./lib/arena/cache";
+import type { CircuitGraph, CircuitTier } from "./lib/arena/circuit";
+import { FlyArena } from "./lib/arena/engine";
+import { MaleCnsCircuit } from "./lib/arena/neural";
+import { decideArena } from "./lib/arena/policy";
+import { simulateArena } from "./lib/arena/simulate";
+import { needsCircuit, needsJev } from "./lib/arena/types";
 import { resolveApiKey, saveApiKey } from "./lib/auth";
 import { compileExperiment } from "./lib/compiler";
 import { CompilerRegistry } from "./lib/compilers/registry";
@@ -459,6 +466,275 @@ describe("Language and compiler interfaces", () => {
         },
         30000
     );
+});
+
+function circuitFixture(): CircuitGraph {
+    const names = ["LC16", "LC16", "relay", "relay", "MDN", "MDN"];
+    const neurons = names.map((type, index) => ({
+        id: `cell-${index}`,
+        type,
+        side: index % 2 ? "R" : "L",
+        nt: "acetylcholine",
+        role: index < 2 ? "sensory" : "interneuron",
+        x: index,
+        y: index,
+        z: index,
+    }));
+    return {
+        version: "fixture",
+        neurons,
+        edges: [
+            [0, 2, 100, 1],
+            [1, 3, 100, 1],
+            [2, 4, 100, 1],
+            [3, 5, 100, 1],
+        ],
+        manifest: {
+            dataset: "male-cns:v1.0",
+            neuronCount: 6,
+            edgeCount: 4,
+            contactCount: 400,
+            sensoryIds: ["cell-0", "cell-1"],
+            outputIds: ["cell-4", "cell-5"],
+            assumptions: ["Synthetic test fixture"],
+            attribution: "Fixture",
+            license: "CC BY 4.0",
+            licenseUrl: "https://creativecommons.org/licenses/by/4.0/",
+            sources: [],
+            modelParameters: { synapseMvPerContact: 0.275, sensoryCurrentMv: 36, decoderHz: 40, turnHz: 35 },
+        },
+    };
+}
+
+describe("Fly arena and lazy circuit cache", () => {
+    test("cache status and non-connectome modes do not download or create a cache", async () => {
+        const root = await mkdtemp(join(tmpdir(), "jev-circuit-"));
+        const directory = join(root, "not-created");
+        const download = mock(async () => {
+            throw new Error("Unexpected download");
+        });
+        const cache = new CircuitCache({ directory, download });
+        try {
+            expect((await cache.status()).every((tier) => !tier.cached)).toBe(true);
+            await expect(stat(directory)).rejects.toMatchObject({ code: "ENOENT" });
+            expect(needsCircuit("human")).toBe(false);
+            expect(needsCircuit("jev")).toBe(false);
+            expect(needsJev("human")).toBe(false);
+            const load = mock(async () => {
+                throw new Error("Unexpected model load");
+            });
+            const decide = mock(async () => {
+                throw new Error("Unexpected paid request");
+            });
+            const human = await simulateArena({ input: { mode: "human", seconds: 0.1 }, load, decide });
+            expect(human.state.elapsed).toBeCloseTo(0.1);
+            expect(load).not.toHaveBeenCalled();
+            expect(decide).not.toHaveBeenCalled();
+            expect(download).not.toHaveBeenCalled();
+        } finally {
+            await rm(root, { recursive: true, force: true });
+        }
+    });
+
+    test("concurrent first loads download once; subsequent loads verify and reuse the cached bytes", async () => {
+        const root = await mkdtemp(join(tmpdir(), "jev-circuit-"));
+        const bytes = new TextEncoder().encode(SafeJSON.stringify(circuitFixture()));
+        const tier: CircuitTier = {
+            id: "fixture",
+            label: "Fixture",
+            file: "fixture.json",
+            neurons: 6,
+            edges: 4,
+            bytes: bytes.length,
+            blob: circuitBlobHash(bytes),
+        };
+        const download = mock(async () => bytes);
+        const cache = new CircuitCache({ directory: root, tiers: [tier], download });
+        try {
+            const [first, second] = await Promise.all([
+                cache.load({ tierId: "fixture" }),
+                cache.load({ tierId: "fixture" }),
+            ]);
+            expect(first.cacheHit).toBe(false);
+            expect(second.graph.neurons).toHaveLength(6);
+            expect(download).toHaveBeenCalledTimes(1);
+            expect((await cache.load({ tierId: "fixture" })).cacheHit).toBe(true);
+            expect(download).toHaveBeenCalledTimes(1);
+            expect((await cache.status())[0].cached).toBe(true);
+        } finally {
+            await rm(root, { recursive: true, force: true });
+        }
+    });
+
+    test("bad checksums never become a cached model and cancelled requests never download", async () => {
+        const root = await mkdtemp(join(tmpdir(), "jev-circuit-"));
+        const bytes = new TextEncoder().encode(SafeJSON.stringify(circuitFixture()));
+        const tier: CircuitTier = {
+            id: "fixture",
+            label: "Fixture",
+            file: "fixture.json",
+            neurons: 6,
+            edges: 4,
+            bytes: bytes.length,
+            blob: "wrong",
+        };
+        const download = mock(async () => bytes);
+        const cache = new CircuitCache({ directory: root, tiers: [tier], download });
+        try {
+            await expect(cache.load({ tierId: "fixture" })).rejects.toThrow("checksum");
+            expect((await cache.status())[0].cached).toBe(false);
+            const abort = new AbortController();
+            abort.abort();
+            await expect(cache.load({ tierId: "fixture", signal: abort.signal })).rejects.toThrow();
+            expect(download).toHaveBeenCalledTimes(1);
+            await expect(cache.load({ tierId: "../secret" })).rejects.toThrow("Unknown");
+        } finally {
+            await rm(root, { recursive: true, force: true });
+        }
+    });
+
+    test("Jev-only simulation makes decisions without loading any circuit", async () => {
+        const load = mock(async () => {
+            throw new Error("Unexpected circuit download");
+        });
+        const decide = mock<typeof decideArena>(async () => ({
+            action: "forage",
+            confidence: 0.9,
+            threatProbability: 0,
+            survivalScore: 4,
+            probabilities: { forage: 0.9 },
+            fallback: false,
+            latencyMs: 1,
+            usage: {},
+        }));
+        const result = await simulateArena({ input: { mode: "jev", seconds: 0.1 }, load, decide });
+        expect(load).not.toHaveBeenCalled();
+        expect(decide).toHaveBeenCalledTimes(1);
+        expect(result.state.actionSource).toBe("Jev");
+        expect(result.state.neural).toBeNull();
+        decide.mockImplementation(async () => {
+            throw new Error("Fixture gateway failure");
+        });
+        const failed = await simulateArena({ input: { mode: "jev", seconds: 0.1 }, load, decide });
+        expect(failed.state.actionSource).toBe("fallback");
+        expect(failed.failures).toHaveLength(1);
+        expect(failed.attempts).toBe(1);
+        expect(load).not.toHaveBeenCalled();
+    });
+
+    test("render-frame batching preserves fixed-step physics and neural outputs", () => {
+        const options = { mode: "malecns" as const, seed: 42, wiring: "original" as const, graph: circuitFixture() };
+        const fine = new FlyArena(options);
+        const batched = new FlyArena(options);
+        fine.start();
+        batched.start();
+        for (let index = 0; index < 250; index++) {
+            fine.advance({ milliseconds: 20 });
+        }
+
+        for (let index = 0; index < 50; index++) {
+            batched.advance({ milliseconds: 100 });
+        }
+
+        expect(batched.state).toEqual(fine.state);
+    });
+
+    test("seeded manual control moves the fly, collects sugar, and respects pause", () => {
+        const options = { mode: "human" as const, seed: 42, wiring: "original" as const };
+        const arena = new FlyArena(options);
+        expect(arena.state.food).toEqual(new FlyArena(options).state.food);
+        arena.state.food[0] = { x: 460, y: 260 };
+        arena.start();
+        arena.advance({ milliseconds: 100, input: { x: 1, y: 0 } });
+        expect(arena.state.fly.x).toBeGreaterThan(450);
+        expect(arena.state.sugar).toBe(1);
+        arena.pause();
+        const elapsed = arena.state.elapsed;
+        arena.advance({ milliseconds: 100 });
+        expect(arena.state.elapsed).toBe(elapsed);
+        expect(() => new FlyArena({ ...options, mode: "malecns" })).toThrow("Load");
+    });
+
+    test("a swat damages a stationary fly and finished rounds stop advancing", () => {
+        const arena = new FlyArena({ mode: "human", seed: 42, wiring: "original" });
+        arena.start();
+        for (let i = 0; i < 600; i++) {
+            arena.advance({ milliseconds: 20 });
+        }
+        expect(arena.state.status).toBe("lost");
+        expect(arena.state.health).toBe(0);
+        const elapsed = arena.state.elapsed;
+        arena.advance({ milliseconds: 100 });
+        expect(arena.state.elapsed).toBe(elapsed);
+    });
+
+    test("sensory spikes reach motor cells through wiring; disconnected control keeps motor output silent", () => {
+        const graph = circuitFixture();
+        const normal = new MaleCnsCircuit(graph, { seed: 42, wiring: "original" });
+        const disconnected = new MaleCnsCircuit(graph, { seed: 42, wiring: "disconnected" });
+        expect(normal.snapshot().leftHz).toBe(0);
+        for (let i = 0; i < 5; i++) {
+            normal.advance({ milliseconds: 100, left: 1, right: 0 });
+            disconnected.advance({ milliseconds: 100, left: 1, right: 0 });
+        }
+        expect(normal.snapshot().sensoryLeftHz).toBeGreaterThan(0);
+        expect(normal.snapshot().leftHz).toBeGreaterThan(0);
+        expect(normal.snapshot().rightHz).toBe(0);
+        expect(disconnected.snapshot().leftHz).toBe(0);
+        expect(disconnected.snapshot().retreat).toBe(0);
+        expect(graph.edges).toEqual(circuitFixture().edges);
+    });
+
+    test("shuffled wiring and game replay are reproducible for a fixed seed", () => {
+        const options = { mode: "malecns" as const, seed: 19, wiring: "shuffled" as const, graph: circuitFixture() };
+        const first = new FlyArena(options);
+        const second = new FlyArena(options);
+        first.start();
+        second.start();
+        for (let i = 0; i < 200; i++) {
+            first.advance({ milliseconds: 20 });
+            second.advance({ milliseconds: 20 });
+        }
+        expect(first.state).toEqual(second.state);
+    });
+
+    test("Jev gets reduced state, validates choices, and uses an explicit low-confidence fallback", async () => {
+        const evaluate = mock<typeof evaluateRequest>(async ({ input }) => {
+            evaluationSchema.parse(input);
+            return {
+                model: JEV_MODEL,
+                answers: {
+                    action: { type: "choice", choice: "dash", probabilities: { dash: 0.9 } },
+                    threat: { type: "boolean", probability: 0.95 },
+                    survival: { type: "score", score: 2 },
+                },
+                usage: { inputTokens: 10, outputTokens: 3, totalTokens: 13 },
+                warnings: [],
+                rounding: undefined,
+                providerMetadata: undefined,
+            };
+        });
+        const observation = new FlyArena({ mode: "human", seed: 42, wiring: "original" }).observe();
+        const result = await decideArena({ observation, evaluate });
+        expect(result.action).toBe("dash");
+        expect(result.fallback).toBe(false);
+        expect(result.threatProbability).toBe(0.95);
+        evaluate.mockImplementation(async () => ({
+            model: JEV_MODEL,
+            answers: {
+                action: { type: "choice", choice: "left", probabilities: { left: 0.2 } },
+                threat: { type: "boolean", probability: 0.1 },
+                survival: { type: "score", score: 3 },
+            },
+            usage: { inputTokens: 10, outputTokens: 3, totalTokens: 13 },
+            warnings: [],
+            rounding: undefined,
+            providerMetadata: undefined,
+        }));
+        expect(await decideArena({ observation, evaluate })).toMatchObject({ action: "forage", fallback: true });
+        await expect(decideArena({ observation: { ...observation, health: -2 }, evaluate })).rejects.toThrow();
+        expect(evaluate).toHaveBeenCalledTimes(2);
+    });
 });
 
 describe("Unconstrained mode regressions", () => {

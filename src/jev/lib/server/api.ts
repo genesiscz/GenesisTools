@@ -4,6 +4,8 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import type { Plugin } from "vite";
 import { ZodError, z } from "zod";
+import { circuitCache } from "../arena/cache";
+import { decideArena } from "../arena/policy";
 import { compileExperiment } from "../compiler";
 import { demoInput } from "../evaluate";
 import { stepExperiment } from "../experiment";
@@ -77,7 +79,10 @@ export function jevApiPlugin(): Plugin {
 
                 activeRequests++;
                 const controller = new AbortController();
-                const timer = setTimeout(() => controller.abort(), 45000);
+                const timer = setTimeout(
+                    () => controller.abort(),
+                    req.url?.split("?")[0] === "/arena/circuit" ? 120000 : 45000
+                );
                 const disconnect = () => {
                     if (!res.writableEnded) {
                         controller.abort();
@@ -91,6 +96,10 @@ export function jevApiPlugin(): Plugin {
                         return gatewayStatus();
                     }
 
+                    if (req.method === "GET" && route === "/arena/circuits") {
+                        return circuitCache.status();
+                    }
+
                     if (req.method === "GET" && route === "/presets") {
                         return { evaluation: demoInput, typescript: typescriptPresets };
                     }
@@ -100,6 +109,18 @@ export function jevApiPlugin(): Plugin {
                     }
 
                     const body = await readBody(req);
+                    if (route === "/arena/circuit") {
+                        const { tierId } = z
+                            .object({ tierId: z.string().max(32) })
+                            .strict()
+                            .parse(body);
+                        return circuitCache.load({ tierId, signal: controller.signal });
+                    }
+
+                    if (route === "/arena/decide") {
+                        return decideArena({ observation: body, signal: controller.signal });
+                    }
+
                     if (route === "/evaluate") {
                         const options = evaluateBody.parse(body);
                         return evaluateRequest({ ...options, signal: controller.signal });
