@@ -12,7 +12,7 @@ function update(rev: number, changed: string, revised: string, fields: WorkItemU
         id: rev,
         workItemId: 261311,
         rev,
-        revisedBy: { displayName: "Charvátová Mária (QT1)" },
+        revisedBy: { displayName: "Testerová Jana (QT1)" },
         revisedDate: revised,
         fields: { "System.ChangedDate": { newValue: changed }, ...fields },
         url: "",
@@ -22,14 +22,14 @@ function update(rev: number, changed: string, revised: string, fields: WorkItemU
 const UPDATES: WorkItemUpdate[] = [
     update(25, "2026-08-02T21:21:00Z", "2026-09-01T12:51:00Z", {
         "System.State": { oldValue: "Development", newValue: "Testing" },
-        "System.AssignedTo": { newValue: { displayName: "Charvátová Mária (QT1)" } },
+        "System.AssignedTo": { newValue: { displayName: "Testerová Jana (QT1)" } },
     }),
     update(31, "2026-08-05T13:23:48Z", "2026-09-17T16:33:14Z", {
         "System.State": { oldValue: "Testing", newValue: "Closed" },
     }),
     update(34, "2026-09-17T16:33:14Z", "9999-01-01T00:00:00Z", {
         "System.State": { oldValue: "Closed", newValue: "Development" },
-        "System.AssignedTo": { newValue: { displayName: "Hladej Filip (QT)" } },
+        "System.AssignedTo": { newValue: { displayName: "Vývojář Karel (QT)" } },
     }),
 ];
 
@@ -63,8 +63,8 @@ describe("computeAssignmentPeriods", () => {
     test("dates assignments by the changed date too", () => {
         const periods = computeAssignmentPeriods(UPDATES);
         expect(periods.map((p) => [p.assignee, p.startDate, p.endDate])).toEqual([
-            ["Charvátová Mária (QT1)", "2026-08-02T21:21:00Z", "2026-09-17T16:33:14Z"],
-            ["Hladej Filip (QT)", "2026-09-17T16:33:14Z", null],
+            ["Testerová Jana (QT1)", "2026-08-02T21:21:00Z", "2026-09-17T16:33:14Z"],
+            ["Vývojář Karel (QT)", "2026-09-17T16:33:14Z", null],
         ]);
     });
 });

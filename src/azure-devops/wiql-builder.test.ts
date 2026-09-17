@@ -3,10 +3,10 @@ import { buildCombinedQuery } from "@app/azure-devops/wiql-builder";
 
 describe("buildCombinedQuery", () => {
     test("scopes to the configured project and matches the current assignee with =", () => {
-        const wiql = buildCombinedQuery({ currentAssignedTo: "Kiefmann Karel (QK)" });
+        const wiql = buildCombinedQuery({ currentAssignedTo: "Vývojář Karel (QK)" });
 
         expect(wiql).toContain("[System.TeamProject] = @project");
-        expect(wiql).toContain("[System.AssignedTo] = 'Kiefmann Karel (QK)'");
+        expect(wiql).toContain("[System.AssignedTo] = 'Vývojář Karel (QK)'");
     });
 
     test("assigneeContains switches the current-assignee predicate to CONTAINS", () => {
