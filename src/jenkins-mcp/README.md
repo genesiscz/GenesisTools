@@ -12,7 +12,13 @@ Inspect Jenkins from an AI assistant (MCP) *or* from your shell (CLI). Same back
 ## Quick Start
 
 ```bash
-# Required env vars (set once)
+# Log in once. Opens <jenkins>/me/security/, which is the API-token page for
+# whoever the browser is signed in as, so it works before it knows your username.
+tools jenkins-mcp login
+tools jenkins-mcp status          # which credentials are in use, and who they are
+tools jenkins-mcp logout          # forget the stored token
+
+# Scripted alternative, and what CI uses. The environment always wins.
 export JENKINS_URL=https://jenkins.example.com
 export JENKINS_USER=myuser
 export JENKINS_TOKEN=xxxxxxxxxxxx
@@ -27,6 +33,16 @@ tools jenkins-mcp monitor "https://.../job/X/123/" --timeout 30m | tee /tmp/buil
 ```
 
 Without args (no CLI subcommand), the binary launches as a stdio MCP server — that's what your assistant config uses.
+
+## Credentials
+
+Resolution order is the environment first (all three of `JENKINS_URL`, `JENKINS_USER` and `JENKINS_TOKEN`), then the stored login. `JENKINS_URL` on its own is config, not a credential: it selects which stored host to use and never counts as "partly logged in", because a repo `.env` routinely sets it alone.
+
+`tools jenkins-mcp login` writes **one** entry, `jenkins/credentials`, into the GenesisTools vault (`~/.genesis-tools/security/vault.json`, AES-256-GCM). That entry holds the URL, username and token together for every host you log into, so a stored login is self-contained and nothing needs `JENKINS_URL` exported. The newest login becomes the default host.
+
+A token alone is not a login: Jenkins accepts `Authorization: Bearer <token>` with HTTP 200 and resolves it to `anonymous`, and the same token with a wrong username answers 401. `login` and `status` therefore check `/me/api/json` and reject a resolved id of `anonymous` rather than trusting the status code.
+
+**The MCP server starts without credentials.** It resolves them on the first tool call, so `tools/list` works and a `tools/call` answers JSON-RPC `-32600` with the login instructions. Exiting at startup instead would show the assistant only "server failed to connect".
 
 ---
 

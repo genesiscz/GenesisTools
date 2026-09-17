@@ -11,7 +11,8 @@ import {
 } from "@modelcontextprotocol/server";
 import { StdioServerTransport } from "@modelcontextprotocol/server/stdio";
 import axios, { type AxiosInstance } from "axios";
-import { createClient, readEnvAuth } from "./lib/client";
+import { createClient } from "./lib/client";
+import { JenkinsAuthMissingError, resolveAuth } from "./lib/credentials";
 import { axiosLogFields, extractErrors } from "./lib/errors";
 import { formatDuration, formatStageLine, statusBody } from "./lib/format";
 import { fetchLog, grepLog } from "./lib/log";
@@ -126,18 +127,43 @@ function parseArgs<T>(raw: unknown, schema: ArgSchema, toolName: string): T {
 
 class JenkinsServer {
     protected server: Server;
-    protected client: AxiosInstance;
-    protected baseUrl: string;
+    // Resolved on the first tool call, never in the constructor: a server that
+    // exits at startup shows an MCP client "failed to connect" and hides the one
+    // sentence that fixes it. Starting lets tools/list work and puts the setup
+    // instructions in the tool error instead.
+    protected client!: AxiosInstance;
+    protected baseUrl!: string;
+    private authReady: Promise<void> | null = null;
+    private authDone = false;
 
     protected getMcpServer(): Server {
         return this.server;
     }
 
-    constructor() {
-        const auth = readEnvAuth();
-        this.client = createClient(auth);
-        this.baseUrl = auth.url;
+    protected async ensureAuth(): Promise<void> {
+        if (this.authDone) {
+            return;
+        }
 
+        this.authReady ??= (async () => {
+            const auth = await resolveAuth();
+            this.client = createClient(auth);
+            this.baseUrl = auth.url;
+            this.authDone = true;
+        })();
+
+        try {
+            await this.authReady;
+        } catch (error) {
+            // Drop the rejected promise so a `tools jenkins-mcp login` in another
+            // terminal takes effect on the next call instead of this session
+            // caching the failure forever.
+            this.authReady = null;
+            throw error;
+        }
+    }
+
+    constructor() {
         this.server = new Server({ name: "jenkins-server", version: "0.2.0" }, { capabilities: { tools: {} } });
 
         this.setupToolHandlers();
@@ -349,6 +375,8 @@ class JenkinsServer {
                 const raw = request.params.arguments ?? {};
                 const name = request.params.name;
 
+                await this.ensureAuth();
+
                 switch (name) {
                     case "get_build_status":
                         return await this.getBuildStatus(
@@ -433,6 +461,14 @@ class JenkinsServer {
             } catch (error) {
                 if (error instanceof ProtocolError) {
                     throw error;
+                }
+
+                // InvalidRequest, not InternalError: nothing went wrong inside the
+                // server, the caller has no credentials yet. The message names the
+                // command that fixes it, which is the whole point of not throwing
+                // at startup.
+                if (error instanceof JenkinsAuthMissingError) {
+                    throw new ProtocolError(ProtocolErrorCode.InvalidRequest, error.message);
                 }
 
                 if (axios.isAxiosError(error)) {

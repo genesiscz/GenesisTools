@@ -4,9 +4,11 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import type { AxiosInstance } from "axios";
 import { Command } from "commander";
-import { createClient, type JenkinsAuth, readEnvAuth } from "./lib/client";
+import { createClient } from "./lib/client";
+import { type JenkinsAuth, JenkinsAuthMissingError, resolveAuth } from "./lib/credentials";
 import { formatStageLine } from "./lib/format";
 import { fetchLog, grepLog } from "./lib/log";
+import { runAuthStatus, runLogin, runLogout } from "./lib/login";
 import { exitCodeFor, runMonitor } from "./lib/monitor";
 import { MonitorNotifier } from "./lib/notify";
 import { getStages } from "./lib/pipeline";
@@ -15,18 +17,14 @@ import { resolveRef } from "./lib/url";
 let cachedAuth: JenkinsAuth | null = null;
 let cachedClient: AxiosInstance | null = null;
 
-function loadClient(): AxiosInstance {
-    if (!cachedClient) {
-        cachedAuth ??= readEnvAuth();
-        cachedClient = createClient(cachedAuth);
-    }
-
-    return cachedClient;
+async function loadAuth(): Promise<JenkinsAuth> {
+    cachedAuth ??= await resolveAuth();
+    return cachedAuth;
 }
 
-function loadAuth(): JenkinsAuth {
-    cachedAuth ??= readEnvAuth();
-    return cachedAuth;
+async function loadClient(): Promise<AxiosInstance> {
+    cachedClient ??= createClient(await loadAuth());
+    return cachedClient;
 }
 
 function parseDuration(s: string): number {
@@ -56,7 +54,7 @@ export async function runCli(argv: string[]): Promise<void> {
                 throw new Error("Need --build or URL with build number");
             }
 
-            const snap = await getStages(loadClient(), ref.jobPath, ref.buildNumber, {
+            const snap = await getStages(await loadClient(), ref.jobPath, ref.buildNumber, {
                 expand: opts.expand,
             });
             out.println(`Build ${ref.buildNumber} — ${snap.status}`);
@@ -91,7 +89,7 @@ export async function runCli(argv: string[]): Promise<void> {
                     throw new Error("Need --build or URL with build number");
                 }
 
-                const r = await fetchLog(loadClient(), ref.jobPath, ref.buildNumber, {
+                const r = await fetchLog(await loadClient(), ref.jobPath, ref.buildNumber, {
                     nodeId: ref.nodeId,
                 });
                 out.println(
@@ -129,7 +127,7 @@ export async function runCli(argv: string[]): Promise<void> {
             const ref = resolveRef({ input, buildOverride: opts.build });
             const tree =
                 "number,result,building,duration,timestamp,builtOn,estimatedDuration,executor[*],actions[parameters[name,value],causes[shortDescription,userId]]";
-            const res = await loadClient().get(
+            const res = await (await loadClient()).get(
                 `/${ref.jobPath}/${ref.buildNumber ?? "lastBuild"}/api/json?tree=${tree}`
             );
             out.println(SafeJSON.stringify(res.data, null, 2));
@@ -143,7 +141,7 @@ export async function runCli(argv: string[]): Promise<void> {
             const ref = resolveRef({ input, buildOverride: opts.build });
             const tree =
                 "changeSet[items[commitId,author[fullName],msg,timestamp]],actions[causes[shortDescription,userId]]";
-            const res = await loadClient().get(
+            const res = await (await loadClient()).get(
                 `/${ref.jobPath}/${ref.buildNumber ?? "lastBuild"}/api/json?tree=${tree}`
             );
             out.println(SafeJSON.stringify(res.data, null, 2));
@@ -156,7 +154,7 @@ export async function runCli(argv: string[]): Promise<void> {
         .option("--limit <n>", "Max jobs to print", (v) => Number.parseInt(v, 10))
         .action(async (opts: { folder?: string; limit?: number }) => {
             const path = opts.folder ? `/${opts.folder}/api/json` : "/api/json";
-            const res = await loadClient().get(path);
+            const res = await (await loadClient()).get(path);
             const all = (res.data.jobs ?? []) as Array<{ name: string; color: string; url: string }>;
             const limited = opts.limit !== undefined ? all.slice(0, opts.limit) : all;
 
@@ -193,10 +191,10 @@ export async function runCli(argv: string[]): Promise<void> {
                 const notifier = opts.notify === false ? undefined : new MonitorNotifier();
                 const out = opts.quiet ? () => {} : (line: string) => process.stdout.write(line);
                 const result = await runMonitor({
-                    client: loadClient(),
+                    client: await loadClient(),
                     jobPath: ref.jobPath,
                     build: ref.buildNumber,
-                    baseUrl: loadAuth().url,
+                    baseUrl: (await loadAuth()).url,
                     timeoutMs: parseDuration(opts.timeout),
                     pollMs: parseDuration(opts.poll),
                     notifier,
@@ -206,6 +204,50 @@ export async function runCli(argv: string[]): Promise<void> {
             }
         );
 
+    program
+        .command("login")
+        .description("Create and store a Jenkins API token (opens <jenkins>/me/security/)")
+        .option("--url <url>", "Jenkins base URL — skips the prompt")
+        .option("--user <name>", "Jenkins username — skips the prompt")
+        .option("--token <token>", "API token — skips the prompt and the browser")
+        .option("--no-open", "Print the token page URL instead of opening a browser")
+        .action(async (opts: { url?: string; user?: string; token?: string; open?: boolean }) => {
+            process.exit(
+                await runLogin({
+                    url: opts.url,
+                    user: opts.user,
+                    token: opts.token,
+                    noOpen: opts.open === false,
+                })
+            );
+        });
+
+    program
+        .command("logout")
+        .description("Remove the stored Jenkins token")
+        .option("--url <url>", "Which Jenkins to forget (default: the stored one)")
+        .action(async (opts: { url?: string }) => {
+            process.exit(await runLogout(opts.url));
+        });
+
+    program
+        .command("status")
+        .description("Show which credentials are in use and who they authenticate as")
+        .action(async () => {
+            process.exit(await runAuthStatus());
+        });
+
     enhanceHelp(program);
-    await program.parseAsync(argv, { from: "user" });
+
+    try {
+        await program.parseAsync(argv, { from: "user" });
+    } catch (error) {
+        // The setup message is the whole value here; a stack trace is not.
+        if (error instanceof JenkinsAuthMissingError) {
+            out.error(error.message);
+            process.exit(1);
+        }
+
+        throw error;
+    }
 }

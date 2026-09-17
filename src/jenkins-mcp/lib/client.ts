@@ -1,13 +1,15 @@
 import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
 import axios, { type AxiosInstance, type InternalAxiosRequestConfig } from "axios";
+import { type JenkinsAuth, JenkinsAuthMissingError } from "./credentials";
 
-export interface JenkinsAuth {
-    url: string;
-    user: string;
-    token: string;
-}
+export type { JenkinsAuth } from "./credentials";
 
+/**
+ * Environment-only auth, for callers that must stay synchronous. Reading the
+ * secret store is async, so anything that can await should use `resolveAuth`
+ * from ./credentials instead and get the stored token as well.
+ */
 export function readEnvAuth(): JenkinsAuth {
     const url = env.jenkins.getUrl();
     const user = env.jenkins.getUser();
@@ -17,7 +19,7 @@ export function readEnvAuth(): JenkinsAuth {
         const missing = [!url && "JENKINS_URL", !user && "JENKINS_USER", !token && "JENKINS_TOKEN"]
             .filter(Boolean)
             .join(", ");
-        throw new Error(`Missing required Jenkins env vars: ${missing}`);
+        throw new JenkinsAuthMissingError(`${missing} not set`);
     }
 
     return { url, user, token };
