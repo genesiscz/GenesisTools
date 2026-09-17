@@ -8,9 +8,13 @@ import { logger } from "@genesiscz/utils/logger";
 import { collapsePath } from "@genesiscz/utils/paths";
 import { profiler } from "@genesiscz/utils/profile";
 
-export const CACHE_TTL_MS = 60 * 60 * 1000; // 60 minutes (CC 1-hour prompt-cache TTL)
-export const COOLING_THRESHOLD_MS = 50 * 60 * 1000; // 50 min idle = 10 min left
-export const CRITICAL_THRESHOLD_MS = 55 * 60 * 1000; // 55 min idle = 5 min left
+export const CACHE_TTL_MS = 60 * 60 * 1000; // Claude Code 1-hour prompt-cache TTL
+export const CODEX_CACHE_TTL_MS = 30 * 60 * 1000; // GPT-5.6+ / Codex subscription documented minimum
+export const GROK_CACHE_TTL_MS = 30 * 60 * 1000; // warning clock; xAI publishes no TTL (eviction anytime)
+export const COOLING_REMAINING_MS = 10 * 60 * 1000;
+export const CRITICAL_REMAINING_MS = 5 * 60 * 1000;
+export const COOLING_THRESHOLD_MS = CACHE_TTL_MS - COOLING_REMAINING_MS; // 50 min idle = 10 min left
+export const CRITICAL_THRESHOLD_MS = CACHE_TTL_MS - CRITICAL_REMAINING_MS; // 55 min idle = 5 min left
 
 const TAIL_BATCH_SIZE = 20;
 /** First slice. Grows up to TAIL_MAX_BYTES until a user/assistant timestamp is found. */
@@ -32,6 +36,8 @@ export interface SessionRow {
     modelSwitched: boolean;
     cacheStatus: CacheStatus;
     cacheTtlSec: number;
+    /** Full prompt-cache lifetime in seconds (3600 Claude, 1800 Codex). */
+    cacheLifetimeSec: number;
     totalTokens: number;
     cacheReadTokens: number;
     cacheCreateTokens: number;
@@ -88,20 +94,24 @@ export interface ListSessionRowsOptions {
     now?: number;
 }
 
-export function computeCacheStatus(cacheAt: number, now: number): { status: CacheStatus; ttlSec: number } {
+export function computeCacheStatus(
+    cacheAt: number,
+    now: number,
+    ttlMs: number = CACHE_TTL_MS
+): { status: CacheStatus; ttlSec: number } {
     const elapsed = now - cacheAt;
-    const ttlRemaining = Math.max(0, CACHE_TTL_MS - elapsed);
+    const ttlRemaining = Math.max(0, ttlMs - elapsed);
     const ttlSec = Math.ceil(ttlRemaining / 1000);
 
-    if (elapsed >= CACHE_TTL_MS) {
+    if (elapsed >= ttlMs) {
         return { status: "COLD", ttlSec: 0 };
     }
 
-    if (elapsed >= CRITICAL_THRESHOLD_MS) {
+    if (ttlRemaining <= CRITICAL_REMAINING_MS) {
         return { status: "CRITICAL", ttlSec };
     }
 
-    if (elapsed >= COOLING_THRESHOLD_MS) {
+    if (ttlRemaining <= COOLING_REMAINING_MS) {
         return { status: "COOLING", ttlSec };
     }
 
@@ -326,6 +336,7 @@ function buildRow(record: SessionMetadataRecord, usage: TailUsage, now: number, 
         modelSwitched: usage.model !== null && usage.prevModel !== null && usage.model !== usage.prevModel,
         cacheStatus: status,
         cacheTtlSec: ttlSec,
+        cacheLifetimeSec: Math.ceil(CACHE_TTL_MS / 1000),
         totalTokens: usage.totalTokens,
         cacheReadTokens: usage.cacheReadTokens,
         cacheCreateTokens: usage.cacheCreateTokens,
