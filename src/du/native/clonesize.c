@@ -1321,11 +1321,15 @@ static int run_scan(const char *target, Result *R) {
     double t3 = now_s();
 
     uint64_t unique = unique_private + mapped.unique_shared;
-    uint64_t shared = (naive > unique) ? naive - unique : 0;
+    uint64_t unique_alloc = unique_private_alloc + alloced.unique_shared;
+    // `naive` is allocated bytes (st_blocks), so the sharing figure must be
+    // taken against the allocated unique, not the mapped one: the gap between
+    // those two is per-file tail-block slack, which is not clone sharing.
+    uint64_t shared = (naive > unique_alloc) ? naive - unique_alloc : 0;
 
     R->naive = naive;
     R->unique = unique;
-    R->unique_alloc = unique_private_alloc + alloced.unique_shared;
+    R->unique_alloc = unique_alloc;
     // Single-file clusters hold both the file's own private blocks and the blocks
     // it shares with something outside the scan; privatesize separates the two.
     R->outside_shared = alloced.single_file > priv_opened ? alloced.single_file - priv_opened : 0;
@@ -1541,6 +1545,8 @@ static void print_human(const char *target, const Result *R, int quiet) {
            HUM(R->unique_alloc), (unsigned long long)R->unique_alloc);
     printf("Shared (CoW):    %8.1f %s   (%.1f%% of naive collapses to shared blocks)\n",
            HUM(R->shared), R->pct);
+    printf("Tail slack:      %8.1f %s   (allocation rounding inside unique files, not sharing)\n",
+           HUM(R->unique_alloc - R->unique));
     printf("Cross-worktree:  %8.1f %s   (shared across marked dirs)\n", HUM(R->cross_shared));
     printf("Deleting frees:  %8.1f %s   (>= this — per-file blocks private volume-wide)\n",
            HUM(R->priv_sum));

@@ -287,6 +287,7 @@ export async function scanWithBun(opts: ScanOptions): Promise<ClonesizeResult> {
     let opened = 0;
     let naive = 0n;
     let uniquePrivate = 0n;
+    let uniquePrivateAlloc = 0n;
     let privSum = 0n;
     const gNaive = new Array<number>(ngroups).fill(0);
     const gFiles = new Array<number>(ngroups).fill(0);
@@ -298,6 +299,7 @@ export async function scanWithBun(opts: ScanOptions): Promise<ClonesizeResult> {
         opened += r.opened;
         naive += BigInt(r.naive);
         uniquePrivate += BigInt(r.uniquePrivate);
+        uniquePrivateAlloc += BigInt(r.uniquePrivateAlloc ?? 0);
         privSum += BigInt(r.privSum);
         for (let g = 0; g < ngroups; g++) {
             gNaive[g]! += r.gNaive[g] ?? 0;
@@ -335,9 +337,25 @@ export async function scanWithBun(opts: ScanOptions): Promise<ClonesizeResult> {
         ngroups
     );
 
+    // Second merge over block-aligned extents: what the volume actually spends
+    // on the shared clusters. Mirrors merge_pass(align=1) in the C engine.
+    const BLK = 4096n;
+    const aDevs = new BigUint64Array(totalExts);
+    const aLens = new BigUint64Array(totalExts);
+    for (let e = 0; e < totalExts; e++) {
+        const start = devs[e]! & ~(BLK - 1n);
+        const end = (devs[e]! + lens[e]! + BLK - 1n) & ~(BLK - 1n);
+        aDevs[e] = start;
+        aLens[e] = end - start;
+    }
+    const aligned = mergeExtentClusters(idxArr, aDevs, aLens, grps, totalExts, ngroups);
+
     const naiveNum = Number(naive);
     const uniqueNum = Number(uniquePrivate + uniqueShared);
-    const shared = naiveNum > uniqueNum ? naiveNum - uniqueNum : 0;
+    const uniqueAllocNum = Number(uniquePrivateAlloc + aligned.uniqueShared);
+    // naive is allocated bytes, so sharing is measured against the allocated
+    // unique; the mapped/allocated gap is tail-block slack, never sharing.
+    const shared = naiveNum > uniqueAllocNum ? naiveNum - uniqueAllocNum : 0;
     const pct = naiveNum ? (100 * shared) / naiveNum : 0;
 
     const groupsOut: GroupResult[] = [];
@@ -371,6 +389,7 @@ export async function scanWithBun(opts: ScanOptions): Promise<ClonesizeResult> {
         threads: nthreads,
         naive_bytes: naiveNum,
         unique_bytes: uniqueNum,
+        unique_allocated_bytes: uniqueAllocNum,
         shared_bytes: shared,
         shared_pct: Number(pct.toFixed(2)),
         cross_group_shared_bytes: Number(crossShared),

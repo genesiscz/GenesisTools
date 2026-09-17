@@ -4,6 +4,7 @@ import { isAbsolute, relative, resolve, sep } from "node:path";
 import { runTool } from "@genesiscz/utils/cli";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
+import { profiler } from "@genesiscz/utils/profile";
 import { Storage } from "@genesiscz/utils/storage";
 import { Command, Option } from "commander";
 import pc from "picocolors";
@@ -16,6 +17,30 @@ import { detectWorktreeExcludes } from "./lib/worktrees";
 
 const program = new Command();
 const storage = new Storage("du");
+
+/** `PROFILE=du` turns on every phase this CLI times: the scan itself and the
+ *  engine's own sub-phases. Use it instead of wrapping the binary in `time`,
+ *  which can only ever report the total. */
+const duProfile = profiler.scope("du.cli");
+
+/**
+ * Clone accounting needs APFS: the engines map physical extents through
+ * `F_LOG2PHYS_EXT` and read `ATTR_CMNEXT_*`, and the C core includes
+ * <sys/attr.h> / <sys/vnode.h>. Off darwin the honest answer is "this build
+ * cannot measure clones here", not a clang error about missing headers.
+ */
+function assertClonePlatform(): void {
+    if (process.platform === "darwin") {
+        return;
+    }
+
+    out.error(
+        `tools du measures APFS clone sharing and only runs on macOS (this is ${process.platform}).\n` +
+            `Linux reflinks (btrfs/XFS) would need a FIEMAP backend, which this build does not have.\n` +
+            `For a plain allocated-size total anywhere, use \`du -sh\`.`
+    );
+    process.exit(2);
+}
 
 /**
  * Extent-cache directory. One file per volume lives here, keyed by fsid, so a
@@ -34,7 +59,8 @@ program
             "worktrees), which plain `du` massively overcounts because every clone reports\n" +
             "its full size even though clones share physical blocks."
     )
-    .version("0.1.0");
+    .version("0.1.0")
+    .hook("preAction", assertClonePlatform);
 
 function assertDir(dir: string): string {
     const root = resolve(dir);
@@ -53,16 +79,22 @@ function assertDir(dir: string): string {
 
 async function runScan(opts: ScanOptions, engine: Engine): Promise<{ result: ClonesizeResult; ms: number }> {
     const t0 = performance.now();
+    const end = duProfile.start(`scan.${engine}`);
     let result: ClonesizeResult;
-    if (engine === "bun") {
-        result = await scanWithBun(opts);
-    } else if (engine === "c") {
-        result = scanWithC(opts);
-    } else {
-        result = scanWithCFfi(opts);
+    try {
+        if (engine === "bun") {
+            result = await scanWithBun(opts);
+        } else if (engine === "c") {
+            result = scanWithC(opts);
+        } else {
+            result = scanWithCFfi(opts);
+        }
+    } finally {
+        end();
     }
 
     const ms = performance.now() - t0;
+    duProfile.summary(`du ${engine}`);
     return { result, ms };
 }
 
@@ -299,7 +331,7 @@ program
 // clones
 // ---------------------------------------------------------------------------
 program
-    .command("clones")
+    .command("partners")
     .description("Find WHERE ELSE a directory's blocks live — the concrete clone partners")
     .argument("<dir>", "Directory whose shared blocks to trace")
     .option("--against <root>", "Where to search for partners (default: the dir's parent)")
@@ -314,8 +346,8 @@ program
             "That is the question that decides whether a package-manager cache is safe to delete:",
             "blocks a live node_modules still references are not freed by deleting the cache.",
             "",
-            "  tools du clones ~/.bun --against ~/Projects",
-            "  tools du clones ~/repo/.worktrees/feat-x --against ~/repo",
+            "  tools du partners ~/.bun --against ~/Projects",
+            "  tools du partners ~/repo/.worktrees/feat-x --against ~/repo",
         ].join("\n")
     )
     .action(async (dir: string, o: { against?: string; format: "human" | "json"; threads?: number; top?: number }) => {
@@ -391,7 +423,11 @@ program
         // ---- cross-check: the two engines that matter (C-ffi vs Bun) ----
         const naiveMatch = cffi.result.naive_bytes === b.result.naive_bytes;
         const uniqueMatch = cffi.result.unique_bytes === b.result.unique_bytes;
-        const match = naiveMatch && uniqueMatch;
+        // Allocated unique is what `shared` is derived from, so the two engines
+        // must agree on it too, or the headline sharing figure silently drifts.
+        const allocMatch = cffi.result.unique_allocated_bytes === b.result.unique_allocated_bytes;
+        const sharedMatch = cffi.result.shared_bytes === b.result.shared_bytes;
+        const match = naiveMatch && uniqueMatch && allocMatch && sharedMatch;
 
         // ---- speed gap between engines (user wants a heads-up if C vs Bun > 20%) ----
         const gapPct = cffi.ms > 0 && b.ms > 0 ? (Math.abs(cffi.ms - b.ms) / Math.min(cffi.ms, b.ms)) * 100 : 0;
@@ -445,15 +481,22 @@ program
         out.println(
             pc.dim(
                 `  naive: du-style ${humanBytes(cffi.result.naive_bytes)} → real unique ${humanBytes(
-                    cffi.result.unique_bytes
-                )} (${cffi.result.shared_pct.toFixed(1)}% shared).`
+                    cffi.result.unique_allocated_bytes ?? cffi.result.unique_bytes
+                )} (${cffi.result.shared_pct.toFixed(1)}% shared, ${humanBytes(
+                    (cffi.result.unique_allocated_bytes ?? cffi.result.unique_bytes) - cffi.result.unique_bytes
+                )} tail slack).`
             )
         );
 
         out.println("");
         if (match) {
             out.println(pc.green(`  ✓ cross-check PASS — C (ffi) and Bun agree byte-for-byte`));
-            out.println(pc.dim(`    naive=${cffi.result.naive_bytes}  unique=${cffi.result.unique_bytes}`));
+            out.println(
+                pc.dim(
+                    `    naive=${cffi.result.naive_bytes}  unique=${cffi.result.unique_bytes}  ` +
+                        `allocated=${cffi.result.unique_allocated_bytes}  shared=${cffi.result.shared_bytes}`
+                )
+            );
         } else {
             out.println(pc.yellow(`  ⚠ cross-check DIFF (a live tree can change between runs):`));
             out.println(
@@ -464,6 +507,16 @@ program
             out.println(
                 pc.dim(
                     `    unique C=${cffi.result.unique_bytes} Bun=${b.result.unique_bytes} (${uniqueMatch ? "match" : "differ"})`
+                )
+            );
+            out.println(
+                pc.dim(
+                    `    alloc  C=${cffi.result.unique_allocated_bytes} Bun=${b.result.unique_allocated_bytes} (${allocMatch ? "match" : "differ"})`
+                )
+            );
+            out.println(
+                pc.dim(
+                    `    shared C=${cffi.result.shared_bytes} Bun=${b.result.shared_bytes} (${sharedMatch ? "match" : "differ"})`
                 )
             );
             out.println(pc.dim(`    Re-run on a quiesced/static tree for an exact byte match.`));

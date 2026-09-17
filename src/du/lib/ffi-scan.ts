@@ -6,6 +6,7 @@
 // via the fcntl shim. Used by scan-worker.ts (one instance per Bun Worker).
 
 import { dlopen, FFIType, ptr } from "bun:ffi";
+import { profiler } from "@genesiscz/utils/profile";
 
 const VREG = 1;
 const VDIR = 2;
@@ -37,6 +38,8 @@ export interface ScanDirsResult {
     grps: Int32Array;
     naive: string;
     uniquePrivate: string;
+    /** Allocated (block-rounded) bytes of the fully private files, Σ st_blocks. */
+    uniquePrivateAlloc: string;
     privSum: string;
     scanned: number; // files accounted (alloc>0 && >=min)
     listed: number; // all regular files seen
@@ -48,7 +51,19 @@ export interface ScanDirsResult {
 
 const MAX_GROUPS = 4096; // mirrors native/clonesize.c; BigInt mask has no 64-bit limit
 
+/** Per-worker walk timings. `PROFILE=du` includes this scope. */
+const ffiProfile = profiler.scope("du.ffi");
+
 export function scanDirs(input: ScanDirsInput): ScanDirsResult {
+    const endScan = ffiProfile.start("scanDirs");
+    try {
+        return scanDirsInner(input);
+    } finally {
+        endScan();
+    }
+}
+
+function scanDirsInner(input: ScanDirsInput): ScanDirsResult {
     const { shim, root, dirs, recurse, groupIndex, ngroups, minBytes } = input;
     const excludeSet = new Set(input.excludes);
 
@@ -98,6 +113,7 @@ export function scanDirs(input: ScanDirsInput): ScanDirsResult {
 
     let naive = 0n;
     let uniquePrivate = 0n;
+    let uniquePrivateAlloc = 0n;
     let privSum = 0n;
     let scanned = 0;
     let listed = 0;
@@ -191,6 +207,7 @@ export function scanDirs(input: ScanDirsInput): ScanDirsResult {
 
                 if (priv >= alloc && nlink <= 1 && alloc >= dlen) {
                     uniquePrivate += dlen; // fully private, non-sparse, single link
+                    uniquePrivateAlloc += alloc;
                     p += len;
                     continue;
                 }
@@ -233,6 +250,7 @@ export function scanDirs(input: ScanDirsInput): ScanDirsResult {
         grps: grps.slice(0, n),
         naive: naive.toString(),
         uniquePrivate: uniquePrivate.toString(),
+        uniquePrivateAlloc: uniquePrivateAlloc.toString(),
         privSum: privSum.toString(),
         scanned,
         listed,
