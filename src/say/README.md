@@ -150,6 +150,39 @@ With `--save`, the keys are reset to `null` (not deleted), so the profile keeps 
 
 ---
 
+## Call log (`logs` / `stats`)
+
+Every call that has text is recorded in `~/.genesis-tools/say/calls.db`, so a notification you half-heard can be read back, together with who sent it.
+
+```bash
+# The last 100 calls, oldest first, newest at the bottom (same as `tools say --logs`)
+tools say logs
+
+# Only the "Attention please!!" calls, or a text search, or a window
+tools say logs --attention
+tools say logs --grep "deploy" --since 7d
+tools say logs -n 20 --since 2026-09-15
+
+# Everything about one call: argv, cwd, process chain, pids, the jump command
+tools say logs -n 3 --full
+
+# Statistics: outcomes, agents, app profiles, providers, days, hours, sessions, phrases (same as `tools say --stats`)
+tools say stats
+tools say stats --since 24h --json
+```
+
+Each row records:
+
+- **The request:** the text, the raw argv, the `--app` profile, and whether the text carries the `Attention` marker.
+- **The caller:** the agent (`claude` / `codex` / `grok` / `copilot`) and its session id from the environment (`CLAUDE_CODE_SESSION_ID`, `CODEX_THREAD_ID`, `GROK_SESSION_ID`), the account (`TOOLS_CLAUDE_ACCOUNT`), the cmux workspace / surface / tab ids (or the tmux pane), the terminal program, the cwd, and the process chain above `tools say` (two `ps` calls, captured in the foreground before it exits). The chain is what identifies a caller that set none of those variables.
+- **The outcome:** `spoken`, `written` (`--output`), `muted`, or `failed` with the error, plus the provider and voice that actually spoke, whether the audio came from the cache, which provider it fell back from, and when it finished.
+
+The `WHERE` column shows the cmux workspace title when cmux is running (resolved at view time, so a renamed workspace shows its current name), otherwise the short workspace id. `tools claude cmux focus <session>` jumps to the pane of a listed session.
+
+Two processes write one row. The foreground `tools say` writes the request and the caller, then returns; the detached speaker child (told the row id through `GENESIS_SAY_CALL_ID`) writes the outcome when playback ends. Both writes are upserts, so either order works. A row still `playing` two minutes after its call is shown as **no outcome**: the speaker crashed or was killed. Its log lines are in the day log under the pid the `--full` view prints.
+
+---
+
 ## Mute / unmute
 
 `--mute` and `--unmute` are now `--save`-dependent. Without `--save` they error — they no longer write config implicitly.
