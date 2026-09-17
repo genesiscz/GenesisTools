@@ -1,5 +1,4 @@
 import { SafeJSON } from "@genesiscz/utils/json";
-import { logger } from "@genesiscz/utils/logger";
 import type {
     DeviceCodeResponse,
     DeviceFlowCallbacks,
@@ -120,23 +119,18 @@ export async function startDeviceFlow(config: DeviceFlowConfig): Promise<DeviceC
     };
 }
 
-/** The URL a human (or a pending-login record) should open, including the user code. */
+/** The URL to open. Uses the AS-supplied complete URI when present; never synthesizes one. */
 export function deviceVerificationUrl(started: DeviceCodeResponse): string {
+    return started.verification_uri_complete ?? started.verification_uri;
+}
+
+/** The user_code to show when the AS did not send verification_uri_complete. */
+export function deviceUserCode(started: DeviceCodeResponse): string | undefined {
     if (started.verification_uri_complete) {
-        return started.verification_uri_complete;
+        return undefined;
     }
 
-    try {
-        const url = new URL(started.verification_uri);
-        url.searchParams.set("user_code", started.user_code);
-
-        return url.toString();
-    } catch (error) {
-        logger.debug({ error, uri: started.verification_uri }, "device verification_uri was not a URL");
-        const join = started.verification_uri.includes("?") ? "&" : "?";
-
-        return `${started.verification_uri}${join}user_code=${encodeURIComponent(started.user_code)}`;
-    }
+    return started.user_code;
 }
 
 /** The access token only. Use pollDeviceTokenResponse when you need its expiry. */

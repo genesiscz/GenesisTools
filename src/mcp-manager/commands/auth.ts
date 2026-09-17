@@ -88,8 +88,13 @@ export async function authLogin(
             config: server,
             device: opts.device,
             clientName,
-            onAuthorizationUrl: (url) => {
-                writePendingLogin({ server: name, pid: process.pid, url });
+            onAuthorizationUrl: (url, userCode) => {
+                writePendingLogin({ server: name, pid: process.pid, url, userCode });
+
+                if (userCode) {
+                    ui.dim(url);
+                    ui.kv("code", userCode);
+                }
             },
         });
         const current = config.mcpServers[name];
@@ -117,7 +122,7 @@ export async function authLogin(
 
         throw err;
     } finally {
-        clearPendingLogin(name);
+        clearPendingLogin(name, process.pid);
     }
 }
 

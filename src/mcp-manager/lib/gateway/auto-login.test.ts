@@ -104,11 +104,34 @@ describe("the authorization URL stays reachable", () => {
         await settle();
 
         expect(launcher.authorizationUrl("wisprflow")).toBe("https://issuer.example/authorize?code_challenge=x");
+        expect(launcher.userCode("wisprflow")).toBeUndefined();
 
         gate.resolve();
         await settle();
 
         expect(launcher.authorizationUrl("wisprflow")).toBeUndefined();
+    });
+
+    test("a device user_code stays reachable with the URL while in flight", async () => {
+        const gate = deferred<void>();
+        const launcher = createLoginLauncher({
+            login: async (_server, report) => {
+                report("https://identity.example/activate", "ABCD-EFGH");
+                await gate.promise;
+            },
+            notify: async () => undefined,
+        });
+
+        launcher.request("wisprflow");
+        await settle();
+
+        expect(launcher.authorizationUrl("wisprflow")).toBe("https://identity.example/activate");
+        expect(launcher.userCode("wisprflow")).toBe("ABCD-EFGH");
+
+        gate.resolve();
+        await settle();
+
+        expect(launcher.userCode("wisprflow")).toBeUndefined();
     });
 
     test("a later request after success does not echo the spent authorize URL", async () => {
@@ -213,9 +236,34 @@ describe("a login held by another process counts as in flight", () => {
 
         held = undefined;
         expect(launcher.request("wisprflow")).toBe("started");
+        expect(launcher.authorizationUrl("wisprflow")).toBeUndefined();
         await settle();
 
         expect(calls).toBe(1);
+    });
+
+    test("a new login after an external pending login does not echo the spent URL", async () => {
+        let held: { url?: string } | undefined = { url: "https://issuer.example/spent" };
+        const gate = deferred<void>();
+        const launcher = createLoginLauncher({
+            login: async (_server, report) => {
+                report("https://issuer.example/fresh");
+                await gate.promise;
+            },
+            notify: async () => undefined,
+            pending: () => held,
+        });
+
+        expect(launcher.request("wisprflow")).toBe("in-flight");
+        expect(launcher.authorizationUrl("wisprflow")).toBe("https://issuer.example/spent");
+
+        held = undefined;
+        expect(launcher.request("wisprflow")).toBe("started");
+        expect(launcher.authorizationUrl("wisprflow")).toBeUndefined();
+        await settle();
+        expect(launcher.authorizationUrl("wisprflow")).toBe("https://issuer.example/fresh");
+        gate.resolve();
+        await settle();
     });
 });
 
@@ -250,6 +298,32 @@ describe("a failed login is not retried on every reconnect", () => {
         expect(launcher.request("wisprflow")).toBe("started");
         await settle();
 
+        expect(calls).toBe(2);
+    });
+
+    test("a notification failure does not skip login or start the cooldown", async () => {
+        const clock = 1_000;
+        let calls = 0;
+        const errors: string[] = [];
+        const launcher = createLoginLauncher({
+            login: async () => {
+                calls += 1;
+            },
+            notify: async () => {
+                throw new Error("notification rejected");
+            },
+            onError: (server) => errors.push(server),
+            now: () => clock,
+            cooldownMs: 60_000,
+        });
+
+        expect(launcher.request("wisprflow")).toBe("started");
+        await settle();
+
+        expect(calls).toBe(1);
+        expect(errors).toEqual([]);
+        expect(launcher.request("wisprflow")).toBe("started");
+        await settle();
         expect(calls).toBe(2);
     });
 

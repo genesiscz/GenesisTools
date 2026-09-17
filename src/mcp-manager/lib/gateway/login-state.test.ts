@@ -114,4 +114,38 @@ describe("pending-login records", () => {
         expect(() => clearPendingLogin(SERVER)).not.toThrow();
         expect(clearStalePendingLogin(SERVER)).toBe(false);
     });
+
+    test("a URL-less write keeps a same-pid URL the child already stored", () => {
+        writePendingLogin({
+            server: SERVER,
+            pid: process.pid,
+            url: "https://issuer.example/authorize",
+            userCode: "ABCD-EFGH",
+        });
+        writePendingLogin({ server: SERVER, pid: process.pid });
+
+        expect(readPendingLogin(SERVER)).toMatchObject({
+            server: SERVER,
+            url: "https://issuer.example/authorize",
+            userCode: "ABCD-EFGH",
+        });
+    });
+
+    test("clear with an owner pid leaves a record owned by someone else", () => {
+        writePendingLogin({ server: SERVER, pid: process.pid, url: "https://issuer.example/authorize" });
+
+        clearPendingLogin(SERVER, process.pid + 1);
+        expect(existsSync(pendingLoginPath(SERVER))).toBe(true);
+
+        clearPendingLogin(SERVER, process.pid);
+        expect(existsSync(pendingLoginPath(SERVER))).toBe(false);
+    });
+
+    test("clearStale does not delete a live record that replaced a stale snapshot", () => {
+        writePendingLogin({ server: SERVER, pid: 2_147_483_000 });
+        writePendingLogin({ server: SERVER, pid: process.pid, url: "https://issuer.example/authorize" });
+
+        expect(clearStalePendingLogin(SERVER)).toBe(false);
+        expect(readPendingLogin(SERVER)?.url).toBe("https://issuer.example/authorize");
+    });
 });

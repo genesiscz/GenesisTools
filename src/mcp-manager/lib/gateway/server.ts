@@ -59,20 +59,22 @@ function loginRequiredResponse(name: string, server: UnifiedMCPServerConfig, lau
     logger.info({ server: name, outcome }, "gateway requested an MCP login");
 
     const url = launcher.authorizationUrl(name);
+    const userCode = launcher.userCode(name);
     const link = url ? ` Reopen it here: ${url}` : "";
+    const code = userCode ? ` Enter code ${userCode}.` : "";
 
     if (outcome === "cooling-down") {
         return jsonRpcError(
-            `${name} needs a login and the last attempt failed. Run tools mcp-manager auth login ${name}${link}`
+            `${name} needs a login and the last attempt failed. Run tools mcp-manager auth login ${name}${link}${code}`
         );
     }
 
     const lead = outcome === "started" ? "a browser window is opening" : "a browser window is already open";
     // The first response is answered before the login has built its URL. A stale
     // authorize link from a previous success must not be echoed here.
-    const startedLink = outcome === "started" ? "" : link;
+    const extras = outcome === "started" ? "" : `${link}${code}`;
 
-    return jsonRpcError(`${name} needs a login: ${lead}. Authorize it, then reconnect this server.${startedLink}`);
+    return jsonRpcError(`${name} needs a login: ${lead}. Authorize it, then reconnect this server.${extras}`);
 }
 
 function serverNameFromPath(pathname: string): string | undefined {

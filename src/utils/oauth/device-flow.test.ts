@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import type { DeviceFlowConfig } from "@genesiscz/utils/oauth/types";
-import { deviceVerificationUrl, pollDeviceTokenResponse, startDeviceFlow } from "./device-flow.ts";
+import { deviceUserCode, deviceVerificationUrl, pollDeviceTokenResponse, startDeviceFlow } from "./device-flow.ts";
 
 const config: DeviceFlowConfig = {
     clientId: "client-1",
@@ -151,30 +151,33 @@ describe("a confidential client sends its secret", () => {
     });
 });
 
-describe("deviceVerificationUrl reports the user code", () => {
+describe("deviceVerificationUrl keeps the AS-supplied URI", () => {
+    const started = {
+        device_code: "d",
+        user_code: "ABCD-EFGH",
+        verification_uri: "https://identity.example/activate",
+        interval: 5,
+        expires_in: 600,
+    };
+
     test("prefers verification_uri_complete when the AS sends it", () => {
         expect(
             deviceVerificationUrl({
-                device_code: "d",
-                user_code: "ABCD-EFGH",
-                verification_uri: "https://identity.example/activate",
+                ...started,
                 verification_uri_complete: "https://identity.example/activate?user_code=ABCD-EFGH",
-                interval: 5,
-                expires_in: 600,
             })
         ).toBe("https://identity.example/activate?user_code=ABCD-EFGH");
+        expect(
+            deviceUserCode({
+                ...started,
+                verification_uri_complete: "https://identity.example/activate?user_code=ABCD-EFGH",
+            })
+        ).toBeUndefined();
     });
 
-    test("puts user_code on verification_uri when complete is absent", () => {
-        expect(
-            deviceVerificationUrl({
-                device_code: "d",
-                user_code: "ABCD-EFGH",
-                verification_uri: "https://identity.example/activate",
-                interval: 5,
-                expires_in: 600,
-            })
-        ).toBe("https://identity.example/activate?user_code=ABCD-EFGH");
+    test("leaves verification_uri alone and reports user_code separately when complete is absent", () => {
+        expect(deviceVerificationUrl(started)).toBe("https://identity.example/activate");
+        expect(deviceUserCode(started)).toBe("ABCD-EFGH");
     });
 
     test("startDeviceFlow keeps verification_uri_complete", async () => {
@@ -191,10 +194,11 @@ describe("deviceVerificationUrl reports the user code", () => {
             { preconnect: realFetch.preconnect }
         );
 
-        const started = await startDeviceFlow(config);
+        const fromAs = await startDeviceFlow(config);
 
-        expect(started.user_code).toBe("ABCD-EFGH");
-        expect(started.verification_uri_complete).toBe("https://identity.example/activate?user_code=ABCD-EFGH");
-        expect(deviceVerificationUrl(started)).toBe("https://identity.example/activate?user_code=ABCD-EFGH");
+        expect(fromAs.user_code).toBe("ABCD-EFGH");
+        expect(fromAs.verification_uri_complete).toBe("https://identity.example/activate?user_code=ABCD-EFGH");
+        expect(deviceVerificationUrl(fromAs)).toBe("https://identity.example/activate?user_code=ABCD-EFGH");
+        expect(deviceUserCode(fromAs)).toBeUndefined();
     });
 });
