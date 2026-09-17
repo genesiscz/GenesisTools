@@ -174,8 +174,9 @@ exists. Pick from this table instead of measuring it live.
 
 **The legacy keyboard verbs are unusable while a human is working.** `type` and `set` go through a
 CGEvent clear+type path that raises the app, and `hotkey` used to return `{"ok":true}` while the
-keystroke landed in whatever app was frontmost. Each of them now prints a one-line warning naming
-the replacement. The safe substitutes:
+keystroke landed in whatever app was frontmost. **`type` and `hotkey` print a one-line warning
+naming the replacement; `set` does not** — it raises the app just the same, so treat it as legacy
+even though it stays quiet. The safe substitutes:
 
 - instead of `type` / `set` → `act --action set --value "…"`, which writes `AXValue` and reads it
   back with no keystrokes at all
@@ -706,9 +707,13 @@ the CLI flags (`id`, `role`, `title`, `desc`, `subrole`, `window`, `value`, `tex
 `interval`, `gone`, `for`, `expect`, `contains`. Runner-only fields, never passed through as
 flags: `delay`, `atMs`, `retries`, `retryDelayMs`, `saveAs`.
 
-The step verbs now include the visual family — `dump`, `typography`, `hittest`, `draw` and
-`compare-screenshot` — so a plan can end with a visual assertion instead of shelling out after
-the runner has already exited.
+The step verbs now include `dump`, `typography` and `hittest`, so a plan can read pixels and hit
+tests without leaving the runner.
+
+🛑 **`draw` and `compare-screenshot` are NOT plan steps.** They are TypeScript-only commands;
+native `ax-tool` has no such subcommand, so a step naming one would fail every time. Shell out for
+those two after the plan, and pass `retries` only on a read verb — the runner refuses it on a
+mutating step, because a retry after a half-applied `type` would type the text twice.
 
 Plan steps do NOT carry `see` snapshot guarantees. Never put a token or a `see` index into a
 plan.

@@ -45,10 +45,62 @@ describe("validatePlan", () => {
         expect(validatePlan([{ do: "press", q: "Save", app: "Genesis" }], undefined)).toEqual([]);
     });
 
-    test("the verbs that were missing from the plan schema are accepted now", () => {
-        const visual = ["dump", "typography", "hittest", "draw", "compare-screenshot"].map((verb) => ({ do: verb }));
+    test("the native read verbs that were missing from the plan schema are accepted now", () => {
+        const visual = ["dump", "typography", "hittest"].map((verb) => ({ do: verb }));
 
         expect(validatePlan(visual, "Genesis")).toEqual([]);
+    });
+
+    test("draw and compare-screenshot are REFUSED: native ax-tool has no such subcommand", () => {
+        // Accepting them would be a promise the runner cannot keep — every such
+        // step reaches ax-tool's `default: errorExit("unknown command")`.
+        for (const verb of ["draw", "compare-screenshot"]) {
+            expect(validatePlan([{ do: verb }], "Genesis")[0]).toContain(`unknown step command '${verb}'`);
+        }
+    });
+
+    test("hittest needs no app, so it is valid with no plan default", () => {
+        expect(validatePlan([{ do: "hittest", at: "10,10" }], undefined)).toEqual([]);
+    });
+
+    describe("retries", () => {
+        test("refused on a mutating step, because a retry would act twice", () => {
+            const problems = validatePlan([{ do: "type", text: "x", retries: 2 }], "Genesis");
+
+            expect(problems[0]).toContain("not allowed on a mutating step");
+        });
+
+        test("allowed on a read step", () => {
+            expect(validatePlan([{ do: "get", q: "Save", retries: 2 }], "Genesis")).toEqual([]);
+        });
+
+        test("Infinity is refused — comment-json turns 1e309 into it and the loop never ends", () => {
+            expect(validatePlan([{ do: "get", retries: Number.POSITIVE_INFINITY }], "Genesis")[0]).toContain(
+                "whole number"
+            );
+        });
+
+        test.each([
+            ["fractional", 1.5],
+            ["negative", -1],
+            ["beyond the ceiling", 999],
+        ])("%s is refused", (_label, retries) => {
+            expect(validatePlan([{ do: "get", retries }], "Genesis")[0]).toContain("whole number");
+        });
+
+        test("an unbounded retryDelayMs is refused, since Bun.sleep would clamp it to days", () => {
+            expect(validatePlan([{ do: "get", retries: 1, retryDelayMs: 9e12 }], "Genesis")[0]).toContain(
+                "retryDelayMs"
+            );
+        });
+    });
+
+    test.each([
+        ["null", null],
+        ["an array", []],
+        ["a string", "focus"],
+    ])("a step that is %s is reported, not thrown on", (_label, step) => {
+        expect(validatePlan([step as never], "Genesis")[0]).toContain("must be an object");
     });
 
     test("an action alias is resolved before the verb is judged", () => {

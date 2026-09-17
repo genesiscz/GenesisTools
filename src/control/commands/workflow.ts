@@ -175,6 +175,14 @@ interface AxWindowRow {
  * The index is the RAW position in `window --app`'s array, because that is what
  * `see --window-index` counts. Do not filter the array before indexing it: a
  * minimized window still occupies its slot.
+ *
+ * 🛑 This is two calls, so a window closing or reordering between them would
+ * hand `see` an index that now points somewhere else. It cannot be closed by
+ * passing `--window-id` instead: `window --app` reports an AXIdentifier
+ * (`"FinderWindow"`), not the CG window id `see` accepts. So the caller RE-CHECKS
+ * the title on the window `see` actually returned and refuses on a mismatch —
+ * the race is detected rather than prevented, which is the difference between a
+ * loud retry and silently driving the wrong window.
  */
 function resolveWindowTitle(app: string, substring: string): { index: number } | { error: string } {
     const listed = runAx(["window", "--app", app]);
@@ -267,6 +275,23 @@ export function registerWorkflowCommands(program: Command): void {
             }
 
             const result = runAx(args, 30_000);
+
+            if (opts.windowTitle !== undefined && result.ok) {
+                const seenTitle = (result as { window?: { title?: string } }).window?.title;
+
+                if (
+                    typeof seenTitle === "string" &&
+                    !seenTitle.toLowerCase().includes(opts.windowTitle.toLowerCase())
+                ) {
+                    logger.error(
+                        `--window-title "${opts.windowTitle}" resolved to a window titled "${seenTitle}". ` +
+                            `The windows changed between listing and reading them; run see again.`
+                    );
+                    process.exitCode = 1;
+                    return;
+                }
+            }
+
             out.result(result.ok && opts.since ? sinceSnapshot(opts.since, result) : result);
             process.exitCode = result.ok ? 0 : 1;
         });

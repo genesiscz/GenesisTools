@@ -16,7 +16,7 @@ import { addTargetOptions, targetArgs, targetLabel } from "../lib/target";
  * `process.kill(pid, 0)` signals nothing and only asks whether the process
  * exists: EPERM means it exists and is not ours, which is still a real target.
  */
-function validateToPid(toPid: string | undefined): string | null {
+export function validateToPid(toPid: string | undefined): string | null {
     if (toPid == null) {
         return null;
     }

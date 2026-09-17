@@ -17,7 +17,39 @@ const ACTION_ALIASES: Record<string, string> = {
     axPerform: "perform",
 };
 
-const NO_APP_COMMANDS = new Set(["snapshot", "restore", "hotkey", "apps"]);
+// `hittest` asks the window server what is under a SCREEN point; it resolves no
+// app, and native ax-tool rejects the --app shape for it.
+const NO_APP_COMMANDS = new Set(["snapshot", "restore", "hotkey", "apps", "hittest"]);
+
+/**
+ * Steps whose failure is transient and happens BEFORE anything is dispatched —
+ * the only ones `retries` may wrap.
+ *
+ * A mutating verb must never retry: `type` can post its keystrokes and then fail
+ * its hard verification, so a retry types the text a second time. Same shape for
+ * click, set, press and the rest.
+ */
+const RETRYABLE_STEP_COMMANDS = new Set([
+    "get",
+    "find",
+    "attrs",
+    "actions",
+    "window",
+    "screenshot",
+    "ocr",
+    "dump",
+    "typography",
+    "hittest",
+    "apps",
+    "wait",
+    "assert",
+]);
+
+/** `retries` above this is a typo or an overflow, not an intention. */
+const MAX_RETRIES = 10;
+
+/** `Bun.sleep` clamps a huge delay to ~24 days, which reads as a hang. */
+const MAX_RETRY_DELAY_MS = 60_000;
 
 const KNOWN_STEP_COMMANDS = new Set([
     "focus",
@@ -41,13 +73,19 @@ const KNOWN_STEP_COMMANDS = new Set([
     "restore",
     "apps",
     // The verb set used to be smaller than the CLI, so a plan could act but
-    // never make a VISUAL assertion: it had to shell out to `compare-screenshot`
-    // after the runner had already exited, by which time the UI had moved on.
+    // never read pixels: it had to shell out after the runner had already
+    // exited, by which time the UI had moved on. These three exist in native
+    // ax-tool and dispatch correctly.
+    //
+    // `draw` and `compare-screenshot` are deliberately NOT here. They are
+    // TypeScript-only commands (commands/draw.ts, commands/compare-screenshot.ts);
+    // native ax-tool has no such subcommand, so a plan step naming one would
+    // reach its `default: errorExit("unknown command")` and fail every time.
+    // Accepting them in the plan schema would be a promise the runner cannot
+    // keep. Shell out for those two until the runner grows TypeScript dispatch.
     "dump",
     "typography",
     "hittest",
-    "draw",
-    "compare-screenshot",
 ]);
 
 /** Fields the runner consumes itself; everything else becomes a `--flag value`. */
@@ -118,9 +156,18 @@ export function validatePlan(steps: Array<Record<string, unknown>>, planApp: str
     const problems: string[] = [];
 
     steps.forEach((step, index) => {
+        const where = `step ${index + 1}`;
+
+        // A valid JSON plan can hold `null` or an array here. Reading `.do` off
+        // one throws inside the preflight, which is the one place that must not.
+        if (step === null || typeof step !== "object" || Array.isArray(step)) {
+            const what = step === null ? "null" : Array.isArray(step) ? "an array" : typeof step;
+            problems.push(`${where}: must be an object, got ${what}`);
+            return;
+        }
+
         const raw = String(step.do ?? "");
         const cmd = ACTION_ALIASES[raw] ?? raw;
-        const where = `step ${index + 1}`;
 
         if (!raw) {
             problems.push(`${where}: missing 'do'`);
@@ -136,8 +183,27 @@ export function validatePlan(steps: Array<Record<string, unknown>>, planApp: str
             problems.push(`${where} (${cmd}): missing 'app', and the plan sets no default`);
         }
 
-        if (step.retries != null && (typeof step.retries !== "number" || step.retries < 0)) {
-            problems.push(`${where} (${cmd}): 'retries' must be a number >= 0`);
+        if (step.retries != null) {
+            const retries = step.retries;
+
+            // comment-json turns `1e309` into Infinity, which a bare `>= 0`
+            // accepts and which makes the retry loop unbounded.
+            if (!Number.isInteger(retries) || (retries as number) < 0 || (retries as number) > MAX_RETRIES) {
+                problems.push(`${where} (${cmd}): 'retries' must be a whole number from 0 to ${MAX_RETRIES}`);
+            } else if ((retries as number) > 0 && !RETRYABLE_STEP_COMMANDS.has(cmd)) {
+                problems.push(
+                    `${where} (${cmd}): 'retries' is not allowed on a mutating step — a retry would act twice. ` +
+                        `Retryable: ${[...RETRYABLE_STEP_COMMANDS].join(", ")}`
+                );
+            }
+        }
+
+        if (step.retryDelayMs != null) {
+            const delay = step.retryDelayMs;
+
+            if (!Number.isFinite(delay) || (delay as number) < 0 || (delay as number) > MAX_RETRY_DELAY_MS) {
+                problems.push(`${where} (${cmd}): 'retryDelayMs' must be from 0 to ${MAX_RETRY_DELAY_MS}`);
+            }
         }
 
         if (step.saveAs != null && typeof step.saveAs !== "string") {
@@ -253,6 +319,58 @@ export function registerRunCommand(program: Command): void {
                 steps?: Array<Record<string, unknown>>;
             };
 
+            const steps = plan.steps ?? plan.actions ?? [];
+
+            if (!steps.length) {
+                logger.error("plan has no steps");
+                process.exit(1);
+            }
+
+            // Validation and --dry-run run BEFORE the capture branch. A plan
+            // carrying `capture` used to reach runCapturePlan first, so
+            // `run --dry-run` on a recording plan drove the real UI — the one
+            // thing --dry-run promises never to do.
+            const problems = validatePlan(steps, plan.app);
+
+            if (problems.length > 0) {
+                if (opts.json) {
+                    out.println(SafeJSON.stringify({ ok: false, problems }, null, opts.pretty ? 2 : 0));
+                } else {
+                    for (const problem of problems) {
+                        out.println(`  ${pc.red("INVALID")} ${problem}`);
+                    }
+                }
+
+                process.exit(1);
+            }
+
+            if (opts.dryRun) {
+                const planned = steps.map((step, index) => ({
+                    index: index + 1,
+                    do: ACTION_ALIASES[String(step.do)] ?? String(step.do),
+                    app: String(step.app ?? plan.app ?? ""),
+                    step,
+                }));
+
+                if (opts.json) {
+                    out.println(
+                        SafeJSON.stringify(
+                            { ok: true, dryRun: true, capture: Boolean(plan.capture), steps: planned },
+                            null,
+                            opts.pretty ? 2 : 0
+                        )
+                    );
+                } else {
+                    for (const entry of planned) {
+                        out.println(`  ${pc.dim(String(entry.index))} ${pc.cyan(entry.do)} ${pc.dim(entry.app)}`);
+                    }
+
+                    out.println(`\n${planned.length} step(s) valid; nothing was run.`);
+                }
+
+                process.exit(0);
+            }
+
             // Recording plans: the capture runner owns the whole timeline.
             // Normalize BEFORE delegating — the runner reads `actions` with its
             // own ax-prefixed verbs and axId targeting; the unified schema
@@ -295,51 +413,6 @@ export function registerRunCommand(program: Command): void {
                 }
             }
 
-            const steps = plan.steps ?? plan.actions ?? [];
-            if (!steps.length) {
-                logger.error("plan has no steps");
-                process.exit(1);
-            }
-
-            // Before the first action, always — not only under --dry-run. The
-            // whole point is that a plan cannot half-run into a bad verb.
-            const problems = validatePlan(steps, plan.app);
-
-            if (problems.length > 0) {
-                if (opts.json) {
-                    out.println(SafeJSON.stringify({ ok: false, problems }, null, opts.pretty ? 2 : 0));
-                } else {
-                    for (const problem of problems) {
-                        out.println(`  ${pc.red("INVALID")} ${problem}`);
-                    }
-                }
-
-                process.exit(1);
-            }
-
-            if (opts.dryRun) {
-                const planned = steps.map((step, index) => ({
-                    index: index + 1,
-                    do: ACTION_ALIASES[String(step.do)] ?? String(step.do),
-                    app: String(step.app ?? plan.app ?? ""),
-                    step,
-                }));
-
-                if (opts.json) {
-                    out.println(
-                        SafeJSON.stringify({ ok: true, dryRun: true, steps: planned }, null, opts.pretty ? 2 : 0)
-                    );
-                } else {
-                    for (const entry of planned) {
-                        out.println(`  ${pc.dim(String(entry.index))} ${pc.cyan(entry.do)} ${pc.dim(entry.app)}`);
-                    }
-
-                    out.println(`\n${planned.length} step(s) valid; nothing was run.`);
-                }
-
-                process.exit(0);
-            }
-
             const timeline = steps.some((s) => typeof s.atMs === "number");
             const delay = plan.delayMs ?? 200;
             let snapshot: AxResult | null = null;
@@ -349,15 +422,25 @@ export function registerRunCommand(program: Command): void {
             }
 
             const startedAt = performance.now();
-            const results: Array<{ step: Record<string, unknown>; result: AxResult; ms: number; attempts?: number }> =
-                [];
+            const results: Array<{
+                step: Record<string, unknown>;
+                result: AxResult;
+                ms: number;
+                attempts?: number;
+                skipped?: boolean;
+            }> = [];
             const saved = new Map<string, AxResult>();
             const stopOnFail = opts.stopOnFail === true || plan.stopOnFail === true;
             let stoppedAt = -1;
 
             for (const [index, step] of steps.entries()) {
                 if (stoppedAt >= 0) {
-                    results.push({ step, result: { ok: false, error: "skipped after an earlier failure" }, ms: 0 });
+                    results.push({
+                        step,
+                        result: { ok: false, error: "skipped after an earlier failure" },
+                        ms: 0,
+                        skipped: true,
+                    });
                     continue;
                 }
 
@@ -402,6 +485,14 @@ export function registerRunCommand(program: Command): void {
                         const label = step.q ?? step.id ?? step.desc ?? cmd;
                         printStep(String(label), result, msW);
                     }
+
+                    // wait/assert exit the loop body here, so the stop-on-fail
+                    // check further down never saw them: a failed condition let
+                    // every later step run anyway.
+                    if (!result.ok && stopOnFail) {
+                        stoppedAt = index;
+                    }
+
                     continue;
                 }
 
@@ -433,6 +524,8 @@ export function registerRunCommand(program: Command): void {
                 }
 
                 const t0 = performance.now();
+                // validatePlan has already refused `retries` on a mutating verb,
+                // so this can only repeat a read.
                 const maxAttempts = typeof step.retries === "number" ? step.retries + 1 : 1;
                 const retryDelay = typeof step.retryDelayMs === "number" ? step.retryDelayMs : 250;
                 let result: AxResult;
@@ -488,7 +581,9 @@ export function registerRunCommand(program: Command): void {
                 }
             }
 
-            const failedSteps = results.filter((r) => !r.result.ok).length;
+            // A skipped step is not a failure: counting it in both failedSteps and
+            // skippedSteps reported the same step twice and overstated the damage.
+            const failedSteps = results.filter((r) => !r.result.ok && !r.skipped).length;
             if (opts.json) {
                 out.println(
                     SafeJSON.stringify(
@@ -507,7 +602,9 @@ export function registerRunCommand(program: Command): void {
                     )
                 );
             } else {
-                const passed = results.length - failedSteps;
+                // Count what actually succeeded. `length - failedSteps` folded the
+                // skipped steps into "passed" once they stopped counting as failed.
+                const passed = results.filter((r) => r.result.ok).length;
                 const totalMs = results.reduce((s, r) => s + r.ms, 0);
                 const skipped = stoppedAt >= 0 ? results.length - stoppedAt - 1 : 0;
                 out.println(
