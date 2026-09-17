@@ -800,14 +800,23 @@ export default function Dashboard() {
     const [provider, setProvider] = useState<EvaluationProviderId>("vercel");
     const [status, setStatus] = useState<GatewayStatus>();
     const [refreshing, setRefreshing] = useState(false);
+    const refreshGeneration = useRef(0);
     const refresh = async () => {
+        const generation = ++refreshGeneration.current;
         setRefreshing(true);
         try {
-            setStatus(await api<GatewayStatus>({ route: "/status" }));
+            const next = await api<GatewayStatus>({ route: "/status" });
+            if (generation === refreshGeneration.current) {
+                setStatus(next);
+            }
         } catch (error) {
-            setStatus({ configured: false, error: errorMessage(error) });
+            if (generation === refreshGeneration.current) {
+                setStatus({ configured: false, error: errorMessage(error) });
+            }
         } finally {
-            setRefreshing(false);
+            if (generation === refreshGeneration.current) {
+                setRefreshing(false);
+            }
         }
     };
     useEffect(() => {
