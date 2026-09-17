@@ -8,6 +8,8 @@ export const PROFILER_SCOPE_NAMES = [
     "du",
     "du.engine",
     "du.bun",
+    "du.ffi",
+    "du.cli",
     "clones",
     "teams",
     "claude-cmux-tree",
