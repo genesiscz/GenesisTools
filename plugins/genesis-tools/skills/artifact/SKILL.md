@@ -1,6 +1,6 @@
 ---
 name: artifact
-description: Create, serve, and build LOCAL dashboards and HTML artifacts via `tools artifact` — a single .tsx or .html file anywhere (no folder, no node_modules, no tsconfig) becomes a live page with clean URLs, React, Tailwind and a 30-component kit (Tabs, Router, MdViewer, Timeline, Simulator, ParametricSimulator, DataTable, Claim, …), or a self-contained single-file HTML. Use this WHENEVER the user says "create me an html artifact", "make a dashboard for/from this", "visualize this analysis as a page", "serve this folder", "single-file report", "incident dashboard", "artifact library", "turn these notes/json/md into a dashboard", or wants an interactive local page over some data — even when they don't say "artifact". Also use it PROACTIVELY when an analysis produces data (json/md/csv) that reads better as an interactive page than as chat text.
+description: Create, serve, and build LOCAL dashboards and HTML artifacts via `tools artifact` — a single .tsx or .html file anywhere (no folder, no node_modules, no tsconfig) becomes a live page with clean URLs, React, Tailwind and a 40+ component kit (Tabs, Router, MdViewer, Mermaid diagrams, DiffView, TreeView, Steps, Heatmap, Timeline, Simulator, ParametricSimulator, DataTable, Claim, …), or a self-contained single-file HTML. Use this WHENEVER the user says "create me an html artifact", "make a dashboard for/from this", "visualize this analysis as a page", "serve this folder", "single-file report", "incident dashboard", "artifact library", "turn these notes/json/md into a dashboard", or wants an interactive local page over some data — even when they don't say "artifact". Also use it PROACTIVELY when an analysis produces data (json/md/csv) that reads better as an interactive page than as chat text.
 ---
 
 # tools artifact — dashboards from a single file
@@ -50,9 +50,19 @@ body renders as markdown. Full API: `tools artifact kit`.
 |---|---|
 | Layout | `Page` `Hero` `Section` `Card`/`CardGrid` `Tabs` (hash-synced) `Router`/`RouterLink`/`useParams`/`useNavigate` (history API; hash fallback on file://) |
 | Data | `StatGrid` `DataTable` (filter, `rowTone`, toned/markdown cells) `SeriesTable` `Timeline` `Bullets` `QA` (per-item `open`/`featured`/`meta`) |
-| Evidence | `CodeBlock` (copy, `highlightLines`/`badLines`) `FileMark` `Claim` ([NN%] badge) `Quote` `Callout` `Badge` `Chips` `Note` `Superseded` |
-| Markdown | `Md` `MdInline` `MdViewer` (`src="../doc.md"` fetches LIVE — TOC + section filter; replaces build-time inlining) |
+| Evidence | `CodeBlock` (copy, `lang="ts"` highlighting, `highlightLines`/`badLines`) `FileMark` `Claim` ([NN%] badge) `Quote` `Callout` `Badge` `Chips` `Note` `Superseded` |
+| Markdown | `Md` `MdInline` `MdViewer` (`src="../doc.md"` fetches LIVE — TOC + section filter; replaces build-time inlining). Fenced code is highlighted; a ```` ```mermaid ```` fence renders as a diagram |
+| Diagrams | `Mermaid` (`chart` = mermaid source: flowchart, sequence, state, class, ER, gantt, gitGraph, mindmap, timeline; zoom toolbar, copy source, download SVG) `ZoomPane` |
+| Diff | `DiffView` (`before`/`after` or a unified `patch`; `mode="split"`; `labels`) |
+| Structure | `TreeView` + `treeFromPaths(paths)` (file trees) `Steps` (done/active/pending/failed/skipped) `Compare` (A vs B columns) `KeyValue` `JsonView` `Figure` (captioned image, click = full size) |
+| Viz | `Sparkline` (inline trend for a cell or stat) `Meter` (bar with `thresholds`) `Heatmap` (rows × cols, one tone) |
 | Interactive | `Simulator` (step player) `ParametricSimulator` (sliders/segments/toggles + pure `generate(params)` + presets) `SegmentedControl` |
+
+Show-me rule: a flow, a sequence, a state machine or an architecture is a `Mermaid` (or a
+```` ```mermaid ```` fence in an `.md`), never hand-drawn boxes. mermaid itself is NOT installed:
+the browser loads it from jsdelivr on first use, so a diagram needs the network once and a
+single-file build shows the fence source offline. A served or built `.md` renders its fences
+the same way, so `tools artifact serve notes.md` is the shortest path to a diagram.
 
 Data rule: small → inline in the file; larger → sibling `data.json` + `fetch("./data.json")`
 (live served, embedded on build) or a static JSON import (bundled). The `<entry>.data*.json`

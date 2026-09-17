@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 
 /**
@@ -66,6 +66,70 @@ test("an edit tool that names its path in another field is still tracked", async
     });
 
     expect((await readJson<{ files: string[] }>("sessions", "s2.json")).files).toEqual(["/repo/b.ts"]);
+});
+
+// Regression test: Codex 0.154 apply_patch hooks serialize paths inside tool_input.command,
+// relative to the payload's cwd. The seeding Edit carries no cwd, so its path stays as given.
+test("a Codex apply_patch payload tracks its complete path set, absolute against its cwd", async () => {
+    await runHook({
+        session_id: "s2-patch",
+        hook_event_name: "PostToolUse",
+        tool_name: "Edit",
+        tool_input: { file_path: "src/seed.ts" },
+        transcript_path: CLAUDE_TRANSCRIPT,
+    });
+
+    expect(
+        await runHook({
+            session_id: "s2-patch",
+            hook_event_name: "PostToolUse",
+            tool_name: "apply_patch",
+            cwd: "/repo",
+            tool_input: {
+                command: [
+                    "*** Begin Patch",
+                    "*** Add File: src/added.ts",
+                    "+added",
+                    "*** Update File: src/original.ts",
+                    "*** Move to: src/moved.ts",
+                    "@@",
+                    "-old",
+                    "+new",
+                    "*** Delete File: src/deleted.ts",
+                    "*** End Patch",
+                ].join("\n"),
+            },
+            tool_response:
+                "Exit code: 0\nSuccess. Updated the following files:\nA src/added.ts\nM src/moved.ts\nD src/deleted.ts",
+            transcript_path: CODEX_TRANSCRIPT,
+        })
+    ).toBe(0);
+
+    expect((await readJson<{ files: string[] }>("sessions", "s2-patch.json")).files).toEqual([
+        "src/seed.ts",
+        resolve("/repo", "src/added.ts"),
+        resolve("/repo", "src/original.ts"),
+        resolve("/repo", "src/moved.ts"),
+        resolve("/repo", "src/deleted.ts"),
+    ]);
+});
+
+test("a rejected apply_patch tracks nothing: its string response leads with a non-zero exit code", async () => {
+    expect(
+        await runHook({
+            session_id: "s2-rejected",
+            hook_event_name: "PostToolUse",
+            tool_name: "apply_patch",
+            cwd: "/repo",
+            tool_input: {
+                command: ["*** Begin Patch", "*** Add File: src/never.ts", "+x", "*** End Patch"].join("\n"),
+            },
+            tool_response: "Exit code: 1\napply_patch: src/never.ts: file already exists",
+            transcript_path: CODEX_TRANSCRIPT,
+        })
+    ).toBe(0);
+
+    await expect(readJson("sessions", "s2-rejected.json")).rejects.toThrow();
 });
 
 test("an unrecognised tool is tallied by harness, so the vocabulary can be confirmed", async () => {
