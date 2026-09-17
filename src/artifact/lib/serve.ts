@@ -1,4 +1,4 @@
-import { createServer, type ViteDevServer } from "vite";
+import { createServer, type PluginOption, type ViteDevServer } from "vite";
 import { artifactServePlugin } from "./catalog";
 import { baseOptimizeDeps, basePlugins, baseResolve, cacheDirFor, fsAllowRoots } from "./vite";
 
@@ -7,6 +7,7 @@ export interface ServeOptions {
     port: number;
     host?: string;
     templateDir: string;
+    plugins?: PluginOption[];
 }
 
 /**
@@ -23,7 +24,11 @@ export async function serveArtifacts(options: ServeOptions): Promise<ViteDevServ
         appType: "mpa",
         cacheDir: cacheDirFor(options.dir),
         logLevel: "warn",
-        plugins: [...basePlugins(), artifactServePlugin({ dir: options.dir, templateDir: options.templateDir })],
+        plugins: [
+            ...basePlugins(),
+            ...(options.plugins ?? []),
+            artifactServePlugin({ dir: options.dir, templateDir: options.templateDir }),
+        ],
         resolve: baseResolve(),
         optimizeDeps: baseOptimizeDeps(),
         server: {

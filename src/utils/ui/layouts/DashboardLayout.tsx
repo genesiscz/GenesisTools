@@ -72,6 +72,7 @@ export function DashboardLayout({
                                 {/* Logo / Title */}
                                 <button
                                     type="button"
+                                    aria-label={titleAccent ? `${title} ${titleAccent}` : title}
                                     className="flex items-center gap-2 group cursor-pointer shrink-0"
                                     onClick={() => onNavigate?.("/")}
                                 >
@@ -95,6 +96,8 @@ export function DashboardLayout({
                                                     <TooltipTrigger asChild>
                                                         <a
                                                             href={href}
+                                                            aria-label={label}
+                                                            aria-current={isActive ? "page" : undefined}
                                                             onClick={(e) => {
                                                                 if (onNavigate) {
                                                                     e.preventDefault();

@@ -1,0 +1,35 @@
+@import "tailwindcss";
+@import "../../utils/ui/theme/styles.css";
+@source "../../utils/ui/components";
+@source "../../utils/ui/layouts";
+@source "../../utils/ui/custom";
+
+.jev-page { max-width: 1400px; margin: 0 auto; padding: 32px 24px 64px; }
+.jev-page h1 { font-size: 30px; font-weight: 650; letter-spacing: -0.04em; line-height: 1.2; }
+.jev-page h2 { font-size: 15px; font-weight: 600; line-height: 1.4; }
+.jev-page p { line-height: 1.55; }
+.jev-subtitle { color: var(--muted-foreground); font-size: 14px; margin-top: 9px; max-width: 760px; }
+.jev-columns { display: grid; grid-template-columns: minmax(280px, 0.9fr) minmax(0, 1.2fr); gap: 24px; align-items: start; }
+.jev-lab { display: grid; grid-template-columns: minmax(250px, 0.85fr) minmax(300px, 1.45fr) minmax(200px, 0.75fr); gap: 20px; align-items: start; }
+.jev-stack { display: flex; flex-direction: column; gap: 20px; min-width: 0; }
+.jev-field { display: flex; flex-direction: column; gap: 8px; font-size: 13px; }
+.jev-field > label { color: var(--foreground); font-weight: 550; }
+.jev-select { width: 100%; padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--background); color: var(--foreground); }
+.jev-select:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+.jev-help { font-size: 12px; color: var(--muted-foreground); }
+.jev-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.jev-code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; line-height: 1.7; }
+.jev-source { min-height: 310px; padding: 18px; overflow: auto; background: var(--background); border: 1px solid var(--border); border-radius: 6px; white-space: pre; }
+.jev-metric { font-family: ui-monospace, monospace; font-size: 24px; font-weight: 600; letter-spacing: -0.04em; }
+.jev-empty { min-height: 230px; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 32px; gap: 12px; color: var(--muted-foreground); }
+.jev-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.jev-table th { text-align: left; color: var(--muted-foreground); font-weight: 500; padding: 8px; }
+.jev-table td { padding: 9px 8px; border-top: 1px solid var(--border); font-variant-numeric: tabular-nums; }
+.jev-trace { max-height: 340px; overflow: auto; }
+.jev-heading { display: flex; justify-content: space-between; gap: 20px; align-items: start; margin-bottom: 28px; }
+.jev-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.jev-token { font-family: ui-monospace, monospace; font-size: 12px; border: 1px solid var(--border); background: var(--background); padding: 5px 8px; border-radius: 4px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.jev-error { white-space: pre-wrap; overflow-wrap: anywhere; }
+@media (max-width: 1080px) { .jev-lab { grid-template-columns: minmax(240px, 0.8fr) minmax(0, 1.2fr); } .jev-lab > :last-child { grid-column: 1 / -1; } }
+@media (max-width: 720px) { .jev-page { padding: 24px 14px 40px; } .jev-columns, .jev-lab { grid-template-columns: minmax(0, 1fr); } .jev-lab > :last-child { grid-column: auto; } .jev-heading { flex-direction: column; } .jev-page h1 { font-size: 25px; } }
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }

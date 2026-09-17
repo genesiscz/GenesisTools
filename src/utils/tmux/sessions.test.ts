@@ -44,6 +44,20 @@ describe("tmux sessions", () => {
         expect(wrapped.join(" ")).toContain("alarm 1");
     });
 
+    test.skipIf(process.platform === "win32")(
+        "child watchdog preserves success, nonzero exit and signal status",
+        () => {
+            for (const [script, status] of [
+                ["exit 0", 0],
+                ["exit 7", 7],
+                ["kill -TERM $$", 143],
+            ] as const) {
+                const result = Bun.spawnSync(argvWithChildDeadline(["/bin/sh", "-c", script]));
+                expect(result.exitCode).toBe(status);
+            }
+        }
+    );
+
     test("listTmuxSessions parses every column of the tmux list-sessions record", async () => {
         setTmuxBinForTests("/mock/tmux");
         setTmuxSpawnSyncForTests((cmd) => {
