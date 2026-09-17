@@ -251,3 +251,19 @@ tools control cursor click \
 `paste --text PAYLOAD --format text|md|html` pastes at the focused input's existing selection. To choose another range or caret, use `select → see → paste`. Prefix/suffix do not modify the paste payload, and selection flags on `paste` are rejected. `type` is limited to single-line text of at most 256 UTF-16 code units; use paste for longer text.
 
 Clipboard restoration checks ownership and skips observed competing copies. It is best effort because AppKit has no atomic compare-and-swap; a narrow concurrent-copy race remains. HTML paste also carries raw markup as its plain-text representation, so rendering depends on the receiver.
+
+## Jev semantic control
+
+`resolve` and `judge` inspect a native window without dispatching. Both accept `--provider vercel|typesafe`, `--window-id`, `--scope window|chrome`, and `--snapshot-file` for a retained full `see` observation.
+
+```sh
+tools control resolve --app TextEdit --intent "the settings button for this account" --provider typesafe
+tools control judge --app TextEdit --expect "the export finished successfully"
+tools control judge --app Fixture --expect "counter is one" --exact-id counter --exact-value 1
+```
+
+Targets come from observed AXPress actions or writable text fields, with ancestor context. Disabled/hidden targets and secure fields are excluded. Unknown or uncertain choices abstain. Resolution returns the native snapshot token and selected element without execution.
+
+Judging reports verified/refuted/unknown, evidence IDs, probabilities and its semantic or exact basis. A button label is not completion evidence. Conflicting failure evidence blocks success. Exact ID/value readback does not call the model. A semantic verdict is a model judgment, not independent proof of hidden application state.
+
+Requests contain window/candidate labels and redacted observation text; writable input values stay local. The model cannot construct action arguments or bypass native snapshot freshness and app/window validation.

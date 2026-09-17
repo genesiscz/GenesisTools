@@ -1,5 +1,7 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { StringDecoder } from "node:string_decoder";
+import { replayCases } from "@app/control/lib/decision/fixtures";
+import { replayControl } from "@app/control/lib/decision/replay";
 import { evaluationProviderSchema } from "@genesiscz/utils/ai/evaluation/types";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
@@ -102,6 +104,9 @@ export function jevApiPlugin(): Plugin {
                         return circuitCache.status();
                     }
 
+                    if (req.method === "GET" && route === "/control/cases") {
+                        return replayCases;
+                    }
                     if (req.method === "GET" && route === "/presets") {
                         return { evaluation: demoInput, typescript: typescriptPresets };
                     }
@@ -111,6 +116,9 @@ export function jevApiPlugin(): Plugin {
                     }
 
                     const body = await readBody(req);
+                    if (route === "/control/replay") {
+                        return replayControl({ input: body, provider, signal: controller.signal });
+                    }
                     if (route === "/arena/circuit") {
                         const { tierId } = z
                             .object({ tierId: z.string().max(32) })

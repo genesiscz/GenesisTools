@@ -28,6 +28,7 @@ import { languages } from "../lib/languages";
 import type { EvaluationResponse } from "../lib/service";
 import { type TypeScriptRequest, typescriptPresets } from "../lib/typescript-grammar";
 import { ArenaLab } from "./ArenaLab";
+import { ControlLab } from "./ControlLab";
 import { api, download, errorMessage, selectProvider } from "./client";
 import "./styles.css";
 
@@ -829,6 +830,7 @@ export default function Dashboard() {
                 { label: "Request editor", href: "requests", icon: <Braces size={15} /> },
                 { label: "TypeScript lab", href: "typescript", icon: <Code2 size={15} /> },
                 { label: "Fly arena", href: "arena", icon: <Gamepad2 size={15} /> },
+                { label: "Control", href: "control", icon: <Terminal size={15} /> },
             ]}
             activePath={tab}
             onNavigate={(value) => {
@@ -876,7 +878,9 @@ export default function Dashboard() {
                         <ErrorNotice message={status.error} />
                     </div>
                 )}
-                {tab === "arena" ? (
+                {tab === "control" ? (
+                    <ControlLab />
+                ) : tab === "arena" ? (
                     <ArenaLab />
                 ) : tab === "typescript" ? (
                     <TypeScriptLab />

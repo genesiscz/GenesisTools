@@ -1,5 +1,5 @@
 import { type AxResult, runAx } from "../runner";
-import { type Candidate, type Observation, observationSchema, sameScope } from "./observation";
+import { type Candidate, candidatesFor, type Observation, observationSchema, sameScope } from "./observation";
 
 export interface DriverCall {
     signal?: AbortSignal;
@@ -37,6 +37,12 @@ export class NativeControlDriver implements ControlDriver {
         call.signal?.throwIfAborted();
         if (!this.pinned || !sameScope(this.pinned, call.observation)) {
             throw new Error("Action is outside the observed app/window.");
+        }
+        const admitted = candidatesFor({ observation: call.observation, action: call.candidate.action }).some(
+            (item) => item.element === call.candidate.element && item.id === call.candidate.id
+        );
+        if (!admitted) {
+            throw new Error("Action does not match an observed allowed candidate.");
         }
         const args = [
             "act",

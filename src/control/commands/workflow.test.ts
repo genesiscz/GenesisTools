@@ -3,7 +3,9 @@ import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 import type { EvaluationResponse, Evaluator } from "@genesiscz/utils/ai/evaluation/service";
 import { admittedChoice, judgeOutcome, resolveIntent } from "../lib/decision/decisions";
+import { replayCases } from "../lib/decision/fixtures";
 import { candidatesFor, type Observation } from "../lib/decision/observation";
+import { replayControl } from "../lib/decision/replay";
 
 const entry = join(import.meta.dir, "..", "index.ts");
 
@@ -245,4 +247,23 @@ test("semantic completion requires sufficient evidence and conflicting failure w
             })
         ).status
     ).toBe("unknown");
+});
+
+test("replay oracle verifies plumbing for every case without native actions or model requests", async () => {
+    for (const fixture of replayCases) {
+        const result = await replayControl({
+            input: { fixture, chooser: "mock" },
+            evaluate: async () => {
+                throw new Error("No network");
+            },
+        });
+        expect(result.metrics).toMatchObject({ correctTarget: true, correctOutcome: true, actions: 0, requests: 0 });
+        expect(result.mode).toBe("decision-only");
+    }
+});
+test("replay exact matching exposes semantic misses instead of borrowing fixture labels", async () => {
+    const result = await replayControl({ input: { fixture: replayCases[0], chooser: "exact" } });
+    expect(result.metrics.correctTarget).toBe(false);
+    expect(result.metrics.abstained).toBe(true);
+    expect(result.metrics.costUsd).toBe(0);
 });
