@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { profileArgs } from "./test-args";
+import { DEFAULT_MAX_MINUTES, maxRunMs, profileArgs } from "./test-args";
 
 test("a leading path survives --profile without --jobs", () => {
     // The documented shape `bun scripts/test.ts <paths> --profile`: index 0 is the path, and
@@ -32,4 +32,34 @@ test("a --jobs value that is not a positive count falls back to the default", ()
 
 test("a fractional --jobs value is floored, never zero", () => {
     expect(profileArgs(["--profile", "--jobs", "2.7"], 8)).toEqual({ jobs: 2, roots: [] });
+});
+
+test("whitespace-only GENESIS_TOOLS_TEST_MAX_MINUTES keeps the default tripwire", () => {
+    // `Number(" ")` is 0, which used to take the disable-the-tripwire branch.
+    const warnings: string[] = [];
+    const warn = (message: string) => {
+        warnings.push(message);
+    };
+
+    expect(maxRunMs(" ", warn)).toBe(DEFAULT_MAX_MINUTES * 60_000);
+    expect(maxRunMs("\t\n", warn)).toBe(DEFAULT_MAX_MINUTES * 60_000);
+    expect(maxRunMs("", warn)).toBe(DEFAULT_MAX_MINUTES * 60_000);
+    expect(maxRunMs(undefined, warn)).toBe(DEFAULT_MAX_MINUTES * 60_000);
+    expect(warnings).toEqual([]);
+});
+
+test("a non-numeric GENESIS_TOOLS_TEST_MAX_MINUTES falls back to the default, not off", () => {
+    const warnings: string[] = [];
+    expect(maxRunMs("fifteen", (message) => warnings.push(message))).toBe(DEFAULT_MAX_MINUTES * 60_000);
+    expect(warnings).toEqual([
+        `GENESIS_TOOLS_TEST_MAX_MINUTES=fifteen is not a number — using ${DEFAULT_MAX_MINUTES}m`,
+    ]);
+});
+
+test("0 disables the tripwire, a positive count is minutes in ms", () => {
+    const warn = () => {};
+    expect(maxRunMs("0", warn)).toBe(0);
+    expect(maxRunMs("  0  ", warn)).toBe(0);
+    expect(maxRunMs("2", warn)).toBe(120_000);
+    expect(maxRunMs("  3  ", warn)).toBe(180_000);
 });
