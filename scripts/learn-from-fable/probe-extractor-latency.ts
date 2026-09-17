@@ -24,7 +24,10 @@ function claudeProjectDir(repoRoot: string): string {
     return repoRoot.replace(/[^a-zA-Z0-9]/g, "-");
 }
 
-const TRANSCRIPT_DIR = `${env.paths.getHome()}/.claude/projects/${claudeProjectDir(resolve(import.meta.dir, "../.."))}`;
+// CLAUDE_CONFIG_DIR moves the whole config tree, transcripts included, so the
+// guidance below has to follow it or it names a directory that does not exist.
+const CLAUDE_DIR = env.paths.getClaudeConfigDir() ?? `${env.paths.getHome()}/.claude`;
+const TRANSCRIPT_DIR = `${CLAUDE_DIR}/projects/${claudeProjectDir(resolve(import.meta.dir, "../.."))}`;
 const SESSION = process.argv[2];
 
 if (!SESSION) {
