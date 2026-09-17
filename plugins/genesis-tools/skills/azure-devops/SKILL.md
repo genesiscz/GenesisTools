@@ -409,6 +409,12 @@ tools azure-devops history sync --dry-run         # Show what would be synced
 tools azure-devops history sync --batch           # Use batch reporting API instead
 ```
 
+**Dates in `history show` are the moment a change was made** (`System.ChangedDate` of that update).
+The API's `revisedDate` is the moment the next revision replaced it, `9999-01-01` on the latest one,
+so it is never used for that; before 2026-09-17 every state and assignment change showed one revision
+late (a bug closed on 5.8. printed 1.9., the day an automation edited a field). Who closed an item is
+`Microsoft.VSTS.Common.ClosedBy` of the closing revision, never the item's last `changedBy`.
+
 ### NL Query Translation
 
 | User says | Command |
