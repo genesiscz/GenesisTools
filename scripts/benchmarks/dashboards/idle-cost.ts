@@ -144,6 +144,7 @@ async function portHolders(port: number): Promise<CommandResult> {
 
 function signal(pid: number, name: NodeJS.Signals): void {
     try {
+        // pid-verified: pid is an lsof holder of the dashboard port this run bound
         process.kill(pid, name);
     } catch (err) {
         log.debug({ err, pid, signal: name }, "signal failed; the process is already gone");

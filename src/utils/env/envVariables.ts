@@ -53,7 +53,11 @@ export const env = {
      * proxy that Bun rejects; the `tools` launcher and detached children share this.
      */
     withoutProxy(extra?: Record<string, string | undefined>): NodeJS.ProcessEnv {
-        const spawnEnv: NodeJS.ProcessEnv = { ...snapshotEnv(), ...extra };
+        const snap = snapshotEnv();
+        const rawNodeEnv = extra?.NODE_ENV ?? snap.NODE_ENV;
+        const NODE_ENV: NodeJS.ProcessEnv["NODE_ENV"] =
+            rawNodeEnv === "production" || rawNodeEnv === "test" ? rawNodeEnv : "development";
+        const spawnEnv: NodeJS.ProcessEnv = { ...snap, ...extra, NODE_ENV };
 
         for (const key of PROXY_ENV_KEYS) {
             delete spawnEnv[key];
