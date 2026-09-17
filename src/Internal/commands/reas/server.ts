@@ -19,6 +19,7 @@ const CORS_HEADERS: Record<string, string> = {
 export async function startServer(port = DEFAULT_PORT): Promise<void> {
     const server = Bun.serve({
         port,
+        hostname: "127.0.0.1",
         async fetch(req) {
             const url = new URL(req.url);
 

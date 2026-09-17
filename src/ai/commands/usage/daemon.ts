@@ -118,10 +118,9 @@ export function registerUsageDaemonCommands(program: Command): void {
     daemon
         .command("register")
         .description("Register usage polling as a daemon task")
-        // 30s, not 60s: the usage buckets are what every picker and dashboard
-        // ranks accounts by, and a minute-old reading is already wrong after a
-        // busy turn. Only HEALTHY accounts pay for it — lapsed and failing ones
-        // are held back by the poll gate (src/utils/ai/usage-poll/poll-gate.ts).
+        // 60s floor: 30s was ~890 runs/day. HEALTHY accounts still pay for it —
+        // lapsed and failing ones are held back by the poll gate
+        // (src/utils/ai/usage-poll/poll-gate.ts).
         .option("-i, --interval <interval>", "Polling interval", "every 60 seconds")
         .option("--retention-days <days>", "Delete run logs older than N days (with --retention-min)", "3")
         .option("--retention-min <count>", "Always keep at least N newest run logs", "100")

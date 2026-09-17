@@ -5,6 +5,7 @@ import { AIConfig } from "@genesiscz/utils/ai/AIConfig";
 import { findClaudeCommand } from "@genesiscz/utils/claude";
 import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
+import { capture } from "@genesiscz/utils/process/ps";
 import { shellQuote } from "@genesiscz/utils/shell/quote";
 import { resolveTmuxBin } from "@genesiscz/utils/tmux/bin";
 import type { TeamMemberView, TeamView } from "./types";
@@ -205,17 +206,24 @@ export async function injectLeadAssignment(opts: {
     // held the event loop for the whole 4 s: no timer fired and Ctrl-C was not delivered until it
     // returned. The capture is a real process either way, but nothing else has to stop for it.
     while (Date.now() < deadline) {
-        const cap = Bun.spawn([tmux, "capture-pane", "-t", opts.tmuxTarget, "-p"], {
-            stdout: "pipe",
-            stderr: "pipe",
-        });
-        const [text] = await Promise.all([new Response(cap.stdout).text(), cap.exited]);
-
-        if (/bypass permissions|for agents|❯|Not logged in|Claude Code/.test(text)) {
+        const remaining = deadline - Date.now();
+        if (remaining <= 0) {
             break;
         }
 
-        await Bun.sleep(250);
+        const cap = await capture(tmux, ["capture-pane", "-t", opts.tmuxTarget, "-p"], {
+            timeoutMs: remaining,
+        });
+        if (/bypass permissions|for agents|❯|Not logged in|Claude Code/.test(cap.stdout)) {
+            break;
+        }
+
+        const leftover = deadline - Date.now();
+        if (leftover <= 0) {
+            break;
+        }
+
+        await Bun.sleep(Math.min(250, leftover));
     }
 
     const body = opts.prompt.trim();

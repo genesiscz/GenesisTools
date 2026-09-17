@@ -1,9 +1,16 @@
-import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { startWakefulInterval, type WakefulInterval } from "@genesiscz/utils/async";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import {
+    batchCwd,
+    batchPsInfo,
+    captureSync,
+    PS_COLUMNS_SPEC,
+    type PsRow,
+    parsePsLine,
+} from "@genesiscz/utils/process/ps";
 import { isProcessAlive } from "@genesiscz/utils/process-alive";
 import { readProcessCommand } from "@genesiscz/utils/process-identity";
 import type { KillResult, PortProcess, PortSnapshot, ProcessSnapshot, ProcessStatus } from "./types";
@@ -102,133 +109,11 @@ const DEV_PROCESS_NAMES = new Set([
     "com.docker.backend",
 ]);
 
-const PS_BATCH_SIZE = 60;
 const MAX_PROJECT_ROOT_DEPTH = 12;
 const KB_PER_MB = 1024;
 const KB_PER_GB = 1024 * 1024;
 const GRACEFUL_SHUTDOWN_WAIT_MS = 1000;
 const DEFAULT_WATCH_INTERVAL_MS = 2000;
-const PS_COLUMNS_SPEC = "pid=,ppid=,user=,state=,pcpu=,rss=,lstart=,command=";
-// ps output columns: PID PPID USER STAT %CPU RSS TTY LSTART COMMAND
-const PS_OUTPUT_PATTERN =
-    /^(\d+)\s+(\d+)\s+(\S+)\s+(\S+)\s+([\d.]+)\s+(\d+)\s+\w+\s+(\w+\s+\d+\s+[\d:]+\s+\d+)\s+(.*)$/;
-
-interface PsRow {
-    pid: number;
-    ppid: number;
-    user: string;
-    stat: string;
-    cpu: number;
-    rss: number;
-    startTime: Date | null;
-    command: string;
-}
-
-function run(
-    command: string,
-    args: string[],
-    options?: { timeoutMs?: number }
-): { stdout: string; stderr: string; status: number | null } {
-    const result = spawnSync(command, args, {
-        encoding: "utf8",
-        stdio: ["ignore", "pipe", "pipe"],
-        timeout: options?.timeoutMs,
-    });
-
-    return {
-        stdout: result.stdout ?? "",
-        stderr: result.stderr ?? "",
-        status: result.status,
-    };
-}
-
-function chunk<T>(items: T[], size: number): T[][] {
-    const chunks: T[][] = [];
-
-    for (let i = 0; i < items.length; i += size) {
-        chunks.push(items.slice(i, i + size));
-    }
-
-    return chunks;
-}
-
-function parsePsLine(line: string): PsRow | null {
-    const match = line.trim().match(PS_OUTPUT_PATTERN);
-
-    if (!match) {
-        return null;
-    }
-
-    const startTime = new Date(match[7]);
-
-    return {
-        pid: Number.parseInt(match[1], 10),
-        ppid: Number.parseInt(match[2], 10),
-        user: match[3],
-        stat: match[4],
-        cpu: Number.parseFloat(match[5]),
-        rss: Number.parseInt(match[6], 10),
-        startTime: Number.isNaN(startTime.getTime()) ? null : startTime,
-        command: match[8],
-    };
-}
-
-function batchPsInfo(pids: number[]): Map<number, PsRow> {
-    const rows = new Map<number, PsRow>();
-
-    for (const batch of chunk(pids, PS_BATCH_SIZE)) {
-        const result = run("ps", ["-p", batch.join(","), "-o", PS_COLUMNS_SPEC]);
-
-        for (const line of result.stdout.split("\n")) {
-            if (line.trim() === "") {
-                continue;
-            }
-
-            const parsed = parsePsLine(line);
-
-            if (!parsed) {
-                continue;
-            }
-
-            rows.set(parsed.pid, parsed);
-        }
-    }
-
-    return rows;
-}
-
-function batchCwd(pids: number[]): Map<number, string> {
-    const values = new Map<number, string>();
-
-    for (const batch of chunk(pids, PS_BATCH_SIZE)) {
-        const result = run("lsof", ["-a", "-d", "cwd", "-p", batch.join(",")]);
-        const lines = result.stdout.split("\n").slice(1);
-
-        for (const line of lines) {
-            if (line.trim() === "") {
-                continue;
-            }
-
-            const parts = line.trim().split(/\s+/);
-
-            if (parts.length < 9) {
-                continue;
-            }
-
-            const pid = Number.parseInt(parts[1], 10);
-            const cwd = parts.slice(8).join(" ");
-
-            if (Number.isNaN(pid) || !cwd.startsWith("/")) {
-                continue;
-            }
-
-            values.set(pid, cwd);
-        }
-    }
-
-    return values;
-}
-
 function formatUptime(startTime: Date | null): string | null {
     if (!startTime) {
         return null;
@@ -646,7 +531,7 @@ function getWindowsProcessData(pidFilter?: number[]): Map<number, WindowsProcess
     const result = new Map<number, WindowsProcessRow>();
 
     // tasklist without /V is much faster (no window-title or username queries)
-    const taskResult = run("tasklist", ["/FO", "CSV", "/NH"], { timeoutMs: WINDOWS_TASKLIST_TIMEOUT_MS });
+    const taskResult = captureSync("tasklist", ["/FO", "CSV", "/NH"], { timeoutMs: WINDOWS_TASKLIST_TIMEOUT_MS });
     const taskMap = taskResult.status === 0 ? parseTasklistCsv(taskResult.stdout) : new Map();
 
     // Filtering wmic by PID is dramatically faster than enumerating every process —
@@ -660,7 +545,7 @@ function getWindowsProcessData(pidFilter?: number[]): Map<number, WindowsProcess
 
     wmicArgs.push("get", "ProcessId,Name,CommandLine,WorkingDirectory,CreationDate,WorkingSetSize", "/FORMAT:LIST");
 
-    const wmicResult = run("wmic", wmicArgs, { timeoutMs: WINDOWS_WMIC_TIMEOUT_MS });
+    const wmicResult = captureSync("wmic", wmicArgs, { timeoutMs: WINDOWS_WMIC_TIMEOUT_MS });
 
     if (wmicResult.status === 0 && wmicResult.stdout.trim()) {
         let current: Record<string, string> = {};
@@ -839,7 +724,7 @@ function buildWindowsPortSnapshot(
 }
 
 function getWindowsListeningPorts(): PortSnapshot[] {
-    const netstatResult = run("netstat", ["-ano"], { timeoutMs: WINDOWS_NETSTAT_TIMEOUT_MS });
+    const netstatResult = captureSync("netstat", ["-ano"], { timeoutMs: WINDOWS_NETSTAT_TIMEOUT_MS });
 
     if (netstatResult.status !== 0 && !netstatResult.stdout.trim()) {
         return [];
@@ -861,7 +746,7 @@ function getWindowsListeningPorts(): PortSnapshot[] {
 }
 
 function getWindowsPortDetails(port: number): PortSnapshot[] {
-    const netstatResult = run("netstat", ["-ano"], { timeoutMs: WINDOWS_NETSTAT_TIMEOUT_MS });
+    const netstatResult = captureSync("netstat", ["-ano"], { timeoutMs: WINDOWS_NETSTAT_TIMEOUT_MS });
 
     if (netstatResult.status !== 0 && !netstatResult.stdout.trim()) {
         return [];
@@ -885,7 +770,7 @@ function getWindowsPortDetails(port: number): PortSnapshot[] {
 function getWindowsAllProcesses(): ProcessSnapshot[] {
     // For the global ps view we genuinely need every process, so no PID filter here.
     const processData = getWindowsProcessData();
-    const netstatResult = run("netstat", ["-ano"], { timeoutMs: WINDOWS_NETSTAT_TIMEOUT_MS });
+    const netstatResult = captureSync("netstat", ["-ano"], { timeoutMs: WINDOWS_NETSTAT_TIMEOUT_MS });
     const listeningPortMap = new Map<number, number[]>();
 
     if (netstatResult.status === 0) {
@@ -932,7 +817,7 @@ export function getPortDetails(port: number): PortSnapshot[] {
         return getWindowsPortDetails(port);
     }
 
-    const result = run("lsof", ["-i", `:${port}`, "-n", "-P"]);
+    const result = captureSync("lsof", ["-i", `:${port}`, "-n", "-P"]);
 
     if (result.status !== 0 && result.stdout.trim() === "") {
         return [];
@@ -946,7 +831,7 @@ export function getListeningPorts(): PortSnapshot[] {
         return getWindowsListeningPorts();
     }
 
-    const result = run("lsof", ["-iTCP", "-sTCP:LISTEN", "-P", "-n"]);
+    const result = captureSync("lsof", ["-iTCP", "-sTCP:LISTEN", "-P", "-n"]);
 
     if (result.status !== 0 || result.stdout.trim() === "") {
         return [];
@@ -1049,7 +934,7 @@ export function getAllProcesses(): ProcessSnapshot[] {
         return getWindowsAllProcesses();
     }
 
-    const result = run("ps", ["-axo", PS_COLUMNS_SPEC]);
+    const result = captureSync("ps", ["-axo", PS_COLUMNS_SPEC]);
 
     if (result.status !== 0 || result.stdout.trim() === "") {
         return [];
@@ -1116,7 +1001,7 @@ export function getGitBranch(cwd: string | null): string | null {
         return null;
     }
 
-    const result = run("git", ["-C", cwd, "rev-parse", "--abbrev-ref", "HEAD"]);
+    const result = captureSync("git", ["-C", cwd, "rev-parse", "--abbrev-ref", "HEAD"]);
     const branch = result.stdout.trim();
 
     if (result.status !== 0 || branch === "") {
@@ -1238,7 +1123,7 @@ function killProcessesWindows(pids: number[]): Promise<KillResult[]> {
     const results: KillResult[] = [];
 
     for (const pid of pids) {
-        const r = run("taskkill", ["/PID", String(pid), "/F"]);
+        const r = captureSync("taskkill", ["/PID", String(pid), "/F"]);
 
         if (r.status === 0) {
             results.push({ pid, status: "killed" });

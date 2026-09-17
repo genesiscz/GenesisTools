@@ -245,3 +245,8 @@ README.json-to-ts.md
 
 # Benchmark result rows carry real scan paths; keep them out of git
 scripts/benchmarks/**/*results*.jsonl
+# clone/du benchmark baselines: machine-specific timings + captured outputs, never tracked
+scripts/benchmarks/clones/baselines/
+
+# graft's local graph cache — regenerable, not committed (run `graft build`).
+/graft/

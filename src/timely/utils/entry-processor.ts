@@ -11,12 +11,14 @@ import type { Storage } from "@genesiscz/utils/storage";
 import { getDatesInMonth } from "./date";
 
 /**
- * Repository name that marks an entry as project development, and the project's
- * own name. Change both to your own: the classifier looks for these strings in
- * the entry title, note and description, all lower-cased.
+ * Repository name that marks an entry as project development, the project's own
+ * name, and a side project whose entries are never billable work. Change all
+ * three to your own: the classifier looks for these strings in the entry title,
+ * note and description, all lower-cased.
  */
 const PROJECT_REPO = "web-app";
 const PROJECT_NAME = "widgets";
+const SIDE_PROJECT_NAME = "northwind";
 
 export interface ProcessedEntry {
     title: string;
@@ -120,7 +122,7 @@ function isWorkRelated(entry: ProcessedEntry): boolean {
         text.includes("genesi") ||
         text.includes("glm") ||
         text.includes("t3 chat") ||
-        text.includes("reservine") ||
+        text.includes(SIDE_PROJECT_NAME) ||
         text.includes("x (4m)")
     ) {
         return false;

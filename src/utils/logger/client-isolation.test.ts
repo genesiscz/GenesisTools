@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 
 /**
  * `@app/logger` statically pulls pino + pino-pretty + node:stream + (post
@@ -12,10 +12,13 @@ import { join } from "node:path";
  * (`routes/api/**`, `server/**`), the Node dev-server middleware, and
  * vite/test config legitimately use the Node logger and are excluded.
  *
- * Coarse-by-design: a direct value-import regex on each client tree. It does
- * not chase transitive chains (current client reach is zero, and the one
- * fragile edge — RegularsPanel.tsx → `import type` of a logger-importing
- * module — is type-only and erased). See
+ * Two passes. The first is a direct value-import regex on each client tree.
+ * The second walks the import graph out of the client tree, because a client
+ * file may value-import a repo module that ITSELF pulls the logger: on
+ * 2026-09-16 that chain (QaSessionActions.tsx → lib/qa-session-actions.ts →
+ * lib/session-focus.ts → the logger) put @clack/prompts in the dev-dashboard
+ * bundle, `globalThis.process.platform` threw at module evaluation, and the
+ * whole dashboard rendered its boot splash forever. See
  * .claude/work/logger-client-vite-compat.md.
  */
 const REPO = join(import.meta.dir, "..", "..", "..");
@@ -43,6 +46,8 @@ function isServerOrTooling(rel: string): boolean {
         rel.endsWith(".test.tsx") ||
         rel.includes("vite-middleware") ||
         rel.includes("vite.plugins/") ||
+        // The DashboardApp harness entry beside the Vite app. It runs in Bun, not the browser.
+        rel.endsWith("/ui/app.ts") ||
         /vite\.config\.[cm]?[jt]s$/.test(rel) ||
         rel.includes("/node_modules/") ||
         rel.includes("/dist/")
@@ -122,6 +127,143 @@ describe("browser-client trees never value-import @app/logger", () => {
                 const src = readFileSync(file, "utf8");
                 for (const m of src.matchAll(VALUE_LOGGER_IMPORT)) {
                     offenders.push(`${rel}: ${m[0].replace(/\s+/g, " ").trim()}`);
+                }
+            }
+        }
+
+        expect(offenders).toEqual([]);
+    });
+});
+
+// ── Transitive pass ───────────────────────────────────────────────────────────
+// The regex above only sees the client file itself. Everything below follows the
+// value-import edges out of the client tree so a two-hop chain cannot hide.
+
+const LOGGER_SPEC = /^@(?:app|genesiscz)\/utils\/logger(?:\/out)?$/;
+
+interface ModuleImport {
+    spec: string;
+    typeOnly: boolean;
+}
+
+/** Every `from "…"` and bare `import "…"`, with the `import type …` form marked. */
+function moduleImports(src: string): ModuleImport[] {
+    const found: ModuleImport[] = [];
+    for (const m of src.matchAll(/(?:^|\n)\s*(?:import|export)([\s\S]*?)from\s*["']([^"']+)["']/g)) {
+        found.push({ spec: m[2], typeOnly: /^\s*type\s/.test(m[1]) });
+    }
+
+    for (const m of src.matchAll(/(?:^|\n)\s*import\s*["']([^"']+)["']/g)) {
+        found.push({ spec: m[1], typeOnly: false });
+    }
+
+    return found;
+}
+
+/**
+ * Resolve the alias forms every dashboard shares. A spec this cannot resolve is simply
+ * not followed, so the guard can under-report but never invent an offender.
+ */
+function resolveSpec(spec: string, fromFile: string, clientRootAbs: string): string | null {
+    let base: string;
+
+    if (spec.startsWith("@app/")) {
+        base = join(REPO, "src", spec.slice("@app/".length));
+    } else if (spec.startsWith("@genesiscz/utils/")) {
+        base = join(REPO, "src/utils", spec.slice("@genesiscz/utils/".length));
+    } else if (spec.startsWith("@ui/")) {
+        base = join(REPO, "src/utils/ui", spec.slice("@ui/".length));
+    } else if (spec.startsWith("@/")) {
+        base = join(clientRootAbs, "src", spec.slice(2));
+    } else if (spec.startsWith(".")) {
+        base = resolve(dirname(fromFile), spec);
+    } else {
+        return null;
+    }
+
+    const candidates = [base, `${base}.ts`, `${base}.tsx`, join(base, "index.ts"), join(base, "index.tsx")];
+
+    return candidates.find((candidate) => existsSync(candidate) && statSync(candidate).isFile()) ?? null;
+}
+
+/**
+ * Where the walk stops. A TanStack Start route that declares `createServerFn` keeps its
+ * handler — and that handler's imports — out of the client bundle, so following those edges
+ * would report chains the bundler already cut. Such a file is still covered by the direct
+ * regex pass above, which reads the file itself rather than what it imports.
+ */
+function isBundlerBoundary(src: string): boolean {
+    return src.includes("createServerFn");
+}
+
+/** The chain from a client file to the logger, or null when that tree stays clean. */
+function chainToLogger(entry: string, clientRootAbs: string, sourceOf: Map<string, string>): string[] | null {
+    const seen = new Set([entry]);
+    const queue: string[][] = [[entry]];
+
+    while (queue.length > 0) {
+        const path = queue.shift() as string[];
+        const file = path[path.length - 1];
+        let src = sourceOf.get(file);
+
+        if (src === undefined) {
+            src = readFileSync(file, "utf8");
+            sourceOf.set(file, src);
+        }
+
+        if (isBundlerBoundary(src)) {
+            continue;
+        }
+
+        for (const imported of moduleImports(src)) {
+            if (imported.typeOnly) {
+                continue;
+            }
+
+            if (LOGGER_SPEC.test(imported.spec)) {
+                return [...path, imported.spec];
+            }
+
+            const next = resolveSpec(imported.spec, file, clientRootAbs);
+
+            if (!next || seen.has(next) || isServerOrTooling(next.slice(REPO.length + 1))) {
+                continue;
+            }
+
+            seen.add(next);
+            queue.push([...path, next]);
+        }
+    }
+
+    return null;
+}
+
+describe("browser-client trees never reach @app/logger through another module", () => {
+    it("no client source pulls the Node logger transitively", () => {
+        const offenders: string[] = [];
+        const sourceOf = new Map<string, string>();
+
+        for (const root of CLIENT_ROOTS) {
+            const abs = join(REPO, root);
+
+            if (!existsSync(abs)) {
+                continue;
+            }
+
+            const files: string[] = [];
+            walk(abs, files);
+
+            for (const file of files) {
+                const rel = file.slice(REPO.length + 1);
+
+                if (isServerOrTooling(rel)) {
+                    continue;
+                }
+
+                const chain = chainToLogger(file, abs, sourceOf);
+
+                if (chain) {
+                    offenders.push(chain.map((step) => step.replace(`${REPO}/`, "")).join(" -> "));
                 }
             }
         }

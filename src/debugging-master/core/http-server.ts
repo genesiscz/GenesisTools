@@ -5,6 +5,7 @@ import { SessionManager } from "@app/debugging-master/core/session-manager";
 import { sseBroadcaster } from "@app/debugging-master/core/sse-broadcaster";
 import type { LogEntry } from "@app/debugging-master/types";
 import { decodeSessionPathSegment, isSafeLogSessionName } from "@app/log-viewer/session-name";
+import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 
 function ensureDir(): void {
@@ -66,7 +67,9 @@ export function startServer(port: number = 7243): { server: ReturnType<typeof Bu
 
     const server = Bun.serve({
         port,
-        hostname: "0.0.0.0",
+        // Loopback unless the DashboardApp launcher says otherwise through DASHBOARD_BIND_HOST. This
+        // was a literal 0.0.0.0, reachable from the whole LAN, with no way to turn it off.
+        hostname: env.dashboard.getBindHost() ?? "127.0.0.1",
         // Idle timeout 2 minutes. SSE heartbeats fire every 15s (well within
         // this window) so streams stay open. The non-zero timeout is a safety
         // net: if a connection genuinely goes silent (network glitch, sleeping

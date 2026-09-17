@@ -12,7 +12,6 @@ export const logDashboardApp = defineDashboardApp({
     description: "Unified dbg + task log dashboard HTTP server",
     commandName: "serve",
     port: DASHBOARDS["debugging-master"].port,
-    bindHost: DASHBOARDS["debugging-master"].bindHost,
     spawn: {
         cmd: ["bun", "run", SERVER_ENTRY],
         cwd: PROJECT_ROOT,

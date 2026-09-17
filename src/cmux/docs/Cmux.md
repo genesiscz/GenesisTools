@@ -183,7 +183,7 @@ A `workspace.list` entry contains:
   "ref": "workspace:1",
   "id": "92F762D5-...",
   "index": 0,
-  "title": "reservine",
+  "title": "northwind",
   "selected": false,           // is this the focused workspace?
   "pinned": false,
   "current_directory": "/Users/Martin/projects/NorthwindBack",
