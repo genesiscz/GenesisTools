@@ -6,6 +6,7 @@ import { runShare } from "@app/dev-dashboard/commands/share";
 import { runTunnelSetup } from "@app/dev-dashboard/commands/tunnel";
 import { getConfig, saveConfig } from "@app/dev-dashboard/config";
 import { createBasicAuthCredentials } from "@app/dev-dashboard/lib/auth";
+import { resolveDevDashboardBindHost } from "@app/dev-dashboard/lib/bind-host";
 import { generatePairingCode, savePairingCode } from "@app/dev-dashboard/lib/e2e/pairing-code";
 import { startFrontProxy } from "@app/dev-dashboard/lib/front-proxy";
 import { runPreviewUiServer } from "@app/dev-dashboard/lib/preview-ui-server";
@@ -110,7 +111,7 @@ async function runUiServer(): Promise<void> {
     }
 
     try {
-        const bindHost = env.dashboard.getBindHost() ?? "0.0.0.0";
+        const bindHost = resolveDevDashboardBindHost();
         frontProxy = startFrontProxy({ publicPort: port, internalPort, hostname: bindHost });
         setDashboardBoundPort(port);
         logger.info({ publicPort: port, internalPort }, "front proxy listening — upstream Vite is ready");
@@ -184,13 +185,14 @@ program
     .command("__ui-server", { hidden: true })
     .description("Internal entry: front-proxy + UI upstream + ttyd")
     .option("--dev", "Vite dev + HMR (slower over tunnel; default is watch build + preview)")
-    .action(async (opts: { dev?: boolean }) => {
+    .option("--static", "build the UI once and serve it (what `ui install` registers)")
+    .action(async (opts: { dev?: boolean; static?: boolean }) => {
         if (opts.dev) {
             await runUiServer();
             return;
         }
 
-        await runPreviewUiServer();
+        await runPreviewUiServer({ serve: opts.static ? "static" : "preview" });
     });
 
 program.addCommand(devDashboardUiApp.commanderCommand);

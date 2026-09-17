@@ -5,18 +5,23 @@ import { PROJECT_ROOT } from "@genesiscz/utils/paths";
 
 const serverScript = resolve(fileURLToPath(new URL("../index.ts", import.meta.url)));
 
-/** DashboardApp harness config — preview (watch build) is the default serve mode. */
+/**
+ * DashboardApp harness config. `up` and `install` run the static server (one build, then serve);
+ * `install --preview` registers the watch build instead (rebuild on save, page reload), and `ui dev`
+ * swaps in Vite dev + HMR for one run and brings the installed server back on exit.
+ */
 export const devDashboardUiApp = defineDashboardApp({
     type: "ui",
     key: "dev-dashboard",
     name: "Dev Dashboard",
-    description: "Launch dev-dashboard (front-proxy, bundled UI with watch rebuild, ttyd)",
+    description: "Launch dev-dashboard (front-proxy, UI built once and served, ttyd)",
     commandName: "ui",
     aliases: ["dashboard"],
     bindHost: "0.0.0.0",
     spawn: {
-        cmd: buildDashboardUiServerCmd({ serverScript, mode: "preview" }),
+        cmd: buildDashboardUiServerCmd({ serverScript, mode: "static" }),
         devCmd: buildDashboardUiServerCmd({ serverScript, mode: "dev" }),
+        previewCmd: buildDashboardUiServerCmd({ serverScript, mode: "preview" }),
         cwd: PROJECT_ROOT,
     },
     readiness: { kind: "http", path: "/", timeoutMs: 90_000 },

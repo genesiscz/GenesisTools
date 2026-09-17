@@ -10,6 +10,15 @@ export function revealAppAfterBoot(): void {
         return;
     }
 
+    // A hidden tab never runs requestAnimationFrame, so a dashboard opened in the background
+    // would keep the boot splash over a mounted app until it is focused. Reveal it at once
+    // there, and keep the two-frame fade for a tab the user is actually looking at.
+    if (document.hidden) {
+        document.documentElement.classList.add(READY_CLASS);
+        boot.remove();
+        return;
+    }
+
     requestAnimationFrame(() => {
         requestAnimationFrame(() => {
             document.documentElement.classList.add(READY_CLASS);

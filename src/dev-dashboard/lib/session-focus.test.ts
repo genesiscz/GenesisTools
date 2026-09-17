@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { focusSessionPane, type RunResult, resumeCommandFor } from "./session-focus";
+import { focusSessionPane, type RunResult } from "./session-focus";
 
 const SESSION = "11111111-2222-3333-4444-555555555555";
 
@@ -63,11 +63,5 @@ describe("focusSessionPane", () => {
         expect(result.ok).toBe(false);
         expect(result.ok === false && result.error).toContain("cannot start with");
         expect(calls).toEqual([]);
-    });
-});
-
-describe("resumeCommandFor", () => {
-    test("builds the same resume string Genesis copies", () => {
-        expect(resumeCommandFor(SESSION)).toBe(`tools claude run --resume ${SESSION}`);
     });
 });

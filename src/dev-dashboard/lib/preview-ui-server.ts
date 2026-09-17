@@ -1,7 +1,8 @@
 import { resolve } from "node:path";
 import { getConfig } from "@app/dev-dashboard/config";
+import { resolveDevDashboardBindHost } from "@app/dev-dashboard/lib/bind-host";
 import { startFrontProxy } from "@app/dev-dashboard/lib/front-proxy";
-import { stopUiServerOnPort } from "@genesiscz/utils/DashboardApp";
+import { staticBuildDir, stopUiServerOnPort } from "@genesiscz/utils/DashboardApp";
 import {
     buildPreviewServerWatchGlobs,
     notifyPreviewReload,
@@ -10,12 +11,15 @@ import {
 import { findFreePort } from "@genesiscz/utils/net/free-port";
 import { PROJECT_ROOT } from "@genesiscz/utils/paths";
 
-export async function runPreviewUiServer(): Promise<void> {
+export async function runPreviewUiServer(opts: { serve?: "preview" | "static" } = {}): Promise<void> {
     const devDashboardRoot = resolve(import.meta.dirname, "..");
     const uiDir = resolve(devDashboardRoot, "ui");
 
     await runDashboardPreviewUiServer({
         toolLabel: "dev-dashboard",
+        serve: opts.serve,
+        staticOutDir: staticBuildDir("dev-dashboard"),
+        resolveBindHost: resolveDevDashboardBindHost,
         viteConfigPath: resolve(uiDir, "vite.config.ts"),
         configRoot: PROJECT_ROOT,
         uiDir,
