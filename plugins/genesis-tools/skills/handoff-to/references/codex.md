@@ -61,7 +61,7 @@ Recipe for a note under the notes vault:
 1. Orchestrator `mkdir -p` the note's parent first. macOS TCC on a synced folder can block the Codex child's mkdir.
 2. Spawn `--write allow` with `--cwd` set to that parent. Do not set cwd to the app repo.
 3. Brief: write only the exact path. Do not commit. Do not touch the repo.
-4. If `apply_patch` still stalls on Tresors, the worker writes `/tmp/<same-filename>` and you `cp` it into the vault.
+4. If `apply_patch` still stalls on the vault path, the worker writes `/tmp/<same-filename>` and you `cp` it into the vault.
 
 `--write ask` is fine if the driver will approve that one path. `allow` is allowed here because cwd is the note folder, not the live repo.
 
@@ -115,7 +115,7 @@ Codex presses on by default. The brief must say where it stops. The generic cont
 - Do NOT touch <paths>.
 ```
 
-The path rule earns its line. Observed: a brief supplied `/private/tmp/claude-502/-Users-Martin-Tresors-Projects-Contoso-example-app/<uuid>/scratchpad/report.md` and Codex echoed it back as `…/-Users-Martin-Tresors-Projects/Contoso-example-app/<uuid>/…`, substituting a `/` for a `-` mid-path. Harmless that time because the orchestrator used its own path; a human copy-pasting it lands nowhere.
+The path rule earns its line. Observed: a brief supplied `/private/tmp/claude-502/-Users-alice-projects-Contoso-example-app/<uuid>/scratchpad/report.md` and Codex echoed it back as `…/-Users-alice-projects/Contoso-example-app/<uuid>/…`, substituting a `/` for a `-` mid-path. Harmless that time because the orchestrator used its own path; a human copy-pasting it lands nowhere.
 
 ## 3. Watch and steer
 

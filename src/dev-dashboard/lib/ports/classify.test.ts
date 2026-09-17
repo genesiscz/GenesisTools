@@ -61,8 +61,8 @@ describe("isVerifiedGenesisTools (registry + matchProcess)", () => {
         expect(
             isVerifiedGenesisTools(
                 3042,
-                "bun run /Users/Martin/Tresors/Projects/GenesisTools/src/dev-dashboard/index.ts",
-                "/Users/Martin/Tresors/Projects/GenesisTools",
+                "bun run /Users/Martin/projects/GenesisTools/src/dev-dashboard/index.ts",
+                "/Users/Martin/projects/GenesisTools",
                 "bun"
             )
         ).toBe(true);
@@ -76,16 +76,16 @@ describe("isVerifiedGenesisTools (registry + matchProcess)", () => {
         expect(
             isVerifiedGenesisTools(
                 9876,
-                "bun run /Users/Martin/Tresors/Projects/GenesisTools/src/youtube/lib/server/index.ts",
-                "/Users/Martin/Tresors/Projects/GenesisTools",
+                "bun run /Users/Martin/projects/GenesisTools/src/youtube/lib/server/index.ts",
+                "/Users/Martin/projects/GenesisTools",
                 "bun"
             )
         ).toBe(true);
         expect(
             isVerifiedGenesisTools(
                 9877,
-                "bun /Users/Martin/Tresors/Projects/GenesisTools/src/youtube/index.ts extension dev",
-                "/Users/Martin/Tresors/Projects/GenesisTools",
+                "bun /Users/Martin/projects/GenesisTools/src/youtube/index.ts extension dev",
+                "/Users/Martin/projects/GenesisTools",
                 "bun"
             )
         ).toBe(true);
@@ -96,16 +96,16 @@ describe("isVerifiedGenesisTools (registry + matchProcess)", () => {
             isVerifiedGenesisTools(
                 8317,
                 "bun run src/ai-proxy/index.ts serve --port 8317",
-                "/Users/Martin/Tresors/Projects/GenesisTools",
+                "/Users/Martin/projects/GenesisTools",
                 "bun"
             )
         ).toBe(true);
     });
 
     test("unregistered port is never GenesisTools even under monorepo cwd", () => {
-        expect(
-            isVerifiedGenesisTools(55555, "bun run something", "/Users/Martin/Tresors/Projects/GenesisTools", "bun")
-        ).toBe(false);
+        expect(isVerifiedGenesisTools(55555, "bun run something", "/Users/Martin/projects/GenesisTools", "bun")).toBe(
+            false
+        );
     });
 });
 
@@ -214,8 +214,8 @@ describe("deriveTitle", () => {
             deriveTitle({
                 port: 9876,
                 command: "bun",
-                fullCommand: "bun run /Users/Martin/Tresors/Projects/GenesisTools/src/youtube/lib/server/index.ts",
-                cwd: "/Users/Martin/Tresors/Projects/GenesisTools",
+                fullCommand: "bun run /Users/Martin/projects/GenesisTools/src/youtube/lib/server/index.ts",
+                cwd: "/Users/Martin/projects/GenesisTools",
             })
         ).toBe("YouTube Server");
     });

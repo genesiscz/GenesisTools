@@ -11,8 +11,8 @@ describe("cwdFromTitle", () => {
     });
 
     it("expands user@host:~/path titles", () => {
-        const out = cwdFromTitle("Martin@MacBook-Pro:~/Tresors/Projects/Foo");
-        expect(out).toBe(join(homedir(), "Tresors/Projects/Foo"));
+        const out = cwdFromTitle("Martin@MacBook-Pro:~/projects/Foo");
+        expect(out).toBe(join(homedir(), "projects/Foo"));
     });
 
     it("keeps absolute user@host:/abs paths", () => {
@@ -52,7 +52,7 @@ describe("lastCommandFromCapture", () => {
         const text = [
             "Last login: Mon Apr 27 19:24:32 on ttys013",
             "You have mail.",
-            "➜  GenesisTools git:(fix/several) ✗ cd /Users/Martin/Tresors/Projects/GenesisTools",
+            "➜  GenesisTools git:(fix/several) ✗ cd /Users/Martin/projects/GenesisTools",
             "➜  GenesisTools git:(feat/cmux) ✗ bun test src/cmux/lib/__tests__/",
             "20 pass, 0 fail",
             "➜  GenesisTools git:(feat/cmux) ✗",

@@ -18,7 +18,7 @@
  *
  * Usage:
  *   bun scripts/benchmarks/clones/microbenches/apfs-bench-prefix-hash.ts \
- *     --root ~/Tresors/Projects/GenesisTools --iterations 3 \
+ *     --root ~/projects/GenesisTools --iterations 3 \
  *     [--variant full|prefix] [--prefix-bytes 4096] [--min-size 1048576]
  *     [--max-mb 1024] [--jsonl /tmp/prefix-hash.jsonl] [--label phase-0]
  */

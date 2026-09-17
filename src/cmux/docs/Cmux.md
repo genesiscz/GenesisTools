@@ -288,7 +288,7 @@ Surfaces are tabs inside a pane. Each pane has 1+ surfaces; clicking a tab makes
 ```jsonc
 [
   { "ref": "surface:1",  "type": "terminal", "title": "✳ templates-todo",                       "index": 0, "selected": false },
-  { "ref": "surface:3",  "type": "terminal", "title": "Martin@MacBook-Pro:~/Tresors/Projects/X", "index": 1, "selected": false },
+  { "ref": "surface:3",  "type": "terminal", "title": "Martin@MacBook-Pro:~/projects/X", "index": 1, "selected": false },
   { "ref": "surface:12", "type": "terminal", "title": "tools claude usage",                     "index": 2, "selected": true  }
 ]
 ```
@@ -301,7 +301,7 @@ cmux derives a default tab title from whatever is running:
 
 | Running | Example title |
 |---------|---------------|
-| Idle shell (zsh) | `Martin@MacBook-Pro:~/Tresors/Projects/Foo` (OSC-7 + OSC-1337 derived) |
+| Idle shell (zsh) | `Martin@MacBook-Pro:~/projects/Foo` (OSC-7 + OSC-1337 derived) |
 | `cd` to a long path, then idle | `…/Projects/Foo/sub/dir` |
 | `claude` working | `✳ <session-name>` |
 | `claude` idle | `⠐ <session-name>` |

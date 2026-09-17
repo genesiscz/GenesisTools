@@ -13,7 +13,7 @@
  *
  * Usage:
  *   bun scripts/benchmarks/clones/microbenches/apfs-bench-prod-sha256.ts \
- *     --root ~/Tresors/Projects/GenesisTools --iterations 5 \
+ *     --root ~/projects/GenesisTools --iterations 5 \
  *     [--max-files 500] [--max-mb 512] \
  *     [--jsonl scripts/benchmarks/clones/microbench-results.jsonl] \
  *     [--label phase-6-buffer-reuse-small]

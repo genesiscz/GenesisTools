@@ -22,12 +22,12 @@ describe("paths.client", () => {
 
     it("finds longest common path prefix across collapsed home paths", () => {
         const paths = [
-            "/Users/Martin/Tresors/Projects/widgets/web-app/mobile-app",
-            "/Users/Martin/Tresors/Projects/GenesisTools",
-            "/Users/Martin/Tresors/Projects/Other/app",
+            "/Users/Martin/projects/widgets/web-app/mobile-app",
+            "/Users/Martin/projects/GenesisTools",
+            "/Users/Martin/projects/Other/app",
         ];
 
-        expect(longestCommonPathPrefix(paths)).toBe("~/Tresors/Projects");
+        expect(longestCommonPathPrefix(paths)).toBe("~/projects");
     });
 
     it("returns empty prefix when paths do not share a directory", () => {
@@ -43,23 +43,23 @@ describe("paths.client", () => {
     });
 
     it("shortens paths using a shared prefix", () => {
-        const prefix = "~/Tresors/Projects";
+        const prefix = "~/projects";
 
-        expect(shortenPathWithPrefix("~/Tresors/Projects/widgets/web-app/mobile-app", prefix)).toBe(
+        expect(shortenPathWithPrefix("~/projects/widgets/web-app/mobile-app", prefix)).toBe(
             "widgets/web-app/mobile-app"
         );
-        expect(shortenPathWithPrefix("~/Tresors/Projects/GenesisTools", prefix)).toBe("GenesisTools");
-        expect(shortenPathWithPrefix("~/Tresors/Projects", prefix)).toBe(".");
+        expect(shortenPathWithPrefix("~/projects/GenesisTools", prefix)).toBe("GenesisTools");
+        expect(shortenPathWithPrefix("~/projects", prefix)).toBe(".");
     });
 
     it("keeps worktree folders visible when siblings share a repo", () => {
         const paths = [
-            "~/Tresors/Projects/widgets/web-app/.claude/worktrees/wt-a",
-            "~/Tresors/Projects/widgets/web-app/.claude/worktrees/wt-b",
+            "~/projects/widgets/web-app/.claude/worktrees/wt-a",
+            "~/projects/widgets/web-app/.claude/worktrees/wt-b",
         ];
         const prefix = resolveDirPathDisplayPrefix(paths);
 
-        expect(prefix).toBe("~/Tresors/Projects");
+        expect(prefix).toBe("~/projects");
         expect(shortenPathWithPrefix(paths[0], prefix)).toBe("widgets/web-app/.claude/worktrees/wt-a");
         expect(shortenPathWithPrefix(paths[1], prefix)).toBe("widgets/web-app/.claude/worktrees/wt-b");
     });

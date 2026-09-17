@@ -14,7 +14,7 @@ const SESSION_A = "8b6e69bf-0efc-4990-ba3e-b77262498421";
 const SESSION_B = "f013e93c-a367-46e6-add2-4c026b9cf667";
 
 /** The real shape of a restored pane's screen, copied from a live `cmux read-screen`. */
-function resumeScreen(sessionId: string, cwd = "/Users/Martin/Tresors/Projects/GenesisTools"): string {
+function resumeScreen(sessionId: string, cwd = "/Users/Martin/projects/GenesisTools"): string {
     return `Last login: Wed Aug 19 12:48:46 on ttys025\ncd -- '${cwd}' && tools claude start -- --resume '${sessionId}'`;
 }
 

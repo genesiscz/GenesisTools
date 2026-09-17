@@ -6,15 +6,31 @@
  *
  *   PROFILE=probe bun scripts/learn-from-fable/probe-extractor-latency.ts
  */
+import { resolve } from "node:path";
 import { AiProxyClient } from "@genesiscz/utils/ai/proxy/AiProxyClient";
+import { env } from "@genesiscz/utils/env";
 import { out } from "@genesiscz/utils/logger";
 import { profiler } from "@genesiscz/utils/profile";
 import { EXTRACT_SCHEMA, EXTRACT_SYSTEM } from "../../src/learn-from-fable/lib/stages/mine";
 import { condenseForExtraction, loadTurns } from "../../src/learn-from-fable/lib/transcript";
 
-const SESSION =
-    process.argv[2] ??
-    `${process.env.HOME}/.claude/projects/-Users-Martin-Tresors-Projects-GenesisTools/8a4faba3-dcfd-4622-83b4-b56c7eac2451.jsonl`;
+/**
+ * Claude encodes a project's directory by replacing every non-alphanumeric
+ * character with `-`, so the transcript directory for THIS checkout is
+ * derivable rather than hardcoded. The old default named one developer's vault
+ * path and one session id, which worked on exactly one machine.
+ */
+function claudeProjectDir(repoRoot: string): string {
+    return repoRoot.replace(/[^a-zA-Z0-9]/g, "-");
+}
+
+const TRANSCRIPT_DIR = `${env.paths.getHome()}/.claude/projects/${claudeProjectDir(resolve(import.meta.dir, "../.."))}`;
+const SESSION = process.argv[2];
+
+if (!SESSION) {
+    out.error(`Pass a transcript path. This checkout's transcripts live in:\n    ${TRANSCRIPT_DIR}`);
+    process.exit(1);
+}
 
 interface Probe {
     label: string;

@@ -81,5 +81,5 @@ tools mcp-manager list                                                          
 By hand it is the same shape as every other server this repo owns:
 
 ```json
-{ "command": "/Users/Martin/Tresors/Projects/GenesisTools/tools", "args": ["node-repl", "mcp"] }
+{ "command": "/Users/Martin/projects/GenesisTools/tools", "args": ["node-repl", "mcp"] }
 ```

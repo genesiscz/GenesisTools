@@ -47,7 +47,7 @@ function fakeTeam(over: Partial<TeamView> = {}): TeamView {
             members: [],
         },
         leadSessionId: "55a1a95d-4c46-4f3d-8a2d-5b27191ed430",
-        cwd: "/Users/Martin/Tresors/Projects/GenesisPlayground",
+        cwd: "/Users/Martin/projects/GenesisPlayground",
         mtimeMs: Date.now(),
         members: [],
         teammates: [],
@@ -63,7 +63,7 @@ function fakeMate(over: Partial<TeamMemberView> = {}): TeamMemberView {
             model: "sonnet",
             color: "blue",
             agentType: "general-purpose",
-            cwd: "/Users/Martin/Tresors/Projects/GenesisPlayground",
+            cwd: "/Users/Martin/projects/GenesisPlayground",
             prompt: "Research BridgeMind thoroughly.",
         },
         isLead: false,
@@ -170,7 +170,7 @@ describe("buildToolsCcTeammateCommand", () => {
         expect(cmd).toContain("tools cc run 'personal' --");
         expect(cmd).toContain("--agent-name");
         expect(cmd).toContain("bm-research-product");
-        expect(cmd).toContain("cd '/Users/Martin/Tresors/Projects/GenesisPlayground'");
+        expect(cmd).toContain("cd '/Users/Martin/projects/GenesisPlayground'");
     });
 });
 

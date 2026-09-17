@@ -44,7 +44,7 @@ describe("matchProcess", () => {
                 port: 3042,
                 command: "bun",
                 fullCommand: "bun …/GenesisTools/src/dev-dashboard/index.ts",
-                cwd: "/Users/Martin/Tresors/Projects/GenesisTools",
+                cwd: "/Users/Martin/projects/GenesisTools",
             })
         ).toBe(true);
 

@@ -11,7 +11,7 @@
  *
  * Usage:
  *   bun scripts/benchmarks/clones/microbenches/apfs-bench-walk-isolated.ts \
- *     --root ~/Tresors/Projects/GenesisTools --iterations 5 \
+ *     --root ~/projects/GenesisTools --iterations 5 \
  *     [--variant readdir-stat] [--jsonl /tmp/walk-results.jsonl] [--label phase-0]
  *
  * Output: one summary line on stderr, one JSON object on stdout (and to

@@ -133,11 +133,11 @@ export const testCases: TestCase[] = [
     // ═══════════════════════════════════════════════════════════════════
     {
         name: "path split at terminal width — word boundary",
-        input: "rm -rf /Users/Martin/Tresors/Projects/ClaudeCode/npm-claude-code/vendor && cp -r ~/.bun/install/global/node_modules/@anthropic-ai/claude-code/vendor\n  /Users/Martin/Tresors/Projects/ClaudeCode/npm-claude-code/vendor",
+        input: "rm -rf /Users/Martin/projects/ClaudeCode/npm-claude-code/vendor && cp -r ~/.bun/install/global/node_modules/@anthropic-ai/claude-code/vendor\n  /Users/Martin/projects/ClaudeCode/npm-claude-code/vendor",
         expected:
-            "rm -rf /Users/Martin/Tresors/Projects/ClaudeCode/npm-claude-code/vendor && cp -r ~/.bun/install/global/node_modules/@anthropic-ai/claude-code/vendor /Users/Martin/Tresors/Projects/ClaudeCode/npm-claude-code/vendor",
+            "rm -rf /Users/Martin/projects/ClaudeCode/npm-claude-code/vendor && cp -r ~/.bun/install/global/node_modules/@anthropic-ai/claude-code/vendor /Users/Martin/projects/ClaudeCode/npm-claude-code/vendor",
         expectedPretty:
-            "rm -rf /Users/Martin/Tresors/Projects/ClaudeCode/npm-claude-code/vendor && cp -r ~/.bun/install/global/node_modules/@anthropic-ai/claude-code/vendor /Users/Martin/Tresors/Projects/ClaudeCode/npm-claude-code/vendor",
+            "rm -rf /Users/Martin/projects/ClaudeCode/npm-claude-code/vendor && cp -r ~/.bun/install/global/node_modules/@anthropic-ai/claude-code/vendor /Users/Martin/projects/ClaudeCode/npm-claude-code/vendor",
         tags: ["terminal-wrap", "paths"],
     },
     {
@@ -180,11 +180,11 @@ export const testCases: TestCase[] = [
     },
     {
         name: "multiple args wrapped at terminal width",
-        input: "diff\n  /Users/Martin/Tresors/Projects/GenesisTools/src/utils/format.ts\n  /Users/Martin/Tresors/Projects/GenesisTools/src/utils/string.ts",
+        input: "diff\n  /Users/Martin/projects/GenesisTools/src/utils/format.ts\n  /Users/Martin/projects/GenesisTools/src/utils/string.ts",
         expected:
-            "diff /Users/Martin/Tresors/Projects/GenesisTools/src/utils/format.ts /Users/Martin/Tresors/Projects/GenesisTools/src/utils/string.ts",
+            "diff /Users/Martin/projects/GenesisTools/src/utils/format.ts /Users/Martin/projects/GenesisTools/src/utils/string.ts",
         expectedPretty:
-            "diff /Users/Martin/Tresors/Projects/GenesisTools/src/utils/format.ts /Users/Martin/Tresors/Projects/GenesisTools/src/utils/string.ts",
+            "diff /Users/Martin/projects/GenesisTools/src/utils/format.ts /Users/Martin/projects/GenesisTools/src/utils/string.ts",
         tags: ["terminal-wrap", "multiple-paths"],
     },
     {
@@ -730,11 +730,11 @@ export const testCases: TestCase[] = [
     },
     {
         name: "tar with absolute paths wrapped across lines",
-        input: "tar czf /Users/Martin/Tresors/Projects/GenesisTools/backu\n  p-2026-03-31.tar.gz \\\n  --exclude='node_modules' \\\n  --exclude='.git' \\\n  /Users/Martin/Tresors/Projects/GenesisTools/src/\n  /Users/Martin/Tresors/Projects/GenesisTools/package.json",
+        input: "tar czf /Users/Martin/projects/GenesisTools/backu\n  p-2026-03-31.tar.gz \\\n  --exclude='node_modules' \\\n  --exclude='.git' \\\n  /Users/Martin/projects/GenesisTools/src/\n  /Users/Martin/projects/GenesisTools/package.json",
         expected:
-            "tar czf /Users/Martin/Tresors/Projects/GenesisTools/backup-2026-03-31.tar.gz --exclude='node_modules' --exclude='.git' /Users/Martin/Tresors/Projects/GenesisTools/src/ /Users/Martin/Tresors/Projects/GenesisTools/package.json",
+            "tar czf /Users/Martin/projects/GenesisTools/backup-2026-03-31.tar.gz --exclude='node_modules' --exclude='.git' /Users/Martin/projects/GenesisTools/src/ /Users/Martin/projects/GenesisTools/package.json",
         expectedPretty:
-            "tar czf /Users/Martin/Tresors/Projects/GenesisTools/backup-2026-03-31.tar.gz \\\n  --exclude='node_modules' \\\n  --exclude='.git' /Users/Martin/Tresors/Projects/GenesisTools/src/ /Users/Martin/Tresors/Projects/GenesisTools/package.json",
+            "tar czf /Users/Martin/projects/GenesisTools/backup-2026-03-31.tar.gz \\\n  --exclude='node_modules' \\\n  --exclude='.git' /Users/Martin/projects/GenesisTools/src/ /Users/Martin/projects/GenesisTools/package.json",
         tags: ["stress", "terminal-wrap", "continuation", "paths"],
     },
     {
@@ -1601,9 +1601,9 @@ export const testCases: TestCase[] = [
     // t13: Read() multi-line should NOT skip normalization (only Bash() should)
     {
         name: "Read() multi-line path should be normalized, not returned as-is",
-        input: "Read(/Users/Martin/Tresors/Projects/GenesisTools/src/\n  utils/format.ts)",
-        expected: "/Users/Martin/Tresors/Projects/GenesisTools/src/utils/format.ts",
-        expectedPretty: "/Users/Martin/Tresors/Projects/GenesisTools/src/utils/format.ts",
+        input: "Read(/Users/Martin/projects/GenesisTools/src/\n  utils/format.ts)",
+        expected: "/Users/Martin/projects/GenesisTools/src/utils/format.ts",
+        expectedPretty: "/Users/Martin/projects/GenesisTools/src/utils/format.ts",
         tags: ["review-fix", "tool-wrapper"],
     },
 

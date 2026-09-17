@@ -320,6 +320,20 @@ export const env = {
         getCookiePassword: () => getTrimmed("WORKOS_COOKIE_PASSWORD"),
     },
 
+    doctor: {
+        /**
+         * Extra roots for the dev-caches analyzer's node_modules sweep, colon
+         * separated, `~` allowed. The built-in list is deliberately generic
+         * (`~/Projects`, `~/dev`, …); a developer whose checkouts live somewhere
+         * else names it here rather than in a public source file.
+         */
+        getDevCacheRoots: () =>
+            getTrimmed("GENESIS_TOOLS_DEV_CACHE_ROOTS")
+                ?.split(":")
+                .map((root) => root.trim())
+                .filter((root) => root.length > 0) ?? [],
+    },
+
     jenkins: {
         getUrl: () => getWithDefault("JENKINS_URL", ""),
         getUser: () => getWithDefault("JENKINS_USER", ""),

@@ -13,13 +13,21 @@ import {
 import { run, runInherit } from "@app/doctor/lib/run";
 import { duBytes, formatBytes } from "@app/doctor/lib/size";
 import type { Action, AnalyzerCategory, AnalyzerContext, ExecutorContext, Finding } from "@app/doctor/lib/types";
+import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import pLimit from "p-limit";
 
 const DU_CONCURRENCY = 8;
 
-const ROOTS = ["~/Tresors", "~/Projects", "~/Developer", "~/dev", "~/code", "~/src"];
+/**
+ * Generic only. A private checkout root belongs in
+ * `GENESIS_TOOLS_DEV_CACHE_ROOTS` (colon separated, `~` allowed), not in a
+ * public source file. Scrub note, 2026-09-17: this list used to name one
+ * developer's vault directory, so on that machine the sweep silently stops
+ * covering it until the variable is set.
+ */
+const ROOTS = ["~/Projects", "~/Developer", "~/dev", "~/code", "~/src"];
 const NODE_MODULES_MIN_BYTES = 500 * 1024 * 1024;
 const NODE_MODULES_SCAN_DEPTH = 6;
 
@@ -102,7 +110,9 @@ export class DevCachesAnalyzer extends Analyzer {
 
     private async *scanNodeModules(ctx: AnalyzerContext): AsyncIterable<Finding> {
         const home = homedir();
-        const expandedRoots = ROOTS.map((root) => root.replace(/^~/, home)).filter(existsSync);
+        const expandedRoots = [...ROOTS, ...env.doctor.getDevCacheRoots()]
+            .map((root) => root.replace(/^~/, home))
+            .filter(existsSync);
 
         if (expandedRoots.length === 0) {
             return;

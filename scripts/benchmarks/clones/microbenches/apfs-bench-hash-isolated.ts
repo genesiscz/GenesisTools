@@ -16,7 +16,7 @@
  *
  * Usage:
  *   bun scripts/benchmarks/clones/microbenches/apfs-bench-hash-isolated.ts \
- *     --root ~/Tresors/Projects/GenesisTools --iterations 5 \
+ *     --root ~/projects/GenesisTools --iterations 5 \
  *     [--variant sha256-node] [--max-files 300] [--max-mb 512]
  *     [--jsonl /tmp/hash-results.jsonl] [--label phase-0]
  *
