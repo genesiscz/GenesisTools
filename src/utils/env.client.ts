@@ -38,7 +38,8 @@ export const env = {
     },
 
     dashboard: {
-        getBindHost: (fallback = "0.0.0.0") => getWithDefault("DASHBOARD_BIND_HOST", fallback),
+        /** Loopback unless the DashboardApp launcher, or the caller's fallback, says otherwise. */
+        getBindHost: (fallback = "127.0.0.1") => getWithDefault("DASHBOARD_BIND_HOST", fallback),
         shouldOpenBrowser: () => isFlag("DASHBOARD_OPEN_BROWSER"),
         isDevtoolsEnabled: () => isFlag("DASHBOARD_DEVTOOLS"),
         getQaBaseUrl: () => getWithDefault("DD_QA_BASE_URL", "http://localhost:3042"),

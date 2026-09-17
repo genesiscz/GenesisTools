@@ -149,18 +149,8 @@ describe("loopback OAuth callback listener", () => {
     test("serves exactly one callback", async () => {
         const listener = await listening();
         await fetch(callbackUrl(listener, "?code=first&state=session"));
-        // bun 1.3.13 still answers 410 on the same socket. bun 1.4.2 has already
-        // closed it by the next fetch, which is the same "exactly one" contract:
-        // the second code never replaces the first.
-        let secondStatus: number | "closed" = "closed";
-        try {
-            secondStatus = (await fetch(callbackUrl(listener, "?code=second&state=session"))).status;
-        } catch (error) {
-            const code = error instanceof Error && "code" in error ? String(error.code) : "";
-            expect(["ConnectionRefused", "ECONNREFUSED", "ConnectionReset"]).toContain(code);
-        }
-
-        expect(secondStatus === 410 || secondStatus === "closed").toBe(true);
+        const second = await fetch(callbackUrl(listener, "?code=second&state=session"));
+        expect(second.status).toBe(410);
         expect(await listener.callback).toEqual({ code: "first", state: "session" });
         await listener.close();
     });

@@ -97,13 +97,13 @@ describe("pidfile", () => {
             return;
         }
 
-        if (!record.command) {
+        if (!record.command || record.startedAt === null) {
             return;
         }
 
         expect(classifyPidRecord(record).status).toBe("live");
 
-        const recycled = { ...record, startedAt: (record.startedAt ?? Date.now()) - 600_000 };
+        const recycled = { ...record, startedAt: record.startedAt - 600_000 };
         expect(classifyPidRecord(recycled).status).toBe("foreign");
     });
 

@@ -368,3 +368,19 @@ describe("clones profiler scope", () => {
         expect(profilingLogBodies()).toContain("[profile:clones] discover");
     });
 });
+
+describe("du.ffi and du.cli profiler scopes", () => {
+    it("are known scope names and record under PROFILE=du.ffi / du.cli", () => {
+        expect(PROFILER_SCOPE_NAMES).toContain("du.ffi");
+        expect(PROFILER_SCOPE_NAMES).toContain("du.cli");
+        env.testing.set("PROFILE", "du.ffi,du.cli");
+        reloadProfiler();
+
+        profiler.scope("du.ffi").measure("scanDirs", () => 1);
+        profiler.scope("du.cli").measure("scan.c", () => 1);
+
+        const bodies = profilingLogBodies();
+        expect(bodies).toContain("[profile:du.ffi] scanDirs");
+        expect(bodies).toContain("[profile:du.cli] scan.c");
+    });
+});

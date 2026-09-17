@@ -89,6 +89,26 @@ describe("env", () => {
         }
     });
 
+    it("withoutProxy pins NODE_ENV to production, test, or development", async () => {
+        await env.testing.withOverrides({ NODE_ENV: "production" }, () => {
+            expect(env.withoutProxy().NODE_ENV).toBe("production");
+            expect(env.withoutProxy({ NODE_ENV: "test" }).NODE_ENV).toBe("test");
+            expect(env.withoutProxy({ NODE_ENV: "staging" }).NODE_ENV).toBe("development");
+        });
+
+        await env.testing.withOverrides({ NODE_ENV: "test" }, () => {
+            expect(env.withoutProxy().NODE_ENV).toBe("test");
+        });
+
+        await env.testing.withOverrides({ NODE_ENV: "staging" }, () => {
+            expect(env.withoutProxy().NODE_ENV).toBe("development");
+        });
+
+        await env.testing.withOverrides({ NODE_ENV: undefined }, () => {
+            expect(env.withoutProxy().NODE_ENV).toBe("development");
+        });
+    });
+
     it("resolves tools home with fallback to homedir", () => {
         const home = join(tmpdir(), "gt-home");
         env.testing.set("GENESIS_TOOLS_HOME", home);
