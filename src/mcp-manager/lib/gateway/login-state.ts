@@ -18,6 +18,7 @@ import {
     type PidRecord,
     parsePidRecord,
 } from "@genesiscz/utils/process/pidfile";
+import { withFileLock } from "@genesiscz/utils/storage/file-lock";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/storage";
 import { mcpManagerDir } from "../auth/paths.ts";
 
@@ -49,31 +50,34 @@ export function pendingLoginPath(server: string): string {
     return join(pendingLoginDir(), `${encodeURIComponent(server)}.json`);
 }
 
-export function writePendingLogin(state: PendingLoginWrite): void {
+export async function writePendingLogin(state: PendingLoginWrite): Promise<void> {
     mkdirSync(pendingLoginDir(), { recursive: true, mode: 0o700 });
-    const identity = buildPidRecord(state.pid);
     const path = pendingLoginPath(state.server);
-    let url = state.url;
-    let userCode = state.userCode;
 
-    // The detached child can write its URL before the parent reaches this line.
-    // A URL-less parent write must not replace a same-pid record that already has one.
-    if ((url === undefined || userCode === undefined) && existsSync(path)) {
-        const existing = readPendingFile(path);
+    // Parent spawn and the detached child both write this file. The same-pid URL
+    // merge is only correct if that read-modify-write cannot interleave.
+    await withFileLock(`${path}.lock`, async () => {
+        const identity = buildPidRecord(state.pid);
+        let url = state.url;
+        let userCode = state.userCode;
 
-        if (existing?.identity.pid === identity.pid) {
-            url ??= existing.url;
-            userCode ??= existing.userCode;
+        if (url === undefined || userCode === undefined) {
+            const existing = readPendingFile(path);
+
+            if (existing?.identity.pid === identity.pid) {
+                url ??= existing.url;
+                userCode ??= existing.userCode;
+            }
         }
-    }
 
-    const record = {
-        server: state.server,
-        ...(url === undefined ? {} : { url }),
-        ...(userCode === undefined ? {} : { userCode }),
-        ...identity,
-    };
-    atomicWriteFileSync(path, `${SafeJSON.stringify(record, null, 2)}\n`, { mode: 0o600 });
+        const record = {
+            server: state.server,
+            ...(url === undefined ? {} : { url }),
+            ...(userCode === undefined ? {} : { userCode }),
+            ...identity,
+        };
+        atomicWriteFileSync(path, `${SafeJSON.stringify(record, null, 2)}\n`, { mode: 0o600 });
+    });
 }
 
 /**

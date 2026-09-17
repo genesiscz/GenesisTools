@@ -80,7 +80,7 @@ export async function authLogin(
     // Recorded BEFORE discovery and registration, not when the URL appears: the gateway
     // decides whether to start a login by this record, and a request arriving during the
     // registration round trip would otherwise start a second one.
-    writePendingLogin({ server: name, pid: process.pid });
+    await writePendingLogin({ server: name, pid: process.pid });
 
     try {
         const result = await loginMcpServer({
@@ -88,8 +88,8 @@ export async function authLogin(
             config: server,
             device: opts.device,
             clientName,
-            onAuthorizationUrl: (url, userCode) => {
-                writePendingLogin({ server: name, pid: process.pid, url, userCode });
+            onAuthorizationUrl: async (url, userCode) => {
+                await writePendingLogin({ server: name, pid: process.pid, url, userCode });
 
                 if (userCode) {
                     ui.dim(url);

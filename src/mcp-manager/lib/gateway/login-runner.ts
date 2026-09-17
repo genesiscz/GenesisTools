@@ -73,7 +73,7 @@ async function runLogin(server: string, report: (url: string, userCode?: string)
         throw new Error(`auth login ${server} spawned without a pid; see ${logFile}`);
     }
 
-    writePendingLogin({ server, pid: child.pid });
+    await writePendingLogin({ server, pid: child.pid });
     child.unref();
     logger.info({ server, pid: child.pid, logFile }, "gateway spawned a detached MCP login");
 
