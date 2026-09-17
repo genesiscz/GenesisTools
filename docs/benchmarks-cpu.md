@@ -36,7 +36,7 @@ notifications/app PR, not here.
 | Claude Code statusline (**sibling #400**) | `scripts/benchmarks/statusline/current-statusline.ts` | shell script, ~75 processes per render: 826/743/883/823 ms median across four repos, ~660 ms user CPU | `tools ai statusline` in-process: 109/87/86/84 ms, ~103 ms user CPU, 2 or 3 child processes. Output is **byte-identical to the installed chain** (`statusline-graft.sh`, which is `~/.claude/statusline.sh` plus graft's line), ANSI colour included, against a real payload: `showDirty` defaults to false because the shell script computes the `*N` count and then wipes it, and `modelStyle` defaults to `"id"` because it prints `claude-opus-5`. Both are config switches, so the richer forms are one edit away |
 | dev-dashboard serve mode (**sibling, not #404**) | `scripts/benchmarks/dashboards/idle-cost.ts` | preview (rolldown watch build parked for life): RSS 1038 MB, 79 threads, 0.22% idle CPU, ready in 2.3 s | static (one build in a child, then serve): RSS 287 MB, 53 threads, 0.20% idle CPU, ready in 2.8 s |
 | Swift waits and depth caps (**sibling #401**) | `scripts/benchmarks/swift/{ax-tool-depth,notify-rpc}.ts` | unbounded `findByIdentifier`, `raiseElementWindow`, `DispatchGroup.wait`, notify RPCs with no deadline | cap 50, 10 s and 30 s waits, 8 s RPC deadline exiting 75: lookups -9 to -18% at depth 10 to 40, rpc hello/status/list -17 to -22% |
-| ai-usage-poll daemon | `~/.genesis-tools/logs/<day>.log` run counts | 12 accounts fetched on almost every 30 s tick: ~890 runs/day at a 9.4 s median, ~12% of a core | 60 s floor per account and a 60 s tick; re-measure after a day |
+| ai-usage-poll daemon | `~/.genesis-tools/logs/<day>.log` poll counts and `duration_ms` | 2026-09-15, clean pre-fix day: 890 polls, median 929 ms, p90 9448 ms, duty cycle 3.2% | 60 s floor per account and a 60 s tick. **Re-measured 2026-09-17 02:50; the section below has the three arms.** The tick was already 60 s in practice, so the poll count per hour did not move; the median rose to 3797 ms and the duty cycle to 8.8% because the tick now also refreshes the resident `usage sessions` answer, on purpose |
 | `tools ai usage sessions` (Genesis.app, every 35 s) | `/usr/bin/time -p`, `bun --cpu-prof` | 1.6 s wall, 1.2 s user + 1.3 s sys per call; 0.6 s of it 364 codex `thread_items` scans (one per rollout) | codex projection index built once per home and cached by database stamp: 1.3 s wall, 0.95 s user + 1.2 s sys; the codex part is under 1 ms |
 | `cr … --resume <text>` (content search) | `PROFILE=agent-sessions` probe | 12.0 s wall, 12.5 s CPU: every candidate transcript parsed and commit-regexed to place matches the picker never shows | `candidatesOnly` search: ripgrep gate plus metadata rows, 2.0 s wall, 0.86 s CPU |
 | `tools ai` import tree (DECISION 2, lazy imports) | `tools ts imports lazy src/ai/index.ts`, `bun src/ai/index.ts --help` x10 | 298 ms sum of self, 465 modules; user CPU 0.36 s under load 26 to 37 (0.29 s quiet) | the ai barrel (122 ms) and run-who (57.5 ms) imported at their use sites with the measured saving in a comment: user CPU 0.22 s under the same load |
@@ -86,6 +86,52 @@ provider plus once inside the write transaction), the transcript tails of the wi
 launcher hop). The metadata refresh and the metadata read now cover the window only. What would
 cut further: a resident answer (the poll daemon writing the rows to a file the app reads), and
 dropping the second discovery walk when the first one is seconds old.
+
+## Re-measured 2026-09-17 02:50 — the ai-usage-poll daemon
+
+`cfc1dc0b7` (60 s per-account floor, 60 s tick) and `bb07e6fa9` (the tick refreshes the resident
+`usage sessions` answer) both landed on 2026-09-16, two hours apart. That gives three arms in
+`~/.genesis-tools/logs/`, read from the `[ai-usage] daemon poll starting` and
+`daemon poll completed` lines. "Duty cycle" is the share of wall time spent inside a poll; it is
+not CPU, because `duration_ms` is wall time.
+
+| Arm | Window | Polls | Per hour | Median | p90 | Duty cycle |
+|---|---|---|---|---|---|---|
+| before both | 2026-09-15, full day | 890 | 37.1 | 929 ms | 9448 ms | 3.2% |
+| 60 s floor only | 16th 17:57Z to 20:10Z | 133 | 60.3 | 810 ms | 6695 ms | 3.6% |
+| both | 16th 20:10Z to 17th 00:50Z | 277 | 59.3 | 3797 ms | 9826 ms | 8.8% |
+
+**The poll count per day is not a usable metric on this machine, and the old row's baseline was
+wrong in two ways.** The gaps between polls on 2026-09-15 were already a median of 60.0 s
+(495 of 889 gaps are exactly 60 s), so the tick was 60 s before the change as well; the day only
+holds 890 polls because the laptop was asleep for 9.67 h across 33 gaps longer than two minutes.
+Per hour of daemon uptime the rate is ~60/h in every arm. The old row also read 9.4 s as the
+median when it is the p90 (the median was 929 ms), and "~12% of a core" does not reproduce: the
+wall duty cycle was 3.2%.
+
+Each poll is its own process (886 distinct pids for 890 polls), so a poll's cost is a process
+start plus its work, and nothing accumulates between ticks.
+
+**What did move is the per-poll duration, and that was the intent.** `session rows cache` with
+`refreshed: true` appears 0 times on 2026-09-15 and on every poll afterwards, which is
+`bb07e6fa9` keeping `~/.genesis-tools/ai/usage-sessions.json` warm. It costs the daemon a median
+of about 3 s per tick and takes `tools ai usage sessions --json` from 2.300 s to 0.220 s of CPU
+per call, measured in the row above. The 60 s floor on its own slightly lowered the median
+(929 to 810 ms), which is what halving the live per-account fetches should look like.
+
+⚠️ The "both" arm is 4.67 h of a quiet night, not a full day, and no log line counts per-account
+upstream fetches, so the halving is inferred from the median and from the code, never measured
+directly. Re-run the table after a full waking day for a like-for-like day arm:
+
+⚠️ 2026-09-16 is not usable as a day arm for a second reason: its pre-fix hours ran a median of
+3031 ms while 2026-09-15 ran 929 ms, with no code change between them. That day carried the
+CPU-hog campaign's own load. The attribution above therefore rests on the two ADJACENT windows of
+the same evening (810 ms, then 3797 ms) and on `session rows cache` appearing in the second and
+not the first, never on a day-to-day median.
+
+```bash
+bun scripts/benchmarks/ai-usage/poll-duty.ts 2026-09-15 2026-09-18
+```
 
 ## Rerunning
 
