@@ -2801,6 +2801,10 @@ func cmdHitTest(x: Double, y: Double) {
 let maxDepth = Int(argValue("--depth") ?? "10") ?? 10
 
 switch command {
+case "folder-list":
+    cmdFolderList(appName: appName)
+case "folder-set":
+    cmdFolderSet(appName: appName)
 case "see":
     cmdSee(appName: appName)
 case "act":

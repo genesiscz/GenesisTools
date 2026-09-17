@@ -265,6 +265,7 @@ export function setCursorFeedbackEnabled(enabled: boolean): void {
 }
 export function runAx(args: string[], timeoutMs = 10_000): AxResult {
     const mutating = [
+        "folder-set",
         "act",
         "set",
         "press",

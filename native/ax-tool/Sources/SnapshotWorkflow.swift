@@ -863,3 +863,105 @@ func cmdAct(appName _: String) {
         workflowFailure(error.localizedDescription)
     }
 }
+
+private func folderRoots(_ window: AXUIElement) -> [AXUIElement] {
+    findByAttributes(window, role: "AXOutline", title: nil, value: nil, desc: nil, exact: true, maxDepth: 50)
+}
+
+private func folderRows(_ root: AXUIElement) -> [AXUIElement] {
+    findByAttributes(root, role: "AXRow", title: nil, value: nil, desc: nil, exact: true, maxDepth: 50)
+        .filter { axAttributeNames($0).contains("AXExpanded") && axAttribute($0, "AXExpanded") is Bool }
+}
+
+private func folderFailure(_ message: String, dispatched: Bool = false) -> Never {
+    jsonOutput(["ok": false, "error": message, "dispatchState": dispatched ? "uncertain" : "not_started"])
+    exit(1)
+}
+
+/// Explicit selector scope: one outline in one window. No screenshot or transcript digest is involved.
+func cmdFolderList(appName: String) {
+    workflowPermissions()
+    let pid = resolveApp(appName)
+    let app = AXUIElementCreateApplication(pid)
+    let windows: [AXUIElement]
+    if let raw = argValue("--window-id"), let id = Int(raw), id > 0, id <= Int(UInt32.max) {
+        windows = [workflowWindowByID(id, pid: pid).ax]
+    } else if argValue("--window-id") != nil {
+        folderFailure("invalid --window-id")
+    } else {
+        windows = axWindowsOrExit(app, appName)
+    }
+    let roots = windows.flatMap { window in folderRoots(window).map { (window, $0) } }
+    guard roots.count == 1 else { folderFailure("expected exactly one outline; use --window-id to narrow the app") }
+    let window = workflowWindow(roots[0].0, pid: pid)
+    let rows = folderRows(roots[0].1)
+    guard rows.count <= 200 else { folderFailure("more than 200 folders; narrow the tree before resolving") }
+    let launch = workflowLaunch(pid)
+    var folders: [[String: Any]] = []
+    for row in rows {
+        let frame = axFrame(row)
+        guard frame.width > 0, frame.height > 0, window.bounds.intersects(frame),
+              (axAttribute(row, "AXEnabled") as? Bool) != false,
+              axActionNames(row).contains("AXPress") else { continue }
+        let label = axStringAttribute(row, "AXDescription") ?? axStringAttribute(row, "AXTitle") ?? ""
+        guard !label.isEmpty else { continue }
+        let keys = ["AXIdentifier", "AXDescription", "AXTitle"]
+        guard let key = keys.first(where: { key in
+            guard let value = axStringAttribute(row, key), !value.isEmpty else { return false }
+            return rows.filter { axStringAttribute($0, key) == value }.count == 1
+        }), let identity = axStringAttribute(row, key) else { continue }
+        let ref = FolderReference(pid: pid, launch: launch, window: Int(window.id),
+            created: Date().timeIntervalSince1970, label: label, identityAttribute: key, identity: identity)
+        guard let data = try? JSONEncoder().encode(ref) else { folderFailure("cannot encode folder reference") }
+        folders.append(["id": "f\(folders.count)", "label": label, "expanded": (axAttribute(row, "AXExpanded") as? Bool) == true,
+                        "reference": data.base64EncodedString()])
+    }
+    jsonOutput(["ok": true, "scope": "unique-outline", "pid": pid, "windowId": window.id, "folders": folders])
+}
+
+func cmdFolderSet(appName: String) {
+    workflowPermissions()
+    guard let raw = argValue("--reference"), raw.count < 8192, let data = Data(base64Encoded: raw),
+          let ref = try? JSONDecoder().decode(FolderReference.self, from: data),
+          let desiredRaw = argValue("--expanded"), ["true", "false"].contains(desiredRaw) else {
+        folderFailure("--reference and --expanded true|false required")
+    }
+    let pid = resolveApp(appName)
+    do { try ref.validate(pid: pid, launch: workflowLaunch(pid), now: Date().timeIntervalSince1970) }
+    catch { folderFailure(error.localizedDescription) }
+    let window = workflowWindowByID(ref.window, pid: pid)
+    let roots = folderRoots(window.ax)
+    guard roots.count == 1 else { folderFailure("outline scope changed") }
+    let matches = findByAttributes(roots[0], role: "AXRow", title: nil, value: nil, desc: nil, exact: true, maxDepth: 50)
+        .filter { axStringAttribute($0, ref.identityAttribute) == ref.identity }
+    guard matches.count == 1 else { folderFailure("folder target missing or ambiguous") }
+    let row = matches[0]
+    let label = axStringAttribute(row, "AXDescription") ?? axStringAttribute(row, "AXTitle") ?? ""
+    guard label == ref.label, axAttributeNames(row).contains("AXExpanded"),
+          let before = axAttribute(row, "AXExpanded") as? Bool,
+          (axAttribute(row, "AXEnabled") as? Bool) != false, axActionNames(row).contains("AXPress"),
+          axFrame(row).width > 0, axFrame(row).height > 0, window.bounds.intersects(axFrame(row)) else {
+        folderFailure("folder identity, visibility or enabled state changed")
+    }
+    let desired = desiredRaw == "true"
+    if before == desired {
+        jsonOutput(["ok": true, "changed": false, "verified": true, "label": label, "expanded": before,
+                    "dispatchState": "not_started"])
+        return
+    }
+    ActionCursor.element("press", row, background: frontmostPid() != pid)
+    let result = performActionWithTimeout(row, action: "AXPress")
+    guard result == .success else { folderFailure("folder press failed; delivery uncertain (AX \(result.rawValue))", dispatched: true) }
+    let deadline = ProcessInfo.processInfo.systemUptime + 0.6
+    while true {
+        if (axAttribute(row, "AXExpanded") as? Bool) == desired {
+            jsonOutput(["ok": true, "changed": true, "verified": true, "label": label,
+                        "expanded": desired, "dispatchState": "dispatched"])
+            return
+        }
+        guard ProcessInfo.processInfo.systemUptime < deadline else {
+            folderFailure("folder press dispatched but expanded state not verified; no retry", dispatched: true)
+        }
+        Thread.sleep(forTimeInterval: 0.1)
+    }
+}

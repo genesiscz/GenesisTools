@@ -314,3 +314,20 @@ Reduced Motion follows the macOS accessibility setting; the environment override
 The same complete command set is available through `tools jev control` while using the linked Jev worktree. For example, `tools jev control cursor hide` and `tools jev control act … --no-cursor`.
 
 Visual proof: `bun src/control/scripts/live-smoke.ts --cursor-proof` records five seconds of native press/set/press feedback on a disposable fixture. It is separate from `--background-only --verify-pointer`, which checks pointer and foreground invariants without the recording's foreground text entry.
+
+### Fast folder navigation
+
+`folders` inventories the app's unique Accessibility outline once, without capturing a screenshot or hashing the changing conversation. Exact unique labels resolve locally. Unmatched intents, or every target with `--semantic`, share one Jev evaluation before the first action.
+
+```sh
+tools jev control folders list --app Codex
+tools jev control folders open .agents .claude .codex --app Codex --interval 1000
+tools jev control folders peek .agents .claude .codex --app Codex --interval 0
+tools jev control --provider typesafe folders peek "folder containing project documentation" "directory containing source code" --semantic --app Codex --interval 0
+```
+
+`open` and `close` request an explicit state; an already satisfied target does not receive another press. `toggle` changes it once; `peek` changes and restores it. The default interval is 1000 ms between action starts; 0 runs at native speed. A slow operation delays subsequent actions. The returned timings separate inventory, model decision, first action, and total time.
+
+This is an explicit selector scope, not the full-window snapshot contract. Each native action pins process launch/window, re-resolves one outline and a unique target identity, verifies the unchanged label and supported AXExpanded attribute, and reads back the requested state. Ambiguous, missing, hidden or disabled targets stop. A failed or uncertain dispatch is never retried. References expire after 120 seconds. DOM IDs are not used because applications may change them on focus. Folder contents may change between steps; missing descendants require a new sequence.
+
+On Codex on 2026-09-18, a warm six-action exact-name open/restore sequence completed in 2.88 seconds with first action at 318 ms and zero model requests. A two-target semantic run used one real TypeSafe request and verified four changes. These are small live measurements, not general throughput guarantees. Cold native compilation is separate and can add seconds after a code change.
