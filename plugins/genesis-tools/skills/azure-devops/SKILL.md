@@ -124,7 +124,10 @@ tools azure-devops workitem 12345
 tools azure-devops workitem 12345,12346,12347
 tools azure-devops workitem 12345 --category react19
 tools azure-devops workitem 12345 --force
+tools azure-devops workitem 12345,12346 -f json   # one JSON array of work items
 ```
+
+**`-f json` shape:** always a single JSON array (`[{…}]` for one id, `[{…},{…}]` for many). Never concatenated objects or `---` separators (those are only for `ai` / `md`).
 
 ### Fetch Query
 
