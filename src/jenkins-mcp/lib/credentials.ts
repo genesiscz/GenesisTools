@@ -9,6 +9,7 @@
  */
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { logger } from "@genesiscz/utils/logger";
 import { clearVault, readVault, secretStoreAvailable, secretStoreName, writeVault } from "./credentialStore";
 
 export interface JenkinsAuth {
@@ -91,7 +92,24 @@ function isAuth(value: unknown): value is JenkinsAuth {
     );
 }
 
-/** A malformed or truncated vault reads as absent, never as half-valid. */
+/**
+ * Readers only. An unreadable vault is reported and treated as absent, which is
+ * right for a reader and WRONG for a writer \(see `loadVault`\).
+ */
+async function loadVaultForRead(): Promise<JenkinsVault | null> {
+    try {
+        return await loadVault();
+    } catch (error) {
+        logger.warn({ error }, "jenkins: the stored login could not be read; treating it as absent for this read");
+        return null;
+    }
+}
+
+/**
+ * A malformed or truncated vault reads as absent, never as half-valid \(that is
+ * a content judgement\). A STORE failure throws instead, so a writer never
+ * mistakes "could not read" for "nothing stored".
+ */
 export async function loadVault(): Promise<JenkinsVault | null> {
     const raw = await readVault();
 
@@ -133,7 +151,7 @@ export async function loadVault(): Promise<JenkinsVault | null> {
 }
 
 export async function readStoredAuth(url?: string): Promise<JenkinsAuth | null> {
-    const vault = await loadVault();
+    const vault = await loadVaultForRead();
 
     if (!vault) {
         return null;
@@ -145,7 +163,17 @@ export async function readStoredAuth(url?: string): Promise<JenkinsAuth | null> 
 /** Store one login. The newest login becomes the default host. */
 export async function saveAuth(auth: JenkinsAuth): Promise<boolean> {
     const host = hostKey(auth.url);
-    const existing = await loadVault();
+    let existing: JenkinsVault | null;
+
+    try {
+        existing = await loadVault();
+    } catch (error) {
+        // Refuse rather than overwrite. The write below spreads `existing.hosts`,
+        // so continuing with a failed read would drop every other host.
+        const detail = error instanceof Error ? error.message : String(error);
+        throw new Error(`Refusing to save: the existing login could not be read (${detail}). Nothing was changed.`);
+    }
+
     const vault: JenkinsVault = {
         version: 1,
         defaultHost: host,
@@ -157,6 +185,8 @@ export async function saveAuth(auth: JenkinsAuth): Promise<boolean> {
 
 /** Drop one host, or the whole object when that was the last one. */
 export async function forgetAuth(url?: string): Promise<string | null> {
+    // Also a writer: a failed read here would rewrite the object without the
+    // hosts it could not see.
     const vault = await loadVault();
 
     if (!vault) {
@@ -214,7 +244,7 @@ export async function resolveAuth(): Promise<ResolvedAuth> {
         return { url, user, token, source: "env" };
     }
 
-    const vault = await loadVault();
+    const vault = await loadVaultForRead();
     const stored = vault ? (vault.hosts[url ? hostKey(url) : vault.defaultHost] ?? null) : null;
 
     if (stored) {

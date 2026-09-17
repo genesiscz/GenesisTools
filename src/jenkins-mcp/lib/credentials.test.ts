@@ -18,6 +18,8 @@ const store = {
     vault: null as string | null,
     available: true,
     writes: 0,
+    /** Simulates the vault being present but unreadable (locked, bad key, IO). */
+    readThrows: false,
 };
 
 mock.module("./credentialStore", () => ({
@@ -26,7 +28,13 @@ mock.module("./credentialStore", () => ({
     SECRET_PATH: "jenkins/credentials",
     secretStoreName: () => "the GenesisTools vault",
     secretStoreAvailable: async () => store.available,
-    readVault: async () => (store.available ? store.vault : null),
+    readVault: async () => {
+        if (store.readThrows) {
+            throw new Error("vault is locked");
+        }
+
+        return store.available ? store.vault : null;
+    },
     writeVault: async (value: string) => {
         if (!store.available) {
             return false;
@@ -64,6 +72,47 @@ beforeEach(() => {
     store.vault = null;
     store.available = true;
     store.writes = 0;
+    store.readThrows = false;
+});
+
+describe("an unreadable vault is never mistaken for an empty one", () => {
+    test("saveAuth REFUSES and writes nothing, so other hosts cannot be dropped", async () => {
+        await saveAuth(AUTH);
+        const before = store.vault;
+        store.readThrows = true;
+
+        // The write spreads the existing hosts. Treating a failed read as "no
+        // hosts" would replace every stored credential with just the new one.
+        expect(saveAuth(OTHER)).rejects.toThrow(/Refusing to save/);
+        await Bun.sleep(0);
+
+        expect(store.vault).toBe(before);
+        expect(store.writes).toBe(1);
+    });
+
+    test("forgetAuth refuses too, for the same reason", async () => {
+        await saveAuth(AUTH);
+        store.readThrows = true;
+
+        expect(forgetAuth()).rejects.toThrow("vault is locked");
+    });
+
+    test("a READER treats it as absent instead of throwing at the user", async () => {
+        await saveAuth(AUTH);
+        store.readThrows = true;
+
+        expect(await readStoredAuth()).toBeNull();
+    });
+
+    test("negative control: with the vault readable, a second host still joins the same object", async () => {
+        await saveAuth(AUTH);
+        await saveAuth(OTHER);
+
+        const vault = await loadVault();
+
+        expect(Object.keys(vault?.hosts ?? {})).toEqual(["jenkins.example", "other.example"]);
+        expect(store.writes).toBe(2);
+    });
 });
 
 describe("hostKey", () => {

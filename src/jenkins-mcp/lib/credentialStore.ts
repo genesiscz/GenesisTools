@@ -69,17 +69,18 @@ export async function secretStoreAvailable(): Promise<boolean> {
     }
 }
 
+/**
+ * `null` means the entry is ABSENT. A read FAILURE throws.
+ *
+ * Collapsing the two was a data-loss path: `saveAuth` spreads the existing
+ * hosts into the object it writes, so one transient read error followed by a
+ * successful write replaced every stored Jenkins credential with just the new
+ * one. Callers that only read catch this and report it; callers that write
+ * refuse.
+ */
 export async function readVault(): Promise<string | null> {
-    try {
-        const store = await secrets();
-        return (await store.get(SECRET_PATH)) ?? null;
-    } catch (error) {
-        // A locked or unreadable vault is "no stored login" for the caller, but
-        // it is never silent: without this line the only symptom is a setup
-        // message telling the user to log in again when they already had.
-        logger.warn({ error, path: SECRET_PATH }, "jenkins: could not read the stored login from the vault");
-        return null;
-    }
+    const store = await secrets();
+    return (await store.get(SECRET_PATH)) ?? null;
 }
 
 export async function writeVault(value: string): Promise<boolean> {

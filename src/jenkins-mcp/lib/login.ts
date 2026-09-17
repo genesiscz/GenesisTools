@@ -13,7 +13,7 @@
  */
 import { spawn } from "node:child_process";
 import { env } from "@genesiscz/utils/env";
-import { out } from "@genesiscz/utils/logger";
+import { logger, out } from "@genesiscz/utils/logger";
 import * as p from "@genesiscz/utils/prompts/p";
 import { createClient } from "./client";
 import { secretStoreAvailable, secretStoreName } from "./credentialStore";
@@ -46,9 +46,17 @@ function openInBrowser(url: string): void {
               : ["xdg-open", url];
 
     try {
-        spawn(cmd[0] as string, cmd.slice(1), { stdio: "ignore", detached: true }).unref();
-    } catch {
+        const child = spawn(cmd[0] as string, cmd.slice(1), { stdio: "ignore", detached: true });
+        // A missing opener (no xdg-open on a headless box) arrives as an ASYNC
+        // 'error' event, which the surrounding try cannot catch. With no listener
+        // that event is thrown globally and kills the CLI mid-prompt.
+        child.on("error", (error) => {
+            logger.debug({ error, cmd }, "jenkins: could not open a browser; the URL was printed instead");
+        });
+        child.unref();
+    } catch (error) {
         // Printing the URL is the contract; opening it is a convenience.
+        logger.debug({ error, cmd }, "jenkins: browser launch failed synchronously");
     }
 }
 
@@ -88,19 +96,22 @@ export async function runLogin(opts: LoginOptions): Promise<number> {
     // No default URL baked in. The upstream copy of this file carries a specific
     // company Jenkins here; this repo is public, and a wrong default is worse
     // than an empty prompt.
-    const url = normalizeBaseUrl(
+    const typedUrl =
         opts.url ??
-            (await p.text({
-                message: "Jenkins URL",
-                initialValue: existing?.url ?? env.jenkins.getUrl(),
-                placeholder: "https://jenkins.example.com",
-            }))
-    );
+        (await p.text({
+            message: "Jenkins URL",
+            initialValue: existing?.url ?? env.jenkins.getUrl(),
+            placeholder: "https://jenkins.example.com",
+        }));
 
-    if (p.isCancel(url)) {
+    // isCancel BEFORE normalizing: p.text answers with a cancel SYMBOL, and
+    // handing that to a regex throws instead of cancelling cleanly.
+    if (p.isCancel(typedUrl)) {
         p.cancel("Cancelled.");
         return 1;
     }
+
+    const url = normalizeBaseUrl(typedUrl);
 
     const tokenPage = tokenPageUrl(url);
 
