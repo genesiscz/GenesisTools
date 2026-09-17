@@ -52,7 +52,7 @@ describe("tmux sessions", () => {
                 ["exit 7", 7],
                 ["kill -TERM $$", 143],
             ] as const) {
-                const result = Bun.spawnSync(argvWithChildDeadline(["/bin/sh", "-c", script]));
+                const result = Bun.spawnSync(argvWithChildDeadline(["/bin/sh", "-c", script]), { env: process.env });
                 expect(result.exitCode).toBe(status);
             }
         }
