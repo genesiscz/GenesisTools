@@ -6,6 +6,8 @@ import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { installedGenesisAppLauncher } from "@genesiscz/utils/macos/genesis-app";
+import { boundedCommand } from "@genesiscz/utils/process/bounded-command";
+import { Stopwatch } from "@genesiscz/utils/Stopwatch";
 import { captureNativeSources, nativeNeedsBuild, recordNativeBuild } from "./native-build";
 
 const GT_ROOT = join(import.meta.dir, "..", "..", "..");
@@ -225,6 +227,18 @@ export function runAxWithBoundary({
         };
     }
 
+    return interpretNativeResult({ args, result: r, timeoutMs });
+}
+
+export function interpretNativeResult({
+    args,
+    result: r,
+    timeoutMs,
+}: {
+    args: string[];
+    result: AxSpawnResult;
+    timeoutMs: number;
+}): AxResult {
     if (r.error?.code === "ENOBUFS") {
         return {
             ok: false,
@@ -281,7 +295,7 @@ let cursorFeedbackEnabled = true;
 export function setCursorFeedbackEnabled(enabled: boolean): void {
     cursorFeedbackEnabled = enabled;
 }
-export function runAx(args: string[], timeoutMs = 10_000): AxResult {
+function nativeArguments(args: string[]): string[] {
     const mutating = [
         "act",
         "set",
@@ -294,8 +308,56 @@ export function runAx(args: string[], timeoutMs = 10_000): AxResult {
         "hotkey",
         "window",
     ].includes(args[0]);
-    const nativeArgs = !cursorFeedbackEnabled && mutating ? [...args, "--no-cursor"] : args;
-    return runAxWithBoundary({ args: nativeArgs, timeoutMs, boundary: DEFAULT_AX_RUN_BOUNDARY });
+    return !cursorFeedbackEnabled && mutating ? [...args, "--no-cursor"] : args;
+}
+
+export function runAx(args: string[], timeoutMs = 10_000): AxResult {
+    return runAxWithBoundary({ args: nativeArguments(args), timeoutMs, boundary: DEFAULT_AX_RUN_BOUNDARY });
+}
+
+export async function runAxAsync(options: {
+    args: string[];
+    timeoutMs?: number;
+    signal?: AbortSignal;
+}): Promise<AxResult> {
+    const clock = new Stopwatch();
+    const timeoutMs = Math.floor(options.timeoutMs ?? 10000);
+    if (options.signal?.aborted || !Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 2147483647) {
+        return {
+            ok: false,
+            dispatchState: "not_started",
+            error: "Native command cancelled or deadline invalid before dispatch.",
+        };
+    }
+    const args = nativeArguments(options.args);
+    let binary: string;
+    try {
+        binary = ensureBinary();
+    } catch (error) {
+        logger.error({ error }, "Native build unavailable");
+        return { ok: false, dispatchState: "not_started", error: "Native build unavailable; no action dispatched." };
+    }
+    const remainingMs = Math.floor(timeoutMs - clock.elapsedMs);
+    if (remainingMs < 1 || options.signal?.aborted) {
+        return { ok: false, dispatchState: "not_started", error: "Native command deadline reached before dispatch." };
+    }
+    logger.debug({ command: args[0], timeoutMs: remainingMs }, "Running asynchronous native control command");
+    try {
+        const result = await boundedCommand({
+            command: axCommandLine(binary, args),
+            timeoutMs: remainingMs,
+            maxBufferBytes: AX_STDOUT_BUDGET_BYTES,
+            signal: options.signal,
+        });
+        return interpretNativeResult({ args, result, timeoutMs });
+    } catch (error) {
+        logger.warn({ error, command: args[0] }, "Native transport failed; no retry");
+        return {
+            ok: false,
+            dispatchState: "uncertain",
+            error: "Native transport failed; action delivery is unknown. No retry.",
+        };
+    }
 }
 
 export function getBinaryPath(): string {

@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { boundedCommand } from "@genesiscz/utils/process/bounded-command";
 import { JsonLineProcess } from "@genesiscz/utils/process/json-line-process";
 import { ReplEngine, resultMessage } from "./engine";
 
@@ -143,4 +144,40 @@ it("JSON-line transport reuses its worker and cancels without replay", async () 
     } finally {
         transport.close();
     }
+});
+
+describe("bounded command ownership", () => {
+    it("collects complete UTF-8 output without blocking the parent event loop", async () => {
+        let timerRan = false;
+        const timer = setTimeout(() => {
+            timerRan = true;
+        }, 1);
+        const result = await boundedCommand({
+            command: [process.execPath, "-e", 'process.stdout.write("hello 🐈"); process.stderr.write("diagnostic");'],
+            timeoutMs: 5000,
+        });
+        clearTimeout(timer);
+        expect(result.status).toBe(0);
+        expect(result.stdout).toBe("hello 🐈");
+        expect(result.stderr).toBe("diagnostic");
+        expect(timerRan).toBe(true);
+    });
+    it("bounds output and cancels a running owned group without retry", async () => {
+        const overflow = await boundedCommand({
+            command: [process.execPath, "-e", 'process.stdout.write("x".repeat(2048));'],
+            timeoutMs: 5000,
+            maxBufferBytes: 1024,
+        });
+        expect(overflow.error?.code).toBe("ENOBUFS");
+        expect(overflow.stdout.length).toBeLessThanOrEqual(1024);
+        const cancelled = await boundedCommand({
+            command: [process.execPath, "-e", "setInterval(() => {}, 1000)"],
+            timeoutMs: 5000,
+            signal: AbortSignal.timeout(100),
+        });
+        expect(cancelled.error?.code).toBe("ABORT_ERR");
+        await expect(
+            boundedCommand({ command: ["/never-spawn"], timeoutMs: 100, signal: AbortSignal.abort() })
+        ).rejects.toThrow();
+    });
 });
