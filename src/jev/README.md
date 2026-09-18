@@ -239,13 +239,23 @@ Reusable provider implementations, schema and credential access live in `src/uti
 
 ## Control Lab
 
-Open the Control tab in `tools jev dashboard` for read-only fixture comparisons. The same core is available through `tools jev control resolve|judge|replay|fill|assist` and `tools control`.
+Open the Control tab in `tools jev dashboard` for read-only fixture comparisons. The same core is available through `tools jev control resolve|judge|replay|fill|assist|observe` and `tools control`.
 
 ```sh
 tools jev control replay context --chooser jev --provider typesafe
 tools jev control resolve --app Editor --intent "Show line numbers" --provider typesafe
 tools jev control fill --app Editor --data fields.json --provider typesafe
 tools jev control assist --app Editor --goal "Enable line numbers" --max-steps 3 --provider typesafe
+tools jev observe --app Editor --goal "Enable line numbers"
+tools jev listen --stt mock --wake-mode off --goal "go back"
+tools jev route "unresolved review threads on 409"
+tools jev compact session.jsonl
+tools jev verify --templates
+tools jev browser "Log in as qa-user" --snapshot fixture.txt --inputs '{"Username":"qa-user"}'
+tools jev loop --goal "Enable line numbers" --app Editor --surface native
+tools jev demo route
 ```
+
+Specs: `docs/specs/jev/*.v1.md` and `*.v2.md`. Compact is not hooked into `/gt:github-pr` yet; see `docs/specs/jev/github-pr-compact.md`.
 
 Use `--window-id` when more than one window is present. The Jev namespace is also useful while this module is linked from a feature worktree and the main checkout's `tools control` has not been updated. See `src/control/README.md` for limits and verification contracts.

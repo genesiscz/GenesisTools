@@ -1,3 +1,4 @@
+import { registerObserve } from "@app/jev/commands/observe";
 import type { Command } from "commander";
 import { registerAssistCommand } from "./assist";
 import { registerAwaitCommand } from "./await";
@@ -47,4 +48,5 @@ export function registerControlCommands(program: Command): void {
     registerVerifyCommands(program);
     registerVisualCommand(program);
     registerWorkflowCommands(program);
+    registerObserve(program);
 }

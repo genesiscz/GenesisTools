@@ -338,9 +338,25 @@ func runCursorFeedbackCommand() {
         jsonOutput(["ok":true, "action":"cursor-hide"])
         return
     }
+    if args.contains("--emit") {
+        guard let verb = argValue("--action") else { errorExit("--action required with --emit") }
+        var point: CGPoint?
+        if let at = argValue("--at") {
+            let parts = at.split(separator: ",")
+            guard parts.count == 2, let x = Double(parts[0].trimmingCharacters(in: .whitespaces)),
+                  let y = Double(parts[1].trimmingCharacters(in: .whitespaces)), x.isFinite, y.isFinite else {
+                errorExit("--at must be x,y")
+            }
+            point = CGPoint(x: x, y: y)
+        }
+        let target = argValue("--target") ?? "pixel"
+        ActionCursor.emit(verb, point: point, background: args.contains("--background"), target: target)
+        jsonOutput(["ok": true, "action": CursorFeedbackEvent.semantic(verb) ?? verb, "overlay": true])
+        return
+    }
     guard args.contains("--server"), let raw = argValue("--initial"),
           let data = Data(base64Encoded: raw), data.count <= 4096 else {
-        errorExit("cursor-feedback requires --hide or an internal server payload")
+        errorExit("cursor-feedback requires --hide, --emit, or an internal server payload")
     }
     do {
         let event = try JSONDecoder().decode(CursorFeedbackEvent.self, from: data)
