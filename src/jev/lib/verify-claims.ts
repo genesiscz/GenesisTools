@@ -1,6 +1,7 @@
 import type { Evaluator } from "@genesiscz/utils/ai/evaluation/service";
 import { z } from "zod";
 import { booleanProbability, scoreIndex } from "./answers";
+import { type CustomTemplate, mergeTemplates } from "./verify-sarif";
 
 export const VERIFY_TEMPLATES = [
     "pii-names",
@@ -53,10 +54,12 @@ export async function verifyClaims(options: {
     task?: string;
     evaluate: Evaluator;
     signal?: AbortSignal;
+    custom?: CustomTemplate[];
 }) {
     const against = z.string().min(1).max(100_000).parse(options.against);
     const claims = z.array(claimSchema).max(40).parse(options.claims);
     const purposes = options.purposes;
+    const custom = options.custom ? mergeTemplates(VERIFY_TEMPLATES, options.custom) : [];
     const questions: Record<string, unknown> = {};
     for (const purpose of purposes) {
         if (purpose === "accuracy" || purpose === "contradiction") {
@@ -81,6 +84,12 @@ export async function verifyClaims(options: {
         }
         questions[purpose] = { type: "boolean", instructions: INSTRUCTIONS[purpose] };
     }
+    for (const template of custom) {
+        questions[template.id] =
+            template.type === "score"
+                ? { type: "score", instructions: template.instructions, criteria: template.criteria ?? ["low", "high"] }
+                : { type: template.type, instructions: template.instructions, criteria: template.criteria };
+    }
     if (Object.keys(questions).length === 0) {
         throw new Error("Select at least one verify template.");
     }
@@ -99,6 +108,9 @@ export async function verifyClaims(options: {
         document[purpose] =
             purpose === "risk" ? scoreIndex(evaluation, "risk") : booleanProbability(evaluation, purpose);
     }
+    for (const template of custom) {
+        document[template.id] = booleanProbability(evaluation, template.id) ?? scoreIndex(evaluation, template.id);
+    }
     const claimResults: Record<string, Record<string, number | undefined>> = {};
     for (const claim of claims) {
         claimResults[claim.id] = {
@@ -115,6 +127,11 @@ export async function verifyClaims(options: {
     }
     if ((document.risk ?? 0) >= 2) {
         reasons.push("risk");
+    }
+    for (const template of custom) {
+        if (template.gate !== undefined && (document[template.id] ?? 0) >= template.gate) {
+            reasons.push(template.id);
+        }
     }
     return {
         document,

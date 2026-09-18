@@ -4,7 +4,7 @@
 |---|---|
 | Surface | `tools jev` |
 | Version | v2 |
-| Status | specify |
+| Status | implemented (v2) |
 | Date | 2026-09-18 |
 | Stacked on | PR #409 `feat/jev-gateway-lab` |
 | Demand | Martin Foltyn 2026-09-18 |

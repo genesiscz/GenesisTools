@@ -279,7 +279,7 @@ describe("listen pipeline", () => {
         expect(seen).toEqual(["partial", "final", "wake", "decision", "stop"]);
     });
 
-    test("rejects jev wake-mode as v2", async () => {
+    test("jev wake-mode runs the noul instead of throwing", async () => {
         const driver: BrowserDriver = {
             async observe() {
                 return browserPage();
@@ -288,16 +288,36 @@ describe("listen pipeline", () => {
                 return { ok: true, overlay: false };
             },
         };
-        const events = (async function* () {})();
-        await expect(async () => {
-            for await (const _ of runListenPipeline({
-                events,
-                driver,
-                wakeMode: "jev",
-                evaluate: fakeEvaluator({}),
-            })) {
-            }
-        }).toThrow("v2");
+        const events = (async function* () {
+            yield { type: "final" as const, text: "hey genesis go back", tMs: 1, provider: "mock" as const };
+        })();
+        const seen: string[] = [];
+        for await (const event of runListenPipeline({
+            events,
+            driver,
+            wakeMode: "jev",
+            evaluate: fakeEvaluator({
+                woke: bool(0.95),
+                remainder: choice("after-wake", { "after-wake": 0.9, whole: 0.05, none: 0.05 }),
+                destructive: bool(0.05),
+                complete: bool(0.9),
+                target: choice("none", { e1: 0.1, e2: 0.1, none: 0.8 }),
+                verb: choice("stop", {
+                    click: 0.05,
+                    fill: 0.05,
+                    back: 0.1,
+                    scroll: 0.05,
+                    wait: 0.05,
+                    stop: 0.65,
+                    navigate: 0.05,
+                }),
+                done: bool(0.1),
+            }),
+        })) {
+            seen.push(event.type);
+        }
+        expect(seen).toContain("wake");
+        expect(seen).toContain("decision");
     });
 });
 

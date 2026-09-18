@@ -9,7 +9,7 @@ import { runGoalLoop } from "../lib/loop";
 export function registerLoop(program: Command): void {
     observationOptions(program.command("loop").description("Bounded see/act loop on native UI or a CDP browser"))
         .requiredOption("--goal <text>", "Controlling goal")
-        .option("--surface <surface>", "native|browser|auto", "auto")
+        .option("--surface <surface>", "native|browser|auto|hybrid", "auto")
         .option("--url <url>", "Browser start URL")
         .option("--snapshot <file>", "Offline browser snapshot")
         .option("--max-steps <n>", "Action cap")
@@ -17,7 +17,7 @@ export function registerLoop(program: Command): void {
             async (
                 options: ControlOptions & {
                     goal: string;
-                    surface: "native" | "browser" | "auto";
+                    surface: "native" | "browser" | "auto" | "hybrid";
                     url?: string;
                     snapshot?: string;
                     maxSteps?: string;

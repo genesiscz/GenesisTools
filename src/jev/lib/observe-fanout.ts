@@ -3,17 +3,20 @@ import { candidatesFor, type Observation, observedEvidence } from "@app/control/
 import type { Evaluator } from "@genesiscz/utils/ai/evaluation/service";
 import { z } from "zod";
 import { booleanProbability, scoreIndex } from "./answers";
+import { type ObservePack, packQuestions, parseObservePack } from "./observe-packs";
 
 export const VERBS = ["press", "set", "scroll", "wait", "stop"] as const;
 export type ObserveVerb = (typeof VERBS)[number];
 
 export interface FanoutResult {
+    pack: ObservePack;
     target: ReturnType<typeof admittedChoice>;
     verb: ReturnType<typeof admittedChoice>;
     done: number | undefined;
     blocked: number | undefined;
     wait: number | undefined;
     risk: number | undefined;
+    packAnswers: Record<string, number | undefined>;
     candidates: ReturnType<typeof candidatesFor>;
     evaluation: Awaited<ReturnType<Evaluator>>;
     dispatchable: boolean;
@@ -24,8 +27,10 @@ export async function observeFanout(options: {
     goal: string;
     evaluate: Evaluator;
     signal?: AbortSignal;
+    pack?: string;
 }): Promise<FanoutResult> {
     const goal = z.string().trim().min(1).max(4000).parse(options.goal);
+    const pack = parseObservePack(options.pack);
     const candidates = candidatesFor({ observation: options.observation });
     if (candidates.length > 80) {
         throw new Error("More than 80 actionable targets. Narrow the window or scope.");
@@ -33,11 +38,13 @@ export async function observeFanout(options: {
     const targetCriteria = Object.fromEntries(
         candidates.map((candidate) => [candidate.id, `${candidate.kind ?? candidate.role}: ${candidate.label}`])
     );
+    const extra = packQuestions(pack);
     const evaluation = await options.evaluate({
         signal: options.signal,
         input: {
             state: {
                 goal,
+                pack,
                 window: options.observation.window.title,
                 observations: observedEvidence(options.observation),
             },
@@ -74,6 +81,7 @@ export async function observeFanout(options: {
                         "irreversible: send delete pay push",
                     ],
                 },
+                ...extra,
             },
         },
     });
@@ -87,6 +95,7 @@ export async function observeFanout(options: {
         id: "verb",
         allowed: [...VERBS],
     });
+    const packAnswers = Object.fromEntries(Object.keys(extra).map((id) => [id, booleanProbability(evaluation, id)]));
     const dispatchable =
         target.admitted &&
         target.choice !== "none" &&
@@ -96,12 +105,14 @@ export async function observeFanout(options: {
         (booleanProbability(evaluation, "blocked") ?? 1) < 0.5 &&
         (booleanProbability(evaluation, "done") ?? 0) < 0.8;
     return {
+        pack,
         target,
         verb,
         done: booleanProbability(evaluation, "done"),
         blocked: booleanProbability(evaluation, "blocked"),
         wait: booleanProbability(evaluation, "wait"),
         risk: scoreIndex(evaluation, "risk"),
+        packAnswers,
         candidates,
         evaluation,
         dispatchable,

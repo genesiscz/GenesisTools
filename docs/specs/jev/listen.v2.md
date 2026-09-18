@@ -4,7 +4,7 @@
 |---|---|
 | Surface | `tools jev` |
 | Version | v2 |
-| Status | specify; implement after v1 is green |
+| Status | implemented (v2) |
 | Date | 2026-09-18 |
 | Stacked on | [PR #409](https://github.com/genesiscz/GenesisTools/pull/409) `feat/jev-gateway-lab` |
 | Author demand | Martin Foltyn, 2026-09-18 (voice, browser goal, route, compact, observe, verify, see/act loop, demo) |

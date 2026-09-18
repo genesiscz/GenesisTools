@@ -1,8 +1,11 @@
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
 import { parseSnapshotText } from "../lib/browser/snapshot";
 import { compactMessages } from "../lib/compact";
 import { bool, choice, fakeEvaluator } from "../lib/fake-evaluate";
+import { runReel } from "../lib/reel";
 import { routeUtterance } from "../lib/route";
 import { VERIFY_TEMPLATES, verifyClaims } from "../lib/verify-claims";
 
@@ -88,5 +91,12 @@ export function registerDemoScenes(program: Command): void {
                 { type: "wake", matched: "hey genesis", remainder: "go back" },
                 { type: "decision", admitted: false, reason: "No available action safely advances the user's goal." },
             ]);
+        });
+    demo.command("reel")
+        .description("Run every demo chapter into a folder (dry-run, no overlay)")
+        .option("--dir <dir>", "Output directory")
+        .action(async (options: { dir?: string }) => {
+            const dir = options.dir ?? join(tmpdir(), `jev-reel-${Date.now()}`);
+            out.result(await runReel({ dir, dryRun: true }));
         });
 }

@@ -4,6 +4,7 @@ import { OperationBudget, type OperationLimits } from "@genesiscz/utils/operatio
 import { Stopwatch } from "@genesiscz/utils/Stopwatch";
 import { z } from "zod";
 import { booleanProbability } from "../answers";
+import { authenticationBarrier } from "./auth";
 import { mapInput } from "./snapshot";
 import type { BrowserAction, BrowserDriver, BrowserObservation } from "./types";
 
@@ -46,6 +47,17 @@ export async function runBrowserGoal(options: {
     );
     let status: "completed" | "stopped" | "unknown" = "stopped";
     let reason = "";
+    if (authenticationBarrier(observation, inputs)) {
+        return {
+            status: "stopped" as const,
+            reason: "Password field observed without a user-supplied --inputs password.",
+            url: observation.url,
+            title: observation.title,
+            headings: observation.headings,
+            timing: { totalMs: clock.elapsedMs, jevMs, browserMs, jevRequests: 0 },
+            steps,
+        };
+    }
     while (true) {
         budget.remaining();
         const jevClock = new Stopwatch();
