@@ -1,4 +1,5 @@
 import { type Candidate, candidatesFor, type Observation } from "@app/control/lib/decision/observation";
+import { prefixCandidateId, type SurfacePrefix } from "../loop/prefix";
 
 export const CHROME_VERBS = ["back", "next_tab", "prev_tab", "close_tab", "reload"] as const;
 export type ChromeVerb = (typeof CHROME_VERBS)[number];
@@ -11,10 +12,10 @@ export interface ListenCandidate {
     chrome?: ChromeVerb;
 }
 
-export function listenCandidates(observation: Observation): ListenCandidate[] {
+export function listenCandidates(observation: Observation, prefix?: SurfacePrefix): ListenCandidate[] {
     const rows = candidatesFor({ observation, action: "press" });
     const items: ListenCandidate[] = rows.map((candidate: Candidate) => ({
-        id: candidate.id,
+        id: prefix ? prefixCandidateId(prefix, candidate.id) : candidate.id,
         label: candidate.label,
         action: "press",
         element: candidate.element,

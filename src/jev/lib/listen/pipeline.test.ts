@@ -2,7 +2,9 @@ import { expect, test } from "bun:test";
 import type { Observation } from "@app/control/lib/decision/observation";
 import type { EvaluationResponse, Evaluator } from "@genesiscz/utils/ai/evaluation/service";
 import type { LiveTranscriptEvent } from "@genesiscz/utils/ai/stt";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { createListenPipeline } from "./pipeline";
+import { listenCandidates } from "./verbs";
 
 function evaluation(answers: EvaluationResponse["answers"]): EvaluationResponse {
     return {
@@ -45,7 +47,12 @@ const winner: Evaluator = async () =>
     evaluation({
         verb: { type: "choice", choice: "c0", probabilities: distribution("c0") },
         terminal: { type: "boolean", probability: 0.95 },
+        correction: { type: "boolean", probability: 0.01 },
     });
+
+test("auto surface prefixes observed ids", () => {
+    expect(listenCandidates(observation, "ax").some((item) => item.id === "ax:c0")).toBe(true);
+});
 
 test("partial below the gate does not act", async () => {
     const acts: string[] = [];
@@ -53,6 +60,7 @@ test("partial below the gate does not act", async () => {
         evaluation({
             verb: { type: "choice", choice: "c0", probabilities: distribution("c0", 0.51) },
             terminal: { type: "boolean", probability: 0.2 },
+            correction: { type: "boolean", probability: 0.01 },
         });
     const pipeline = createListenPipeline({
         evaluate,
@@ -121,6 +129,7 @@ test("chrome verb back is choosable", async () => {
         evaluation({
             verb: { type: "choice", choice: "back", probabilities: distribution("back") },
             terminal: { type: "boolean", probability: 0.96 },
+            correction: { type: "boolean", probability: 0.01 },
         });
     const pipeline = createListenPipeline({
         evaluate,
@@ -158,4 +167,40 @@ test("prefetch hit dispatches without a second see", async () => {
     const hit = await pipeline.dispatchIfPrefetched("c0");
     expect(hit?.reason).toBe("prefetch_hit");
     expect(sees).toBe(1);
+});
+
+test("correction drops prefetch and does not dispatch", async () => {
+    let acts = 0;
+    const pipeline = createListenPipeline({
+        evaluate: async (call) => {
+            const transcript = SafeJSON.stringify(call.input);
+            if (transcript.includes("never mind")) {
+                return evaluation({
+                    verb: { type: "choice", choice: "c0", probabilities: distribution("c0") },
+                    terminal: { type: "boolean", probability: 0.95 },
+                    correction: { type: "boolean", probability: 0.96 },
+                });
+            }
+
+            return winner({ input: call.input, signal: call.signal });
+        },
+        dispatchAhead: true,
+        surface: {
+            see: async () => observation,
+            act: async () => {
+                acts += 1;
+                return { ok: true };
+            },
+        },
+    });
+    await pipeline.decide({ kind: "final", text: "click export", isFinal: true, startedAtMs: 1 });
+    expect(acts).toBe(1);
+    const retracted = await pipeline.decide({
+        kind: "final",
+        text: "never mind",
+        isFinal: true,
+        startedAtMs: 2,
+    });
+    expect(retracted.reason).toBe("correction");
+    expect(await pipeline.dispatchIfPrefetched("c0")).toBeNull();
 });

@@ -67,6 +67,10 @@ export function createListenPipeline(options: ListenPipelineOptions) {
                         type: "boolean",
                         instructions: "Is this utterance a complete command that should dispatch now?",
                     },
+                    correction: {
+                        type: "boolean",
+                        instructions: "Does this utterance retract the previous intent?",
+                    },
                 },
             },
             signal: options.signal,
@@ -80,6 +84,21 @@ export function createListenPipeline(options: ListenPipelineOptions) {
         });
         const terminal = evaluation.answers.terminal;
         const terminalP = terminal?.type === "boolean" ? terminal.probability : 0;
+        const correction = evaluation.answers.correction;
+        const correctionP = correction?.type === "boolean" ? correction.probability : 0;
+        if (correctionP >= 0.8) {
+            prefetch = null;
+            const retracted: ListenDecision = {
+                status: "abstain",
+                transcript: event.text,
+                choice: null,
+                probability: correctionP,
+                snapshot: current.snapshot,
+                reason: "correction",
+            };
+            decisions.push(retracted);
+            return retracted;
+        }
         const distribution =
             evaluation.answers.verb?.type === "choice" ? (evaluation.answers.verb.probabilities ?? {}) : {};
         prefetch = buildPrefetch({

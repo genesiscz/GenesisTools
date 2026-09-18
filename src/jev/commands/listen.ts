@@ -9,6 +9,8 @@ import type { Command } from "commander";
 import { z } from "zod";
 import { createListenPipeline } from "../lib/listen/pipeline";
 import type { PrefetchPayload } from "../lib/prefetch";
+import { eventsAfterWake } from "../lib/wake/handoff";
+import { readWakeGate } from "../lib/wake/wake";
 
 export function registerListen(program: Command): void {
     program
@@ -22,6 +24,9 @@ export function registerListen(program: Command): void {
         .option("--gate <n>", "Admission probability", "0.8")
         .option("--max-seconds <n>", "Session budget", "60")
         .option("--transcript <file>", "Replay JSONL instead of a microphone")
+        .option("--surface [kind]", "ax, browser, or auto")
+        .option("--from-wake", "Keep transcript events at or after the last wake phrase")
+        .option("--dispatch-ahead", "Dispatch a prefetch hit without a second see")
         .option("--dry-run", "Never dispatch")
         .option("--force-act", "Allow dispatch from a pipe")
         .action(
@@ -34,6 +39,9 @@ export function registerListen(program: Command): void {
                 gate: string;
                 maxSeconds: string;
                 transcript?: string;
+                surface?: string;
+                fromWake?: boolean;
+                dispatchAhead?: boolean;
                 dryRun?: boolean;
                 forceAct?: boolean;
             }) => {
@@ -68,9 +76,16 @@ export function registerListen(program: Command): void {
                 const cancel = () => controller.abort();
                 process.once("SIGINT", cancel);
                 try {
-                    const events: LiveTranscriptEvent[] = options.transcript
+                    let events: LiveTranscriptEvent[] = options.transcript
                         ? parseTranscript(await Bun.file(options.transcript).text())
                         : [];
+                    if (options.fromWake) {
+                        const word = readWakeGate().word;
+                        const trigger = [...events]
+                            .reverse()
+                            .find((event) => event.text.toLowerCase().includes(word.toLowerCase()));
+                        events = eventsAfterWake(events, trigger?.startedAtMs ?? 0);
+                    }
                     const session = await openLiveStt({
                         provider,
                         accountId: options.account,
@@ -85,6 +100,7 @@ export function registerListen(program: Command): void {
                         : undefined;
                     const pipeline = createListenPipeline({
                         dryRun,
+                        dispatchAhead: options.dispatchAhead === true,
                         gate: Number(options.gate),
                         signal: controller.signal,
                         evaluate: await createEvaluator({ provider: selectedProvider(program) }),
