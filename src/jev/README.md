@@ -237,6 +237,29 @@ Both providers share boolean/choice/score results, cancellation and zero automat
 
 Reusable provider implementations, schema and credential access live in `src/utils/ai/evaluation/`. No model weights are downloaded by either remote provider.
 
+## Live policy (on top of Control Lab)
+
+These commands keep Jev as a decision workbench. They pick tools, keep/drop
+tool results, or choose a `see`/`act` verb. They do not generate chat.
+
+```sh
+tools jev listen --stt fixture --transcript session.jsonl --app Fixture --dry-run
+tools jev route "unresolved review threads on 409"
+tools jev compact session.jsonl --keep 0.5
+tools jev screen src/control/commands/run.ts --purpose focus-safety
+tools jev verify --claims claims.md --against src/ --purpose secrets
+tools jev watch --app Fixture --goal "the send button is enabled" --hz 4
+tools jev loop --goal "open the first result" --browser --port 9222
+tools jev control observe --app Fixture --goal "archive the selected newsletter"
+tools jev control demo route
+tools jev wake status
+```
+
+STT providers are `deepgram`, `xai` (Grok live), `openai`, and `fixture`.
+They resolve through `tools ai` accounts. `--run` on `route` is opt-in.
+`compact --llm` still only chooses keep/drop/truncate. Specs live in
+`docs/plans/jev-live-policy/`.
+
 ## Control Lab
 
 Open the Control tab in `tools jev dashboard` for read-only fixture comparisons. The same core is available through `tools jev control resolve|judge|replay|fill|assist` and `tools control`.

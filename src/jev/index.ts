@@ -6,11 +6,19 @@ import { logger, out } from "@genesiscz/utils/logger";
 import { Command } from "commander";
 import { ZodError } from "zod";
 import { registerArena } from "./commands/arena";
+import { registerCompact } from "./commands/compact";
 import { registerControlLabCommands } from "./commands/control";
 import { registerDashboard } from "./commands/dashboard";
+import { registerDemoReel } from "./commands/demo-reel";
 import { registerEvaluation } from "./commands/evaluate";
 import { registerExperiment } from "./commands/experiment";
+import { registerListen } from "./commands/listen";
 import { registerLogin } from "./commands/login";
+import { registerLoop } from "./commands/loop";
+import { registerRoute } from "./commands/route";
+import { registerScreen } from "./commands/screen";
+import { registerWake } from "./commands/wake";
+import { registerWatch } from "./commands/watch";
 
 const program = new Command().name("tools jev").description("Jev evaluation tools and local experiment workbench");
 addProviderOption(program);
@@ -20,6 +28,14 @@ registerExperiment(program);
 registerArena(program);
 registerDashboard(program);
 registerControlLabCommands(program);
+registerListen(program);
+registerRoute(program);
+registerCompact(program);
+registerScreen(program);
+registerWatch(program);
+registerLoop(program);
+registerWake(program);
+registerDemoReel(program);
 
 try {
     await runTool(program, { tool: "jev" });
