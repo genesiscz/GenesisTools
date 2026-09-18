@@ -176,5 +176,47 @@ export function createListenPipeline(options: ListenPipelineOptions) {
         return row;
     }
 
-    return { decide, refresh, decisions: () => decisions };
+    async function dispatchIfPrefetched(winnerId: string): Promise<ListenDecision | null> {
+        if (!options.dispatchAhead || !observation) {
+            return null;
+        }
+
+        const payload = matchPrefetch({
+            cache: prefetch,
+            snapshot: observation.snapshot,
+            winnerId,
+            candidates: listenCandidates(observation).map((item) => ({
+                id: item.id,
+                element: item.element,
+                action: item.action,
+                chrome: item.chrome,
+            })),
+        });
+        if (!payload) {
+            return null;
+        }
+
+        if (options.dryRun) {
+            return {
+                status: "would",
+                transcript: winnerId,
+                choice: winnerId,
+                probability: prefetch?.items.find((item) => item.id === winnerId)?.probability ?? 0,
+                snapshot: observation.snapshot,
+                reason: "prefetch_hit",
+            };
+        }
+
+        const acted = await options.surface.act(payload, observation);
+        return {
+            status: acted.ok ? "act" : "hold",
+            transcript: winnerId,
+            choice: winnerId,
+            probability: prefetch?.items.find((item) => item.id === winnerId)?.probability ?? 0,
+            snapshot: observation.snapshot,
+            reason: acted.ok ? "prefetch_hit" : (acted.error ?? "act_failed"),
+        };
+    }
+
+    return { decide, refresh, decisions: () => decisions, dispatchIfPrefetched };
 }

@@ -139,3 +139,23 @@ test("chrome verb back is choosable", async () => {
     expect(decision.choice).toBe("back");
     expect(decision.status).toBe("would");
 });
+
+test("prefetch hit dispatches without a second see", async () => {
+    let sees = 0;
+    const pipeline = createListenPipeline({
+        evaluate: winner,
+        dispatchAhead: true,
+        surface: {
+            see: async () => {
+                sees += 1;
+                return observation;
+            },
+            act: async () => ({ ok: true }),
+        },
+    });
+    await pipeline.decide({ kind: "final", text: "click export", isFinal: true, startedAtMs: 1 });
+    expect(sees).toBe(1);
+    const hit = await pipeline.dispatchIfPrefetched("c0");
+    expect(hit?.reason).toBe("prefetch_hit");
+    expect(sees).toBe(1);
+});
