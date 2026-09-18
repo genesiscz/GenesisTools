@@ -3,9 +3,11 @@ import { selectedProvider } from "@genesiscz/utils/ai/evaluation/cli";
 import { createEvaluator } from "@genesiscz/utils/ai/evaluation/service";
 import { out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
+import { createAutoSurface } from "../lib/loop/auto";
 import { createAxSurface } from "../lib/loop/ax";
 import { createBrowserSurface } from "../lib/loop/browser";
 import { runGoalLoop } from "../lib/loop/run";
+import type { GoalSurface } from "../lib/loop/surface";
 
 export function registerLoop(program: Command): void {
     program
@@ -15,6 +17,7 @@ export function registerLoop(program: Command): void {
         .option("--app <name>", "Native AX target")
         .option("--window-id <id>", "Pin one window")
         .option("--browser", "Use chrome-devtools page snapshot")
+        .option("--surface [kind]", "ax, browser, or auto (AX chrome + CDP page)")
         .option("--port <n>", "CDP port", "9222")
         .option("--max-steps <n>", "Action attempts", "8")
         .option("--yes", "Allow high-risk acts")
@@ -24,18 +27,20 @@ export function registerLoop(program: Command): void {
                 app?: string;
                 windowId?: string;
                 browser?: boolean;
+                surface?: string;
                 port: string;
                 maxSteps: string;
                 yes?: boolean;
             }) => {
-                if (options.browser && options.app) {
-                    out.log.error("--browser and --app are mutually exclusive in v1.");
+                const surfaceKind = options.surface ?? (options.browser ? "browser" : options.app ? "ax" : "");
+                if (surfaceKind !== "auto" && options.browser && options.app) {
+                    out.log.error("--browser and --app are mutually exclusive unless --surface auto.");
                     process.exitCode = 1;
                     return;
                 }
 
-                if (!options.browser && !options.app) {
-                    out.log.error("loop needs --app or --browser.");
+                if (surfaceKind !== "auto" && !options.browser && !options.app) {
+                    out.log.error("loop needs --app, --browser, or --surface auto.");
                     process.exitCode = 1;
                     return;
                 }
@@ -44,14 +49,33 @@ export function registerLoop(program: Command): void {
                 const cancel = () => controller.abort();
                 process.once("SIGINT", cancel);
                 try {
-                    const surface = options.browser
-                        ? createBrowserSurface({ port: Number(options.port) })
-                        : createAxSurface(
-                              new NativeControlDriver({
-                                  app: options.app ?? "",
-                                  windowId: options.windowId ? Number(options.windowId) : undefined,
-                              })
-                          );
+                    const ax =
+                        options.app || surfaceKind === "ax" || surfaceKind === "auto"
+                            ? options.app
+                                ? createAxSurface(
+                                      new NativeControlDriver({
+                                          app: options.app,
+                                          windowId: options.windowId ? Number(options.windowId) : undefined,
+                                      })
+                                  )
+                                : undefined
+                            : undefined;
+                    const browser =
+                        options.browser || surfaceKind === "browser" || surfaceKind === "auto"
+                            ? createBrowserSurface({ port: Number(options.port) })
+                            : undefined;
+                    let surface: GoalSurface;
+                    if (surfaceKind === "auto") {
+                        surface = createAutoSurface({ ax, browser });
+                    } else if (browser && surfaceKind === "browser") {
+                        surface = browser;
+                    } else if (ax) {
+                        surface = ax;
+                    } else {
+                        out.log.error("loop needs --app, --browser, or --surface auto.");
+                        process.exitCode = 1;
+                        return;
+                    }
                     const result = await runGoalLoop({
                         goal: options.goal,
                         surface,

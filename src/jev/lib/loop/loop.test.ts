@@ -1,7 +1,9 @@
 import { expect, test } from "bun:test";
 import type { Observation } from "@app/control/lib/decision/observation";
 import type { EvaluationResponse, Evaluator } from "@genesiscz/utils/ai/evaluation/service";
+import { createAutoSurface } from "./auto";
 import { createAxSurface } from "./ax";
+import { prefixCandidateId } from "./prefix";
 import { runGoalLoop } from "./run";
 import type { GoalSurface } from "./surface";
 
@@ -99,4 +101,36 @@ test("high risk without --yes stops", async () => {
     const result = await runGoalLoop({ goal: "Delete", surface, evaluate });
     expect(result.status).toBe("stopped");
     expect(result.reason).toBe("high_risk");
+});
+
+test("auto surface prefixes ax and cdp ids", async () => {
+    const auto = createAutoSurface({
+        ax: createAxSurface({
+            observe: async () => observation,
+            act: async () => ({ ok: true }),
+        }),
+        browser: {
+            kind: "browser",
+            see: async () => ({
+                id: "nav-1",
+                label: "page",
+                candidates: [{ id: "1_2", label: "Export", element: -1, action: "click" }],
+            }),
+            act: async () => ({ ok: true }),
+        },
+    });
+    const snapshot = await auto.see();
+    expect(snapshot.candidates.map((item) => item.id)).toEqual(["ax:c0", "cdp:1_2"]);
+    expect(prefixCandidateId("cdp", "1_2")).toBe("cdp:1_2");
+});
+
+test("browser act rejects a model-supplied CSS selector", async () => {
+    const { createBrowserSurface } = await import("./browser");
+    const surface = createBrowserSurface({ port: 9 });
+    const result = await surface.act(
+        { id: "nav", label: "x", candidates: [{ id: "div.export", label: "x", element: -1, action: "click" }] },
+        { id: "div.export", label: "x", element: -1, action: "click" }
+    );
+    expect(result.ok).toBe(false);
+    expect(result.error).toMatch(/uid/);
 });
