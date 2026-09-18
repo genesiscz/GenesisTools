@@ -3,6 +3,7 @@ import type { ControlDriver } from "@app/control/lib/decision/native";
 import type { Observation } from "@app/control/lib/decision/observation";
 import type { EvaluationResponse, Evaluator } from "@genesiscz/utils/ai/evaluation/service";
 import { runWatch } from "./loop";
+import { encodeWatchState } from "./state";
 
 function evaluation(answers: EvaluationResponse["answers"]): EvaluationResponse {
     return {
@@ -67,6 +68,20 @@ test("watch stops verified when done becomes true", async () => {
     });
     expect(result.status).toBe("verified");
     expect(result.observes).toBe(3);
+    expect(result.lastState?.unchangedCount).toBe(1);
+    expect(result.hz).toBe(4);
+});
+
+test("encodeWatchState reports changed rows and OCR text", () => {
+    const next = {
+        ...observation,
+        snapshot: "tok-2",
+        elements: [{ ...observation.elements[0], AXEnabled: "0", AXTitle: "Send" }],
+    };
+    const state = encodeWatchState(next, observation, [{ id: "ocr-1", text: "Send" }]);
+    expect(state.changed).toHaveLength(1);
+    expect(state.unchangedCount).toBe(0);
+    expect(state.ocr).toEqual([{ id: "ocr-1", text: "Send" }]);
 });
 
 test("rejects hz outside 1-10", async () => {

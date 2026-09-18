@@ -3,6 +3,7 @@ import { evaluationSchema } from "@genesiscz/utils/ai/evaluation/evaluate";
 import type { EvaluationResponse, Evaluator } from "@genesiscz/utils/ai/evaluation/service";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { screenFiles } from "./batch";
+import { changedFiles } from "./changed";
 import { SCREEN_PURPOSES } from "./templates";
 import { parseClaims, verifyClaims } from "./verify";
 
@@ -55,4 +56,10 @@ test("verify claims returns per-id answers", async () => {
     const claims = parseClaims('[{"id":"c0","text":"this includes alice@example.com"}]');
     const result = await verifyClaims({ claims, against: "src/", evaluate });
     expect(result.scores[0]).toEqual({ id: "c0", supported: 0.95, contradicted: 0.01, sensitive: 0.8 });
+});
+
+test("only-changed keeps paths from git diff --name-only", () => {
+    expect(changedFiles("src", () => "src/jev/lib/screen/verify.ts\nREADME.md\n")).toEqual([
+        "src/jev/lib/screen/verify.ts",
+    ]);
 });

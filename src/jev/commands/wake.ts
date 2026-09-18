@@ -15,7 +15,14 @@ export function registerWake(program: Command): void {
     wake.command("status")
         .description("Read the wake-word marker without starting the microphone")
         .action(() => {
-            out.result({ ...readWakeGate(), blocked: wakeBlockedByEnv(), mic: false });
+            const gate = readWakeGate();
+            out.result({
+                ...gate,
+                blocked: wakeBlockedByEnv(),
+                mic: false,
+                pid: gate.pid ?? null,
+                startedAt: gate.startedAt,
+            });
         });
     wake.command("enable")
         .description("Write the wake-word marker; first time requires a TTY")

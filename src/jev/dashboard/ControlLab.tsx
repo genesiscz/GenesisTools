@@ -6,6 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@ui/components/card";
 import { CheckCheck, MousePointer2, Play, Square } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { api, errorMessage } from "./client";
+import { LivePolicyLab } from "./LivePolicyLab";
 import { WaitLab } from "./WaitLab";
 
 export function ControlLab() {
@@ -280,6 +281,7 @@ export function ControlLab() {
                     </CardContent>
                 </Card>
             )}
+            <LivePolicyLab />
             <WaitLab />
             <Callout tone="info" title="Use the same core from your terminal">
                 <code>tools control replay context --chooser jev --provider typesafe</code>

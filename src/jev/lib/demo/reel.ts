@@ -13,6 +13,29 @@ export interface DemoSummary {
     readback?: boolean;
 }
 
+export interface DemoTrace {
+    demo: DemoName;
+    startedAt: string;
+    events: Array<{ atMs: number; kind: string; detail?: string }>;
+    readback: boolean;
+    ok: boolean;
+}
+
+export function demoTrace(summary: DemoSummary, startedAt = new Date().toISOString()): DemoTrace {
+    return {
+        demo: summary.demo,
+        startedAt,
+        events: [{ atMs: 0, kind: "summary", detail: summary.reason }],
+        readback: summary.readback === true,
+        ok:
+            summary.ok &&
+            (summary.readback !== false ||
+                summary.demo === "verify" ||
+                summary.demo === "route" ||
+                summary.demo === "compact"),
+    };
+}
+
 function evaluation(answers: EvaluationResponse["answers"]): EvaluationResponse {
     return {
         model: "fixture",

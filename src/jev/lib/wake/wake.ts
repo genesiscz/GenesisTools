@@ -12,6 +12,8 @@ export interface WakeGate {
     cooldownMs: number;
     listenSeconds: number;
     stt: string;
+    pid?: number | null;
+    startedAt?: number;
 }
 
 export const DEFAULT_WAKE_GATE: WakeGate = {

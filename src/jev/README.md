@@ -244,13 +244,16 @@ tool results, or choose a `see`/`act` verb. They do not generate chat.
 
 ```sh
 tools jev listen --stt fixture --transcript session.jsonl --app Fixture --dry-run
+tools jev listen --stt fixture --transcript session.jsonl --from-wake --dispatch-ahead --dry-run
 tools jev route "unresolved review threads on 409"
-tools jev compact session.jsonl --keep 0.5
+tools jev route --suggest "pr 409"
+tools jev compact session.jsonl --keep 0.5 --keep-tokens 8000 --source jsonl
 tools jev screen src/control/commands/run.ts --purpose focus-safety
-tools jev verify --claims claims.md --against src/ --purpose secrets
+tools jev verify --claims claims.md --against src/ --purpose secrets --only-changed
 tools jev watch --app Fixture --goal "the send button is enabled" --hz 4
-tools jev loop --goal "open the first result" --browser --port 9222
+tools jev loop --goal "open the first result" --surface auto --app Safari --browser
 tools jev control observe --app Fixture --goal "archive the selected newsletter"
+tools jev control assist --app Fixture --goal "Enable line numbers" --no-fanout
 tools jev control demo route
 tools jev wake status
 ```

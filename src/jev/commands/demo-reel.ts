@@ -1,6 +1,6 @@
 import { out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
-import { DEMO_NAMES, refuseUserMail, runDemo } from "../lib/demo/reel";
+import { DEMO_NAMES, demoTrace, refuseUserMail, runDemo } from "../lib/demo/reel";
 
 export function registerDemoReel(program: Command): void {
     const control = program.commands.find((command) => command.name() === "control");
@@ -23,11 +23,12 @@ export function registerDemoReel(program: Command): void {
             }
 
             const summary = await runDemo(name);
+            const trace = demoTrace(summary);
             out.result({
-                ...summary,
+                ...trace,
                 record: options.record === true ? "capture skipped" : undefined,
             });
-            if (!summary.ok) {
+            if (!trace.ok) {
                 process.exitCode = 1;
             }
         });

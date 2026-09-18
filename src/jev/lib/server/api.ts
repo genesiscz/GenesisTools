@@ -17,6 +17,13 @@ import { stepExperiment } from "../experiment";
 import { experimentRequestSchema } from "../experiment-contract";
 import { generationMode } from "../generation";
 import { languages } from "../languages";
+import {
+    ListenSessionConflictError,
+    listenLabStatus,
+    listenLabTail,
+    startListenLab,
+    stopListenLab,
+} from "../listen/lab";
 import { evaluateRequest, gatewayStatus } from "../service";
 import { typescriptPresets } from "../typescript-grammar";
 
@@ -116,6 +123,14 @@ export function jevApiPlugin(): Plugin {
                         return { evaluation: demoInput, typescript: typescriptPresets };
                     }
 
+                    if (req.method === "GET" && route === "/listen/status") {
+                        return listenLabStatus();
+                    }
+
+                    if (req.method === "GET" && route === "/listen/tail") {
+                        return { tail: listenLabTail() };
+                    }
+
                     if (req.method !== "POST") {
                         throw new Error("Unknown Jev API route.");
                     }
@@ -160,6 +175,15 @@ export function jevApiPlugin(): Plugin {
                         return compileExperiment({ input: body, signal: controller.signal });
                     }
 
+                    if (route === "/listen/start") {
+                        const parsed = z.object({ transcript: z.string().optional() }).parse(body);
+                        return startListenLab(parsed);
+                    }
+
+                    if (route === "/listen/stop") {
+                        return stopListenLab();
+                    }
+
                     throw new Error("Unknown Jev API route.");
                 };
                 void handle()
@@ -177,7 +201,13 @@ export function jevApiPlugin(): Plugin {
                                   : "Request failed.";
                         logger.debug({ message }, "Jev dashboard request ended with an error");
                         if (!res.destroyed) {
-                            reply(res, error instanceof ZodError ? 400 : 502, { error: message });
+                            const status =
+                                error instanceof ListenSessionConflictError
+                                    ? 409
+                                    : error instanceof ZodError
+                                      ? 400
+                                      : 502;
+                            reply(res, status, { error: message });
                         }
                     })
                     .finally(() => {
