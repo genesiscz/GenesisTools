@@ -4,12 +4,13 @@ import { join } from "node:path";
 import { evaluationSchema } from "@genesiscz/utils/ai/evaluation/evaluate";
 import type { EvaluationResponse, Evaluator } from "@genesiscz/utils/ai/evaluation/service";
 import { SafeJSON } from "@genesiscz/utils/json";
+import type { JsonLineTransport } from "@genesiscz/utils/process/json-line-process";
 import { assistTask } from "../lib/decision/assist";
 import { admittedChoice, judgeOutcome, resolveIntent } from "../lib/decision/decisions";
 import { fillForm } from "../lib/decision/fill";
 import { replayCases } from "../lib/decision/fixtures";
-import { type FolderDriver, navigateFolders } from "../lib/decision/folders";
 import type { ControlDriver } from "../lib/decision/native";
+import { NativeControlSession } from "../lib/decision/native-session";
 import { candidatesFor, type Observation } from "../lib/decision/observation";
 import { replayControl } from "../lib/decision/replay";
 
@@ -513,115 +514,97 @@ test("assist does not reverse a toggle when semantic completion stays uncertain"
     expect(fixture.calls()).toBe(1);
 });
 
-function folderFixture() {
-    let time = 0;
-    const calls: Array<{ id: string; at: number; expanded: boolean }> = [];
-    const folders = ["agents", "docs", "src"].map((label, index) => ({
-        id: `f${index}`,
-        label,
-        expanded: false,
-        reference: `reference-${index}`,
-    }));
-    const driver: FolderDriver = {
-        inspect: async () => ({ ok: true, scope: "unique-outline", pid: 1, windowId: 2, folders }),
-        set: async (call) => {
-            calls.push({ id: call.target.id, at: time, expanded: call.expanded });
-            return { ok: true, verified: true, expanded: call.expanded, changed: true };
+function sessionFixture(options: { reply?: Record<string, unknown>; evaluate?: Evaluator } = {}) {
+    const requests: Record<string, unknown>[] = [];
+    let generation = 0;
+    let closed = false;
+    const transport: JsonLineTransport = {
+        request: async ({ input, signal }) => {
+            signal?.throwIfAborted();
+            requests.push(input);
+            if (input.op === "observe") {
+                generation++;
+                return {
+                    ok: true,
+                    pid: 1,
+                    windowId: 2,
+                    scope: "chrome",
+                    rootRole: "AXTabGroup",
+                    targets: ["one", "two"].map((label, index) => ({
+                        id: `${generation}:${index}`,
+                        role: "AXRadioButton",
+                        roleDescription: "tab",
+                        subrole: "AXTabButton",
+                        label,
+                        selected: index === 0,
+                        actions: ["press"],
+                    })),
+                };
+            }
+            return options.reply ?? { ok: true, verified: true };
+        },
+        close: () => {
+            closed = true;
         },
     };
-    return {
-        driver,
-        calls,
-        clock: {
-            now: () => time,
-            sleep: async (ms: number) => {
-                time += ms;
-            },
-        },
-    };
+    const session = new NativeControlSession({
+        app: "Fixture",
+        transport,
+        evaluate: options.evaluate ?? (async () => evaluation({ matches: { type: "boolean", probability: 0.98 } })),
+    });
+    return { session, requests, closed: () => closed };
 }
-test("folder sequence resolves explicit names without a model and schedules in one process", async () => {
-    const fixture = folderFixture();
-    const result = await navigateFolders({
-        ...fixture,
-        names: ["agents", "docs", "src"],
-        mode: "open",
-        evaluate: async () => {
-            throw new Error("Exact names must not call Jev");
-        },
+test("generic session retains targets and one evaluator across bounded native actions", async () => {
+    const fixture = sessionFixture();
+    const view = await fixture.session.observe({ role: "AXRadioButton", rootRole: "AXTabGroup" });
+    const plan = await fixture.session.chooseAll("Select every tab");
+    expect(plan.targets).toEqual(view.targets.map((target) => target.id));
+    await fixture.session.batch({
+        steps: plan.targets.map((target) => ({ target, verifyAttribute: "AXSelected", verifyValue: true })),
     });
-    expect(result.status).toBe("verified");
-    expect(result.metrics.requests).toBe(0);
-    expect(fixture.calls.map((call) => call.at)).toEqual([0, 1000, 2000]);
-    expect(result.bindings.every((binding) => binding.source === "exact")).toBe(true);
+    expect(fixture.requests.map((request) => request.op)).toEqual(["observe", "batch"]);
+    fixture.session.close();
+    expect(fixture.closed()).toBe(true);
 });
-test("semantic folder intents share one evaluation and uncertain batches never begin dispatch", async () => {
-    const fixture = folderFixture();
-    let requests = 0;
-    const evaluate: Evaluator = async (call) => {
-        requests++;
-        const request = evaluationSchema.parse(call.input);
-        expect(Object.keys(request.questions)).toEqual(["q0", "q1"]);
-        return evaluation(
-            Object.fromEntries(
-                ["q0", "q1"].map((id, index) => [
-                    id,
-                    {
-                        type: "choice" as const,
-                        choice: `f${index}`,
-                        probabilities: { f0: index === 0 ? 1 : 0, f1: index === 1 ? 1 : 0, f2: 0, abstain: 0 },
-                    },
-                ])
-            )
-        );
-    };
-    const result = await navigateFolders({
-        ...fixture,
-        names: ["agent configuration", "documentation"],
-        mode: "open",
-        evaluate,
+test("generic session rejects invented, expired and malformed batch targets before dispatch", async () => {
+    const fixture = sessionFixture();
+    const old = await fixture.session.observe({ role: "AXButton", rootRole: "AXGroup" });
+    await fixture.session.observe({ role: "AXButton", rootRole: "AXGroup" });
+    for (const target of ["invented", old.targets[0].id]) {
+        await expect(fixture.session.batch({ steps: [{ target }] })).rejects.toThrow("observed");
+        await expect(fixture.session.act({ target })).rejects.toThrow("observed");
+    }
+    expect(fixture.requests).toHaveLength(2);
+    fixture.session.close();
+});
+test("generic session does not dispatch on a low target match or repeat an uncertain mutation", async () => {
+    const low = sessionFixture({
+        evaluate: async () => evaluation({ matches: { type: "boolean", probability: 0.4 } }),
     });
-    expect(result.status).toBe("verified");
-    expect(requests).toBe(1);
-    expect(result.metrics.requests).toBe(1);
-    const uncertain = folderFixture();
-    const stopped = await navigateFolders({
-        ...uncertain,
-        names: ["unclear"],
-        mode: "open",
-        evaluate: async () =>
-            evaluation({
-                q0: { type: "choice", choice: "f0", probabilities: { f0: 0.5, f1: 0.5, f2: 0, abstain: 0 } },
+    await low.session.observe({ role: "AXButton", rootRole: "AXGroup" });
+    await expect(low.session.chooseAll("Click save")).rejects.toThrow("did not admit");
+    expect(low.requests).toHaveLength(1);
+    low.session.close();
+    const uncertain = sessionFixture({ reply: { ok: false, dispatchState: "uncertain", error: "delivery lost" } });
+    const view = await uncertain.session.observe({ role: "AXButton", rootRole: "AXGroup" });
+    const result = await uncertain.session.batch({ steps: [{ target: view.targets[0].id }] });
+    expect(result.ok).toBe(false);
+    expect(uncertain.requests.map((request) => request.op)).toEqual(["observe", "batch"]);
+    uncertain.session.close();
+});
+test("a new observation invalidates an in-flight semantic choice", async () => {
+    let finish!: (result: EvaluationResponse) => void;
+    const fixture = sessionFixture({
+        evaluate: () =>
+            new Promise((resolve) => {
+                finish = resolve;
             }),
     });
-    expect(stopped.status).toBe("stopped");
-    expect(uncertain.calls).toHaveLength(0);
-});
-test("folder sequences stop on uncertain delivery and never double-toggle", async () => {
-    const fixture = folderFixture();
-    let attempts = 0;
-    fixture.driver.set = async () => {
-        attempts++;
-        return { ok: false, dispatchState: "uncertain", error: "transport lost" };
-    };
-    const result = await navigateFolders({
-        ...fixture,
-        names: ["agents", "docs"],
-        mode: "peek",
-        evaluate: chooseFirst,
-    });
-    expect(result.status).toBe("unknown");
-    expect(attempts).toBe(1);
-});
-test("folder sequences reject duplicate targets, cancellation and budget overflow before dispatch", async () => {
-    for (const extra of [
-        { names: ["agents", "agents"] },
-        { names: ["agents"], signal: AbortSignal.abort() },
-        { names: ["agents", "docs"], limits: { maxActions: 1 } },
-    ]) {
-        const fixture = folderFixture();
-        const result = await navigateFolders({ ...fixture, ...extra, mode: "open", evaluate: chooseFirst });
-        expect(result.status).toBe("stopped");
-        expect(fixture.calls).toHaveLength(0);
-    }
+    await fixture.session.observe({ role: "AXButton", rootRole: "AXGroup" });
+    const choice = fixture.session.chooseAll("Click save");
+    await Promise.resolve();
+    await fixture.session.observe({ role: "AXButton", rootRole: "AXGroup" });
+    finish(evaluation({ matches: { type: "boolean", probability: 0.99 } }));
+    await expect(choice).rejects.toThrow("changed");
+    fixture.session.close();
 });

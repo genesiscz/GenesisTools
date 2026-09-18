@@ -118,6 +118,17 @@ private func workflowSameFrame(_ first: CGRect, _ second: CGRect) -> Bool {
         && abs(first.width - second.width) < 1 && abs(first.height - second.height) < 1
 }
 
+
+private func workflowAXWindowID(_ element: AXUIElement) -> CGWindowID? {
+    typealias GetWindow = @convention(c) (AXUIElement, UnsafeMutablePointer<CGWindowID>) -> AXError
+    guard let handle = dlopen("/System/Library/Frameworks/ApplicationServices.framework/ApplicationServices", RTLD_LAZY) else { return nil }
+    defer { dlclose(handle) }
+    guard let symbol = dlsym(handle, "_AXUIElementGetWindow") else { return nil }
+    let getWindow = unsafeBitCast(symbol, to: GetWindow.self)
+    var id: CGWindowID = 0
+    return getWindow(element, &id) == .success && id > 0 ? id : nil
+}
+
 private func observedWindow(_ ax: AXUIElement, pid: pid_t) throws -> ObservedWindow {
     let frame = axFrame(ax)
     guard frame.origin.x.isFinite, frame.origin.y.isFinite,
@@ -125,19 +136,22 @@ private func observedWindow(_ ax: AXUIElement, pid: pid_t) throws -> ObservedWin
           (axAttribute(ax, "AXMinimized") as? Bool) != true else {
         throw ObservedTreeError("selected window is minimized or has no usable geometry; inspect again")
     }
+    let nativeID = workflowAXWindowID(ax)
     let matches = workflowWindows(pid).filter { info in
+        guard let expectedID = info[kCGWindowNumber] as? CGWindowID else { return false }
         guard let raw = info[kCGWindowBounds] as? NSDictionary,
               let bounds = CGRect(dictionaryRepresentation: raw) else {
             return false
         }
-        return workflowSameFrame(bounds, frame)
+        return matchesNativeWindowIdentity(reportedID: nativeID, expectedID: expectedID,
+            frameMatches: workflowSameFrame(bounds, frame))
     }
     guard matches.count == 1, let id = matches[0][kCGWindowNumber] as? CGWindowID else {
         throw ObservedTreeError("selected AX window has \(matches.count) matching on-screen CG windows; refusing an ambiguous or offscreen screenshot")
     }
     // Matching a frame is safe only when exactly one AX window owns it too.
     let sameFrame = axWindows(AXUIElementCreateApplication(pid)).filter { workflowSameFrame(axFrame($0), frame) }
-    guard sameFrame.count == 1 else {
+    guard nativeID != nil || sameFrame.count == 1 else {
         throw ObservedTreeError("multiple AX windows share the selected frame; cannot prove screenshot ownership")
     }
     return ObservedWindow(ax: ax, id: id, bounds: frame)
@@ -287,7 +301,10 @@ private func workflowWindowByID(_ id: Int, pid: pid_t) -> ObservedWindow {
           let frame = CGRect(dictionaryRepresentation: bounds) else {
         workflowFailure("selected window is closed or offscreen; run see again")
     }
-    let matches = axWindows(AXUIElementCreateApplication(pid)).filter { workflowSameFrame(axFrame($0), frame) }
+    let matches = axWindows(AXUIElementCreateApplication(pid)).filter {
+        return matchesNativeWindowIdentity(reportedID: workflowAXWindowID($0), expectedID: CGWindowID(id),
+            frameMatches: workflowSameFrame(axFrame($0), frame))
+    }
     guard matches.count == 1 else {
         workflowFailure("selected window identity is missing or ambiguous; run see again")
     }
@@ -864,104 +881,197 @@ func cmdAct(appName _: String) {
     }
 }
 
-private func folderRoots(_ window: AXUIElement) -> [AXUIElement] {
-    findByAttributes(window, role: "AXOutline", title: nil, value: nil, desc: nil, exact: true, maxDepth: 50)
-}
+private final class ControlNativeSession {
+    let pid: pid_t
+    let launch: Double
+    var window: ObservedWindow?
+    var root: AXUIElement?
+    var role = ""
+    var rootRole = ""
+    var chrome = true
+    var generation = 0
+    var targets: [String: AXUIElement] = [:]
+    let started = ProcessInfo.processInfo.systemUptime
+    var actions = 0
+    var lastTraversal: [String: Int] = [:]
 
-private func folderRows(_ root: AXUIElement) -> [AXUIElement] {
-    findByAttributes(root, role: "AXRow", title: nil, value: nil, desc: nil, exact: true, maxDepth: 50)
-        .filter { axAttributeNames($0).contains("AXExpanded") && axAttribute($0, "AXExpanded") is Bool }
-}
+    init(appName: String) {
+        pid = resolveApp(appName)
+        launch = workflowLaunch(pid)
+    }
 
-private func folderFailure(_ message: String, dispatched: Bool = false) -> Never {
-    jsonOutput(["ok": false, "error": message, "dispatchState": dispatched ? "uncertain" : "not_started"])
-    exit(1)
-}
-
-/// Explicit selector scope: one outline in one window. No screenshot or transcript digest is involved.
-func cmdFolderList(appName: String) {
-    workflowPermissions()
-    let pid = resolveApp(appName)
-    let app = AXUIElementCreateApplication(pid)
-    let windows: [AXUIElement]
-    if let raw = argValue("--window-id"), let id = Int(raw), id > 0, id <= Int(UInt32.max) {
-        windows = [workflowWindowByID(id, pid: pid).ax]
-    } else if argValue("--window-id") != nil {
-        folderFailure("invalid --window-id")
-    } else {
-        windows = axWindowsOrExit(app, appName)
-    }
-    let roots = windows.flatMap { window in folderRoots(window).map { (window, $0) } }
-    guard roots.count == 1 else { folderFailure("expected exactly one outline; use --window-id to narrow the app") }
-    let window = workflowWindow(roots[0].0, pid: pid)
-    let rows = folderRows(roots[0].1)
-    guard rows.count <= 200 else { folderFailure("more than 200 folders; narrow the tree before resolving") }
-    let launch = workflowLaunch(pid)
-    var folders: [[String: Any]] = []
-    for row in rows {
-        let frame = axFrame(row)
-        guard frame.width > 0, frame.height > 0, window.bounds.intersects(frame),
-              (axAttribute(row, "AXEnabled") as? Bool) != false,
-              axActionNames(row).contains("AXPress") else { continue }
-        let label = axStringAttribute(row, "AXDescription") ?? axStringAttribute(row, "AXTitle") ?? ""
-        guard !label.isEmpty else { continue }
-        let keys = ["AXIdentifier", "AXDescription", "AXTitle"]
-        guard let key = keys.first(where: { key in
-            guard let value = axStringAttribute(row, key), !value.isEmpty else { return false }
-            return rows.filter { axStringAttribute($0, key) == value }.count == 1
-        }), let identity = axStringAttribute(row, key) else { continue }
-        let ref = FolderReference(pid: pid, launch: launch, window: Int(window.id),
-            created: Date().timeIntervalSince1970, label: label, identityAttribute: key, identity: identity)
-        guard let data = try? JSONEncoder().encode(ref) else { folderFailure("cannot encode folder reference") }
-        folders.append(["id": "f\(folders.count)", "label": label, "expanded": (axAttribute(row, "AXExpanded") as? Bool) == true,
-                        "reference": data.base64EncodedString()])
-    }
-    jsonOutput(["ok": true, "scope": "unique-outline", "pid": pid, "windowId": window.id, "folders": folders])
-}
-
-func cmdFolderSet(appName: String) {
-    workflowPermissions()
-    guard let raw = argValue("--reference"), raw.count < 8192, let data = Data(base64Encoded: raw),
-          let ref = try? JSONDecoder().decode(FolderReference.self, from: data),
-          let desiredRaw = argValue("--expanded"), ["true", "false"].contains(desiredRaw) else {
-        folderFailure("--reference and --expanded true|false required")
-    }
-    let pid = resolveApp(appName)
-    do { try ref.validate(pid: pid, launch: workflowLaunch(pid), now: Date().timeIntervalSince1970) }
-    catch { folderFailure(error.localizedDescription) }
-    let window = workflowWindowByID(ref.window, pid: pid)
-    let roots = folderRoots(window.ax)
-    guard roots.count == 1 else { folderFailure("outline scope changed") }
-    let matches = findByAttributes(roots[0], role: "AXRow", title: nil, value: nil, desc: nil, exact: true, maxDepth: 50)
-        .filter { axStringAttribute($0, ref.identityAttribute) == ref.identity }
-    guard matches.count == 1 else { folderFailure("folder target missing or ambiguous") }
-    let row = matches[0]
-    let label = axStringAttribute(row, "AXDescription") ?? axStringAttribute(row, "AXTitle") ?? ""
-    guard label == ref.label, axAttributeNames(row).contains("AXExpanded"),
-          let before = axAttribute(row, "AXExpanded") as? Bool,
-          (axAttribute(row, "AXEnabled") as? Bool) != false, axActionNames(row).contains("AXPress"),
-          axFrame(row).width > 0, axFrame(row).height > 0, window.bounds.intersects(axFrame(row)) else {
-        folderFailure("folder identity, visibility or enabled state changed")
-    }
-    let desired = desiredRaw == "true"
-    if before == desired {
-        jsonOutput(["ok": true, "changed": false, "verified": true, "label": label, "expanded": before,
-                    "dispatchState": "not_started"])
-        return
-    }
-    ActionCursor.element("press", row, background: frontmostPid() != pid)
-    let result = performActionWithTimeout(row, action: "AXPress")
-    guard result == .success else { folderFailure("folder press failed; delivery uncertain (AX \(result.rawValue))", dispatched: true) }
-    let deadline = ProcessInfo.processInfo.systemUptime + 0.6
-    while true {
-        if (axAttribute(row, "AXExpanded") as? Bool) == desired {
-            jsonOutput(["ok": true, "changed": true, "verified": true, "label": label,
-                        "expanded": desired, "dispatchState": "dispatched"])
-            return
+    func find(_ node: AXUIElement, role: String) throws -> [AXUIElement] {
+        var count = 0
+        var visited = SnapshotObjectSet()
+        var matches: [AXUIElement] = []
+        var roles: [String: Int] = [:]
+        func walk(_ element: AXUIElement, depth: Int) throws {
+            guard visited.insert(element) else { return }
+            count += 1
+            guard count <= 4000, depth <= 50 else { throw ObservedTreeError("scope exceeds traversal budget") }
+            let actualRole = axStringAttribute(element, "AXRole") ?? ""
+            roles[actualRole, default: 0] += 1
+            if actualRole == role { matches.append(element) }
+            if chrome && actualRole == "AXWebArea" { return }
+            for child in axChildren(element) { try walk(child, depth: depth + 1) }
         }
-        guard ProcessInfo.processInfo.systemUptime < deadline else {
-            folderFailure("folder press dispatched but expanded state not verified; no retry", dispatched: true)
+        try walk(node, depth: 0)
+        lastTraversal = roles
+        return matches
+    }
+
+    func observe(_ input: [String: Any]) throws -> [String: Any] {
+        guard let requestedRole = input["role"] as? String, requestedRole.hasPrefix("AX"),
+              let requestedRoot = input["rootRole"] as? String, requestedRoot.hasPrefix("AX") else {
+            throw ObservedTreeError("role and rootRole required")
         }
-        Thread.sleep(forTimeInterval: 0.1)
+        chrome = (input["scope"] as? String ?? "chrome") == "chrome"
+        let windows = axWindows(AXUIElementCreateApplication(pid))
+        if let id = input["windowId"] as? Int {
+            window = workflowWindowByID(id, pid: pid)
+        } else {
+            let index = input["windowIndex"] as? Int ?? 0
+            guard windows.indices.contains(index) else { throw ObservedTreeError("window index unavailable") }
+            window = workflowWindow(windows[index], pid: pid)
+        }
+        guard let window else { throw ObservedTreeError("window unavailable") }
+        if input["focus"] as? Bool == true {
+            guard bringFrontmost(pid), performActionWithTimeout(window.ax, action: "AXRaise", timeoutMs: 1000) == .success else {
+                throw ObservedTreeError("could not focus requested window before observation")
+            }
+        }
+        var liveWindow = workflowWindowByID(Int(window.id), pid: pid)
+        var roots = try find(liveWindow.ax, role: requestedRoot)
+        let readyDeadline = ProcessInfo.processInfo.systemUptime + 1
+        while roots.isEmpty && ProcessInfo.processInfo.systemUptime < readyDeadline {
+            Thread.sleep(forTimeInterval: 0.1)
+            liveWindow = workflowWindowByID(Int(window.id), pid: pid)
+            roots = try find(liveWindow.ax, role: requestedRoot)
+        }
+        self.window = liveWindow
+        let rootIndex = input["rootIndex"] as? Int
+        guard rootIndex != nil || roots.count == 1, roots.indices.contains(rootIndex ?? 0) else {
+            throw ObservedTreeError("root role has \(roots.count) matches; observed roles: \(lastTraversal)")
+        }
+        let selectedRoot = roots[rootIndex ?? 0]
+        root = selectedRoot; role = requestedRole; rootRole = requestedRoot
+        let observed = try find(selectedRoot, role: requestedRole)
+        guard observed.count <= 200 else { throw ObservedTreeError("more than 200 targets") }
+        generation += 1
+        targets.removeAll()
+        var rows: [[String: Any]] = []
+        for element in observed {
+            guard axActionNames(element).contains("AXPress"), (axAttribute(element, "AXEnabled") as? Bool) != false else { continue }
+            let id = "\(generation):\(rows.count)"
+            targets[id] = element
+            var row: [String: Any] = ["id": id, "role": requestedRole,
+                "roleDescription": axStringAttribute(element, "AXRoleDescription") ?? "",
+                "subrole": axStringAttribute(element, "AXSubrole") ?? "",
+                "label": axStringAttribute(element, "AXTitle") ?? axStringAttribute(element, "AXDescription") ?? "",
+                "selected": (axAttribute(element, "AXSelected") as? Bool) == true,
+                "actions": ["press"]]
+            if axAttributeNames(element).contains("AXExpanded") {
+                row["expanded"] = axAttribute(element, "AXExpanded")
+            }
+            rows.append(row)
+        }
+        return ["ok": true, "pid": pid, "windowId": window.id, "scope": chrome ? "chrome" : "window",
+                "rootRole": rootRole, "targets": rows]
+    }
+
+    func act(_ input: [String: Any]) throws -> [String: Any] {
+        guard actions < 200, ProcessInfo.processInfo.systemUptime - started < 120,
+              workflowLaunch(pid) == launch, let window, let root,
+              let id = input["target"] as? String, let target = targets[id] else {
+            throw ObservedTreeError("target reference, process lifetime or session budget invalid")
+        }
+        let liveWindow = workflowWindowByID(Int(window.id), pid: pid)
+        let roots = try find(liveWindow.ax, role: rootRole)
+        let retainedRoot = roots.first(where: { CFEqual($0, root) })
+        let containingRoots = try roots.filter { try find($0, role: role).contains(where: { CFEqual($0, target) }) }
+        guard let liveRoot = retainedRoot ?? (containingRoots.count == 1 ? containingRoots[0] : nil),
+              try find(liveRoot, role: role).contains(where: { CFEqual($0, target) }) else {
+            throw ObservedTreeError("observed target was replaced or left its window scope")
+        }
+        self.root = liveRoot
+        guard (axAttribute(target, "AXEnabled") as? Bool) != false, axActionNames(target).contains("AXPress") else {
+            throw ObservedTreeError("target became disabled or lost AXPress")
+        }
+        let attribute = input["verifyAttribute"] as? String
+        let expected = input["verifyValue"] as? Bool
+        if let attribute {
+            guard ["AXSelected", "AXExpanded", "AXValue"].contains(attribute), expected != nil else {
+                throw ObservedTreeError("verification requires AXSelected, AXExpanded or boolean AXValue")
+            }
+        }
+        if input["focus"] as? Bool == true {
+            guard bringFrontmost(pid), performActionWithTimeout(window.ax, action: "AXRaise", timeoutMs: 1000) == .success else {
+                throw ObservedTreeError("could not focus requested window")
+            }
+        }
+        actions += 1
+        ActionCursor.element("press", target, background: frontmostPid() != pid)
+        let code = performActionWithTimeout(target, action: "AXPress")
+        guard code == .success else {
+            return ["ok": false, "target": id, "dispatchState": "uncertain", "error": "AXPress failed or timed out; no retry"]
+        }
+        let deadline = ProcessInfo.processInfo.systemUptime + 0.6
+        while let attribute, let expected, (axAttribute(target, attribute) as? Bool) != expected {
+            guard ProcessInfo.processInfo.systemUptime < deadline else {
+                return ["ok": false, "target": id, "dispatchState": "dispatched",
+                        "error": "postcondition not observed; no retry"]
+            }
+            Thread.sleep(forTimeInterval: 0.1)
+        }
+        return ["ok": true, "target": id, "dispatchState": "dispatched", "verified": attribute != nil]
+    }
+
+    func handle(_ input: [String: Any]) throws -> [String: Any] {
+        switch input["op"] as? String {
+        case "observe": return try observe(input)
+        case "act": return try act(input)
+        case "batch":
+            guard let steps = input["steps"] as? [[String: Any]], !steps.isEmpty, steps.count <= 200 else {
+                throw ObservedTreeError("batch requires 1–200 locally supplied actions")
+            }
+            let interval = input["intervalMs"] as? Int ?? 0
+            guard interval >= 0, interval <= 5000 else { throw ObservedTreeError("interval outside 0–5000") }
+            for step in steps {
+                guard let target = step["target"] as? String, targets[target] != nil else {
+                    throw ObservedTreeError("batch includes an unobserved target")
+                }
+            }
+            var results: [[String: Any]] = []
+            let start = ProcessInfo.processInfo.systemUptime
+            for (index, step) in steps.enumerated() {
+                let delay = start + Double(index * interval) / 1000 - ProcessInfo.processInfo.systemUptime
+                if delay > 0 { Thread.sleep(forTimeInterval: delay) }
+                var result: [String: Any]
+                do { result = try act(step) }
+                catch { result = ["ok": false, "dispatchState": "not_started", "error": error.localizedDescription] }
+                result["atMs"] = (ProcessInfo.processInfo.systemUptime - start) * 1000
+                results.append(result)
+                if result["ok"] as? Bool != true { break }
+            }
+            return ["ok": results.count == steps.count && results.allSatisfy { $0["ok"] as? Bool == true },
+                    "results": results, "elapsedMs": (ProcessInfo.processInfo.systemUptime - start) * 1000]
+        default: throw ObservedTreeError("unknown session operation")
+        }
+    }
+}
+
+func cmdControlSession(appName: String) {
+    workflowPermissions()
+    let session = ControlNativeSession(appName: appName)
+    DispatchQueue.global().asyncAfter(deadline: .now() + 125) { exit(0) }
+    while let line = readLine() {
+        guard line.utf8.count <= 65536, let data = line.data(using: .utf8),
+              let input = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            jsonOutput(["ok": false, "dispatchState": "not_started", "error": "invalid session request"])
+            continue
+        }
+        do { jsonOutput(try session.handle(input)) }
+        catch { jsonOutput(["ok": false, "dispatchState": "not_started", "error": error.localizedDescription]) }
+        fflush(stdout)
     }
 }

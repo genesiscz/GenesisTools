@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { JsonLineProcess } from "@genesiscz/utils/process/json-line-process";
 import { ReplEngine, resultMessage } from "./engine";
 
 // The MCP server renders a js_add_node_module_dir result with this. A timeout or a worker exit
@@ -121,4 +122,25 @@ describe("ReplEngine", () => {
         expect(imported.ok).toBe(true);
         expect(imported.text).toBe("7");
     });
+});
+
+it("JSON-line transport reuses its worker and cancels without replay", async () => {
+    const transport = new JsonLineProcess({
+        command: [
+            process.execPath,
+            "-e",
+            "let count=0; for await (const chunk of Bun.stdin.stream()) { count++; console.log('{\"count\":'+count+'}'); }",
+        ],
+    });
+    try {
+        expect(await transport.request({ input: { request: "first" } })).toEqual({ count: 1 });
+        expect(await transport.request({ input: { request: "second" } })).toEqual({ count: 2 });
+        const controller = new AbortController();
+        const cancelled = transport.request({ input: { request: "cancel" }, signal: controller.signal });
+        controller.abort();
+        await expect(cancelled).rejects.toThrow("cancelled");
+        await expect(transport.request({ input: { request: "must not replay" } })).rejects.toThrow("closed");
+    } finally {
+        transport.close();
+    }
 });

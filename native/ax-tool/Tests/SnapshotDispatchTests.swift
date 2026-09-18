@@ -169,21 +169,15 @@ final class CursorFeedbackTests: XCTestCase {
     }
 }
 
+
 extension SnapshotDispatchTests {
-    func testFolderReferenceAllowsReflowButPinsProcessLifetime() throws {
-        let ref = FolderReference(pid: 42, launch: 100, window: 7, created: 1000, label: "docs",
-            identityAttribute: "AXDOMIdentifier", identity: "folder-docs")
-        try ref.validate(pid: 42, launch: 100, now: 1050)
-        XCTAssertThrowsError(try ref.validate(pid: 43, launch: 100, now: 1050))
-        XCTAssertThrowsError(try ref.validate(pid: 42, launch: 101, now: 1050))
-        XCTAssertThrowsError(try ref.validate(pid: 42, launch: 100, now: 1121))
-        XCTAssertThrowsError(try ref.validate(pid: 42, launch: 100, now: 999))
+    func testNativeWindowIdentityDistinguishesIdenticalFrames() {
+        XCTAssertTrue(matchesNativeWindowIdentity(reportedID: 7, expectedID: 7, frameMatches: true))
+        XCTAssertFalse(matchesNativeWindowIdentity(reportedID: 8, expectedID: 7, frameMatches: true))
+        XCTAssertFalse(matchesNativeWindowIdentity(reportedID: 7, expectedID: 7, frameMatches: false))
     }
-    func testFolderReferenceRejectsUnboundedOrUnsupportedSelectors() {
-        for key in ["AXValue", "AXSelectedText", "AXWindow"] {
-            let ref = FolderReference(pid: 42, launch: 100, window: 7, created: 1000, label: "docs",
-                identityAttribute: key, identity: "folder-docs")
-            XCTAssertThrowsError(try ref.validate(pid: 42, launch: 100, now: 1050))
-        }
+    func testUnavailableNativeWindowIdentityRetainsGeometryFallback() {
+        XCTAssertTrue(matchesNativeWindowIdentity(reportedID: nil, expectedID: 7, frameMatches: true))
+        XCTAssertFalse(matchesNativeWindowIdentity(reportedID: nil, expectedID: 7, frameMatches: false))
     }
 }

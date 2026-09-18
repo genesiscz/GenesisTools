@@ -315,19 +315,39 @@ The same complete command set is available through `tools jev control` while usi
 
 Visual proof: `bun src/control/scripts/live-smoke.ts --cursor-proof` records five seconds of native press/set/press feedback on a disposable fixture. It is separate from `--background-only --verify-pointer`, which checks pointer and foreground invariants without the recording's foreground text entry.
 
-### Fast folder navigation
 
-`folders` inventories the app's unique Accessibility outline once, without capturing a screenshot or hashing the changing conversation. Exact unique labels resolve locally. Unmatched intents, or every target with `--semantic`, share one Jev evaluation before the first action.
+### Generic persistent sessions and sequences
+
+`sequence` applies one user intent to a bounded observed target set. It keeps native AX references and the Jev client loaded, so each action does not restart the helper, capture a screenshot or hash an unrelated transcript. Targets can be buttons, tabs, rows and other AXPress controls; the command is not tied to folders or a particular app.
 
 ```sh
-tools jev control folders list --app Codex
-tools jev control folders open .agents .claude .codex --app Codex --interval 1000
-tools jev control folders peek .agents .claude .codex --app Codex --interval 0
-tools jev control --provider typesafe folders peek "folder containing project documentation" "directory containing source code" --semantic --app Codex --interval 0
+tools jev control --provider typesafe sequence "Click all the browser tabs." \
+  --app com.brave.Browser --role AXRadioButton --within AXTabGroup --within-index 0 \
+  --window-ids WINDOW_ID --scope chrome --verify selected --interval 120 --restore-selected
 ```
 
-`open` and `close` request an explicit state; an already satisfied target does not receive another press. `toggle` changes it once; `peek` changes and restores it. The default interval is 1000 ms between action starts; 0 runs at native speed. A slow operation delays subsequent actions. The returned timings separate inventory, model decision, first action, and total time.
+Obtain current window IDs and root order with `see --scope chrome`. Choose a root index only from that observation. `--focus` explicitly focuses the window before binding. `--restore-selected` restores the target selected at observation time. A transient find bar can replace the browser's accessible root; dismiss it through its observed native close control before starting a new sequence. No browser scripting API or AppleScript is used.
 
-This is an explicit selector scope, not the full-window snapshot contract. Each native action pins process launch/window, re-resolves one outline and a unique target identity, verifies the unchanged label and supported AXExpanded attribute, and reads back the requested state. Ambiguous, missing, hidden or disabled targets stop. A failed or uncertain dispatch is never retried. References expire after 120 seconds. DOM IDs are not used because applications may change them on focus. Folder contents may change between steps; missing descendants require a new sequence.
+The model answers a typed target-set matching question using native control descriptions, scope and labels. It does not generate action arguments. Matching uses the existing 0.8 target-selection probability floor; completion is independent, exact native readback of the requested boolean attribute. The ordinary `judge` completion threshold is unchanged.
 
-On Codex on 2026-09-18, a warm six-action exact-name open/restore sequence completed in 2.88 seconds with first action at 318 ms and zero model requests. A two-target semantic run used one real TypeSafe request and verified four changes. These are small live measurements, not general throughput guarantees. Cold native compilation is separate and can add seconds after a code change.
+The native helper checks process launch, window identity, retained target membership, enabled state and AXPress support before every dispatch. Replaced parent containers can be rebound only when they still contain the retained target. Missing targets and ambiguous scope stop. Each batch retains successful and failed step results; no uncertain mutation retries. Sessions have a 120-second execution lifetime, 200-action cap and bounded IPC timeouts. Root/window IDs are observation data, not saved authorization.
+
+Two Brave windows with identical geometry are distinguished by their native AX window IDs, with the prior strict frame matching retained as fallback when that OS capability is unavailable.
+
+Live measurement on 2026-09-18: Jev plus native AXPress activated and read back all 74 tabs across two Brave windows in 10.24 seconds, then restored the selections present at the start of that run. This is a small warm desktop measurement; it excludes development and cold native compilation.
+
+For persistent agent use, import `NativeControlSession` from `src/control/lib/decision/native-session.ts` inside the repository's `tools node-repl` runtime. Keep the instance across REPL calls:
+
+```ts
+const { NativeControlSession } = await import("/absolute/GenesisTools/src/control/lib/decision/native-session.ts");
+const control = new NativeControlSession({ app: "com.brave.Browser", provider: "typesafe" });
+const view = await control.observe({ role: "AXRadioButton", rootRole: "AXTabGroup", rootIndex: 0,
+    scope: "chrome", windowId: currentWindowId });
+const plan = await control.chooseAll("Click all the browser tabs.");
+await control.batch({ steps: plan.targets.map(target => ({
+    target, verifyAttribute: "AXSelected", verifyValue: true,
+})), intervalMs: 120 });
+control.close();
+```
+
+The repository's Bun-based REPL supports TypeScript imports. A different host's Node REPL may only accept compiled JavaScript. The measured repository REPL setup took 178 ms; a later call reused its bindings and completed Jev plus two native presses and restoration in 1.04 seconds. Keep sessions short; create a fresh one after expiry or cancellation.
