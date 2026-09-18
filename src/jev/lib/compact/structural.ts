@@ -1,4 +1,5 @@
 import { measureBytes, serializeMessage } from "./format";
+import { isPairedToolResult, pairToolCalls } from "./pairing";
 import { type CompactDecision, type CompactMessage, type CompactResult, isToolResult } from "./schema";
 
 export interface StructuralCompactOptions {
@@ -6,6 +7,7 @@ export interface StructuralCompactOptions {
     pin: number;
     maxResult: number;
     threshold: number;
+    keepTokens?: number;
 }
 
 export function pinTail(messages: CompactMessage[], pin: number): CompactMessage[] {
@@ -17,8 +19,12 @@ export function compactStructural(messages: CompactMessage[], options: Structura
     const pinned = pinTail(messages, options.pin);
     const originalLines = pinned.map((message) => serializeMessage(message));
     const inBytes = measureBytes(originalLines);
+    if (options.keepTokens !== undefined) {
+        options = { ...options, keep: Math.min(options.keep, (options.keepTokens * 4) / Math.max(inBytes, 1)) };
+    }
     const decisions: CompactDecision[] = [];
     const kept: CompactMessage[] = [];
+    const pairs = pairToolCalls(pinned);
 
     const toolCounts = new Map<string, number>();
     for (const message of pinned) {
@@ -100,6 +106,20 @@ export function compactStructural(messages: CompactMessage[], options: Structura
             if (existing) {
                 existing.kind = "drop";
                 existing.reason = "keep_ratio";
+            }
+
+            const pairedIndex = pairs.get(next.index);
+            const paired =
+                pairedIndex === undefined ? undefined : kept.find((message) => message.index === pairedIndex);
+            if (paired && isPairedToolResult(paired) && !paired.pinned) {
+                const remainPaired = kept.filter((message) => message !== paired);
+                kept.length = 0;
+                kept.push(...remainPaired);
+                const pairedDecision = decisions.find((item) => item.index === paired.index);
+                if (pairedDecision) {
+                    pairedDecision.kind = "drop";
+                    pairedDecision.reason = "paired_drop";
+                }
             }
             lines = kept.map((message) => {
                 const decision = decisions.find((item) => item.index === message.index);

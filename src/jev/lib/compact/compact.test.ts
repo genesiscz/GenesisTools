@@ -2,6 +2,8 @@ import { expect, test } from "bun:test";
 import type { EvaluationResponse, Evaluator } from "@genesiscz/utils/ai/evaluation/service";
 import { parseCompactJsonl } from "./format";
 import { compactWithJev } from "./llm";
+import { pairToolCalls } from "./pairing";
+import { convertSessionJsonl } from "./sources";
 import { compactStructural } from "./structural";
 
 const defaults = { keep: 0.5, pin: 2, maxResult: 20, threshold: 0.25 };
@@ -71,4 +73,43 @@ test("Jev layer applies keep/drop without rewriting user text", async () => {
     });
     expect(result.lines.join("\n")).toContain("stay");
     expect(result.decisions.some((decision) => decision.kind === "drop" || decision.reason === "jev")).toBe(true);
+});
+
+test("pairs shuffled tool_use and tool_result ids", () => {
+    const text = [
+        `{"role":"tool","tool_call_id":"c1","content":"${"z".repeat(80)}"}`,
+        `{"role":"assistant","content":[{"type":"tool_use","id":"c1","name":"github"}]}`,
+        `{"role":"user","content":"tail"}`,
+        `{"role":"assistant","content":"tail2"}`,
+    ].join("\n");
+    const messages = parseCompactJsonl(text);
+    const pairs = pairToolCalls(messages);
+    expect(pairs.get(0)).toBe(1);
+    expect(pairs.get(1)).toBe(0);
+});
+
+test("keep-tokens tightens the keep ratio", () => {
+    const text = [
+        `{"role":"user","content":"please review 409"}`,
+        `{"role":"tool","name":"github","content":"${"hunk".repeat(80)}"}`,
+        `{"role":"assistant","content":"done"}`,
+        `{"role":"user","content":"keep this tail"}`,
+        `{"role":"assistant","content":"ok"}`,
+    ].join("\n");
+    const loose = compactStructural(parseCompactJsonl(text), { ...defaults, keep: 0.99, threshold: 0.01 });
+    const tight = compactStructural(parseCompactJsonl(text), {
+        ...defaults,
+        keep: 0.99,
+        threshold: 0.01,
+        keepTokens: 8,
+    });
+    expect(tight.outBytes).toBeLessThanOrEqual(loose.outBytes);
+});
+
+test("session sources convert type/message rows without rewriting user text", () => {
+    const converted = convertSessionJsonl(
+        `{"type":"user","message":{"role":"user","content":"please review 409"}}\n{"type":"assistant","message":{"role":"assistant","content":"looking"}}`
+    );
+    expect(converted).toContain("please review 409");
+    expect(converted).toContain('"role":"user"');
 });

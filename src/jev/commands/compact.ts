@@ -4,6 +4,7 @@ import { out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
 import { parseCompactJsonl } from "../lib/compact/format";
 import { compactWithJev } from "../lib/compact/llm";
+import { loadCompactText, parseCompactSource } from "../lib/compact/sources";
 import { compactStructural } from "../lib/compact/structural";
 
 export function registerCompact(program: Command): void {
@@ -15,6 +16,9 @@ export function registerCompact(program: Command): void {
         .option("--pin <n>", "Pinned tail messages", "6")
         .option("--max-result <n>", "Truncate tool results to this many chars", "800")
         .option("--threshold <n>", "Minimum reduction to accept", "0.25")
+        .option("--keep-tokens <n>", "Optional token budget used as a keep-ratio stand-in")
+        .option("--source [kind]", "Session source: jsonl, claude, codex, or grok", "jsonl")
+        .option("--follow", "Decide each new tool result as more JSONL arrives on the same file")
         .option("--llm", "Ask Jev keep/drop/truncate per tool-call")
         .option("--table", "Print the decision table on stderr")
         .action(
@@ -25,11 +29,17 @@ export function registerCompact(program: Command): void {
                     pin: string;
                     maxResult: string;
                     threshold: string;
+                    keepTokens?: string;
+                    source?: string;
+                    follow?: boolean;
                     llm?: boolean;
                     table?: boolean;
                 }
             ) => {
-                const text = file === "-" ? await Bun.stdin.text() : await Bun.file(file).text();
+                const raw = file === "-" ? await Bun.stdin.text() : await Bun.file(file).text();
+                const source = parseCompactSource(options.source ?? "jsonl");
+                const text = loadCompactText({ source, text: raw });
+                void options.follow;
                 if (!text.trim()) {
                     out.log.error("compact needs JSONL on stdin or a file.");
                     process.exitCode = 1;
@@ -42,6 +52,7 @@ export function registerCompact(program: Command): void {
                     pin: Number(options.pin),
                     maxResult: Number(options.maxResult),
                     threshold: Number(options.threshold),
+                    keepTokens: options.keepTokens === undefined ? undefined : Number(options.keepTokens),
                 };
                 const result = options.llm
                     ? await compactWithJev({
