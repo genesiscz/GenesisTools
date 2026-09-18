@@ -61,6 +61,9 @@ export class NativeControlDriver implements ControlDriver {
             call.candidate.action,
             "--refresh",
         ];
+        if (this.options.image === false) {
+            args.push("--no-image");
+        }
         if (call.candidate.action === "set") {
             if (call.value === undefined) {
                 throw new Error("A set action requires an exact supplied value.");

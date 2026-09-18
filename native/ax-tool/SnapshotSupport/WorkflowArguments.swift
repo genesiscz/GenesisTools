@@ -28,7 +28,7 @@ public struct WorkflowArguments {
                 "--keys", "--coords", "--button", "--to", "--duration", "--pages", "--pixels", "--range", "--prefix",
                 "--suffix", "--selection", "--format", "--path", "--region",
             ]
-            flagOptions = ["--background", "--double", "--refresh", "--no-cursor"]
+            flagOptions = ["--background", "--double", "--refresh", "--no-cursor", "--no-image"]
         default:
             throw WorkflowArgumentError.invalid("unknown workflow command \(command)")
         }
@@ -114,6 +114,9 @@ public struct WorkflowArguments {
         try reject(["--keys"], unless: ["key"])
         try reject(["--ax-action"], unless: ["perform"])
 
+        if flags.contains("--no-image"), !flags.contains("--refresh") || values["--path"] != nil {
+            throw WorkflowArgumentError.invalid("--no-image requires --refresh and cannot use --path")
+        }
         if values["--path"] != nil, !flags.contains("--refresh") {
             throw WorkflowArgumentError.invalid("--path requires --refresh")
         }

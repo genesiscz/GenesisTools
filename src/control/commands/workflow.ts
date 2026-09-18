@@ -355,6 +355,7 @@ export function registerWorkflowCommands(program: Command): void {
             "settle, then return the post-action snapshot under `after`; one round trip instead of two"
         )
         .option("--path <png>", "with --refresh: save the post-action screenshot here")
+        .option("--no-image", "with --refresh: return AX state without a post-action screenshot")
         .action((opts: WorkflowOptions) => {
             if (typeof opts.action !== "string" || !ACTIONS.some((action) => action === opts.action)) {
                 logger.error(suggestEnumFlag("tools control act", "--action", ACTIONS));
@@ -427,6 +428,9 @@ export function registerWorkflowCommands(program: Command): void {
 
             if (opts.refresh) {
                 args.push("--refresh");
+            }
+            if (opts.image === false) {
+                args.push("--no-image");
             }
 
             if (typeof opts.path === "string") {

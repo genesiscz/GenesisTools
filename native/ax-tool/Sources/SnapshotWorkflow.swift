@@ -307,7 +307,7 @@ private func workflowAfterState(appName: String, pid: pid_t, launch: Double, win
         }
         return try workflowSnapshot(appName: appName, pid: pid, launch: launch, window: current, index: index,
                                     depth: token.depth, scope: token.effectiveScope,
-                                    path: workflowArgument("--path"), settled: settled)
+                                    path: workflowArgument("--path"), settled: settled, captureImage: !workflowFlag("--no-image"))
     } catch let unstable as SnapshotUnstable {
         return ["ok": false, "error": unstable.message, "changedElements": unstable.changes]
     } catch {
@@ -513,6 +513,8 @@ func cmdAct(appName _: String) {
             ActionCursor.emit(action, point: center, background: frontmostPid() != pid)
         }
     }
+    var actionExtras: [String: Any] = [:]
+    var actionOK = true
     switch action {
     case "get":
         jsonOutput(["ok": true, "element": tree.rows[elementIndex].filter { $0.key != "identity" }, "windowId": window.id])
@@ -874,11 +876,11 @@ func cmdAct(appName _: String) {
                     if axStringAttribute(element, "AXValue") != before { break }
                 } while Date() < deadline
             }
-            jsonOutput(["ok": restoration != "restore-failed", "action": action, "element": elementIndex,
-                        "pid": pid, "windowId": window.id, "clipboardRestore": restoration,
-                        "refreshRequired": true, "note": "paste dispatched; use see to verify the resulting UI"])
-            if restoration == "restore-failed" { exit(1) }
-            return
+            actionExtras["clipboardRestore"] = restoration
+            actionOK = restoration != "restore-failed"
+            if !actionOK {
+                actionExtras["error"] = "paste dispatched but clipboard restoration failed; do not repeat the paste"
+            }
         } catch {
             workflowFailure(error)
         }
@@ -934,7 +936,8 @@ func cmdAct(appName _: String) {
     default:
         workflowFailure("unsupported action")
     }
-    var payload: [String: Any] = ["ok": true, "action": action, "element": elementIndex, "pid": pid, "windowId": window.id]
+    var payload: [String: Any] = ["ok": actionOK, "action": action, "element": elementIndex, "pid": pid, "windowId": window.id, "dispatchState": "dispatched"]
+    payload.merge(actionExtras) { _, new in new }
     if workflowFlag("--refresh") {
         // Derive it from the result. workflowAfterState has three failure returns — the
         // window list changed, the tree never settled, or any other throw — and each one
@@ -954,6 +957,7 @@ func cmdAct(appName _: String) {
         payload["note"] = "action dispatched; use see to verify the resulting UI"
     }
     jsonOutput(payload)
+    if !actionOK { exit(1) }
     }
     } catch {
         workflowFailure(error)

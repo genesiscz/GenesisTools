@@ -33,6 +33,13 @@ final class WorkflowArgumentsTests: XCTestCase {
         }
     }
 
+    func testTextOnlyRefreshRequiresRefreshAndRefusesImagePath() throws {
+        let args = ["--app", "Fixture", "--snapshot", "token", "--element", "0", "--action", "press"]
+        XCTAssertNoThrow(try WorkflowArguments(args + ["--refresh", "--no-image"], command: "act"))
+        XCTAssertThrowsError(try WorkflowArguments(args + ["--no-image"], command: "act"))
+        XCTAssertThrowsError(try WorkflowArguments(args + ["--refresh", "--no-image", "--path", "/tmp/after.png"], command: "act"))
+    }
+
     func testSelectOnlyFlagsAreRejectedForPaste() {
         XCTAssertThrowsError(try WorkflowArguments([
             "--app", "Fixture", "--snapshot", "token", "--element", "0", "--action", "paste", "--range", "0,1",

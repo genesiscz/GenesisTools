@@ -7,7 +7,11 @@ import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
 import { classifyPid } from "@genesiscz/utils/process-identity";
+import { Client } from "@modelcontextprotocol/client";
+import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { buildPreflightReport, runCapturePlan } from "../lib/capture-runner";
+import { ComputerReplEngine } from "../lib/computer-use/repl";
+import { type ComputerState, ComputerUse } from "../lib/computer-use/session";
 import { assistTask } from "../lib/decision/assist";
 import { judgeOutcome } from "../lib/decision/decisions";
 import { fillForm } from "../lib/decision/fill";
@@ -42,6 +46,7 @@ const backgroundOnly = Bun.argv.includes("--background-only");
 const semantic = Bun.argv.includes("--semantic");
 const cursorProof = Bun.argv.includes("--cursor-proof");
 const verifyPointer = Bun.argv.includes("--verify-pointer");
+const computerApi = Bun.argv.includes("--computer-api");
 const visual = Bun.argv.includes("--visual");
 const visualJev = Bun.argv.includes("--visual-jev");
 if (visual && !backgroundOnly) {
@@ -656,6 +661,136 @@ try {
         checks.push(
             `native OCR crop/resize region maps to its exact screen control; ${visualJev ? "Jev" : "exact"} choice clicks it with changed pixels and unchanged counter`
         );
+    }
+    if (computerApi) {
+        const app = String(fixturePid);
+        const originalFront = SafeJSON.parse((await command([native, "snapshot"])).stdout) as { pid: number };
+        const computer = new ComputerUse({ timeoutMs: 30000 });
+        try {
+            let observed = await computer.get_app_state({ app, window_index: 0, image: false });
+            const named = (id: string) => {
+                const row = observed.elements.find((element) => element.identifier === id);
+                assert.ok(row, id);
+                return row;
+            };
+            const counterBefore = Number(named("counter").value);
+            const firstButton = () => {
+                const row = observed.elements.find((element) => element.label === "Increment");
+                assert.ok(row);
+                return row;
+            };
+            let result = await computer.click({ app, element_ref: firstButton().ref });
+            assert.ok(result.ok && result.state);
+            observed = result.state;
+            assert.equal(Number(named("counter").value), counterBefore + 1);
+            result = await computer.set_value({ app, element_ref: named("input").ref, value: "API fixture" });
+            assert.ok(result.ok && result.state);
+            observed = result.state;
+            assert.equal(named("input").value, "API fixture");
+            result = await computer.focus({ app, element_ref: named("input").ref });
+            assert.ok(result.ok && result.state);
+            observed = result.state;
+            result = await computer.press_key({ app, revision: observed.revision, key: "super+a" });
+            assert.ok(result.ok && result.state);
+            observed = result.state;
+            result = await computer.type_text({ app, revision: observed.revision, text: "Native 🐈" });
+            assert.ok(result.ok && result.state);
+            observed = result.state;
+            assert.equal(named("input").value, "Native 🐈");
+            result = await computer.select_text({ app, element_ref: named("input").ref, text: "Native 🐈" });
+            assert.ok(result.ok && result.state);
+            observed = result.state;
+            result = await computer.paste({ app, revision: observed.revision, text: "API pasted", format: "text" });
+            assert.ok(result.ok && result.state);
+            assert.equal(result.clipboardRestore, "restored");
+            observed = result.state;
+            assert.equal(named("input").value, "API pasted");
+            result = await computer.perform_secondary_action({ app, element_ref: firstButton().ref, action: "press" });
+            assert.ok(result.ok && result.state);
+            observed = result.state;
+            assert.equal(Number(named("counter").value), counterBefore + 2);
+            result = await computer.scroll({ app, element_ref: named("scroll").ref, direction: "down", pixels: 60 });
+            assert.ok(result.ok && result.state);
+            observed = result.state;
+            observed = await computer.get_app_state({ app, window_id: observed.window.id, image: true });
+            const drag = named("drag");
+            assert.ok(drag.bounds && observed.screenshot);
+            const x = (drag.bounds.x - observed.window.x + drag.bounds.width / 2) * observed.screenshot.scaleX;
+            const y = (drag.bounds.y - observed.window.y + drag.bounds.height / 2) * observed.screenshot.scaleY;
+            result = await computer.drag({
+                app,
+                revision: observed.revision,
+                from_x: x,
+                from_y: y,
+                to_x: x + 30 * observed.screenshot.scaleX,
+                to_y: y,
+            });
+            assert.ok(result.ok && result.state, SafeJSON.stringify(result));
+            observed = result.state;
+            assert.equal(named("dragStatus").value, "dragged");
+            checks.push(
+                "independent API reads/diffs, clicks, sets, focuses, keys, types Unicode, selects, pastes with restoration, performs AX actions, scrolls and drags"
+            );
+
+            const transport = new StdioClientTransport({
+                command: process.execPath,
+                args: [join(root, "src/computer-use/index.ts"), "mcp"],
+                stderr: "pipe",
+            });
+            transport.stderr?.on("data", (chunk) =>
+                logger.debug({ stderr: String(chunk).slice(0, 2000) }, "Computer MCP stderr")
+            );
+            const client = new Client({ name: "native-fixture", version: "1" });
+            await client.connect(transport);
+            try {
+                const response = await client.callTool({
+                    name: "get_app_state",
+                    arguments: { app, window_id: observed.window.id, image: false },
+                });
+                assert.ok("content" in response && Array.isArray(response.content));
+                const text = response.content.find((item) => item.type === "text");
+                assert.ok(text && "text" in text && typeof text.text === "string");
+                const mcpState = SafeJSON.parse(text.text) as ComputerState;
+                const field = mcpState.elements.find((element) => element.identifier === "input");
+                assert.ok(field);
+                const set = await client.callTool({
+                    name: "set_value",
+                    arguments: { app, element_ref: field.ref, value: "MCP verified" },
+                });
+                assert.ok(!set.isError);
+            } finally {
+                await client.close();
+            }
+            state = await run(["see", "--app", app, "--window-id", String(observed.window.id), "--no-image"]);
+            assert.equal(find(state, "input").AXValue, "MCP verified");
+            checks.push("standalone stdio MCP process observes and edits the native fixture without Codex or Sky");
+
+            const engine = new ComputerReplEngine();
+            try {
+                const first = await engine.run(
+                    `const appState = await computer.get_app_state({app:${SafeJSON.stringify(app)},window_id:${observed.window.id},image:false}); appState.elements.length`
+                );
+                assert.ok(first.ok, first.error);
+                const second = await engine.run(
+                    `const edited = await computer.set_value({app:${SafeJSON.stringify(app)},element_ref:appState.elements.find(e=>e.identifier==="input").ref,value:"REPL verified"}); edited.ok`
+                );
+                assert.ok(second.ok && second.text === "true", second.error ?? second.text);
+            } finally {
+                engine.dispose();
+            }
+            state = await run(["see", "--app", app, "--window-id", String(observed.window.id)]);
+            assert.equal(find(state, "input").AXValue, "REPL verified");
+            checks.push("independent REPL preserves the observed app state across cells and performs a native edit");
+        } finally {
+            computer.close_session();
+            const currentFront = SafeJSON.parse((await command([native, "snapshot"])).stdout) as { pid: number };
+            if (currentFront.pid === fixturePid && originalFront.pid !== fixturePid) {
+                const restored = await command([native, "focus", "--app", String(originalFront.pid)]);
+                if (restored.exit !== 0) {
+                    logger.warn({ stderr: restored.stderr }, "Could not restore original front app");
+                }
+            }
+        }
     }
     out.result({ ok: true, checks, screenshot: state.screenshot.path, directory });
 } finally {

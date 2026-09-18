@@ -4,6 +4,7 @@ import { registerAwaitCommand } from "./await";
 import { registerCaptureCommands } from "./capture";
 import { registerChooseCommand } from "./choose";
 import { registerCompareScreenshotCommand } from "./compare-screenshot";
+import { registerComputerUseCommands } from "./computer-use";
 import { registerCursorCommands } from "./cursor";
 import { registerDecisionCommands } from "./decision";
 import { registerDiscoveryCommands } from "./discovery";
@@ -27,6 +28,7 @@ export function registerControlCommands(program: Command): void {
     registerAssistCommand(program);
     registerAwaitCommand(program);
     registerChooseCommand(program);
+    registerComputerUseCommands(program);
     registerCompareScreenshotCommand(program);
     registerCursorCommands(program);
     registerDiscoveryCommands(program);
