@@ -61,3 +61,18 @@ extension WorkflowArgumentsTests {
         XCTAssertThrowsError(try WorkflowArguments(["--app", "Fixture", "--no-image", "--path", "/tmp/read.png"], command: "see"))
     }
 }
+
+final class PerceptionArgumentTests: XCTestCase {
+    func testNativeOCROptionsAndExclusiveRegionTargets() throws {
+        let see = try WorkflowArguments(["--app", "Fixture", "--perception", "ocr", "--perception-width", "800"], command: "see")
+        XCTAssertEqual(see.values["--perception"], "ocr")
+        XCTAssertThrowsError(try WorkflowArguments(["--app", "Fixture", "--perception", "icons"], command: "see"))
+        XCTAssertThrowsError(try WorkflowArguments(["--app", "Fixture", "--perception", "ocr", "--no-image"], command: "see"))
+        XCTAssertThrowsError(try WorkflowArguments(["--app", "Fixture", "--perception-width", "800"], command: "see"))
+        let action = ["--app", "Fixture", "--snapshot", "token", "--action", "click", "--region", "v0"]
+        XCTAssertNoThrow(try WorkflowArguments(action, command: "act"))
+        XCTAssertThrowsError(try WorkflowArguments(action + ["--coords", "1,2"], command: "act"))
+        XCTAssertThrowsError(try WorkflowArguments(action + ["--element", "1"], command: "act"))
+        XCTAssertThrowsError(try WorkflowArguments(["--app", "Fixture", "--snapshot", "token", "--action", "press", "--region", "v0"], command: "act"))
+    }
+}

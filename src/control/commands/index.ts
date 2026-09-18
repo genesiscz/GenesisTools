@@ -19,6 +19,7 @@ import { registerRunCommand } from "./run";
 import { registerSequenceCommand } from "./sequence";
 import { registerStateCommands } from "./state";
 import { registerVerifyCommands } from "./verify";
+import { registerVisualCommand } from "./visual";
 import { registerWorkflowCommands } from "./workflow";
 
 export function registerControlCommands(program: Command): void {
@@ -42,5 +43,6 @@ export function registerControlCommands(program: Command): void {
     registerReplayPlanCommand(program);
     registerStateCommands(program);
     registerVerifyCommands(program);
+    registerVisualCommand(program);
     registerWorkflowCommands(program);
 }

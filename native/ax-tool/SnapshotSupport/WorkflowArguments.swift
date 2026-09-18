@@ -20,13 +20,13 @@ public struct WorkflowArguments {
         let flagOptions: Set<String>
         switch command {
         case "see":
-            valueOptions = ["--app", "--window-index", "--window-id", "--depth", "--path", "--scope"]
+            valueOptions = ["--app", "--window-index", "--window-id", "--depth", "--path", "--scope", "--perception", "--perception-crop", "--perception-width"]
             flagOptions = ["--no-image"]
         case "act":
             valueOptions = [
                 "--app", "--snapshot", "--element", "--action", "--value", "--ax-action", "--direction", "--text",
                 "--keys", "--coords", "--button", "--to", "--duration", "--pages", "--pixels", "--range", "--prefix",
-                "--suffix", "--selection", "--format", "--path",
+                "--suffix", "--selection", "--format", "--path", "--region",
             ]
             flagOptions = ["--background", "--double", "--refresh", "--no-cursor"]
         default:
@@ -63,6 +63,19 @@ public struct WorkflowArguments {
         if command == "see", parsedFlags.contains("--no-image"), parsedValues["--path"] != nil {
             throw WorkflowArgumentError.invalid("--no-image cannot be combined with --path")
         }
+        if command == "see" {
+            if let mode = parsedValues["--perception"], mode != "ocr" {
+                throw WorkflowArgumentError.invalid("--perception supports native ocr only")
+            }
+            if parsedValues["--perception-crop"] != nil || parsedValues["--perception-width"] != nil {
+                guard parsedValues["--perception"] == "ocr" else {
+                    throw WorkflowArgumentError.invalid("perception transforms require --perception ocr")
+                }
+            }
+            if parsedFlags.contains("--no-image"), parsedValues["--perception"] != nil {
+                throw WorkflowArgumentError.invalid("OCR perception requires an image")
+            }
+        }
         if command == "act" {
             guard let action = parsedValues["--action"], ["get", "press", "click", "move", "drag", "set", "perform", "focus", "scroll", "type", "key", "select", "paste"].contains(action) else {
                 throw WorkflowArgumentError.invalid("--action required and must name a supported action")
@@ -72,8 +85,9 @@ public struct WorkflowArguments {
             }
             let hasElement = parsedValues["--element"] != nil
             let hasCoordinates = parsedValues["--coords"] != nil
-            guard hasElement != hasCoordinates else {
-                throw WorkflowArgumentError.invalid("act requires exactly one of --element or --coords")
+            let hasRegion = parsedValues["--region"] != nil
+            guard [hasElement, hasCoordinates, hasRegion].filter({ $0 }).count == 1 else {
+                throw WorkflowArgumentError.invalid("act requires exactly one of --element, --coords or --region")
             }
             try Self.validateAction(action, values: parsedValues, flags: parsedFlags)
         }
@@ -90,7 +104,7 @@ public struct WorkflowArguments {
         }
 
         try reject(["--button", "--double"], unless: ["click"])
-        try reject(["--background", "--coords"], unless: ["click", "move", "drag", "scroll"])
+        try reject(["--background", "--coords", "--region"], unless: ["click", "move", "drag", "scroll"])
         try reject(["--prefix", "--suffix", "--selection", "--range"], unless: ["select"])
         try reject(["--format"], unless: ["paste"])
         try reject(["--text"], unless: ["type", "select", "paste"])

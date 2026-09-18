@@ -29,6 +29,10 @@ const FORMATS = ["text", "md", "html"] as const;
 interface WorkflowOptions {
     app: string;
     image?: boolean;
+    perception?: string | boolean;
+    perceptionCrop?: string;
+    perceptionWidth?: string;
+    region?: string;
     windowIndex?: string;
     windowId?: string;
     windowTitle?: string;
@@ -228,6 +232,9 @@ export function registerWorkflowCommands(program: Command): void {
         .option("--scope [name]", "window (default) or chrome (omit web-area descendants for browser controls)")
         .option("--path <png>", "save screenshot here (default: unique temporary PNG)")
         .option("--no-image", "Read AX state without creating a screenshot")
+        .option("--perception [mode]", "Native local OCR regions bound to this screenshot: ocr")
+        .option("--perception-crop <x,y,w,h>", "Crop OCR input in original source pixels; retain original screenshot")
+        .option("--perception-width <pixels>", "Resize cropped OCR input to this width, 64–8192")
         .option(
             "--since <json>",
             "a previous see result for the same window; output carries changes and only the rows that moved"
@@ -235,6 +242,11 @@ export function registerWorkflowCommands(program: Command): void {
         .action((opts: WorkflowOptions) => {
             if (opts.scope !== undefined && !["window", "chrome"].includes(String(opts.scope))) {
                 logger.error(suggestEnumFlag("tools control see", "--scope", ["window", "chrome"]));
+                process.exitCode = 1;
+                return;
+            }
+            if (opts.perception !== undefined && opts.perception !== "ocr") {
+                logger.error(suggestEnumFlag("tools control see", "--perception", ["ocr"]));
                 process.exitCode = 1;
                 return;
             }
@@ -272,6 +284,9 @@ export function registerWorkflowCommands(program: Command): void {
                 ["window-index", opts.windowIndex],
                 ["window-id", opts.windowId],
                 ["depth", opts.depth],
+                ["perception", typeof opts.perception === "string" ? opts.perception : undefined],
+                ["perception-crop", opts.perceptionCrop],
+                ["perception-width", opts.perceptionWidth],
                 ["path", opts.path],
             ]) {
                 if (value !== undefined) {
@@ -319,7 +334,11 @@ export function registerWorkflowCommands(program: Command): void {
             "key: comma-separated modifiers cmd,ctrl,alt,shift plus a letter, digit, return, tab, escape, backspace or arrow"
         )
         .option("--double", "click: double-click the observed element")
-        .option("--coords <x,y>", "click/move/drag/scroll: global screen point; alternative to --element")
+        .option("--coords <x,y>", "click/move/drag/scroll: global screen point from this screenshot")
+        .option(
+            "--region <id>",
+            "click/move/drag/scroll: observed OCR region ID; revalidates pixels and consumes capture"
+        )
         .option("--background", "click/move/drag/scroll: deliver without explicit activation or pointer movement")
         .option("--button [name]", "click: left, right or middle")
         .option("--to <x,y>", "drag: global destination point")
@@ -377,6 +396,7 @@ export function registerWorkflowCommands(program: Command): void {
                 ["value", opts.value],
                 ["element", opts.element],
                 ["coords", opts.coords],
+                ["region", opts.region],
                 ["ax-action", opts.axAction],
                 ["direction", opts.direction],
                 ["text", opts.text],

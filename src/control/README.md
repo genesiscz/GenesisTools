@@ -416,3 +416,15 @@ resolves a unique exact label locally, otherwise asks Jev once. It returns separ
 `choose` defaults to `--chooser exact` (no AI). Exact-only assist additionally requires `--exact-id`/`--exact-value` and recovery off, so it cannot silently invoke semantic judgment. `assist --chooser auto` uses the same chooser and keeps native validation and shared budgets. `--host-decision decision.json` accepts `{"packet": <original packet>, "answer": {"packetId": "...", "choice": "c0", "evidence": ["e1"]}}`; changed or expired observations, invented IDs and extra action fields are rejected. The tool never requests shell code, coordinates or new payloads from the host.
 
 `tools jev control compare-choosers --jev --split held-out` explicitly enables Jev on the same fixed synthetic cases used by exact and auto. Without `--jev`, comparison is exact-only. Development and held-out cases are reported separately; this small corpus is a smoke check, not a desktop accuracy benchmark.
+
+### Native visual grounding
+
+`tools control see --app APP --window-id ID --perception ocr` adds local macOS Vision OCR. `--perception-crop x,y,w,h` and `--perception-width 400` crop/resize only the OCR input; rectangles map back onto the original screenshot. Known AX text inputs are excluded from OCR candidates. No Python, icon model, download or external vision API is involved.
+
+`tools jev control visual --app APP --window-id ID --intent "Paint" --chooser auto` captures and chooses only. Add `--click` to explicitly dispatch one click; `--background` requests window-addressed delivery. Exact is the default chooser and makes no AI call. Jev receives observed OCR labels/rectangles and can return only a region ID, never coordinates or action arguments.
+
+For direct control, `act --snapshot TOKEN --region v0 --action click` uses an observed region. Raw `--coords` and drag destinations also require screenshot-backed evidence. Native code checks process/window identity, exact window geometry, pixel dimensions and current pixel hash, then atomically consumes the capture before posting input. Visual captures expire after **30 seconds** and permit **one coordinate action** (a double click/drag is one bounded action); ordinary AX tokens retain their 120-second limit. Run see again after an action. A reused capture fails before another screenshot is taken.
+
+Dispatch and task completion are separate: visual output says `verification: unverified` until the caller checks a postcondition. An unchanged AX tree is insufficient when canvas pixels changed. Source PNG hash, pixel hash, original dimensions, crop/resize transform and logical screen rectangles are returned for inspection. Used-capture markers live in the private temporary control directory.
+
+Live proof: `bun src/control/scripts/live-smoke.ts --background-only --visual --visual-jev` uses an isolated native fixture, checks pixel-only change refusal, cross-process one-use admission, crop/resize geometry, known-input exclusion and a real Jev-guided OCR click. `--visual-jev` explicitly enables that paid Jev call.

@@ -16,9 +16,10 @@ public struct SnapshotToken: Codable {
     public let digest: String
     public let created: Double
     public let scope: String?
+    public let visual: VisualCaptureIdentity?
     public var effectiveScope: String { scope ?? "window" }
 
-    public init(pid: Int32, launch: Double, window: Int, depth: Int, digest: String, created: Double, scope: String = "window") {
+    public init(pid: Int32, launch: Double, window: Int, depth: Int, digest: String, created: Double, scope: String = "window", visual: VisualCaptureIdentity? = nil) {
         self.version = 1
         self.pid = pid
         self.launch = launch
@@ -27,6 +28,7 @@ public struct SnapshotToken: Codable {
         self.digest = digest
         self.created = created
         self.scope = scope
+        self.visual = visual
     }
 
     public func validate(pid: Int32, launch: Double, window: Int, digest: String, element: Int, count: Int, now: Double) throws -> Int {

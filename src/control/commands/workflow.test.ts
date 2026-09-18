@@ -18,6 +18,7 @@ import { candidatesFor, type Observation } from "../lib/decision/observation";
 import { actionRefusal, authenticationBarrier, RecoveryController } from "../lib/decision/recovery";
 import { replayControl } from "../lib/decision/replay";
 import { ControlSession } from "../lib/decision/session";
+import { type VisualDriver, visualObservationSchema, visualTask } from "../lib/decision/visual";
 import { replayWait, waitCases } from "../lib/decision/wait-replay";
 import { applyWorkflowRepairs, attachSemanticPlan, replayWorkflow, type WorkflowPlan } from "../lib/decision/workflow";
 
@@ -1144,4 +1145,153 @@ test("exact-only assist cannot silently make semantic judgment or recovery calls
     });
     expect(result.status).toBe("verified");
     expect(result.metrics.requests).toBe(0);
+});
+
+function visualFixture() {
+    return visualObservationSchema.parse({
+        ok: true,
+        app: "Visual fixture",
+        pid: 1,
+        processLaunch: 100,
+        snapshot: "fixture",
+        window: { id: 7, title: "Visual fixture", x: -400, y: 0, width: 400, height: 300 },
+        screenshot: { path: "/fixture.png", width: 800, height: 600 },
+        perception: {
+            method: "vision-ocr",
+            expiresInSeconds: 30,
+            capture: {
+                id: "11111111-1111-4111-8111-111111111111",
+                pid: 1,
+                launch: 100,
+                windowID: 7,
+                created: 1000,
+                bounds: { x: -400, y: 0, width: 400, height: 300 },
+                pngHash: "a".repeat(64),
+                pixelHash: "b".repeat(64),
+                transform: {
+                    sourceWidth: 800,
+                    sourceHeight: 600,
+                    crop: { x: 0, y: 0, width: 800, height: 600 },
+                    processedWidth: 800,
+                    processedHeight: 600,
+                },
+                regions: [{ id: "v0", source: { x: 100, y: 100, width: 80, height: 40 } }],
+            },
+            regions: [
+                {
+                    id: "v0",
+                    text: "Paint",
+                    confidence: 1,
+                    source: { x: 100, y: 100, width: 80, height: 40 },
+                    screen: { x: -350, y: 50, width: 40, height: 20 },
+                },
+            ],
+        },
+    });
+}
+test("visual selection defaults to local exact matching and dispatch requires explicit execute", async () => {
+    let actions = 0;
+    const observation = visualFixture();
+    const driver: VisualDriver = {
+        observe: async () => observation,
+        click: async (call) => {
+            actions++;
+            expect(call.regionId).toBe("v0");
+            return { ok: true };
+        },
+    };
+    const inspected = await visualTask({
+        driver,
+        intent: "Paint",
+        evaluate: async () => {
+            throw new Error("No AI allowed");
+        },
+    });
+    expect(inspected.choice.source).toBe("exact");
+    expect(actions).toBe(0);
+    const dispatched = await visualTask({ driver, intent: "Paint", execute: true });
+    expect(actions).toBe(1);
+    expect(dispatched.verification).toBe("unverified");
+    expect(dispatched.metrics.requests).toBe(0);
+});
+test("visual Jev cannot supply a made-up region or action arguments", async () => {
+    let actions = 0;
+    const driver: VisualDriver = {
+        observe: async () => visualFixture(),
+        click: async () => {
+            actions++;
+            throw new Error("Must not dispatch");
+        },
+    };
+    const result = await visualTask({
+        driver,
+        intent: "Paint",
+        chooser: "jev",
+        execute: true,
+        evaluate: async () => evaluation({ target: { type: "choice", choice: "v999", probabilities: { v999: 1 } } }),
+    });
+    expect(result.choice.status).toBe("abstained");
+    expect(actions).toBe(0);
+    expect(result.metrics.requests).toBe(1);
+});
+test("visual transport uncertainty never retries the chosen region", async () => {
+    let actions = 0;
+    const result = await visualTask({
+        intent: "Paint",
+        execute: true,
+        driver: {
+            observe: async () => visualFixture(),
+            click: async () => {
+                actions++;
+                return { ok: false, dispatchState: "uncertain", error: "Lost reply" };
+            },
+        },
+    });
+    expect(actions).toBe(1);
+    expect(result.action?.ok).toBe(false);
+    expect(result.verification).toBe("unverified");
+});
+test("visual observations reject mismatched capture identity and duplicate regions", () => {
+    const capture = visualFixture();
+    expect(visualObservationSchema.safeParse({ ...capture, pid: 2 }).success).toBe(false);
+    expect(
+        visualObservationSchema.safeParse({
+            ...capture,
+            perception: {
+                ...capture.perception,
+                regions: [...capture.perception.regions, ...capture.perception.regions],
+            },
+        }).success
+    ).toBe(false);
+});
+
+test("visual geometry is tied to the capture and oversized semantic candidate sets make no AI call", async () => {
+    const source = visualFixture();
+    const tampered = structuredClone(source);
+    tampered.perception.regions[0].screen.x += 1;
+    expect(visualObservationSchema.safeParse(tampered).success).toBe(false);
+    source.perception.regions = Array.from({ length: 81 }, (_, index) => ({
+        ...source.perception.regions[0],
+        id: `v${index}`,
+        text: `Button ${index}`,
+    }));
+    source.perception.capture.regions = source.perception.regions.map(({ id, source }) => ({ id, source }));
+    let requests = 0;
+    await expect(
+        visualTask({
+            intent: "Choose a button",
+            chooser: "jev",
+            driver: {
+                observe: async () => source,
+                click: async () => {
+                    throw new Error("Must not act");
+                },
+            },
+            evaluate: async () => {
+                requests++;
+                throw new Error("Must not call model");
+            },
+        })
+    ).rejects.toThrow("80 OCR");
+    expect(requests).toBe(0);
 });

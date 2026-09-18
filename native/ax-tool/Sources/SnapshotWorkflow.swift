@@ -56,7 +56,7 @@ private func workflowFailure(_ message: String, category: SnapshotRefusal = .ref
 }
 
 private func workflowFailure(_ error: Error) -> Never {
-    let category = (error as? SnapshotError)?.category ?? (error as? SnapshotDispatchError)?.category ?? .refused
+    let category = (error as? SnapshotError)?.category ?? (error as? SnapshotDispatchError)?.category ?? (error as? VisualCaptureError)?.category ?? .refused
     workflowFailure(error.localizedDescription, category: category)
 }
 
@@ -213,12 +213,13 @@ private struct SnapshotUnstable: Error {
 /// that read as the first one.
 private func workflowSnapshot(appName: String, pid: pid_t, launch: Double, window: ObservedWindow, index: Int,
                               depth: Int, scope: String, path requestedPath: String?,
-                              settled: ObservedTreeData?, captureImage: Bool = true) throws -> [String: Any] {
+                              settled: ObservedTreeData?, captureImage: Bool = true, perception: VisualPerceptionOptions? = nil) throws -> [String: Any] {
     let tree = try settled ?? observedTree(window.ax, depth: depth, scope: scope)
     let image = captureImage ? CGWindowListCreateImage(.null, .optionIncludingWindow, window.id, [.boundsIgnoreFraming, .bestResolution]) : nil
     if captureImage && image == nil {
         throw ObservedTreeError("screenshot failed for the selected window; no snapshot issued")
     }
+    let capturedAt = Date().timeIntervalSince1970
     let refreshed = try observedWindow(window.ax, pid: pid)
     let after = try observedTree(window.ax, depth: depth, scope: scope)
     guard refreshed.id == window.id, try observedLaunch(pid) == launch, after.digest == tree.digest else {
@@ -236,6 +237,8 @@ private func workflowSnapshot(appName: String, pid: pid_t, launch: Double, windo
         throw SnapshotUnstable(changes: changes)
     }
     var screenshot: [String: Any] = [:]
+    var visual: VisualCaptureIdentity?
+    var perceptionResult: [String: Any] = [:]
     if let image {
         let path = requestedPath ?? FileManager.default.temporaryDirectory
             .appendingPathComponent("control-see-\(UUID().uuidString).png").path
@@ -245,9 +248,19 @@ private func workflowSnapshot(appName: String, pid: pid_t, launch: Double, windo
         do { try png.write(to: URL(fileURLWithPath: path), options: .atomic) }
         catch { throw ObservedTreeError("cannot save snapshot: \(error.localizedDescription)") }
         screenshot = ["path": URL(fileURLWithPath: path).path, "width": image.width, "height": image.height]
+        let privateFrames = tree.rows.enumerated().compactMap { index, row -> CGRect? in
+            guard ["AXTextField", "AXTextArea", "AXComboBox"].contains(row["role"] as? String ?? "") ||
+                  row["AXSubrole"] as? String == "AXSecureTextField" ||
+                  (scope == "chrome" && row["role"] as? String == "AXWebArea") else { return nil }
+            return tree.frames[index]
+        }
+        let result = try visualPerception(image: image, png: png, pid: pid, launch: launch, windowID: Int(window.id),
+            bounds: window.bounds, capturedAt: capturedAt, options: perception, privateFrames: privateFrames)
+        visual = result.0
+        perceptionResult = result.1
     }
     let token = SnapshotToken(pid: pid, launch: launch, window: Int(window.id), depth: depth,
-                              digest: tree.digest, created: Date().timeIntervalSince1970, scope: scope)
+                              digest: tree.digest, created: capturedAt, scope: scope, visual: visual)
     let encoded: String
     do {
         encoded = try JSONEncoder().encode(token).base64EncodedString()
@@ -259,7 +272,7 @@ private func workflowSnapshot(appName: String, pid: pid_t, launch: Double, windo
             "window": ["id": window.id, "index": index, "title": axStringAttribute(window.ax, "AXTitle") ?? "",
                        "x": window.bounds.minX, "y": window.bounds.minY,
                        "width": window.bounds.width, "height": window.bounds.height],
-            "screenshot": screenshot, "imageCaptured": captureImage,
+            "screenshot": screenshot, "imageCaptured": captureImage, "perception": perceptionResult,
             "snapshot": encoded, "scope": scope, "expiresInSeconds": 120, "bulk": workflowBulkUsed,
             "elements": publicRows]
 }
@@ -371,8 +384,26 @@ func cmdSee(appName _: String) {
     let scope = workflowArgument("--scope") ?? "window"
     guard ["window", "chrome"].contains(scope) else { workflowFailure("--scope must be window or chrome") }
     do {
+        var perception: VisualPerceptionOptions?
+        if workflowArgument("--perception") == "ocr" {
+            var crop: VisualRect?
+            if let rawCrop = workflowArgument("--perception-crop") {
+                let parts = rawCrop.split(separator: ",", omittingEmptySubsequences: false)
+                let numbers = parts.compactMap { Int($0.trimmingCharacters(in: .whitespaces)) }
+                guard parts.count == 4, numbers.count == 4 else { throw VisualCaptureError.invalid("perception crop requires x,y,width,height in source pixels") }
+                crop = VisualRect(x: Double(numbers[0]), y: Double(numbers[1]), width: Double(numbers[2]), height: Double(numbers[3]))
+            }
+            var width: Int?
+            if let rawWidth = workflowArgument("--perception-width") {
+                guard let number = Int(rawWidth), number >= 64, number <= 8192 else {
+                    throw VisualCaptureError.invalid("perception width must be 64–8192 pixels")
+                }
+                width = number
+            }
+            perception = VisualPerceptionOptions(ocr: true, crop: crop, width: width)
+        }
         jsonOutput(try workflowSnapshot(appName: appName, pid: pid, launch: launch, window: window, index: index,
-                                        depth: depth, scope: scope, path: workflowArgument("--path"), settled: nil, captureImage: !workflowFlag("--no-image")))
+                                        depth: depth, scope: scope, path: workflowArgument("--path"), settled: nil, captureImage: !workflowFlag("--no-image"), perception: perception))
     } catch let unstable as SnapshotUnstable {
         jsonOutput(["ok": false, "error": unstable.message, "changedElements": unstable.changes])
         exit(1)
@@ -411,12 +442,19 @@ private func workflowAXAction(_ element: AXUIElement, action: String) {
 func cmdAct(appName _: String) {
     workflowDispatchState = "not_started"
     let appName = workflowParse("act")
-    guard let raw = workflowArgument("--snapshot"), raw.count < 8192,
+    guard let raw = workflowArgument("--snapshot"), raw.count < 65536,
           let data = Data(base64Encoded: raw),
           let token = try? JSONDecoder().decode(SnapshotToken.self, from: data) else {
         workflowFailure("invalid --snapshot token; run see again")
     }
-    let rawCoords = workflowArgument("--coords")
+    var rawCoords = workflowArgument("--coords")
+    if let region = workflowArgument("--region") {
+        do {
+            guard let visual = token.visual else { throw VisualCaptureError.invalid("snapshot has no visual regions") }
+            let point = try visual.center(of: region)
+            rawCoords = "\(point.x),\(point.y)"
+        } catch { workflowFailure(error) }
+    }
 
     let elementIndex = rawCoords == nil ? workflowInteger("--element") : 0
     let action = workflowArgument("--action")!
@@ -573,6 +611,25 @@ func cmdAct(appName _: String) {
             }
             return point
         }
+        var visualAdmitted = false
+        func admitVisualAction() throws {
+            guard rawCoords != nil || action == "drag", !visualAdmitted else { return }
+            workflowDispatchState = "not_started"
+            guard let visual = token.visual else {
+                throw VisualCaptureError.invalid("coordinate actions require a fresh screenshot-backed observation")
+            }
+            guard try !visualCaptureWasUsed(visual) else { throw VisualCaptureError.invalid("visual capture already used; observe again") }
+            guard let currentImage = CGWindowListCreateImage(.null, .optionIncludingWindow, window.id, [.boundsIgnoreFraming, .bestResolution]) else {
+                throw VisualCaptureError.invalid("coordinate actions require a fresh screenshot-backed observation")
+            }
+            let liveWindow = try observedWindow(window.ax, pid: pid)
+            try admitVisualCapture(capture: visual, pid: pid, launch: try observedLaunch(pid), windowID: Int(liveWindow.id),
+                bounds: VisualRect(liveWindow.bounds), pixelHash: try visualPixelHash(currentImage),
+                width: currentImage.width, height: currentImage.height, now: Date().timeIntervalSince1970,
+                consume: { try consumeVisualCapture(visual) })
+            visualAdmitted = true
+            workflowDispatchState = "uncertain"
+        }
         func verifyPoint(_ point: CGPoint, pin: SnapshotVerifyTarget) throws -> AXUIElement {
             // Pin whatever the CALLER named. The parameter existed but was ignored: the
             // guard asserted the captured `element` frame every time, so a drag — which
@@ -690,6 +747,7 @@ func cmdAct(appName _: String) {
             let factory = try WindowEventFactory(windowID: Int(window.id), bounds: window.bounds)
             if action == "move" {
                 let event = try factory.mouse(type: .mouseMoved, point: point, clickCount: 0)
+                try admitVisualAction()
                 ActionCursor.emit("move", point: point, background: background, target: rawCoords == nil ? "ax" : "pixel")
                 event.postToPid(pid)
                 Thread.sleep(forTimeInterval: 0.05)
@@ -728,6 +786,7 @@ func cmdAct(appName _: String) {
                     }
                     try validateScrollViewportUnchanged(expected: viewport.observed, current: refreshed.observed)
                 }
+                try admitVisualAction()
                 ActionCursor.emit("scroll", point: point, background: background, target: rawCoords == nil ? "ax" : "pixel")
                 event.postToPid(pid)
                 Thread.sleep(forTimeInterval: 0.1)
@@ -749,6 +808,7 @@ func cmdAct(appName _: String) {
                 try factory.drag(start: point, points: points, stepDelay: duration / Double(steps),
                                  verify: {
                                      _ = try verifyPoint($0, pin: WindowEventFactory.dragVerifyTarget(point: $0, start: point))
+                                     try admitVisualAction()
                                  }, post: {
                                      ActionCursor.emit("drag", point: $0.location, background: background, target: rawCoords == nil ? "ax" : "pixel")
                                      $0.postToPid(pid)
@@ -770,6 +830,7 @@ func cmdAct(appName _: String) {
                         down.setIntegerValueField(.mouseEventButtonNumber, value: 2)
                         up.setIntegerValueField(.mouseEventButtonNumber, value: 2)
                     }
+                    try admitVisualAction()
                     ActionCursor.emit("click", point: point, background: background, target: rawCoords == nil ? "ax" : "pixel")
                     down.postToPid(pid)
                     Thread.sleep(forTimeInterval: 0.03)

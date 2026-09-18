@@ -12,6 +12,7 @@ import { assistTask } from "../lib/decision/assist";
 import { judgeOutcome } from "../lib/decision/decisions";
 import { fillForm } from "../lib/decision/fill";
 import { NativeControlDriver } from "../lib/decision/native";
+import { NativeVisualDriver, visualObservationSchema, visualTask } from "../lib/decision/visual";
 import { axCommandLine, ensureBinary } from "../lib/runner";
 
 interface Element {
@@ -41,10 +42,18 @@ const backgroundOnly = Bun.argv.includes("--background-only");
 const semantic = Bun.argv.includes("--semantic");
 const cursorProof = Bun.argv.includes("--cursor-proof");
 const verifyPointer = Bun.argv.includes("--verify-pointer");
+const visual = Bun.argv.includes("--visual");
+const visualJev = Bun.argv.includes("--visual-jev");
+if (visual && !backgroundOnly) {
+    throw new Error("--visual requires --background-only for this fixture probe.");
+}
+if (visualJev && !visual) {
+    throw new Error("--visual-jev requires --visual.");
+}
 
 if (Bun.argv.includes("--help")) {
     out.print(
-        "Usage: bun src/control/scripts/live-smoke.ts [--background-only] [--verify-pointer] [--semantic] [--cursor-proof]\n--cursor-proof records five seconds of native cursor feedback on a disposable fixture (foreground).\n--semantic tests Jev fill/assist/judge with TYPESAFE_API_KEY (paid requests).\n--background-only avoids focus/keyboard tests and opens the fixture in the background.\n--verify-pointer asserts the physical pointer stays unchanged; keep mouse and keyboard idle during measurement.\nBuilds and opens a temporary two-window test app. Exercises see/act, then terminates only that app. Requires Accessibility and Screen Recording. Uses no Codex, Sky or Peekaboo.\n"
+        "Usage: bun src/control/scripts/live-smoke.ts [--background-only] [--verify-pointer] [--semantic] [--cursor-proof] [--visual] [--visual-jev]\n--visual requires --background-only and tests OCR/pixel guards; --visual-jev additionally enables one Jev target choice.\n--cursor-proof records five seconds of native cursor feedback on a disposable fixture (foreground).\n--semantic tests Jev fill/assist/judge with TYPESAFE_API_KEY (paid requests).\n--background-only avoids focus/keyboard tests and opens the fixture in the background.\n--verify-pointer asserts the physical pointer stays unchanged; keep mouse and keyboard idle during measurement.\nBuilds and opens a temporary two-window test app. Exercises see/act, then terminates only that app. Requires Accessibility and Screen Recording. Uses no Codex, Sky or Peekaboo.\n"
     );
     process.exit(0);
 }
@@ -104,6 +113,7 @@ const launcher = Bun.spawn(
         ...(backgroundOnly ? ["--background"] : []),
         ...(semantic ? ["--semantic"] : []),
         ...(cursorProof ? ["--cursor-proof"] : []),
+        ...(visual ? ["--visual"] : []),
     ],
     {
         env: env.getProcessEnv(),
@@ -526,6 +536,126 @@ try {
             checks.push("closed window token and stable-ID refresh refuse without selecting the remaining window");
             state.screenshot.path = lastShot;
         }
+    }
+    if (visual) {
+        state = await see();
+        const countBefore = find(state, "counter").AXValue;
+        const oldCapture = state;
+        await act(state, find(state, "paint").index, "press");
+        await Bun.sleep(100);
+        const fresh = await see();
+        const oldToken = SafeJSON.parse(Buffer.from(oldCapture.snapshot, "base64").toString("utf8")) as {
+            digest: string;
+            visual: { pixelHash: string };
+        };
+        const freshToken = SafeJSON.parse(Buffer.from(fresh.snapshot, "base64").toString("utf8")) as {
+            digest: string;
+            visual: { pixelHash: string };
+        };
+        assert.equal(oldToken.digest, freshToken.digest, "canvas changed without changing AX evidence");
+        assert.notEqual(oldToken.visual.pixelHash, freshToken.visual.pixelHash);
+        const increment = oldCapture.elements.find((row) => row.AXTitle === "Increment") as Element & {
+            x: number;
+            y: number;
+            width: number;
+            height: number;
+        };
+        const refused = await run(
+            [
+                "act",
+                "--app",
+                String(fixturePid),
+                "--snapshot",
+                oldCapture.snapshot,
+                "--action",
+                "click",
+                "--background",
+                "--coords",
+                `${increment.x + increment.width / 2},${increment.y + increment.height / 2}`,
+            ],
+            false
+        );
+        assert.match(refused.error ?? "", /pixels changed/);
+        assert.equal(find(await see(), "counter").AXValue, countBefore);
+        checks.push("changed canvas pixels refuse an old coordinate click even when AX digest is identical");
+
+        state = await see();
+        const quietPoint = `${state.window.x + state.window.width - 8},${state.window.y + state.window.height - 8}`;
+        const move = [
+            "act",
+            "--app",
+            String(fixturePid),
+            "--snapshot",
+            state.snapshot,
+            "--action",
+            "move",
+            "--background",
+            "--coords",
+            quietPoint,
+        ];
+        await run(move);
+        const reused = await run(move, false);
+        assert.match(reused.error ?? "", /already used/);
+        checks.push("a visual capture is consumed once across separate native processes");
+
+        const capture = visualObservationSchema.parse(
+            await run([
+                "see",
+                "--app",
+                String(fixturePid),
+                "--window-id",
+                String(state.window.id),
+                "--perception",
+                "ocr",
+            ])
+        );
+        assert.ok(
+            capture.perception.regions.some((region) => region.text.trim() === "Paint"),
+            SafeJSON.stringify(capture.perception.regions)
+        );
+        assert.ok(
+            !capture.perception.regions.some((region) => region.text.includes("seed")),
+            "Known AX input text is excluded from OCR candidates"
+        );
+        const paint = find(await see(), "paint") as Element & { x: number; y: number; width: number; height: number };
+        const scaleX = capture.screenshot.width / capture.window.width;
+        const scaleY = capture.screenshot.height / capture.window.height;
+        const crop = [
+            Math.max(0, Math.floor((paint.x - capture.window.x) * scaleX) - 4),
+            Math.max(0, Math.floor((paint.y - capture.window.y) * scaleY) - 4),
+            Math.ceil(paint.width * scaleX) + 8,
+            Math.ceil(paint.height * scaleY) + 8,
+        ].join(",");
+        const driver = new NativeVisualDriver({
+            app: String(fixturePid),
+            windowId: state.window.id,
+            crop,
+            width: 400,
+            background: true,
+        });
+        const beforeVisual = SafeJSON.parse(Buffer.from((await see()).snapshot, "base64").toString("utf8")) as {
+            visual: { pixelHash: string };
+        };
+        const result = await visualTask({
+            driver,
+            intent: visualJev ? "Click the Paint control" : "Paint",
+            chooser: visualJev ? "jev" : "exact",
+            execute: true,
+            evaluate: visualJev ? await createEvaluator({ provider: "typesafe" }) : undefined,
+        });
+        assert.equal(result.choice.status, "resolved", SafeJSON.stringify(result.choice));
+        assert.equal(result.action?.ok, true, SafeJSON.stringify(result.action));
+        await Bun.sleep(100);
+        state = await see();
+        const afterVisual = SafeJSON.parse(Buffer.from(state.snapshot, "base64").toString("utf8")) as {
+            visual: { pixelHash: string };
+        };
+        assert.notEqual(beforeVisual.visual.pixelHash, afterVisual.visual.pixelHash);
+        assert.equal(find(state, "counter").AXValue, countBefore);
+        writeFileSync(join(directory, "visual-proof.json"), SafeJSON.stringify(result, null, 2));
+        checks.push(
+            `native OCR crop/resize region maps to its exact screen control; ${visualJev ? "Jev" : "exact"} choice clicks it with changed pixels and unchanged counter`
+        );
     }
     out.result({ ok: true, checks, screenshot: state.screenshot.path, directory });
 } finally {

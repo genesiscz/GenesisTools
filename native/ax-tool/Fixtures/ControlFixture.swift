@@ -48,9 +48,18 @@ func deepWindowDepth() -> (depth: Int, source: String)? {
     return nil
 }
 
+final class CanvasSwatch: NSView {
+    var alternate = false
+    override func draw(_ dirtyRect: NSRect) {
+        (alternate ? NSColor.systemOrange : NSColor.systemPurple).setFill()
+        NSBezierPath(rect: bounds).fill()
+    }
+}
+
 final class ControlFixture: NSObject, NSApplicationDelegate {
     var windows: [NSWindow] = []
     var counters: [NSTextField] = []
+    var swatches: [Int: CanvasSwatch] = [:]
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let menu = NSMenu()
@@ -74,6 +83,17 @@ final class ControlFixture: NSObject, NSApplicationDelegate {
             counter.setAccessibilityIdentifier("counter")
             content.addSubview(counter)
             counters.append(counter)
+            if CommandLine.arguments.contains("--visual") {
+                let canvas = CanvasSwatch(frame: NSRect(x: 150, y: 374, width: 35, height: 18))
+                canvas.setAccessibilityElement(false)
+                content.addSubview(canvas)
+                swatches[index] = canvas
+                let paint = NSButton(title: "Paint", target: self, action: #selector(paintCanvas(_:)))
+                paint.tag = index
+                paint.frame = NSRect(x: 200, y: 370, width: 100, height: 26)
+                paint.setAccessibilityIdentifier("paint")
+                content.addSubview(paint)
+            }
             for buttonIndex in 0..<2 {
                 let button = FixtureButton(title: "Increment", target: self, action: #selector(increment(_:)))
                 button.secondary = { counter.stringValue = String((Int(counter.stringValue) ?? 0) + 100) }
@@ -197,6 +217,13 @@ final class ControlFixture: NSObject, NSApplicationDelegate {
         leaf.setAccessibilityIdentifier("deep-leaf")
         parent.addSubview(leaf)
         return window
+    }
+
+    @objc func paintCanvas(_ sender: NSButton) {
+        let canvas = swatches[sender.tag]
+        canvas?.alternate.toggle()
+        canvas?.needsDisplay = true
+        canvas?.displayIfNeeded()
     }
 
     @objc func increment(_ sender: NSButton) {

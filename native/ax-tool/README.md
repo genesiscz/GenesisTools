@@ -146,3 +146,12 @@ Clipboard restoration skips observed competing writes, but remains best effort b
 `bun run test:native` runs the SwiftPM test targets (`swift test` in `native/ax-tool`). CI runs
 on ubuntu, which has no Swift toolchain, so these tests are a local gate: run them before pushing
 a change under `native/ax-tool`.
+
+
+### Visual evidence
+
+`see --perception ocr` uses native Vision OCR on the captured image. Optional `--perception-crop x,y,w,h` and `--perception-width N` preserve a source-pixel transform, and `act --region v0` targets the corresponding original-image region. Every image-backed snapshot carries a canonical pixel hash and PNG hash. Coordinate actions (and fixed drag destinations) revalidate pixels, dimensions, process/window and geometry, then claim a private one-use marker atomically. Visual evidence expires after 30 seconds. `see --no-image` remains the fast AX-only path and cannot authorize coordinate actions.
+
+No Codex Computer Use, Sky, Python or icon-parser API is used. AI target choice lives in the TypeScript Jev layer; the native layer accepts only observed region IDs or explicit caller-supplied coordinates and verifies the capture.
+
+Extended live probe: `bun src/control/scripts/live-smoke.ts --background-only --visual --visual-jev`. It mutates only its temporary native fixture and explicitly calls Jev once.
