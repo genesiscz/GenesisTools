@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { evaluationSchema } from "@genesiscz/utils/ai/evaluation/evaluate";
 import type { EvaluationResponse, Evaluator } from "@genesiscz/utils/ai/evaluation/service";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { OperationBudget } from "@genesiscz/utils/operation-budget";
 import type { JsonLineTransport } from "@genesiscz/utils/process/json-line-process";
 import { assistTask } from "../lib/decision/assist";
 import { awaitCondition, semanticFingerprint } from "../lib/decision/await";
@@ -1294,4 +1295,53 @@ test("visual geometry is tied to the capture and oversized semantic candidate se
         })
     ).rejects.toThrow("80 OCR");
     expect(requests).toBe(0);
+});
+
+test("large observations keep exact readback and exact target binding local while semantic choices stay bounded", async () => {
+    const observation: Observation = {
+        ...semanticFixture,
+        elements: Array.from({ length: 500 }, (_, index) => ({
+            index,
+            depth: 0,
+            role: "AXButton",
+            AXIdentifier: `button-${index}`,
+            AXTitle: `Button ${index}`,
+            AXValue: "ready",
+            actions: ["AXPress"],
+        })),
+    };
+    let calls = 0;
+    const evaluate: Evaluator = async () => {
+        calls++;
+        throw new Error("Must not call AI");
+    };
+    const exact = await judgeOutcome({
+        observation,
+        expect: "Ready",
+        exact: { identifier: "button-499", value: "ready" },
+        evaluate,
+    });
+    expect(exact.status).toBe("verified");
+    expect(exact.observations).toHaveLength(1);
+    const choice = await chooseCandidate({
+        observation,
+        intent: "Button 499",
+        mode: "auto",
+        session: chooserSession(evaluate),
+    });
+    expect(choice.selected?.element).toBe(499);
+    expect(choice.candidates).toHaveLength(1);
+    expect(choice.candidateCount).toBe(500);
+    await expect(resolveIntent({ observation, intent: "Find the right button", evaluate })).rejects.toThrow(
+        "80 actionable"
+    );
+    expect(calls).toBe(0);
+});
+test("monotonic remaining budgets are integers accepted by strict timeout APIs", () => {
+    let now = 0;
+    const budget = new OperationBudget({ timeoutMs: 2, clock: { now: () => now } });
+    now = 0.25;
+    expect(budget.remaining()).toBe(1);
+    now = 1.25;
+    expect(() => budget.remaining()).toThrow("deadline");
 });

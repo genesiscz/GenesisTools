@@ -120,9 +120,6 @@ export function candidatesFor({
         }
         ancestors.push(row);
     }
-    if (candidates.length > 80) {
-        throw new Error("More than 80 actionable targets. Narrow the window or scope before using semantic control.");
-    }
     return candidates;
 }
 export function observedEvidence(observation: Observation) {

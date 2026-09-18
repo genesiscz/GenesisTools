@@ -151,6 +151,7 @@ export async function chooseCandidate(options: {
         : candidates.filter((candidate) => candidate.label.trim().toLocaleLowerCase() === intent.toLocaleLowerCase());
     const base = {
         candidates,
+        candidateCount: candidates.length,
         selected: null as Candidate | null,
         decision: null as Awaited<ReturnType<typeof resolveIntent>>["decision"],
         evaluation: null as Awaited<ReturnType<typeof resolveIntent>>["evaluation"],
@@ -168,11 +169,18 @@ export async function chooseCandidate(options: {
     };
     signal.throwIfAborted();
     if (mode !== "jev" && exact.length === 1) {
-        return { ...base, status: "resolved" as const, reason: "unique_exact_binding", selected: exact[0] };
+        return {
+            ...base,
+            candidates: exact,
+            status: "resolved" as const,
+            reason: "unique_exact_binding",
+            selected: exact[0],
+        };
     }
     if (mode === "exact") {
         return {
             ...base,
+            candidates: exact,
             status: "abstained" as const,
             reason: exact.length > 1 ? "ambiguous_exact_binding" : "missing_exact_binding",
         };

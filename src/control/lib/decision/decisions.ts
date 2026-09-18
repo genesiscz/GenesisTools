@@ -87,6 +87,9 @@ export async function resolveIntent(
     );
     const clock = new Stopwatch();
     options.signal?.throwIfAborted();
+    if (candidates.length > 80) {
+        throw new Error("More than 80 actionable targets. Narrow the window or scope before using semantic control.");
+    }
     if (!candidates.length) {
         return {
             status: "abstained" as const,
@@ -169,7 +172,6 @@ export async function judgeOutcome(
     }
 ) {
     const expected = z.string().trim().min(1).max(4000).parse(options.expect);
-    const evidence = observedEvidence(options.observation);
     const clock = new Stopwatch();
     options.signal?.throwIfAborted();
     if (options.exact) {
@@ -180,12 +182,14 @@ export async function judgeOutcome(
             status: matched ? ("verified" as const) : rows.length === 1 ? ("refuted" as const) : ("unknown" as const),
             basis: "exact" as const,
             evidence: rows.map((row) => `e${row.index}`),
-            observations: evidence,
+            observations: rows.length <= 300 ? observedEvidence({ ...options.observation, elements: rows }) : [],
+            matchingElements: rows.length,
             probabilities: null,
             evaluation: null,
             verificationMs: clock.elapsedMs,
         };
     }
+    const evidence = observedEvidence(options.observation);
     if (!evidence.length) {
         return {
             status: "unknown" as const,

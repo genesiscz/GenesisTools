@@ -23,7 +23,7 @@ export class OperationBudget {
     }
     remaining(): number {
         this.signal.throwIfAborted();
-        const remaining = this.limits.timeoutMs - (this.clock.now() - this.started);
+        const remaining = Math.floor(this.limits.timeoutMs - (this.clock.now() - this.started));
         if (remaining <= 0) {
             throw new Error("Operation deadline reached.");
         }
