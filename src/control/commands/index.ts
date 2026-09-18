@@ -2,6 +2,7 @@ import type { Command } from "commander";
 import { registerAssistCommand } from "./assist";
 import { registerAwaitCommand } from "./await";
 import { registerCaptureCommands } from "./capture";
+import { registerChooseCommand } from "./choose";
 import { registerCompareScreenshotCommand } from "./compare-screenshot";
 import { registerCursorCommands } from "./cursor";
 import { registerDecisionCommands } from "./decision";
@@ -24,6 +25,7 @@ export function registerControlCommands(program: Command): void {
     registerCaptureCommands(program);
     registerAssistCommand(program);
     registerAwaitCommand(program);
+    registerChooseCommand(program);
     registerCompareScreenshotCommand(program);
     registerCursorCommands(program);
     registerDiscoveryCommands(program);

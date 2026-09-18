@@ -1,5 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { StringDecoder } from "node:string_decoder";
+import { compareChoosers } from "@app/control/lib/decision/chooser-replay";
 import { replayCases } from "@app/control/lib/decision/fixtures";
 import { replayControl } from "@app/control/lib/decision/replay";
 import { replayWait, waitCases } from "@app/control/lib/decision/wait-replay";
@@ -120,6 +121,9 @@ export function jevApiPlugin(): Plugin {
                     }
 
                     const body = await readBody(req);
+                    if (route === "/control/compare-choosers") {
+                        return compareChoosers({ input: body, provider, signal: controller.signal });
+                    }
                     if (route === "/control/wait-replay") {
                         return replayWait({ input: body, provider, signal: controller.signal });
                     }

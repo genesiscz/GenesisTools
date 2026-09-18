@@ -407,3 +407,12 @@ A version 1 plan binds each step against a fresh observation, first by an exact 
 Exact values come from a separate local file such as `{"name":"Example Person"}`. Choosers see field descriptions and redacted inputs, never this values map. Set steps also verify the exact written value before the recorded postcondition. Missing values are rejected before any desktop observation/action.
 
 `record-plan stop --semantic metadata.json --out workflow.json` attaches the same versioned metadata to a recording after checking every recorded action/selector/app. Inline values are replaced by references in the emitted plan. No observations or screenshots are retained automatically; optional context contains only caller-supplied role/label pairs. Existing raw recorder logs retain their existing lifecycle. This first semantic format supports `press` and `set`; unsupported recorded verbs fail explicitly. The legacy `run` path remains available for old plans and refuses semantic plans rather than ignoring their postconditions.
+
+### Exact → Jev → host chooser
+
+`tools jev control choose --app APP --intent "Refresh" --chooser auto`
+resolves a unique exact label locally, otherwise asks Jev once. It returns separate coverage, conflict, probability, margin and confidence signals. Uncertain or conflicting choices return a bounded redacted evidence packet. **Jev is the only AI model called by control**, through either direct TypeSafe or Vercel Gateway. A host handoff makes no extra AI API request.
+
+`choose` defaults to `--chooser exact` (no AI). Exact-only assist additionally requires `--exact-id`/`--exact-value` and recovery off, so it cannot silently invoke semantic judgment. `assist --chooser auto` uses the same chooser and keeps native validation and shared budgets. `--host-decision decision.json` accepts `{"packet": <original packet>, "answer": {"packetId": "...", "choice": "c0", "evidence": ["e1"]}}`; changed or expired observations, invented IDs and extra action fields are rejected. The tool never requests shell code, coordinates or new payloads from the host.
+
+`tools jev control compare-choosers --jev --split held-out` explicitly enables Jev on the same fixed synthetic cases used by exact and auto. Without `--jev`, comparison is exact-only. Development and held-out cases are reported separately; this small corpus is a smoke check, not a desktop accuracy benchmark.

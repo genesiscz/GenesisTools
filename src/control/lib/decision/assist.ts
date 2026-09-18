@@ -3,7 +3,8 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import type { OperationLimits } from "@genesiscz/utils/operation-budget";
 import { z } from "zod";
-import { type ExactExpectation, judgeOutcome, resolveIntent } from "./decisions";
+import { type ChooserMode, chooseCandidate, type HostDecision } from "./chooser";
+import { type ExactExpectation, judgeOutcome } from "./decisions";
 import type { ControlDriver } from "./native";
 import { observedEvidence } from "./observation";
 import { actionRefusal, authenticationBarrier, RecoveryController, type RecoveryOptions } from "./recovery";
@@ -18,12 +19,19 @@ export async function assistTask(options: {
     signal?: AbortSignal;
     limits?: OperationLimits;
     recovery?: RecoveryOptions;
+    chooser?: ChooserMode;
+    hostDecision?: HostDecision;
 }) {
     const goal = z.string().trim().min(1).max(4000).parse(options.goal);
     const session = new ControlSession(options);
     const recovery = new RecoveryController(options.recovery);
+    if (options.chooser === "exact" && (!options.exact || recovery.options.mode !== "off")) {
+        throw new Error(
+            "Exact-only assist requires exact completion readback and recovery off; semantic judgment/recovery requires Jev."
+        );
+    }
     const steps: Array<{
-        resolution: Awaited<ReturnType<typeof resolveIntent>>;
+        resolution: Awaited<ReturnType<typeof chooseCandidate>>;
         dispatchOk?: boolean;
         refusal?: ReturnType<typeof actionRefusal>;
         observationError?: string;
@@ -61,10 +69,12 @@ export async function assistTask(options: {
                 reason = "Action budget exhausted before the goal was verified.";
                 break;
             }
-            const resolution = await resolveIntent({
+            const resolution = await chooseCandidate({
                 observation,
-                intent: `Task: ${goal}. Choose only the next observed press action that advances this task, or abstain. Do not claim completion by choosing a label.`,
-                evaluate: session.evaluate,
+                intent: goal,
+                mode: options.chooser ?? "jev",
+                session,
+                hostDecision: options.hostDecision,
                 signal: session.budget.signal,
                 allowReobserve: true,
             });
@@ -78,6 +88,10 @@ export async function assistTask(options: {
                 await Bun.sleep(Math.min(250, session.budget.remaining()));
                 observation = await session.observe();
                 continue;
+            }
+            if (resolution.status === "escalated") {
+                reason = resolution.reason;
+                break;
             }
             if (!resolution.selected) {
                 const fresh = await recovery.recover({ session, category: "semantic_interruption", observation, goal });

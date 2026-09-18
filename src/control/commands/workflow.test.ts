@@ -7,6 +7,8 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import type { JsonLineTransport } from "@genesiscz/utils/process/json-line-process";
 import { assistTask } from "../lib/decision/assist";
 import { awaitCondition, semanticFingerprint } from "../lib/decision/await";
+import { acceptHostChoice, chooseCandidate, readHostDecision } from "../lib/decision/chooser";
+import { compareChoosers } from "../lib/decision/chooser-replay";
 import { admittedChoice, judgeOutcome, resolveIntent } from "../lib/decision/decisions";
 import { fillForm } from "../lib/decision/fill";
 import { replayCases } from "../lib/decision/fixtures";
@@ -982,4 +984,164 @@ test("semantic recording replaces inline values and refuses action/selector chan
     const changed = structuredClone(plan);
     changed.steps[0].selector = { identifier: "city" };
     expect(() => attachSemanticPlan({ legacy, semantic: changed })).toThrow("differs");
+});
+
+function chooserSession(evaluate: Evaluator) {
+    return new ControlSession({
+        evaluate,
+        driver: {
+            observe: async () => semanticFixture,
+            act: async () => {
+                throw new Error("Read-only chooser");
+            },
+        },
+    });
+}
+function uncertainChooser(config: { coverage?: number; conflict?: number; strong?: boolean } = {}): Evaluator {
+    return async (call) => {
+        const input = evaluationSchema.parse(call.input);
+        const target = input.questions.target;
+        if (target.type !== "choice") {
+            throw new Error("Expected target choice");
+        }
+        const ids = Object.keys(target.criteria);
+        const choice = config.strong ? "c0" : "abstain";
+        return evaluation({
+            target: {
+                type: "choice",
+                choice,
+                probabilities: Object.fromEntries(ids.map((id) => [id, id === choice ? 1 : 0])),
+            },
+            coverage: { type: "boolean", probability: config.coverage ?? 0.5 },
+            conflict: { type: "boolean", probability: config.conflict ?? 0 },
+        });
+    };
+}
+test("auto chooser spends zero requests for a unique exact supplied binding", async () => {
+    const session = chooserSession(async () => {
+        throw new Error("Exact binding must not call AI");
+    });
+    const result = await chooseCandidate({
+        observation: semanticFixture,
+        intent: "Account settings",
+        mode: "auto",
+        binding: { identifier: "account-settings" },
+        session,
+    });
+    expect(result.selected?.element).toBe(1);
+    expect(result.source).toBe("exact");
+    expect(session.report().requests).toBe(0);
+});
+test("auto chooser keeps coverage, conflict, probability and confidence separate", async () => {
+    for (const config of [
+        { coverage: 0.4, strong: true },
+        { coverage: 1, conflict: 1, strong: true },
+        { coverage: 1 },
+    ]) {
+        const session = chooserSession(uncertainChooser(config));
+        const result = await chooseCandidate({
+            observation: semanticFixture,
+            intent: "Open account preferences",
+            mode: "auto",
+            session,
+        });
+        expect(result.status).toBe("escalated");
+        expect(result.selected).toBeNull();
+        expect(result.packet?.candidates).toHaveLength(2);
+        expect(session.report().requests).toBe(1);
+    }
+    const admitted = await chooseCandidate({
+        observation: semanticFixture,
+        intent: "Open account preferences",
+        mode: "auto",
+        session: chooserSession(uncertainChooser({ coverage: 1, strong: true })),
+    });
+    expect(admitted.status).toBe("resolved");
+});
+test("host handoff accepts only current candidate and evidence IDs, without calling another model", async () => {
+    const observation = {
+        ...semanticFixture,
+        elements: [...semanticFixture.elements, { index: 6, depth: 0, role: "AXTextField", AXValue: "PRIVATE SECRET" }],
+    };
+    const session = chooserSession(uncertainChooser());
+    const first = await chooseCandidate({ observation, intent: "Open account preferences", mode: "auto", session });
+    const packet = first.packet;
+    if (!packet) {
+        throw new Error("Expected packet");
+    }
+    expect(SafeJSON.stringify(packet)).not.toContain("PRIVATE SECRET");
+    const answer = { packetId: packet.packetId, choice: "c0", evidence: ["e1"] };
+    const hostDecision = readHostDecision({ packet, answer });
+    const second = await chooseCandidate({
+        observation,
+        intent: "Open account preferences",
+        mode: "auto",
+        session,
+        hostDecision,
+    });
+    expect(second.source).toBe("host");
+    expect(second.selected?.element).toBe(1);
+    expect(session.report().requests).toBe(2);
+    expect(() =>
+        acceptHostChoice({ packet, currentPacket: packet, response: { ...answer, choice: "invented" } })
+    ).toThrow("unknown candidate");
+    expect(() =>
+        acceptHostChoice({ packet, currentPacket: packet, response: { ...answer, evidence: ["e999"] } })
+    ).toThrow("evidence");
+    expect(() =>
+        acceptHostChoice({ packet, currentPacket: packet, response: answer, now: packet.expiresAt + 1 })
+    ).toThrow("expired");
+    expect(() => readHostDecision({ packet, answer: { ...answer, command: "shell" } })).toThrow();
+    const changed = structuredClone(observation);
+    changed.elements[1].AXTitle = "Different operation";
+    await expect(
+        chooseCandidate({
+            observation: changed,
+            intent: "Open account preferences",
+            mode: "auto",
+            session,
+            hostDecision,
+        })
+    ).rejects.toThrow("changed");
+});
+test("chooser comparison is exact-only until Jev is explicitly enabled", async () => {
+    const result = await compareChoosers({
+        input: {},
+        evaluate: async () => {
+            throw new Error("No Jev permission");
+        },
+    });
+    expect(result.metrics.requests).toBe(0);
+    expect(result.summary).toHaveLength(1);
+    expect(result.summary[0].mode).toBe("exact");
+    expect(result.rows.every((row) => row.split === "held-out")).toBe(true);
+});
+
+test("exact-only assist cannot silently make semantic judgment or recovery calls", async () => {
+    const fixture = taskDriver();
+    const evaluate: Evaluator = async () => {
+        throw new Error("Jev was not enabled");
+    };
+    await expect(
+        assistTask({ driver: fixture.driver, evaluate, goal: "Show line numbers", chooser: "exact" })
+    ).rejects.toThrow("Exact-only assist");
+    await expect(
+        assistTask({
+            driver: fixture.driver,
+            evaluate,
+            goal: "Show line numbers",
+            chooser: "exact",
+            exact: { identifier: "line-numbers", value: "1" },
+            recovery: { mode: "bounded" },
+        })
+    ).rejects.toThrow("Exact-only assist");
+    const result = await assistTask({
+        driver: fixture.driver,
+        evaluate,
+        goal: "Show line numbers",
+        chooser: "exact",
+        exact: { identifier: "line-numbers", value: "1" },
+    });
+    expect(result.status).toBe("verified");
+    expect(result.metrics.requests).toBe(0);
 });

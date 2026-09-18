@@ -6,6 +6,7 @@ import { out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
 import { z } from "zod";
 import { assistTask } from "../lib/decision/assist";
+import { chooserModeSchema, readHostDecision } from "../lib/decision/chooser";
 import { remedySchema } from "../lib/decision/recovery";
 import { type ControlOptions, controlDriver, exactExpectation, observationOptions } from "./decision";
 
@@ -20,6 +21,11 @@ export function registerAssistCommand(program: Command) {
         .option("--max-steps <n>", "Maximum action attempts", "8")
         .option("--max-requests <n>", "Maximum paid evaluations", "20")
         .option("--recovery [mode]", "Recovery: off or bounded", "off")
+        .option("--chooser [mode]", "Target chooser: exact, jev or auto (Jev only; host handoff on uncertainty)", "jev")
+        .option(
+            "--host-decision <json>",
+            "Explicit host answer plus original packet; revalidated against current state"
+        )
         .option("--max-recoveries <n>", "Separate recovery attempt cap", "2")
         .option("--remedies <json>", "File with explicitly authorized dismiss/back targets")
         .option("--exact-id <id>", "Use a unique AXIdentifier for completion readback")
@@ -34,6 +40,8 @@ export function registerAssistCommand(program: Command) {
                     recovery: string;
                     maxRecoveries: string;
                     remedies?: string;
+                    chooser: string | boolean;
+                    hostDecision?: string;
                 }
             ) => {
                 const parsedMode = z.enum(["off", "bounded"]).safeParse(options.recovery);
@@ -43,6 +51,15 @@ export function registerAssistCommand(program: Command) {
                     return;
                 }
                 const mode = parsedMode.data;
+                const chooser = chooserModeSchema.safeParse(options.chooser);
+                if (!chooser.success) {
+                    out.log.error(suggestEnumFlag("tools control assist", "--chooser", ["exact", "jev", "auto"]));
+                    process.exitCode = 1;
+                    return;
+                }
+                const hostDecision = options.hostDecision
+                    ? readHostDecision(SafeJSON.parse(await Bun.file(options.hostDecision).text()))
+                    : undefined;
                 const remedies = options.remedies
                     ? z.array(remedySchema).parse(SafeJSON.parse(await Bun.file(options.remedies).text()))
                     : [];
@@ -53,6 +70,8 @@ export function registerAssistCommand(program: Command) {
                 try {
                     const result = await assistTask({
                         goal: options.goal,
+                        chooser: chooser.data,
+                        hostDecision,
                         recovery: { mode, remedies, maxRecoveries: Number(options.maxRecoveries) },
                         expect: options.expect,
                         exact: exactExpectation(options),
