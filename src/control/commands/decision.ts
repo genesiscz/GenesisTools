@@ -13,6 +13,7 @@ export interface ControlOptions {
     app?: string;
     windowId?: string;
     scope?: string | boolean;
+    image?: boolean;
     snapshotFile?: string;
     timeout: string;
     exactId?: string;
@@ -30,7 +31,7 @@ export function controlDriver(options: ControlOptions) {
     const scope = z.enum(["window", "chrome"]).parse(options.scope ?? "window");
     const windowId =
         options.windowId === undefined ? undefined : z.number().int().positive().parse(Number(options.windowId));
-    return new NativeControlDriver({ app, scope, windowId });
+    return new NativeControlDriver({ app, scope, windowId, image: options.image });
 }
 export function deadline(options: ControlOptions): AbortSignal {
     return AbortSignal.timeout(z.number().int().min(1).max(300000).parse(Number(options.timeout)));

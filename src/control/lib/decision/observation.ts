@@ -10,6 +10,7 @@ const rowSchema = z
         AXDescription: z.string().optional(),
         AXValue: z.union([z.string(), z.number(), z.boolean()]).optional(),
         AXSubrole: z.string().optional(),
+        AXRoleDescription: z.string().optional(),
         AXEnabled: z.union([z.string(), z.number(), z.boolean()]).optional(),
         actions: z.array(z.string()).optional(),
         valueSettable: z.boolean().optional(),
@@ -21,6 +22,7 @@ export const observationSchema = z
         ok: z.literal(true),
         app: z.string(),
         pid: z.number().int().positive(),
+        processLaunch: z.number().positive().optional(),
         snapshot: z.string().min(1),
         window: z.object({ id: z.number().int().positive(), title: z.string() }).passthrough(),
         scope: z.enum(["window", "chrome"]).default("window"),
@@ -38,6 +40,7 @@ export interface Candidate {
     action: "press" | "set";
     label: string;
     role: string;
+    kind?: string;
     identifier?: string;
     ancestors: string[];
     checked?: boolean;
@@ -45,6 +48,25 @@ export interface Candidate {
 
 export function elementLabel(row: ObservedElement): string {
     return row.AXTitle || row.AXDescription || row.AXIdentifier || row.role;
+}
+export function elementKind(row: ObservedElement): string {
+    if (row.AXRoleDescription) {
+        return row.AXRoleDescription;
+    }
+    const kinds: Record<string, string> = {
+        AXStaticText: "visible text",
+        AXButton: "button",
+        AXCheckBox: "checkbox",
+        AXRadioButton: "radio button",
+        AXProgressIndicator: "progress indicator",
+        AXTextField: "text input",
+        AXTextArea: "text area",
+        AXGroup: "group",
+        AXWindow: "window",
+        AXRow: "row",
+        AXTabGroup: "tab group",
+    };
+    return kinds[row.role] ?? row.role;
 }
 function checkedState(row: ObservedElement): boolean | undefined {
     if (!["AXCheckBox", "AXRadioButton", "AXSwitch"].includes(row.role)) {
@@ -87,6 +109,7 @@ export function candidatesFor({
                 action,
                 label: elementLabel(row).slice(0, 300),
                 role: row.role,
+                kind: elementKind(row),
                 identifier: row.AXIdentifier,
                 checked: checkedState(row),
                 ancestors: ancestors
@@ -113,6 +136,7 @@ export function observedEvidence(observation: Observation) {
         .map((row) => ({
             id: `e${row.index}`,
             role: row.role,
+            kind: elementKind(row),
             label: elementLabel(row).slice(0, 300),
             value:
                 ["AXTextField", "AXTextArea", "AXComboBox"].includes(row.role) || row.AXSubrole === "AXSecureTextField"
@@ -122,6 +146,16 @@ export function observedEvidence(observation: Observation) {
             ...(checkedState(row) === undefined ? {} : { checked: checkedState(row) }),
         }));
 }
+export function evidenceChoices(evidence: ReturnType<typeof observedEvidence>): Record<string, string> {
+    return Object.fromEntries(
+        evidence.map((item) => [item.id, `${item.kind}: ${item.label}${item.value ? ` — ${item.value}` : ""}`])
+    );
+}
 export function sameScope(first: Observation, next: Observation): boolean {
-    return first.pid === next.pid && first.window.id === next.window.id && first.scope === next.scope;
+    return (
+        first.pid === next.pid &&
+        first.processLaunch === next.processLaunch &&
+        first.window.id === next.window.id &&
+        first.scope === next.scope
+    );
 }

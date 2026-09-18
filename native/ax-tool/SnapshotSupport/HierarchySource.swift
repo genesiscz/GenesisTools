@@ -31,7 +31,7 @@ public struct ObservedTreeData {
 
 /// Attributes copied verbatim into every row, in this order.
 public let observedAttributeKeys = [
-    "AXIdentifier", "AXTitle", "AXDescription", "AXSubrole", "AXValue",
+    "AXIdentifier", "AXTitle", "AXDescription", "AXSubrole", "AXRoleDescription", "AXValue",
     "AXEnabled", "AXFocused", "AXSelected", "AXSelectedText", "AXSelectedTextRange",
 ]
 public let observedElementLimit = 4000

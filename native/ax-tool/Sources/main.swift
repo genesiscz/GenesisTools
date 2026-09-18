@@ -2801,6 +2801,8 @@ func cmdHitTest(x: Double, y: Double) {
 let maxDepth = Int(argValue("--depth") ?? "10") ?? 10
 
 switch command {
+case "wait-change":
+    cmdWaitChange(appName: appName)
 case "control-session":
     cmdControlSession(appName: appName)
 case "see":

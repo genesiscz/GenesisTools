@@ -53,3 +53,11 @@ final class WorkflowArgumentsTests: XCTestCase {
         ], command: "act"))
     }
 }
+
+extension WorkflowArgumentsTests {
+    func testTextOnlyObservationDoesNotAcceptAnImageDestination() throws {
+        let read = try WorkflowArguments(["--app", "Fixture", "--no-image"], command: "see")
+        XCTAssertTrue(read.flags.contains("--no-image"))
+        XCTAssertThrowsError(try WorkflowArguments(["--app", "Fixture", "--no-image", "--path", "/tmp/read.png"], command: "see"))
+    }
+}

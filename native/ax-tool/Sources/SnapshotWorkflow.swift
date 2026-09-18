@@ -193,7 +193,7 @@ private func workflowTree(_ window: AXUIElement, depth: Int, scope: String) -> O
 }
 
 private struct SnapshotUnstable: Error {
-    let message = "UI changed during screenshot capture; run see again"
+    let message = "UI changed during observation; run see again"
     let changes: [[String: Any]]
 }
 
@@ -202,9 +202,10 @@ private struct SnapshotUnstable: Error {
 /// that read as the first one.
 private func workflowSnapshot(appName: String, pid: pid_t, launch: Double, window: ObservedWindow, index: Int,
                               depth: Int, scope: String, path requestedPath: String?,
-                              settled: ObservedTreeData?) throws -> [String: Any] {
+                              settled: ObservedTreeData?, captureImage: Bool = true) throws -> [String: Any] {
     let tree = try settled ?? observedTree(window.ax, depth: depth, scope: scope)
-    guard let image = CGWindowListCreateImage(.null, .optionIncludingWindow, window.id, [.boundsIgnoreFraming, .bestResolution]) else {
+    let image = captureImage ? CGWindowListCreateImage(.null, .optionIncludingWindow, window.id, [.boundsIgnoreFraming, .bestResolution]) : nil
+    if captureImage && image == nil {
         throw ObservedTreeError("screenshot failed for the selected window; no snapshot issued")
     }
     let refreshed = try observedWindow(window.ax, pid: pid)
@@ -223,15 +224,16 @@ private func workflowSnapshot(appName: String, pid: pid_t, launch: Double, windo
         }
         throw SnapshotUnstable(changes: changes)
     }
-    let path = requestedPath ?? FileManager.default.temporaryDirectory
-        .appendingPathComponent("control-see-\(UUID().uuidString).png").path
-    guard let png = NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:]) else {
-        throw ObservedTreeError("PNG encoding failed")
-    }
-    do {
-        try png.write(to: URL(fileURLWithPath: path), options: .atomic)
-    } catch {
-        throw ObservedTreeError("cannot save snapshot: \(error.localizedDescription)")
+    var screenshot: [String: Any] = [:]
+    if let image {
+        let path = requestedPath ?? FileManager.default.temporaryDirectory
+            .appendingPathComponent("control-see-\(UUID().uuidString).png").path
+        guard let png = NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:]) else {
+            throw ObservedTreeError("PNG encoding failed")
+        }
+        do { try png.write(to: URL(fileURLWithPath: path), options: .atomic) }
+        catch { throw ObservedTreeError("cannot save snapshot: \(error.localizedDescription)") }
+        screenshot = ["path": URL(fileURLWithPath: path).path, "width": image.width, "height": image.height]
     }
     let token = SnapshotToken(pid: pid, launch: launch, window: Int(window.id), depth: depth,
                               digest: tree.digest, created: Date().timeIntervalSince1970, scope: scope)
@@ -242,11 +244,11 @@ private func workflowSnapshot(appName: String, pid: pid_t, launch: Double, windo
         throw ObservedTreeError("cannot encode snapshot token: \(error.localizedDescription)")
     }
     let publicRows = tree.rows.map { row in row.filter { $0.key != "identity" } }
-    return ["ok": true, "app": appName, "pid": pid,
+    return ["ok": true, "app": appName, "pid": pid, "processLaunch": launch,
             "window": ["id": window.id, "index": index, "title": axStringAttribute(window.ax, "AXTitle") ?? "",
                        "x": window.bounds.minX, "y": window.bounds.minY,
                        "width": window.bounds.width, "height": window.bounds.height],
-            "screenshot": ["path": URL(fileURLWithPath: path).path, "width": image.width, "height": image.height],
+            "screenshot": screenshot, "imageCaptured": captureImage,
             "snapshot": encoded, "scope": scope, "expiresInSeconds": 120, "bulk": workflowBulkUsed,
             "elements": publicRows]
 }
@@ -356,7 +358,7 @@ func cmdSee(appName _: String) {
     guard ["window", "chrome"].contains(scope) else { workflowFailure("--scope must be window or chrome") }
     do {
         jsonOutput(try workflowSnapshot(appName: appName, pid: pid, launch: launch, window: window, index: index,
-                                        depth: depth, scope: scope, path: workflowArgument("--path"), settled: nil))
+                                        depth: depth, scope: scope, path: workflowArgument("--path"), settled: nil, captureImage: !workflowFlag("--no-image")))
     } catch let unstable as SnapshotUnstable {
         jsonOutput(["ok": false, "error": unstable.message, "changedElements": unstable.changes])
         exit(1)
@@ -1074,4 +1076,61 @@ func cmdControlSession(appName: String) {
         catch { jsonOutput(["ok": false, "dispatchState": "not_started", "error": error.localizedDescription]) }
         fflush(stdout)
     }
+}
+
+private final class ObservationWake {
+    var count = 0
+}
+
+func cmdWaitChange(appName: String) {
+    workflowPermissions()
+    guard let windowRaw = argValue("--window-id"), let windowID = Int(windowRaw), windowID > 0,
+          windowID <= Int(UInt32.max), let timeoutRaw = argValue("--timeout-ms"), let timeout = Int(timeoutRaw),
+          timeout >= 1, timeout <= 1000 else {
+        workflowFailure("--window-id and --timeout-ms 1..1000 required")
+    }
+    let pid = resolveApp(appName)
+    let window = workflowWindowByID(windowID, pid: pid)
+    if let raw = argValue("--launch"), let expected = Double(raw), expected != workflowLaunch(pid) {
+        workflowFailure("app instance changed before waiting")
+    }
+    let wake = ObservationWake()
+    var observer: AXObserver?
+    let callback: AXObserverCallback = { _, _, _, pointer in
+        guard let pointer else { return }
+        let state = Unmanaged<ObservationWake>.fromOpaque(pointer).takeUnretainedValue()
+        state.count += 1
+        CFRunLoopStop(CFRunLoopGetCurrent())
+    }
+    guard AXObserverCreate(pid, callback, &observer) == .success, let observer else {
+        jsonOutput(["ok": true, "supported": false, "events": 0])
+        return
+    }
+    let context = Unmanaged.passUnretained(wake).toOpaque()
+    let app = AXUIElementCreateApplication(pid)
+    let notifications: [(AXUIElement, String)] = [
+        (window.ax, "AXLayoutChanged"), (window.ax, "AXValueChanged"),
+        (window.ax, "AXSelectedChildrenChanged"), (window.ax, "AXTitleChanged"),
+        (window.ax, "AXUIElementDestroyed"), (app, "AXFocusedUIElementChanged")
+    ]
+    var registered: [(AXUIElement, String)] = []
+    for (element, notification) in notifications {
+        if AXObserverAddNotification(observer, element, notification as CFString, context) == .success {
+            registered.append((element, notification))
+        }
+    }
+    guard !registered.isEmpty else {
+        jsonOutput(["ok": true, "supported": false, "events": 0])
+        return
+    }
+    let source = AXObserverGetRunLoopSource(observer)
+    CFRunLoopAddSource(CFRunLoopGetCurrent(), source, .defaultMode)
+    defer {
+        CFRunLoopRemoveSource(CFRunLoopGetCurrent(), source, .defaultMode)
+        for (element, notification) in registered {
+            _ = AXObserverRemoveNotification(observer, element, notification as CFString)
+        }
+    }
+    _ = CFRunLoopRunInMode(.defaultMode, Double(timeout) / 1000, true)
+    jsonOutput(["ok": true, "supported": true, "events": wake.count, "registrations": registered.count])
 }

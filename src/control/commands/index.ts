@@ -1,5 +1,6 @@
 import type { Command } from "commander";
 import { registerAssistCommand } from "./assist";
+import { registerAwaitCommand } from "./await";
 import { registerCaptureCommands } from "./capture";
 import { registerCompareScreenshotCommand } from "./compare-screenshot";
 import { registerCursorCommands } from "./cursor";
@@ -21,6 +22,7 @@ import { registerWorkflowCommands } from "./workflow";
 export function registerControlCommands(program: Command): void {
     registerCaptureCommands(program);
     registerAssistCommand(program);
+    registerAwaitCommand(program);
     registerCompareScreenshotCommand(program);
     registerCursorCommands(program);
     registerDiscoveryCommands(program);

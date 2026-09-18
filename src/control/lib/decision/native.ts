@@ -11,10 +11,15 @@ export interface ControlDriver {
 }
 export class NativeControlDriver implements ControlDriver {
     private pinned?: Observation;
-    constructor(private readonly options: { app: string; windowId?: number; scope?: "window" | "chrome" }) {}
+    constructor(
+        private readonly options: { app: string; windowId?: number; scope?: "window" | "chrome"; image?: boolean }
+    ) {}
     async observe(call: DriverCall): Promise<Observation> {
         call.signal?.throwIfAborted();
         const args = ["see", "--app", this.options.app, "--scope", this.options.scope ?? "window"];
+        if (this.options.image === false) {
+            args.push("--no-image");
+        }
         const windowId = this.pinned?.window.id ?? this.options.windowId;
         if (windowId !== undefined) {
             args.push("--window-id", String(windowId));

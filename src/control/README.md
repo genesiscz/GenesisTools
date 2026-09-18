@@ -351,3 +351,18 @@ control.close();
 ```
 
 The repository's Bun-based REPL supports TypeScript imports. A different host's Node REPL may only accept compiled JavaScript. The measured repository REPL setup took 178 ms; a later call reused its bindings and completed Jev plus two native presses and restoration in 1.04 seconds. Keep sessions short; create a fresh one after expiry or cancellation.
+
+### Semantic waits
+
+```sh
+tools jev control await --app Editor --window-id 42 --condition "A saved confirmation is displayed" --timeout 30000 --max-requests 12 --provider typesafe
+tools jev control wait-replay ready --chooser oracle
+tools jev control wait-replay unchanged --chooser jev --provider vercel
+tools control see --app Editor --window-id 42 --no-image
+```
+
+`await` pins the process launch/window and batches loading, ready, blocked, failed and evidence questions. Readiness requires an observable condition and admitted evidence; it does not prove hidden server or filesystem state. Failure and human-input blockers take precedence. A loading classification is advisory; terminal states require an admitted witness. Uncertain evidence stays uncertain.
+
+AXObserver notifications wake the reader where supported, with a bounded one-second snapshot fallback for missing notifications and a short event debounce. Repeated observations create no PNG files. Geometry, element indexes, capture metadata and other non-semantic fields do not cause another model request. Readable native control kinds accompany raw AX roles in model inputs. A monotonic deadline, cancellation and request budget bound every run. A stable spinner produces “no observed progress,” not a claim that the app is dead.
+
+The dashboard's Semantic waits card and `wait-replay` run the same wait core with a virtual event source. The oracle verifies plumbing without a model. Live Jev runs retain probabilities and evidence decisions, including uncertainty; no desktop action is dispatched by replay.

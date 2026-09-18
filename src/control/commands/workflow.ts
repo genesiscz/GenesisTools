@@ -28,6 +28,7 @@ const FORMATS = ["text", "md", "html"] as const;
 
 interface WorkflowOptions {
     app: string;
+    image?: boolean;
     windowIndex?: string;
     windowId?: string;
     windowTitle?: string;
@@ -226,6 +227,7 @@ export function registerWorkflowCommands(program: Command): void {
         .option("--depth <n>", "tree depth, 1–50; refuses truncated trees", "20")
         .option("--scope [name]", "window (default) or chrome (omit web-area descendants for browser controls)")
         .option("--path <png>", "save screenshot here (default: unique temporary PNG)")
+        .option("--no-image", "Read AX state without creating a screenshot")
         .option(
             "--since <json>",
             "a previous see result for the same window; output carries changes and only the rows that moved"
@@ -237,6 +239,9 @@ export function registerWorkflowCommands(program: Command): void {
                 return;
             }
             const args = ["see", "--app", opts.app];
+            if (opts.image === false) {
+                args.push("--no-image");
+            }
             if (typeof opts.scope === "string") {
                 args.push("--scope", opts.scope);
             }

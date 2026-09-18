@@ -6,6 +6,7 @@ import type { EvaluationResponse, Evaluator } from "@genesiscz/utils/ai/evaluati
 import { SafeJSON } from "@genesiscz/utils/json";
 import type { JsonLineTransport } from "@genesiscz/utils/process/json-line-process";
 import { assistTask } from "../lib/decision/assist";
+import { awaitCondition, semanticFingerprint } from "../lib/decision/await";
 import { admittedChoice, judgeOutcome, resolveIntent } from "../lib/decision/decisions";
 import { fillForm } from "../lib/decision/fill";
 import { replayCases } from "../lib/decision/fixtures";
@@ -13,6 +14,7 @@ import type { ControlDriver } from "../lib/decision/native";
 import { NativeControlSession } from "../lib/decision/native-session";
 import { candidatesFor, type Observation } from "../lib/decision/observation";
 import { replayControl } from "../lib/decision/replay";
+import { replayWait, waitCases } from "../lib/decision/wait-replay";
 
 const entry = join(import.meta.dir, "..", "index.ts");
 
@@ -607,4 +609,94 @@ test("a new observation invalidates an in-flight semantic choice", async () => {
     finish(evaluation({ matches: { type: "boolean", probability: 0.99 } }));
     await expect(choice).rejects.toThrow("changed");
     fixture.session.close();
+});
+
+test("semantic wait replay calls only for changed evidence and terminates on supported states", async () => {
+    for (const [id, status, requests] of [
+        ["ready", "ready", 2],
+        ["blocked", "blocked", 2],
+        ["failed", "failed", 2],
+        ["unchanged", "expired", 1],
+    ] as const) {
+        const result = await replayWait({ input: { id, chooser: "oracle" } });
+        expect(result.status).toBe(status);
+        expect(result.metrics.requests).toBe(requests);
+        expect(result.metrics.actions).toBe(0);
+        expect(result.paidRequests).toBe(0);
+        if (id === "unchanged") {
+            expect(result.metrics.elapsedMs).toBe(4000);
+            expect(result.metrics.unchanged).toBe(3);
+            expect(result.reason).toContain("no observed progress");
+        }
+    }
+});
+test("semantic fingerprints ignore geometry and indexes while preserving meaningful values", () => {
+    const first = waitCases[0].frames[0].observation;
+    const moved = structuredClone(first);
+    moved.elements[0].index = 99;
+    moved.elements[0].x = 400;
+    moved.snapshot = "new-capture";
+    expect(semanticFingerprint(first)).toBe(semanticFingerprint(moved));
+    moved.elements[0].AXValue = "Export failed";
+    expect(semanticFingerprint(first)).not.toBe(semanticFingerprint(moved));
+});
+test("wait scope changes and cancellation stop before another model call and close the source", async () => {
+    const first = waitCases[0].frames[0].observation;
+    for (const signal of [undefined, AbortSignal.abort()]) {
+        let closed = false;
+        let requests = 0;
+        let time = 0;
+        const result = await awaitCondition({
+            condition: "Export complete",
+            signal,
+            clock: {
+                now: () => time,
+                sleep: async (ms) => {
+                    time += ms;
+                },
+            },
+            driver: {
+                observe: async () => first,
+                act: async () => {
+                    throw new Error("No mutations");
+                },
+            },
+            source: {
+                kind: "fixture",
+                next: async () => ({ ...first, pid: 2 }),
+                close: async () => {
+                    closed = true;
+                },
+            },
+            evaluate: async () => {
+                requests++;
+                return evaluation({
+                    loading: { type: "boolean", probability: 1 },
+                    evidence: { type: "choice", choice: "e0", probabilities: { e0: 1, none: 0 } },
+                });
+            },
+        });
+        expect(result.status).toBe(signal ? "cancelled" : "stopped");
+        expect(requests).toBe(signal ? 0 : 1);
+        expect(closed).toBe(true);
+    }
+});
+test("wait respects the model request budget before classifying another frame", async () => {
+    const first = waitCases[0].frames[0].observation;
+    const result = await awaitCondition({
+        condition: "Export complete",
+        limits: { maxRequests: 0 },
+        driver: {
+            observe: async () => first,
+            act: async () => {
+                throw new Error("No mutations");
+            },
+        },
+        evaluate: async () => {
+            throw new Error("Budget must prevent the provider call");
+        },
+    });
+    expect(result.status).toBe("stopped");
+    expect(result.metrics.requests).toBe(0);
+    expect(result.reason).toContain("request budget");
 });

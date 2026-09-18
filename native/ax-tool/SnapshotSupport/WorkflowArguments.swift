@@ -21,7 +21,7 @@ public struct WorkflowArguments {
         switch command {
         case "see":
             valueOptions = ["--app", "--window-index", "--window-id", "--depth", "--path", "--scope"]
-            flagOptions = []
+            flagOptions = ["--no-image"]
         case "act":
             valueOptions = [
                 "--app", "--snapshot", "--element", "--action", "--value", "--ax-action", "--direction", "--text",
@@ -59,6 +59,9 @@ public struct WorkflowArguments {
 
         guard parsedValues["--app"] != nil else {
             throw WorkflowArgumentError.invalid("--app required")
+        }
+        if command == "see", parsedFlags.contains("--no-image"), parsedValues["--path"] != nil {
+            throw WorkflowArgumentError.invalid("--no-image cannot be combined with --path")
         }
         if command == "act" {
             guard let action = parsedValues["--action"], ["get", "press", "click", "move", "drag", "set", "perform", "focus", "scroll", "type", "key", "select", "paste"].contains(action) else {

@@ -1,7 +1,7 @@
 import type { EvaluationResponse, Evaluator } from "@genesiscz/utils/ai/evaluation/service";
 import { Stopwatch } from "@genesiscz/utils/Stopwatch";
 import { z } from "zod";
-import { type Candidate, candidatesFor, type Observation, observedEvidence } from "./observation";
+import { type Candidate, candidatesFor, evidenceChoices, type Observation, observedEvidence } from "./observation";
 
 const policySchema = z.object({
     minProbability: z.number().min(0.5).max(1).default(0.8),
@@ -105,6 +105,7 @@ export async function resolveIntent(
                 action: candidate.action,
                 label: candidate.label,
                 role: candidate.role,
+                kind: candidate.kind ?? candidate.role,
                 ancestors: candidate.ancestors,
                 ...(candidate.checked === undefined ? {} : { checked: candidate.checked }),
             },
@@ -196,7 +197,7 @@ export async function judgeOutcome(
             verificationMs: clock.elapsedMs,
         };
     }
-    const criteria = Object.fromEntries(evidence.map((item) => [item.id, item]));
+    const criteria = evidenceChoices(evidence);
     const evaluation = await options.evaluate({
         input: {
             state: { expected, window: options.observation.window.title, observations: evidence },

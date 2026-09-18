@@ -10,17 +10,20 @@ export type OperationLimits = z.input<typeof operationLimitsSchema>;
 export class OperationBudget {
     readonly limits;
     readonly signal: AbortSignal;
-    readonly started = performance.now();
+    readonly started: number;
+    private readonly clock: { now(): number };
     actions = 0;
     requests = 0;
-    constructor(options: OperationLimits & { signal?: AbortSignal }) {
+    constructor(options: OperationLimits & { signal?: AbortSignal; clock?: { now(): number } }) {
+        this.clock = options.clock ?? { now: () => performance.now() };
+        this.started = this.clock.now();
         this.limits = operationLimitsSchema.parse(options);
         const deadline = AbortSignal.timeout(this.limits.timeoutMs);
         this.signal = options.signal ? AbortSignal.any([options.signal, deadline]) : deadline;
     }
     remaining(): number {
         this.signal.throwIfAborted();
-        const remaining = this.limits.timeoutMs - (performance.now() - this.started);
+        const remaining = this.limits.timeoutMs - (this.clock.now() - this.started);
         if (remaining <= 0) {
             throw new Error("Operation deadline reached.");
         }
@@ -43,7 +46,7 @@ export class OperationBudget {
         return {
             actions: this.actions,
             requests: this.requests,
-            elapsedMs: performance.now() - this.started,
+            elapsedMs: this.clock.now() - this.started,
             limits: this.limits,
         };
     }
