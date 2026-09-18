@@ -14,6 +14,18 @@ export const DESTRUCTIVE_PATHS = new Set([
     "jev wake enable",
 ]);
 
+export const ROUTE_ALIASES: Record<string, string> = {
+    pr: "github review",
+    review: "github review",
+};
+
+export function aliasNote(path: string): string {
+    const aliases = Object.entries(ROUTE_ALIASES)
+        .filter(([, target]) => path === target || path.startsWith(`${target} `))
+        .map(([name]) => name);
+    return aliases.length ? ` aliases: ${aliases.join(", ")}` : "";
+}
+
 export interface CatalogueCommand {
     path: string;
     description: string;
@@ -125,7 +137,7 @@ export function flattenCatalogue(
                 id: command.path.replaceAll(" ", "."),
                 path: command.path,
                 destructive: command.destructive,
-                oneLine: `${tool.oneLine} / ${command.description}`.trim(),
+                oneLine: `${tool.oneLine} / ${command.description}${aliasNote(command.path)}`.trim(),
             });
         }
     }

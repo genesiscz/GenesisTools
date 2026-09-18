@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { admittedChoice } from "@app/control/lib/decision/decisions";
 import type { Evaluator } from "@genesiscz/utils/ai/evaluation/service";
 import { flattenCatalogue, type ToolCatalogue } from "./catalogue";
@@ -16,8 +17,75 @@ export interface RouteDecision {
 
 const TOKEN_RE = /\b(\d{1,7}|[A-Za-z0-9._-]+\.md|[A-Za-z0-9._-]+\.ts)\b/g;
 
+export function suggestBatches<T>(rows: T[], size = 20): T[][] {
+    const batches: T[][] = [];
+    for (let offset = 0; offset < rows.length; offset += size) {
+        batches.push(rows.slice(offset, offset + size));
+    }
+    return batches;
+}
+
 export function extractArgHints(utterance: string): string[] {
     return [...utterance.matchAll(TOKEN_RE)].map((match) => match[1]);
+}
+
+export function looksLikePath(hint: string): boolean {
+    return hint.includes("/") || /\.[A-Za-z][A-Za-z0-9]*$/.test(hint);
+}
+
+export function fillArgv(utterance: string, rest: string[], exists: (path: string) => boolean = existsSync): string[] {
+    const hints = extractArgHints(utterance).filter((hint) => {
+        if (rest.includes(hint)) {
+            return false;
+        }
+
+        if (looksLikePath(hint) && !exists(hint)) {
+            return false;
+        }
+
+        return true;
+    });
+    return [...rest, ...hints];
+}
+
+export interface RouteSuggestion {
+    path: string;
+    score: number;
+}
+
+export async function suggestCatalogue(options: {
+    utterance: string;
+    catalogue: ToolCatalogue;
+    evaluate: Evaluator;
+    signal?: AbortSignal;
+    limit?: number;
+}): Promise<RouteSuggestion[]> {
+    const rows = flattenCatalogue(options.catalogue);
+    const scored: RouteSuggestion[] = [];
+    for (const batch of suggestBatches(rows, 20)) {
+        const evaluation = await options.evaluate({
+            input: {
+                state: { utterance: options.utterance, names: batch.map((row) => row.path) },
+                questions: Object.fromEntries(
+                    batch.map((row) => [
+                        row.id,
+                        {
+                            type: "score",
+                            instructions: "How well does this command match the utterance?",
+                            criteria: ["poor match", "possible match", "strong match"],
+                        },
+                    ])
+                ),
+            },
+            signal: options.signal,
+        });
+        for (const row of batch) {
+            const answer = evaluation.answers[row.id];
+            scored.push({ path: row.path, score: answer?.type === "score" ? answer.score : 0 });
+        }
+    }
+
+    return scored.sort((left, right) => right.score - left.score || left.path.localeCompare(right.path)).slice(0, 10);
 }
 
 export async function routeUtterance(options: {
@@ -102,8 +170,7 @@ export async function routeUtterance(options: {
     }
 
     const [tool, ...rest] = row.path.split(" ");
-    const hints = extractArgHints(options.utterance);
-    const argv = [...rest, ...hints.filter((hint) => !rest.includes(hint))];
+    const argv = fillArgv(options.utterance, rest);
     const destructiveAnswer = evaluation.answers.destructive;
     const confirmAnswer = evaluation.answers.confirm;
     const destructive =
