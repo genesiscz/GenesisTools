@@ -6,6 +6,7 @@ import { logger, out } from "@genesiscz/utils/logger";
 import { classifyPid, readProcessCommand } from "@genesiscz/utils/process-identity";
 import type { Command } from "commander";
 import pc from "picocolors";
+import { attachSemanticPlan } from "../lib/decision/workflow";
 import { ensureBinary, RECORD_DIR, RECORD_SESSION, recordSource } from "../lib/runner";
 
 const COMMANDS_LOG = join(RECORD_DIR, "commands.jsonl");
@@ -430,6 +431,10 @@ export function registerRecordPlanCommand(program: Command): void {
         .option("--record <mode>", "commands | activity | all", "all")
         .option("--duration <s>", "one-shot: record activity for N seconds, then emit the plan")
         .option("--out <path>", "write plan JSON to this file (default: stdout)")
+        .option(
+            "--semantic <metadata-json>",
+            "Stop: attach validated semantic metadata and replace inline values with references"
+        )
         .option("--app <name>", "force the plan-level app instead of the most frequent")
         .option(
             "--exclude-foreign",
@@ -482,15 +487,23 @@ export function registerRecordPlanCommand(program: Command): void {
                 stopActivityRecorder(session);
                 Bun.sleepSync(150);
                 const { plan, foreignCount } = synthesizePlan(session, opts.app, !!opts.excludeForeign);
+                const outputPlan = opts.semantic
+                    ? attachSemanticPlan({
+                          legacy: plan,
+                          semantic: SafeJSON.parse(readFileSync(String(opts.semantic), "utf8")),
+                      })
+                    : plan;
+                const planJson = SafeJSON.stringify(outputPlan, null, 2);
                 unlinkSync(RECORD_SESSION);
-                const planJson = SafeJSON.stringify(plan, null, 2);
                 const stepCount = (plan.steps as unknown[]).length;
                 if (opts.out) {
                     writeFileSync(opts.out, `${planJson}\n`);
                     out.println(
                         `${pc.green("plan written")} ${pc.cyan(opts.out)} — ${stepCount} steps (mode=${session.mode})`
                     );
-                    out.println(pc.dim(`review it, then: tools control run ${opts.out}`));
+                    out.println(
+                        pc.dim(`review it, then: tools control ${opts.semantic ? "replay-plan" : "run"} ${opts.out}`)
+                    );
                 } else {
                     out.println(planJson);
                 }

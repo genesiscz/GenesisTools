@@ -376,3 +376,34 @@ Recovery uses native delivery metadata. A stale snapshot or missing target may b
 Optional `--remedies remedies.json` admits explicit local dismiss/back controls only:
 `[{"id":"close-help","kind":"dismiss","identifier":"help-close","label":"Close help","role":"AXButton","description":"Close the help overlay"}]`.
 The identifier, role and label must uniquely match fresh state. There is no default generic Cancel/Back click. The result preserves the refusal, evidence, supplied remedy set, model choice and recovery action result.
+
+### Resilient workflow replay
+
+`tools jev control replay-plan workflow.json --values values.json --rebind --window-id 123`
+
+A version 1 plan binds each step against a fresh observation, first by an exact unique selector, then (only with `--rebind`) by Jev. Every step has a required postcondition and `noRetry: true`. Unknown dispatch/readback stops the run. Repaired selectors stay in the result unless a verified run explicitly uses `--save-repairs new-plan.json`; the original is never overwritten.
+
+```json
+{
+  "version": 1,
+  "app": "Example App",
+  "scope": "window",
+  "windowTitle": "Profile",
+  "steps": [{
+    "id": "name",
+    "action": "set",
+    "selector": {"identifier": "full-name"},
+    "intent": "Enter the supplied full name",
+    "valueRef": "name",
+    "postcondition": {
+      "expect": "The supplied name is displayed",
+      "exact": {"identifier": "full-name", "valueRef": "name"}
+    },
+    "noRetry": true
+  }]
+}
+```
+
+Exact values come from a separate local file such as `{"name":"Example Person"}`. Choosers see field descriptions and redacted inputs, never this values map. Set steps also verify the exact written value before the recorded postcondition. Missing values are rejected before any desktop observation/action.
+
+`record-plan stop --semantic metadata.json --out workflow.json` attaches the same versioned metadata to a recording after checking every recorded action/selector/app. Inline values are replaced by references in the emitted plan. No observations or screenshots are retained automatically; optional context contains only caller-supplied role/label pairs. Existing raw recorder logs retain their existing lifecycle. This first semantic format supports `press` and `set`; unsupported recorded verbs fail explicitly. The legacy `run` path remains available for old plans and refuses semantic plans rather than ignoring their postconditions.

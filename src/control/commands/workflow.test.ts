@@ -17,6 +17,7 @@ import { actionRefusal, authenticationBarrier, RecoveryController } from "../lib
 import { replayControl } from "../lib/decision/replay";
 import { ControlSession } from "../lib/decision/session";
 import { replayWait, waitCases } from "../lib/decision/wait-replay";
+import { applyWorkflowRepairs, attachSemanticPlan, replayWorkflow, type WorkflowPlan } from "../lib/decision/workflow";
 
 const entry = join(import.meta.dir, "..", "index.ts");
 
@@ -842,4 +843,143 @@ test("only uniquely observed explicitly authorized recovery buttons can be dispa
         })
     ).toBeNull();
     expect(fixture.calls()).toBe(0);
+});
+
+function formPlan(): WorkflowPlan {
+    return {
+        version: 1,
+        app: "FormFixture",
+        scope: "window",
+        windowTitle: "Profile",
+        steps: [
+            {
+                id: "name",
+                action: "set",
+                selector: { identifier: "name" },
+                intent: "Enter the supplied name",
+                valueRef: "nameValue",
+                postcondition: { expect: "Name entered", exact: { identifier: "name", valueRef: "nameValue" } },
+                noRetry: true,
+            },
+            {
+                id: "city",
+                action: "set",
+                selector: { identifier: "city" },
+                intent: "Enter the supplied city",
+                valueRef: "cityValue",
+                postcondition: { expect: "City entered", exact: { identifier: "city", valueRef: "cityValue" } },
+                noRetry: true,
+            },
+        ],
+    };
+}
+test("resilient workflows bind reordered fields without model calls and keep values out of traces", async () => {
+    const fixture = formDriver();
+    const result = await replayWorkflow({
+        plan: formPlan(),
+        driver: fixture.driver,
+        values: { nameValue: "Private Name", cityValue: "Private Town" },
+        evaluate: async () => {
+            throw new Error("Exact plan must not call model");
+        },
+    });
+    expect(result.status).toBe("verified");
+    expect(fixture.calls.map((call) => call.candidate.element)).toEqual([0, 0]);
+    expect(result.steps.every((step) => step.suppliedValueVerified)).toBe(true);
+    expect(result.metrics.requests).toBe(0);
+    expect(SafeJSON.stringify(result)).not.toContain("Private Name");
+    expect(SafeJSON.stringify(result)).not.toContain("Private Town");
+});
+test("workflow rebind is opt-in, constrained to the same action, and never silently persists", async () => {
+    const plan = formPlan();
+    plan.steps = [plan.steps[0]];
+    plan.steps[0].selector = { label: "Former full-name label" };
+    const fixture = formDriver();
+    const captured: string[] = [];
+    const result = await replayWorkflow({
+        plan,
+        driver: fixture.driver,
+        values: { nameValue: "Private Name" },
+        rebind: true,
+        evaluate: chooseField(captured),
+    });
+    expect(result.status).toBe("verified");
+    expect(result.steps[0].binding).toBe("jev");
+    expect(result.repairs).toHaveLength(1);
+    expect(fixture.calls[0].candidate.action).toBe("set");
+    expect(plan.steps[0].selector.label).toBe("Former full-name label");
+    const repaired = applyWorkflowRepairs({ plan, repairs: result.repairs });
+    expect(repaired.steps[0].selector.identifier).toBe("name");
+    expect(captured.join("")).not.toContain("Private Name");
+    const disabled = formDriver();
+    const stopped = await replayWorkflow({
+        plan,
+        driver: disabled.driver,
+        values: { nameValue: "Name" },
+        evaluate: chooseField([]),
+    });
+    expect(stopped.status).toBe("stopped");
+    expect(disabled.calls).toHaveLength(0);
+});
+test("workflow preflight refuses missing values before reading or mutating", async () => {
+    const fixture = formDriver();
+    await expect(
+        replayWorkflow({ plan: formPlan(), driver: fixture.driver, evaluate: chooseField([]) })
+    ).rejects.toThrow("Missing supplied value");
+    expect(fixture.observations()).toBe(0);
+    expect(fixture.calls).toHaveLength(0);
+});
+test("workflow ambiguity, scope change, wrong readback and unknown mutation stop subsequent steps", async () => {
+    for (const config of [{ failWrite: true }, { wrongWindow: true }, { corruptReadback: true }]) {
+        const fixture = formDriver(config);
+        const result = await replayWorkflow({
+            plan: formPlan(),
+            driver: fixture.driver,
+            values: { nameValue: "Name", cityValue: "Town" },
+            evaluate: chooseField([]),
+        });
+        expect(result.status).not.toBe("verified");
+        expect(fixture.calls).toHaveLength(1);
+    }
+    const fixture = formDriver();
+    const originalObserve = fixture.driver.observe;
+    fixture.driver.observe = async (call) => {
+        const observation = await originalObserve(call);
+        observation.elements[1].AXIdentifier = "name";
+        return observation;
+    };
+    const result = await replayWorkflow({
+        plan: formPlan(),
+        driver: fixture.driver,
+        values: { nameValue: "Name", cityValue: "Town" },
+        rebind: true,
+        evaluate: async () => {
+            throw new Error("Ambiguous original selector must stop before chooser");
+        },
+    });
+    expect(result.steps[0].reason).toContain("ambiguous");
+    expect(fixture.calls).toHaveLength(0);
+});
+test("semantic recording replaces inline values and refuses action/selector changes", () => {
+    const plan = formPlan();
+    const legacy = {
+        app: "FormFixture",
+        steps: [
+            { do: "set", id: "name", value: "Secret A" },
+            { do: "set", id: "city", value: "Secret B" },
+        ],
+    };
+    const envelope = attachSemanticPlan({ legacy, semantic: plan });
+    expect(SafeJSON.stringify(envelope)).not.toContain("Secret");
+    expect(envelope.semantic).toEqual(plan);
+    expect(legacy.steps[0].value).toBe("Secret A");
+    expect(() =>
+        attachSemanticPlan({
+            legacy: { ...legacy, steps: [{ do: "press", id: "name" }, legacy.steps[1]] },
+            semantic: plan,
+        })
+    ).toThrow("app/action");
+    const changed = structuredClone(plan);
+    changed.steps[0].selector = { identifier: "city" };
+    expect(() => attachSemanticPlan({ legacy, semantic: changed })).toThrow("differs");
 });

@@ -13,6 +13,7 @@ import { registerOsascriptCommand } from "./osascript";
 import { registerPermissionsCommands } from "./permissions";
 import { registerRecordPlanCommand } from "./record-plan";
 import { registerReplayCommand } from "./replay";
+import { registerReplayPlanCommand } from "./replay-plan";
 import { registerRunCommand } from "./run";
 import { registerSequenceCommand } from "./sequence";
 import { registerStateCommands } from "./state";
@@ -36,6 +37,7 @@ export function registerControlCommands(program: Command): void {
     registerRunCommand(program);
     registerSequenceCommand(program);
     registerReplayCommand(program);
+    registerReplayPlanCommand(program);
     registerStateCommands(program);
     registerVerifyCommands(program);
     registerWorkflowCommands(program);
