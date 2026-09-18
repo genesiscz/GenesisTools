@@ -196,6 +196,14 @@ export function runAxWithBoundary({
     timeoutMs?: number;
     boundary: AxRunBoundary;
 }): AxResult {
+    timeoutMs = Math.floor(timeoutMs);
+    if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 2147483647) {
+        return {
+            ok: false,
+            dispatchState: "not_started",
+            error: "Native timeout must be a finite duration of at least 1 ms and at most 2147483647 ms.",
+        };
+    }
     logger.debug({ command: args[0], timeoutMs }, "running native control command");
     let binary: string;
     try {
@@ -205,7 +213,17 @@ export function runAxWithBoundary({
         return { ok: false, error: error instanceof Error ? error.message : String(error) };
     }
 
-    const r = boundary.spawn({ binary, args, timeoutMs, maxBufferBytes: AX_STDOUT_BUDGET_BYTES });
+    let r: ReturnType<AxRunBoundary["spawn"]>;
+    try {
+        r = boundary.spawn({ binary, args, timeoutMs, maxBufferBytes: AX_STDOUT_BUDGET_BYTES });
+    } catch (error) {
+        logger.warn({ error, command: args[0] }, "Native spawn failed; no retry");
+        return {
+            ok: false,
+            dispatchState: "uncertain",
+            error: "Native spawn failed; the action may have partially completed. No retry was attempted.",
+        };
+    }
 
     if (r.error?.code === "ENOBUFS") {
         return {

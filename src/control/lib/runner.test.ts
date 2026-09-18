@@ -248,3 +248,43 @@ test("a native error message survives a nonzero exit", () => {
 
     expect(runAxWithBoundary({ args: ["act"], boundary })).toEqual({ ok: false, error: "snapshot token expired" });
 });
+
+test("native deadlines round down to subprocess milliseconds and never become unlimited", () => {
+    let builds = 0;
+    const observedTimeouts: number[] = [];
+    const boundary: AxRunBoundary = {
+        ensureBinary: () => {
+            builds++;
+            return "/fixture/ax-tool";
+        },
+        spawn: (options) => {
+            observedTimeouts.push(options.timeoutMs);
+            return { status: 0, signal: null, stdout: '{"ok":true}', stderr: "" };
+        },
+    };
+    expect(runAxWithBoundary({ args: ["see"], timeoutMs: 29999.798708, boundary }).ok).toBe(true);
+    expect(observedTimeouts).toEqual([29999]);
+    for (const timeoutMs of [0.4, 0, -1, Infinity, NaN, 2147483648]) {
+        expect(runAxWithBoundary({ args: ["act"], timeoutMs, boundary })).toMatchObject({
+            ok: false,
+            dispatchState: "not_started",
+        });
+    }
+    expect(builds).toBe(1);
+    expect(observedTimeouts).toHaveLength(1);
+});
+test("a throwing spawn is reported as uncertain and never retried", () => {
+    let spawns = 0;
+    const result = runAxWithBoundary({
+        args: ["act"],
+        boundary: {
+            ensureBinary: () => "/fixture/ax-tool",
+            spawn: () => {
+                spawns++;
+                throw new Error("Lost transport");
+            },
+        },
+    });
+    expect(result).toMatchObject({ ok: false, dispatchState: "uncertain" });
+    expect(spawns).toBe(1);
+});
