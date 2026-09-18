@@ -30,6 +30,9 @@ export async function observeFanout(options: {
     signal?: AbortSignal;
     exact?: ExactExpectation;
     allowYes?: boolean;
+    lastRefusal?: string;
+    remedies?: Array<{ id: string; description?: string }>;
+    stateExtras?: Record<string, unknown>;
 }): Promise<ObserveFanout> {
     const goal = z.string().trim().min(1).max(4000).parse(options.goal);
     const press = candidatesFor({ observation: options.observation, action: "press" });
@@ -88,6 +91,7 @@ export async function observeFanout(options: {
                 window: options.observation.window.title,
                 candidates: targetCriteria,
                 observations: observedEvidence(options.observation),
+                ...options.stateExtras,
             },
             questions: {
                 target: {
@@ -117,6 +121,27 @@ export async function observeFanout(options: {
                     instructions: "How irreversible is the next act?",
                     criteria: ["low: reversible", "medium: send or navigate", "high: delete or purchase"],
                 },
+                ...(options.lastRefusal
+                    ? {
+                          recovery: {
+                              type: "choice" as const,
+                              instructions: `The last act was refused (${options.lastRefusal}). Choose an authorized remedy or abstain.`,
+                              criteria: {
+                                  ...Object.fromEntries(
+                                      (options.remedies ?? []).map((remedy) => [
+                                          remedy.id,
+                                          remedy.description ?? remedy.id,
+                                      ])
+                                  ),
+                                  abstain: "Do not recover; stop or wait for the host.",
+                              },
+                          },
+                          rebind: {
+                              type: "boolean" as const,
+                              instructions: "Should the workflow rebind this step to a fresh observation?",
+                          },
+                      }
+                    : {}),
             },
         },
         signal: options.signal,

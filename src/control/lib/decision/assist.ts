@@ -42,6 +42,7 @@ export async function assistTask(options: {
     let status: "verified" | "stopped" | "unknown" = "stopped";
     let reason = "";
     let reobservations = 0;
+    let lastRefusal: ReturnType<typeof actionRefusal> | undefined;
     const changedToggles = new Set<string>();
     try {
         let observation = await session.observe();
@@ -78,6 +79,8 @@ export async function assistTask(options: {
                     exact: options.exact,
                     evaluate: session.evaluate,
                     signal: session.budget.signal,
+                    lastRefusal,
+                    remedies: recovery.options.remedies,
                 });
                 if (fanout.status === "verified") {
                     status = "verified";
@@ -105,10 +108,24 @@ export async function assistTask(options: {
                     } as Awaited<ReturnType<typeof chooseCandidate>>,
                     dispatchOk: dispatched.result.ok,
                     observationError: dispatched.observationError,
+                    refusal: dispatched.result.ok ? undefined : actionRefusal(dispatched.result),
                 });
-                if (!dispatched.result.ok || !dispatched.after) {
+                if (!dispatched.result.ok) {
+                    lastRefusal = actionRefusal(dispatched.result);
+                    if (recovery.options.mode === "bounded" && dispatched.after) {
+                        observation = dispatched.after;
+                        continue;
+                    }
+
                     status = "unknown";
                     reason = dispatched.result.error ?? dispatched.observationError ?? "Action outcome is uncertain.";
+                    break;
+                }
+
+                lastRefusal = undefined;
+                if (!dispatched.after) {
+                    status = "unknown";
+                    reason = dispatched.observationError ?? "Action outcome is uncertain.";
                     break;
                 }
 

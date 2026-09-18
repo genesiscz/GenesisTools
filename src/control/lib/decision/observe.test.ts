@@ -95,6 +95,31 @@ test("high risk without --yes escalates", async () => {
     expect(result.status).toBe("escalate");
 });
 
+test("recovery question appears only after a refusal", async () => {
+    let without: string[] = [];
+    let withRefusal: string[] = [];
+    const evaluate: Evaluator = async (call) => {
+        const ids = Object.keys(evaluationSchema.parse(call.input).questions);
+        if (without.length === 0) {
+            without = ids;
+        } else {
+            withRefusal = ids;
+        }
+        return evaluation(answers());
+    };
+    await observeFanout({ observation, goal: "Export the document", evaluate });
+    await observeFanout({
+        observation,
+        goal: "Export the document",
+        evaluate,
+        lastRefusal: "stale_observation",
+        remedies: [{ id: "dismiss-sheet", description: "Dismiss the blocking sheet" }],
+    });
+    expect(without.sort()).toEqual(["blocked", "done", "risk", "target", "verb", "wait"]);
+    expect(withRefusal).toContain("recovery");
+    expect(withRefusal).toContain("rebind");
+});
+
 test("exact readback overrides semantic done", async () => {
     const evaluate: Evaluator = async () => evaluation(answers({ done: { type: "boolean", probability: 0.99 } }));
     const result = await observeFanout({
