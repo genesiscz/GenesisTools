@@ -52,6 +52,25 @@ final class SnapshotDispatchTests: XCTestCase {
         XCTAssertEqual(dispatchCount, 0, "primitive dispatch must remain unreachable", file: file, line: line)
     }
 
+    func testRefusalCategoriesAreTypedBeforeDispatch() {
+        for (context, expected) in [
+            (makeContext(observedTreeDigest: "changed"), SnapshotRefusal.staleObservation),
+            (makeContext(observedWindowID: 8), .scopeChanged),
+            (makeContext(inputFocused: false, operation: .input), .focusMismatch),
+            (makeContext(targetEnabled: false), .missingTarget)
+        ] {
+            var dispatches = 0
+            XCTAssertThrowsError(try dispatchSnapshotAction(context: context) {
+                dispatches += 1
+                throw PrimitiveError.reached
+            }) { error in
+                let category = (error as? SnapshotError)?.category ?? (error as? SnapshotDispatchError)?.category
+                XCTAssertEqual(category, expected)
+            }
+            XCTAssertEqual(dispatches, 0)
+        }
+    }
+
     func testValidOperationReachesPrimitiveDispatch() throws {
         let result = try dispatchSnapshotAction(context: makeContext()) { "dispatched" }
 

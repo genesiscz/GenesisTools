@@ -13,7 +13,9 @@ import { replayCases } from "../lib/decision/fixtures";
 import type { ControlDriver } from "../lib/decision/native";
 import { NativeControlSession } from "../lib/decision/native-session";
 import { candidatesFor, type Observation } from "../lib/decision/observation";
+import { actionRefusal, authenticationBarrier, RecoveryController } from "../lib/decision/recovery";
 import { replayControl } from "../lib/decision/replay";
+import { ControlSession } from "../lib/decision/session";
 import { replayWait, waitCases } from "../lib/decision/wait-replay";
 
 const entry = join(import.meta.dir, "..", "index.ts");
@@ -699,4 +701,145 @@ test("wait respects the model request budget before classifying another frame", 
     expect(result.status).toBe("stopped");
     expect(result.metrics.requests).toBe(0);
     expect(result.reason).toContain("request budget");
+});
+
+const recoverByReobserving: Evaluator = async (call) => {
+    const input = evaluationSchema.parse(call.input);
+    if (!input.questions.remedy) {
+        return chooseField([])(call);
+    }
+    const question = input.questions.remedy;
+    if (question.type !== "choice") {
+        throw new Error("Expected remedy choice");
+    }
+    return evaluation({
+        remedy: {
+            type: "choice",
+            choice: "reobserve",
+            probabilities: Object.fromEntries(
+                Object.keys(question.criteria).map((id) => [id, id === "reobserve" ? 1 : 0])
+            ),
+        },
+    });
+};
+test("bounded recovery redecides a stale action using fresh observation and shared budgets", async () => {
+    const fixture = taskDriver();
+    let attempts = 0;
+    const dispatch = fixture.driver.act;
+    const tokens: string[] = [];
+    fixture.driver.act = async (call) => {
+        attempts++;
+        tokens.push(call.observation.snapshot);
+        if (attempts === 1) {
+            return { ok: false, error: "Stale", dispatchState: "not_started", refusal: "stale_observation" };
+        }
+        return dispatch(call);
+    };
+    const observe = fixture.driver.observe;
+    fixture.driver.observe = async (call) => ({
+        ...(await observe(call)),
+        snapshot: `generation-${fixture.observations()}`,
+    });
+    const result = await assistTask({
+        driver: fixture.driver,
+        goal: "Enable line numbers",
+        exact: { identifier: "line-numbers", value: "1" },
+        evaluate: recoverByReobserving,
+        recovery: { mode: "bounded" },
+    });
+    expect(result.status).toBe("verified");
+    expect(result.recoveries[0]).toMatchObject({
+        category: "stale_observation",
+        selected: "reobserve",
+        status: "continued",
+    });
+    expect(attempts).toBe(2);
+    expect(fixture.calls()).toBe(1);
+    expect(tokens[0]).not.toBe(tokens[1]);
+    expect(result.metrics).toMatchObject({ actions: 2, requests: 3 });
+});
+test("uncertain or partial delivery never receives a second dispatch even with recovery enabled", async () => {
+    const fixture = taskDriver({ unknown: true });
+    const result = await assistTask({
+        driver: fixture.driver,
+        goal: "Enable line numbers",
+        exact: { identifier: "line-numbers", value: "1" },
+        evaluate: recoverByReobserving,
+        recovery: { mode: "bounded" },
+    });
+    expect(fixture.calls()).toBe(1);
+    expect(result.status).toBe("unknown");
+    expect(result.recoveries[0]).toMatchObject({ category: "transport_uncertainty", selected: null });
+    expect(actionRefusal({ ok: false, error: "stale observation" })).toBe("transport_uncertainty");
+});
+test("recovery caps, permission, authentication and changed scope cannot expand execution", async () => {
+    const fixture = taskDriver();
+    let attempts = 0;
+    fixture.driver.act = async () => {
+        attempts++;
+        return { ok: false, dispatchState: "not_started", refusal: "stale_observation" };
+    };
+    const result = await assistTask({
+        driver: fixture.driver,
+        goal: "Enable line numbers",
+        exact: { identifier: "line-numbers", value: "1" },
+        evaluate: recoverByReobserving,
+        recovery: { mode: "bounded", maxRecoveries: 1 },
+    });
+    expect(attempts).toBe(2);
+    expect(result.recoveries).toHaveLength(1);
+    for (const category of ["permission", "authentication", "scope_changed", "transport_uncertainty"] as const) {
+        const session = new ControlSession({
+            driver: fixture.driver,
+            evaluate: async () => {
+                throw new Error("Must not call model");
+            },
+        });
+        const recovery = new RecoveryController({ mode: "bounded" });
+        expect(await recovery.recover({ session, category, goal: "Continue" })).toBeNull();
+        expect(session.report().requests).toBe(0);
+    }
+    expect(
+        authenticationBarrier({
+            ...semanticFixture,
+            elements: [{ index: 0, depth: 0, role: "AXTextField", AXSubrole: "AXSecureTextField" }],
+        })
+    ).toBe(true);
+});
+test("only uniquely observed explicitly authorized recovery buttons can be dispatched", async () => {
+    const fixture = taskDriver({ noChange: true });
+    const session = new ControlSession({
+        driver: fixture.driver,
+        evaluate: async (call) => {
+            const input = evaluationSchema.parse(call.input);
+            const q = input.questions.remedy;
+            if (q.type !== "choice") {
+                throw new Error("Expected remedy");
+            }
+            expect(q.criteria).not.toHaveProperty("close-help");
+            return evaluation({ remedy: { type: "choice", choice: "close-help", probabilities: { "close-help": 1 } } });
+        },
+    });
+    const recovery = new RecoveryController({
+        mode: "bounded",
+        remedies: [
+            {
+                id: "close-help",
+                kind: "dismiss",
+                identifier: "help-close",
+                role: "AXButton",
+                label: "Close help",
+                description: "Dismiss help only",
+            },
+        ],
+    });
+    expect(
+        await recovery.recover({
+            session,
+            observation: await session.observe(),
+            category: "semantic_interruption",
+            goal: "Continue",
+        })
+    ).toBeNull();
+    expect(fixture.calls()).toBe(0);
 });

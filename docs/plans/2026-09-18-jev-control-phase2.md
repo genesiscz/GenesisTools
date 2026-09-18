@@ -11,3 +11,9 @@ Requested 2026-09-18; extend feat/jev-gateway-lab / PR #409. Primary implements;
 Each area gets appropriate targeted tests and a logical commit. Update Control Lab, README, Obsidian specs/status/proof, push and update existing normal PR. Do not merge or run a review loop.
 
 Live folder-demo interruption: actual Jev selected all 28 supplied folder labels. Six below semantic gate are admitted by explicit user-name exact binding only. Whole-window see/act guard refused while chat updated. Selector-based AXPress demonstration uses fresh unique anchored regex/AXRow selectors, reads AXExpanded before/after, one-second timed capture. Keep refusal and final proof; do not call it a successful snapshot-token demonstration.
+
+## Extended improvement pass
+
+User expanded the goal at 2026-09-18 01:02 UTC: finish every feature and spend at least four further hours comparing/improving this stack against the Computer Use capabilities available in Codex. Earliest finish: 2026-09-18 05:02:17 UTC (07:02 Prague). Do useful implementation and runtime work throughout; no time-filling sleep.
+
+Comparison baseline is the installed Computer Use public skill/API (@oai/sky through persistent node_repl), not undocumented internals. Map native capability, SDK convenience, observation freshness, cancellation, clipboard, pixel transforms, performance and app coverage. Build repeatable native fixture benchmarks and retain failures as well as successes. Primary implements. Terra performs a bounded read-only gap analysis. No AppleScript or browser scripting for the native UI proofs.

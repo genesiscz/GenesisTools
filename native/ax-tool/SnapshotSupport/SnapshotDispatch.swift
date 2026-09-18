@@ -9,18 +9,23 @@ public enum SnapshotDispatchOperation: Equatable {
 }
 
 public enum SnapshotDispatchError: Error, LocalizedError {
-    case rejected(String)
+    case rejected(String, category: SnapshotRefusal = .refused)
+    public var category: SnapshotRefusal {
+        switch self {
+        case .rejected(_, let category): return category
+        }
+    }
 
     public var errorDescription: String? {
         switch self {
-        case .rejected(let message): return message
+        case .rejected(let message, _): return message
         }
     }
 }
 
 public func validatePointerHitEnabled(_ enabledStates: [Bool?]) throws {
     guard !enabledStates.contains(false) else {
-        throw SnapshotDispatchError.rejected("element is disabled; no action dispatched")
+        throw SnapshotDispatchError.rejected("element is disabled; no action dispatched", category: .missingTarget)
     }
 }
 
@@ -82,16 +87,16 @@ public func dispatchSnapshotAction<Result>(
         now: context.observedAt
     )
     guard context.operation == .read || context.targetEnabled else {
-        throw SnapshotDispatchError.rejected("element is disabled; no action dispatched")
+        throw SnapshotDispatchError.rejected("element is disabled; no action dispatched", category: .missingTarget)
     }
     if case .pointer(background: false) = context.operation, !context.windowFocused {
-        throw SnapshotDispatchError.rejected("wrong frontmost app/window; focus explicitly and refresh")
+        throw SnapshotDispatchError.rejected("wrong frontmost app/window; focus explicitly and refresh", category: .focusMismatch)
     }
     if context.operation == .input, !context.windowFocused {
-        throw SnapshotDispatchError.rejected("wrong frontmost app/window; focus explicitly and refresh")
+        throw SnapshotDispatchError.rejected("wrong frontmost app/window; focus explicitly and refresh", category: .focusMismatch)
     }
     if context.operation == .input, !context.inputFocused {
-        throw SnapshotDispatchError.rejected("focus changed before input; no action dispatched")
+        throw SnapshotDispatchError.rejected("focus changed before input; no action dispatched", category: .focusMismatch)
     }
 
     return try primitiveDispatch()

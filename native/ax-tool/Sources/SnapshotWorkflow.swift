@@ -45,8 +45,19 @@ private struct ObservedWindow {
     let bounds: CGRect
 }
 
-private func workflowFailure(_ message: String) -> Never {
+private var workflowDispatchState: String?
+
+private func workflowFailure(_ message: String, category: SnapshotRefusal = .refused) -> Never {
+    if let state = workflowDispatchState {
+        jsonOutput(["ok": false, "error": message, "dispatchState": state, "refusal": category.rawValue])
+        exit(1)
+    }
     errorExit(message)
+}
+
+private func workflowFailure(_ error: Error) -> Never {
+    let category = (error as? SnapshotError)?.category ?? (error as? SnapshotDispatchError)?.category ?? .refused
+    workflowFailure(error.localizedDescription, category: category)
 }
 
 private var workflowInput: WorkflowArguments?
@@ -65,7 +76,7 @@ private func workflowParse(_ command: String) -> String {
         workflowInput = parsed
         return parsed.values["--app"]!
     } catch {
-        workflowFailure(error.localizedDescription)
+        workflowFailure(error)
     }
 }
 
@@ -161,7 +172,7 @@ private func workflowWindow(_ ax: AXUIElement, pid: pid_t) -> ObservedWindow {
     do {
         return try observedWindow(ax, pid: pid)
     } catch {
-        workflowFailure(error.localizedDescription)
+        workflowFailure(error)
     }
 }
 
@@ -188,7 +199,7 @@ private func workflowTree(_ window: AXUIElement, depth: Int, scope: String) -> O
     do {
         return try observedTree(window, depth: depth, scope: scope)
     } catch {
-        workflowFailure(error.localizedDescription)
+        workflowFailure(error)
     }
 }
 
@@ -293,6 +304,9 @@ private func workflowAfterState(appName: String, pid: pid_t, launch: Double, win
 
 private func workflowPermissions() {
     guard AXIsProcessTrusted() else {
+        if workflowDispatchState != nil {
+            workflowFailure("Accessibility permission is required.", category: .permission)
+        }
         axUntrustedExit()
     }
 }
@@ -301,18 +315,18 @@ private func workflowWindowByID(_ id: Int, pid: pid_t) -> ObservedWindow {
     let cgWindows = workflowWindows(pid).filter { ($0[kCGWindowNumber] as? Int) == id }
     guard cgWindows.count == 1, let bounds = cgWindows[0][kCGWindowBounds] as? NSDictionary,
           let frame = CGRect(dictionaryRepresentation: bounds) else {
-        workflowFailure("selected window is closed or offscreen; run see again")
+        workflowFailure("selected window is closed or offscreen; run see again", category: .scopeChanged)
     }
     let matches = axWindows(AXUIElementCreateApplication(pid)).filter {
         return matchesNativeWindowIdentity(reportedID: workflowAXWindowID($0), expectedID: CGWindowID(id),
             frameMatches: workflowSameFrame(axFrame($0), frame))
     }
     guard matches.count == 1 else {
-        workflowFailure("selected window identity is missing or ambiguous; run see again")
+        workflowFailure("selected window identity is missing or ambiguous; run see again", category: .scopeChanged)
     }
     let window = workflowWindow(matches[0], pid: pid)
     guard Int(window.id) == id else {
-        workflowFailure("selected window identity changed; run see again")
+        workflowFailure("selected window identity changed; run see again", category: .scopeChanged)
     }
     return window
 }
@@ -363,7 +377,7 @@ func cmdSee(appName _: String) {
         jsonOutput(["ok": false, "error": unstable.message, "changedElements": unstable.changes])
         exit(1)
     } catch {
-        workflowFailure(error.localizedDescription)
+        workflowFailure(error)
     }
 }
 
@@ -395,6 +409,7 @@ private func workflowAXAction(_ element: AXUIElement, action: String) {
 }
 
 func cmdAct(appName _: String) {
+    workflowDispatchState = "not_started"
     let appName = workflowParse("act")
     guard let raw = workflowArgument("--snapshot"), raw.count < 8192,
           let data = Data(base64Encoded: raw),
@@ -413,7 +428,7 @@ func cmdAct(appName _: String) {
         _ = try token.validate(pid: pid, launch: launch, window: token.window, digest: token.digest,
                                element: elementIndex, count: 4000, now: Date().timeIntervalSince1970)
     } catch {
-        workflowFailure(error.localizedDescription)
+        workflowFailure(error)
     }
     let window = workflowWindowByID(token.window, pid: pid)
     let tree = workflowTree(window.ax, depth: token.depth, scope: token.effectiveScope)
@@ -421,7 +436,7 @@ func cmdAct(appName _: String) {
         _ = try token.validate(pid: pid, launch: launch, window: Int(window.id), digest: tree.digest,
                                element: elementIndex, count: tree.elements.count, now: Date().timeIntervalSince1970)
     } catch {
-        workflowFailure(error.localizedDescription)
+        workflowFailure(error)
     }
     let element = tree.elements[elementIndex]
     if token.effectiveScope == "chrome", action != "get",
@@ -452,6 +467,7 @@ func cmdAct(appName _: String) {
         windowFocused: windowFocused, inputFocused: inputFocused, operation: operation)
     do {
     try dispatchSnapshotAction(context: context) {
+    workflowDispatchState = "uncertain"
     if !["get", "click", "move", "drag", "scroll"].contains(action) {
         let frame = tree.frames[elementIndex]
         let center = CGPoint(x: frame.midX, y: frame.midY)
@@ -511,7 +527,7 @@ func cmdAct(appName _: String) {
                 workflowFailure("selection read-back differs; inspect actual state")
             }
         } catch {
-            workflowFailure(error.localizedDescription)
+            workflowFailure(error)
         }
     case "focus":
         guard bringFrontmost(pid) else {
@@ -762,7 +778,7 @@ func cmdAct(appName _: String) {
                 }
             }
         } catch {
-            workflowFailure(error.localizedDescription)
+            workflowFailure(error)
         }
     case "paste":
         workflowFrontWindow(window, pid: pid, element: element)
@@ -803,7 +819,7 @@ func cmdAct(appName _: String) {
             if restoration == "restore-failed" { exit(1) }
             return
         } catch {
-            workflowFailure(error.localizedDescription)
+            workflowFailure(error)
         }
     case "type":
         guard let text = workflowArgument("--text"), !text.contains("\n"), !text.contains("\r") else {
@@ -879,7 +895,7 @@ func cmdAct(appName _: String) {
     jsonOutput(payload)
     }
     } catch {
-        workflowFailure(error.localizedDescription)
+        workflowFailure(error)
     }
 }
 

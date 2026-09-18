@@ -366,3 +366,13 @@ tools control see --app Editor --window-id 42 --no-image
 AXObserver notifications wake the reader where supported, with a bounded one-second snapshot fallback for missing notifications and a short event debounce. Repeated observations create no PNG files. Geometry, element indexes, capture metadata and other non-semantic fields do not cause another model request. Readable native control kinds accompany raw AX roles in model inputs. A monotonic deadline, cancellation and request budget bound every run. A stable spinner produces “no observed progress,” not a claim that the app is dead.
 
 The dashboard's Semantic waits card and `wait-replay` run the same wait core with a virtual event source. The oracle verifies plumbing without a model. Live Jev runs retain probabilities and evidence decisions, including uncertainty; no desktop action is dispatched by replay.
+
+### Bounded recovery
+
+`tools jev control assist --app APP --goal "Enable line numbers" --recovery bounded --max-recoveries 2`
+
+Recovery uses native delivery metadata. A stale snapshot or missing target may be reobserved and decided again; an unknown/partial mutation, changed app/window, permission or authentication barrier stops. Normal request/action budgets also cover recovery. A successful no-op is never repeated.
+
+Optional `--remedies remedies.json` admits explicit local dismiss/back controls only:
+`[{"id":"close-help","kind":"dismiss","identifier":"help-close","label":"Close help","role":"AXButton","description":"Close the help overlay"}]`.
+The identifier, role and label must uniquely match fresh state. There is no default generic Cancel/Back click. The result preserves the refusal, evidence, supplied remedy set, model choice and recovery action result.

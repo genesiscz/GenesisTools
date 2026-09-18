@@ -6,6 +6,7 @@ import { z } from "zod";
 import { type ExactExpectation, judgeOutcome, resolveIntent } from "./decisions";
 import type { ControlDriver } from "./native";
 import { observedEvidence } from "./observation";
+import { actionRefusal, authenticationBarrier, RecoveryController, type RecoveryOptions } from "./recovery";
 import { ControlSession } from "./session";
 
 export async function assistTask(options: {
@@ -16,12 +17,15 @@ export async function assistTask(options: {
     evaluate: Evaluator;
     signal?: AbortSignal;
     limits?: OperationLimits;
+    recovery?: RecoveryOptions;
 }) {
     const goal = z.string().trim().min(1).max(4000).parse(options.goal);
     const session = new ControlSession(options);
+    const recovery = new RecoveryController(options.recovery);
     const steps: Array<{
         resolution: Awaited<ReturnType<typeof resolveIntent>>;
         dispatchOk?: boolean;
+        refusal?: ReturnType<typeof actionRefusal>;
         observationError?: string;
     }> = [];
     const judgments: Array<Awaited<ReturnType<typeof judgeOutcome>>> = [];
@@ -32,6 +36,10 @@ export async function assistTask(options: {
     try {
         let observation = await session.observe();
         while (true) {
+            if (recovery.options.mode === "bounded" && authenticationBarrier(observation)) {
+                reason = "Authentication or permission UI requires user input.";
+                break;
+            }
             const judgment = await judgeOutcome({
                 observation,
                 expect: options.expect ?? goal,
@@ -72,6 +80,11 @@ export async function assistTask(options: {
                 continue;
             }
             if (!resolution.selected) {
+                const fresh = await recovery.recover({ session, category: "semantic_interruption", observation, goal });
+                if (fresh) {
+                    observation = fresh;
+                    continue;
+                }
                 reason = "No sufficiently certain permitted next action.";
                 break;
             }
@@ -85,12 +98,27 @@ export async function assistTask(options: {
                     reason = "This toggle was already changed; completion remains unverified. No second toggle.";
                     break;
                 }
-                changedToggles.add(toggleId);
             }
             const before = SafeJSON.stringify(observedEvidence(observation));
             const dispatched = await session.dispatch({ observation, candidate: resolution.selected });
             step.dispatchOk = dispatched.result.ok;
             step.observationError = dispatched.observationError;
+            if (resolution.selected.checked !== undefined && dispatched.result.dispatchState !== "not_started") {
+                changedToggles.add(toggleId);
+            }
+            if (!dispatched.result.ok) {
+                step.refusal = actionRefusal(dispatched.result);
+                const fresh = await recovery.recover({
+                    session,
+                    category: step.refusal,
+                    observation: dispatched.after,
+                    goal,
+                });
+                if (fresh) {
+                    observation = fresh;
+                    continue;
+                }
+            }
             if (!dispatched.result.ok || !dispatched.after) {
                 status = "unknown";
                 reason =
@@ -123,5 +151,5 @@ export async function assistTask(options: {
               ? error.message
               : "Task stopped.";
     }
-    return { status, reason, steps, judgments, metrics: session.report() };
+    return { status, reason, steps, judgments, recoveries: recovery.attempts, metrics: session.report() };
 }
