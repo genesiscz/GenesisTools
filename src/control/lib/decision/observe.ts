@@ -32,7 +32,7 @@ export async function observeFanout(options: {
     allowYes?: boolean;
     lastRefusal?: string;
     remedies?: Array<{ id: string; description?: string }>;
-    stateExtras?: Record<string, unknown>;
+    stateExtras?: object;
 }): Promise<ObserveFanout> {
     const goal = z.string().trim().min(1).max(4000).parse(options.goal);
     const press = candidatesFor({ observation: options.observation, action: "press" });
