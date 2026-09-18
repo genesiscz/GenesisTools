@@ -11,6 +11,7 @@ import { registerDiscoveryCommands } from "./discovery";
 import { registerDrawCommand } from "./draw";
 import { registerFillCommand } from "./fill";
 import { registerInteractCommands } from "./interact";
+import { registerObserveCommand } from "./observe";
 import { registerOsascriptCommand } from "./osascript";
 import { registerPermissionsCommands } from "./permissions";
 import { registerRecordPlanCommand } from "./record-plan";
@@ -37,6 +38,7 @@ export function registerControlCommands(program: Command): void {
     registerPermissionsCommands(program);
     registerDrawCommand(program);
     registerInteractCommands(program);
+    registerObserveCommand(program);
     registerFillCommand(program);
     registerRecordPlanCommand(program);
     registerRunCommand(program);

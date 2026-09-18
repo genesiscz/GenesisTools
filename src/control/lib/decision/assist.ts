@@ -7,6 +7,7 @@ import { type ChooserMode, chooseCandidate, type HostDecision } from "./chooser"
 import { type ExactExpectation, judgeOutcome } from "./decisions";
 import type { ControlDriver } from "./native";
 import { observedEvidence } from "./observation";
+import { observeFanout } from "./observe";
 import { actionRefusal, authenticationBarrier, RecoveryController, type RecoveryOptions } from "./recovery";
 import { ControlSession } from "./session";
 
@@ -21,6 +22,7 @@ export async function assistTask(options: {
     recovery?: RecoveryOptions;
     chooser?: ChooserMode;
     hostDecision?: HostDecision;
+    fanout?: boolean;
 }) {
     const goal = z.string().trim().min(1).max(4000).parse(options.goal);
     const session = new ControlSession(options);
@@ -69,6 +71,51 @@ export async function assistTask(options: {
                 reason = "Action budget exhausted before the goal was verified.";
                 break;
             }
+            if (options.fanout) {
+                const fanout = await observeFanout({
+                    observation,
+                    goal,
+                    exact: options.exact,
+                    evaluate: session.evaluate,
+                    signal: session.budget.signal,
+                });
+                if (fanout.status === "verified") {
+                    status = "verified";
+                    reason = fanout.reason;
+                    break;
+                }
+
+                if (fanout.status === "wait") {
+                    await Bun.sleep(Math.min(250, session.budget.remaining()));
+                    observation = await session.observe();
+                    continue;
+                }
+
+                if (fanout.status !== "act" || !fanout.target) {
+                    reason = fanout.reason;
+                    break;
+                }
+
+                const dispatched = await session.dispatch({ observation, candidate: fanout.target });
+                steps.push({
+                    resolution: {
+                        status: "resolved",
+                        selected: fanout.target,
+                        reason: fanout.reason,
+                    } as Awaited<ReturnType<typeof chooseCandidate>>,
+                    dispatchOk: dispatched.result.ok,
+                    observationError: dispatched.observationError,
+                });
+                if (!dispatched.result.ok || !dispatched.after) {
+                    status = "unknown";
+                    reason = dispatched.result.error ?? dispatched.observationError ?? "Action outcome is uncertain.";
+                    break;
+                }
+
+                observation = dispatched.after;
+                continue;
+            }
+
             const resolution = await chooseCandidate({
                 observation,
                 intent: goal,
