@@ -1,0 +1,9 @@
+let message = input()
+
+if message feels "genuinely urgent" with confidence 80% {
+  print("Okay. This is a drop-everything situation.")
+} otherwise maybe {
+  print("Define urgent. And define tiny favor.")
+} else {
+  print("This could have been an email. Oh, it is.")
+}

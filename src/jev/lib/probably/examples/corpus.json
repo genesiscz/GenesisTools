@@ -1,0 +1,44 @@
+[
+  {
+    "name": "The inbox department",
+    "file": "inbox.prob",
+    "input": "Hi Alex, we're putting together a small developer meetup next month and would love you to give a 20-minute talk. Could you send a proposed title and let us know by tomorrow? Happy to cover travel. \u2014 Morgan",
+    "source": "// The inbox department: triage, draft, edit, package.\nlet email = input()\nlet reply = \"\"\n\n// Decide what deserves attention first.\nif email feels \"needs a reply urgently\" with confidence 80% {\n  print(\"Priority: reply soon. The inbox has developed opinions.\")\n} otherwise maybe {\n  print(\"Priority: unclear. Check the deadline yourself.\")\n} else {\n  print(\"Priority: normal. Finish your coffee.\")\n}\n\n// Same input, different jobs for the LLM.\nmatch email {\n  \"an invitation to speak or participate in an event\" => {\n    reply = llm \"Draft a brief reply expressing interest, without accepting. Ask for missing event details. Do not invent availability, a talk title or a signature.\" using email\n  }\n  \"a routine request to schedule a meeting\" => {\n    reply = llm \"Draft a short scheduling reply. Ask for two possible times if none were offered; otherwise acknowledge the options and say availability needs checking. Do not pick a time or invent availability. No signature.\" using email\n  }\n  \"an unsolicited sales pitch\" => {\n    reply = llm \"Politely decline in one sentence. No invented excuses, no promises to reconnect, no signature.\" using email\n  }\n  \"another kind of message\" => {\n    reply = llm \"Draft a warm acknowledgement and a useful clarifying question. Do not invent answers, commitments or a signature. Keep it short.\" using email\n  }\n}\n\n// Revise until the draft sounds like a person.\nwhile reply feels \"stiff, corporate, or unnecessarily wordy\" {\n  reply = llm \"Make this brief and natural. Preserve its meaning and questions. Add no new facts or commitments.\" using reply\n}\n\n// A last check can admit uncertainty.\nif reply feels \"polite and clear about the next step\" with confidence 80% {\n  print(\"Review: ready for you to read.\")\n} otherwise maybe {\n  print(\"Review: the editor is unsure. Give this a closer look.\")\n} else {\n  reply = llm \"Make this polite and give it one clear next step. Preserve facts; make no commitments.\" using reply\n  print(\"Review: revised once more. Check the final wording.\")\n}\n\n// Generate a subject from the finished reply, not the first draft.\nlet subject = llm \"Write a reply subject line, at most 7 words. No quotes, labels or commentary.\" using reply\nprint(\"Subject:\")\nprint(subject)\nprint(\"Draft reply:\")\nprint(reply)"
+  },
+  {
+    "name": "The corporate translator",
+    "file": "translator.prob",
+    "input": "We are thrilled to announce a strategic realignment of our cross-functional collaboration cadence: the weekly team meeting is moving from Monday to Tuesday.",
+    "source": "// Turn a corporate announcement into human speech.\nlet draft = input()\n\n// Jev picks the description that fits best.\nmatch draft {\n  \"a corporate announcement\" => {\n    print(\"An exciting development in saying things.\")\n  }\n  \"a sales pitch\" => {\n    print(\"Someone would like our money.\")\n  }\n  \"a normal human message\" => {\n    print(\"A promising start.\")\n  }\n}\n\n// Rewrite, then ask Jev again. Stop when the jargon is gone.\nwhile draft feels \"full of corporate jargon\" {\n  draft = llm \"Rewrite plainly in one short sentence.\" using draft\n}\n\n// Uncertainty gets its own branch.\nif draft feels \"clear and specific\" with confidence 80% {\n  print(\"Approved for human consumption.\")\n} otherwise maybe {\n  print(\"Understandable? Probably. Ask a human.\")\n} else {\n  print(\"We have successfully produced different nonsense.\")\n}\n\n// Print the finished draft.\nprint(draft)"
+  },
+  {
+    "name": "Is this actually urgent?",
+    "file": "urgent.prob",
+    "input": "Hey, tiny favor \u2014 the presentation is in 10 minutes and every slide says INSERT STRATEGY HERE.",
+    "source": "let message = input()\n\nif message feels \"genuinely urgent\" with confidence 80% {\n  print(\"Okay. This is a drop-everything situation.\")\n} otherwise maybe {\n  print(\"Define urgent. And define tiny favor.\")\n} else {\n  print(\"This could have been an email. Oh, it is.\")\n}"
+  },
+  {
+    "name": "The LinkedIn detox",
+    "file": "detox.prob",
+    "input": "I am humbled and thrilled to announce that I have disrupted my morning routine by drinking water. Here are 10 leadership lessons.",
+    "source": "let draft = input()\n\nwhile draft feels \"like a LinkedIn influencer post\" {\n  draft = llm \"Rewrite this as a normal person. Remove corporate language, humblebrags and life lessons. One short sentence.\" using draft\n}\n\nprint(\"We have achieved human speech. Probably.\")\nprint(draft)"
+  },
+  {
+    "name": "The feedback department",
+    "file": "feedback.prob",
+    "input": "Your app deleted my work, but the button animation was honestly beautiful.",
+    "source": "let feedback = input()\n\nmatch feedback {\n  \"a useful suggestion\" => {\n    print(\"Added to the roadmap. A mythical place.\")\n  }\n  \"a bug report\" => {\n    print(\"That is, regrettably, our department.\")\n  }\n  \"someone having a day\" => {\n    print(\"We hear you. We are also having a day.\")\n  }\n}"
+  },
+  {
+    "name": "A questionable business plan",
+    "file": "startup.prob",
+    "input": "A subscription service that sends you reminders to cancel your other subscriptions.",
+    "source": "let pitch = llm \"Pitch this startup in two enthusiastic sentences.\" using input()\nprint(pitch)\n\nchaos {\n  if pitch feels \"a financially responsible business idea\" {\n    print(\"We are raising a seed round.\")\n  } else {\n    print(\"We are raising a seed round anyway.\")\n  }\n}"
+  },
+  {
+    "name": "Hello, uncertainty (no API key)",
+    "file": "hello.prob",
+    "input": "",
+    "source": "// This one runs without any model calls.\nlet greeting = \"Hello, uncertainty.\"\nprint(greeting)\n\nrepeat 3 {\n  print(\"Everything is going according to some plan.\")\n}"
+  }
+]

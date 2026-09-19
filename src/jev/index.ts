@@ -13,6 +13,7 @@ import { registerControlLabCommands } from "./commands/control";
 import { registerDashboard } from "./commands/dashboard";
 import { registerDemoReel } from "./commands/demo-reel";
 import { registerEvaluation } from "./commands/evaluate";
+import { registerProbablyEvaluation } from "./commands/evaluation";
 import { registerExperiment } from "./commands/experiment";
 import { registerListen } from "./commands/listen";
 import { registerLogin } from "./commands/login";
@@ -30,6 +31,7 @@ const program = new Command().name("tools jev").description("Jev evaluation tool
 addProviderOption(program);
 registerLogin(program);
 registerEvaluation(program);
+registerProbablyEvaluation(program);
 registerExperiment(program);
 registerArena(program);
 registerDashboard(program);

@@ -1,0 +1,8 @@
+let draft = input()
+
+while draft feels "like a LinkedIn influencer post" {
+  draft = llm "Rewrite this as a normal person. Remove corporate language, humblebrags and life lessons. One short sentence." using draft
+}
+
+print("We have achieved human speech. Probably.")
+print(draft)

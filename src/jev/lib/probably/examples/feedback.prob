@@ -1,0 +1,13 @@
+let feedback = input()
+
+match feedback {
+  "a useful suggestion" => {
+    print("Added to the roadmap. A mythical place.")
+  }
+  "a bug report" => {
+    print("That is, regrettably, our department.")
+  }
+  "someone having a day" => {
+    print("We hear you. We are also having a day.")
+  }
+}

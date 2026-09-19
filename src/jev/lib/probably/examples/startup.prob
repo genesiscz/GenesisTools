@@ -1,0 +1,10 @@
+let pitch = llm "Pitch this startup in two enthusiastic sentences." using input()
+print(pitch)
+
+chaos {
+  if pitch feels "a financially responsible business idea" {
+    print("We are raising a seed round.")
+  } else {
+    print("We are raising a seed round anyway.")
+  }
+}

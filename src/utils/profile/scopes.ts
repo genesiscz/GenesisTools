@@ -36,6 +36,7 @@ export const PROFILER_SCOPE_NAMES = [
     "jev-arena",
     "jev-experiment",
     "jev-evaluate",
+    "jev-probably",
     "control-native",
     "control-overlay",
     "stt",

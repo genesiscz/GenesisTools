@@ -4,6 +4,24 @@ Try `typesafe-ai/jev` through Vercel AI Gateway. Jev evaluates shared state and 
 boolean probabilities, named choices, and scores. It does not generate chat replies.
 Requires Bun and AI SDK 7.0.105 or newer.
 
+## Probably Lang lab (experimental)
+
+A fun lab port of Probably 0.1 under `tools jev evaluation` (aliases: `probably`, `prob`).
+Jev judges `feels` / `match` / confidence; the default chat model handles `llm` / `write`.
+Not a production language runtime. Provenance: `src/jev/lib/probably/NOTICE.md`.
+
+```sh
+tools jev evaluation create                              # language guide + corpus
+tools jev evaluation create --name inbox --bundle inbox  # save a bundled example
+tools jev evaluation list
+tools jev evaluation run inbox --input "Can you speak next month?"
+tools jev evaluation run inbox --input @./message.txt
+tools jev evaluation run hello                           # no model calls
+tools jev evaluation run detox --replay recording.json   # deterministic replay
+```
+
+Programs are stored at `~/.genesis-tools/jev/probably/programs/<name>.prob`.
+
 ## Dashboard
 
 ```sh

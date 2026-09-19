@@ -1,0 +1,7 @@
+// This one runs without any model calls.
+let greeting = "Hello, uncertainty."
+print(greeting)
+
+repeat 3 {
+  print("Everything is going according to some plan.")
+}

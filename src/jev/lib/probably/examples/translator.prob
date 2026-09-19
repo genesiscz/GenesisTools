@@ -1,0 +1,32 @@
+// Turn a corporate announcement into human speech.
+let draft = input()
+
+// Jev picks the description that fits best.
+match draft {
+  "a corporate announcement" => {
+    print("An exciting development in saying things.")
+  }
+  "a sales pitch" => {
+    print("Someone would like our money.")
+  }
+  "a normal human message" => {
+    print("A promising start.")
+  }
+}
+
+// Rewrite, then ask Jev again. Stop when the jargon is gone.
+while draft feels "full of corporate jargon" {
+  draft = llm "Rewrite plainly in one short sentence." using draft
+}
+
+// Uncertainty gets its own branch.
+if draft feels "clear and specific" with confidence 80% {
+  print("Approved for human consumption.")
+} otherwise maybe {
+  print("Understandable? Probably. Ask a human.")
+} else {
+  print("We have successfully produced different nonsense.")
+}
+
+// Print the finished draft.
+print(draft)

@@ -1,0 +1,50 @@
+// The inbox department: triage, draft, edit, package.
+let email = input()
+let reply = ""
+
+// Decide what deserves attention first.
+if email feels "needs a reply urgently" with confidence 80% {
+  print("Priority: reply soon. The inbox has developed opinions.")
+} otherwise maybe {
+  print("Priority: unclear. Check the deadline yourself.")
+} else {
+  print("Priority: normal. Finish your coffee.")
+}
+
+// Same input, different jobs for the LLM.
+match email {
+  "an invitation to speak or participate in an event" => {
+    reply = llm "Draft a brief reply expressing interest, without accepting. Ask for missing event details. Do not invent availability, a talk title or a signature." using email
+  }
+  "a routine request to schedule a meeting" => {
+    reply = llm "Draft a short scheduling reply. Ask for two possible times if none were offered; otherwise acknowledge the options and say availability needs checking. Do not pick a time or invent availability. No signature." using email
+  }
+  "an unsolicited sales pitch" => {
+    reply = llm "Politely decline in one sentence. No invented excuses, no promises to reconnect, no signature." using email
+  }
+  "another kind of message" => {
+    reply = llm "Draft a warm acknowledgement and a useful clarifying question. Do not invent answers, commitments or a signature. Keep it short." using email
+  }
+}
+
+// Revise until the draft sounds like a person.
+while reply feels "stiff, corporate, or unnecessarily wordy" {
+  reply = llm "Make this brief and natural. Preserve its meaning and questions. Add no new facts or commitments." using reply
+}
+
+// A last check can admit uncertainty.
+if reply feels "polite and clear about the next step" with confidence 80% {
+  print("Review: ready for you to read.")
+} otherwise maybe {
+  print("Review: the editor is unsure. Give this a closer look.")
+} else {
+  reply = llm "Make this polite and give it one clear next step. Preserve facts; make no commitments." using reply
+  print("Review: revised once more. Check the final wording.")
+}
+
+// Generate a subject from the finished reply, not the first draft.
+let subject = llm "Write a reply subject line, at most 7 words. No quotes, labels or commentary." using reply
+print("Subject:")
+print(subject)
+print("Draft reply:")
+print(reply)
