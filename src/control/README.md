@@ -57,6 +57,57 @@ bun plugins/genesis-tools/skills/macos-control/scripts/check-help.ts --repo .
 
 The live smoke opens a dedicated two-window test app and terminates only that app. It requires desktop access; ordinary tests do not operate personal apps. Add `--peekaboo` to the help check when validating the optional recording provider.
 
+## iOS Simulator (`control sim`)
+
+The same observe / decide / act / readback contract, against a booted iOS Simulator instead of a
+macOS window. `SimulatorControlDriver` implements the same `ControlDriver` interface as the macOS
+driver and produces the same `Observation`, so the admission gate, Jev's classification, the
+freshness rules and the readback are the shared ones — nothing above the driver knows the screen
+is a simulator.
+
+```bash
+tools control sim devices                                    # booted simulators, with udids
+tools control sim launch --bundle-id com.apple.mobilecal     # launch, or bring to the front
+tools control sim see --bundle-id com.apple.mobilecal --out screen.json
+tools control sim act --snapshot-file screen.json --element 10 --action press
+tools control sim act --snapshot-file screen.json --element 12 --action type --text "Standup"
+tools control sim act --snapshot-file screen.json --element 19 --action scroll --direction down --pages 1
+tools control sim screenshot --path screen.png
+```
+
+`--simulator [udid]` also reaches the Jev decision commands, so the autonomous loop runs against a
+simulator with no other change:
+
+```bash
+tools control assist --simulator --bundle-id com.apple.mobilecal --task "create an event titled Standup"
+tools control resolve --simulator --intent "the button that adds an event"
+```
+
+**Requires `idb`** (`brew install facebook/fb/idb-companion`). The macOS Accessibility API cannot
+see inside the simulator's rendered surface; the measurement is in `docs/benchmarks-simulator.md`.
+
+How a screen is read: `idb ui describe-all` returns only the elements an app publishes at the top
+of its accessibility hierarchy, which for iOS Calendar's day view is 5 rows and no Add button. The
+leaves are recovered by sweeping a bounded grid of `describe-point` hit tests, which returned 32
+elements on the same screen including `add-plus-button`. `--probe-step`, `--max-points` and
+`--no-probe` control that sweep; a sweep cut short by its budget is reported as
+`probe.truncated: true` and never presented as a complete screen.
+
+Freshness: `src/control` treats `Observation.snapshot` as an opaque string, and the macOS
+guarantee comes from a tree digest inside `ax-tool`. The simulator driver enforces its own
+equivalent — a hit test at the exact point about to be tapped. If the element there is no longer
+the element that was decided on, the act is refused as `not_started` rather than landing on
+whatever moved into its place. The CLI door additionally re-resolves the chosen element in a fresh
+read before dispatching, so a decision made against a screen that has since changed is discarded:
+
+```
+The chosen element (id:add-plus-button) is no longer on screen.
+The screen moved while the decision was being made; observe again.
+```
+
+Supported actions are `press`, `click`, `focus`, `type`, `key` and `scroll`. `set`, `paste`,
+`select` and `perform` are refused by name rather than approximated.
+
 ## Legacy discovery and recording preflight
 
 

@@ -22,6 +22,7 @@ import { registerReplayPlanCommand } from "./replay-plan";
 import { registerResilienceCommand } from "./resilience";
 import { registerRunCommand } from "./run";
 import { registerSequenceCommand } from "./sequence";
+import { registerSimulatorCommands } from "./simulator";
 import { registerStateCommands } from "./state";
 import { registerVerifyCommands } from "./verify";
 import { registerVisualCommand } from "./visual";
@@ -50,6 +51,7 @@ export function registerControlCommands(program: Command): void {
     registerRecordPlanCommand(program);
     registerRunCommand(program);
     registerSequenceCommand(program);
+    registerSimulatorCommands(program);
     registerReplayCommand(program);
     registerReplayPlanCommand(program);
     registerResilienceCommand(program);

@@ -5,9 +5,10 @@ import { out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
 import { z } from "zod";
 import { judgeOutcome, resolveIntent } from "../lib/decision/decisions";
-import { NativeControlDriver } from "../lib/decision/native";
+import { type ControlDriver, NativeControlDriver } from "../lib/decision/native";
 import { observationSchema } from "../lib/decision/observation";
 import { setCursorFeedbackEnabled } from "../lib/runner";
+import { SimulatorControlDriver } from "../lib/simulator/driver";
 
 export interface ControlOptions {
     app?: string;
@@ -18,15 +19,30 @@ export interface ControlOptions {
     timeout: string;
     exactId?: string;
     exactValue?: string;
+    simulator?: string | boolean;
+    bundleId?: string;
 }
 export function observationOptions(command: Command): Command {
     return command
         .option("--app <name>", "Target app name or PID")
         .option("--window-id <id>", "Pin to a native window ID")
         .option("--scope [scope]", "AX scope: window or chrome", "window")
+        .option("--simulator [udid]", "Observe a booted iOS Simulator instead of a macOS window")
+        .option("--bundle-id <id>", "With --simulator: the app under test, e.g. com.apple.mobilecal")
         .option("--timeout <ms>", "Total deadline in milliseconds", "120000");
 }
-export function controlDriver(options: ControlOptions) {
+/**
+ * The one place a surface is chosen. `--simulator` swaps the macOS AX driver for the iOS one;
+ * everything above this call (the admission gate, Jev's classification, freshness and readback)
+ * is written against `ControlDriver` and does not change.
+ */
+export function controlDriver(options: ControlOptions): ControlDriver {
+    if (options.simulator !== undefined && options.simulator !== false) {
+        return new SimulatorControlDriver({
+            udid: typeof options.simulator === "string" ? options.simulator : undefined,
+            bundleId: options.bundleId,
+        });
+    }
     const app = z.string().trim().min(1).parse(options.app);
     const scope = z.enum(["window", "chrome"]).parse(options.scope ?? "window");
     const windowId =

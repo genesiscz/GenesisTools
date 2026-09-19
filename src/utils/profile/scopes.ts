@@ -39,6 +39,7 @@ export const PROFILER_SCOPE_NAMES = [
     "jev-probably",
     "control-native",
     "control-overlay",
+    "control-simulator",
     "stt",
     "tts",
 ] as const;
