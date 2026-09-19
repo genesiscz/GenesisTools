@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { env } from "@genesiscz/utils/env";
-import { logger } from "@genesiscz/utils/logger";
 import { argvWithChildDeadline } from "./child-deadline";
+import { killProcessGroup } from "./killWithEscalation";
 
 export interface BoundedCommandResult {
     status: number | null;
@@ -60,15 +60,7 @@ export async function boundedCommand(options: {
         let escalation: ReturnType<typeof setTimeout> | undefined;
         let reap: ReturnType<typeof setTimeout> | undefined;
         const kill = (signal: NodeJS.Signals) => {
-            if (!child.pid || child.exitCode !== null || child.signalCode !== null) {
-                return;
-            }
-            try {
-                // pid-verified: retained live child handle, spawned here as leader of this detached process group.
-                process.kill(-child.pid, signal);
-            } catch (error) {
-                logger.debug({ error, pid: child.pid, signal }, "Owned command group already ended");
-            }
+            killProcessGroup(child, signal, "Owned command");
         };
         const finish = () => {
             if (settled) {

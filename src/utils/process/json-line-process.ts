@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { killProcessGroup } from "./killWithEscalation";
 
 export interface JsonLineTransport {
     request(options: { input: Record<string, unknown>; timeoutMs?: number; signal?: AbortSignal }): Promise<unknown>;
@@ -32,13 +33,8 @@ export class JsonLineProcess implements JsonLineTransport {
     private stop(error: Error) {
         this.pending?.reject(error);
         this.pending = undefined;
-        if (!this.closed && this.child.pid && this.child.exitCode === null && this.child.signalCode === null) {
-            try {
-                // pid-verified: retained live child handle, spawned here as leader of this detached process group.
-                process.kill(-this.child.pid, "SIGTERM");
-            } catch (cause) {
-                logger.debug({ error: cause }, "JSON-line child group already ended");
-            }
+        if (!this.closed) {
+            killProcessGroup(this.child, "SIGTERM", "JSON-line child");
         }
         this.closed = true;
     }
