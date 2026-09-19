@@ -489,6 +489,12 @@ jobs:
         timeout-minutes: 1
         run: bun scripts/ci/check-package-boundaries.ts
 
+      # Every Jev / live-STT function that reaches Jev, the chrome-devtools MCP, the ax-tool or a
+      # live socket carries a profiler measurement, so PROFILE=jev-* can show where time went.
+      - name: Jev instrumentation guard
+        timeout-minutes: 1
+        run: bun scripts/ci/jev-instrumentation-guard.ts
+
       # Catches the shape that made the full suite stop terminating: a test
       # importing an entrypoint that runs the CLI on import. Cheap, and it fires
       # before the timeout does, so the failure names the cause.
