@@ -14,13 +14,7 @@ import { join } from "node:path";
 import { renderAnnotationPlan } from "@genesiscz/utils/image";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { createCanvas, loadImage } from "@napi-rs/canvas";
-import {
-    NativeCaptureControls,
-    nativeCapturePreflight,
-    nativeScreens,
-    nativeTargetRegion,
-    validateNativeCapturePlan,
-} from "./capture-native";
+import { NativeCaptureControls, nativeScreens, nativeTargetRegion, validateNativeCapturePlan } from "./capture-native";
 import {
     type Action,
     type CropOut,
@@ -697,10 +691,6 @@ export async function runRecrop(resultPath: string, planPath: string): Promise<R
     );
     const vitrinka = plan.vitrinka ? publishVitrinka(plan.vitrinka, prior.sessionDir, frames, crops, strip) : undefined;
     return { sessionDir: prior.sessionDir, mode: "recrop", warnings, crops, strip, stripReview, vitrinka };
-}
-
-export function buildPreflightReport(appArg?: string): Record<string, unknown> {
-    return nativeCapturePreflight(appArg);
 }
 
 export interface ClickmapOptions {

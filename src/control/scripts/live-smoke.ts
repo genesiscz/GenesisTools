@@ -11,7 +11,8 @@ import { logger, out } from "@genesiscz/utils/logger";
 import { classifyPid } from "@genesiscz/utils/process-identity";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
-import { buildPreflightReport, runCapturePlan } from "../lib/capture-runner";
+import { nativeCapturePreflight } from "../lib/capture-native";
+import { runCapturePlan } from "../lib/capture-runner";
 import { ComputerReplEngine } from "../lib/computer-use/repl";
 import { type ComputerState, ComputerUse } from "../lib/computer-use/session";
 import { judgeOutcome } from "../lib/decision/decisions";
@@ -347,7 +348,7 @@ try {
         state = await see();
     }
     if (cursorProof) {
-        buildPreflightReport(String(fixturePid));
+        nativeCapturePreflight(String(fixturePid));
         if (!state.elements.some((row) => row.AXIdentifier === "cursor-proof")) {
             windowIndex = 1;
             state = await see();

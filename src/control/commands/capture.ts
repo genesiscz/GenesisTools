@@ -4,15 +4,9 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import { tmpdir } from "@genesiscz/utils/paths";
 import type { Command } from "commander";
+import { nativeCapturePreflight } from "../lib/capture-native";
 import { CAPTURE_HELP, type Plan } from "../lib/capture-plan";
-import {
-    buildPreflightReport,
-    CaptureRunError,
-    type RunResult,
-    runCapturePlan,
-    runClickmap,
-    runRecrop,
-} from "../lib/capture-runner";
+import { CaptureRunError, type RunResult, runCapturePlan, runClickmap, runRecrop } from "../lib/capture-runner";
 
 function fail(msg: string, exitCode = 2): never {
     console.error(`capture-with-actions: ${msg}`);
@@ -101,11 +95,11 @@ export function registerCaptureCommands(program: Command): void {
     capture
         .command("preflight")
         .description(
-            "RUN THIS FIRST when writing a capture plan: screens (scale/origins), frontmost app + window bounds in points AND frame px, browser tab, units reminder, suggested plan skeleton"
+            "RUN THIS FIRST when writing a capture plan: screens (scale/origins), frontmost app with every window in points AND frame px, the picked window and why, a units reminder, and a suggested plan skeleton"
         )
         .option("--app <name>", "inspect this app's windows (default: the frontmost app)")
         .action((opts: { app?: string }) => {
-            out.println(SafeJSON.stringify(buildPreflightReport(opts.app), null, 2));
+            out.println(SafeJSON.stringify(nativeCapturePreflight(opts.app), null, 2));
         });
 
     capture
