@@ -70,3 +70,20 @@ public final class ClipboardTransaction {
         return items.isEmpty || board.writeObjects(items) ? "restored" : "restore-failed"
     }
 }
+
+/// Await the receiver's readback without redispatching a shortcut or restoring the clipboard early.
+public func waitForPasteReadback(
+    before: String?, expected: String?,
+    now: () -> TimeInterval = { ProcessInfo.processInfo.systemUptime },
+    wait: (TimeInterval) -> Void = { Thread.sleep(forTimeInterval: $0) },
+    read: () -> String?
+) -> String? {
+    let deadline = now() + 1
+    var current = before
+    while now() < deadline {
+        wait(min(0.1, max(0, deadline - now())))
+        current = read()
+        if current != before, expected == nil || current == expected { return current }
+    }
+    return current
+}

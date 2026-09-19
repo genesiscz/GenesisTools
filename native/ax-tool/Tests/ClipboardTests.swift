@@ -63,3 +63,30 @@ final class ClipboardTests: XCTestCase {
         XCTAssertEqual(board.string(forType: .string), "new user copy")
     }
 }
+
+extension ClipboardTests {
+    func testReplacementWaitsPastIntermediateValueWithoutRepeatingPaste() throws {
+        let board = NSPasteboard.withUniqueName()
+        defer { board.releaseGlobally() }
+        let transaction = try ClipboardTransaction(board: board)
+        try transaction.write(text: "complete", format: "text")
+        defer { transaction.restore() }
+        var pastes = 0
+        try transaction.dispatchPaste { pastes += 1 }
+        var time: TimeInterval = 0
+        var reads = ["seed", "", "complete"]
+        let value = waitForPasteReadback(before: "seed", expected: "complete", now: { time }, wait: { time += $0 }) {
+            XCTAssertEqual(board.string(forType: .string), "complete")
+            return reads.removeFirst()
+        }
+        XCTAssertEqual(value, "complete")
+        XCTAssertEqual(pastes, 1)
+        XCTAssertEqual(time, 0.3, accuracy: 0.0001)
+    }
+    func testReadbackDeadlineReturnsMismatchWithoutDispatchingAnything() {
+        var time: TimeInterval = 0
+        let value = waitForPasteReadback(before: "seed", expected: "complete", now: { time }, wait: { time += $0 }) { "partial" }
+        XCTAssertEqual(value, "partial")
+        XCTAssertEqual(time, 1, accuracy: 0.0001)
+    }
+}

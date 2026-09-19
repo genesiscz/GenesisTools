@@ -31,8 +31,8 @@ public struct ObservedTreeData {
 
 /// Attributes copied verbatim into every row, in this order.
 public let observedAttributeKeys = [
-    "AXIdentifier", "AXTitle", "AXDescription", "AXSubrole", "AXValue",
-    "AXEnabled", "AXFocused", "AXSelected", "AXSelectedText", "AXSelectedTextRange",
+    "AXIdentifier", "AXTitle", "AXDescription", "AXSubrole", "AXRoleDescription", "AXValue", "AXURL",
+    "AXEnabled", "AXFocused", "AXSelected", "AXSelectedText", "AXSelectedTextRange", "AXModal",
 ]
 public let observedElementLimit = 4000
 
@@ -74,6 +74,7 @@ public func buildObservedTree(root: AXUIElement, source: HierarchySource, depth:
     }
     var tree = ObservedTreeData()
     var visited = SnapshotObjectSet()
+    var ancestry: [(depth:Int,row:[String:Any])] = []
     func walk(_ element: AXUIElement, level: Int, clip: CGRect) throws {
         let identity = CFHash(element)
         guard visited.insert(element) else {
@@ -129,6 +130,13 @@ public func buildObservedTree(root: AXUIElement, source: HierarchySource, depth:
         if hasValue, let settable = source.isValueSettable(element) {
             row["valueSettable"] = settable
         }
+        if ["AXTextField", "AXTextArea", "AXComboBox", "AXPopUpButton"].contains(role),
+           let invalid = source.attribute(element, "AXInvalid"), let value = snapshotValue(invalid) {
+            row["AXInvalid"] = value
+        }
+        while let last = ancestry.last, last.depth >= level { ancestry.removeLast() }
+        row["targetKey"] = try snapshotTargetKey(row,ancestors:ancestry.map { $0.row })
+        ancestry.append((level,row))
         tree.elements.append(element)
         tree.frames.append(frame)
         tree.rows.append(row)
@@ -139,6 +147,8 @@ public func buildObservedTree(root: AXUIElement, source: HierarchySource, depth:
     }
     try walk(root, level: 0, clip: snapshotFrame(root, source: source))
     do {
+        try bindTargetsToSiblingText(&tree.rows)
+        try bindTargetsToBrowserDocument(&tree.rows)
         tree.digest = try snapshotDigest(tree.rows)
     } catch {
         throw ObservedTreeError("cannot encode observed AX tree: \(error.localizedDescription)")

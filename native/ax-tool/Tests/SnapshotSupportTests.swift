@@ -152,3 +152,30 @@ final class SnapshotSupportTests: XCTestCase {
                                                 element: 2, count: 4, now: 1001))
     }
 }
+
+extension SnapshotSupportTests {
+    func testMenuTokensRefuseForeignExpiredDisabledAndUnfocusedDispatchBeforeThePrimitive() throws {
+        let token = MenuSnapshotToken(pid:42,launch:123,depth:40,digest:"menu-tree",created:1000)
+        var calls = 0
+        func attempt(pid: Int32 = 42, launch: Double = 123, digest: String = "menu-tree",
+                     index: Int = 1, now: Double = 1001, frontmost: Bool = true, enabled: Bool = true) throws {
+            try dispatchMenuAction(token:token,pid:pid,launch:launch,digest:digest,element:index,count:3,now:now,
+                frontmost:frontmost,enabled:enabled) { calls += 1 }
+        }
+        XCTAssertThrowsError(try attempt(pid:43))
+        XCTAssertThrowsError(try attempt(launch:124))
+        XCTAssertThrowsError(try attempt(digest:"changed"))
+        XCTAssertThrowsError(try attempt(index:3))
+        XCTAssertThrowsError(try attempt(now:1031))
+        XCTAssertThrowsError(try attempt(now:999))
+        XCTAssertThrowsError(try attempt(frontmost:false))
+        XCTAssertThrowsError(try attempt(enabled:false))
+        XCTAssertEqual(calls,0)
+        try attempt()
+        XCTAssertEqual(calls,1)
+        let window = SnapshotToken(pid:42,launch:123,window:7,depth:40,digest:"menu-tree",created:1000)
+        XCTAssertThrowsError(try JSONDecoder().decode(MenuSnapshotToken.self,from:JSONEncoder().encode(window)))
+        let foreign = try JSONDecoder().decode(MenuSnapshotToken.self,from:Data(#"{"version":1,"surface":"window","pid":42,"launch":123,"depth":40,"digest":"menu-tree","created":1000}"#.utf8))
+        XCTAssertThrowsError(try foreign.validate(pid:42,launch:123,digest:"menu-tree",element:1,count:3,now:1001))
+    }
+}

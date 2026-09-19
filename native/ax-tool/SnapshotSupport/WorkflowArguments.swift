@@ -20,15 +20,15 @@ public struct WorkflowArguments {
         let flagOptions: Set<String>
         switch command {
         case "see":
-            valueOptions = ["--app", "--window-index", "--window-id", "--depth", "--path", "--scope"]
-            flagOptions = []
+            valueOptions = ["--app", "--window-index", "--window-id", "--depth", "--path", "--scope", "--perception", "--perception-crop", "--perception-width"]
+            flagOptions = ["--no-image"]
         case "act":
             valueOptions = [
                 "--app", "--snapshot", "--element", "--action", "--value", "--ax-action", "--direction", "--text",
                 "--keys", "--coords", "--button", "--to", "--duration", "--pages", "--pixels", "--range", "--prefix",
-                "--suffix", "--selection", "--format", "--path",
+                "--suffix", "--selection", "--format", "--path", "--region", "--target-key",
             ]
-            flagOptions = ["--background", "--double", "--refresh"]
+            flagOptions = ["--background", "--double", "--refresh", "--no-cursor", "--no-image", "--prepare", "--replace"]
         default:
             throw WorkflowArgumentError.invalid("unknown workflow command \(command)")
         }
@@ -60,6 +60,22 @@ public struct WorkflowArguments {
         guard parsedValues["--app"] != nil else {
             throw WorkflowArgumentError.invalid("--app required")
         }
+        if command == "see", parsedFlags.contains("--no-image"), parsedValues["--path"] != nil {
+            throw WorkflowArgumentError.invalid("--no-image cannot be combined with --path")
+        }
+        if command == "see" {
+            if let mode = parsedValues["--perception"], mode != "ocr" {
+                throw WorkflowArgumentError.invalid("--perception supports native ocr only")
+            }
+            if parsedValues["--perception-crop"] != nil || parsedValues["--perception-width"] != nil {
+                guard parsedValues["--perception"] == "ocr" else {
+                    throw WorkflowArgumentError.invalid("perception transforms require --perception ocr")
+                }
+            }
+            if parsedFlags.contains("--no-image"), parsedValues["--perception"] != nil {
+                throw WorkflowArgumentError.invalid("OCR perception requires an image")
+            }
+        }
         if command == "act" {
             guard let action = parsedValues["--action"], ["get", "press", "click", "move", "drag", "set", "perform", "focus", "scroll", "type", "key", "select", "paste"].contains(action) else {
                 throw WorkflowArgumentError.invalid("--action required and must name a supported action")
@@ -69,8 +85,9 @@ public struct WorkflowArguments {
             }
             let hasElement = parsedValues["--element"] != nil
             let hasCoordinates = parsedValues["--coords"] != nil
-            guard hasElement != hasCoordinates else {
-                throw WorkflowArgumentError.invalid("act requires exactly one of --element or --coords")
+            let hasRegion = parsedValues["--region"] != nil
+            guard [hasElement, hasCoordinates, hasRegion].filter({ $0 }).count == 1 else {
+                throw WorkflowArgumentError.invalid("act requires exactly one of --element, --coords or --region")
             }
             try Self.validateAction(action, values: parsedValues, flags: parsedFlags)
         }
@@ -87,16 +104,36 @@ public struct WorkflowArguments {
         }
 
         try reject(["--button", "--double"], unless: ["click"])
-        try reject(["--background", "--coords"], unless: ["click", "move", "drag", "scroll"])
+        try reject(["--prepare", "--target-key"], unless: ["press","click","key","type","paste","select","set"])
+        if let key = values["--target-key"] {
+            guard flags.contains("--prepare"), key.count == 64, key.allSatisfy({ $0.isHexDigit }) else {
+                throw WorkflowArgumentError.invalid("--target-key requires --prepare and a native target fingerprint")
+            }
+        }
+        if flags.contains("--prepare"), flags.contains("--background") || values["--coords"] != nil || values["--region"] != nil {
+            throw WorkflowArgumentError.invalid("--prepare requires a foreground element action, not coordinates or regions")
+        }
+        try reject(["--background", "--coords", "--region"], unless: ["click", "move", "drag", "scroll"])
         try reject(["--prefix", "--suffix", "--selection", "--range"], unless: ["select"])
         try reject(["--format"], unless: ["paste"])
+        try reject(["--replace"], unless: ["paste"])
+        if flags.contains("--replace"), !flags.contains("--prepare") {
+            throw WorkflowArgumentError.invalid("--replace requires --prepare")
+        }
         try reject(["--text"], unless: ["type", "select", "paste"])
         try reject(["--to", "--duration"], unless: ["drag"])
         try reject(["--pages", "--pixels", "--direction"], unless: ["scroll"])
         try reject(["--value"], unless: ["set"])
         try reject(["--keys"], unless: ["key"])
         try reject(["--ax-action"], unless: ["perform"])
+        if action == "key" {
+            guard let keys = values["--keys"] else { throw WorkflowArgumentError.invalid("key requires --keys") }
+            _ = try NativeKeyChord(keys)
+        }
 
+        if flags.contains("--no-image"), !flags.contains("--refresh") || values["--path"] != nil {
+            throw WorkflowArgumentError.invalid("--no-image requires --refresh and cannot use --path")
+        }
         if values["--path"] != nil, !flags.contains("--refresh") {
             throw WorkflowArgumentError.invalid("--path requires --refresh")
         }

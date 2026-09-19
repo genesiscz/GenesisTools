@@ -72,6 +72,22 @@ private final class FakeSource: HierarchySource {
 }
 
 final class ObservedTreeBuilderTests: XCTestCase {
+    func testBulkNodesWithoutRolesTriggerFallbackInsteadOfEmptyActionableRows() throws {
+        let keys = BulkHierarchyKeys(arrayAttributes:"arrays",maxArrayCount:"max",maxDepth:"depth",returnAttributeErrors:"errors",incomplete:"incomplete",count:"count",error:"error",value:"value")
+        let element = AXUIElementCreateApplication(999999)
+        var keyCallbacks = kCFTypeDictionaryKeyCallBacks
+        var valueCallbacks = kCFTypeDictionaryValueCallBacks
+        let dictionary = CFDictionaryCreateMutable(nil, 0, &keyCallbacks, &valueCallbacks)!
+        let missing: NSDictionary = ["AXChildren":["value":[]]]
+        CFDictionarySetValue(dictionary, Unmanaged.passUnretained(element).toOpaque(), Unmanaged.passUnretained(missing).toOpaque())
+        let source = BulkHierarchySource(dictionary: dictionary, keys: keys)
+        XCTAssertThrowsError(try source.children(of: element)) { error in
+            guard case BulkHierarchyError.missingElement = error else { return XCTFail("Expected structural fallback") }
+        }
+        let valid: NSDictionary = ["AXRole":["value":"AXWindow"],"AXChildren":["value":[]]]
+        CFDictionarySetValue(dictionary, Unmanaged.passUnretained(element).toOpaque(), Unmanaged.passUnretained(valid).toOpaque())
+        XCTAssertTrue(try source.children(of: element).isEmpty)
+    }
     private func source() -> FakeSource {
         let source = FakeSource()
         source.nodes[1] = FakeNode(role: "AXWindow", attributes: ["AXTitle": "Main"], children: [2, 3], frame: CGRect(x: 0, y: 0, width: 400, height: 300))
@@ -105,6 +121,17 @@ final class ObservedTreeBuilderTests: XCTestCase {
         fake.nodes[1]?.children = [2, 3, 4]
         let tree = try buildObservedTree(root: fake.element(1), source: fake, depth: 5, scope: "window")
         XCTAssertEqual(tree.rows.count, 4)
+    }
+
+    func testValidationChangeInvalidatesTheObservationWithoutChangingItsValue() throws {
+        let fake = source()
+        fake.nodes[4] = FakeNode(role: "AXTextField", attributes: ["AXValue": "unchanged", "AXInvalid": "false"], settable: true)
+        let valid = try buildObservedTree(root: fake.element(1), source: fake, depth: 5, scope: "window")
+        fake.nodes[4]?.attributes["AXInvalid"] = "true"
+        let invalid = try buildObservedTree(root: fake.element(1), source: fake, depth: 5, scope: "window")
+        XCTAssertEqual(valid.rows[3]["AXValue"] as? String, invalid.rows[3]["AXValue"] as? String)
+        XCTAssertEqual(invalid.rows[3]["AXInvalid"] as? String, "true")
+        XCTAssertNotEqual(valid.digest, invalid.digest)
     }
 
     func testDepthOverflowIsRefusedNotTruncated() {
@@ -230,7 +257,7 @@ final class BulkHierarchySourceTests: XCTestCase {
         let root = AXUIElementCreateApplication(21)
         let stranger = AXUIElementCreateApplication(22)
         let dictionary = hierarchy([
-            (root, ["AXChildren": ["count": 1, "value": [stranger], "incmplt": true]]),
+            (root, ["AXRole": ["value": "AXWindow"], "AXChildren": ["count": 1, "value": [stranger], "incmplt": true]]),
         ])
         let source = BulkHierarchySource(dictionary: dictionary, keys: keys)
         XCTAssertThrowsError(try source.children(of: root)) { error in
@@ -243,7 +270,7 @@ final class BulkHierarchySourceTests: XCTestCase {
 
     func testARealChildrenFailureIsNotSwallowed() {
         let root = AXUIElementCreateApplication(31)
-        let dictionary = hierarchy([(root, ["AXChildren": ["error": axError(.cannotComplete)]])])
+        let dictionary = hierarchy([(root, ["AXRole": ["value": "AXWindow"], "AXChildren": ["error": axError(.cannotComplete)]])])
         let source = BulkHierarchySource(dictionary: dictionary, keys: keys)
         XCTAssertThrowsError(try source.children(of: root)) { error in
             guard case BulkHierarchyError.failed(let code) = error, code == .cannotComplete else {

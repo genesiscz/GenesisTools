@@ -48,9 +48,52 @@ func deepWindowDepth() -> (depth: Int, source: String)? {
     return nil
 }
 
+final class CanvasSwatch: NSView {
+    var alternate = false
+    override func draw(_ dirtyRect: NSRect) {
+        (alternate ? NSColor.systemOrange : NSColor.systemPurple).setFill()
+        NSBezierPath(rect: bounds).fill()
+    }
+}
+
+/// Deflects one AX focus request to exercise a real pre-dispatch refusal.
+final class RecoveryField: NSTextField {
+    weak var decoy: NSTextField?
+    var deflectOnce = true
+    var changed: (() -> Void)?
+    override func setAccessibilityFocused(_ focused: Bool) {
+        super.setAccessibilityFocused(focused)
+        if focused, deflectOnce, let decoy {
+            deflectOnce = false
+            window?.makeFirstResponder(decoy)
+        }
+    }
+    override func textDidChange(_ notification: Notification) {
+        super.textDidChange(notification)
+        changed?()
+    }
+}
+
 final class ControlFixture: NSObject, NSApplicationDelegate {
     var windows: [NSWindow] = []
     var counters: [NSTextField] = []
+    var swatches: [Int: CanvasSwatch] = [:]
+    var saveStatuses: [Int: NSTextField] = [:]
+
+    @objc func saveLater(_ sender: NSButton) {
+        guard let status = saveStatuses[sender.tag] else { return }
+        status.stringValue = "Saving"
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+            status.stringValue = "Saved"
+            NSAccessibility.post(element: status, notification: .valueChanged)
+        }
+    }
+
+    @objc func incrementFromMenu(_ sender: NSMenuItem) {
+        for counter in counters {
+            counter.stringValue = String((Int(counter.stringValue) ?? 0) + 10)
+        }
+    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let menu = NSMenu()
@@ -60,11 +103,19 @@ final class ControlFixture: NSObject, NSApplicationDelegate {
         edit.addItem(NSMenuItem(title: "Paste", action: Selector(("paste:")), keyEquivalent: "v"))
         editItem.submenu = edit
         menu.addItem(editItem)
+        let fixtureItem = NSMenuItem(title: "Fixture", action: nil, keyEquivalent: "")
+        let fixtureMenu = NSMenu(title: "Fixture")
+        let incrementItem = NSMenuItem(title: "Increment counters", action: #selector(incrementFromMenu(_:)), keyEquivalent: "")
+        incrementItem.target = self
+        fixtureMenu.addItem(incrementItem)
+        fixtureItem.submenu = fixtureMenu
+        menu.addItem(fixtureItem)
         NSApp.mainMenu = menu
         let screen = NSScreen.main?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1200, height: 800)
         for index in 0..<2 {
             let window = NSWindow(contentRect: NSRect(x: screen.minX + 40 + CGFloat(index) * 380,
-                                                      y: screen.minY + 80, width: 350, height: 420),
+                                                      y: screen.minY + 80, width: 350,
+                                                      height: CommandLine.arguments.contains("--dropdown") ? 500 : (CommandLine.arguments.contains("--delayed-save") ? 460 : 420)),
                                   styleMask: [.titled, .closable], backing: .buffered, defer: false)
             window.title = "Control fixture"
             window.isReleasedWhenClosed = false
@@ -74,17 +125,75 @@ final class ControlFixture: NSObject, NSApplicationDelegate {
             counter.setAccessibilityIdentifier("counter")
             content.addSubview(counter)
             counters.append(counter)
+            if CommandLine.arguments.contains("--visual") {
+                let canvas = CanvasSwatch(frame: NSRect(x: 150, y: 374, width: 35, height: 18))
+                canvas.setAccessibilityElement(false)
+                content.addSubview(canvas)
+                swatches[index] = canvas
+                let paint = NSButton(title: "Paint", target: self, action: #selector(paintCanvas(_:)))
+                paint.tag = index
+                paint.frame = NSRect(x: 200, y: 370, width: 100, height: 26)
+                paint.setAccessibilityIdentifier("paint")
+                content.addSubview(paint)
+            }
             for buttonIndex in 0..<2 {
                 let button = FixtureButton(title: "Increment", target: self, action: #selector(increment(_:)))
                 button.secondary = { counter.stringValue = String((Int(counter.stringValue) ?? 0) + 100) }
                 button.tag = index * 10 + buttonIndex
                 button.frame = NSRect(x: 20 + buttonIndex * 150, y: 315, width: 130, height: 32)
+                if !CommandLine.arguments.contains("--anonymous-buttons") {
+                    button.setAccessibilityIdentifier("increment-\(index)-\(buttonIndex)")
+                }
                 content.addSubview(button)
             }
-            let field = NSTextField(string: "seed")
+            let field: NSTextField = CommandLine.arguments.contains("--guard-recovery") ? RecoveryField(string: "seed") : NSTextField(string: "seed")
+            if let recovery = field as? RecoveryField {
+                let decoy = NSTextField(string: "untouched")
+                decoy.frame = NSRect(x: 20, y: 240, width: 290, height: 22)
+                decoy.setAccessibilityIdentifier("recovery-decoy")
+                content.addSubview(decoy)
+                recovery.decoy = decoy
+                recovery.changed = { counter.stringValue = String((Int(counter.stringValue) ?? 0) + 1) }
+            }
             field.frame = NSRect(x: 20, y: 265, width: 290, height: 26)
             field.setAccessibilityIdentifier("input")
             content.addSubview(field)
+            if CommandLine.arguments.contains("--dropdown") {
+                let priority = NSPopUpButton(frame: NSRect(x: 20, y: 460, width: 290, height: 28), pullsDown: false)
+                priority.addItems(withTitles: ["Low", "Normal", "High"])
+                priority.selectItem(withTitle: "Normal")
+                priority.setAccessibilityIdentifier("priority")
+                priority.setAccessibilityLabel("Priority")
+                content.addSubview(priority)
+            }
+            if CommandLine.arguments.contains("--delayed-save") {
+                let save = NSButton(title: "Save changes", target: self, action: #selector(saveLater(_:)))
+                save.tag = index
+                save.frame = NSRect(x: 20, y: 420, width: 130, height: 24)
+                save.setAccessibilityIdentifier("save-later")
+                content.addSubview(save)
+                let status = NSTextField(labelWithString: "Idle")
+                status.frame = NSRect(x: 170, y: 420, width: 130, height: 24)
+                status.setAccessibilityIdentifier("save-status")
+                content.addSubview(status)
+                saveStatuses[index] = status
+            }
+            if CommandLine.arguments.contains("--semantic") {
+                let toggle = NSButton(checkboxWithTitle: "Show line numbers", target: nil, action: nil)
+                toggle.frame = NSRect(x: 20, y: 240, width: 290, height: 22)
+                toggle.setAccessibilityIdentifier("line-numbers")
+                content.addSubview(toggle)
+            }
+            if CommandLine.arguments.contains("--cursor-proof"), index == 0 {
+                let proof = NSButton(checkboxWithTitle: "Cursor proof", target: nil, action: nil)
+                proof.frame = NSRect(x: 20, y: 240, width: 130, height: 22)
+                proof.setAccessibilityIdentifier("cursor-proof")
+                content.addSubview(proof)
+                let proofInput = NSTextField(string: "")
+                proofInput.frame = NSRect(x: 170, y: 237, width: 145, height: 26)
+                proofInput.setAccessibilityIdentifier("cursor-proof-input")
+                content.addSubview(proofInput)
+            }
             let disabled = NSButton(title: "Disabled", target: self, action: #selector(increment(_:)))
             disabled.isEnabled = false
             disabled.frame = NSRect(x: 20, y: 210, width: 130, height: 32)
@@ -181,6 +290,13 @@ final class ControlFixture: NSObject, NSApplicationDelegate {
         leaf.setAccessibilityIdentifier("deep-leaf")
         parent.addSubview(leaf)
         return window
+    }
+
+    @objc func paintCanvas(_ sender: NSButton) {
+        let canvas = swatches[sender.tag]
+        canvas?.alternate.toggle()
+        canvas?.needsDisplay = true
+        canvas?.displayIfNeeded()
     }
 
     @objc func increment(_ sender: NSButton) {

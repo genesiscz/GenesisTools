@@ -150,19 +150,24 @@ func axErrorName(_ err: AXError) -> String {
 /// CALLER, never about the target app: an untrusted client gets an empty window list from every
 /// app, and reporting that as "no windows for X" sent a session chasing a window bug that did
 /// not exist (handoff h_xt5ixzf9).
-func axUntrustedMessage() -> String {
+func axUntrustedMessage(responsible: (pid: pid_t, bundleId: String?, path: String)) -> String {
     let route: String
-    if let bundle = genesisAppBundleId() {
+    if let bundle = responsible.bundleId, bundle == genesisAppBundleIdentifier {
         route = "This run went through GenesisTools.app (\(bundle)), which is the identity to grant."
     } else {
-        route = "This run did NOT go through GenesisTools.app, so macOS attributes it to the terminal or whatever launched it; `tools control` normally routes ax-tool through the app."
+        route = "macOS currently attributes this run to responsible pid \(responsible.pid) (\(responsible.bundleId ?? responsible.path)); `tools control` normally routes ax-tool through GenesisTools.app."
     }
     return "Accessibility is not granted to the process macOS holds responsible for ax-tool. \(route) Grant it in System Settings > Privacy & Security > Accessibility (`tools macos permissions open --pane accessibility`), then re-run. `tools control doctor` shows every grant tools control needs."
 }
 
 func axUntrustedExit() -> Never {
-    jsonOutput(["ok": false, "error": axUntrustedMessage(), "reason": "accessibility-not-granted",
-                "responsible": genesisAppBundleId() ?? "not GenesisTools.app"])
+    let responsible = responsibleProcess()
+    jsonOutput(["ok": false, "error": axUntrustedMessage(responsible: responsible), "reason": "accessibility-not-granted",
+                "refusal": "permission", "pid": getpid(),
+                "responsible": responsible.bundleId ?? "unknown",
+                "responsiblePid": responsible.pid, "responsibleBundleId": responsible.bundleId ?? "",
+                "responsiblePath": responsible.path,
+                "viaGenesisApp": responsible.bundleId == genesisAppBundleIdentifier])
     exit(1)
 }
 
@@ -196,11 +201,11 @@ func cmdPermissions() {
     jsonOutput(["ok": true, "pid": getpid(),
                 "accessibility": AXIsProcessTrusted(),
                 "screenRecording": CGPreflightScreenCaptureAccess(),
-                "responsible": genesisAppBundleId() ?? "not GenesisTools.app",
+                "responsible": responsible.bundleId ?? "unknown",
                 "responsiblePid": responsible.pid,
                 "responsibleBundleId": responsible.bundleId ?? "",
                 "responsiblePath": responsible.path,
-                "viaGenesisApp": genesisAppBundleId() != nil])
+                "viaGenesisApp": responsible.bundleId == genesisAppBundleIdentifier])
 }
 
 /// One app-level boolean attribute, read without touching the target. `AXManualAccessibility`
@@ -769,6 +774,7 @@ func cmdSet(appName: String, value: String) {
     let role = axStringAttribute(element, "AXRole") ?? ""
     let textRoles = Set(["AXTextField", "AXTextArea", "AXSecureTextField", "AXComboBox", "AXSearchField"])
 
+    ActionCursor.element("set", element, background: frontmostPid() != pid)
     var result: [String: Any] = ["ok": true, "action": "set", "value": value]
     result.merge(elementInfo(element)) { _, new in new }
 
@@ -877,6 +883,7 @@ func cmdPress(appName: String) {
     let app = AXUIElementCreateApplication(pid)
     let element = resolveElement(app, appName)
 
+    ActionCursor.element("press", element, background: frontmostPid() != pid)
     let err = performActionWithTimeout(element, action: kAXPressAction as String)
     if err != .success {
         errorExit("press failed: AXError \(err.rawValue)")
@@ -982,6 +989,7 @@ func cmdPerform(appName: String, action: String) {
     if !available.contains(action) {
         errorExit("action '\(action)' not available. Available: \(available.joined(separator: ", "))")
     }
+    ActionCursor.element("perform", el, background: frontmostPid() != pid)
     let err = performActionWithTimeout(el, action: action)
     if err != .success {
         errorExit("perform '\(action)' failed: AXError \(err.rawValue)")
@@ -1067,6 +1075,9 @@ func cmdWindow(appName: String) {
     if let action = argValue("--action") {
         let w = resolveWindow(app, appName)
         let title = axStringAttribute(w, "AXTitle") ?? ""
+        if ["move", "resize", "minimize", "maximize", "close", "focus"].contains(action) {
+            ActionCursor.element("window", w, background: frontmostPid() != pid)
+        }
         switch action {
         case "move":
             guard let xStr = argValue("--x"), let yStr = argValue("--y"),
@@ -1119,6 +1130,7 @@ func cmdWindow(appName: String) {
     var infos: [[String: Any]] = []
     for (i, w) in windows.enumerated() {
         var info: [String: Any] = ["title": axStringAttribute(w, "AXTitle") ?? "window-\(i)"]
+        if let windowID = nativeAXWindowID(w) { info["window_id"] = Int(windowID) }
         if let id = axStringAttribute(w, "AXIdentifier") { info["id"] = id }
         if let pos = axPointValue(w, "AXPosition") { info["x"] = pos.x; info["y"] = pos.y }
         if let sz = axSizeValue(w, "AXSize") { info["width"] = sz.width; info["height"] = sz.height }
@@ -1161,6 +1173,7 @@ func cmdFocus(appName: String) {
     if hasTarget {
         let el = resolveElement(app, appName)
         AXUIElementSetAttributeValue(el, kAXFocusedAttribute as CFString, true as CFTypeRef)
+        ActionCursor.element("focus", el, background: noActivate)
         var result: [String: Any] = ["ok": true, "action": "focus"]
         result.merge(elementInfo(el)) { _, new in new }
         jsonOutput(result)
@@ -1168,6 +1181,7 @@ func cmdFocus(appName: String) {
         // AXRaise pulls the window forward just as surely as activating does, so the
         // no-target form has to honour --no-activate too or the flag's promise is empty.
         if !noActivate, let w = axWindows(app).first {
+            ActionCursor.element("focus", w)
             let _ = performActionWithTimeout(w, action: kAXRaiseAction as String, timeoutMs: 2000)
         }
         jsonOutput(["ok": true, "action": "focus", "app": appName, "raised": !noActivate])
@@ -1201,6 +1215,7 @@ func postClick(at point: CGPoint, right: Bool, double: Bool) {
                                   mouseCursorPosition: point, mouseButton: button),
               let up = CGEvent(mouseEventSource: nil, mouseType: upType,
                                 mouseCursorPosition: point, mouseButton: button) else { return }
+        ActionCursor.emit("click", point: point, target: "pixel")
         down.setIntegerValueField(.mouseEventClickState, value: Int64(i + 1))
         up.setIntegerValueField(.mouseEventClickState, value: Int64(i + 1))
         down.postRouted()
@@ -1381,6 +1396,8 @@ func cmdTypeText(appName: String, text: String) {
         typeString(text, delayMs: delayMs)
     }
 
+    if let targetEl { ActionCursor.element("type", targetEl) }
+    else { ActionCursor.emit("type", point: nil, target: "desktop") }
     let beforeValue = targetEl.flatMap { axAttribute($0, "AXValue").map { "\($0)" } }
     clearAndType()
 
@@ -1489,6 +1506,7 @@ func cmdScroll(appName: String) {
             errorExit("scroll without --direction needs a target element (performs AXScrollToVisible); add --direction up/down/left/right for wheel scrolling")
         }
         if axActionNames(el).contains("AXScrollToVisible") {
+            ActionCursor.element("scroll", el, background: frontmostPid() != pid)
             let err = performActionWithTimeout(el, action: "AXScrollToVisible", timeoutMs: 3000)
             if err != .success { errorExit("AXScrollToVisible failed: AXError \(err.rawValue)") }
             var result: [String: Any] = ["ok": true, "action": "scroll", "method": "AXScrollToVisible"]
@@ -1533,6 +1551,7 @@ func cmdScroll(appName: String) {
         errorExit("failed to create scroll event")
     }
     if let p = point { ev.location = p }
+    ActionCursor.emit("scroll", point: point, target: hasTarget ? "ax" : "pixel")
     ev.postRouted()
     var result: [String: Any] = ["ok": true, "action": "scroll", "method": "wheel",
                                   "direction": direction!, "amount": amount]
@@ -1918,6 +1937,7 @@ func cmdHotkey(keys: String) {
         errorExit("no key specified — only modifiers given. Add a key: e.g. cmd,a")
     }
 
+    ActionCursor.emit("hotkey", point: nil, target: "desktop")
     let holdMs = Double(argValue("--hold") ?? "50") ?? 50
 
     let src = CGEventSource(stateID: .hidSystemState)
@@ -2496,6 +2516,10 @@ func argValue(_ flag: String) -> String? {
     return args[idx + 1]
 }
 
+if command == "cursor-feedback" {
+    runCursorFeedbackCommand()
+    exit(0)
+}
 if command == "permissions" {
     cmdPermissions()
     exit(0)
@@ -2505,7 +2529,15 @@ if command == "audit" {
     exit(0)
 }
 if command == "apps" {
-    cmdApps()
+    if args.contains("--installed") { cmdInstalledApps() } else { cmdApps() }
+    exit(0)
+}
+if command == "launch-app" {
+    cmdLaunchApp()
+    exit(0)
+}
+if command == "quit-app" {
+    cmdQuitApp()
     exit(0)
 }
 
@@ -2783,6 +2815,12 @@ func cmdHitTest(x: Double, y: Double) {
 let maxDepth = Int(argValue("--depth") ?? "10") ?? 10
 
 switch command {
+case "menu-see", "menu-act":
+    cmdMenu(command)
+case "wait-change":
+    cmdWaitChange(appName: appName)
+case "control-session":
+    cmdControlSession(appName: appName)
 case "see":
     cmdSee(appName: appName)
 case "act":

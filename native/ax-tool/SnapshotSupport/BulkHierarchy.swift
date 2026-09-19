@@ -139,6 +139,10 @@ public final class BulkHierarchySource: HierarchySource {
         guard let entry = entry(element) else {
             throw BulkHierarchyError.missingElement
         }
+        guard let role = (entry[kAXRoleAttribute as String] as? [String: Any])?[keys.value] as? String,
+              !role.isEmpty else {
+            throw BulkHierarchyError.missingElement
+        }
         guard let attribute = entry[kAXChildrenAttribute as String] as? [String: Any] else {
             return []
         }
