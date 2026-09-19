@@ -1,5 +1,6 @@
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
+import { classifyPid } from "@genesiscz/utils/process-identity";
 import type { Command } from "commander";
 import pc from "picocolors";
 import { runAx } from "../lib/runner";
@@ -13,8 +14,10 @@ import { addTargetOptions, targetArgs, targetLabel } from "../lib/target";
  * human had focused. The SKILL already claimed "an invalid pid is rejected
  * rather than downgraded to the global tap"; this makes that true.
  *
- * `process.kill(pid, 0)` signals nothing and only asks whether the process
- * exists: EPERM means it exists and is not ours, which is still a real target.
+ * The pid comes from a human on the command line, so it is classified rather than probed:
+ * `classifyPid` answers "dead" only for a pid nothing is using, and reports a live process we
+ * do not own as `unverified` rather than refusing it. A process we cannot signal is still a
+ * real window to type into, which is why EPERM must not read as absent.
  */
 export function validateToPid(toPid: string | undefined): string | null {
     if (toPid == null) {
@@ -27,16 +30,11 @@ export function validateToPid(toPid: string | undefined): string | null {
         return `--to-pid ${toPid} is not a process id. No event was posted.`;
     }
 
-    try {
-        process.kill(pid, 0);
-        return null;
-    } catch (error) {
-        if ((error as NodeJS.ErrnoException).code === "EPERM") {
-            return null;
-        }
-
+    if (classifyPid(pid).status === "dead") {
         return `--to-pid ${pid} names no running process. No event was posted.`;
     }
+
+    return null;
 }
 
 /**

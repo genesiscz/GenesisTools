@@ -43,8 +43,9 @@ describe("validateToPid", () => {
         });
 
         test("pid 1 (launchd): it exists and is not ours, which EPERM must not reject", () => {
-            // process.kill(1, 0) throws EPERM for a non-root caller. Treating that
-            // as "no such process" would refuse every send to another user's app.
+            // A non-root caller cannot signal launchd, so a bare liveness probe reports EPERM
+            // there. Reading that as "no such process" would refuse every send to another
+            // user's app; classifyPid says "unverified", not "dead", which is the distinction.
             expect(validateToPid("1")).toBeNull();
         });
     });
