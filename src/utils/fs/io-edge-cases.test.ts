@@ -36,6 +36,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { bytesEqualStreaming, copyFileStreaming, sha256File, sha256PrefixFile } from "@genesiscz/utils/fs/disk-usage";
 import { sha256File as sha256FileHash } from "@genesiscz/utils/fs/hash";
+import { TemporaryArtifacts } from "./temporary-artifacts";
 
 const PREFIX_HASH_BYTES = 4 * 1024;
 const STREAM_CHUNK_BYTES_DISK_USAGE = 64 * 1024;
@@ -475,4 +476,29 @@ describe("sha256File (hash.ts, 128KB chunk variant) — buffer-reuse evil paths"
             rmSync(dir, { recursive: true, force: true });
         }
     });
+});
+
+it("temporary artifact ownership bounds files without deleting outside paths", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "artifact-unowned-"));
+    const unowned = join(dir, "keep.txt");
+    writeFileSync(unowned, "keep");
+    const owner = new TemporaryArtifacts({ prefix: "artifact-test", maxFiles: 2 });
+    try {
+        const first = owner.allocate("png");
+        await Bun.write(first, "a");
+        const second = owner.allocate("png");
+        await Bun.write(second, "b");
+        const third = owner.allocate("png");
+        await Bun.write(third, "c");
+        expect(await Bun.file(first).exists()).toBe(false);
+        expect(owner.release(unowned)).toBe(false);
+        expect(readFileSync(unowned, "utf8")).toBe("keep");
+        expect(() => owner.allocate("../png")).toThrow();
+        owner.dispose();
+        expect(await Bun.file(second).exists()).toBe(false);
+        expect(await Bun.file(third).exists()).toBe(false);
+    } finally {
+        owner.dispose();
+        rmSync(dir, { recursive: true, force: true });
+    }
 });

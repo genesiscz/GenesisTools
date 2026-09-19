@@ -59,6 +59,26 @@ export function installedGenesisAppLauncher(): string | null {
     return existsSync(launcher) ? launcher : null;
 }
 
+export class GenesisAppUpdatingError extends Error {
+    constructor(readonly lockPath: string) {
+        super(
+            "GenesisTools.app is being rebuilt or its build lock remains. No native command was started. Wait for the build to finish; if its owner exited, run tools macos permissions build to recover the stale lock."
+        );
+        this.name = "GenesisAppUpdatingError";
+    }
+}
+
+/** Read-only admission check; the installer owns lock cleanup and bundle replacement. */
+export function assertGenesisAppNotUpdating(): void {
+    if (process.platform !== "darwin" || env.tools.isAppLauncherDisabled() || isGenesisAppDisabledByMarker()) {
+        return;
+    }
+    const lockPath = join(genesisAppDir(), "build.lock");
+    if (existsSync(lockPath)) {
+        throw new GenesisAppUpdatingError(lockPath);
+    }
+}
+
 /**
  * The launcher to prepend to a command this process is about to spawn, or null when there is
  * nothing to add — including the case where this process ALREADY runs under the app, since

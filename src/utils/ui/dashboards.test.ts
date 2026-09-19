@@ -28,6 +28,7 @@ describe("port registry", () => {
     });
 
     test("web services cover youtube server/extension and ai-proxy", () => {
+        expect(DASHBOARDS.jev.port).toBe(3088);
         expect(WEB_SERVICES["youtube-server"].port).toBe(9876);
         expect(WEB_SERVICES["youtube-extension"].port).toBe(9877);
         expect(WEB_SERVICES["ai-proxy"].port).toBe(8317);
