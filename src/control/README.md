@@ -8,6 +8,13 @@ Drives native macOS apps by addressing real accessibility elements instead of gu
 
 ## Snapshot-scoped inspection and actions
 
+Prepared `act` calls carrying `--target-key` can recover from typed stale/focus refusals only when
+native dispatch is confirmed `not_started`. The shared sync/async runner reuses the original token
+and fingerprint, allows two retry starts within 1.5 seconds of the first refusal, and reports a
+`recovery` receipt. Attempts and readback share the original deadline. It does not repeat completed steps, unknown input, coordinate
+clicks, or Jev decisions. Unstable screenshot reads have a separate bounded read-only recovery;
+post-action observation failure never authorizes repeating the action.
+
 Start adaptive UI work with `tools control see --app APP`. It returns JSON with the selected window's stable CG ID, a PNG path, indexed AX elements and a short-lived snapshot token. Multiple windows require an explicit `--window-index` from the returned candidates; no largest-window fallback is used. Refresh the selected window with `--window-id` using its returned CG ID, since indexes reorder when focus changes. Do not combine both selectors.
 
 `see` reads the whole tree in one `AXUIElementCopyHierarchy` round trip when that private call is available (`"bulk": true` in the output; `AX_TOOL_NO_BULK=1` forces the per-attribute walk, and chrome scope always walks). `act --refresh` settles and returns the post-action snapshot under `after`, so one call replaces `act` plus a second `see`; `--path <png>` names its screenshot. `see --since previous.json` returns the fresh token, window and screenshot with only the rows that were added or changed, plus a `changes` block with an old-to-new `indexMap`.
@@ -251,3 +258,198 @@ tools control cursor click \
 `paste --text PAYLOAD --format text|md|html` pastes at the focused input's existing selection. To choose another range or caret, use `select → see → paste`. Prefix/suffix do not modify the paste payload, and selection flags on `paste` are rejected. `type` is limited to single-line text of at most 256 UTF-16 code units; use paste for longer text.
 
 Clipboard restoration checks ownership and skips observed competing copies. It is best effort because AppKit has no atomic compare-and-swap; a narrow concurrent-copy race remains. HTML paste also carries raw markup as its plain-text representation, so rendering depends on the receiver.
+
+## Independent Computer Use API
+
+`tools computer-use mcp` exposes the native API as stdio tools; `tools computer-use mcp --repl` preloads `computer` in the persistent repository REPL. `tools computer-use run --file task.ts` runs one script. App/window inventory, native menu refs, state/diffs, paging, input, generic sequences and OCR use the same backend. See [the standalone API guide](../computer-use/README.md).
+
+Run `tools computer-use prepare` once before latency-sensitive work. The repeatable native CPU/call-count benchmark is `bun src/control/scripts/live-smoke.ts --background-only --benchmark`; it spends no AI requests and verifies every fixture write.
+
+## Jev semantic control
+
+`resolve` and `judge` inspect a native window without dispatching. Both accept `--provider vercel|typesafe`, `--window-id`, `--scope window|chrome`, and `--snapshot-file` for a retained full `see` observation.
+
+```sh
+tools control resolve --app TextEdit --intent "the settings button for this account" --provider typesafe
+tools control judge --app TextEdit --expect "the export finished successfully"
+tools control judge --app Fixture --expect "counter is one" --exact-id counter --exact-value 1
+```
+
+Targets come from observed AXPress actions or writable text fields, with ancestor context. Disabled/hidden targets and secure fields are excluded. Unknown or uncertain choices abstain. Resolution returns the native snapshot token and selected element without execution.
+
+Judging reports verified/refuted/unknown, evidence IDs, probabilities and its semantic or exact basis. A button label is not completion evidence. Conflicting failure evidence blocks success. Exact ID/value readback does not call the model. A semantic verdict is a model judgment, not independent proof of hidden application state.
+
+Requests contain window/candidate labels and redacted observation text; writable input values stay local. The model cannot construct action arguments or bypass native snapshot freshness and app/window validation.
+
+### Replay and structured form filling
+
+```sh
+tools control replay --list
+tools control replay context --chooser jev --provider typesafe
+tools control replay completed --chooser mock
+tools control fill --app Fixture --window-id 42 --data fields.json --provider typesafe
+```
+
+Replay accepts a built-in case ID or a labeled JSON fixture. It is always decision-only, with zero native actions. The fixture oracle checks the pipeline using known labels; it is not a model accuracy benchmark. The dashboard Control tab compares exact-label matching, the oracle and Jev. Missing provider cost is shown as unknown, never estimated as free.
+
+Fill accepts an object of 1–20 supplied string values, such as `{"Full name":"Alice Example","City":"Prague"}`. It maps keys to observed writable text fields, keeps the values out of model requests, sets each exact value, reobserves after each attempt, and verifies final readback. Bindings must be unique and one-to-one. Secure inputs, unsupported dropdowns, masked readback and ambiguous fields stop the run. It never presses Submit or types generated text. Use `--max-fields`, `--max-requests`, `--timeout` and Ctrl-C to bound it. Partial progress is returned on failure.
+
+### Bounded tasks
+
+```sh
+tools control assist --app Editor --window-id 42 --goal "Open preferences and enable line numbers" --max-steps 4 --max-requests 10 --provider typesafe
+tools control assist --app Fixture --goal "Enable Show line numbers" --exact-id line-numbers --exact-value 1
+```
+
+Assist admits observed AXPress actions only. Each attempt uses the current native snapshot, then obtains a fresh observation in the same process/window. It stops on abstention, uncertainty, unchanged state, cancellation, deadline or budget exhaustion. A reobserve decision is allowed once. Failed or partially delivered native actions are never retried. Goal completion is reported with an explicit exact or semantic verification basis.
+
+Defaults are 8 action attempts, 20 model requests and 120 seconds. Native commands are individually capped at 10 seconds; Ctrl-C stops the model call/next iteration, with an in-flight synchronous native call allowed to return within its cap. First-use native compilation is separately bounded by the existing two-minute build limit. Text entry belongs to `fill`; arbitrary generated text, shell commands, coordinates and automatic focus changes are not supported.
+
+`bun src/control/scripts/live-smoke.ts --background-only --semantic` runs the real TypeSafe provider against a temporary AppKit fixture. It requires TYPESAFE_API_KEY, Accessibility and Screen Recording, makes paid requests, and terminates only its own verified fixture PID.
+
+### Animated action cursor
+
+Applicable mutations show the bundled MIT-licensed Cua Default 2.0.0 vector cursor: cyan fill, white outline, soft glow, gentle float, animated action marks and a fading GenesisTools badge with foreground/background and AX/pixel context. Movement glides between resolved targets. Drag feedback follows delivered gesture points.
+
+This covers snapshot press/click/move/drag/set/perform/focus/scroll/type/key/select/paste, named software cursors, Jev fill/assist, and legacy targeted mutations and window actions. Targetless typing/hotkeys animate at the last known cursor location; they never invent a new target. Read-only commands stay quiet.
+
+The click-through native overlay never moves the physical pointer or activates a target app. It is best-effort feedback, not proof of action success. Core Animation drives motion without an idle rendering timer. The helper fades and exits after 20 seconds without actions, with a ten-minute absolute lifetime; a future action starts it again. Invalid or refused native targets retain all existing admission checks.
+
+Feedback now waits up to 1.5 seconds for an event-specific receipt after the helper submits its layers, finishes the glide and receives two display callbacks. The display link stops when receipts are complete. Set `GENESIS_CONTROL_CURSOR_WAIT=required` for demonstrations: missing geometry, disabled feedback or a missing receipt stops input. Ordinary mode reports feedback failure and remains best effort. Drag waits before mouse-down, then streams samples. Snapshot/menu/pointer targets are revalidated after waiting; feedback never overrides stale-state refusal.
+
+`live-smoke.ts --task-benchmark` compares complete stepwise and compound public-API tasks on a disposable fixture, with explicit TypeSafe Jev requests and exact final-state checks. It alternates order and retains the first pair separately. Add `--host-paced` for a single pair with actual stdin host dispatch boundaries, including their wait time. This measures the specified task and orchestration; it does not call another computer-use provider or establish universal speed parity.
+
+```sh
+tools control act ... --no-cursor
+tools control cursor hide
+GENESIS_CONTROL_CURSOR=off tools control ...
+GENESIS_CONTROL_CURSOR_MOTION=off tools control ...
+```
+
+Reduced Motion follows the macOS accessibility setting; the environment override forces still artwork. `--no-cursor` also works on `tools jev control` commands. The artwork and Inter font are bundled assets, not AI models; there are no runtime downloads. Provenance, original source archive, licenses and the offline regeneration script are in `native/ax-tool/CursorAssets`.
+
+The same complete command set is available through `tools jev control` while using the linked Jev worktree. For example, `tools jev control cursor hide` and `tools jev control act … --no-cursor`.
+
+Visual proof: `bun src/control/scripts/live-smoke.ts --cursor-proof` records five seconds of native press/set/press feedback on a disposable fixture. It is separate from `--background-only --verify-pointer`, which checks pointer and foreground invariants without the recording's foreground text entry.
+
+
+### Generic persistent sessions and sequences
+
+`sequence` applies one user intent to a bounded observed target set. It keeps native AX references and the Jev client loaded, so each action does not restart the helper, capture a screenshot or hash an unrelated transcript. Targets can be buttons, tabs, rows and other AXPress controls; the command is not tied to folders or a particular app.
+
+```sh
+tools jev control --provider typesafe sequence "Click all the browser tabs." \
+  --app com.brave.Browser --role AXRadioButton --within AXTabGroup --within-index 0 \
+  --window-ids WINDOW_ID --scope chrome --verify selected --interval 120 --restore-selected
+```
+
+Obtain current window IDs and root order with `see --scope chrome`. Choose a root index only from that observation. `--focus` explicitly focuses the window before binding. `--restore-selected` restores the target selected at observation time. A transient find bar can replace the browser's accessible root; dismiss it through its observed native close control before starting a new sequence. No browser scripting API or AppleScript is used.
+
+The model answers a typed target-set matching question using native control descriptions, scope and labels. It does not generate action arguments. Matching uses the existing 0.8 target-selection probability floor; completion is independent, exact native readback of the requested boolean attribute. The ordinary `judge` completion threshold is unchanged.
+
+The native helper checks process launch, window identity, retained target membership, enabled state and AXPress support before every dispatch. Replaced parent containers can be rebound only when they still contain the retained target. Missing targets and ambiguous scope stop. Each batch retains successful and failed step results; no uncertain mutation retries. Sessions have a 120-second execution lifetime, 200-action cap and bounded IPC timeouts. Root/window IDs are observation data, not saved authorization.
+
+Two Brave windows with identical geometry are distinguished by their native AX window IDs, with the prior strict frame matching retained as fallback when that OS capability is unavailable.
+
+Live measurement on 2026-09-18: Jev plus native AXPress activated and read back all 74 tabs across two Brave windows in 10.24 seconds, then restored the selections present at the start of that run. This is a small warm desktop measurement; it excludes development and cold native compilation.
+
+For persistent agent use, import `NativeControlSession` from `src/control/lib/decision/native-session.ts` inside the repository's `tools node-repl` runtime. Keep the instance across REPL calls:
+
+```ts
+const { NativeControlSession } = await import("/absolute/GenesisTools/src/control/lib/decision/native-session.ts");
+const control = new NativeControlSession({ app: "com.brave.Browser", provider: "typesafe" });
+const view = await control.observe({ role: "AXRadioButton", rootRole: "AXTabGroup", rootIndex: 0,
+    scope: "chrome", windowId: currentWindowId });
+const plan = await control.chooseAll("Click all the browser tabs.");
+await control.batch({ steps: plan.targets.map(target => ({
+    target, verifyAttribute: "AXSelected", verifyValue: true,
+})), intervalMs: 120 });
+control.close();
+```
+
+The repository's Bun-based REPL supports TypeScript imports. A different host's Node REPL may only accept compiled JavaScript. The measured repository REPL setup took 178 ms; a later call reused its bindings and completed Jev plus two native presses and restoration in 1.04 seconds. Keep sessions short; create a fresh one after expiry or cancellation.
+
+### Semantic waits
+
+```sh
+tools jev control await --app Editor --window-id 42 --condition "A saved confirmation is displayed" --timeout 30000 --max-requests 12 --provider typesafe
+tools jev control wait-replay ready --chooser oracle
+tools jev control wait-replay unchanged --chooser jev --provider vercel
+tools control see --app Editor --window-id 42 --no-image
+```
+
+`await` pins the process launch/window and batches loading, ready, blocked, failed and evidence questions. Readiness requires an observable condition and admitted evidence; it does not prove hidden server or filesystem state. Failure and human-input blockers take precedence. A loading classification is advisory; terminal states require an admitted witness. Uncertain evidence stays uncertain.
+
+AXObserver notifications wake the reader where supported, with a bounded one-second snapshot fallback for missing notifications and a short event debounce. Repeated observations create no PNG files. Geometry, element indexes, capture metadata and other non-semantic fields do not cause another model request. Readable native control kinds accompany raw AX roles in model inputs. A monotonic deadline, cancellation and request budget bound every run. A stable spinner produces “no observed progress,” not a claim that the app is dead.
+
+For exact local readiness, add `--exact-id status --exact-value Saved --max-requests 0`. This uses the same bounded native event loop and makes no AI calls. The independent API offers the same check as `computer.await_condition({app,condition:"Save finished",exact:{identifier:"status",value:"Saved"},max_requests:0})` after observing the target window.
+
+The dashboard's Semantic waits card and `wait-replay` run the same wait core with a virtual event source. The oracle verifies plumbing without a model. Live Jev runs retain probabilities and evidence decisions, including uncertainty; no desktop action is dispatched by replay.
+
+### Bounded recovery
+
+`tools jev control assist --app APP --goal "Enable line numbers" --recovery bounded --max-recoveries 2`
+
+Recovery uses native delivery metadata. A stale snapshot or missing target may be reobserved and decided again; an unknown/partial mutation, changed app/window, permission or authentication barrier stops. Normal request/action budgets also cover recovery. A successful no-op is never repeated.
+
+Optional `--remedies remedies.json` admits explicit local dismiss/back controls only:
+`[{"id":"close-help","kind":"dismiss","identifier":"help-close","label":"Close help","role":"AXButton","description":"Close the help overlay"}]`.
+The identifier, role and label must uniquely match fresh state. There is no default generic Cancel/Back click. The result preserves the refusal, evidence, supplied remedy set, model choice and recovery action result.
+
+### Resilient workflow replay
+
+`tools jev control replay-plan workflow.json --values values.json --rebind --window-id 123`
+
+A version 1 plan binds each step against a fresh observation, first by an exact unique selector, then (only with `--rebind`) by Jev. Every step has a required postcondition and `noRetry: true`. Unknown dispatch/readback stops the run. Repaired selectors stay in the result unless a verified run explicitly uses `--save-repairs new-plan.json`; the original is never overwritten.
+
+```json
+{
+  "version": 1,
+  "app": "Example App",
+  "scope": "window",
+  "windowTitle": "Profile",
+  "steps": [{
+    "id": "name",
+    "action": "set",
+    "selector": {"identifier": "full-name"},
+    "intent": "Enter the supplied full name",
+    "valueRef": "name",
+    "postcondition": {
+      "expect": "The supplied name is displayed",
+      "exact": {"identifier": "full-name", "valueRef": "name"}
+    },
+    "noRetry": true
+  }]
+}
+```
+
+Exact values come from a separate local file such as `{"name":"Example Person"}`. Choosers see field descriptions and redacted inputs, never this values map. Set steps also verify the exact written value before the recorded postcondition. Missing values are rejected before any desktop observation/action.
+
+`record-plan stop --semantic metadata.json --out workflow.json` attaches the same versioned metadata to a recording after checking every recorded action, selector, app and fixed parameter. A key chord cannot change during attachment, and unsupported side effects such as legacy `--return` are refused instead of dropped. Inline values are replaced by references in the emitted plan. No observations or screenshots are retained automatically; optional context contains only caller-supplied role/label pairs. Existing raw recorder logs retain their existing lifecycle. Plans support `press`, `set`, `click`, `focus`, `key`, `type`, `paste`, `select`, `scroll` and an exposed AX `perform`. `parameters` carries fixed verb-specific arguments such as `{"keys":"super+a"}`, `{"direction":"down","pixels":80}` or `{"axAction":"AXShowMenu"}`. Text actions use local `valueRef` values. Exact postconditions may specify `attribute` as `AXValue`, `AXFocused`, `AXSelected`, `AXExpanded` or `AXSelectedText`. Semantic postconditions require explicit `--jev` or `--rebind`. Unsupported recordings fail explicitly. The legacy `run` path remains available for old plans and refuses semantic plans rather than ignoring their postconditions.
+
+### Exact → Jev → host chooser
+
+`tools jev control choose --app APP --intent "Refresh" --chooser auto`
+resolves a unique exact label locally, otherwise asks Jev once. It returns separate coverage, conflict, probability, margin and confidence signals. Uncertain or conflicting choices return a bounded redacted evidence packet. **Jev is the only AI model called by control**, through either direct TypeSafe or Vercel Gateway. A host handoff makes no extra AI API request.
+
+`choose` defaults to `--chooser exact` (no AI). Exact-only assist additionally requires `--exact-id`/`--exact-value` and recovery off, so it cannot silently invoke semantic judgment. `assist --chooser auto` uses the same chooser and keeps native validation and shared budgets. `--host-decision decision.json` accepts `{"packet": <original packet>, "answer": {"packetId": "...", "choice": "c0", "evidence": ["e1"]}}`; changed or expired observations, invented IDs and extra action fields are rejected. The tool never requests shell code, coordinates or new payloads from the host.
+
+`tools jev control compare-choosers --jev --split held-out` explicitly enables Jev on the same fixed synthetic cases used by exact and auto. Without `--jev`, comparison is exact-only. Development and held-out cases are reported separately; this small corpus is a smoke check, not a desktop accuracy benchmark.
+
+Add `--split all --calibrate` to collect each case/mode once and replay four conservative threshold policies locally. The report selects using development labels only (fewest wrong choices, then most correct outcomes), reports held-out accuracy/abstention and host handoffs, and preserves default policy on ties. No additional requests are made for the policy sweep, and live action thresholds remain unchanged. The HTTP comparison endpoint accepts the same `calibrate:true` flag with `jev:true, split:"all"`. Missing provider usage/cost is reported as unknown, not zero. These ten synthetic cases do not establish real-world accuracy, fewer actual assistant turns or universal speed parity.
+
+### Native recording
+
+The default capture backend uses ScreenCaptureKit and the independent ComputerUse API for timed input. Build/start failures stop without changing backend. Native preflight, focus, crop lookups and action dispatch do not call Peekaboo or AppleScript. URL scripting, raw osascript and media-key rewrites are rejected before recording starts. Native input requires an explicit app and an unambiguous window/target. The old behavior remains available only through an explicitly selected `capture.backend: "peekaboo"`.
+
+### Native visual grounding
+
+`tools control see --app APP --window-id ID --perception ocr` adds local macOS Vision OCR. `--perception-crop x,y,w,h` and `--perception-width 400` crop/resize only the OCR input; rectangles map back onto the original screenshot. Known AX text inputs are excluded from OCR candidates. No Python, icon model, download or external vision API is involved.
+
+`tools jev control visual --app APP --window-id ID --intent "Paint" --chooser auto` captures and chooses only. Add `--click` to explicitly dispatch one click; `--background` requests window-addressed delivery. Exact is the default chooser and makes no AI call. Jev receives observed OCR labels/rectangles and can return only a region ID, never coordinates or action arguments.
+
+For direct control, `act --snapshot TOKEN --region v0 --action click` uses an observed region. Raw `--coords` and drag destinations also require screenshot-backed evidence. Native code checks process/window identity, exact window geometry, pixel dimensions and current pixel hash, then atomically consumes the capture before posting input. Visual captures expire after **30 seconds** and permit **one coordinate action** (a double click/drag is one bounded action); ordinary AX tokens retain their 120-second limit. Run see again after an action. A reused capture fails before another screenshot is taken.
+
+Dispatch and task completion are separate: visual output says `verification: unverified` until the caller checks a postcondition. An unchanged AX tree is insufficient when canvas pixels changed. Source PNG hash, pixel hash, original dimensions, crop/resize transform and logical screen rectangles are returned for inspection. Used-capture markers live in the private temporary control directory.
+
+Live proof: `bun src/control/scripts/live-smoke.ts --background-only --visual --visual-jev` uses an isolated native fixture, checks pixel-only change refusal, cross-process one-use admission, crop/resize geometry, known-input exclusion and a real Jev-guided OCR click. `--visual-jev` explicitly enables that paid Jev call.

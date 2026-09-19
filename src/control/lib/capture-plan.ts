@@ -7,7 +7,16 @@
 import { type Annotation, type PresetName, parseRect } from "@genesiscz/utils/image";
 import { SafeJSON } from "@genesiscz/utils/json";
 
-export const CAPTURE_HELP = `control capture — declarative peekaboo capture + timed UI actions
+export const CAPTURE_HELP = `control capture — native recording + timed UI actions
+
+NATIVE DEFAULT
+  The native backend uses ScreenCaptureKit and snapshot-checked AX/CoreGraphics input.
+  It never falls back to Peekaboo or AppleScript. Choose capture.backend:"peekaboo"
+  explicitly for the legacy behavior described below. Native plans reject url,
+  osascript and media-key scripting. Native type is single-line, at most 256 UTF-16
+  units; ax-set supports longer exact field values. Native scroll amount is pixels.
+  Use an exact window ID/index/title when the app has multiple windows.
+  Native preflight reads app/window/screen geometry; it does not query browser URLs.
 
 USAGE
   tools control capture preflight [--app "<Name>"]   # RUN THIS FIRST when writing a plan:

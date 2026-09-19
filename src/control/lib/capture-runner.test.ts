@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
-import { peekabooDurationArg } from "./capture-runner";
+import { validateNativeCapturePlan } from "./capture-native";
+import { peekabooDurationArg, runCapturePlan } from "./capture-runner";
 
 // Regression: PR #376 review round 3 — plan durations reached peekaboo unconverted.
 // `capture-plan.ts` documents `capture.duration` in SECONDS, but peekaboo reads a bare
@@ -21,4 +22,19 @@ test("the argument is never a bare number, which peekaboo would read as millisec
 
 test("a fractional duration keeps its unit rather than truncating to milliseconds", () => {
     expect(peekabooDurationArg(1.5)).toBe("1.5s");
+});
+
+test("native recording rejects scripting and unsupported typing before recorder startup", async () => {
+    const base = { capture: { mode: "screen" as const, duration: 1 }, actions: [] };
+    for (const action of [
+        { atMs: 0, do: "osascript" as const, script: 'error "must never run"' },
+        { atMs: 0, do: "url" as const, url: "https://example.com" },
+        { atMs: 0, do: "hotkey" as const, keys: "volumeup" },
+        { atMs: 0, do: "type" as const, text: "line one\nline two" },
+    ]) {
+        await expect(runCapturePlan({ ...base, actions: [action] })).rejects.toThrow(/unavailable|single-line/);
+    }
+    expect(() =>
+        validateNativeCapturePlan({ ...base, actions: [{ atMs: 0, do: "ax-press", app: "Fixture", axId: "save" }] })
+    ).not.toThrow();
 });

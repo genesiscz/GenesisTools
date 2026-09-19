@@ -5,7 +5,13 @@ import { agentSessionIds } from "@genesiscz/utils/agent/host";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
-import { installedGenesisAppLauncher } from "@genesiscz/utils/macos/genesis-app";
+import {
+    assertGenesisAppNotUpdating,
+    GenesisAppUpdatingError,
+    installedGenesisAppLauncher,
+} from "@genesiscz/utils/macos/genesis-app";
+import { boundedCommand } from "@genesiscz/utils/process/bounded-command";
+import { Stopwatch } from "@genesiscz/utils/Stopwatch";
 import { captureNativeSources, nativeNeedsBuild, recordNativeBuild } from "./native-build";
 
 const GT_ROOT = join(import.meta.dir, "..", "..", "..");
@@ -68,6 +74,89 @@ export interface AxResult {
     ok: boolean;
     error?: string;
     [key: string]: unknown;
+}
+
+/** Recovery never renews the snapshot or changes its target fingerprint. */
+export class PreparedActionRecovery {
+    private readonly clock = new Stopwatch();
+    private recoveryStarted?: number;
+    private readonly refusals: string[] = [];
+    constructor(private readonly options: { args: string[]; timeoutMs: number; signal?: AbortSignal }) {}
+
+    remaining(): number {
+        return Math.floor(this.options.timeoutMs - this.clock.elapsedMs);
+    }
+
+    retry(result: AxResult): boolean {
+        const { args, signal } = this.options;
+        const key = args[args.indexOf("--target-key") + 1];
+        if (
+            result.ok ||
+            result.dispatchState !== "not_started" ||
+            !["stale_observation", "focus_mismatch"].includes(String(result.refusal)) ||
+            args[0] !== "act" ||
+            !args.includes("--prepare") ||
+            !args.includes("--target-key") ||
+            !/^[a-f0-9]{64}$/.test(key ?? "") ||
+            args.includes("--coords") ||
+            args.includes("--region") ||
+            this.refusals.length >= 2 ||
+            (this.recoveryStarted !== undefined && this.clock.elapsedMs - this.recoveryStarted >= 1500) ||
+            signal?.aborted ||
+            this.remaining() < 1
+        ) {
+            return false;
+        }
+        this.recoveryStarted ??= this.clock.elapsedMs;
+        this.refusals.push(String(result.refusal));
+        logger.debug(
+            { attempt: this.refusals.length + 1, refusal: result.refusal },
+            "Retrying undispatched prepared action"
+        );
+        return true;
+    }
+
+    finish(result: AxResult): AxResult {
+        return this.refusals.length
+            ? {
+                  ...result,
+                  recovery: { retries: this.refusals.length, refusals: this.refusals, elapsedMs: this.clock.elapsedMs },
+              }
+            : result;
+    }
+}
+
+export async function runAxAsyncWithRecovery(options: {
+    args: string[];
+    timeoutMs: number;
+    signal?: AbortSignal;
+    run: (timeoutMs: number) => Promise<AxResult>;
+}): Promise<AxResult> {
+    const recovery = new PreparedActionRecovery(options);
+    let result: AxResult;
+    do {
+        if (options.signal?.aborted || recovery.remaining() < 1) {
+            return recovery.finish({
+                ok: false,
+                dispatchState: "not_started",
+                error: "Recovery deadline or cancellation reached before dispatch.",
+            });
+        }
+        try {
+            result = await options.run(recovery.remaining());
+        } catch (error) {
+            logger.warn({ error, command: options.args[0] }, "Native transport failed; no further retry");
+            result =
+                error instanceof GenesisAppUpdatingError
+                    ? { ok: false, dispatchState: "not_started", refusal: "launcher_updating", error: error.message }
+                    : {
+                          ok: false,
+                          dispatchState: "uncertain",
+                          error: "Native transport failed; action delivery is unknown. No further retry.",
+                      };
+        }
+    } while (recovery.retry(result));
+    return recovery.finish(result);
 }
 
 /**
@@ -141,6 +230,7 @@ export const AX_STDOUT_BUDGET_BYTES = 32 * 1024 * 1024;
 
 /** Argv the AX spawn will exec: launcher + binary + args when a launcher is installed. */
 export function axCommandLine(binary: string, args: readonly string[]): string[] {
+    assertGenesisAppNotUpdating();
     const launcher = installedGenesisAppLauncher();
     return launcher ? [launcher, binary, ...args] : [binary, ...args];
 }
@@ -196,6 +286,14 @@ export function runAxWithBoundary({
     timeoutMs?: number;
     boundary: AxRunBoundary;
 }): AxResult {
+    timeoutMs = Math.floor(timeoutMs);
+    if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 2147483647) {
+        return {
+            ok: false,
+            dispatchState: "not_started",
+            error: "Native timeout must be a finite duration of at least 1 ms and at most 2147483647 ms.",
+        };
+    }
     logger.debug({ command: args[0], timeoutMs }, "running native control command");
     let binary: string;
     try {
@@ -205,8 +303,51 @@ export function runAxWithBoundary({
         return { ok: false, error: error instanceof Error ? error.message : String(error) };
     }
 
-    const r = boundary.spawn({ binary, args, timeoutMs, maxBufferBytes: AX_STDOUT_BUDGET_BYTES });
+    const recovery = new PreparedActionRecovery({ args, timeoutMs });
+    let r: ReturnType<AxRunBoundary["spawn"]>;
+    let result: AxResult;
+    do {
+        try {
+            const remainingMs = recovery.remaining();
+            if (remainingMs < 1) {
+                return recovery.finish({
+                    ok: false,
+                    dispatchState: "not_started",
+                    error: "Recovery deadline reached before dispatch.",
+                });
+            }
+            r = boundary.spawn({ binary, args, timeoutMs: remainingMs, maxBufferBytes: AX_STDOUT_BUDGET_BYTES });
+        } catch (error) {
+            logger.warn({ error, command: args[0] }, "Native spawn failed; no retry");
+            if (error instanceof GenesisAppUpdatingError) {
+                return recovery.finish({
+                    ok: false,
+                    dispatchState: "not_started",
+                    refusal: "launcher_updating",
+                    error: error.message,
+                });
+            }
+            return recovery.finish({
+                ok: false,
+                dispatchState: "uncertain",
+                error: "Native spawn failed; the action may have partially completed. No retry was attempted.",
+            });
+        }
 
+        result = interpretNativeResult({ args, result: r, timeoutMs });
+    } while (recovery.retry(result));
+    return recovery.finish(result);
+}
+
+export function interpretNativeResult({
+    args,
+    result: r,
+    timeoutMs,
+}: {
+    args: string[];
+    result: AxSpawnResult;
+    timeoutMs: number;
+}): AxResult {
     if (r.error?.code === "ENOBUFS") {
         return {
             ok: false,
@@ -243,13 +384,30 @@ export function runAxWithBoundary({
 
         if (r.signal) {
             parsed.ok = false;
+            if (parsed.dispatchState !== undefined) {
+                parsed.dispatchState = "uncertain";
+            }
             parsed.error ??= `native command terminated by ${r.signal}; the action may have partially completed; no retry was attempted`;
         } else if (r.status !== 0) {
             parsed.ok = false;
             parsed.error ??= `native command exited ${r.status}`;
         }
 
-        logger.debug({ command: args[0], ok: parsed.ok, error: parsed.error }, "native control completed");
+        logger.debug(
+            {
+                command: args[0],
+                ok: parsed.ok,
+                error: parsed.error,
+                dispatchState: parsed.dispatchState,
+                refusal: parsed.refusal,
+                reason: parsed.reason,
+                responsiblePid: parsed.responsiblePid,
+                responsibleBundleId: parsed.responsibleBundleId,
+                responsiblePath: parsed.responsiblePath,
+                viaGenesisApp: parsed.viaGenesisApp,
+            },
+            "native control completed"
+        );
         maybeRecord(args, parsed.ok);
         return parsed;
     } catch (error) {
@@ -259,8 +417,84 @@ export function runAxWithBoundary({
     }
 }
 
+let cursorFeedbackEnabled = true;
+export function setCursorFeedbackEnabled(enabled: boolean): void {
+    cursorFeedbackEnabled = enabled;
+}
+function nativeArguments(args: string[]): string[] {
+    const mutating = [
+        "act",
+        "menu-act",
+        "set",
+        "press",
+        "perform",
+        "focus",
+        "click",
+        "type",
+        "scroll",
+        "hotkey",
+        "window",
+    ].includes(args[0]);
+    return !cursorFeedbackEnabled && mutating ? [...args, "--no-cursor"] : args;
+}
+
 export function runAx(args: string[], timeoutMs = 10_000): AxResult {
-    return runAxWithBoundary({ args, timeoutMs, boundary: DEFAULT_AX_RUN_BOUNDARY });
+    return runAxWithBoundary({ args: nativeArguments(args), timeoutMs, boundary: DEFAULT_AX_RUN_BOUNDARY });
+}
+
+export async function runAxAsync(options: {
+    args: string[];
+    timeoutMs?: number;
+    signal?: AbortSignal;
+}): Promise<AxResult> {
+    const clock = new Stopwatch();
+    const timeoutMs = Math.floor(options.timeoutMs ?? 10000);
+    if (options.signal?.aborted || !Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 2147483647) {
+        return {
+            ok: false,
+            dispatchState: "not_started",
+            error: "Native command cancelled or deadline invalid before dispatch.",
+        };
+    }
+    const args = nativeArguments(options.args);
+    let binary: string;
+    try {
+        binary = ensureBinary();
+    } catch (error) {
+        logger.error({ error }, "Native build unavailable");
+        return { ok: false, dispatchState: "not_started", error: "Native build unavailable; no action dispatched." };
+    }
+    const remainingMs = Math.floor(timeoutMs - clock.elapsedMs);
+    if (remainingMs < 1 || options.signal?.aborted) {
+        return { ok: false, dispatchState: "not_started", error: "Native command deadline reached before dispatch." };
+    }
+    logger.debug({ command: args[0], timeoutMs: remainingMs }, "Running asynchronous native control command");
+    try {
+        return await runAxAsyncWithRecovery({
+            args,
+            timeoutMs: remainingMs,
+            signal: options.signal,
+            run: async (attemptTimeoutMs) => {
+                const result = await boundedCommand({
+                    command: axCommandLine(binary, args),
+                    timeoutMs: attemptTimeoutMs,
+                    maxBufferBytes: AX_STDOUT_BUDGET_BYTES,
+                    signal: options.signal,
+                });
+                return interpretNativeResult({ args, result, timeoutMs: attemptTimeoutMs });
+            },
+        });
+    } catch (error) {
+        logger.warn({ error, command: args[0] }, "Native transport failed; no retry");
+        if (error instanceof GenesisAppUpdatingError) {
+            return { ok: false, dispatchState: "not_started", refusal: "launcher_updating", error: error.message };
+        }
+        return {
+            ok: false,
+            dispatchState: "uncertain",
+            error: "Native transport failed; action delivery is unknown. No retry.",
+        };
+    }
 }
 
 export function getBinaryPath(): string {

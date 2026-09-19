@@ -85,3 +85,18 @@ describe("diffSnapshots", () => {
         expect(diff.indexMap[800]).toBe(801);
     });
 });
+
+it("compares structured selection ranges by content and preserves duplicate-label alignment", () => {
+    const previous = [
+        row(0, 0, "AXTextField", { AXIdentifier: "field", AXSelectedTextRange: { location: 2, length: 3 } }),
+    ];
+    expect(diffSnapshots(previous, structuredClone(previous)).changed).toEqual([]);
+    const next = [row(0, 0, "AXTextField", { AXIdentifier: "field", AXSelectedTextRange: { location: 4, length: 3 } })];
+    expect(diffSnapshots(previous, next).changed[0].fields.AXSelectedTextRange).toEqual({
+        from: { location: 2, length: 3 },
+        to: { location: 4, length: 3 },
+    });
+    const a = ["X", "A", "A"].map((AXTitle, index) => row(index, 0, "AXButton", { AXTitle }));
+    const b = ["Y", "A"].map((AXTitle, index) => row(index, 0, "AXButton", { AXTitle }));
+    expect(diffSnapshots(a, b).indexMap).toEqual({ 2: 1 });
+});

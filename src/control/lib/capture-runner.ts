@@ -1,6 +1,6 @@
 /**
  * Capture orchestration: owns the whole recording timeline in one process —
- * starts `peekaboo capture live`, detects the actual recording start (first
+ * starts the selected native or legacy recorder, detects the actual recording start (first
  * frame on disk), fires each action at its exact offset, then composites
  * crops/strip and optionally publishes to vitrinka.
  *
@@ -10,11 +10,17 @@
  */
 
 import { existsSync, mkdirSync, readdirSync, statSync } from "node:fs";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { renderAnnotationPlan } from "@genesiscz/utils/image";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { createCanvas, loadImage } from "@napi-rs/canvas";
+import {
+    NativeCaptureControls,
+    nativeCapturePreflight,
+    nativeScreens,
+    nativeTargetRegion,
+    validateNativeCapturePlan,
+} from "./capture-native";
 import {
     type Action,
     type CropOut,
@@ -31,7 +37,6 @@ import { nativeCaptureArgv } from "./native-record";
 import {
     AX_TOOL_PATH,
     axToolAvailable,
-    CHROMIUM_APPS,
     captureSessionsRoot,
     clickArgv,
     focusWindow,
@@ -47,7 +52,6 @@ import {
     resolveTargetRegion,
     runAxAction,
     runCmd,
-    runCmdFull,
     runCountdown,
     runPeekabooJson,
     type ScreenInfo,
@@ -121,10 +125,7 @@ export function peekabooDurationArg(seconds: number): string {
 }
 
 /**
- * The command shape each recorder is diagnosed by. The native backend falls back to Peekaboo
- * by replacing the attempt while `backend` still reads "native", so every post-capture
- * diagnostic has to name the binary that actually ran, or it sends an operator to debug a
- * process that was never spawned.
+ * Recorder diagnostics name the binary that actually ran, including explicitly selected legacy transports.
  */
 export function captureToolCommand(tool: string): { command: string; standalone: string } {
     if (tool === "peekaboo") {
@@ -230,33 +231,16 @@ export async function runCapturePlan(plan: Plan): Promise<RunResult> {
         warnings.push("crop target markers only work with capture.mode 'screen' — they will be dropped");
     }
 
-    // Native unless the plan says otherwise. A missing or stale binary is built here, so a
-    // fresh clone records natively too; only a failed build (no Swift toolchain) goes to
-    // Peekaboo, and the warning says why.
-    //
-    // Build the binary BEFORE anything reaches for it. The focus step below used to run
-    // first, so on a fresh clone it found no binary, fell through peekaboo to osascript and
-    // warned `windowTitle ignored` — for a capture that recorded natively moments later.
-    let backend = cap.backend ?? "native";
+    const backend = cap.backend ?? "native";
     let axTool = AX_TOOL_PATH;
     if (backend === "native") {
-        try {
-            axTool = ensureBinary();
-        } catch (error) {
-            const reason = (error instanceof Error ? error.message : String(error)).split("\n")[0];
-
-            if (Bun.which("peekaboo") === null) {
-                throw new CaptureRunError(`native recorder unavailable: ${reason}`);
-            }
-
-            warnings.push(`native recorder unavailable — ${reason} — falling back to peekaboo`);
-            backend = "peekaboo";
-        }
+        validateNativeCapturePlan(plan);
+        axTool = ensureBinary();
     }
+    using nativeControls = backend === "native" ? new NativeCaptureControls(cap) : undefined;
 
     // CAPTURE_HELP still recommends noRemote/captureEngine, which are peekaboo transport flags.
-    // nativeCaptureArgv drops both, so a plan that sets them and keeps the default backend gets
-    // neither the flag nor a word about it. Said only once the fallback above has settled.
+    // nativeCaptureArgv drops both; report ignored legacy transport flags explicitly.
     if (backend === "native" && (cap.noRemote || cap.captureEngine)) {
         warnings.push(
             "capture.noRemote/captureEngine apply to the peekaboo backend only — the native recorder ignores them"
@@ -270,9 +254,12 @@ export async function runCapturePlan(plan: Plan): Promise<RunResult> {
     }
 
     if (plan.focus) {
-        const f = focusWindow(plan.focus);
+        const f = nativeControls ? await nativeControls.focus(plan.focus) : focusWindow(plan.focus);
         if (!f.ok) {
-            warnings.push(`focus ${plan.focus.app} failed (peekaboo AND osascript): ${f.detail}`);
+            if (nativeControls) {
+                throw new CaptureRunError(`Native focus failed: ${f.detail}`);
+            }
+            warnings.push(`focus ${plan.focus.app} failed: ${f.detail}`);
         } else {
             if (f.via === "osascript") {
                 warnings.push(
@@ -294,12 +281,9 @@ export async function runCapturePlan(plan: Plan): Promise<RunResult> {
         attempt = await startCapture([axTool, ...nativeCaptureArgv(cap, outDir)]);
 
         if (!attempt.sessionDir) {
-            if (Bun.which("peekaboo") === null) {
-                throw new CaptureRunError(`native recording never started: ${attempt.failDiag}`);
-            }
-
-            warnings.push(`native recording never started — ${attempt.failDiag} — falling back to peekaboo`);
-            attempt = await startPeekabooCapture(cap, warnings);
+            throw new CaptureRunError(
+                `Native recording never started: ${attempt.failDiag}. No fallback was attempted.`
+            );
         }
     } else {
         attempt = await startPeekabooCapture(cap, warnings);
@@ -327,6 +311,7 @@ export async function runCapturePlan(plan: Plan): Promise<RunResult> {
     // ambient target starts as plan.focus (else capture.app for window-mode
     // captures) and is steerable mid-timeline by "focus"/"focus-stop" markers.
     let ambientFocusApp = plan.focus?.app ?? (cap.mode === "window" ? cap.app : undefined);
+    let ambientFocusWindow = plan.focus?.windowTitle ?? cap.windowTitle;
     let refocusWarned = false;
 
     const sortedActions = [...plan.actions]
@@ -346,7 +331,7 @@ export async function runCapturePlan(plan: Plan): Promise<RunResult> {
         const actualMs = Date.now() - t0;
         let result: { ok: boolean; stdout: string; stderr: string; data?: unknown };
 
-        if (ambientFocusApp && REFOCUS_ACTIONS.has(action.do)) {
+        if (!nativeControls && ambientFocusApp && REFOCUS_ACTIONS.has(action.do)) {
             const f = runCmd(["osascript", "-e", `tell application "${ambientFocusApp}" to activate`], 3_000);
             if (!f.ok && !refocusWarned) {
                 refocusWarned = true;
@@ -356,133 +341,150 @@ export async function runCapturePlan(plan: Plan): Promise<RunResult> {
             }
         }
 
-        switch (action.do) {
-            case "url":
-                result = navigateBrowser(
-                    action.app ?? plan.browser ?? "Brave Browser",
-                    action.url,
-                    action.target ?? "new-tab"
-                );
-                break;
-            case "osascript":
-                result = runCmd(["osascript", "-e", action.script]);
-                break;
-            case "click": {
-                let clickCoords = coordsToString(action.coords);
-                if (action.relativeTo) {
-                    const resolved = resolveRelativeCoords(action.coords, action.relativeTo);
-                    if ("error" in resolved) {
-                        result = { ok: false, stdout: "", stderr: resolved.error };
-                        break;
-                    }
-                    clickCoords = resolved.global;
-                }
-                result = runPeekabooJson(clickArgv(clickCoords));
-                break;
-            }
-            case "focus": {
-                // full assertion (window-level, bridge with osascript fallback)
-                // once at the marker; cheap per-input re-asserts take over after
-                const f = focusWindow({ app: action.app, windowTitle: action.windowTitle }, 3_000);
+        if (nativeControls && action.do !== "crop") {
+            result = await nativeControls.run(
+                action,
+                ambientFocusApp ? { app: ambientFocusApp, windowTitle: ambientFocusWindow } : undefined
+            );
+            if (action.do === "focus" && result.ok) {
                 ambientFocusApp = action.app;
-                result = {
-                    ok: f.ok,
-                    stdout: f.ok ? `focused via ${f.via}; ambient refocus target -> ${action.app}` : "",
-                    stderr: f.detail,
-                };
-                break;
+                ambientFocusWindow = action.windowTitle;
             }
-            case "focus-stop":
+            if (action.do === "focus-stop") {
                 ambientFocusApp = undefined;
-                result = { ok: true, stdout: "ambient refocus disabled", stderr: "" };
-                break;
-            case "hotkey": {
-                const media = MEDIA_KEY_SCRIPTS[action.keys.toLowerCase().trim()];
-                if (media) {
-                    result = runCmd(["osascript", "-e", media]);
+                ambientFocusWindow = undefined;
+            }
+        } else {
+            switch (action.do) {
+                case "url":
+                    result = navigateBrowser(
+                        action.app ?? plan.browser ?? "Brave Browser",
+                        action.url,
+                        action.target ?? "new-tab"
+                    );
                     break;
-                }
-
-                result = runPeekabooJson(pressArgv(action.keys, action.holdMs));
-                if (!result.ok) {
-                    result.stderr = `${result.stderr} (valid keys: cmd/shift/alt/ctrl/fn, a-z, 0-9, space/return/tab/escape/delete/arrows, f1-f12; media keys only via volumeup/volumedown/mute/unmute rewrite)`;
-                }
-
-                break;
-            }
-            case "type":
-                result = runPeekabooJson(typeArgv(action.text, action.delayMs ?? 0));
-                break;
-            case "ax-set": {
-                result = runAxAction(action.app, action.axId, "set", action.value, undefined, action.q);
-                break;
-            }
-            case "ax-press": {
-                result = runAxAction(action.app, action.axId, "press", undefined, undefined, action.q);
-                break;
-            }
-            case "ax-perform": {
-                result = runAxAction(action.app, action.axId, "perform", undefined, action.action, action.q);
-                break;
-            }
-            case "scroll": {
-                if (action.coords) {
-                    let scrollCoords = coordsToString(action.coords);
+                case "osascript":
+                    result = runCmd(["osascript", "-e", action.script]);
+                    break;
+                case "click": {
+                    let clickCoords = coordsToString(action.coords);
                     if (action.relativeTo) {
                         const resolved = resolveRelativeCoords(action.coords, action.relativeTo);
                         if ("error" in resolved) {
                             result = { ok: false, stdout: "", stderr: resolved.error };
                             break;
                         }
-                        scrollCoords = resolved.global;
+                        clickCoords = resolved.global;
                     }
-                    const [cx, cy] = scrollCoords.split(",").map(Number);
-                    if (cx < 0 || cy < 0) {
-                        warnings.push(
-                            `scroll at ${action.atMs}ms: peekaboo move rejects negative coords (${cx},${cy}) — scrolling at current cursor position`
-                        );
-                    } else {
-                        runCmd(["peekaboo", ...moveArgv(`${cx},${cy}`)]);
-                    }
+                    result = runPeekabooJson(clickArgv(clickCoords));
+                    break;
                 }
-
-                result = runPeekabooJson(
-                    scrollArgv({
-                        direction: action.direction,
-                        amount: action.amount,
-                        app: action.app,
-                        windowTitle: action.windowTitle,
-                    })
-                );
-                break;
-            }
-            case "crop": {
-                // target marker: freeze the window's bounds NOW, write region back
-                // so extractCropSpecs picks it up after capture
-                screensCache ??= listScreens();
-                const screen = screensCache.find((s) => s.index === (cap.screenIndex ?? 0));
-                if (!screen || cap.mode !== "screen") {
+                case "focus": {
+                    // full assertion (window-level, bridge with osascript fallback)
+                    // once at the marker; cheap per-input re-asserts take over after
+                    const f = focusWindow({ app: action.app, windowTitle: action.windowTitle }, 3_000);
+                    ambientFocusApp = action.app;
                     result = {
-                        ok: false,
-                        stdout: "",
-                        stderr: `crop target needs screen-mode capture with a known screenIndex`,
+                        ok: f.ok,
+                        stdout: f.ok ? `focused via ${f.via}; ambient refocus target -> ${action.app}` : "",
+                        stderr: f.detail,
                     };
                     break;
                 }
+                case "focus-stop":
+                    ambientFocusApp = undefined;
+                    result = { ok: true, stdout: "ambient refocus disabled", stderr: "" };
+                    break;
+                case "hotkey": {
+                    const media = MEDIA_KEY_SCRIPTS[action.keys.toLowerCase().trim()];
+                    if (media) {
+                        result = runCmd(["osascript", "-e", media]);
+                        break;
+                    }
 
-                const resolved = resolveTargetRegion(action.target!, screen);
-                if ("error" in resolved) {
-                    result = { ok: false, stdout: "", stderr: resolved.error };
-                    warnings.push(`crop target at ${action.atMs}ms dropped: ${resolved.error}`);
-                } else {
-                    action.region = resolved.region;
-                    result = { ok: true, stdout: `region ${SafeJSON.stringify(resolved.region)}`, stderr: "" };
+                    result = runPeekabooJson(pressArgv(action.keys, action.holdMs));
+                    if (!result.ok) {
+                        result.stderr = `${result.stderr} (valid keys: cmd/shift/alt/ctrl/fn, a-z, 0-9, space/return/tab/escape/delete/arrows, f1-f12; media keys only via volumeup/volumedown/mute/unmute rewrite)`;
+                    }
+
+                    break;
                 }
+                case "type":
+                    result = runPeekabooJson(typeArgv(action.text, action.delayMs ?? 0));
+                    break;
+                case "ax-set": {
+                    result = runAxAction(action.app, action.axId, "set", action.value, undefined, action.q);
+                    break;
+                }
+                case "ax-press": {
+                    result = runAxAction(action.app, action.axId, "press", undefined, undefined, action.q);
+                    break;
+                }
+                case "ax-perform": {
+                    result = runAxAction(action.app, action.axId, "perform", undefined, action.action, action.q);
+                    break;
+                }
+                case "scroll": {
+                    if (action.coords) {
+                        let scrollCoords = coordsToString(action.coords);
+                        if (action.relativeTo) {
+                            const resolved = resolveRelativeCoords(action.coords, action.relativeTo);
+                            if ("error" in resolved) {
+                                result = { ok: false, stdout: "", stderr: resolved.error };
+                                break;
+                            }
+                            scrollCoords = resolved.global;
+                        }
+                        const [cx, cy] = scrollCoords.split(",").map(Number);
+                        if (cx < 0 || cy < 0) {
+                            warnings.push(
+                                `scroll at ${action.atMs}ms: peekaboo move rejects negative coords (${cx},${cy}) — scrolling at current cursor position`
+                            );
+                        } else {
+                            runCmd(["peekaboo", ...moveArgv(`${cx},${cy}`)]);
+                        }
+                    }
 
-                break;
+                    result = runPeekabooJson(
+                        scrollArgv({
+                            direction: action.direction,
+                            amount: action.amount,
+                            app: action.app,
+                            windowTitle: action.windowTitle,
+                        })
+                    );
+                    break;
+                }
+                case "crop": {
+                    // target marker: freeze the window's bounds NOW, write region back
+                    // so extractCropSpecs picks it up after capture
+                    screensCache ??= nativeControls ? nativeScreens() : listScreens();
+                    const screen = screensCache.find((s) => s.index === (cap.screenIndex ?? 0));
+                    if (!screen || cap.mode !== "screen") {
+                        result = {
+                            ok: false,
+                            stdout: "",
+                            stderr: `crop target needs screen-mode capture with a known screenIndex`,
+                        };
+                        break;
+                    }
+
+                    const resolved = nativeControls
+                        ? nativeTargetRegion(action.target!, screen)
+                        : resolveTargetRegion(action.target!, screen);
+                    if ("error" in resolved) {
+                        result = { ok: false, stdout: "", stderr: resolved.error };
+                        warnings.push(`crop target at ${action.atMs}ms dropped: ${resolved.error}`);
+                    } else {
+                        action.region = resolved.region;
+                        result = { ok: true, stdout: `region ${SafeJSON.stringify(resolved.region)}`, stderr: "" };
+                    }
+
+                    break;
+                }
+                default:
+                    result = { ok: false, stdout: "", stderr: "unknown action type" };
             }
-            default:
-                result = { ok: false, stdout: "", stderr: "unknown action type" };
         }
 
         fired.push({
@@ -698,148 +700,7 @@ export async function runRecrop(resultPath: string, planPath: string): Promise<R
 }
 
 export function buildPreflightReport(appArg?: string): Record<string, unknown> {
-    const screens = listScreens();
-
-    const frontRes = runCmd([
-        "osascript",
-        "-e",
-        'tell application "System Events" to get name of first application process whose frontmost is true',
-    ]);
-    const app = appArg ?? frontRes.stdout;
-    const windows = app ? listWindowBounds(app) : [];
-    // Flag phantom strip windows (menu bar, titlebar): full-width x <=50px
-    const phantomStrips = windows.filter((w) => w.h <= 50);
-    let realWindows = windows.filter((w) => w.h > 50);
-
-    // Cross-check against the AX window list: peekaboo's CGWindowList view
-    // includes other-Space/stale windows the AX API doesn't show — picking one
-    // of those as the crop basis targets the wrong window (blind-test 6).
-    if (app && axToolAvailable()) {
-        const axr = runCmdFull([AX_TOOL_PATH, "window", "--app", app]);
-        if (axr.ok) {
-            try {
-                const parsed = SafeJSON.parse(axr.stdout) as {
-                    windows?: Array<{ title?: string; x?: number; y?: number; width?: number; height?: number }>;
-                };
-                const axWins = parsed.windows ?? [];
-                const axMatch = (w: { title: string; x: number; y: number; w: number; h: number }): boolean =>
-                    axWins.some(
-                        (a) =>
-                            (Math.abs((a.x ?? 0) - w.x) < 6 &&
-                                Math.abs((a.y ?? 0) - w.y) < 6 &&
-                                Math.abs((a.width ?? 0) - w.w) < 6 &&
-                                Math.abs((a.height ?? 0) - w.h) < 6) ||
-                            (!!a.title && a.title === w.title)
-                    );
-                realWindows = realWindows.map((w) => ({ ...w, axVisible: axMatch(w) }));
-                const visible = realWindows.filter((w) => (w as { axVisible?: boolean }).axVisible);
-                if (visible.length > 0) {
-                    realWindows = [...visible, ...realWindows.filter((w) => !(w as { axVisible?: boolean }).axVisible)];
-                }
-            } catch {
-                // ax cross-check unavailable — fall through to CG-only view
-            }
-        }
-    }
-
-    // largest AX-VISIBLE window preferred; CG-only windows only when AX saw none
-    const axVisibleWindows = realWindows.filter((w) => (w as { axVisible?: boolean }).axVisible !== false);
-    const main = pickLargestWindow(
-        axVisibleWindows.length > 0 ? axVisibleWindows : realWindows.length > 0 ? realWindows : windows
-    );
-
-    let activeScreen: ScreenInfo | undefined;
-    if (main) {
-        const cx = main.x + main.w / 2;
-        const cy = main.y + main.h / 2;
-        activeScreen = screens.find(
-            (s) =>
-                cx >= s.originCG.x &&
-                cx < s.originCG.x + s.points.width &&
-                cy >= s.originCG.y &&
-                cy < s.originCG.y + s.points.height
-        );
-    }
-
-    activeScreen ??= screens.find((s) => s.isPrimary) ?? screens[0];
-
-    let browserTab: { url?: string; title?: string } | undefined;
-    if (app && (CHROMIUM_APPS.has(app) || app === "Safari")) {
-        const urlScript =
-            app === "Safari"
-                ? `tell application "Safari" to get URL of front document`
-                : `tell application "${app}" to get URL of active tab of front window`;
-        const titleScript =
-            app === "Safari"
-                ? `tell application "Safari" to get name of front document`
-                : `tell application "${app}" to get title of active tab of front window`;
-        const u = runCmd(["osascript", "-e", urlScript]);
-        const t = runCmd(["osascript", "-e", titleScript]);
-        browserTab = { url: u.ok ? u.stdout : undefined, title: t.ok ? t.stdout : undefined };
-    }
-
-    const sf = activeScreen.scaleFactor;
-    const mainFramePx = main && {
-        x: Math.round((main.x - activeScreen.originCG.x) * sf),
-        y: Math.round((main.y - activeScreen.originCG.y) * sf),
-        w: Math.round(main.w * sf),
-        h: Math.round(main.h * sf),
-    };
-
-    return {
-        screens,
-        frontmost: {
-            app,
-            // largest-first so the picked window is always visible in the list
-            windows: realWindows
-                .slice()
-                .sort((a, b) => b.w * b.h - a.w * a.h)
-                .slice(0, 8),
-            phantomStrips:
-                phantomStrips.length > 0
-                    ? phantomStrips.map((w) => ({
-                          title: w.title,
-                          index: w.index,
-                          isMainWindow: w.isMainWindow,
-                          w: w.w,
-                          h: w.h,
-                      }))
-                    : undefined,
-            pickedWindow: main ?? null,
-            pickedBy:
-                "largest AX-visible window (CGWindowList shows other-Space/stale windows the AX API doesn't; isMainWindow lies; <=50px windows filtered as phantom strips)",
-            mainWindowPoints: main ? { x: main.x, y: main.y, w: main.w, h: main.h } : null,
-            mainWindowFramePx: mainFramePx ?? null,
-            activeScreenIndex: activeScreen.index,
-            browserTab,
-        },
-        unitsReminder: {
-            clickCoords: "GLOBAL CG points (mainWindowPoints space; negatives legal)",
-            cropRegion: `FRAME pixels of the captured screen (points x scaleFactor=${sf}; mainWindowFramePx space)`,
-        },
-        suggestedPlan: {
-            capture: {
-                mode: "screen",
-                screenIndex: activeScreen.index,
-                duration: 6,
-                activeFps: 15,
-                threshold: 0.1,
-                videoOut: join(tmpdir(), "run.mp4"),
-                noRemote: true,
-                captureEngine: "cg",
-            },
-            actions: [
-                mainFramePx
-                    ? { atMs: 0, do: "crop", region: mainFramePx, label: "window" }
-                    : {
-                          atMs: 0,
-                          do: "crop",
-                          region: { x: 0, y: 0, w: activeScreen.framePixels.width, h: 300 },
-                          label: "top-band",
-                      },
-            ],
-        },
-    };
+    return nativeCapturePreflight(appArg);
 }
 
 export interface ClickmapOptions {

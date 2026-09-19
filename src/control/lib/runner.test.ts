@@ -1,10 +1,17 @@
 import { expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
+import { GenesisAppUpdatingError } from "@genesiscz/utils/macos/genesis-app";
 import { skip } from "@genesiscz/utils/test/skip";
-import { type AxRunBoundary, axCommandLine, DEFAULT_AX_RUN_BOUNDARY, runAxWithBoundary } from "./runner";
+import {
+    type AxRunBoundary,
+    axCommandLine,
+    DEFAULT_AX_RUN_BOUNDARY,
+    runAxAsyncWithRecovery,
+    runAxWithBoundary,
+} from "./runner";
 
 test("a build failure never reaches the native spawn boundary", () => {
     let spawnCalls = 0;
@@ -169,6 +176,48 @@ test("an ordinary successful envelope is returned unchanged", () => {
     });
 });
 
+test("a launcher replacement refusal is pre-dispatch and never retries", () => {
+    let attempts = 0;
+    const result = runAxWithBoundary({
+        args: ["act"],
+        boundary: {
+            ensureBinary: () => "/fixture/ax-tool",
+            spawn: () => {
+                attempts++;
+                throw new GenesisAppUpdatingError("/fixture/build.lock");
+            },
+        },
+    });
+    expect(result).toMatchObject({ ok: false, dispatchState: "not_started", refusal: "launcher_updating" });
+    expect(attempts).toBe(1);
+});
+
+test.skipIf(skip.unlessMac)(
+    "launcher replacement never falls back to a bare native binary or removes the build lock",
+    async () => {
+        const taskHome = mkdtempSync(join(tmpdir(), "gt-ax-update-"));
+        const appDir = join(taskHome, ".genesis-tools", "app");
+        mkdirSync(appDir, { recursive: true });
+        const lock = join(appDir, "build.lock");
+        writeFileSync(lock, "fixture-holder");
+        await env.testing.withOverrides({ GENESIS_TOOLS_HOME: taskHome, GENESIS_TOOLS_NO_APP: undefined }, () => {
+            expect(() => axCommandLine("/fixture/ax-tool", ["permissions"])).toThrow(GenesisAppUpdatingError);
+            expect(readFileSync(lock, "utf8")).toBe("fixture-holder");
+            const dir = join(taskHome, "Applications", "GenesisTools.app", "Contents", "MacOS");
+            mkdirSync(dir, { recursive: true });
+            const launcher = join(dir, "GenesisTools");
+            writeFileSync(launcher, "");
+            expect(() => axCommandLine("/fixture/ax-tool", ["permissions"])).toThrow(GenesisAppUpdatingError);
+            unlinkSync(lock);
+            expect(axCommandLine("/fixture/ax-tool", ["permissions"])).toEqual([
+                launcher,
+                "/fixture/ax-tool",
+                "permissions",
+            ]);
+        });
+    }
+);
+
 test("the real subprocess boundary accepts valid native JSON larger than one MiB", () => {
     const payloadBytes = 2 * 1024 * 1024;
     const boundary: AxRunBoundary = {
@@ -247,4 +296,189 @@ test("a native error message survives a nonzero exit", () => {
     };
 
     expect(runAxWithBoundary({ args: ["act"], boundary })).toEqual({ ok: false, error: "snapshot token expired" });
+});
+
+test("native deadlines round down to subprocess milliseconds and never become unlimited", () => {
+    let builds = 0;
+    const observedTimeouts: number[] = [];
+    const boundary: AxRunBoundary = {
+        ensureBinary: () => {
+            builds++;
+            return "/fixture/ax-tool";
+        },
+        spawn: (options) => {
+            observedTimeouts.push(options.timeoutMs);
+            return { status: 0, signal: null, stdout: '{"ok":true}', stderr: "" };
+        },
+    };
+    expect(runAxWithBoundary({ args: ["see"], timeoutMs: 29999.798708, boundary }).ok).toBe(true);
+    expect(observedTimeouts).toHaveLength(1);
+    expect(observedTimeouts[0]).toBeGreaterThan(0);
+    expect(observedTimeouts[0]).toBeLessThanOrEqual(29999);
+    for (const timeoutMs of [0.4, 0, -1, Infinity, NaN, 2147483648]) {
+        expect(runAxWithBoundary({ args: ["act"], timeoutMs, boundary })).toMatchObject({
+            ok: false,
+            dispatchState: "not_started",
+        });
+    }
+    expect(builds).toBe(1);
+    expect(observedTimeouts).toHaveLength(1);
+});
+test("a throwing spawn is reported as uncertain and never retried", () => {
+    let spawns = 0;
+    const result = runAxWithBoundary({
+        args: ["act"],
+        boundary: {
+            ensureBinary: () => "/fixture/ax-tool",
+            spawn: () => {
+                spawns++;
+                throw new Error("Lost transport");
+            },
+        },
+    });
+    expect(result).toMatchObject({ ok: false, dispatchState: "uncertain" });
+    expect(spawns).toBe(1);
+});
+
+test("prepared recovery resumes only the refused action and keeps its original arguments", () => {
+    const args = ["act", "--snapshot", "original", "--prepare", "--target-key", "a".repeat(64)];
+    let attempts = 0;
+    const timeouts: number[] = [];
+    const result = runAxWithBoundary({
+        args,
+        timeoutMs: 8000,
+        boundary: {
+            ensureBinary: () => "/fixture/ax-tool",
+            spawn: (call) => {
+                expect(call.args).toEqual(args);
+                timeouts.push(call.timeoutMs);
+                attempts++;
+                return {
+                    status: attempts === 1 ? 1 : 0,
+                    signal: null,
+                    stderr: "",
+                    stdout:
+                        attempts === 1
+                            ? '{"ok":false,"dispatchState":"not_started","refusal":"stale_observation"}'
+                            : '{"ok":true,"dispatchState":"dispatched"}',
+                };
+            },
+        },
+    });
+    expect(result).toMatchObject({ ok: true, recovery: { retries: 1, refusals: ["stale_observation"] } });
+    expect(attempts).toBe(2);
+    expect(timeouts[1]).toBeLessThanOrEqual(timeouts[0]);
+});
+
+test("prepared recovery refuses unsafe states and cannot loop forever", async () => {
+    const args = ["act", "--prepare", "--target-key", "a".repeat(64)];
+    for (const dispatchState of ["uncertain", "dispatched", undefined]) {
+        let calls = 0;
+        await runAxAsyncWithRecovery({
+            args,
+            timeoutMs: 2000,
+            run: async () => {
+                calls++;
+                return { ok: false, dispatchState, refusal: "stale_observation" };
+            },
+        });
+        expect(calls).toBe(1);
+    }
+    for (const refusal of ["scope_changed", "missing_target", "permission", "refused", "launcher_updating"]) {
+        let calls = 0;
+        await runAxAsyncWithRecovery({
+            args,
+            timeoutMs: 2000,
+            run: async () => {
+                calls++;
+                return { ok: false, dispatchState: "not_started", refusal };
+            },
+        });
+        expect(calls).toBe(1);
+    }
+    for (const unsafeArgs of [["act"], ["see"], [...args, "--coords", "1,2"], [...args, "--region", "r1"]]) {
+        let calls = 0;
+        await runAxAsyncWithRecovery({
+            args: unsafeArgs,
+            timeoutMs: 2000,
+            run: async () => {
+                calls++;
+                return { ok: false, dispatchState: "not_started", refusal: "stale_observation" };
+            },
+        });
+        expect(calls).toBe(1);
+    }
+    let calls = 0;
+    const exhausted = await runAxAsyncWithRecovery({
+        args,
+        timeoutMs: 2000,
+        run: async () => {
+            calls++;
+            return { ok: false, dispatchState: "not_started", refusal: "focus_mismatch" };
+        },
+    });
+    expect(calls).toBe(3);
+    expect(exhausted).toMatchObject({ ok: false, recovery: { retries: 2 } });
+    const controller = new AbortController();
+    calls = 0;
+    await runAxAsyncWithRecovery({
+        args,
+        timeoutMs: 2000,
+        signal: controller.signal,
+        run: async () => {
+            calls++;
+            controller.abort();
+            return { ok: false, dispatchState: "not_started", refusal: "stale_observation" };
+        },
+    });
+    expect(calls).toBe(1);
+});
+
+test("terminated native refusal cannot authorize an action retry", () => {
+    let calls = 0;
+    const result = runAxWithBoundary({
+        args: ["act", "--prepare", "--target-key", "a".repeat(64)],
+        boundary: {
+            ensureBinary: () => "/fixture/ax-tool",
+            spawn: () => {
+                calls++;
+                return {
+                    status: null,
+                    signal: "SIGTERM",
+                    stderr: "",
+                    stdout: '{"ok":false,"dispatchState":"not_started","refusal":"stale_observation"}',
+                };
+            },
+        },
+    });
+    expect(result.dispatchState).toBe("uncertain");
+    expect(calls).toBe(1);
+});
+
+test("async recovery retains earlier refusal when transport is lost and never repeats unknown input", async () => {
+    let calls = 0;
+    const args = ["act", "--prepare", "--target-key", "a".repeat(64)];
+    const result = await runAxAsyncWithRecovery({
+        args,
+        timeoutMs: 2000,
+        run: async () => {
+            calls++;
+            if (calls === 1) {
+                return { ok: false, dispatchState: "not_started", refusal: "stale_observation" };
+            }
+            throw new Error("fixture lost transport");
+        },
+    });
+    expect(calls).toBe(2);
+    expect(result).toMatchObject({ ok: false, dispatchState: "uncertain", recovery: { retries: 1 } });
+    calls = 0;
+    await runAxAsyncWithRecovery({
+        args,
+        timeoutMs: 0,
+        run: async () => {
+            calls++;
+            throw new Error("expired deadline must not dispatch");
+        },
+    });
+    expect(calls).toBe(0);
 });

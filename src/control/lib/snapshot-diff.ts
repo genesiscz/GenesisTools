@@ -55,45 +55,70 @@ function same(a: unknown, b: unknown): boolean {
         return a.length === b.length && a.every((item, i) => same(item, b[i]));
     }
 
+    if (a !== null && b !== null && typeof a === "object" && typeof b === "object") {
+        const left = a as Record<string, unknown>;
+        const right = b as Record<string, unknown>;
+        const keys = Object.keys(left);
+        return (
+            keys.length === Object.keys(right).length &&
+            keys.every((key) => Object.hasOwn(right, key) && same(left[key], right[key]))
+        );
+    }
     return a === b;
 }
 
 /** Longest common subsequence over signatures; returns aligned (previous, current) index pairs. */
 function align(previous: string[], current: string[]): Array<[number, number]> {
-    const rows = previous.length;
-    const cols = current.length;
-    const table: Uint32Array[] = [];
-
-    for (let i = 0; i <= rows; i++) {
-        table.push(new Uint32Array(cols + 1));
+    const prefix: Array<[number, number]> = [];
+    let start = 0;
+    while (start < previous.length && start < current.length && previous[start] === current[start]) {
+        prefix.push([start, start]);
+        start++;
     }
-
+    const counts = (values: string[]) => {
+        const result = new Map<string, number>();
+        for (const value of values.slice(start)) {
+            result.set(value, (result.get(value) ?? 0) + 1);
+        }
+        return result;
+    };
+    const oldCounts = counts(previous);
+    const newCounts = counts(current);
+    const suffix: Array<[number, number]> = [];
+    let oldEnd = previous.length;
+    let newEnd = current.length;
+    while (
+        oldEnd > start &&
+        newEnd > start &&
+        previous[oldEnd - 1] === current[newEnd - 1] &&
+        oldCounts.get(previous[oldEnd - 1]) === 1 &&
+        newCounts.get(current[newEnd - 1]) === 1
+    ) {
+        suffix.push([--oldEnd, --newEnd]);
+    }
+    const rows = oldEnd - start;
+    const cols = newEnd - start;
+    const table: Uint32Array[] = Array.from({ length: rows + 1 }, () => new Uint32Array(cols + 1));
     for (let i = rows - 1; i >= 0; i--) {
-        const rowTable = table[i];
-        const next = table[i + 1];
-
         for (let j = cols - 1; j >= 0; j--) {
-            rowTable[j] = previous[i] === current[j] ? next[j + 1] + 1 : Math.max(next[j], rowTable[j + 1]);
+            table[i][j] =
+                previous[start + i] === current[start + j]
+                    ? table[i + 1][j + 1] + 1
+                    : Math.max(table[i + 1][j], table[i][j + 1]);
         }
     }
-
-    const pairs: Array<[number, number]> = [];
     let i = 0;
     let j = 0;
-
     while (i < rows && j < cols) {
-        if (previous[i] === current[j]) {
-            pairs.push([i, j]);
-            i++;
-            j++;
+        if (previous[start + i] === current[start + j]) {
+            prefix.push([start + i++, start + j++]);
         } else if (table[i + 1][j] >= table[i][j + 1]) {
             i++;
         } else {
             j++;
         }
     }
-
-    return pairs;
+    return [...prefix, ...suffix.reverse()];
 }
 
 export function diffSnapshots(previous: SnapshotRow[], current: SnapshotRow[]): SnapshotDiff {
