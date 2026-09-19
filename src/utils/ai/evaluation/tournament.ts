@@ -12,8 +12,15 @@ export interface ChoiceEntrant {
 /** Jev refuses a choice question with more options than this, `abstain` included. */
 export const CHOICE_OPTION_LIMIT = 255;
 
-/** Candidates per question. The remaining slots are `abstain` plus headroom. */
-export const SHARD_BUDGET = 240;
+/**
+ * Candidates per question, derived so the ceiling above is the thing that defines it.
+ *
+ * The gap holds `abstain` plus headroom for rows a caller merges in after sharding, so nothing
+ * added downstream can push a shard past the limit. Written as a bare 240 this read as a magic
+ * number and left the limit above it unused, which is how a documented ceiling stops being
+ * enforced by anything.
+ */
+export const SHARD_BUDGET = CHOICE_OPTION_LIMIT - 15;
 
 /**
  * Split into as few groups as possible, each within `budget`, balanced so every question carries a

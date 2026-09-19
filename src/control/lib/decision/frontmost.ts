@@ -2,7 +2,7 @@ import { logger } from "@genesiscz/utils/logger";
 import { captureSync } from "@genesiscz/utils/process/ps";
 import { runAxAsync } from "../runner";
 
-const { log } = logger.scoped("control-native");
+const { log } = logger.scoped("control-frontmost");
 
 /** Apps whose window content is a web page; the AX tab strip lives in scope `chrome`. */
 export const BROWSER_APPS: readonly string[] = [

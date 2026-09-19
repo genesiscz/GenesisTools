@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -71,13 +71,5 @@ export async function* fixtureWakeEvents(triggers: Array<{ atMs: number; word?: 
 
         last = trigger.atMs;
         yield { kind: "trigger" as const, atMs: trigger.atMs, word: trigger.word };
-    }
-}
-
-export function removeWakeGateForTests(): void {
-    try {
-        rmSync(wakeConfigPath());
-    } catch (error) {
-        log.debug({ error }, "Wake gate file already absent");
     }
 }

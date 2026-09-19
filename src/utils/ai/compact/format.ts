@@ -146,7 +146,3 @@ export function serializeCompactMessage(message: CompactMessage): string {
 export function measureBytes(lines: string[]): number {
     return lines.reduce((total, line) => total + Buffer.byteLength(line, "utf8") + 1, 0);
 }
-
-export function serializeAll(messages: CompactMessage[]): string[] {
-    return messages.map((message) => serializeCompactMessage(message));
-}

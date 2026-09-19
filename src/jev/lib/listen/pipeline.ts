@@ -421,8 +421,13 @@ export function createListenPipeline(options: ListenPipelineOptions) {
         }
 
         const current = observation ?? (await refresh());
-        const menuItems = options.menuItems ? await options.menuItems() : [];
-        const extras = options.extraCandidates ? await options.extraCandidates() : [];
+        // Both reach the desktop and neither reads the other's answer: menu items walk the menu
+        // bar over AX, switchable apps spawn the native binary. Awaiting them in turn put one
+        // whole round trip of latency into every decision of a live voice loop.
+        const [menuItems, extras] = await Promise.all([
+            options.menuItems ? options.menuItems() : Promise.resolve([]),
+            options.extraCandidates ? options.extraCandidates() : Promise.resolve([]),
+        ]);
         const everything = [
             ...current.candidates,
             ...menuItems,

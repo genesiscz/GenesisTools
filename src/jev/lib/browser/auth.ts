@@ -26,12 +26,6 @@ export function passwordWall(nodes: PageNode[], inputs: Record<string, string>):
     return { hit: !supplied, fields };
 }
 
-/** The value `--inputs` holds for a password field, when the caller supplied one. */
-export function passwordInput(inputs: Record<string, string>): string | undefined {
-    const key = Object.keys(inputs).find((name) => PASSWORD_KEY_RE.test(name));
-    return key === undefined ? undefined : inputs[key];
-}
-
 /**
  * Whether `next` stays on the origin of `start`. A navigate to another origin is refused, so a
  * link whose text lies about its destination cannot walk the loop off the page it was scoped to.
