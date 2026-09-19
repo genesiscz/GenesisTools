@@ -123,7 +123,10 @@ export function registerProbablyEvaluation(program: Command): void {
         .command("run")
         .description("Run a stored Probably program")
         .argument("<name>", "Stored program name")
-        .option("--input <value>", 'Literal text, @path, - for stdin, JSON {"input":"…"}, or a file path')
+        .option(
+            "--input <value>",
+            'Literal text, @path, - for stdin, JSON {"input":"…"}, or a path containing / or ending .json/.jsonc/.txt'
+        )
         .option("--replay <file>", "Replay a saved recording (no live model calls)")
         .option("--save <file>", "Write the Run recording (source, input, tape, output, trace)")
         .option("--model <ref>", "Override the chat model for llm/write")

@@ -2,7 +2,6 @@ export { createPayload, languageGuide, loadCorpus, readBundledExample } from "./
 export { type Expr, LanguageError, parse, type Statement, type Value } from "./language";
 export {
     createProgramStore,
-    defaultProgramStore,
     type ProgramStore,
     type StoredProgram,
 } from "./programs";

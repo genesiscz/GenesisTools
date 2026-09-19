@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { env } from "@genesiscz/utils/env";
 import { skip } from "@genesiscz/utils/test/skip";
 import { createProbablyProvider } from "./providers";
 import { run } from "./runtime";
@@ -9,7 +10,7 @@ import { run } from "./runtime";
  * (default xai/grok-4-fast) when no chat task default is configured.
  */
 describe.skipIf(skip.live)("createProbablyProvider live", () => {
-    const writeModel = process.env.PROBABLY_WRITE_MODEL || "xai/grok-4-fast";
+    const writeModel = env.get("PROBABLY_WRITE_MODEL") || "xai/grok-4-fast";
 
     test("Jev judges an urgent message", async () => {
         const provider = createProbablyProvider({ provider: "typesafe" });

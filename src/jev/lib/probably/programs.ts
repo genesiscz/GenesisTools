@@ -119,5 +119,3 @@ export function createProgramStore(options?: { directory?: string }): ProgramSto
         },
     };
 }
-
-export const defaultProgramStore = createProgramStore();
