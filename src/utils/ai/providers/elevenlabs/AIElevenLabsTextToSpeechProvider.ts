@@ -4,6 +4,7 @@ import type { AIProviderType } from "@genesiscz/utils/config/ai.types";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { Storage } from "@genesiscz/utils/storage/storage";
+import { shouldRetrySynthesize } from "../synthesize-retry";
 import { ElevenLabsClient } from "./ElevenLabsClient";
 
 /** ElevenLabs' flagship multilingual voice model, and the API's own default. */
@@ -48,16 +49,6 @@ export interface AIElevenLabsTextToSpeechProviderOptions {
     voiceSettings?: ElevenLabsVoiceSettings;
     /** Bypass the 7-day voice list cache (used by tests). */
     forceFreshVoices?: boolean;
-}
-
-function shouldRetrySynthesize(error: unknown): boolean {
-    const msg = error instanceof Error ? error.message : String(error);
-
-    if (/\b(400|401|403|404|422)\b/.test(msg)) {
-        return false;
-    }
-
-    return true;
 }
 
 function pickContentType(format?: TTSOptions["format"]): string {
@@ -135,7 +126,7 @@ export class AIElevenLabsTextToSpeechProvider implements AITextToSpeechProvider 
         return retry(() => this.synthesizeOnce(text, options), {
             maxAttempts: 3,
             getDelay: SYNTHESIZE_RETRY_DELAY,
-            shouldRetry: shouldRetrySynthesize,
+            shouldRetry: (error: unknown) => shouldRetrySynthesize(error, [422]),
         });
     }
 

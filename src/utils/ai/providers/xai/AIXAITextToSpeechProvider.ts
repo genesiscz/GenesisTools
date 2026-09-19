@@ -3,6 +3,7 @@ import { rateLimitAwareDelay, retry } from "@genesiscz/utils/async";
 import type { AIProviderType } from "@genesiscz/utils/config/ai.types";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { Storage } from "@genesiscz/utils/storage/storage";
+import { shouldRetrySynthesize } from "../synthesize-retry";
 import { XAIClient } from "./XAIClient";
 
 const MAX_TTS_DELTA_CHARS = 15_000;
@@ -20,16 +21,6 @@ interface XAIVoiceResponse {
         description?: string;
         locale?: string;
     }>;
-}
-
-function shouldRetrySynthesize(error: unknown): boolean {
-    const msg = error instanceof Error ? error.message : String(error);
-
-    if (/\b(400|401|403|404)\b/.test(msg)) {
-        return false;
-    }
-
-    return true;
 }
 
 function pickContentType(format?: TTSOptions["format"]): string {

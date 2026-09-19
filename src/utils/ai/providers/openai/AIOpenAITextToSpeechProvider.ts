@@ -4,6 +4,7 @@ import type { AIProviderType } from "@genesiscz/utils/config/ai.types";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { shouldRetrySynthesize } from "../synthesize-retry";
 
 const BASE_URL = "https://api.openai.com/v1";
 const MAX_INPUT_CHARS = 4096;
@@ -28,16 +29,6 @@ const GPT_4O_VOICES: TTSVoice[] = [
     { id: "sage", name: "sage" },
     { id: "verse", name: "verse" },
 ];
-
-function shouldRetrySynthesize(error: unknown): boolean {
-    const msg = error instanceof Error ? error.message : String(error);
-
-    if (/\b(400|401|403|404)\b/.test(msg)) {
-        return false;
-    }
-
-    return true;
-}
 
 function pickContentType(format?: TTSOptions["format"]): string {
     if (format === "wav") {
