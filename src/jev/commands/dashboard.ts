@@ -1,11 +1,8 @@
 import { join, resolve } from "node:path";
-import { serveArtifacts } from "@app/artifact/lib/serve";
-import { resolveTemplateDir } from "@app/artifact/lib/templates";
 import { Browser } from "@genesiscz/utils/browser";
 import { logger, out } from "@genesiscz/utils/logger";
 import { DASHBOARDS } from "@genesiscz/utils/ui/dashboards";
 import type { Command } from "commander";
-import { jevApiPlugin } from "../lib/server/api";
 
 export async function startDashboard({
     port = DASHBOARDS.jev.port,
@@ -14,6 +11,16 @@ export async function startDashboard({
     port?: number;
     open?: boolean;
 } = {}) {
+    // Loaded here, not at module scope. `src/jev/index.ts` registers every subcommand eagerly,
+    // so anything this file imports at the top is paid by `jev wake`, `jev route` and every other
+    // call in the live voice loop, none of which serve anything. Measured on this machine:
+    // `lib/server/api.ts` 321 ms, `artifact/lib/serve.ts` 134-205 ms over three runs each.
+    // Deferring serve.ts alone changed nothing, because api.ts was the larger of the two.
+    const [{ serveArtifacts }, { resolveTemplateDir }, { jevApiPlugin }] = await Promise.all([
+        import("@app/artifact/lib/serve"),
+        import("@app/artifact/lib/templates"),
+        import("../lib/server/api"),
+    ]);
     const root = resolve(import.meta.dir, "../../..");
     const server = await serveArtifacts({
         dir: join(root, "src/jev/dashboard"),
