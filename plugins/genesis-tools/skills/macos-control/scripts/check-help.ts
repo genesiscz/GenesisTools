@@ -40,11 +40,31 @@ if (entry && !existsSync(entry)) {
 }
 
 const control = entry ? ["bun", entry] : ["tools", "control"];
+const computer = repo ? ["bun", resolve(repo, "src/computer-use/index.ts")] : ["tools", "computer-use"];
 const probes = [
+    {
+        argv: [...control, "compare-choosers", "--help"],
+        command: "control compare-choosers",
+        flags: ["--jev", "--split", "--calibrate"],
+    },
+    { argv: [...computer, "prepare", "--help"], command: "computer-use prepare", flags: [] },
+    { argv: [...computer, "run", "--help"], command: "computer-use run", flags: ["--file", "--timeout", "--json"] },
+    { argv: [...computer, "mcp", "--help"], command: "computer-use mcp", flags: ["--repl"] },
+    { argv: [...control, "window", "--help"], command: "control window", flags: ["--app"] },
     {
         argv: [...control, "see", "--help"],
         command: "control see",
-        flags: ["--app", "--window-index", "--window-id", "--depth", "--path", "--scope", "--since"],
+        flags: [
+            "--app",
+            "--window-index",
+            "--window-id",
+            "--window-title",
+            "--depth",
+            "--path",
+            "--scope",
+            "--since",
+            "--no-image",
+        ],
     },
     {
         argv: [...control, "act", "--help"],
@@ -74,6 +94,9 @@ const probes = [
             "--suffix",
             "--selection",
             "--format",
+            "--prepare",
+            "--target-key",
+            "--replace",
         ],
     },
     {
@@ -82,6 +105,13 @@ const probes = [
         flags: ["--app", "--snapshot", "--coords", "--name"],
     },
     { argv: [...control, "cursor", "show", "--help"], command: "control cursor show", flags: ["--name"] },
+    { argv: [...control, "cursor", "preview", "--help"], command: "control cursor preview", flags: ["--coords"] },
+    { argv: [...control, "cursor", "hide", "--help"], command: "control cursor hide", flags: [] },
+    {
+        argv: [...control, "await", "--help"],
+        command: "control await",
+        flags: ["--exact-id", "--exact-value", "--evidence-id", "--evidence-label", "--evidence-role"],
+    },
     {
         argv: [...control, "cursor", "click", "--help"],
         command: "control cursor click",

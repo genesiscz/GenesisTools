@@ -1,9 +1,9 @@
 # Peekaboo as a separate provider
 
-Use this only when Peekaboo is the chosen provider. Since 2026-09-11 it is the fallback
-recorder, not the default: `tools control capture` records through `ax-tool capture` when that
-binary is built, and reaches Peekaboo only on `capture.backend: "peekaboo"` or when the native
-recorder writes no frame (see [capture.md](capture.md)). It is not Sky, and it does not use
+Use this only when the user explicitly chooses the separate legacy Peekaboo integration.
+Current native capture does not switch providers when recording fails. Selecting
+`capture.backend: "peekaboo"` is an explicit alternative, outside the native-only Jev workflow
+(see [capture.md](capture.md)). It is not Sky, and it does not use
 GenesisTools snapshot tokens. Opaque Peekaboo element IDs and GenesisTools integer indexes are
 different things; never mix them.
 
@@ -33,7 +33,7 @@ peekaboo capture live --help
 
 GenesisTools calls only the v4 forms: `peekaboo screen list`, `peekaboo window list --app <app>`
 and `peekaboo capture live --mode <mode> --duration <n>s --json`. Recording on this path works.
-It is the fallback, not the default: see [Which recorder runs](capture.md#which-recorder-runs).
+It is an explicit alternative, not a fallback: see [Backend and permissions](capture.md#backend-and-permissions).
 
 ## Command surface, 4.3.0
 

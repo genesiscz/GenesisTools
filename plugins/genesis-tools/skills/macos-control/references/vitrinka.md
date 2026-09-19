@@ -1,8 +1,8 @@
 # Vitrinka publishing (optional)
 
 Board publishing for screenshots and recordings. Only when the user asks to share, annotate
-or discuss, never by default. It needs the `vitrinka` CLI and a reachable server. Native
-Computer Use, Peekaboo and `tools control` all work without it.
+or discuss, never by default. It needs the `vitrinka` CLI and a reachable server. The independent
+GenesisTools control API, CLI and recorder work without it.
 
 Keep evidence local and view it yourself before publishing anything. Verify the image
 contains the intended app and window, and no unrelated personal UI. Preserve any redaction

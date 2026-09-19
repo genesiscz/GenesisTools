@@ -1,427 +1,148 @@
-# Recording — `tools control capture` (short motion, reviewed frame-by-frame)
+# Native recording and frame review
 
-The recording arm of macos-control. Everything here is multi-frame capture. Single-shot
-element control lives in SKILL.md. Since 2026-09-11 the recorder is native: `ax-tool capture`
-records through ScreenCaptureKit, and Peekaboo is only the fallback when the binary is not
-built.
+Use `tools control capture` for a short transition and inspect the resulting frames. A still
+image cannot prove timing, cursor animation or a complete sequence. Keep publishing separate.
 
-## Which recorder runs
+## Backend and permissions
 
-- **Native (default).** When `native/ax-tool/.build/release/ax-tool` exists, `tools control
-  capture` runs `ax-tool capture --mode <mode> --duration <seconds> --out <dir>` with the plan's
-  `activeFps`, `idleFps`, `threshold` and `videoOut`. Screens come from `ax-tool screens` and
-  window bounds from `ax-tool window --app`, so a plan needs no Peekaboo at all. The result
-  says `capture.data.source: "native"` and `captureEngine: "ScreenCaptureKit"`.
-- **Peekaboo (fallback).** `capture.backend: "peekaboo"` in the plan forces it. The runner also
-  falls back on its own when the native recorder never writes a frame and Peekaboo is
-  installed, with a warning that names both reasons.
-- The native recorder has no bridge, no daemon and no `noRemote` or `captureEngine` knobs:
-  those two plan fields only matter on the Peekaboo path, and the runner warns when a plan
-  sets them while the native backend stays selected.
-- **Name a window by `windowId` whenever you have one.** `windowIndex` is an ordinal into the
-  AX window list that `window` and `preflight` print, while the native recorder indexes its own
-  CGWindowList, filtered by pid, layer and height. The two can differ in order and length, so
-  the same ordinal can name a different window. `see` reports the CG id as `window.id`; put it
-  in `capture.windowId` and both backends agree. The runner warns when only an index is given.
-- Raw form, the same shape the runner reads:
+The default is `capture.backend:"native"`: ScreenCaptureKit recording plus native control
+actions through the shared ComputerUse API. The runner prepares the backend when needed and
+fails if native recording cannot start. It does **not** switch to Peekaboo or AppleScript.
+Use the supported `tools`/Bun entrypoint rather than launching an unwrapped native binary
+with a different permission identity.
+
+`capture.backend:"peekaboo"` explicitly selects the legacy alternative. Its transport flags
+`noRemote` and `captureEngine` do not apply to native capture. A native-only/Jev task must not
+select that alternative as recovery. Native capture rejects `url`, `osascript`, media-key
+scripting and unsupported custom typing/hold timings before executing the plan.
+
+## Inspect the target first
 
 ```bash
-native/ax-tool/.build/release/ax-tool capture --mode window --app "Calculator" \
-  --duration 3 --threshold 0.3 --out /tmp/rec-$(date +%s) 1>/tmp/rec.json 2>/tmp/rec.err
-native/ax-tool/.build/release/ax-tool screens      # index, name, scale, position, resolution
+tools control capture preflight --app APP
+tools control capture --help
 ```
 
-The `--duration 3` above is **three seconds**: that is the NATIVE binary, where `--duration` is
-seconds (0.1 to 180, default 3) and anything outside that range is refused outright. Do not copy
-this number onto a raw `peekaboo capture live` command, which reads a bare `--duration` as
-milliseconds — the runner appends `s` for exactly that reason. Step 1 gives both units.
+Use current `window.id` from a native observation as `capture.windowId`. AX window indexes and
+the recorder's CGWindowList order can differ. Browser windows include transient strips/popups;
+inspect title, bounds and the first frame. Never widen a requested exact-window recording to
+another app or whole screen merely because the target failed.
 
-A plan that ran on 2026-09-11 (Calculator, three presses). `q` matches title, description and
-identifier, so `"q": "7"` resolves to the button whose AXIdentifier is `Seven`:
+| Requested content | Mode |
+| --- | --- |
+| One app/window's content | `window` with observed `windowId` |
+| Cursor overlay and foreground transitions | `region` around observed bounds, or the selected display |
+| A named display | `screen` with the preflight's current screen index |
 
-```json
-{
-  "capture": { "mode": "window", "app": "Calculator", "duration": 3, "threshold": 0.3 },
-  "focus": { "app": "Calculator" },
-  "actions": [
-    { "atMs": 700,  "do": "ax-press", "q": "7", "app": "Calculator" },
-    { "atMs": 1500, "do": "ax-press", "q": "8", "app": "Calculator" },
-    { "atMs": 2300, "do": "ax-press", "q": "9", "app": "Calculator" }
-  ]
-}
-```
+An overlay is a separate window: a content-only window recording may omit it. Use region/screen
+capture when the claim concerns cursor feedback, and review it before claiming visibility.
+Negative global origins are valid. Region geometry uses global logical points; crop/annotation
+geometry uses frame pixels. Derive scale from captured dimensions; monitors can differ.
 
-Result: `ok: true`, `capture.data.source: "native"`, four kept frames reading 0, 7, 78 and 789,
-4.5 s wall time. A missing or stale binary is built by the runner itself (`bun run build:native`
-does the same by hand); only a failed build falls back to Peekaboo, and `warnings` says so.
+## One process owns a timed sequence
 
-Timing you will see in the result: an action's `actualMs` is when the runner *started* it,
-and the pre-input refocus plus the AX call add several hundred milliseconds before the pixels
-move, so the matching kept frame lands later than `actualMs`. Measured 2026-09-11 with three
-Calculator presses at 700, 1500 and 2300 ms: the change frames came at 1424, 2214 and 2988 ms.
+Do not drive recording actions through separate model/tool turns. Model latency and round trips
+can put actions outside the recording. A plan owns the timeline and waits for recording to start.
+An action's `actualMs` records when execution started, not when its pixels or cursor appeared.
 
-## Repaired 2026-09-11 for Peekaboo 4
-
-Peekaboo 4.x removed `list`, `hotkey` and `image`, renamed `--coords` to `--at`, and refuses
-untargeted background input. The wrapper now speaks that grammar: `screen list`, `window
-list`, `press <cmd+shift+a>`, `--at --global --foreground` on every timed action, and the
-clickmap PNG comes from `ax-tool screenshot`. The argv builders live in
-`src/control/lib/peekaboo.ts` with tests, so the next grammar change is one file.
-
-Symbol names, not line numbers, on purpose: this note is read at runtime long after the
-lines move. This file is the only copy; SKILL.md and peekaboo.md link here.
-
-On a checkout without that repair, `tools control capture preflight` exits 1 with
-`undefined is not an object (evaluating 'activeScreen.scaleFactor')`. That is the wrapper
-calling a removed command, never evidence of empty data.
-
-⚠️ The installed Peekaboo daemon may still refuse the default capture engine with
-`predates safe process-lifetime ScreenCaptureKit ownership`; `captureEngine: "cg"` in the plan,
-or `--capture-engine classic` on the CLI, works around it until the host is relaunched.
-
-## The mental model
-
-`peekaboo capture live` records a short screen video, **diff-samples** it (frames changing
-less than `--threshold` percent against the previous kept frame are dropped, so an idle
-screen collapses to one or two frames), and tiles the kept frames into **one contact-sheet
-PNG**. Read that single PNG and you see the whole motion in one vision call. Every kept frame
-also exists as a full-resolution PNG for drill-down.
-
-Two Peekaboo surfaces, and the split matters:
-
-- **CLI** (`/opt/homebrew/bin/peekaboo`) — the only surface with `capture live` and
-  `capture video`. The recording step is always a shell-out.
-- **MCP** (`mcp__peekaboo__*`) — single-shot tools only. Never expect `capture` there.
-
-Review is inline by default: capture, read the contact sheet, answer. Vitrinka publishing is
-opt-in; see [vitrinka.md](vitrinka.md).
-
-## Step 1 — parse duration and fps from the request
-
-🛑 **`--duration` has two different units, and which applies depends on what you are driving.**
-Both are correct in their own scope, so read the scope before copying a number.
-
-- **The plan's `duration` field is SECONDS, on both backends.** The runner converts, appending
-  `s` when it shells out to Peekaboo. This is what almost every task wants, and it is the only
-  form that stays right if the backend changes underneath you. Never copy a millisecond value
-  into a plan, and never put a bare seconds value on a raw `peekaboo` command line.
-- **The native recorder is SECONDS.** `ax-tool capture --duration 3` is three seconds (0.1 to
-  180, default 3). It is the default backend whenever `ax-tool` is built, so this is the unit a
-  raw capture command uses today.
-- **The Peekaboo CLI is MILLISECONDS**, when you run `peekaboo capture live` by hand: there
-  `--duration 2000` is two seconds, and a bare `--duration 3` may be read as three
-  milliseconds. Check `capture live --help` on the installed version before trusting a seconds
-  form.
-
-The rules below give the plan value first, with the raw Peekaboo equivalent in brackets:
-
-- "2s" or "2 seconds" → `"duration": 2` (driving Peekaboo by hand: `--duration 2000`)
-- "4fps" → `--active-fps 4`
-- **No duration given → `"duration": 3`** (raw Peekaboo: `--duration 3000`). Never fall through
-  to Peekaboo's own 60 s default. Always set it explicitly.
-- fps not given → omit `--active-fps` (default 8, max 15). `--idle-fps` defaults to 2.
-  `--threshold` defaults to 2.5 percent. Raise it for noisy content such as video playback;
-  lower it to catch subtle motion.
-
-## Step 2 — resolve the capture target
-
-There is **no interactive rectangle picker anywhere in this stack.** Do not attempt or build
-one. macOS `screencapture -i` rejects every video flag before any UI appears, and Peekaboo's
-region mode hard-errors without an explicit `--region`. Bounds lookup IS the substitute for
-"select an area".
-
-Priority order:
-
-1. **The window fills, or nearly fills, one display** → `--mode screen --screen-index N`.
-   Empirically the most reliable mode. Get N from `peekaboo screen list --json`.
-2. **The user named an app or window** → `--mode window --app "<Name>"`, optionally
-   `--window-title "<title>"` or `--window-index N`. **Verify what you actually captured**
-   by checking frame 1's dimensions and content. Browser "windows" include invisible 30-64 px
-   strips that the AX API even marks as the main window, so a title match can silently
-   capture a 387×64 popup instead of the real window. Ids and indexes come from
-   `peekaboo window list --app "<Name>" --json`.
-3. **A specific area with unknown bounds** → look the bounds up, then `--mode region
-   --region "x,y,width,height"`. ⚠️ `--item_type application_windows` is the MCP tool's
-   vocabulary; the CLI rejects it.
-4. **Everything else** → `--mode screen` on the primary display.
-
-⚠️ Negative coordinates are legal on a multi-display Mac (a display above or left of the
-primary). Compare against `peekaboo screen list --json` positions before calling them junk.
-Windows on another Space are invisible to single-shot capture: focus the app first, or
-capture the screen.
-
-⚠️ Avoid `--mode frontmost`. It produced both a bare crash with empty stdout and stderr and a
-real bridge error in back-to-back tests, while screen and region modes never failed.
-
-**`tools control capture preflight` is the intended shortcut for all of the above** once the
-v4 breakage above is fixed. It prints screens (index, scaleFactor, framePixels, and
-`originCG`, the top-left origin in the global point space that click coordinates live in),
-the target app's window bounds in BOTH points and frame pixels, the active browser tab, and a
-suggested plan skeleton. It kills the two classic footguns in one call: guessing the scale
-factor (crop regions are frame pixels, which is points times scale) and guessing which window
-is actually active. It separates real windows (height above 50 px) from phantom strips, and
-cross-checks CGWindowList against the AX API so windows only CGWindowList sees are marked
-`axVisible: false` and never chosen as the crop basis.
-
-A suggested plan is a starting point, not proof it picked the right window. If the user named
-one window, do not widen the capture to the whole screen just to dodge a targeting failure.
-
-## Step 3 — plain capture, no interactions
-
-Native, the default:
-
-```bash
-native/ax-tool/.build/release/ax-tool capture --mode <screen|window|region> \
-  [--app "<Name>"] [--screen-index N] [--region "x,y,width,height"] \
-  --duration <seconds> [--active-fps <n>] [--threshold <pct>] [--video-out f.mp4] \
-  --out /tmp/rec-$(date +%s) 1>/tmp/capture-out.json 2>/tmp/capture-err.log
-```
-
-Peekaboo, the fallback:
-
-```bash
-peekaboo capture live --mode <screen|window|region> \
-  [--app "<Name>"] [--region "x,y,width,height"] \
-  --duration <ms> [--active-fps <n>] [--threshold <pct>] \
-  --capture-engine classic \
-  --json 1>/tmp/capture-out.json 2>/tmp/capture-err.log
-```
-
-Rules that came from real failures:
-
-- **Always `--json`** and parse it. Never eyeball plain text.
-- **Redirect stdout and stderr to SEPARATE files.** Never merge with `2>&1` and never pipe.
-  A merged redirect produced a spurious empty-output failure that a clean separated-stream
-  retry did not reproduce. Peekaboo also writes a `[Visualizer][INFO]` line to stderr, which
-  corrupts stdout JSON the moment you merge them.
-- **Nonzero exit with empty stdout AND empty stderr → retry the exact command once** before
-  calling it a real failure. This pattern recurred and self-resolved on retry both times.
-- Threshold tip: when the thing you care about is a small fraction of a large frame, drop
-  `--threshold` to about 1. At the default 2.5 a topbar-only change on a 3440×1440 screen can
-  be dropped entirely.
-
-**Hunting a sub-second blip** (stale header, flash of wrong content, double-pop): use
-`--active-fps 15 --threshold 0.1`. At 8 fps and 1 percent, a blip inside a 400 ms window
-leaves only before-and-after frames, which proves nothing. Present it as a cropped strip:
-cut the affected band out of each relevant frame (`magick <frame> -crop WxH+X+Y +repage`) and
-`-append` them with timestamps. Homebrew imagemagick lacks freetype, so `label:` garbles
-non-ASCII; keep labels ASCII.
-
-**Always add `--video-out /tmp/<name>.mp4` on a blip hunt.** The MP4 keeps ALL captured
-frames; the diff filter only prunes the kept-PNG set. Re-sample a narrower window later
-without re-recording:
-
-```bash
-peekaboo capture video /tmp/<name>.mp4 --start-ms 4800 --end-ms 7000 --every-ms 66 --no-diff \
-  --json 1>resample.json 2>resample.err
-```
-
-⚠️ **Blue-tint bug, seen on beta3 2026-07-15:** `capture video … --no-diff` corrupted colours
-on re-sampled frames while live-kept frames from the same recording were fine. Re-check on
-4.x before relying on it. Layout and timing in a blue frame are still valid; colours are not.
-Prefer recording at a higher `--active-fps` with a low threshold over no-diff re-sampling.
-
-`capture video` also ingests ANY existing recording (QuickTime `.mov`, a simulator recording,
-a user-sent `.mp4`) into diff-sampled frames plus a contact sheet. When the user hands you a
-video file, that replaces the recording step entirely.
-
-## Step 3b — capture WITH interactions: always use the runner
-
-**"With interactions" includes purely static sequences.** "Click through 5 tabs, screenshot
-each" is still a timed plan, although for static sequences `tools control run` is better.
-Hand-driving raw clicks plus images reproduces exactly the failures the runner removes:
-clicks eaten on unfocused windows, no per-click refocus, and no `warnings[]` telling you a
-click never landed.
-
-🛑 **An LLM cannot drive timed actions through separate tool calls.** Measured: model thinking
-plus tool round-trips add 3-8 s of jitter, so the recording either misses the transition or
-the action lands before frame 1. Retrying "maybe faster this time" burns tokens and never
-converges. Put the offsets in the plan. One process owns the whole timeline: it starts
-`capture live`, detects the real recording start (first `keep-0001.png` on disk), then fires
-each action at its planned offset. Observed drift is about 1 ms.
-
-```bash
-tools control capture preflight [--app "<Name>"]   # ALWAYS FIRST when writing a plan
-tools control capture --help                       # the full plan and action contract
-tools control capture plan.json 1>result.json 2>err.log
-```
-
-Parse `result.json`. It carries a **`warnings[]` array — read it first.** "Actions fired ok
-but capture kept 1 frame" means the motion never reached recorded pixels. It also carries
-per-action `plannedMs` against `actualMs`; audit the timing before trusting the frames.
-
-Plan-level extras: `focus: {app, windowTitle?}` brings the target frontmost before recording
-AND is re-asserted before every click, so set it in any plan that clicks. `browser` sets the
-default app for `url` actions. `capture.countdownSec` shows a countdown for user-driven
-transitions; the floating panel does not render when agent-spawned, so relay the countdown to
-the user yourself.
-
-**Declarative crops.** Crop markers live in the actions timeline:
-`{atMs, do: "crop", region|target, label?}` then `{atMs, do: "crop-stop"}`. The runner crops
-every kept frame inside each window, writes labelled crops to `<sessionDir>/crops/`, and
-stacks them time-ordered into `crops/strip.png`. It ALSO writes
-**`crops/strip-review.png` (longest side 1600 px) — read THAT one for vision review**; the
-full strip is archival. Regions are FRAME pixels; labels ASCII only. Instead of a region you
-can pass `target: {app, windowTitle?}`, whose bounds are looked up at the marker's `atMs` and
-frozen there. A sequential `crop` with no `toMs` opens one window at a time; add `toMs` to
-make a crop its own standalone window so two regions can be cropped from the same frames.
-
-Two crop traps: a marker at `atMs: 100` EXCLUDES frame 1 at t=0, so start at 0 unless the
-exclusion is deliberate; and verify the strip's content before presenting it, because if the
-window moved display or Space between runs you get a beautifully labelled strip of wallpaper.
-
-Beyond record-and-act the runner also does `recrop` (re-crop a finished run's frames with new
-regions, no re-recording; `target` crops do not work there because bounds would be from now),
-direct vitrinka publish, a dead-publish guard (motion actions fired but one or fewer frames
-kept means publish is refused — fix the plan rather than forcing it), a raw `osascript`
-escape hatch, and per-action `onError: "continue"|"abort"`.
-
-### The `capture{}` plan object
-
-Every panel agent that was asked to write a recording plan named this as the hardest part,
-because the keys were only ever shown as CLI flags. They are camelCase inside the plan, and
-`tools control capture --help` is the authority. The ones you will actually use:
+After observing Calculator's current window ID and ensuring a suitable clear state, replace
+`12345` below with that ID. This changes Calculator and requires authorization for that task.
+Confirm each `q` matches one current row, including any matching readout/history value; otherwise
+use a uniquely observed `axId` or a script that scopes the button role. The native action adapter
+observes at execution time; this JSON does not carry a caller's snapshot token.
 
 ```json
 {
   "capture": {
-    "mode": "screen",          // screen | window | region | frontmost (avoid frontmost)
-    "screenIndex": 0,          // screen mode
-    "app": "Genesis",          // window mode
-    "windowTitle": "Settings", // window mode narrowing
-    "windowId": 40231,         // window mode, EXACT: see's window.id; beats app/title/index
-    "region": "x,y,w,h",       // region mode
-    "duration": 3,             // SECONDS on both backends (the runner converts) — ALWAYS set this explicitly
-    "backend": "native",       // default when ax-tool is built; "peekaboo" forces the fallback
-    "activeFps": 8,            // default 8, max 15
-    "idleFps": 2,              // default 2; the rate while nothing on screen is moving
-    "threshold": 2.5,          // change % cutoff; ~0.1 for a sub-second blip
-    "videoOut": "/tmp/run.mp4",// keep the MP4 so you can re-sample without re-recording
-    "countdownSec": 3,         // only for USER-driven transitions
-    "noRemote": true,          // PEEKABOO ONLY — omit unless backend is "peekaboo"
-    "captureEngine": "cg"      // PEEKABOO ONLY — omit unless backend is "peekaboo"
+    "backend": "native", "mode": "window", "app": "com.apple.calculator",
+    "windowId": 12345, "duration": 4, "activeFps": 15, "idleFps": 2,
+    "threshold": 0.1, "videoOut": "/tmp/calculator-proof.mp4"
   },
-  "focus": { "app": "Genesis", "windowTitle": "Settings" },
-  "actions": [ { "atMs": 500, "do": "ax-press", "q": "Chat", "app": "Genesis" } ]
+  "focus": { "app": "com.apple.calculator" },
+  "actions": [
+    { "atMs": 700, "do": "ax-press", "app": "com.apple.calculator", "q": "7" },
+    { "atMs": 1700, "do": "ax-press", "app": "com.apple.calculator", "q": "8" },
+    { "atMs": 2700, "do": "ax-press", "app": "com.apple.calculator", "q": "9" }
+  ]
 }
 ```
 
-A blip hunt is the same object with `"activeFps": 15, "threshold": 0.1` and a `videoOut`.
+```bash
+GENESIS_CONTROL_CURSOR=on tools control capture plan.json > /tmp/capture-result.json 2> /tmp/capture-errors.log
+```
 
-⚠️ You CANNOT request "exactly N frames". Duration, fps and threshold set a budget, and the
-recorder keeps however many frames crossed the threshold. Want fewer tiles? Raise the
-threshold, lower the fps, shorten the crop window, or `recrop` afterwards. Impossible values
-(a duration that is really milliseconds, a threshold above 100, a zero-size region) come back
-as warnings in the result JSON rather than as errors.
+For overlay proof, use `mode:"region"` and `region:"x,y,width,height"` from observed bounds,
+with room for the badge. Review that region for unrelated personal UI. A demonstration without
+recording can use one `computer-use run` script; not every adaptive action needs a capture plan.
 
-### Action rules learned the hard way
+## Duration, sampling and input
 
-- **URL navigation uses the `url` action.** Default `target` is `new-tab`, which never
-  clobbers what the user is reading. Pass `target: "active-tab"` only when the active tab is
-  known to be yours. NEVER `hotkey cmd,l` plus `type`: user keybindings shadow browser
-  shortcuts.
-- **`type` must run the linear profile** (the runner does this). The human profile ignores
-  `--delay` and types at human speed, which blows every later action's timing.
-- **Synthetic input on a non-frontmost app is eaten by click-to-focus**, and focus decays
-  mid-recording. The runner re-asserts app focus before every click, type and hotkey, but
-  only when it knows the target app. Set `plan.focus` in any plan that clicks. Multi-phase
-  timelines re-steer with `{atMs, do: "focus", app}` and `{atMs, do: "focus-stop"}`.
-- **`click --coords` accepts negative multi-display coordinates; `move` rejects them.**
-- **Scroll success is not visual change.** `ok: true` only means wheel events were injected.
-  Target it with `coords` or `app`/`windowTitle`, then read `warnings[]`.
-- **Never invent media keys.** The vocabulary is modifiers, a-z, 0-9, space, return, tab,
-  escape, delete, arrows and f1-f12. The runner rewrites volume keys to osascript. For
-  guaranteed pixel motion use an osascript window move, a `url` action, or a real scroll.
-- **Window-relative coordinates.** Add `relativeTo: {app, windowTitle?}` to click, scroll or
-  hotkey. Coordinates become offsets from the window's top-left, resolved at fire time, so
-  the window may move between authoring and recording without breaking the click. Prefer this
-  over absolute coordinates in screen-mode captures.
-- **AX actions for native apps.** `ax-set`, `ax-press` and `ax-perform` go through the
-  compiled native binary (about 50-200 ms, no bridge). Target with `axId`, `q` (universal
-  search, refuses when ambiguous), or specific filters. Elements without an AXIdentifier work
-  via `q`, `desc` or `subrole`. `ax-set` and `ax-press` fall back to osascript without the
-  binary; `ax-perform` errors.
+- Plan/native `duration` is **seconds**, bounded by the recorder (up to 180). Set it explicitly.
+- `activeFps`, `idleFps` and `threshold` control sampling. Subtle motion may need 15 fps and a low
+  threshold. You cannot demand an exact number of retained frames.
+- MP4 preserves the captured sequence; PNGs are selected by change threshold. Keep video for
+  timing investigations and sample it locally if the contact sheet lacks detail.
+- Native `type` is at most 256 single-line UTF-16 units; no custom per-character delay. Use
+  script/API paste or exact AX set for longer values. Replacement must be explicit.
+- Native controls include `ax-set`, `ax-press`, `ax-perform`, click, type, hotkey and scroll.
+  `q` must match a unique observed control; ambiguity stops. Never invent IDs.
+- Set `focus` for foreground input. Native controls retain app/window/reference checks. A
+  recorder cannot make uncertain input safe or prove completion from dispatch alone.
+- For URL navigation, use an observed address field in a native script: replace text, verify,
+  then press Return only when requested. Native capture rejects the legacy `url` action.
 
-  ```json
-  { "atMs": 500,  "do": "ax-press",   "q": "Chat", "app": "Genesis" },
-  { "atMs": 1500, "do": "ax-set",     "q": "auth-email", "value": "alice@example.com", "app": "Genesis" },
-  { "atMs": 2500, "do": "ax-perform", "q": "theme-picker", "action": "AXShowMenu", "app": "Genesis" }
-  ```
+## Crops and review
 
-⚠️ Recording plans use the capture API. They do NOT carry `see` snapshot guarantees. Never
-embed a `see` token in a plan as if the recorder revalidated it.
+Timeline crop markers `{atMs,do:"crop",region,label}` and `{atMs,do:"crop-stop"}` select frame-pixel
+regions. A target crop can resolve `{app,windowTitle}` at marker time. Start at zero when the
+initial state matters; a crop beginning at 100 ms excludes frame zero. Re-cropping old frames
+needs their original geometry, not the window's current position. Use ASCII labels if the
+local image/font tool does not support the intended text.
 
-## Step 4 — read the result
+The runner returns:
 
-Two shapes, one object. The recorder itself (`ax-tool capture` or `peekaboo capture live`)
-prints `{success, ok, data: {source, captureEngine, contactSheet: {path, file, rows, columns},
-frames: [{index, file, path, timestampMs, changePercent, reason}], stats: {capturedFrames,
-keptFrames, droppedFrames, durationMs}, sessionDir, metadataFile, videoOut?, window?,
-warnings}}`. `tools control capture plan.json` wraps it: its stdout is `{ok, sessionDir,
-exitCode, warnings, actions: [{action, plannedMs, actualMs, ok, stdout?, error?}], crops,
-strip, stripReview, capture}`, and `capture.data` is that same object. So `capture.data.source`
-in the runner result is `data.source` in the raw recorder output.
+```text
+ok, exitCode, warnings, sessionDir,
+actions: [{plannedMs, actualMs, ok, stdout, error}],
+capture.data: {source, captureEngine, contactSheet, frames, stats, videoOut},
+crops, strip, stripReview
+```
 
-1. Read `capture.data.contactSheet.path` (runner) or `data.contactSheet.path` (raw). That is
-   the whole motion in one call.
-2. Use `frames[].changePercent` with `timestampMs` to locate the discontinuity. A spike between
-   adjacent frames is where it jumped. Native frames carry `reason`: `first` for frame 1 and
-   `change` for every later one, since only kept frames are written (`still` and `cap` are
-   the policy's reasons for NOT keeping, so they never reach `frames[]`). Peekaboo frames
-   carry `motionBoxes` for the changed region instead.
-3. Open individual full-resolution frames only when a visual change needs closer inspection.
+Read warnings and every action outcome. Check `capture.data.source === "native"` for native-only
+work. View `capture.data.contactSheet.path` or bounded `stripReview`, then full-resolution frames
+around a transition. Check target content, not only dimensions. GIF viewers may expose only the
+first frame and are unsuitable as multi-frame proof.
 
-Session output lives in a fresh directory per run under the capture-sessions root in the
-temp dir (`native-<epoch>` for the native recorder, Peekaboo's own naming otherwise). Peekaboo
-cleans its own; native directories stay until the OS clears the temp dir. Do not manage that
-cleanup.
+Each retained frame carries a `reason`: `first` for frame zero and `change` for every later
+one. Only retained frames are written, so the policy's reasons for NOT keeping a frame
+(`still`, `cap`) never appear in `frames[]`. A short `frames[]` therefore means the threshold
+was not crossed, not that the recorder dropped work.
 
-⚠️ Review contact-sheet PNGs, never animated GIFs: vision sees only frame 1 of a GIF. Crops
-use frame pixels while window geometry uses screen points, so derive the scale from the
-observed frame dimensions rather than assuming a Retina multiplier. One retained frame can be
-legitimate for a static screen, but it never proves a requested transition was recorded.
+Distinguish dispatch, visible transition and verified task outcome. Feedback can appear after
+input; sampled video does not prove compositor presentation before every mutation.
 
-## Troubleshooting
+## Failures and cleanup
 
-Peekaboo routes permission-bound operations through whichever TCC-granted host app is
-running. Check `peekaboo permissions status` and `peekaboo bridge status --verbose`.
+- 🛑 **Never run two captures at the same time.** Nothing serialises them. On the Peekaboo
+  transport this was measured to wedge the bridge socket, after which every later capture
+  returned a screen-recording permission error that looked exactly like a revoked grant.
+  Stop the other capture, wait about 10 s, retry once. Never read that error as a lost grant
+  without first checking whether another capture is running.
+- **Give the command a generous tool timeout.** Wall time is the countdown plus the
+  start-wait plus the duration plus crops plus publishing. A default 10 s tool timeout kills
+  the runner mid-recording, and the result reads as a mystery failure rather than a timeout.
+- Separate stdout/stderr. Check process exit and nested outcomes; empty output is not success.
+  The runner owns and bounds its child process tree.
+- Inspect state after failed input or a recording with interactions. Never replay a mutating
+  plan because video is missing or readback failed. A bounded read-only capture retry must not
+  repeat already-dispatched actions.
+- Modal, stale target, changed pixels, wrong foreground or unknown delivery stops the affected
+  sequence. Inspect the blocker; do not suppress the guard.
+- Serialize foreground actions. Another user/process can take focus; use coordination and
+  fresh verification, not unscoped global keystrokes.
+- Report exact permission/build-lock failures. Do not reset grants casually, kill unrelated
+  apps or switch runtimes to obtain success.
+- Preserve proof files and capture directories another process might own. Sharing uses the
+  separately authorized [publishing workflow](vitrinka.md).
 
-- MCP reports Screen Recording "Not Granted" while the app shows full grants → first-boot
-  handshake race. Reconnect the MCP server; no TCC change is needed.
-- 🛑 **Never run two captures concurrently.** It wedges the bridge socket, and every later
-  capture returns a screen-recording permission error that looks exactly like a lost grant.
-  Stop the other capture, back off about 10 s, retry.
-- **Peekaboo path only: agent-driven plans set `capture.noRemote: true` and
-  `captureEngine: "cg"` up front.** Local CoreGraphics, no bridge. The native recorder ignores
-  both fields. On the Peekaboo path the runner also self-heals: if recording has not started in
-  15 s it kills the attempt's process TREE (killing only the shim pid orphans the recorder),
-  settles 2 s, and retries once on the opposite transport.
-- **Screen-index numbering is not consistent across Peekaboo surfaces.** Trust
-  `peekaboo screen list` and always verify frame 1's content.
-- **Give the runner a generous Bash timeout.** Wall time is countdown plus up to 15 s
-  start-wait plus a 15 s bypass retry plus duration plus crops plus publish. A default 10 s
-  tool timeout kills it and it looks like a mystery failure. A native 3 s window capture with
-  three AX presses took 4.5 s end to end on 2026-09-11; before that day the runner idled a
-  further 33 s after printing its result, because the exit-grace timer was never cleared.
-- Missing permission: report the exact responsible process and grant error. Never reinterpret
-  it as "no content".
-- Failed focus or wrong window: stop before capturing another app. Re-inspect the intended
-  target.
-- Unsupported flag or plan field: consult the installed help. Never copy syntax from an older
-  Peekaboo or from an MCP example.
-
-## Anti-patterns
-
-- Never drive timed actions during a recording through your own tool calls.
-- Never use an app shortcut such as `cmd,l` for navigation. Use the `url` action.
-- Never produce or feed a `.gif` for review.
-- Never attempt a drag-select or an interactive region picker. None exists.
-- Never let duration default to 60 s.
-- Never merge stdout and stderr, and never pipe the capture command.
-- Never treat a single empty-output failure as real. Retry once first.
-- Never call `capture` through MCP. Only the CLI has it.
-- Never reach for ffmpeg or `screencapture` pipelines. The native recorder and Peekaboo both
-  do recording, diff sampling and tiling themselves.
-- Never hand-construct a vitrinka board URL. Relay the server-returned `url`.
-- Never retry a mutating plan just because the capture output was empty. Verify the target's
-  state first, because some actions may already have completed.
+The [Peekaboo reference](peekaboo.md) is a dated optional integration, not this native workflow.
