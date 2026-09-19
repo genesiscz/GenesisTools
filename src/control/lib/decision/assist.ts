@@ -405,8 +405,11 @@ function withoutDecoration(label: string): string {
         return normalised;
     }
 
+    // Any script's letters, not just ASCII. With /[a-z]/ a localised label like "设置, 高级" had
+    // no letters in its tail, so the trailing clause read as decoration and the guard refused a
+    // genuinely different second target on every non-Latin UI.
     const tail = normalised.slice(comma + 1);
-    return /[a-z]/.test(tail) ? normalised : normalised.slice(0, comma).trim();
+    return /\p{L}/u.test(tail) ? normalised : normalised.slice(0, comma).trim();
 }
 
 function repeatedTargetReason(label: string): string {

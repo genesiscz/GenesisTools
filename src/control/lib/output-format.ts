@@ -25,7 +25,10 @@ export function addFormatOption(command: Command): Command {
 
 /** The chosen format, or `undefined` after reporting an invalid one and setting the exit code. */
 export function resolveFormat(options: FormatOptions, command: string): OutputFormat | undefined {
-    if (options.format === undefined || options.format === true) {
+    // Only an ABSENT flag defaults. Commander gives `true` for a bare `--format` with no value,
+    // and treating that as absent silently printed a table to someone who asked for a format and
+    // mistyped it; it must reach the invalid-format handler and list the values instead.
+    if (options.format === undefined) {
         return options.json === true ? "json" : "table";
     }
 

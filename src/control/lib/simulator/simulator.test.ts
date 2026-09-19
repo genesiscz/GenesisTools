@@ -321,6 +321,19 @@ describe("action mapping", () => {
         expect(swipe.fromY).toBeLessThan(swipe.toY);
     });
 
+    test("a frame shorter than the 20-point floor still keeps the swipe inside it", () => {
+        // The floor used to be applied outermost, so a 10-point frame took travel 20 and put
+        // both endpoints outside the very element the swipe was scoping to.
+        for (const span of [8, 10, 20, 24]) {
+            const frame = { x: 0, y: 40, width: span, height: span };
+            const swipe = swipeForScroll({ frame, direction: "down", pages: 1 });
+            for (const y of [swipe.fromY, swipe.toY]) {
+                expect(y).toBeGreaterThanOrEqual(frame.y);
+                expect(y).toBeLessThanOrEqual(frame.y + frame.height);
+            }
+        }
+    });
+
     test("a swipe never leaves the element it was asked to scroll", () => {
         const scrollFrame = { x: 0, y: 100, width: 400, height: 600 };
         const swipe = swipeForScroll({ frame: scrollFrame, direction: "down", pixels: 100_000 });
@@ -448,6 +461,21 @@ describe("the probe budget", () => {
 
         const highest = Math.min(...kept.map(([, y]) => y));
         expect(highest).toBe(Math.min(...planned.map(([, y]) => y)));
+    });
+
+    test("thinning spends the whole budget rather than quantising it away", () => {
+        // An integer stride kept ceil(length / stride) points, so 500 planned under a budget of
+        // 400 gave stride 2 and only 250 swept points: 37% of the allowed sweep discarded, and
+        // discovery twice as coarse as asked. Every length in (max, 2 * max] behaved that way.
+        for (const [length, budget] of [
+            [500, 400],
+            [401, 400],
+            [799, 400],
+            [880, 400],
+        ] as const) {
+            const planned = Array.from({ length }, (_, index) => index);
+            expect(withinBudget(planned, budget)).toHaveLength(budget);
+        }
     });
 
     test("thinning keeps points in order and never invents one", () => {

@@ -45,18 +45,22 @@ export function probePoints(screen: Frame, step: number): Array<[number, number]
  * plans ~880, was cut to the first 400, and saw only the top 45%. The knob that reads as "look
  * harder" was making the bottom half of every screen invisible.
  *
- * Taking every nth point instead degrades density uniformly, so a budgeted sweep still covers the
- * whole screen and can only be coarser than asked, never partial.
+ * Spreading the kept points across the whole list instead degrades density uniformly, so a
+ * budgeted sweep still covers the whole screen and can only be coarser than asked, never partial.
+ *
+ * The walk is fractional rather than an integer stride, because an integer one quantises the
+ * sampling rate and silently spends less than the budget: 500 planned points under a 400 budget
+ * gives stride 2 and keeps 250, throwing away 37% of the sweep it was allowed. Every length in
+ * (maxPoints, 2 * maxPoints] had that problem.
  */
 export function withinBudget<T>(points: T[], maxPoints: number): T[] {
     if (points.length <= maxPoints) {
         return points;
     }
 
-    const stride = Math.ceil(points.length / maxPoints);
     const kept: T[] = [];
-    for (let index = 0; index < points.length; index += stride) {
-        kept.push(points[index]);
+    for (let index = 0; index < maxPoints; index += 1) {
+        kept.push(points[Math.floor((index * points.length) / maxPoints)]);
     }
 
     return kept;

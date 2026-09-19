@@ -80,7 +80,10 @@ export function swipeForScroll(options: {
     const vertical = direction === "up" || direction === "down";
     const span = vertical ? frame.height : frame.width;
     const requested = options.pixels ?? (options.pages ?? 1) * span * 0.75;
-    const travel = Math.max(20, Math.min(requested, span * 0.8));
+    // The 0.8 cap is applied LAST so it always wins. With the floor outermost, a frame under 25
+    // points tall took the 20-point minimum and put both endpoints outside the frame the caller
+    // asked to scroll, which is a swipe across a surface nobody observed.
+    const travel = Math.min(Math.max(20, requested), span * 0.8);
     const half = travel / 2;
     const sign = direction === "down" || direction === "right" ? -1 : 1;
     return vertical
