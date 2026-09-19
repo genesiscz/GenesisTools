@@ -6,7 +6,7 @@ import { z } from "zod";
 import { actionParametersSchema, controlActions, nativeActionArguments } from "./action";
 import { exactAttributeSchema, judgeOutcome, resolveIntent } from "./decisions";
 import type { ControlDriver } from "./native";
-import { type Candidate, candidatesFor, type Observation, observedEvidence } from "./observation";
+import { type Candidate, candidatesFor } from "./observation";
 import { authenticationBarrier } from "./recovery";
 import { ControlSession } from "./session";
 
@@ -100,11 +100,6 @@ export function candidateBinding(candidate: Candidate): Binding {
         role: candidate.role,
         ancestors: candidate.ancestors,
     });
-}
-export function retainedWorkflowContext(observation: Observation) {
-    return observedEvidence(observation)
-        .slice(0, 30)
-        .map(({ role, label }) => ({ role, label }));
 }
 export function parseWorkflowPlan(input: unknown): WorkflowPlan {
     const envelope = z.object({ semantic: z.unknown() }).safeParse(input);

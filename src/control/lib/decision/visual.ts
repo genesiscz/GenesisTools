@@ -305,4 +305,3 @@ export async function visualTask(options: {
             : "Observation and choice only. No desktop action.",
     };
 }
-export type VisualTaskResult = Awaited<ReturnType<typeof visualTask>>;
