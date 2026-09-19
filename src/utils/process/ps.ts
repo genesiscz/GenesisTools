@@ -1,3 +1,5 @@
+import { chunk } from "../array";
+
 /**
  * Batched `ps` and `lsof` access.
  *
@@ -69,16 +71,8 @@ export interface PsListRow {
     command: string;
 }
 
-/** Split a list into fixed-size batches. The last batch may be short. */
-export function chunk<T>(items: T[], size: number): T[][] {
-    const chunks: T[][] = [];
-
-    for (let i = 0; i < items.length; i += size) {
-        chunks.push(items.slice(i, i + size));
-    }
-
-    return chunks;
-}
+/** Re-exported from `../array`, where it now lives; batching pids is only one of its uses. */
+export { chunk };
 
 /** Run a binary with an argv and capture both streams. No shell, so no quoting hazard. */
 export function captureSync(command: string, args: string[], options?: { timeoutMs?: number }): CaptureResult {

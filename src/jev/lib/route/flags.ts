@@ -1,5 +1,6 @@
 import { admittedChoice } from "@app/control/lib/decision/decisions";
-import type { EvaluationResponse, Evaluator } from "@genesiscz/utils/ai/evaluation/service";
+import { booleanProbability } from "@genesiscz/utils/ai/evaluation/answers";
+import type { Evaluator } from "@genesiscz/utils/ai/evaluation/service";
 import { logger } from "@genesiscz/utils/logger";
 import { profiler } from "@genesiscz/utils/profile";
 import type { CatalogueRow, RouteFlag } from "./catalogue";
@@ -48,11 +49,6 @@ export interface BindResult {
 const TOKEN_RE = /"([^"]*)"|'([^']*)'|([^\s"']+)/g;
 const POSITIONAL_RE = /<([^>]+)>|\[([^\]]+)\]/g;
 const NUMERIC_RE = /^\d{1,9}$/;
-
-export function booleanProbability(result: EvaluationResponse, id: string): number | null {
-    const answer = result.answers[id];
-    return answer?.type === "boolean" ? answer.probability : null;
-}
 
 /**
  * Every literal span of the utterance a value may be bound to.

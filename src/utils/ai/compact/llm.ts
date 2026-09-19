@@ -1,5 +1,7 @@
+import { booleanProbability } from "@genesiscz/utils/ai/evaluation/answers";
 import type { EvaluationResponse, Evaluator } from "@genesiscz/utils/ai/evaluation/service";
 import { ai } from "@genesiscz/utils/ai/tasks/facade";
+import { chunk } from "@genesiscz/utils/array";
 import { logger } from "@genesiscz/utils/logger";
 import { profiler } from "@genesiscz/utils/profile";
 import { truncateResult } from "./format";
@@ -33,15 +35,6 @@ export const defaultSummarizer: CompactSummarizer = async (text, maxChars) => {
     return result.summary.trim();
 };
 
-export function booleanProbability(result: EvaluationResponse, id: string): number | undefined {
-    const answer = result.answers[id];
-    if (answer?.type !== "boolean" || typeof answer.probability !== "number") {
-        return undefined;
-    }
-
-    return answer.probability;
-}
-
 /**
  * Three-valued on purpose. `undefined` means Jev was not confident either way, and the caller must
  * keep the heuristic verdict rather than read an uncertain answer as a "no".
@@ -52,7 +45,7 @@ export function booleanAnswer(
     threshold = JEV_BOOLEAN_THRESHOLD
 ): boolean | undefined {
     const probability = booleanProbability(result, id);
-    if (probability === undefined) {
+    if (probability === null) {
         return undefined;
     }
 
@@ -68,15 +61,6 @@ function conversation(messages: CompactMessage[]) {
         .filter((message) => message.role === "user" || message.role === "assistant")
         .map((message) => ({ role: message.role, text: message.content.slice(0, CONTEXT_CHARS) }))
         .filter((message) => message.text !== "");
-}
-
-function batches<T>(items: T[], size: number): T[][] {
-    const chunks: T[][] = [];
-    for (let start = 0; start < items.length; start += size) {
-        chunks.push(items.slice(start, start + size));
-    }
-
-    return chunks;
 }
 
 /**
@@ -190,7 +174,7 @@ export async function decideWithJev(options: {
     }
 
     let requests = 0;
-    for (const batch of batches(candidates, JEV_BATCH_SIZE)) {
+    for (const batch of chunk(candidates, JEV_BATCH_SIZE)) {
         options.signal?.throwIfAborted();
         log.info({ calls: batch.length, questions: batch.length * 3 }, "Asking Jev for per-call compaction verdicts");
         const evaluation = await prof.measureAsync("jev-decide", () =>
@@ -283,7 +267,7 @@ export async function gateSummaries(options: {
     let replaced = 0;
     let discarded = 0;
 
-    for (const batch of batches(options.proposals, JEV_BATCH_SIZE)) {
+    for (const batch of chunk(options.proposals, JEV_BATCH_SIZE)) {
         options.signal?.throwIfAborted();
         const state = batch.map((candidate) => ({
             id: candidate.ref.call.id,

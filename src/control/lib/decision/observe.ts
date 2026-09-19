@@ -1,3 +1,4 @@
+import { booleanProbability } from "@genesiscz/utils/ai/evaluation/answers";
 import type { Evaluator } from "@genesiscz/utils/ai/evaluation/service";
 import { chooseByTournament } from "@genesiscz/utils/ai/evaluation/tournament";
 import { logger } from "@genesiscz/utils/logger";
@@ -22,11 +23,6 @@ export interface ObserveFanout {
     wait: number | null;
     risk: number | null;
     evaluation: Awaited<ReturnType<Evaluator>> | null;
-}
-
-function booleanProbability(evaluation: Awaited<ReturnType<Evaluator>> | null, id: string): number | null {
-    const answer = evaluation?.answers[id];
-    return answer?.type === "boolean" && Number.isFinite(answer.probability) ? answer.probability : null;
 }
 
 export interface ObserveFanoutOptions {
