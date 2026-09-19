@@ -48,7 +48,10 @@ export async function resolveProbablyInput(raw: string | undefined): Promise<Res
                 const text = await file.text();
 
                 if (raw.endsWith(".json") || raw.endsWith(".jsonc")) {
-                    const parsed = SafeJSON.parse(text) as unknown;
+                    // `.json` is RFC 8259 by name, so it is parsed strictly; `.jsonc` is the
+                    // extension that promises comments and trailing commas, and only it gets the
+                    // lenient reader. Both are files a caller names, not state this tool wrote.
+                    const parsed = SafeJSON.parse(text, raw.endsWith(".jsonc") ? {} : { strict: true }) as unknown;
 
                     if (parsed && typeof parsed === "object" && "input" in parsed) {
                         const value = (parsed as { input: unknown }).input;
@@ -74,7 +77,8 @@ export async function resolveProbablyInput(raw: string | undefined): Promise<Res
 
     if (raw.trimStart().startsWith("{")) {
         try {
-            const parsed = SafeJSON.parse(raw) as unknown;
+            // Typed on the command line by a caller, so an external boundary: strict.
+            const parsed = SafeJSON.parse(raw, { strict: true }) as unknown;
 
             if (parsed && typeof parsed === "object" && "input" in parsed) {
                 const value = (parsed as { input: unknown }).input;

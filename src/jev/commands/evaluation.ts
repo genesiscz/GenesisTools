@@ -195,7 +195,9 @@ async function runAction(name: string, options: RunOptions, root: Command, signa
     let replayInput: string | undefined;
 
     if (options.replay) {
-        const saved = SafeJSON.parse(await Bun.file(options.replay).text()) as Run;
+        // A path the caller names, so it is validated strictly even though this tool wrote the
+        // original: nothing guarantees the file on disk is still the one it produced.
+        const saved = SafeJSON.parse(await Bun.file(options.replay).text(), { strict: true }) as Run;
 
         if (saved.version !== 1 || !Array.isArray(saved.tape)) {
             throw new Error("Unsupported or invalid recording file.");
