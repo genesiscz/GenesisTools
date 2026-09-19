@@ -110,6 +110,7 @@ export type AIProviderType =
     | "deepgram"
     | "gladia"
     | "xai"
+    | "elevenlabs"
     | "macos";
 export type AITask = "transcribe" | "translate" | "summarize" | "classify" | "embed" | "sentiment" | "tts";
 
@@ -123,6 +124,7 @@ export const CLOUD_PROVIDER_TYPES: ReadonlySet<AIProviderType> = new Set([
     "deepgram",
     "gladia",
     "xai",
+    "elevenlabs",
 ]);
 
 export function isCloudProvider(type: AIProviderType): boolean {

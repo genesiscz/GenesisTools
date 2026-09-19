@@ -3,7 +3,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 
 // Canonical HTTP client for the dev-dashboard boards API — a thin fetch wrapper.
-// `src/claude/mcp/tools/boards/http.ts` is a deliberately separate client with a different
+// `src/genesis-tools-mcp/lib/tools/boards/http.ts` is a deliberately separate client with a different
 // contract: it throws BoardsHttpError on any non-2xx response and only parses 2xx bodies.
 // This client never throws on non-2xx — `watch.ts` depends on that to read the 409
 // ConflictBody — so the two are intentionally not unified.

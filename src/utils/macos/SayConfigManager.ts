@@ -3,7 +3,7 @@ import { dirname, join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { Storage } from "@genesiscz/utils/storage/storage.ts";
 
-export type SayProvider = "macos" | "xai" | "openai";
+export type SayProvider = "macos" | "xai" | "openai" | "elevenlabs";
 
 export interface SayAppConfig {
     name: string;

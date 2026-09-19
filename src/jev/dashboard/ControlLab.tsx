@@ -6,6 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@ui/components/card";
 import { CheckCheck, MousePointer2, Play, Square } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { api, errorMessage } from "./client";
+import { LivePolicyLab } from "./LivePolicyLab";
 import { ChooserLab, ResilienceLab } from "./ResilienceLab";
 import { VisualLab } from "./VisualLab";
 import { WaitLab } from "./WaitLab";
@@ -293,7 +294,7 @@ function TargetReplayLab() {
     );
 }
 
-const areas = ["Targets", "Waits", "Recovery", "Workflows", "Choosers", "Visual OCR"] as const;
+const areas = ["Targets", "Waits", "Recovery", "Workflows", "Choosers", "Visual OCR", "Live policy"] as const;
 export function ControlLab() {
     const [area, setArea] = useState<(typeof areas)[number]>("Targets");
     return (
@@ -315,8 +316,10 @@ export function ControlLab() {
                 <ResilienceLab key="workflow" kind="workflow" />
             ) : area === "Choosers" ? (
                 <ChooserLab />
-            ) : (
+            ) : area === "Visual OCR" ? (
                 <VisualLab />
+            ) : (
+                <LivePolicyLab />
             )}
         </div>
     );

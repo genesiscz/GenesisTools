@@ -83,12 +83,13 @@ function hasMutatingFlags(flags: ProfilingCliFlags): boolean {
 }
 
 async function defaultPromptScopes(): Promise<string[] | null> {
+    const options: Array<{ value: string; label: string }> = [
+        { value: "all", label: "all scopes" },
+        ...PROFILER_SCOPE_NAMES.map((name) => ({ value: name, label: name })),
+    ];
     const picked = await p.multiselect({
         message: "Profiler scopes (empty scopes means all)",
-        options: [
-            { value: "all", label: "all scopes" },
-            ...PROFILER_SCOPE_NAMES.map((name) => ({ value: name, label: name })),
-        ],
+        options,
         required: true,
     });
 
