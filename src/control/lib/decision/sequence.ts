@@ -1,4 +1,4 @@
-import { evaluationProviderSchema } from "@genesiscz/utils/ai/evaluation/types";
+import { DEFAULT_EVALUATION_PROVIDER, evaluationProviderSchema } from "@genesiscz/utils/ai/evaluation/types";
 import { logger } from "@genesiscz/utils/logger";
 import { Stopwatch } from "@genesiscz/utils/Stopwatch";
 import { z } from "zod";
@@ -25,7 +25,7 @@ export const nativeSequenceSchema = z
         restoreSelected: z.boolean().default(false),
         cursor: z.boolean().default(true),
         timeoutMs: z.number().int().min(1).max(120000).default(120000),
-        provider: evaluationProviderSchema.default("vercel"),
+        provider: evaluationProviderSchema.default(DEFAULT_EVALUATION_PROVIDER),
         jev: z.literal(true),
     })
     .strict();

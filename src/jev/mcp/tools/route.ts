@@ -1,6 +1,7 @@
 import { join } from "node:path";
 import { createEvaluator, type Evaluator } from "@genesiscz/utils/ai/evaluation/service";
 import type { EvaluationProviderId } from "@genesiscz/utils/ai/evaluation/types";
+import { DEFAULT_EVALUATION_PROVIDER } from "@genesiscz/utils/ai/evaluation/types";
 import { logger } from "@genesiscz/utils/logger";
 import { z } from "zod";
 import { loadCatalogue } from "../../lib/route/cache";
@@ -44,7 +45,8 @@ export function registerJevRouteTool(registry: JevMcpRegistry, deps: JevRouteDep
             const srcDir = input.src ?? deps.srcDir ?? defaultSrcDir();
             log.info({ srcDir, refresh: Boolean(input.refresh) }, "jev_route called over MCP");
             const loaded = await loadCatalogue({ srcDir, refresh: input.refresh });
-            const evaluate = deps.evaluate ?? (await createEvaluator({ provider: deps.provider ?? "vercel" }));
+            const evaluate =
+                deps.evaluate ?? (await createEvaluator({ provider: deps.provider ?? DEFAULT_EVALUATION_PROVIDER }));
             const decision = await routeUtterance({
                 utterance: input.utterance,
                 catalogue: loaded.catalogue,

@@ -5,6 +5,12 @@ import Foundation
 import SnapshotSupport
 import Vision
 
+// Recursive search by AXIdentifier. Returns first match.
+//
+// Capped like every other walker here (collectElements 15, buildTree 10, the ancestor climbs 50).
+// One nested NSBox is one accessibility level and Electron trees go past 15, so the cap is the
+// climbs' 50: deep enough for anything real, and a pathological tree ends instead of walking
+// every node for the whole 10 s the caller allows.
 func findByIdentifier(_ root: AXUIElement, id: String, maxDepth: Int = 50, depth: Int = 0) -> AXUIElement? {
     if axStringAttribute(root, "AXIdentifier") == id {
         return root

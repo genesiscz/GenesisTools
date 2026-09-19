@@ -1,3 +1,4 @@
+import { DEFAULT_EVALUATION_PROVIDER } from "@genesiscz/utils/ai/evaluation/types";
 import { z } from "zod";
 import { chooserModeSchema, hostDecisionSchema } from "../decision/chooser";
 import { exactExpectationSchema } from "../decision/decisions";
@@ -37,7 +38,7 @@ export const computerSchemas = {
             scope: z.enum(["window", "chrome"]).default("window"),
             chooser: chooserModeSchema.default("exact"),
             jev: z.boolean().default(false),
-            provider: z.enum(["vercel", "typesafe"]).default("vercel"),
+            provider: z.enum(["vercel", "typesafe"]).default(DEFAULT_EVALUATION_PROVIDER),
             recovery: recoveryOptionsSchema.prefault({}),
             max_requests: z.number().int().min(0).max(100).default(20),
             max_steps: z.number().int().min(1).max(50).default(8),
@@ -57,7 +58,7 @@ export const computerSchemas = {
             expected_url: z.string().url().max(4096).optional(),
             rebind: z.boolean().default(false),
             jev: z.boolean().default(false),
-            provider: z.enum(["vercel", "typesafe"]).default("vercel"),
+            provider: z.enum(["vercel", "typesafe"]).default(DEFAULT_EVALUATION_PROVIDER),
             max_requests: z.number().int().min(0).max(100).default(30),
             max_steps: z.number().int().min(1).max(50).default(20),
             timeout_ms: z.number().int().min(1).max(120000).default(120000),
@@ -72,7 +73,7 @@ export const computerSchemas = {
             expected_url: z.string().url().max(4096).optional(),
             scope: z.enum(["window", "chrome"]).default("window"),
             jev: z.literal(true),
-            provider: z.enum(["vercel", "typesafe"]).default("vercel"),
+            provider: z.enum(["vercel", "typesafe"]).default(DEFAULT_EVALUATION_PROVIDER),
             max_requests: z.number().int().min(1).max(20).default(20),
             max_fields: z.number().int().min(1).max(20).default(20),
             timeout_ms: z.number().int().min(1).max(120000).default(60000),
@@ -219,7 +220,7 @@ export const computerSchemas = {
             ...common,
             intent: z.string().min(1).max(4000),
             chooser: z.enum(["exact", "jev", "auto"]).default("exact"),
-            provider: z.enum(["vercel", "typesafe"]).default("vercel"),
+            provider: z.enum(["vercel", "typesafe"]).default(DEFAULT_EVALUATION_PROVIDER),
         })
         .strict(),
     resolve_target: z
@@ -233,7 +234,7 @@ export const computerSchemas = {
             within_ref: z.string().max(100).optional(),
             query: z.string().trim().min(1).max(300).optional(),
             role: z.string().min(1).max(100).optional(),
-            provider: z.enum(["vercel", "typesafe"]).default("vercel"),
+            provider: z.enum(["vercel", "typesafe"]).default(DEFAULT_EVALUATION_PROVIDER),
         })
         .strict(),
     await_condition: z
@@ -244,7 +245,7 @@ export const computerSchemas = {
             exact: exactExpectationSchema.optional(),
             expected_url: z.string().url().max(4096).optional(),
             jev: z.boolean().default(false),
-            provider: z.enum(["vercel", "typesafe"]).default("vercel"),
+            provider: z.enum(["vercel", "typesafe"]).default(DEFAULT_EVALUATION_PROVIDER),
             max_requests: z.number().int().min(0).max(50).default(12),
         })
         .strict()
@@ -255,7 +256,7 @@ export const computerSchemas = {
             expect: z.string().min(1).max(4000),
             exact: exactExpectationSchema.optional(),
             jev: z.boolean().default(false),
-            provider: z.enum(["vercel", "typesafe"]).default("vercel"),
+            provider: z.enum(["vercel", "typesafe"]).default(DEFAULT_EVALUATION_PROVIDER),
         })
         .strict(),
     close_session: z.object({ app: appSchema.optional() }).strict(),

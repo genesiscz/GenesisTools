@@ -1,4 +1,4 @@
-import { NativeControlDriver } from "@app/control/lib/decision/native";
+import { NativeControlDriver, parseSeeDepth } from "@app/control/lib/decision/native";
 import { selectedProvider } from "@genesiscz/utils/ai/evaluation/cli";
 import { createEvaluator } from "@genesiscz/utils/ai/evaluation/service";
 import { ui } from "@genesiscz/utils/cli/ui";
@@ -109,7 +109,7 @@ async function runLoop(program: Command, options: LoopOptions): Promise<void> {
                       windowIndex: options.windowId ? undefined : Number(options.windowIndex ?? 0),
                       prepare: options.prepare === true,
                       expectedURL: options.expectedUrl,
-                      depth: options.depth ? Number(options.depth) : undefined,
+                      depth: parseSeeDepth(options.depth),
                   })
               )
             : undefined;

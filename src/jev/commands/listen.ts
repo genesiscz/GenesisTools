@@ -4,7 +4,7 @@ import {
     isBrowserApp,
     switchableApps,
 } from "@app/control/lib/decision/frontmost";
-import { NativeControlDriver } from "@app/control/lib/decision/native";
+import { NativeControlDriver, parseSeeDepth } from "@app/control/lib/decision/native";
 import { selectedProvider } from "@genesiscz/utils/ai/evaluation/cli";
 import { createEvaluator } from "@genesiscz/utils/ai/evaluation/service";
 import { savedJevSettings } from "@genesiscz/utils/ai/evaluation/settings";
@@ -261,7 +261,7 @@ async function runListen(program: Command, options: ListenOptions): Promise<void
                     scope: scope === "auto" ? "window" : scope,
                     prepare: options.prepare === true,
                     expectedURL: options.expectedUrl,
-                    depth: options.depth ? Number(options.depth) : undefined,
+                    depth: parseSeeDepth(options.depth),
                 }),
                 menus: menus ? createMenuCandidates(bound.app, controller.signal) : undefined,
             });

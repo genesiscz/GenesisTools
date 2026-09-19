@@ -11,7 +11,11 @@ import { VisualCaptureStore } from "@app/control/lib/decision/visual-store";
 import { replayWait, waitCases } from "@app/control/lib/decision/wait-replay";
 import { parseCustomTemplates } from "@app/jev/lib/screen/custom";
 import { COMPACT_SOURCES, type CompactResult, compactSession, formatDecisionTable } from "@genesiscz/utils/ai/compact";
-import { type EvaluationProviderId, evaluationProviderSchema } from "@genesiscz/utils/ai/evaluation/types";
+import {
+    DEFAULT_EVALUATION_PROVIDER,
+    type EvaluationProviderId,
+    evaluationProviderSchema,
+} from "@genesiscz/utils/ai/evaluation/types";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { profiler } from "@genesiscz/utils/profile";
@@ -309,7 +313,9 @@ export function jevApiPlugin(): Plugin {
                 let requestBytes = 0;
                 let responseBytes = 0;
                 const handle = async () => {
-                    const provider = evaluationProviderSchema.parse(req.headers["x-jev-provider"] ?? "vercel");
+                    const provider = evaluationProviderSchema.parse(
+                        req.headers["x-jev-provider"] ?? DEFAULT_EVALUATION_PROVIDER
+                    );
                     log.debug({ route, method: req.method }, "Jev dashboard API request");
                     if (req.method === "GET" && route === "/control/visual/image") {
                         const id = new URL(req.url ?? "", "http://localhost").searchParams.get("id") ?? "";

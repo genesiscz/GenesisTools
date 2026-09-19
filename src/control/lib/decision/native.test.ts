@@ -62,7 +62,7 @@ describe("see depth escalation", () => {
                 }) as AxResult,
         });
 
-        expect(driver.observe({})).rejects.toThrow(/exceeds --depth 50/);
+        await expect(driver.observe({})).rejects.toThrow(/exceeds --depth 50/);
     });
 
     test("overflowsObservation names only the too-large-to-observe refusals", () => {
@@ -101,6 +101,6 @@ describe("see depth escalation", () => {
             scope: "chrome",
             run: async () => ({ ok: false, error: "AX tree exceeds 4000 elements; snapshot refused" }) as AxResult,
         });
-        expect(stubborn.observe({})).rejects.toThrow(/exceeds 4000 elements/);
+        await expect(stubborn.observe({})).rejects.toThrow(/exceeds 4000 elements/);
     });
 });

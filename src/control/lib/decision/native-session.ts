@@ -1,6 +1,7 @@
 import type { Evaluator } from "@genesiscz/utils/ai/evaluation/service";
 import { createEvaluator } from "@genesiscz/utils/ai/evaluation/service";
 import type { EvaluationProviderId } from "@genesiscz/utils/ai/evaluation/types";
+import { DEFAULT_EVALUATION_PROVIDER } from "@genesiscz/utils/ai/evaluation/types";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { JsonLineProcess, type JsonLineTransport } from "@genesiscz/utils/process/json-line-process";
@@ -112,7 +113,7 @@ export class NativeControlSession {
         const observed = this.observation;
         this.evaluate ??= this.options.evaluate
             ? Promise.resolve(this.options.evaluate)
-            : createEvaluator({ provider: this.options.provider ?? "vercel" });
+            : createEvaluator({ provider: this.options.provider ?? DEFAULT_EVALUATION_PROVIDER });
         const result = await (await this.evaluate)({
             input: {
                 state: {

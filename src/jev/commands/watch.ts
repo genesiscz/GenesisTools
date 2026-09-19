@@ -1,4 +1,4 @@
-import { NativeControlDriver } from "@app/control/lib/decision/native";
+import { NativeControlDriver, parseSeeDepth } from "@app/control/lib/decision/native";
 import { NativeVisualDriver } from "@app/control/lib/decision/visual";
 import { selectedProvider } from "@genesiscz/utils/ai/evaluation/cli";
 import { createEvaluator } from "@genesiscz/utils/ai/evaluation/service";
@@ -81,7 +81,7 @@ async function runWatchCommand(program: Command, options: WatchOptions): Promise
                 windowId,
                 windowIndex: windowId === undefined ? Number(options.windowIndex ?? 0) : undefined,
                 expectedURL: options.expectedUrl,
-                depth: options.depth ? Number(options.depth) : undefined,
+                depth: parseSeeDepth(options.depth),
             }),
         });
         ui.info(`${result.status} ${result.reason} after ${result.ticks} ticks (${result.observes} observes)`);

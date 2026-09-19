@@ -36,6 +36,28 @@ const PREPARABLE_ACTIONS = new Set(["press", "click", "key", "type", "paste", "s
 export const MAX_SEE_DEPTH = 50;
 
 /**
+ * Read a `--depth` operand, or refuse it by name.
+ *
+ * Three jev commands each did `options.depth ? Number(options.depth) : undefined`, so
+ * `--depth abc` became NaN and reached ax-tool as the literal `--depth NaN`, while `--depth 999`
+ * sailed past the documented ceiling. Parsing it once here, beside the ceiling it has to
+ * respect, is the root fix rather than three edge fixes.
+ */
+export function parseSeeDepth(raw: string | undefined): number | undefined {
+    if (raw === undefined || raw === "") {
+        return undefined;
+    }
+
+    const depth = Number(raw);
+
+    if (!Number.isInteger(depth) || depth < 1 || depth > MAX_SEE_DEPTH) {
+        throw new Error(`--depth must be a whole number from 1 to ${MAX_SEE_DEPTH}, not "${raw}".`);
+    }
+
+    return depth;
+}
+
+/**
  * ax-tool refuses a too-shallow snapshot rather than truncating it, so a deeply nested app
  * (Electron, a web view) fails the first `see`. Read the refused depth back out of the message
  * and name the next one to try; `null` means the ceiling is already reached.

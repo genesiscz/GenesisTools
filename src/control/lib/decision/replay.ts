@@ -1,6 +1,7 @@
 import { evaluationSchema } from "@genesiscz/utils/ai/evaluation/evaluate";
 import { type EvaluationResponse, type Evaluator, evaluateRequest } from "@genesiscz/utils/ai/evaluation/service";
 import type { EvaluationProviderId } from "@genesiscz/utils/ai/evaluation/types";
+import { DEFAULT_EVALUATION_PROVIDER } from "@genesiscz/utils/ai/evaluation/types";
 import { Stopwatch } from "@genesiscz/utils/Stopwatch";
 import { z } from "zod";
 import { judgeOutcome, resolveIntent } from "./decisions";
@@ -102,7 +103,7 @@ export async function replayControl(options: {
     return {
         fixtureId: fixture.id,
         chooser,
-        provider: chooser === "jev" ? (options.provider ?? "vercel") : null,
+        provider: chooser === "jev" ? (options.provider ?? DEFAULT_EVALUATION_PROVIDER) : null,
         resolution,
         judgment,
         expected: { element: fixture.expectedElement, outcome: fixture.expectedOutcome },

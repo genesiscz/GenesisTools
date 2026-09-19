@@ -1,5 +1,6 @@
 import { createEvaluator, type EvaluationResponse, type Evaluator } from "@genesiscz/utils/ai/evaluation/service";
 import type { EvaluationProviderId } from "@genesiscz/utils/ai/evaluation/types";
+import { DEFAULT_EVALUATION_PROVIDER } from "@genesiscz/utils/ai/evaluation/types";
 import { OperationBudget } from "@genesiscz/utils/operation-budget";
 import { z } from "zod";
 import { type CalibrationRow, calibrationPolicies, calibrationReport } from "./calibration";
@@ -200,7 +201,7 @@ export async function compareChoosers(options: {
     }
     return {
         mode: "decision-only" as const,
-        provider: input.jev ? (options.provider ?? "vercel") : null,
+        provider: input.jev ? (options.provider ?? DEFAULT_EVALUATION_PROVIDER) : null,
         rows,
         summary: modes.map((mode) => {
             const sample = rows.filter((row) => row.mode === mode);

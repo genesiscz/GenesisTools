@@ -72,10 +72,3 @@ func cmdAudit() {
                 "responsible": genesisAppBundleId() ?? "not GenesisTools.app",
                 "note": "manualAccessibility on = an assistive client asked the app to build its AX tree; tools control sets it on every --app resolution and never clears it. enhancedUserInterface is never set by tools control."])
 }
-
-// Recursive search by AXIdentifier. Returns first match.
-//
-// Capped like every other walker here (collectElements 15, buildTree 10, the ancestor climbs 50).
-// One nested NSBox is one accessibility level and Electron trees go past 15, so the cap is the
-// climbs' 50: deep enough for anything real, and a pathological tree ends instead of walking
-// every node for the whole 10 s the caller allows.

@@ -1,4 +1,5 @@
 import { createEvaluator, type Evaluator } from "@genesiscz/utils/ai/evaluation/service";
+import { DEFAULT_EVALUATION_PROVIDER } from "@genesiscz/utils/ai/evaluation/types";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { profiler } from "@genesiscz/utils/profile";
@@ -51,7 +52,7 @@ function sharedEvaluator(deps: JevRouteDeps): Evaluator {
                 return deps.evaluate(call);
             }
 
-            shared ??= createEvaluator({ provider: deps.provider ?? "vercel" });
+            shared ??= createEvaluator({ provider: deps.provider ?? DEFAULT_EVALUATION_PROVIDER });
             return (await shared)(call);
         });
 }
