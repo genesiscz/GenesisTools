@@ -6,6 +6,7 @@ import { logger, out } from "@genesiscz/utils/logger";
 import { classifyPid, readProcessCommand } from "@genesiscz/utils/process-identity";
 import type { Command } from "commander";
 import pc from "picocolors";
+import { attachSemanticPlan } from "../lib/decision/workflow";
 import { ensureBinary, RECORD_DIR, RECORD_SESSION, recordSource } from "../lib/runner";
 
 const COMMANDS_LOG = join(RECORD_DIR, "commands.jsonl");
@@ -83,7 +84,8 @@ function readSession(): SessionState | null {
     }
     try {
         return SafeJSON.parse(readFileSync(RECORD_SESSION, "utf-8")) as SessionState;
-    } catch {
+    } catch (error) {
+        logger.debug({ error, path: RECORD_SESSION }, "record-plan: session file could not be read");
         return null;
     }
 }
@@ -93,15 +95,15 @@ function readJsonl<T>(path: string): T[] {
         return [];
     }
     const items: T[] = [];
-    for (const line of readFileSync(path, "utf-8").split("\n")) {
+    for (const [lineNumber, line] of readFileSync(path, "utf-8").split("\n").entries()) {
         const trimmed = line.trim();
         if (!trimmed) {
             continue;
         }
         try {
             items.push(SafeJSON.parse(trimmed) as T);
-        } catch {
-            // skip partial trailing line
+        } catch (error) {
+            logger.debug({ error, path, lineNumber: lineNumber + 1 }, "record-plan: ignored incomplete JSONL line");
         }
     }
     return items;
@@ -430,13 +432,17 @@ export function registerRecordPlanCommand(program: Command): void {
         .option("--record <mode>", "commands | activity | all", "all")
         .option("--duration <s>", "one-shot: record activity for N seconds, then emit the plan")
         .option("--out <path>", "write plan JSON to this file (default: stdout)")
+        .option(
+            "--semantic <metadata-json>",
+            "Stop: attach validated semantic metadata and replace inline values with references"
+        )
         .option("--app <name>", "force the plan-level app instead of the most frequent")
         .option(
             "--exclude-foreign",
             "stop: drop commands recorded from OTHER terminals/sessions instead of marking them _foreign"
         )
         .option("--json", "machine output for start/status/stop metadata")
-        .action((action: string | undefined, opts) => {
+        .action(async (action: string | undefined, opts) => {
             const mode = String(opts.record) as SessionState["mode"];
             if (!["commands", "activity", "all"].includes(mode)) {
                 logger.error(`--record must be commands|activity|all, got: ${mode}`);
@@ -473,24 +479,32 @@ export function registerRecordPlanCommand(program: Command): void {
                 return session;
             };
 
-            const doStop = (): void => {
+            const doStop = async (): Promise<void> => {
                 const session = readSession();
                 if (!session) {
                     logger.error("no active recording — run: control record-plan start");
                     process.exit(1);
                 }
                 stopActivityRecorder(session);
-                Bun.sleepSync(150);
+                await Bun.sleep(150);
                 const { plan, foreignCount } = synthesizePlan(session, opts.app, !!opts.excludeForeign);
+                const outputPlan = opts.semantic
+                    ? attachSemanticPlan({
+                          legacy: plan,
+                          semantic: SafeJSON.parse(readFileSync(String(opts.semantic), "utf8")),
+                      })
+                    : plan;
+                const planJson = SafeJSON.stringify(outputPlan, null, 2);
                 unlinkSync(RECORD_SESSION);
-                const planJson = SafeJSON.stringify(plan, null, 2);
                 const stepCount = (plan.steps as unknown[]).length;
                 if (opts.out) {
                     writeFileSync(opts.out, `${planJson}\n`);
                     out.println(
                         `${pc.green("plan written")} ${pc.cyan(opts.out)} — ${stepCount} steps (mode=${session.mode})`
                     );
-                    out.println(pc.dim(`review it, then: tools control run ${opts.out}`));
+                    out.println(
+                        pc.dim(`review it, then: tools control ${opts.semantic ? "replay-plan" : "run"} ${opts.out}`)
+                    );
                 } else {
                     out.println(planJson);
                 }
@@ -521,7 +535,7 @@ export function registerRecordPlanCommand(program: Command): void {
                 return;
             }
             if (action === "stop") {
-                doStop();
+                await doStop();
                 return;
             }
             if (action === "status") {
@@ -568,11 +582,16 @@ export function registerRecordPlanCommand(program: Command): void {
                 return;
             }
             if (!action && opts.duration) {
-                doStart();
                 const secs = Number(opts.duration);
+                if (!Number.isFinite(secs) || secs <= 0 || secs > 3600) {
+                    logger.error("--duration must be greater than 0 and no more than 3600 seconds");
+                    process.exitCode = 1;
+                    return;
+                }
+                doStart();
                 out.println(`${pc.green("recording")} for ${secs}s (mode=${mode}) — go do the thing...`);
-                Bun.sleepSync(secs * 1000 + 300);
-                doStop();
+                await Bun.sleep(secs * 1000 + 300);
+                await doStop();
                 return;
             }
             logger.error(

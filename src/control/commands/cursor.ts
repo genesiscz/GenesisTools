@@ -3,6 +3,8 @@ import { logger, out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
 import { type ClickSoftwareCursorOptions, clickSoftwareCursor, loadCursor, moveSoftwareCursor } from "../lib/cursor";
 
+import { runAx } from "../lib/runner";
+
 const BUTTONS = ["left", "right", "middle"] as const;
 
 interface CursorMoveOptions {
@@ -27,6 +29,25 @@ export function registerCursorCommands(program: Command): void {
     const cursor = program
         .command("cursor")
         .description("Named software cursors for window-addressed macOS events; never moves the hardware pointer");
+
+    cursor
+        .command("preview")
+        .description("Preview animated feedback at a global screen point without sending any input")
+        .requiredOption("--coords <x,y>", "Global logical screen point, including negative display origins")
+        .action((options: { coords: string }) => {
+            const result = runAx(["cursor-feedback", "--preview", "--coords", options.coords]);
+            out.result(result);
+            process.exitCode = result.ok ? 0 : 1;
+        });
+
+    cursor
+        .command("hide")
+        .description("Hide the animated feedback overlay; leave all pointers untouched")
+        .action(() => {
+            const result = runAx(["cursor-feedback", "--hide"]);
+            out.result(result);
+            process.exitCode = result.ok ? 0 : 1;
+        });
 
     cursor
         .command("move")

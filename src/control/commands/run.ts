@@ -314,11 +314,17 @@ export function registerRunCommand(program: Command): void {
                 delayMs?: number;
                 exact?: boolean;
                 capture?: Record<string, unknown>;
+                semantic?: unknown;
                 stopOnFail?: boolean;
                 actions?: Array<Record<string, unknown>>;
                 steps?: Array<Record<string, unknown>>;
             };
 
+            if (plan.semantic !== undefined) {
+                throw new Error(
+                    "Semantic plans require tools control replay-plan; legacy run cannot ignore their postconditions."
+                );
+            }
             const steps = plan.steps ?? plan.actions ?? [];
 
             if (!steps.length) {

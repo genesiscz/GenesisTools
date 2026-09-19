@@ -1,6 +1,6 @@
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
-import { classifyPid } from "@genesiscz/utils/process-identity";
+import { isProcessAlive } from "@genesiscz/utils/process-alive";
 import type { Command } from "commander";
 import pc from "picocolors";
 import { runAx } from "../lib/runner";
@@ -14,27 +14,21 @@ import { addTargetOptions, targetArgs, targetLabel } from "../lib/target";
  * human had focused. The SKILL already claimed "an invalid pid is rejected
  * rather than downgraded to the global tap"; this makes that true.
  *
- * The pid comes from a human on the command line, so it is classified rather than probed:
- * `classifyPid` answers "dead" only for a pid nothing is using, and reports a live process we
- * do not own as `unverified` rather than refusing it. A process we cannot signal is still a
- * real window to type into, which is why EPERM must not read as absent.
+ * The shared liveness helper signals nothing and only asks whether the process
+ * exists: EPERM means it exists and is not ours, which is still a real target.
  */
 export function validateToPid(toPid: string | undefined): string | null {
     if (toPid == null) {
         return null;
     }
 
-    const pid = Number.parseInt(String(toPid), 10);
+    const pid = Number(toPid);
 
-    if (!Number.isInteger(pid) || pid <= 0) {
+    if (!/^\d+$/.test(toPid) || !Number.isSafeInteger(pid) || pid <= 0 || pid > 2147483647) {
         return `--to-pid ${toPid} is not a process id. No event was posted.`;
     }
 
-    if (classifyPid(pid).status === "dead") {
-        return `--to-pid ${pid} names no running process. No event was posted.`;
-    }
-
-    return null;
+    return isProcessAlive(pid) ? null : `--to-pid ${pid} names no running process. No event was posted.`;
 }
 
 /**

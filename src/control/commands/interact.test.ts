@@ -32,6 +32,9 @@ describe("validateToPid", () => {
             ["negative", "-1"],
             ["fractional", "12.5"],
             ["empty", ""],
+            ["live pid with fractional suffix", `${process.pid}.5`],
+            ["live pid with text suffix", `${process.pid}oops`],
+            ["outside native pid range", "2147483648"],
         ])("%s", (_label, value) => {
             expect(validateToPid(value)).toContain("No event was posted");
         });
@@ -43,9 +46,8 @@ describe("validateToPid", () => {
         });
 
         test("pid 1 (launchd): it exists and is not ours, which EPERM must not reject", () => {
-            // A non-root caller cannot signal launchd, so a bare liveness probe reports EPERM
-            // there. Reading that as "no such process" would refuse every send to another
-            // user's app; classifyPid says "unverified", not "dead", which is the distinction.
+            // A signal-zero probe of PID 1 throws EPERM for a non-root caller. Treating that
+            // as "no such process" would refuse every send to another user's app.
             expect(validateToPid("1")).toBeNull();
         });
     });

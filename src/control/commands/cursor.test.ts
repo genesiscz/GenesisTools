@@ -9,7 +9,7 @@ test("cursor commands expose move show and window addressed click options", () =
 
     const cursor = program.commands.find((command) => command.name() === "cursor");
     expect(cursor).toBeDefined();
-    expect(cursor?.commands.map((command) => command.name())).toEqual(["move", "show", "click"]);
+    expect(cursor?.commands.map((command) => command.name())).toEqual(["preview", "hide", "move", "show", "click"]);
 
     const move = cursor?.commands.find((command) => command.name() === "move");
     expect(move?.options.filter((option) => option.mandatory).map((option) => option.long)).toEqual([
