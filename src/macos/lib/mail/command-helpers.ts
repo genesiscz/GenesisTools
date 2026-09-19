@@ -280,7 +280,6 @@ export function isStructuredFormat(format: string | undefined): boolean {
  * whatever the main branch happened to encode with. `toToon` is the same encoder, in process.
  */
 export async function printStructured(data: unknown, format: string): Promise<void> {
-    const jsonStr = typeof data === "string" ? data : SafeJSON.stringify(data, null, 2);
     if (format === "toon") {
         try {
             await printLn(toToon(typeof data === "string" ? SafeJSON.parse(data) : data));
@@ -290,7 +289,7 @@ export async function printStructured(data: unknown, format: string): Promise<vo
         }
     }
 
-    await printLn(jsonStr);
+    await printLn(typeof data === "string" ? data : SafeJSON.stringify(data, null, 2));
 }
 
 export async function outputFormattedResults({

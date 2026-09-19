@@ -380,8 +380,9 @@ indistinguishable from no click at all.
 ## Spawning a tool vs calling its library
 
 Audited 2026-09-19 across the whole repo: 32 places start a GenesisTools entry point as a child
-process. 28 are correct and 3 were not, so the default is NOT "a spawn is waste" — but the three
-that were wrong each had an exported function one import away, and one of them was a live bug.
+process. 28 are correct, 3 were not, and the 32nd is a launcher inconsistency in the interactive
+picker rather than a spawn-or-call question. So the default is NOT "a spawn is waste" — but the
+three that were wrong each had an exported function one import away, and one was a live bug.
 
 **Spawn when:**
 
