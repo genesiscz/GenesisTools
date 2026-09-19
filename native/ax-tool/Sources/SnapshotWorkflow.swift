@@ -500,6 +500,26 @@ private func workflowAXAction(_ element: AXUIElement, action: String) {
     }
 }
 
+/// Raise the window for a prepared action. Some apps (Calculator on macOS 26 answers AXRaise with
+/// AX -25205) refuse the action although activation already made the window frontmost and main.
+/// That state is accepted only when it is observable on the window itself; anything else stays an
+/// uncertain outcome, never a synthetic success.
+private func workflowRaise(_ window: ObservedWindow) {
+    guard axActionNames(window.ax).contains("AXRaise") else {
+        workflowFailure("element does not expose AXRaise; inspect actions in a fresh see result")
+    }
+    AXUIElementSetMessagingTimeout(window.ax, 3)
+    let result = AXUIElementPerformAction(window.ax, "AXRaise" as CFString)
+    if result == .success {
+        return
+    }
+    let isMain = (axAttribute(window.ax, "AXMain") as? NSNumber)?.boolValue == true
+    let isFocused = (axAttribute(window.ax, "AXFocused") as? NSNumber)?.boolValue == true
+    guard isMain || isFocused else {
+        workflowFailure("AXRaise failed or timed out (AX \(result.rawValue)) and the window is not main; outcome may be uncertain, inspect before retrying")
+    }
+}
+
 private func workflowFocus(_ window: ObservedWindow, pid: pid_t, element: AXUIElement) {
         guard bringFrontmost(pid) else {
             workflowFailure("app activation failed")
@@ -509,7 +529,7 @@ private func workflowFocus(_ window: ObservedWindow, pid: pid_t, element: AXUIEl
             CFGetTypeID($0) == AXUIElementGetTypeID() && CFEqual($0, window.ax)
         } == true
         if !alreadyFocused {
-            workflowAXAction(window.ax, action: "AXRaise")
+            workflowRaise(window)
         }
         var mainSettable = DarwinBoolean(false)
         if AXUIElementIsAttributeSettable(window.ax, kAXMainAttribute as CFString, &mainSettable) == .success,

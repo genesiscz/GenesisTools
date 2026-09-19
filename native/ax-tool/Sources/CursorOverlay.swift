@@ -490,6 +490,32 @@ func runCursorFeedbackCommand() {
         jsonOutput(["ok":true, "action":"cursor-hide"])
         return
     }
+    // Draws the overlay for one act that a caller performed itself, such as a browser click
+    // dispatched over the Chrome DevTools Protocol. The hardware pointer never moves; this is
+    // feedback for a watching human and proves nothing about the act.
+    if args.contains("--emit") {
+        guard let verb = argValue("--action") else { errorExit("cursor-feedback --emit requires --action") }
+        var point: CGPoint?
+        if let at = argValue("--at") {
+            let parts = at.split(separator: ",")
+            guard parts.count == 2, let x = Double(parts[0].trimmingCharacters(in: .whitespaces)),
+                  let y = Double(parts[1].trimmingCharacters(in: .whitespaces)),
+                  x.isFinite, y.isFinite, abs(x) < 100000, abs(y) < 100000 else {
+                errorExit("cursor-feedback --at must be finite global screen points x,y")
+            }
+            point = CGPoint(x: x, y: y)
+        }
+        guard let action = CursorFeedbackEvent.semantic(verb) else {
+            errorExit("cursor-feedback --emit does not know the verb \(verb)")
+        }
+        let target = argValue("--target") ?? "ax"
+        guard ["ax", "pixel", "desktop"].contains(target) else {
+            errorExit("cursor-feedback --target must be ax, pixel or desktop")
+        }
+        ActionCursor.emit(verb, point: point, background: args.contains("--background"), target: target)
+        jsonOutput(["ok": true, "action": action, "overlay": true, "inputDispatched": false])
+        return
+    }
     if args.contains("--preview") {
         guard let raw = argValue("--coords") else { errorExit("cursor preview requires --coords x,y") }
         let values = raw.split(separator: ",", omittingEmptySubsequences: false).compactMap { Double($0) }
@@ -509,7 +535,7 @@ func runCursorFeedbackCommand() {
     }
     guard args.contains("--server"), let raw = argValue("--initial"),
           let data = Data(base64Encoded: raw), data.count <= 4096 else {
-        errorExit("cursor-feedback requires --hide or an internal server payload")
+        errorExit("cursor-feedback requires --hide, --emit, --preview, or an internal server payload")
     }
     do {
         let event = try JSONDecoder().decode(CursorFeedbackEvent.self, from: data)
