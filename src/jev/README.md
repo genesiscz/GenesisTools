@@ -223,7 +223,11 @@ and [AI Gateway keys](https://vercel.com/docs/ai-gateway/authentication-and-byok
 
 ## Providers
 
-Every paid Jev command accepts `--provider vercel|typesafe` (default: Vercel). The dashboard provider selector applies to the playground, editor, compiler experiment, fly arena and Control Lab.
+Every paid Jev command accepts `--provider typesafe|vercel` (default: **typesafe**). The Vercel AI
+Gateway answers `Service temporarily unavailable` often enough to lose whole utterances of a live
+listen session (seven in one 39-second run on 2026-09-19), which is why it is no longer the
+default; `--provider vercel` still selects it. The dashboard provider selector applies to the
+playground, editor, compiler experiment, fly arena and Control Lab.
 
 ```sh
 tools jev login --provider typesafe
@@ -237,9 +241,239 @@ Both providers share boolean/choice/score results, cancellation and zero automat
 
 Reusable provider implementations, schema and credential access live in `src/utils/ai/evaluation/`. No model weights are downloaded by either remote provider.
 
+## Live policy (on top of Control Lab)
+
+These verbs keep Jev a decision workbench: it picks a command, a tool result to keep, or one
+observed `see`/`act` target. It never generates chat. Every verb shares three rules: `ok: true`
+means dispatched (never "the goal happened"), an act needs fresh observed evidence, and the
+admission thresholds (`minProbability` 0.8, `minMargin` 0.15, `minConfidence` 0.7) never move.
+
+| Verb | What it does |
+|---|---|
+| `listen` | Live speech → Jev choice over the observed actions of one app (`--scope window\|chrome`, `--menus`) → native press, a menu click, or a chrome verb through chrome-devtools. `--wake-mode off\|contains\|jev`, `--continuous`, `--dispatch-ahead`, `--capsule on\|off`, `--dry-run`. See the flag list below. |
+| `wake status\|enable\|disable\|test` | The wake-phrase marker `listen` reads. Never opens a microphone. |
+| `route [utterance]` | Picks a GenesisTools command from an introspected catalogue and binds argv from utterance spans. `--run` executes (destructive routes need `--yes`), `--plan` splits on "then", `--suggest` ranks, `--zsh` prints a widget. |
+| `compact [file]` | Keeps, truncates or drops tool results (never user or assistant text); `--llm` lets Jev overrule the heuristic, `--summaries` adds Jev-gated summaries. See below. |
+| `verify` / `screen` | Per-claim `supported`/`contradicted`/`sensitive` plus purpose templates over a document, a directory or a diff. `--sarif`, `--gate` (exit 2), `--only-changed`, `--custom`. |
+| `loop` | Goal-driven see/act loop; `--surface ax\|browser\|auto`. The browser surface acts on one CDP page (`--page-url` or `--page-index`) by snapshot uid only. Jev decides every step. |
+| `watch` | Bounded high-Hz policy on one window (`--hz`, `--max-seconds`, `--max-requests`); `--ocr` adds native OCR text to the state. |
+| `mcp` | Read-only stdio MCP server: `jev_route`, `jev_compact`, `jev_verify`, `jev_verify_templates`. |
+| `control observe` / `control assist` | One `see`, six questions in one request (target, verb, done, blocked, wait, risk); assist runs the fan-out by default with the double-toggle, recovery and no-change guards; `--no-fanout` restores the serial chooser. |
+
+```sh
+tools jev listen --stt deepgram --pcm-in mic --app Calculator --wake-mode contains
+tools jev listen --stt fixture --transcript session.jsonl --app Calculator --dry-run
+tools jev route "show unresolved review threads on PR 409"
+tools jev route "list tmux sessions" --run
+tools jev compact session.jsonl --table
+tools jev verify --claims claims.json --against notes.md --purpose pii-names,secrets --gate
+tools jev screen src/jev/lib --purpose secrets --max-files 20
+tools jev loop --surface auto --app Calculator --page-url 127.0.0.1:3990 --goal "press the number 7"
+tools jev watch --app Calculator --goal "the display shows 77" --hz 4 --max-seconds 10 --ocr
+tools jev wake enable --word "hey jev,hey jeff" --mode contains --stt deepgram
+```
+
+Saved defaults live in `tools jev config` (`show`, `set <key> <value>`, `unset <key>`), stored
+beside the credentials in `~/.genesis-tools/jev/config.json`. The keys are `provider`, `scope`,
+`menus`, `stt`, `language`, `gate` and `maxSeconds`; a flag always wins over a saved value, and a
+saved value always wins over the built-in default.
+
+`tools jev listen` needs no target flags. Without `--app` the target **follows the focused
+window**: before every utterance it asks the WindowServer which application is frontmost, and
+that is the app the utterance controls. Speaking to the app you are looking at therefore needs no
+flag and no restart, and switching apps mid-session just works; the change is announced as
+`target <app> (focus)` and logged as `listen target followed focus`.
+
+Only when the focused application is the terminal's own process chain does it fall back to window
+z-order and take the first on-screen window that is not the terminal or system UI. That fallback
+is a guess, and a window raised on another display can sit above the app you mean. That is how a
+session begun from a terminal targeted ChatGPT while the intended app was Brave. Focus the app
+you want before the first utterance, or pass `--app`, and the guess never applies.
+
+The scope is `auto`, which observes the **whole window**. `window` is a strict superset of
+`chrome`: measured on a live Brave window, every candidate `chrome` offers also appears under
+`window` (56 vs 113 distinct press candidates, 0 present only in `chrome`), so there is no reason
+to see less by default. `chrome` omits every descendant of the page's `AXWebArea`, which is why a
+session on a browser used to abstain on anything inside the page. Pass `--scope chrome` to get the
+cheap tab-strip-only view back.
+
+When a window is too large to observe at all (ax-tool refuses past 4000 elements, the observation
+schema past 2000, because a truncated tree would hide real targets), the driver narrows to
+`chrome` once and says so in the log rather than failing. That is the only smaller complete
+surface there is.
+The app's menu bar items are offered as targets unless `--no-menus` is passed, and the menu
+session is rebuilt for each new app. The flags: `--app <name>` (pins the target and turns the
+focus following off),
+`--window-id <id>`, `--window-index <n>` (default 0, the frontmost window), `--scope window|chrome`
+(default: chrome for a browser, window otherwise), `--no-menus`, `--stt [provider]` (`deepgram` | `openai` | `xai` | `elevenlabs` | `fixture`,
+plus the aliases `grok-live`, `gpt-realtime`, `scribe`, `mock`), `--account <id>`, `--language
+<codes>` (comma list, one or more ISO 639-1 codes in priority order, e.g. `cs,en`), `--pcm-in
+<input>` (`mic` | `-` | `ffmpeg[:device]` | a file path, default `mic`), `--transcript <file>`,
+`--goal <text>`, `--gate <n>`, `--max-seconds <n>`, `--surface ax|browser|auto`, `--port <n>`,
+`--wake <phrases>`, `--wake-mode off|contains|jev`, `--continuous`, `--from-wake`,
+`--dispatch-ahead`, `--capsule on|off` (default: on with a mic in a TTY), `--prepare` (verify the
+semantic target natively before each dispatch; web fields use paste and keys), `--expected-url <url>`
+(pin the observed browser document by its AXURL; a mismatch blocks the session), `--depth <n>`,
+`--dry-run`, `--force-act`, `--yes`, `--json`. `loop` accepts the same `--prepare`,
+`--expected-url` and `--depth` for its AX surface; `watch` accepts `--expected-url` and `--depth`.
+
+`--depth` is rarely needed. ax-tool refuses a snapshot deeper than the requested depth rather
+than truncating it, because a truncated tree would hide real targets, and its default of 20 is
+too shallow for an Electron app or a heavy web view. The driver reads the refused depth back out
+of that error and retries deeper by itself (20, then 40, then the ax-tool ceiling of 50), so a
+deep app costs one extra `see` and no longer ends the session. Pass `--depth` only to start at a
+known depth and skip that first refusal.
+
+A `--continuous` session also survives one failed utterance. Anything that throws while deciding
+(an unreadable window, an `--expected-url` mismatch, a native timeout) prints one `skipped` line,
+logs a warning, and leaves the session armed for the next thing you say. Without `--continuous` a
+failure still ends the run and exits 1.
+
+### Browsers: the page comes from the DevTools Protocol, not from AX
+
+```sh
+tools jev listen --surface browser --page-url kick.com
+tools jev listen --surface browser --page-index 4 --inputs '{"email":"…"}'
+```
+
+A real web page cannot be reached through the accessibility tree. Measured on live Brave windows:
+one exceeded ax-tool's hard `--depth 50` ceiling, another exceeded the element limit, and both
+therefore fall back to `chrome` scope, whose candidates are `Reload`, `Bookmark this tab`, the
+address bar and the extension buttons. No page content, on either site.
+
+`--surface browser` reads the page over CDP instead, through the same snapshot the goal loop
+already uses. On kick.com that is 558 nodes and 299 clickable rows, each with a role, an
+accessible name and a uid, including every streamer link with its profile URL. The rows Jev may
+choose become the page's own controls, plus `back`, `reload`, `scroll_up`, `scroll_down` and
+`wait` — so scrolling to something below the fold is a thing Jev can decide to do, which it never
+was on the AX surface.
+
+`--page-url <text>` or `--page-index <n>` selects the page. With neither and more than one page
+open the surface refuses rather than act on whichever tab the server had selected. `--inputs` is
+the only text that may ever be typed; a field with no matching key is not offered at all.
+
+### Too many candidates: the tournament
+
+Jev's choice question accepts at most 255 options, and a real web page offers far more: one live
+Brave window produced 514 (390 press rows, 120 menu items, the chrome verbs). That used to fail
+outright with `TypeSafe Choice questions support at most 255 options`.
+
+Nothing is ranked away, because ranking would decide the answer here instead of letting Jev decide
+it. Instead the candidates are split into the fewest balanced groups that fit, Jev answers each
+group in parallel, and the winners meet in a final round. Every round offers `abstain`, so a group
+with no match contributes no finalist and a lone finalist still has to beat abstaining. The
+admission gate judges the final round only, at the usual thresholds. The play-off recurses, so any
+count terminates; a 2000-row observation settles in two rounds.
+
+The live run above cost 4 questions: 3 groups of 171, then the final. `tools jev sessions` shows
+the round count, and the day log carries `candidate tournament round` and `tournament finalists`.
+
+### Reading a past run back: `tools jev sessions`
+
+```bash
+tools jev sessions              # recent listen/loop/watch runs, newest first
+tools jev sessions last         # the newest run in full
+tools jev sessions 2            # the second row of the list
+tools jev sessions 9716         # by pid
+tools jev sessions last --json  # the same, machine-readable
+```
+
+`tools jev logs` is the same command. The list gives one row per run with the app, the STT
+provider, what you said and how it ended (`3 act`, `18 abstain`, `1 error`, `nothing said`).
+Opening one prints its timeline: every `see` with its element count, the menu items offered, each
+admission verdict with probability, margin and confidence, each decision with the transcript that
+produced it, and every error. That is enough to answer "why did it not press 7" without opening a
+log file. `--day <YYYY-MM-DD>` reads one day, `--days <n>` widens the scan (3 by default).
+
+A day log holds every tool's output and runs to tens of megabytes, so the scan parses only the
+lines that can belong to a Jev session. Reading a whole day takes about two seconds.
+
+### Debugging from the logs
+
+Every decision layer writes to the day log (`~/.genesis-tools/logs/<date>.log`) under its own
+`component`: `jev-evaluate` (one line per Jev call with model, questions, answers, token usage and
+running totals for the process), `control-gate` (every admission verdict with probability, margin
+and confidence), `control-native` (every ax-tool `see` and `act` with duration and result),
+`control-observe` (the fan-out decision), `control-assist` (each guard: double-toggle, recovery,
+no-change), `control-recovery`, `control-menu`, `jev-listen` (each listen decision with its
+readback) and `jev-prefetch`. Jev calls are also booked through `recordUsage` under app `jev`
+(provider `jev-vercel` or `jev-typesafe`) into `~/.genesis-tools/ai/usage/<date>.jsonl`, the same
+store every other model writes to; `queryUsage` and the dev-dashboard AI accounts spend view read
+it. Timings go to the profiling log with
+`PROFILE=jev-evaluate,control-native,jev-listen` (scopes in `src/utils/profile/scopes.ts`).
+
+```sh
+rg '"component":"control-gate"' ~/.genesis-tools/logs/$(date +%F).log | tail -5
+PROFILE=jev-evaluate,control-native tools jev listen --app Calculator --transcript session.jsonl --stt fixture
+```
+
+### Live speech (STT)
+
+`listen` reads audio from `--pcm-in`: `mic` (default) is the GenesisTools.app microphone face,
+so the macOS microphone prompt and grant belong to GenesisTools, not to the terminal; `-` is
+stdin, a path is a raw s16le mono 16 kHz file, `ffmpeg[:device]` uses avfoundation. Providers
+(`--stt`) are `deepgram`, `openai` (realtime transcription, audio resampled to 24 kHz),
+`xai` (Grok streaming STT), `elevenlabs` (Scribe realtime) and `fixture` (a JSONL transcript).
+Each provider needs a `tools ai` account (`tools ai config account add --provider deepgram
+--name deepgram --use-env DEEPGRAM_API_KEY`); `--account` picks one, otherwise the provider's
+first enabled account is used. The shared session code lives in `src/utils/ai/stt/`.
+
+Every tested provider hears "hey jev" as "hey jeff", so both are default wake phrases.
+
+The floating voice capsule (`--capsule`) is a small overlay drawn by GenesisTools.app. It shows
+the live transcript, a waveform built from the microphone level, and the label of the action Jev
+chose. It is decoration: nothing in `listen` waits on it or depends on it, and it never gates a
+decision.
+
+On `--language`: on the fixture measured 2026-09-18, Czech transcribed best through ElevenLabs.
+Deepgram pins `language=cs` whenever Czech is requested, because its `multi` code-switching mode
+does not cover Czech (`src/utils/ai/stt/providers/deepgram.ts`).
+
+### compact
+
+`compact` shrinks a transcript by touching TOOL RESULTS only. User and assistant
+text is copied verbatim. Each tool call is kept, truncated to `--max-result` head
+characters, or dropped; a drop always takes the paired `tool_result` with it, so
+the output never carries an orphan result.
+
+Four input shapes are accepted. Detection is automatic and `--source` forces one:
+
+| Shape | Looks like | `--source` |
+|---|---|---|
+| generic JSONL | `{"role","content","toolCalls":[{"id","name","input","result"}]}` per line | `jsonl` |
+| block JSONL | one Anthropic-style message per line, `tool_use` / `tool_result` blocks | `jsonl` |
+| JSON array | a single array of messages in either shape above | `jsonl` |
+| native | a Claude, Codex or Grok transcript file | `claude`, `codex`, `grok` |
+
+A native source is read through the shared agent-sessions readers and needs a file
+path, not stdin. Output is always generic JSONL, so a compacted transcript parses
+back and can be compacted again.
+
+Pins protect a message from being dropped. The last `--pin` messages are pinned;
+so are the last user turn, the last failing tool call, and any message carrying a
+`#pin` marker, and those three keep their result verbatim rather than truncated.
+Below `--threshold` reduction the input is returned unchanged.
+
+`--llm` asks Jev, in one request per 20 calls, whether each call must stay and
+whether its full result must stay; an answer at or above 0.8 replaces the
+heuristic verdict in the OUTPUT, not only in the report. `--summaries` then
+summarizes the results Jev marked summarizable and keeps a summary only after Jev
+judges it faithful; a rejected summary leaves the truncated head in place.
+`--follow` stays attached to the file and re-decides each time it grows.
+`--table` prints the decision table on stderr; stdout is always the JSON result.
+
+```sh
+tools jev compact session.jsonl --table
+tools jev compact ~/.claude/projects/<project>/<id>.jsonl --source claude
+tools jev compact session.jsonl --llm --summaries --max-result 200
+tools jev compact live.jsonl --follow
+```
+
 ## Control Lab
 
-Open the Control tab in `tools jev dashboard`. Targets, Waits, Recovery, Workflows and Choosers run retained or in-memory fixtures. Visual OCR captures a real native window, overlays OCR regions, supports exact/Jev selection, and dispatches only after clicking the explicit **Click selected region** button. Captures have a 30-second action lifetime; a changed image, replaced app/window or reused capture is refused. The local server retains at most four captures for two minutes and removes its owned files on expiry/eviction/shutdown. No icon model or Python is involved.\n\nThe same decision/replay core is available through `tools jev control`. `tools computer-use mcp`, `mcp --repl` and `run --file task.ts` expose the independent native API without Codex Computer Use or Sky. See `src/computer-use/README.md`.
+Open the Control tab in `tools jev dashboard`. Targets, Waits, Recovery, Workflows and Choosers run retained or in-memory fixtures. Visual OCR captures a real native window, overlays OCR regions, supports exact/Jev selection, and dispatches only after clicking the explicit **Click selected region** button. Captures have a 30-second action lifetime; a changed image, replaced app/window or reused capture is refused. The local server retains at most four captures for two minutes and removes its owned files on expiry/eviction/shutdown. No icon model or Python is involved.
+
+The same decision/replay core is available through `tools jev control`. `tools computer-use mcp`, `mcp --repl` and `run --file task.ts` expose the independent native API without Codex Computer Use or Sky. See `src/computer-use/README.md`.
 
 ```sh
 tools jev control replay context --chooser jev --provider typesafe

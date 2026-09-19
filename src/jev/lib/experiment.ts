@@ -1,10 +1,13 @@
 import type { EvaluationProviderId } from "@genesiscz/utils/ai/evaluation/types";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { profiler } from "@genesiscz/utils/profile";
 import { experimentRequestSchema, type ProgramState } from "./experiment-contract";
 import { generationMode } from "./generation";
 import { languages } from "./languages";
 import type { EvaluationResponse } from "./service";
 import { evaluateRequest } from "./service";
+
+const prof = profiler.scope("jev-experiment");
 
 export interface ExperimentDecision {
     step: number;
@@ -55,6 +58,7 @@ export async function stepExperiment({
             request.mode === "characters" ? SafeJSON.stringify(token) : token,
         ])
     );
+    const stopStep = prof.start("step");
     const result = await evaluate({
         input: {
             state: {
@@ -82,6 +86,7 @@ export async function stepExperiment({
         zeroDataRetention: request.zeroDataRetention,
     });
     signal?.throwIfAborted();
+    stopStep();
     const next = result.answers.next;
     const done = result.answers.done;
     if (next?.type !== "choice" || done?.type !== "boolean") {
