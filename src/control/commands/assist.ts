@@ -1,5 +1,3 @@
-import { selectedProvider } from "@genesiscz/utils/ai/evaluation/cli";
-import { createEvaluator, type Evaluator } from "@genesiscz/utils/ai/evaluation/service";
 import { suggestEnumFlag } from "@genesiscz/utils/cli";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
@@ -8,7 +6,14 @@ import { z } from "zod";
 import { assistTask } from "../lib/decision/assist";
 import { chooserModeSchema, readHostDecision } from "../lib/decision/chooser";
 import { remedySchema } from "../lib/decision/recovery";
-import { type ControlOptions, controlDriver, exactExpectation, observationOptions } from "./decision";
+import {
+    type ControlOptions,
+    controlDriver,
+    exactExpectation,
+    lazyEvaluator,
+    observationOptions,
+    withSigintAbort,
+} from "./decision";
 
 export function registerAssistCommand(program: Command) {
     observationOptions(
@@ -63,11 +68,7 @@ export function registerAssistCommand(program: Command) {
                 const remedies = options.remedies
                     ? z.array(remedySchema).parse(SafeJSON.parse(await Bun.file(options.remedies).text()))
                     : [];
-                const controller = new AbortController();
-                const cancel = () => controller.abort();
-                process.once("SIGINT", cancel);
-                let evaluator: Promise<Evaluator> | undefined;
-                try {
+                await withSigintAbort(async (signal) => {
                     const result = await assistTask({
                         goal: options.goal,
                         chooser: chooser.data,
@@ -76,24 +77,19 @@ export function registerAssistCommand(program: Command) {
                         expect: options.expect,
                         exact: exactExpectation(options),
                         driver: controlDriver(options),
-                        signal: controller.signal,
+                        signal,
                         limits: {
                             timeoutMs: Number(options.timeout),
                             maxActions: Number(options.maxSteps),
                             maxRequests: Number(options.maxRequests),
                         },
-                        evaluate: async (call) => {
-                            evaluator ??= createEvaluator({ provider: selectedProvider(program) });
-                            return (await evaluator)(call);
-                        },
+                        evaluate: lazyEvaluator(program),
                     });
                     out.result(result);
                     if (result.status !== "verified") {
                         process.exitCode = 1;
                     }
-                } finally {
-                    process.off("SIGINT", cancel);
-                }
+                });
             }
         );
 }

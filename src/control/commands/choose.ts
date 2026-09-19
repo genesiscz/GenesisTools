@@ -1,5 +1,4 @@
 import { selectedProvider } from "@genesiscz/utils/ai/evaluation/cli";
-import { createEvaluator, type Evaluator } from "@genesiscz/utils/ai/evaluation/service";
 import { suggestEnumFlag } from "@genesiscz/utils/cli";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
@@ -7,7 +6,7 @@ import type { Command } from "commander";
 import { chooseCandidate, chooserModeSchema, readHostDecision } from "../lib/decision/chooser";
 import { compareChoosers } from "../lib/decision/chooser-replay";
 import { ControlSession } from "../lib/decision/session";
-import { type ControlOptions, observationOptions, readObservation } from "./decision";
+import { type ControlOptions, lazyEvaluator, observationOptions, readObservation } from "./decision";
 
 export function registerChooseCommand(program: Command) {
     observationOptions(
@@ -28,7 +27,6 @@ export function registerChooseCommand(program: Command) {
                 const hostDecision = options.hostDecision
                     ? readHostDecision(SafeJSON.parse(await Bun.file(options.hostDecision).text()))
                     : undefined;
-                let evaluate: Promise<Evaluator> | undefined;
                 const session = new ControlSession({
                     driver: {
                         observe: (call) =>
@@ -38,10 +36,7 @@ export function registerChooseCommand(program: Command) {
                         },
                     },
                     limits: { timeoutMs: Number(options.timeout), maxRequests: 1, maxActions: 0 },
-                    evaluate: async (call) => {
-                        evaluate ??= createEvaluator({ provider: selectedProvider(program) });
-                        return (await evaluate)(call);
-                    },
+                    evaluate: lazyEvaluator(program),
                 });
                 const result = await chooseCandidate({
                     observation: await session.observe(),

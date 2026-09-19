@@ -1,12 +1,11 @@
 import { writeFile } from "node:fs/promises";
-import { selectedProvider } from "@genesiscz/utils/ai/evaluation/cli";
-import { createEvaluator, type Evaluator } from "@genesiscz/utils/ai/evaluation/service";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
 import { z } from "zod";
 import { NativeControlDriver } from "../lib/decision/native";
 import { applyWorkflowRepairs, parseWorkflowPlan, replayWorkflow } from "../lib/decision/workflow";
+import { lazyEvaluator, withSigintAbort } from "./decision";
 
 export function registerReplayPlanCommand(program: Command) {
     program
@@ -50,17 +49,13 @@ export function registerReplayPlanCommand(program: Command) {
                     options.windowId === undefined
                         ? undefined
                         : z.number().int().positive().parse(Number(options.windowId));
-                const controller = new AbortController();
-                const cancel = () => controller.abort();
-                process.once("SIGINT", cancel);
-                let evaluator: Promise<Evaluator> | undefined;
-                try {
+                await withSigintAbort(async (signal) => {
                     const result = await replayWorkflow({
                         plan,
                         values,
                         rebind: options.rebind,
                         jev: options.jev,
-                        signal: controller.signal,
+                        signal,
                         driver: new NativeControlDriver({
                             app: plan.app,
                             scope: plan.scope,
@@ -73,10 +68,7 @@ export function registerReplayPlanCommand(program: Command) {
                             maxActions: Number(options.maxSteps),
                             maxRequests: Number(options.maxRequests),
                         },
-                        evaluate: async (call) => {
-                            evaluator ??= createEvaluator({ provider: selectedProvider(program) });
-                            return (await evaluator)(call);
-                        },
+                        evaluate: lazyEvaluator(program),
                     });
                     if (options.saveRepairs && result.status === "verified") {
                         const repaired = applyWorkflowRepairs({ plan, repairs: result.repairs });
@@ -89,9 +81,7 @@ export function registerReplayPlanCommand(program: Command) {
                     if (result.status !== "verified") {
                         process.exitCode = 1;
                     }
-                } finally {
-                    process.off("SIGINT", cancel);
-                }
+                });
             }
         );
 }

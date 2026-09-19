@@ -3,6 +3,7 @@ import { out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
 import { z } from "zod";
 import { runNativeSequence } from "../lib/decision/sequence";
+import { withSigintAbort } from "./decision";
 
 export function registerSequenceCommand(program: Command) {
     program
@@ -24,12 +25,9 @@ export function registerSequenceCommand(program: Command) {
                 options.verify === undefined
                     ? undefined
                     : z.enum(["selected", "expanded", "value"]).parse(options.verify);
-            const controller = new AbortController();
-            const cancel = () => controller.abort();
-            process.once("SIGINT", cancel);
-            try {
+            await withSigintAbort(async (signal) => {
                 const result = await runNativeSequence({
-                    signal: controller.signal,
+                    signal,
                     input: {
                         app: options.app,
                         intent,
@@ -60,8 +58,6 @@ export function registerSequenceCommand(program: Command) {
                 if (!result.ok) {
                     process.exitCode = 1;
                 }
-            } finally {
-                process.off("SIGINT", cancel);
-            }
+            });
         });
 }

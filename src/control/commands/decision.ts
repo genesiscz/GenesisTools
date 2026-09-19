@@ -1,5 +1,5 @@
 import { addProviderOption, selectedProvider } from "@genesiscz/utils/ai/evaluation/cli";
-import { evaluateRequest } from "@genesiscz/utils/ai/evaluation/service";
+import { createEvaluator, type Evaluator, evaluateRequest } from "@genesiscz/utils/ai/evaluation/service";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
@@ -42,6 +42,42 @@ export async function readObservation(options: ControlOptions, signal: AbortSign
     }
     return controlDriver(options).observe({ signal, timeoutMs: Number(options.timeout) });
 }
+/**
+ * Run `body` with a signal that aborts on Ctrl-C, and always unhook the listener afterwards.
+ *
+ * Six commands had hand-rolled this identical four-line block, and `choose` had already drifted
+ * by never installing a handler at all, so it alone could not be interrupted. Leaving the
+ * listener attached matters too: commander runs several commands in one process during tests,
+ * and an unremoved handler leaks past the command that installed it.
+ */
+export async function withSigintAbort<T>(body: (signal: AbortSignal) => Promise<T>): Promise<T> {
+    const controller = new AbortController();
+    const cancel = () => controller.abort();
+    process.once("SIGINT", cancel);
+
+    try {
+        return await body(controller.signal);
+    } finally {
+        process.off("SIGINT", cancel);
+    }
+}
+
+/**
+ * One evaluator per command invocation, created on first use.
+ *
+ * `createEvaluator` resolves a credential, so creating one per question is real work repeated
+ * for no gain. Every call site memoised the PROMISE rather than the evaluator, so two
+ * overlapping questions share one resolution instead of racing two.
+ */
+export function lazyEvaluator(program: Command): Evaluator {
+    let pending: Promise<Evaluator> | undefined;
+
+    return async (call) => {
+        pending ??= createEvaluator({ provider: selectedProvider(program) });
+        return (await pending)(call);
+    };
+}
+
 export function exactExpectation(options: ControlOptions) {
     if (options.exactId === undefined && options.exactValue === undefined) {
         return undefined;

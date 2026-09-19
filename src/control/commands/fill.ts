@@ -4,7 +4,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
 import { fillForm } from "../lib/decision/fill";
-import { type ControlOptions, controlDriver, observationOptions } from "./decision";
+import { type ControlOptions, controlDriver, observationOptions, withSigintAbort } from "./decision";
 
 export function registerFillCommand(program: Command) {
     observationOptions(
@@ -15,14 +15,11 @@ export function registerFillCommand(program: Command) {
         .option("--max-fields <n>", "Maximum write attempts", "20")
         .action(async (options: ControlOptions & { data: string; maxRequests: string; maxFields: string }) => {
             const data = SafeJSON.parse(await Bun.file(options.data).text());
-            const controller = new AbortController();
-            const cancel = () => controller.abort();
-            process.once("SIGINT", cancel);
-            try {
+            await withSigintAbort(async (signal) => {
                 const result = await fillForm({
                     data,
                     driver: controlDriver(options),
-                    signal: controller.signal,
+                    signal,
                     limits: {
                         timeoutMs: Number(options.timeout),
                         maxRequests: Number(options.maxRequests),
@@ -34,8 +31,6 @@ export function registerFillCommand(program: Command) {
                 if (result.status !== "filled") {
                     process.exitCode = 1;
                 }
-            } finally {
-                process.off("SIGINT", cancel);
-            }
+            });
         });
 }

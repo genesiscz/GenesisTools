@@ -1,12 +1,18 @@
 import { selectedProvider } from "@genesiscz/utils/ai/evaluation/cli";
-import { createEvaluator, type Evaluator } from "@genesiscz/utils/ai/evaluation/service";
 import { out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
 import { awaitCondition } from "../lib/decision/await";
 import { evidenceScopeSchema } from "../lib/decision/observation";
 import { NativeObservationSource } from "../lib/decision/observation-source";
 import { replayWait, waitCases } from "../lib/decision/wait-replay";
-import { type ControlOptions, controlDriver, exactExpectation, observationOptions } from "./decision";
+import {
+    type ControlOptions,
+    controlDriver,
+    exactExpectation,
+    lazyEvaluator,
+    observationOptions,
+    withSigintAbort,
+} from "./decision";
 
 export function registerAwaitCommand(program: Command) {
     const command = observationOptions(
@@ -34,11 +40,7 @@ export function registerAwaitCommand(program: Command) {
                     evidenceRole?: string;
                 }
             ) => {
-                const controller = new AbortController();
-                const cancel = () => controller.abort();
-                process.once("SIGINT", cancel);
-                let evaluate: Promise<Evaluator> | undefined;
-                try {
+                await withSigintAbort(async (signal) => {
                     const exact = exactExpectation(options);
                     const driver = controlDriver({ ...options, image: false });
                     const result = await awaitCondition({
@@ -54,20 +56,16 @@ export function registerAwaitCommand(program: Command) {
                                 : undefined,
                         driver,
                         source: new NativeObservationSource({ driver }),
-                        signal: controller.signal,
+                        signal,
                         limits: { timeoutMs: Number(options.timeout), maxRequests: Number(options.maxRequests) },
-                        evaluate: async (call) => {
-                            evaluate ??= createEvaluator({ provider: selectedProvider(program) });
-                            return (await evaluate)(call);
-                        },
+                        evaluate: lazyEvaluator(program),
                     });
                     out.result(result);
+
                     if (result.status !== "ready") {
                         process.exitCode = 1;
                     }
-                } finally {
-                    process.off("SIGINT", cancel);
-                }
+                });
             }
         );
     program

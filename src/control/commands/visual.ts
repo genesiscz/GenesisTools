@@ -1,11 +1,9 @@
-import { selectedProvider } from "@genesiscz/utils/ai/evaluation/cli";
-import { createEvaluator, type Evaluator } from "@genesiscz/utils/ai/evaluation/service";
 import { suggestEnumFlag } from "@genesiscz/utils/cli";
 import { out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
 import { z } from "zod";
 import { NativeVisualDriver, visualTask } from "../lib/decision/visual";
-import { type ControlOptions, observationOptions } from "./decision";
+import { type ControlOptions, lazyEvaluator, observationOptions, withSigintAbort } from "./decision";
 
 export function registerVisualCommand(program: Command) {
     observationOptions(
@@ -50,33 +48,21 @@ export function registerVisualCommand(program: Command) {
                     width: options.width ? z.number().int().min(64).max(8192).parse(Number(options.width)) : undefined,
                     background: options.background,
                 });
-                const controller = new AbortController();
-                const cancel = () => controller.abort();
-                process.once("SIGINT", cancel);
-                let evaluate: Promise<Evaluator> | undefined;
-                try {
+                await withSigintAbort(async (signal) => {
                     const result = await visualTask({
                         intent: options.intent,
                         chooser: mode.data,
                         execute: options.click,
                         driver,
-                        signal: controller.signal,
+                        signal,
                         limits: { timeoutMs: Math.min(30000, Number(options.timeout)) },
-                        evaluate:
-                            mode.data === "exact"
-                                ? undefined
-                                : async (call) => {
-                                      evaluate ??= createEvaluator({ provider: selectedProvider(program) });
-                                      return (await evaluate)(call);
-                                  },
+                        evaluate: mode.data === "exact" ? undefined : lazyEvaluator(program),
                     });
                     out.result(result);
                     if (result.choice.status !== "resolved" || (options.click && !result.action?.ok)) {
                         process.exitCode = 1;
                     }
-                } finally {
-                    process.off("SIGINT", cancel);
-                }
+                });
             }
         );
 }
