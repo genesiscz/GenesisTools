@@ -1,4 +1,9 @@
-import { frontmostTarget, isBrowserApp, switchableApps } from "@app/control/lib/decision/frontmost";
+import {
+    type AppSwitchTarget,
+    frontmostTarget,
+    isBrowserApp,
+    switchableApps,
+} from "@app/control/lib/decision/frontmost";
 import { NativeControlDriver } from "@app/control/lib/decision/native";
 import { selectedProvider } from "@genesiscz/utils/ai/evaluation/cli";
 import { createEvaluator } from "@genesiscz/utils/ai/evaluation/service";
@@ -40,6 +45,16 @@ const SURFACES = ["ax", "browser", "auto"] as const;
 const SCOPES = ["auto", "window", "chrome"] as const;
 const _MENU_ITEM_CAP = 120;
 const DEFAULT_MAX_SECONDS = 60;
+/**
+ * How long a switchable-app list stays good.
+ *
+ * A decision runs on every PARTIAL transcript once a session is armed, several times a second
+ * while someone is speaking, and each one rebuilt this list by spawning `ps` and the native
+ * binary to enumerate every on-screen window. The set of running apps cannot meaningfully
+ * change between two partials of one sentence, so those spawns bought nothing. This mirrors
+ * WAKE_EVAL_INTERVAL_MS, which already coalesces the wake evaluation over the same stream.
+ */
+const APP_LIST_TTL_MS = 500;
 
 interface ListenOptions {
     app?: string;
@@ -202,6 +217,23 @@ async function runListen(program: Command, options: ListenOptions): Promise<void
             controller.abort();
         }, maxSeconds * 1000);
         sigint.addEventListener("abort", () => controller.abort());
+        let appList: { at: number; value: Promise<AppSwitchTarget[]> } | undefined;
+        const recentSwitchableApps = () => {
+            if (appList && Date.now() - appList.at < APP_LIST_TTL_MS) {
+                return appList.value;
+            }
+
+            const value = prof
+                .measureAsync("switchable-apps", () => switchableApps({ signal: controller.signal }))
+                .catch((error: unknown) => {
+                    // A failed read must not be cached, or one transient refusal silences "switch
+                    // to <app>" for the rest of the half second and hides the reason.
+                    appList = undefined;
+                    throw error;
+                });
+            appList = { at: Date.now(), value };
+            return value;
+        };
         const stopSession = prof.start("session");
         const capsule = wantsCapsule ? openVoiceCapsule({ signal: controller.signal }) : null;
         let browser: ReturnType<typeof createBrowserListenSurface> | undefined;
@@ -290,10 +322,7 @@ async function runListen(program: Command, options: ListenOptions): Promise<void
                 menuItems: menus && target ? async () => current?.menus?.items() ?? [] : undefined,
                 // "switch to <app>" is offered on every utterance, so the session is never stuck
                 // on the app it happened to start against.
-                extraCandidates: async () =>
-                    appSwitchCandidates(
-                        await prof.measureAsync("switchable-apps", () => switchableApps({ signal: controller.signal }))
-                    ),
+                extraCandidates: async () => appSwitchCandidates(await recentSwitchableApps()),
                 signal: controller.signal,
                 evaluate: await createEvaluator({ provider: selectedProvider(program) }),
                 surface: browser ?? {
