@@ -53,6 +53,6 @@ describe("speech engine table", () => {
         // `summary-audio` hard-codes xai→openai, and `tools say` defaults to the
         // first local one, which is macos. A missing entry here is a provider
         // that resolves and then cannot speak.
-        expect(speechEngineIds().sort()).toEqual(["macos", "openai", "xai"]);
+        expect(speechEngineIds().sort()).toEqual(["elevenlabs", "macos", "openai", "xai"]);
     });
 });

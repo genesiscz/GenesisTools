@@ -38,4 +38,16 @@ if arguments[0] == "--rpc" {
     runRpc(Array(arguments.dropFirst()))
 }
 
+// GenesisTools --mic [--rate 16000]: stream microphone PCM on stdout as this bundle, so the
+// microphone grant attaches to GenesisTools (see Mic.swift).
+if arguments[0] == "--mic" {
+    runMic(Array(arguments.dropFirst()))
+}
+
+// GenesisTools --capsule [--theme dark|light] [--screen main|<index>] [--position bottom|top]: draw
+// the floating voice capsule, fed one JSON event per line on stdin (see Capsule.swift).
+if arguments[0] == "--capsule" {
+    runCapsule(Array(arguments.dropFirst()))
+}
+
 runLauncher(arguments)

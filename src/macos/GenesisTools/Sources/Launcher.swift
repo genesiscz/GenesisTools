@@ -37,6 +37,9 @@ func launcherUsage() -> Never {
     Runs <program> with this app bundle as the TCC responsible process.
     With no arguments, opens the GenesisTools settings window.
       --rpc <json>  run one request as this bundle ("-" reads stdin), reply on stdout
+      --mic [--rate <hz>] [--device <name>] [--list]  stream microphone PCM (s16le mono) on stdout
+      --capsule [--theme dark|light] [--screen main|<n>] [--position bottom|top]  floating voice
+                    capsule; reads one JSON event per line on stdin, exits when stdin closes
       --window      open the settings window without waiting for a notification click
       --version     print the bundle version
 

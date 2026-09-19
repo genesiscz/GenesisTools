@@ -1,5 +1,6 @@
 import type { AITextToSpeechProvider } from "../types";
 import { AIMacOSTextToSpeechProvider } from "./AIMacOSTextToSpeechProvider";
+import { AIElevenLabsTextToSpeechProvider } from "./elevenlabs/AIElevenLabsTextToSpeechProvider";
 import { AIOpenAITextToSpeechProvider } from "./openai/AIOpenAITextToSpeechProvider";
 import { AIXAITextToSpeechProvider } from "./xai/AIXAITextToSpeechProvider";
 
@@ -30,6 +31,7 @@ const ENGINES: Record<string, () => AITextToSpeechProvider> = {
     macos: () => new AIMacOSTextToSpeechProvider(),
     xai: () => new AIXAITextToSpeechProvider(),
     openai: () => new AIOpenAITextToSpeechProvider(),
+    elevenlabs: () => new AIElevenLabsTextToSpeechProvider(),
 };
 
 /** The engine for a plugin id, or undefined when that provider does not speak. */

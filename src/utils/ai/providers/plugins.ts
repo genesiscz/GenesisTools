@@ -3,6 +3,7 @@ import { aiProxyPlugin } from "./plugins/ai-proxy";
 import { anthropicSubPlugin } from "./plugins/anthropic-sub";
 import { apiKeyPlugins } from "./plugins/api-key";
 import { asrVendorPlugins } from "./plugins/asr-vendors";
+import { elevenLabsPlugin } from "./plugins/elevenlabs";
 import { githubCopilotPlugin } from "./plugins/github-copilot";
 import { grokSubPlugin } from "./plugins/grok-sub";
 import { huggingFacePlugin } from "./plugins/huggingface";
@@ -31,6 +32,7 @@ export function registerBuiltInPlugins(): void {
     registerPlugin(githubCopilotPlugin);
     registerPlugin(aiProxyPlugin);
     registerPlugin(huggingFacePlugin);
+    registerPlugin(elevenLabsPlugin);
     // The id must stay exactly "openrouter": seven files key off it, plus the
     // grandfathered `acc_env_openrouter` account and every user config already
     // naming it.
