@@ -13,7 +13,6 @@ import { out } from "@genesiscz/utils/logger";
 import { PROJECT_ROOT } from "@genesiscz/utils/paths";
 import { profiler } from "@genesiscz/utils/profile";
 import * as p from "@genesiscz/utils/prompts/p";
-import { spawn } from "bun";
 import type { Command } from "commander";
 import pc from "picocolors";
 
@@ -120,11 +119,11 @@ async function offerToSummarize(hits: AgentSearchHit<string>[], options: History
         return;
     }
 
-    const proc = spawn({
-        cmd: ["bun", "run", resolve(import.meta.dir, "../index.ts"), "summarize", chosen as string, "-i"],
-        stdio: ["inherit", "inherit", "inherit"],
-    });
-    await proc.exited;
+    // The same tool calling its own subcommand. Re-entering through the CLI paid for a second bun
+    // start-up to reach a function this process can call, and `bun run ../index.ts` resolves to
+    // whichever checkout the path lands in. The lazy import is how summarize.ts itself loads it.
+    const { runSummarizeCommand } = await import("./summarize-impl");
+    await runSummarizeCommand(chosen as string, { interactive: true });
 }
 
 // =============================================================================

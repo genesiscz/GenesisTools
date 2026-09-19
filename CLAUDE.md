@@ -377,6 +377,39 @@ indistinguishable from no click at all.
 - `GENESIS_TOOLS_NO_APP=1` bypasses the launcher (grants then follow the terminal again). Use it only to reproduce the old behaviour. The window (`tools macos permissions ui`) has the same switch as a persistent marker; `tools macos permissions` reports it.
 - darwinkit stays a plain child: never start it with `disclaim: true` from GenesisTools, or the grants split into a second identity (`DarwinKit.app`).
 
+## Spawning a tool vs calling its library
+
+Audited 2026-09-19 across the whole repo: 32 places start a GenesisTools entry point as a child
+process. 28 are correct and 3 were not, so the default is NOT "a spawn is waste" — but the three
+that were wrong each had an exported function one import away, and one of them was a live bug.
+
+**Spawn when:**
+
+1. **The target's IDENTITY matters, not just its code.** Anything touching a TCC-gated resource
+   (Calendar, Contacts, Accessibility, Full Disk Access, notifications) must go through the same
+   `genesisAppLauncher()` path `tools <name>` uses, so macOS attributes the grant to
+   GenesisTools.app. An in-process call inherits the CALLER's TCC identity, which turns a working
+   permission into an empty result with no error.
+2. **The command name is not known until runtime** — automate's presets, jev's routed commands,
+   the Telegram `/tools` bridge. There is no fixed function to import because the target is not
+   fixed.
+3. **The work must outlive the caller, or the caller must not wait on it** — detached speech,
+   daemonised servers, `--detach`, launchd jobs, `tools task run`'s worker.
+4. **A crash in the target must not take the caller down**, especially when it runs user-authored
+   content or is driven by an external actor.
+
+**Do NOT spawn when the target is your own tool's code, reachable through an exported function,
+and none of the above applies.** The tell is a spawn aimed at `src/<same-tool>/...` or at a small
+pure-function module. All three real offenders looked like that: `tools json` for a string
+transform, an MCP server bootstrapping its own transport, and `claude history` re-entering its
+own CLI to reach `summarize`.
+
+🛑 **Never `Bun.spawn(["tools", ...])` directly.** Bare `tools` resolves off `$PATH` to the
+**main checkout**, so a worktree silently runs the main branch's code — the exact trap in
+[[reference_tools_path_runs_main_repo]]. Use `execTool` / `execToolInteractive` from
+`@genesiscz/utils/cli`: they resolve the binary worktree-safely and route through the real
+wrapper, and therefore through the launcher.
+
 ## Web servers & ports
 
 - Canonical registry: `src/utils/ui/dashboards.ts` — `DASHBOARDS` (browser UIs, consumed by DashboardApp launchers) + `WEB_SERVICES` (http-api/extension/proxy listeners); ports must be unique across both.

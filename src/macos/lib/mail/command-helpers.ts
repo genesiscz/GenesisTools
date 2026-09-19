@@ -1,3 +1,4 @@
+import { toToon } from "@app/json/lib/toon";
 import {
     ALL_COLUMN_KEYS,
     DEFAULT_LIST_COLUMNS,
@@ -14,6 +15,7 @@ import { isInteractive, printLn } from "@genesiscz/utils/cli";
 import { parseVariadic } from "@genesiscz/utils/cli/variadic";
 import { parseDuration } from "@genesiscz/utils/format";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { logger } from "@genesiscz/utils/logger";
 import type { MailMessage } from "@genesiscz/utils/macos/mail/types";
 import type { MailFilterOptions } from "@genesiscz/utils/macos/mail-sql";
 
@@ -270,24 +272,22 @@ export function isStructuredFormat(format: string | undefined): boolean {
     return format === "json" || format === "toon";
 }
 
-/** Print structured result data to stdout: as JSON, or as TOON via `tools json`. */
+/**
+ * Print structured result data to stdout, as JSON or as TOON.
+ *
+ * TOON used to be produced by spawning `tools json`. That cost a process for a pure string
+ * transform, and `tools` resolves off PATH to the MAIN checkout, so a worktree printed with
+ * whatever the main branch happened to encode with. `toToon` is the same encoder, in process.
+ */
 export async function printStructured(data: unknown, format: string): Promise<void> {
     const jsonStr = typeof data === "string" ? data : SafeJSON.stringify(data, null, 2);
-
     if (format === "toon") {
-        const proc = Bun.spawn(["tools", "json"], {
-            stdin: new Blob([jsonStr]),
-            stdout: "inherit",
-            stderr: "inherit",
-        });
-        const exitCode = await proc.exited;
-
-        if (exitCode !== 0) {
-            p.log.warn(`toon format failed (exit code ${exitCode}), falling back to JSON`);
-            await printLn(jsonStr);
+        try {
+            await printLn(toToon(typeof data === "string" ? SafeJSON.parse(data) : data));
+            return;
+        } catch (error) {
+            logger.warn({ error }, "toon encoding failed; printing JSON instead");
         }
-
-        return;
     }
 
     await printLn(jsonStr);

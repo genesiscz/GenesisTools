@@ -45,17 +45,11 @@ program
     .command("mcp-serve")
     .description("Start the indexer MCP server (stdio transport, for AI assistant integration)")
     .action(async () => {
-        // Exec the MCP server as a separate process so it owns stdin/stdout
-        const proc = Bun.spawn(["bun", "run", `${import.meta.dir}/mcp-server.ts`], {
-            stdin: "inherit",
-            stdout: "inherit",
-            stderr: "inherit",
-        });
-
-        process.on("SIGINT", () => proc.kill());
-        process.on("SIGTERM", () => proc.kill());
-        await proc.exited;
-        process.exit(proc.exitCode ?? 0);
+        // In process, like every other tool's MCP server here. A child inheriting this process's
+        // stdio owns nothing the parent did not already own, so the subprocess only added a second
+        // bun start-up and a signal relay between the transport and its own terminal. The import
+        // is lazy so the server's dependency graph costs nothing on any other subcommand.
+        await import("./mcp-server");
     });
 
 async function main(): Promise<void> {
