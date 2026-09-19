@@ -149,8 +149,15 @@ describe("loopback OAuth callback listener", () => {
     test("serves exactly one callback", async () => {
         const listener = await listening();
         await fetch(callbackUrl(listener, "?code=first&state=session"));
-        const second = await fetch(callbackUrl(listener, "?code=second&state=session"));
-        expect(second.status).toBe(410);
+        const second = await fetch(callbackUrl(listener, "?code=second&state=session")).catch((error: unknown) => {
+            // The one-shot server may already have closed after flushing the first response.
+            expect(error).toMatchObject({ code: "ConnectionRefused" });
+            return null;
+        });
+
+        if (second) {
+            expect(second.status).toBe(410);
+        }
         expect(await listener.callback).toEqual({ code: "first", state: "session" });
         await listener.close();
     });
