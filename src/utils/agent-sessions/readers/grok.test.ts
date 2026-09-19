@@ -539,6 +539,49 @@ test("summary timestamps remain the metadata range around chat records", async (
     expect(result.metadata?.summary).toBe("Range summary");
 });
 
+test("last_active_at wins over a summary rewritten with no new turn", async () => {
+    const home = mkdtempSync(join(tmpdir(), "gt-grok-last-active-"));
+    const root = join(home, "sessions");
+    const directory = join(root, encodeURIComponent(CWD), SESSION_ID);
+    mkdirSync(directory, { recursive: true });
+    const chatPath = join(directory, "chat_history.jsonl");
+    const summaryPath = join(directory, "summary.json");
+    writeFileSync(
+        chatPath,
+        line({
+            type: "user",
+            timestamp: "2026-09-01T10:05:00.000Z",
+            content: [{ type: "text", text: "<user_query>still here</user_query>" }],
+        })
+    );
+    // An open Grok CLI rewrites the recap hours after the last turn. `updated_at` moves,
+    // `last_active_at` does not, and the prompt-cache clock must follow the turn.
+    writeFileSync(
+        summaryPath,
+        SafeJSON.stringify(
+            {
+                info: { id: SESSION_ID, cwd: CWD },
+                created_at: "2026-09-01T10:00:00.000Z",
+                updated_at: "2026-09-01T18:00:00.000Z",
+                last_active_at: "2026-09-01T10:05:00.000Z",
+            },
+            { strict: true }
+        )
+    );
+    const source: NativeSessionSource<"grok"> = {
+        kind: "grok",
+        root,
+        sourceHome: home,
+        filePath: summaryPath,
+        dataPaths: [chatPath],
+        metadataPaths: [summaryPath],
+    };
+
+    const result = await readGrokMetadata(source);
+
+    expect(result.metadata?.lastTimestamp).toBe("2026-09-01T10:05:00.000Z");
+});
+
 // Re-homed from grok-sessions.test.ts, which only reached this through a wrapper that had no
 // production caller. The wrapper's own JSON-parsing case went with it.
 test("user-query extraction pulls the tagged query and skips harness info blobs", () => {

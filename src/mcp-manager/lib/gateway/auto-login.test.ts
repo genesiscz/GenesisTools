@@ -387,7 +387,7 @@ describe("the gateway spawns mcp-manager directly", () => {
         const args = loginSpawnArgs("wisprflow");
 
         expect(args[0]?.endsWith("src/mcp-manager/index.ts")).toBe(true);
-        expect(args.slice(1)).toEqual(["auth", "login", "wisprflow"]);
+        expect(args.slice(1)).toEqual(["auth", "login", "wisprflow", "--worker"]);
         expect(args.includes("tools")).toBe(false);
     });
 

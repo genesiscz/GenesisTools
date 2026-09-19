@@ -1,8 +1,8 @@
 #!/usr/bin/env bun
 
-import { spawnSync } from "node:child_process";
 import { resolve } from "node:path";
 import * as p from "@clack/prompts";
+import { execToolInteractive } from "@genesiscz/utils/cli";
 import { copyToClipboard } from "@genesiscz/utils/clipboard";
 import { out } from "@genesiscz/utils/logger";
 import { renderMarkdownToCli } from "@genesiscz/utils/markdown/index.js";
@@ -43,11 +43,13 @@ async function handleToolAction(tool: ToolInfo, srcDir: string): Promise<void> {
 
     if (action === "run") {
         p.outro(`Running ${pc.bold(`tools ${tool.name}`)}...`);
-        const result = spawnSync("bun", ["run", tool.path], {
-            stdio: "inherit",
-            cwd: process.cwd(),
-        });
-        process.exit(result.status ?? 0);
+        // Through the wrapper, exactly as typing `tools <name>` does. Running the tool's entry
+        // file directly skipped it, and the wrapper is where genesisAppLauncher() runs: without it
+        // macOS attributes Calendar, Contacts, Accessibility and Full Disk Access to the terminal
+        // instead of to GenesisTools.app, so a permission-gated tool picked from this menu could
+        // return empty where the same tool typed by name returns data.
+        const result = await execToolInteractive([tool.name]);
+        process.exit(result.exitCode ?? 0);
     }
 
     if (action === "readme") {

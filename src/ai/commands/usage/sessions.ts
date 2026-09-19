@@ -43,14 +43,38 @@ function age(mtime: number, now: number): string {
     return hours < 48 ? `${hours}h` : `${Math.round(hours / 24)}d`;
 }
 
+function cacheCell(row: AgentSessionRow): string {
+    if (!row.cacheStatus) {
+        return pc.dim("—");
+    }
+
+    if (row.cacheStatus === "COLD") {
+        return pc.dim("cold");
+    }
+
+    const minutes = Math.max(0, Math.ceil((row.cacheTtlSec ?? 0) / 60));
+    const label = `${minutes}m`;
+
+    if (row.cacheStatus === "CRITICAL") {
+        return pc.red(label);
+    }
+
+    if (row.cacheStatus === "COOLING") {
+        return pc.yellow(label);
+    }
+
+    return pc.green(label);
+}
+
 function render(rows: AgentSessionRow[]): void {
     renderCliHeader("Agent sessions", "every provider in one list");
-    const table = createBoxTable(["AGE", "PROVIDER", "ACCOUNT", "TITLE", "CWD"]);
+    const table = createBoxTable(["AGE", "CACHE", "PROVIDER", "ACCOUNT", "TITLE", "CWD"]);
     const now = Date.now();
 
     for (const row of rows) {
         table.push([
             age(row.mtime, now),
+            cacheCell(row),
             row.provider,
             row.account ?? pc.dim("—"),
             truncateDisplay(row.title ?? "", 48),
@@ -65,10 +89,8 @@ function render(rows: AgentSessionRow[]): void {
  * `tools ai usage sessions`: the provider-neutral session list.
  *
  * `tools claude usage sessions --json` stays the rich Claude-only surface. This one exists so a
- * reader (the Genesis menu-bar app) needs ONE client instead of one per provider, and so Codex
- * and Grok sessions can be listed at all — nothing downstream of `getSessionListing` had an
- * equivalent, because that wrapper stayed pinned to Claude when PR #370 made the service under
- * it provider-generic.
+ * reader (the Genesis menu-bar app) needs ONE client instead of one per provider. Codex rows
+ * carry a 30-minute prompt-cache clock (Codex documented minimum; Grok warning clock).
  */
 export function registerAiUsageSessionsCommand(usage: Command): void {
     usage

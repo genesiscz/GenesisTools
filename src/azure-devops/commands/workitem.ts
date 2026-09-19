@@ -448,7 +448,14 @@ export async function handleWorkItem(
         log(`   ${skippedCount} cached (unchanged), ${downloadedCount} downloaded`);
     }
 
-    // Output
+    // -f json must be one parseable JSON value. Emitting one object per item with ---
+    // between them is not JSON (json.loads / jq fail on the second object).
+    if (format === "json") {
+        out.println(workItemJsonStdout(results));
+        return;
+    }
+
+    // Output (ai / md): separate items with --- for human reading
     let anyTruncated = false;
 
     for (let i = 0; i < results.length; i++) {
@@ -484,9 +491,6 @@ export async function handleWorkItem(
             case "md":
                 out.println(formatWorkItemMarkdown(item, inlineImageMaps.get(item.id)));
                 break;
-            case "json":
-                out.println(formatJSON(item));
-                break;
         }
     }
 
@@ -494,6 +498,14 @@ export async function handleWorkItem(
         out.println("");
         out.println(suggestCommand("tools azure-devops workitem", { add: ["--full"] }));
     }
+}
+
+/**
+ * `-f json` stdout shape: always a single JSON array of work items (0..N).
+ * One id → `[item]`, many ids → `[item, …]` — never concatenated objects.
+ */
+export function workItemJsonStdout(items: WorkItemFull[]): string {
+    return formatJSON(items);
 }
 
 // ============= Command Registration =============

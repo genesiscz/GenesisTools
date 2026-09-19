@@ -23,7 +23,7 @@ import { logger } from "@genesiscz/utils/logger";
 import { sendNotification } from "@genesiscz/utils/macos/notifications";
 import { serverAuth } from "../auth/policy.ts";
 import { autoLoginRefusal, createLoginLauncher, type LoginLauncher } from "./auto-login.ts";
-import { clearStalePendingLogin, pendingLoginPath, readPendingLogin, writePendingLogin } from "./login-state.ts";
+import { pendingLoginPath, readPendingLogin, takeLivePendingLogin, writePendingLogin } from "./login-state.ts";
 import { gatewayRepoRoot } from "./service.ts";
 
 /** How long the child may take to register a client and produce its URL. */
@@ -34,7 +34,7 @@ export function loginLogFile(server: string): string {
 }
 
 export function loginSpawnArgs(server: string, clientName?: string): string[] {
-    const args = [join(gatewayRepoRoot(), "src/mcp-manager/index.ts"), "auth", "login", server];
+    const args = [join(gatewayRepoRoot(), "src/mcp-manager/index.ts"), "auth", "login", server, "--worker"];
 
     if (clientName) {
         args.push("--client-name", clientName);
@@ -43,7 +43,11 @@ export function loginSpawnArgs(server: string, clientName?: string): string[] {
     return args;
 }
 
-async function runLogin(server: string, report: (url: string, userCode?: string) => void): Promise<void> {
+export async function runLogin(
+    server: string,
+    report: (url: string, userCode?: string) => void,
+    clientNameOverride?: string
+): Promise<void> {
     const config = await readUnifiedConfig();
     const unified = config.mcpServers[server];
 
@@ -57,7 +61,7 @@ async function runLogin(server: string, report: (url: string, userCode?: string)
         throw new Error(refusal);
     }
 
-    const clientName = serverAuth(unified)?.clientName?.trim();
+    const clientName = clientNameOverride?.trim() || serverAuth(unified)?.clientName?.trim();
     const logFile = loginLogFile(server);
     mkdirSync(dirname(logFile), { recursive: true });
     const fd = openSync(logFile, "a");
@@ -172,11 +176,7 @@ async function notifyLoginUrl(server: string, url: string, userCode?: string): P
 export const gatewayLoginLauncher: LoginLauncher = createLoginLauncher({
     login: runLogin,
     notify: notifyLogin,
-    pending: (server) => {
-        clearStalePendingLogin(server);
-
-        return readPendingLogin(server);
-    },
+    pending: (server) => takeLivePendingLogin(server),
     onError: (server, error) => {
         logger.warn({ server, error }, "gateway-initiated MCP login failed");
     },

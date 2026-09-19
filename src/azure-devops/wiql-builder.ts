@@ -28,16 +28,33 @@ export function escapeWiqlValue(value: string): string {
     return value.replace(/'/g, "''");
 }
 
+function toWiqlList(csv: string): string | null {
+    const values = csv
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean);
+
+    if (values.length === 0) {
+        return null;
+    }
+
+    return values.map((v) => `'${escapeWiqlValue(v)}'`).join(", ");
+}
+
 // ============= Query Options =============
 
 interface CombinedQueryOptions {
     assignedTo?: string;
     currentAssignedTo?: string;
+    /** Match currentAssignedTo with CONTAINS; the server rejects EVER CONTAINS on identity fields */
+    assigneeContains?: boolean;
     states?: string;
+    excludeStates?: string;
     from?: string;
     to?: string;
     workItemTypes?: string;
     isMacro?: boolean;
+    allProjects?: boolean;
 }
 
 // ============= Query Builders =============
@@ -151,15 +168,18 @@ export function buildAsOfQuery(baseConditions: string, asOfDate: string): string
  * Build a combined WIQL query from multiple optional filter criteria.
  *
  * - assignedTo: Uses EVER operator (finds items ever assigned to user)
+ * - currentAssignedTo: Uses = on the current assignee, or CONTAINS with assigneeContains
  * - states: Uses IN operator (filters by current state)
+ * - excludeStates: Uses NOT IN operator (drops items in these current states)
  * - workItemTypes: Uses IN operator (filters by work item type)
  * - from/to: Filters by ChangedDate range
+ * - allProjects: Drops the [System.TeamProject] = @project predicate (org-wide search)
  *
  * @param options - Query filter options
  * @returns WIQL query string
  */
 export function buildCombinedQuery(options: CombinedQueryOptions): string {
-    const conditions: string[] = ["[System.TeamProject] = @project"];
+    const conditions: string[] = options.allProjects ? [] : ["[System.TeamProject] = @project"];
 
     if (options.assignedTo) {
         const val = options.isMacro ? options.assignedTo : `'${escapeWiqlValue(options.assignedTo)}'`;
@@ -168,29 +188,23 @@ export function buildCombinedQuery(options: CombinedQueryOptions): string {
 
     if (options.currentAssignedTo) {
         const val = options.isMacro ? options.currentAssignedTo : `'${escapeWiqlValue(options.currentAssignedTo)}'`;
-        conditions.push(`[System.AssignedTo] = ${val}`);
+        const operator = options.assigneeContains && !options.isMacro ? "CONTAINS" : "=";
+        conditions.push(`[System.AssignedTo] ${operator} ${val}`);
     }
 
-    if (options.states) {
-        const stateList = options.states
-            .split(",")
-            .map((s) => s.trim())
-            .filter(Boolean);
-        if (stateList.length > 0) {
-            const escaped = stateList.map((s) => `'${escapeWiqlValue(s)}'`).join(", ");
-            conditions.push(`[System.State] IN (${escaped})`);
-        }
+    const states = options.states ? toWiqlList(options.states) : null;
+    if (states) {
+        conditions.push(`[System.State] IN (${states})`);
     }
 
-    if (options.workItemTypes) {
-        const typeList = options.workItemTypes
-            .split(",")
-            .map((t) => t.trim())
-            .filter(Boolean);
-        if (typeList.length > 0) {
-            const escaped = typeList.map((t) => `'${escapeWiqlValue(t)}'`).join(", ");
-            conditions.push(`[System.WorkItemType] IN (${escaped})`);
-        }
+    const excludeStates = options.excludeStates ? toWiqlList(options.excludeStates) : null;
+    if (excludeStates) {
+        conditions.push(`[System.State] NOT IN (${excludeStates})`);
+    }
+
+    const workItemTypes = options.workItemTypes ? toWiqlList(options.workItemTypes) : null;
+    if (workItemTypes) {
+        conditions.push(`[System.WorkItemType] IN (${workItemTypes})`);
     }
 
     if (options.from) {
@@ -199,6 +213,10 @@ export function buildCombinedQuery(options: CombinedQueryOptions): string {
 
     if (options.to) {
         conditions.push(`[System.ChangedDate] <= '${escapeWiqlValue(options.to)}'`);
+    }
+
+    if (conditions.length === 0) {
+        conditions.push("[System.Id] > 0");
     }
 
     return [

@@ -11,7 +11,7 @@ import { formatJSON, loadWorkItemCache, storage } from "@app/azure-devops/cache"
 import { resolveUser, userMatches } from "@app/azure-devops/history";
 import type { AzureConfig, WorkItem, WorkItemCache } from "@app/azure-devops/types";
 import { requireConfig } from "@app/azure-devops/utils";
-import { buildCombinedQuery, buildEverAssignedQuery } from "@app/azure-devops/wiql-builder";
+import { buildCombinedQuery } from "@app/azure-devops/wiql-builder";
 import * as p from "@clack/prompts";
 import { suggestCommand } from "@genesiscz/utils/cli";
 import { formatLocalDate, formatLocalDateTimeStamp } from "@genesiscz/utils/date";
@@ -30,6 +30,8 @@ export interface SearchOptions {
     minTime?: string;
     wiql?: boolean;
     current?: boolean;
+    excludeState?: string;
+    allProjects?: boolean;
     output: "json" | "table";
 }
 
@@ -76,11 +78,19 @@ function pad(str: string, width: number): string {
     return str.length >= width ? str.slice(0, width) : str + " ".repeat(width - str.length);
 }
 
+interface WiqlSearchRow extends WorkItem {
+    type: string;
+    project: string;
+}
+
 // ============= Mode 1: WIQL Search =============
 
 async function wiqlSearch(options: SearchOptions, api: Api, config: AzureConfig): Promise<void> {
     let assignedToValue: string | undefined;
     const isMeMacro = options.assignedTo?.toLowerCase() === "@me";
+
+    const useCurrent = options.current ?? false;
+    let assigneeContains = false;
 
     // Resolve fuzzy user name (skip for @Me — it's a WIQL macro)
     if (options.assignedTo) {
@@ -90,35 +100,37 @@ async function wiqlSearch(options: SearchOptions, api: Api, config: AzureConfig)
         } else {
             const members = await api.getTeamMembers();
             const resolved = resolveUser(options.assignedTo, members);
-            if (!resolved) {
-                p.log.error(`No team member matches "${options.assignedTo}"`);
-                process.exit(1);
+
+            if (resolved) {
+                assignedToValue = resolved.displayName;
+                p.log.info(`Resolved user: ${pc.bold(assignedToValue)}`);
+            } else if (useCurrent) {
+                assignedToValue = options.assignedTo;
+                assigneeContains = true;
+                p.log.warn(
+                    `No team member matches "${options.assignedTo}"; matching the assignee field with CONTAINS instead`
+                );
+            } else {
+                assignedToValue = options.assignedTo;
+                p.log.warn(
+                    `No team member matches "${options.assignedTo}"; using it as the exact display name (EVER cannot use CONTAINS)`
+                );
             }
-            assignedToValue = resolved.displayName;
-            p.log.info(`Resolved user: ${pc.bold(assignedToValue)}`);
         }
     }
 
     // Build WIQL
-    const useCurrent = options.current ?? false;
-    const wiql =
-        assignedToValue && !options.state
-            ? useCurrent
-                ? buildCombinedQuery({
-                      currentAssignedTo: assignedToValue,
-                      from: options.from,
-                      to: options.to,
-                      isMacro: isMeMacro,
-                  })
-                : buildEverAssignedQuery(assignedToValue, options.from, options.to, isMeMacro)
-            : buildCombinedQuery({
-                  assignedTo: useCurrent ? undefined : assignedToValue,
-                  currentAssignedTo: useCurrent ? assignedToValue : undefined,
-                  states: options.state,
-                  from: options.from,
-                  to: options.to,
-                  isMacro: isMeMacro,
-              });
+    const wiql = buildCombinedQuery({
+        assignedTo: useCurrent ? undefined : assignedToValue,
+        currentAssignedTo: useCurrent ? assignedToValue : undefined,
+        assigneeContains,
+        states: options.state,
+        excludeStates: options.excludeState,
+        from: options.from,
+        to: options.to,
+        isMacro: isMeMacro,
+        allProjects: options.allProjects,
+    });
 
     logger.debug(`[history-search] WIQL:\n${wiql}`);
 
@@ -142,9 +154,10 @@ async function wiqlSearch(options: SearchOptions, api: Api, config: AzureConfig)
         "System.AssignedTo",
         "System.ChangedDate",
         "System.WorkItemType",
+        "System.TeamProject",
     ].join(",");
 
-    const allItems: WorkItem[] = [];
+    const allItems: WiqlSearchRow[] = [];
     const batchSize = 200;
 
     for (let i = 0; i < ids.length; i += batchSize) {
@@ -158,12 +171,12 @@ async function wiqlSearch(options: SearchOptions, api: Api, config: AzureConfig)
     if (options.output === "json") {
         out.println(formatJSON(allItems));
     } else {
-        printWorkItemsTable(allItems);
+        printWorkItemsTable(allItems, options.allProjects ?? false);
     }
 }
 
 /** Fetch work items by IDs using az rest (since Api.get is private) */
-async function fetchWorkItemsBatch(config: AzureConfig, idsParam: string, fields: string): Promise<WorkItem[]> {
+async function fetchWorkItemsBatch(config: AzureConfig, idsParam: string, fields: string): Promise<WiqlSearchRow[]> {
     const { $ } = await import("bun");
     const url = Api.orgUrl(config, ["wit", "workitems"], { ids: idsParam, fields });
 
@@ -186,34 +199,50 @@ async function fetchWorkItemsBatch(config: AzureConfig, idsParam: string, fields
 
     return data.value.map((item) => {
         const f = item.fields;
+        const project = (f["System.TeamProject"] as string) ?? config.project;
+
         return {
             id: item.id,
             rev: item.rev,
             title: (f["System.Title"] as string) ?? "",
             state: (f["System.State"] as string) ?? "",
+            type: (f["System.WorkItemType"] as string) ?? "",
+            project,
             changed: (f["System.ChangedDate"] as string) ?? "",
             assignee: (f["System.AssignedTo"] as { displayName?: string } | undefined)?.displayName,
-            url: Api.workItemWebUrl(config, item.id),
+            url: Api.workItemWebUrl(config, item.id, project),
         };
     });
 }
 
 /** Print work items as a simple table */
-function printWorkItemsTable(items: WorkItem[]): void {
+function printWorkItemsTable(items: WiqlSearchRow[], showProject: boolean): void {
     if (items.length === 0) {
         return;
     }
 
-    const header = `${pad("ID", 8)} ${pad("State", 14)} ${pad("Assignee", 24)} ${pad("Title", 50)}`;
+    const headerCells = [pad("ID", 8), pad("Type", 11), pad("State", 14), pad("Assignee", 24), pad("Title", 50)];
+    if (showProject) {
+        headerCells.splice(1, 0, pad("Project", 24));
+    }
+
+    const header = headerCells.join(" ");
     out.println(pc.bold(header));
     out.println("-".repeat(header.length));
 
     for (const item of items) {
-        const line = `${pad(String(item.id), 8)} ${pad(item.state, 14)} ${pad(item.assignee ?? "-", 24)} ${pad(
-            item.title,
-            50
-        )}`;
-        out.println(line);
+        const cells = [
+            pad(String(item.id), 8),
+            pad(item.type, 11),
+            pad(item.state, 14),
+            pad(item.assignee ?? "-", 24),
+            pad(item.title, 50),
+        ];
+        if (showProject) {
+            cells.splice(1, 0, pad(item.project, 24));
+        }
+
+        out.println(cells.join(" "));
     }
 
     out.println(`\n${pc.dim(`${items.length} work items`)}`);
@@ -442,6 +471,11 @@ export async function handleHistorySearch(options: SearchOptions): Promise<void>
 
     // @me is a server-side WIQL macro — auto-enable WIQL mode
     if (options.assignedTo?.toLowerCase() === "@me" && !options.wiql) {
+        options.wiql = true;
+    }
+
+    // --all-projects and --exclude-state are server-side predicates — auto-enable WIQL mode
+    if ((options.allProjects || options.excludeState) && !options.wiql) {
         options.wiql = true;
     }
 

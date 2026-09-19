@@ -5,7 +5,7 @@
  * work item update data, plus fuzzy user matching with Czech diacritics support.
  */
 
-import { isSentinelDate } from "@app/azure-devops/lib/activity-days";
+import { isSentinelDate, resolveUpdateDate } from "@app/azure-devops/lib/activity-days";
 import type {
     AssignmentPeriod,
     IdentityRef,
@@ -88,6 +88,11 @@ function sanitizeDate(date: string): string {
     return isSentinelDate(date) ? new Date().toISOString() : date;
 }
 
+/** When the update was made: its changed date, never `revisedDate`, which is when the next revision replaced it. */
+function updateMoment(update: WorkItemUpdate): string {
+    return sanitizeDate(resolveUpdateDate(update) || update.revisedDate);
+}
+
 function computeDurationMinutes(start: string, end: string): number {
     return Math.round((new Date(sanitizeDate(end)).getTime() - new Date(sanitizeDate(start)).getTime()) / 60000);
 }
@@ -111,7 +116,7 @@ export function computeAssignmentPeriods(updates: WorkItemUpdate[]): AssignmentP
         }
 
         const newAssignee = (assignedToChange.newValue as IdentityRef)?.displayName ?? null;
-        const changeDate = sanitizeDate(update.revisedDate);
+        const changeDate = updateMoment(update);
 
         // Close previous period
         if (currentAssignee && periodStart) {
@@ -168,7 +173,7 @@ export function computeStatePeriods(updates: WorkItemUpdate[]): StatePeriod[] {
         }
 
         const newState = stateChange.newValue as string | undefined;
-        const changeDate = sanitizeDate(update.revisedDate);
+        const changeDate = updateMoment(update);
 
         // Close previous period
         if (currentState && periodStart) {

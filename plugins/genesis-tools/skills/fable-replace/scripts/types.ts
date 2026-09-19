@@ -336,7 +336,13 @@ export interface RollbackReport {
 
 /** `run({ edits, ...options })`: the batch plus every RunOptions field. */
 export interface RunParams extends RunOptions {
-    edits: FileEdit[];
+    edits?: FileEdit[];
+    /**
+     * Blocks to move between files. Each one is cut from `from` and pasted into `to` without the
+     * caller ever writing the body, so a move cannot become an accidental rewrite. Moves expand
+     * into ordinary edits and run in the same transaction as `edits`, before them.
+     */
+    moves?: import("./move-blocks").MoveSpec[];
 }
 
 export interface PruneParams {

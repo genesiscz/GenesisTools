@@ -357,7 +357,10 @@ export function registerHistoryCommand(program: Command): void {
     history
         .command("search")
         .description("Search history across work items (WIQL or local)")
-        .option("--assigned-to <name>", "Items ever assigned to user (fuzzy match)")
+        .option(
+            "--assigned-to <name>",
+            "Items assigned to user (fuzzy team match; a name outside the team is matched with CONTAINS under --current)"
+        )
         .option("--assigned-to-me", "Shortcut for --assigned-to @me")
         .option("--state <states>", "Items ever in state(s) (comma-separated)")
         .option("--from <date>", "From date (ISO format)")
@@ -367,6 +370,11 @@ export function registerHistoryCommand(program: Command): void {
         .option("--min-time <duration>", "Min time in state/assigned (e.g. 2h, 30m)")
         .option("--wiql", "Use WIQL EVER query (server-side, no local history needed)")
         .option("--current", "Search current assignment (= instead of EVER)")
+        .option("--exclude-state <states>", "Skip items in these current states (comma-separated, implies --wiql)")
+        .option(
+            "--all-projects",
+            "Search every project of the organization, not only the configured one (implies --wiql)"
+        )
         .option("-o, --output <format>", "Output format (table, json)", "table")
         .action((options: SearchOptions & { since?: string; until?: string }) => {
             if (options.since && !options.from) {

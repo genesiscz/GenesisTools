@@ -73,6 +73,9 @@ skill loaded. Keep the quotes: an install path can contain spaces.
 | `<<< delete` (lines) | remove these lines, newline included |
 | `<<< block` (from `===` to `===` replacement) | replace the region between two anchors; empty replacement deletes it |
 | `<<< create` (content) | create a new file; refuses to overwrite an existing one |
+| `<<< move to=<path> symbol=<name>` | cut that declaration (doc comment included) out of this file and paste it into `<path>`; body empty |
+| `<<< move to=<path> lines=<first>-<last>` | same, for a block that is not one declaration |
+| `<<< move … at=after` / `at=before` (body is the anchor) | place it against an anchor in the target instead of appending |
 
 Per-file post-conditions go between `@@` and the first op: `expect: text` (must be present
 afterwards), `absent: text` (must be gone). Both repeatable. `# comments` and blank lines are
@@ -283,6 +286,65 @@ recon never found. A 50-file rename once reported zero MISS and was still broken
 - **A rename is not finished when the code is green.** Sweep README, CLAUDE.md, docs and plans
   that name the symbol. `leftoversCheck` (script) fails the run when the old name survives in
   prose while leaving the verified code written; `leftovers({ names, dirs })` is the manual form.
+
+## Moving code between files
+
+🛑 **Never retype a block to move it.** Deleting it here and typing it again there costs the body
+twice and turns one transcription slip into a rewrite nobody reviewed. Name the block instead; the
+text is cut and pasted byte for byte and is never authored again.
+
+From the CLI, a move is one marker:
+
+```
+@@ src/jev/commands/listen.ts
+<<< move to=src/jev/lib/cli-output.ts symbol=parseEnum
+>>>
+```
+
+From a script, `moves` takes the same three ways of naming a block:
+
+```ts
+await run({
+    moves: [
+        // A whole declaration, doc comment included, appended to the target.
+        { from: "src/jev/commands/listen.ts", to: "src/jev/lib/listen/dispatch.ts", symbol: "actOnSurface" },
+        // A target that does not exist yet gets its imports from createWith, then the block.
+        {
+            from: "src/jev/commands/listen.ts",
+            to: "src/jev/lib/listen/target.ts",
+            symbol: "resolveListenTarget",
+            createWith: 'import { frontmostTarget } from "@app/control/lib/decision/frontmost";\n',
+        },
+        // Not a single declaration: address it by line range or by the lines that bracket it.
+        { from: "a.ts", to: "b.ts", lines: [1, 12] },
+        { from: "a.ts", to: "b.ts", between: { start: "// MARK: - Trust", end: "// MARK: - Permissions" } },
+        // Land it somewhere other than the end.
+        { from: "a.ts", to: "b.ts", symbol: "helper", at: { after: "const PORT = 9222;" } },
+    ],
+});
+```
+
+What it does for you:
+
+- `symbol` takes the **whole declaration plus the doc comment directly above it**, and nothing
+  after it. Works on TypeScript and on Swift.
+- The block is located by a scanner that **skips braces inside strings, template literals, line
+  comments and block comments**. A naive depth count reads the `{` in `"a { b"` as an opening
+  brace and swallows the rest of the file; that is the failure that makes an automated move
+  untrustworthy, and `move-blocks.test.ts` pins it.
+- The cut is **by content, not by line number**. If the file moved between locating and applying,
+  the op MISSes and the batch fails instead of cutting whatever now sits at those lines.
+- One blank line following the block comes with it, so repeated moves do not leave a widening gap.
+- Moves run in the **same transaction** as `edits`: one backup, all-or-nothing, the same post-edit
+  syntax check, the same report.
+
+It refuses rather than guesses: an unknown symbol, a symbol declared more than once in the file, a
+line range outside the file, a marker that never appears, or `from` equal to `to` all fail
+pre-flight with the reason.
+
+⚠️ A move does not fix imports. The block arrives without whatever it used to reach for, so pair
+it with ordinary `edits` for the import lines, and let the syntax check plus your typechecker tell
+you what is still missing.
 
 ## Renames: the two forks
 
