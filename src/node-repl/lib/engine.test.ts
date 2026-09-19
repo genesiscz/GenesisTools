@@ -3,6 +3,8 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { boundedCommand } from "@genesiscz/utils/process/bounded-command";
+import { JsonLineProcess } from "@genesiscz/utils/process/json-line-process";
 import { ReplEngine, resultMessage } from "./engine";
 
 // The MCP server renders a js_add_node_module_dir result with this. A timeout or a worker exit
@@ -121,4 +123,84 @@ describe("ReplEngine", () => {
         expect(imported.ok).toBe(true);
         expect(imported.text).toBe("7");
     });
+});
+
+it("JSON-line transport reuses its worker and cancels without replay", async () => {
+    const transport = new JsonLineProcess({
+        command: [
+            process.execPath,
+            "-e",
+            "let count=0; for await (const chunk of Bun.stdin.stream()) { count++; console.log('{\"count\":'+count+'}'); }",
+        ],
+    });
+    try {
+        expect(await transport.request({ input: { request: "first" } })).toEqual({ count: 1 });
+        expect(await transport.request({ input: { request: "second" } })).toEqual({ count: 2 });
+        const controller = new AbortController();
+        const cancelled = transport.request({ input: { request: "cancel" }, signal: controller.signal });
+        controller.abort();
+        await expect(cancelled).rejects.toThrow("cancelled");
+        await expect(transport.request({ input: { request: "must not replay" } })).rejects.toThrow("closed");
+    } finally {
+        transport.close();
+    }
+});
+
+describe("bounded command ownership", () => {
+    it("collects complete UTF-8 output without blocking the parent event loop", async () => {
+        let timerRan = false;
+        const timer = setTimeout(() => {
+            timerRan = true;
+        }, 1);
+        const result = await boundedCommand({
+            command: [process.execPath, "-e", 'process.stdout.write("hello 🐈"); process.stderr.write("diagnostic");'],
+            timeoutMs: 5000,
+        });
+        clearTimeout(timer);
+        expect(result.status).toBe(0);
+        expect(result.stdout).toBe("hello 🐈");
+        expect(result.stderr).toBe("diagnostic");
+        expect(timerRan).toBe(true);
+    });
+    it("bounds output and cancels a running owned group without retry", async () => {
+        const overflow = await boundedCommand({
+            command: [process.execPath, "-e", 'process.stdout.write("x".repeat(2048));'],
+            timeoutMs: 5000,
+            maxBufferBytes: 1024,
+        });
+        expect(overflow.error?.code).toBe("ENOBUFS");
+        expect(overflow.stdout.length).toBeLessThanOrEqual(1024);
+        const cancelled = await boundedCommand({
+            command: [process.execPath, "-e", "setInterval(() => {}, 1000)"],
+            timeoutMs: 5000,
+            signal: AbortSignal.timeout(100),
+        });
+        expect(cancelled.error?.code).toBe("ABORT_ERR");
+        await expect(
+            boundedCommand({ command: ["/never-spawn"], timeoutMs: 100, signal: AbortSignal.abort() })
+        ).rejects.toThrow();
+    });
+});
+
+it("worker resources reset before preparing a queued turn after timeout", async () => {
+    class OwnedEngine extends ReplEngine {
+        generation = 0;
+        protected override onWorkerStopped = () => {
+            this.generation++;
+        };
+        protected override prepareCode = (code: string) => code.replace("EPOCH", String(this.generation));
+    }
+    const engine = new OwnedEngine();
+    try {
+        const first = engine.run("while (true) {}", 50);
+        const next = engine.run("EPOCH");
+        expect((await first).ok).toBe(false);
+        const result = await next;
+        expect(result.ok).toBe(true);
+        expect(result.text).toBe("1");
+        expect(engine.generation).toBe(1);
+    } finally {
+        engine.dispose();
+    }
+    expect(engine.generation).toBe(2);
 });

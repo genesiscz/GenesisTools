@@ -33,6 +33,26 @@ interface WorkerResponse {
 }
 
 const WORKER_PATH = join(import.meta.dir, "worker.ts");
+function spawnWorker() {
+    return Bun.spawn([process.execPath, WORKER_PATH], { stdin: "pipe", stdout: "pipe", stderr: "pipe" });
+}
+type ReplWorker = ReturnType<typeof spawnWorker>;
+
+async function* streamChunks(stream: ReadableStream<Uint8Array>): AsyncGenerator<Uint8Array> {
+    const reader = stream.getReader();
+    try {
+        while (true) {
+            const chunk = await reader.read();
+            if (chunk.done) {
+                return;
+            }
+
+            yield chunk.value;
+        }
+    } finally {
+        reader.releaseLock();
+    }
+}
 
 /**
  * What to show a caller for one result. A timeout or a worker exit reports through `error` and
@@ -47,7 +67,9 @@ export function resultMessage(result: Pick<ReplResult, "ok" | "text" | "error" |
 }
 
 export class ReplEngine {
-    private worker: ReturnType<typeof Bun.spawn> | null = null;
+    private worker: ReplWorker | null = null;
+    protected onWorkerStopped?: () => void;
+    protected prepareCode?: (code: string) => string;
     private nextId = 1;
     private pending = new Map<number, (response: WorkerResponse) => void>();
     private moduleDirs: string[] = [];
@@ -58,12 +80,15 @@ export class ReplEngine {
         this.defaultTimeoutMs = options.defaultTimeoutMs ?? 30_000;
     }
 
-    private ensureWorker(): ReturnType<typeof Bun.spawn> {
+    private ensureWorker(): ReplWorker {
         if (this.worker && this.worker.exitCode === null) {
             return this.worker;
         }
 
-        const worker = Bun.spawn([process.execPath, WORKER_PATH], { stdin: "pipe", stdout: "pipe", stderr: "pipe" });
+        if (this.worker) {
+            this.onWorkerStopped?.();
+        }
+        const worker = spawnWorker();
         logger.debug({ pid: worker.pid }, "node-repl worker started");
         this.worker = worker;
         void this.readResponses(worker);
@@ -83,11 +108,11 @@ export class ReplEngine {
      * dependency is enough. The same hazard is handled three files away in
      * src/control/lib/peekaboo.ts, which says so in its own comment.
      */
-    private async drainStderr(worker: ReturnType<typeof Bun.spawn>): Promise<void> {
+    private async drainStderr(worker: ReplWorker): Promise<void> {
         const decoder = new TextDecoder();
 
         try {
-            for await (const chunk of worker.stderr as unknown as AsyncIterable<Uint8Array>) {
+            for await (const chunk of streamChunks(worker.stderr)) {
                 const text = decoder.decode(chunk, { stream: true }).trimEnd();
 
                 if (text.length > 0) {
@@ -105,7 +130,7 @@ export class ReplEngine {
      * top level). Every request still waiting is settled here, so a caller learns immediately
      * instead of waiting out a wall clock that a request without a timer never even starts.
      */
-    private async readResponses(worker: ReturnType<typeof Bun.spawn>): Promise<void> {
+    private async readResponses(worker: ReplWorker): Promise<void> {
         try {
             await this.pumpResponses(worker);
         } catch (error) {
@@ -118,6 +143,7 @@ export class ReplEngine {
             // settle requests that belong to its successor.
             if (this.worker === worker) {
                 this.worker = null;
+                this.onWorkerStopped?.();
                 this.settlePending(
                     `the node-repl worker exited (code ${worker.exitCode ?? "unknown"}) before answering`
                 );
@@ -133,14 +159,11 @@ export class ReplEngine {
         this.pending.clear();
     }
 
-    private async pumpResponses(worker: ReturnType<typeof Bun.spawn>): Promise<void> {
+    private async pumpResponses(worker: ReplWorker): Promise<void> {
         const decoder = new TextDecoder();
         let buffered = "";
 
-        // `AsyncIterable`, not `ReadableStream`: Bun's streams ARE async-iterable at runtime, but
-        // the DOM ReadableStream type that wins here does not declare it, which `tsc` reports as
-        // TS2504 while `tsgo` accepts. Naming what the loop actually needs satisfies both.
-        for await (const chunk of worker.stdout as unknown as AsyncIterable<Uint8Array>) {
+        for await (const chunk of streamChunks(worker.stdout)) {
             buffered += decoder.decode(chunk, { stream: true });
             let newline = buffered.indexOf("\n");
 
@@ -166,7 +189,7 @@ export class ReplEngine {
         }
     }
 
-    private send(worker: ReturnType<typeof Bun.spawn>, request: Record<string, unknown>): void {
+    private send(worker: ReplWorker, request: Record<string, unknown>): void {
         const stdin = worker.stdin as { write(data: string): void; flush(): void };
         stdin.write(`${SafeJSON.stringify(request)}\n`);
         stdin.flush();
@@ -182,6 +205,7 @@ export class ReplEngine {
 
         logger.debug({ pid: worker.pid, reason }, "node-repl worker killed");
         worker.kill();
+        this.onWorkerStopped?.();
         this.settlePending(reason);
     }
 
@@ -196,6 +220,7 @@ export class ReplEngine {
         const worker = this.ensureWorker();
         const id = this.nextId++;
         const started = performance.now();
+        const prepared = this.prepareCode?.(code) ?? code;
 
         return new Promise<ReplResult>((resolve) => {
             const timer = setTimeout(() => {
@@ -205,7 +230,7 @@ export class ReplEngine {
                 clearTimeout(timer);
                 resolve({ ...response, durationMs: Math.round(performance.now() - started) });
             });
-            this.send(worker, { id, op: "run", code });
+            this.send(worker, { id, op: "run", code: prepared });
         });
     }
 

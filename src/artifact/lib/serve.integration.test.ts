@@ -49,7 +49,22 @@ beforeAll(async () => {
 
     // Port 0 asks the OS for a free one; strictPort is false so this cannot
     // collide with a dev server the developer already has running.
-    server = await serveArtifacts({ dir, port: 0, host: "127.0.0.1", templateDir: resolveTemplateDir(undefined) });
+    server = await serveArtifacts({
+        dir,
+        port: 0,
+        host: "127.0.0.1",
+        templateDir: resolveTemplateDir(undefined),
+        plugins: [
+            {
+                name: "test:api-extension",
+                configureServer(vite) {
+                    vite.middlewares.use("/api/custom", (_req, res) => {
+                        res.end("custom response");
+                    });
+                },
+            },
+        ],
+    });
     base = server.resolvedUrls?.local[0]?.replace(/\/$/, "") ?? "";
 }, 60_000);
 
@@ -60,6 +75,12 @@ afterAll(async () => {
 });
 
 describe("serveArtifacts middleware", () => {
+    test("mounts caller plugins before the artifact routes", async () => {
+        const result = await get("/api/custom");
+        expect(result.status).toBe(200);
+        expect(result.body).toBe("custom response");
+    });
+
     test("the root serves the catalog with clean hrefs for every artifact kind", async () => {
         const { status, body } = await get("/");
         expect(status).toBe(200);
