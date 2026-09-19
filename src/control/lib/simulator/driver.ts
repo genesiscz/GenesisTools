@@ -181,6 +181,14 @@ export interface SimulatorDriverOptions {
     maxProbePoints?: number;
 }
 
+/** How long an iOS transition is given to finish before the screen is read back again. */
+export const SETTLE_WAIT_MS = 400;
+
+/** Two observations of the same screen, compared the way the freshness gate compares them. */
+function sameScreen(left: Observation, right: Observation): boolean {
+    return SafeJSON.stringify(observedRows(left)) === SafeJSON.stringify(observedRows(right));
+}
+
 /**
  * Drives a booted iOS simulator through idb, producing the same `Observation` the macOS driver
  * produces. Nothing above this class knows the screen is a simulator.
@@ -191,13 +199,6 @@ export interface SimulatorDriverOptions {
  * about to be tapped: if the element there is no longer the element that was decided on, the
  * action is refused as `not_started` instead of landing on whatever moved into its place.
  */
-/** How long an iOS transition is given to finish before the screen is read back again. */
-export const SETTLE_WAIT_MS = 400;
-
-/** Two observations of the same screen, compared the way the freshness gate compares them. */
-function sameScreen(left: Observation, right: Observation): boolean {
-    return SafeJSON.stringify(observedRows(left)) === SafeJSON.stringify(observedRows(right));
-}
 
 export class SimulatorControlDriver implements ControlDriver {
     private pinned?: Observation;

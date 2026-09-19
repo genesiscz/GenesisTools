@@ -56,7 +56,7 @@ export async function assistTask(options: {
         // that happened from a label that was already there; see rowsChanged in decisions.ts.
         let beforeAct: typeof observation | undefined;
         /** The label of the last thing acted on, for the repeated-target guard below. */
-        let lastActedLabel: string | undefined;
+        let lastActed: ActedTarget | undefined;
         while (true) {
             if (recovery.options.mode === "bounded" && authenticationBarrier(observation)) {
                 reason = "Authentication or permission UI requires user input.";
@@ -150,9 +150,9 @@ export async function assistTask(options: {
                     break;
                 }
 
-                if (namesTheSameThing(lastActedLabel, fanout.target.label)) {
+                if (namesTheSameThing(lastActed, fanout.target)) {
                     log.warn(
-                        { step: steps.length, target: fanout.target.label, previous: lastActedLabel },
+                        { step: steps.length, target: fanout.target.label, previous: lastActed?.label },
                         "assist: repeated-target guard stopped a second act on the same thing"
                     );
                     reason = repeatedTargetReason(fanout.target.label);
@@ -204,7 +204,7 @@ export async function assistTask(options: {
 
                 // Only a dispatch that landed makes a second act on the same thing a repeat.
                 // A refusal is retried on purpose by the bounded recovery controller.
-                lastActedLabel = fanout.target.label;
+                lastActed = fanout.target;
                 observation = dispatched.after;
                 if (beforeEvidence === SafeJSON.stringify(observedRows(observation))) {
                     log.info(
@@ -282,9 +282,9 @@ export async function assistTask(options: {
                     break;
                 }
             }
-            if (namesTheSameThing(lastActedLabel, resolution.selected.label)) {
+            if (namesTheSameThing(lastActed, resolution.selected)) {
                 log.warn(
-                    { step: steps.length, target: resolution.selected.label, previous: lastActedLabel },
+                    { step: steps.length, target: resolution.selected.label, previous: lastActed?.label },
                     "assist: repeated-target guard stopped a second act on the same thing"
                 );
                 reason = repeatedTargetReason(resolution.selected.label);
@@ -324,7 +324,7 @@ export async function assistTask(options: {
             }
             // Only a dispatch that landed makes a second act on the same thing a repeat.
             // A refusal is retried on purpose by the bounded recovery controller.
-            lastActedLabel = resolution.selected.label;
+            lastActed = resolution.selected;
             observation = dispatched.after;
             if (before === SafeJSON.stringify(observedRows(observation))) {
                 log.info(
@@ -388,13 +388,31 @@ export async function assistTask(options: {
  * A false positive only stops the loop and asks the judge, so erring narrow costs at most one
  * unwanted act; erring wide would stop real two-step tasks.
  */
-export function namesTheSameThing(previous: string | undefined, next: string): boolean {
+export interface ActedTarget {
+    targetKey?: string;
+    label: string;
+}
+
+/**
+ * Identity first, label only as a fallback.
+ *
+ * `targetKey` is the semantic row identity ax-tool computes from the parent branch, so two rows
+ * with the same text in different places are different keys. Comparing labels alone blocked a
+ * DISTINCT control that merely reused a word: a second "Continue" after navigation is a new
+ * button, and refusing it stopped a legitimate two-step task. When neither side carries a key
+ * the label rule below still applies, because that is all there is to compare.
+ */
+export function namesTheSameThing(previous: ActedTarget | undefined, next: ActedTarget): boolean {
     if (previous === undefined) {
         return false;
     }
 
-    const a = withoutDecoration(previous);
-    const b = withoutDecoration(next);
+    if (previous.targetKey !== undefined && next.targetKey !== undefined) {
+        return previous.targetKey === next.targetKey;
+    }
+
+    const a = withoutDecoration(previous.label);
+    const b = withoutDecoration(next.label);
     return a.length > 0 && a === b;
 }
 

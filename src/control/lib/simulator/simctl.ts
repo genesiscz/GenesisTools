@@ -138,6 +138,26 @@ export function parseLaunchPid(stdout: string): number | undefined {
     return Number.isInteger(pid) && pid > 0 ? pid : undefined;
 }
 
+/**
+ * The bundle id a `launchctl list` label refers to, or the label itself when it names no app.
+ *
+ * A simulator labels an app `UIKitApplication:com.acme.app[0x8f31][rb-legacy]`, so a bare
+ * equality test against the bundle id matches nothing at all. Matching the whole LINE by
+ * substring is the other failure: an extension label carries the app's bundle id as a prefix,
+ * so `com.acme.app` returned the extension's pid, which `observeSimulator` then stored as the
+ * app identity and `sameScope` compared forever after — a relaunch of the real app went
+ * unnoticed while the extension kept running.
+ *
+ * ⚠️ The `UIKitApplication:` shape is from Apple's documented launchd labelling, not from a
+ * live device: no simulator was booted when this was written, so the parsing is pinned by the
+ * tests below rather than by an observed `launchctl list`.
+ */
+export function bundleIdFromLaunchLabel(label: string): string {
+    const withoutPrefix = label.startsWith("UIKitApplication:") ? label.slice("UIKitApplication:".length) : label;
+    const bracket = withoutPrefix.indexOf("[");
+    return bracket === -1 ? withoutPrefix : withoutPrefix.slice(0, bracket);
+}
+
 export async function runningPid(options: {
     udid: string;
     bundleId: string;
@@ -147,17 +167,9 @@ export async function runningPid(options: {
     if (result.status !== 0) {
         return undefined;
     }
-    // `launchctl list` prints PID, status and LABEL. Matching the whole line by substring let a
-    // bundle id that is a prefix of another one ("com.acme.app" against "com.acme.app.helper")
-    // return the helper's pid, so the label column is compared on its own.
     for (const line of result.stdout.split("\n")) {
         const columns = line.trim().split(/\s+/);
-        if (columns.length < 3) {
-            continue;
-        }
-
-        const label = columns[columns.length - 1];
-        if (label !== options.bundleId && !label.startsWith(`${options.bundleId}.`)) {
+        if (columns.length < 3 || bundleIdFromLaunchLabel(columns[columns.length - 1]) !== options.bundleId) {
             continue;
         }
 

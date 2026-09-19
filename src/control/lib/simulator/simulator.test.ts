@@ -6,7 +6,7 @@ import { clipToScreen, contains, dedupeElements, frameCentre, stableId, toObserv
 import { type IdbElement, idbArguments, parseIdbElements } from "./idb";
 import { DEFAULT_SCREEN, observeSimulator, probePoints, screenFrom, withinBudget } from "./observe";
 import { elementSignature, probedSignature, rematchElement, staleRefusalReason } from "./resolve";
-import { parseDeviceList, parseLaunchPid } from "./simctl";
+import { bundleIdFromLaunchLabel, parseDeviceList, parseLaunchPid } from "./simctl";
 
 const SCREEN = { x: 0, y: 0, width: 402, height: 874 };
 
@@ -488,5 +488,22 @@ describe("the probe budget", () => {
 
         const indexes = kept.map((point) => planned.findIndex((p) => p[0] === point[0] && p[1] === point[1]));
         expect([...indexes].sort((a, b) => a - b)).toEqual(indexes);
+    });
+});
+
+describe("reading an app's pid out of launchctl", () => {
+    test("a simulator app label resolves to its bundle id", () => {
+        expect(bundleIdFromLaunchLabel("UIKitApplication:com.acme.app[0x8f31][rb-legacy]")).toBe("com.acme.app");
+        expect(bundleIdFromLaunchLabel("UIKitApplication:com.acme.app")).toBe("com.acme.app");
+        expect(bundleIdFromLaunchLabel("com.acme.app")).toBe("com.acme.app");
+    });
+
+    test("an extension is never mistaken for the app whose id it carries", () => {
+        // The bug this replaced: a substring match over the whole line returned the
+        // extension's pid, which then became the app identity sameScope compared forever.
+        expect(bundleIdFromLaunchLabel("UIKitApplication:com.acme.app.share[0x22][rb-legacy]")).not.toBe(
+            "com.acme.app"
+        );
+        expect(bundleIdFromLaunchLabel("com.acme.app.helper")).not.toBe("com.acme.app");
     });
 });

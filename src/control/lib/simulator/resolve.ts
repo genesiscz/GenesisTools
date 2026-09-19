@@ -17,7 +17,10 @@ export function probedSignature(present: IdbElement): string {
         depth: 0,
         role: present.role?.startsWith("AX") ? present.role : `AX${present.type ?? "Unknown"}`,
         ...(present.AXUniqueId ? { AXIdentifier: present.AXUniqueId } : {}),
-        ...(present.AXLabel ? { AXDescription: present.AXLabel } : {}),
+        // `toRow` puts the probed label in AXTitle and `elementLabel` prefers AXTitle over
+        // AXDescription, so a title-only element signed differently here than it did when it
+        // was decided on, and the hit test refused an act on a screen that had not moved.
+        ...(present.AXLabel ? { AXTitle: present.AXLabel, AXDescription: present.AXLabel } : {}),
     });
 }
 
