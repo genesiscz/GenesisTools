@@ -2,6 +2,7 @@ import { booleanProbability } from "@genesiscz/utils/ai/evaluation/answers";
 import type { EvaluationResponse, Evaluator } from "@genesiscz/utils/ai/evaluation/service";
 import { ai } from "@genesiscz/utils/ai/tasks/facade";
 import { chunk } from "@genesiscz/utils/array";
+import { concurrentMap } from "@genesiscz/utils/async";
 import { logger } from "@genesiscz/utils/logger";
 import { profiler } from "@genesiscz/utils/profile";
 import { truncateResult } from "./format";
@@ -229,27 +230,46 @@ async function proposeSummaries(options: {
     maxSummaries: number;
     signal?: AbortSignal;
 }): Promise<SummaryCandidate[]> {
-    const proposals: SummaryCandidate[] = [];
+    const eligible: Array<{ ref: CallRef; decision: CompactDecision; result: string }> = [];
     for (const ref of options.pass.refs) {
-        if (proposals.length >= options.maxSummaries) {
+        if (eligible.length >= options.maxSummaries) {
             break;
         }
 
         const decision = options.pass.verdicts.get(ref.call.id);
-        const result = ref.call.result ?? "";
         if (decision?.verdict !== "truncate" || !options.summarizable.has(ref.call.id)) {
             continue;
         }
 
-        options.signal?.throwIfAborted();
-        log.info({ call: ref.call.id, chars: result.length }, "Summarizing a truncated tool result");
-        const summary = await prof.measureAsync("summarize", () => options.summarize(result, SUMMARY_TARGET_CHARS));
-        if (summary.trim()) {
-            proposals.push({ ref, decision, summary: summary.trim() });
-        }
+        eligible.push({ ref, decision, result: ref.call.result ?? "" });
     }
 
-    return proposals;
+    options.signal?.throwIfAborted();
+    log.info({ calls: eligible.length }, "Summarizing truncated tool results");
+
+    // One summary never reads another, so running them in turn cost the sum of up to twenty
+    // model round trips for work that has no ordering at all. `concurrentMap` skips an
+    // individual failure rather than losing the batch, which is the right trade here: a
+    // discarded summary leaves the truncated head layer 1 already chose.
+    const summaries = await concurrentMap({
+        items: eligible,
+        concurrency: 5,
+        fn: async (candidate) => {
+            options.signal?.throwIfAborted();
+            return prof.measureAsync("summarize", () => options.summarize(candidate.result, SUMMARY_TARGET_CHARS));
+        },
+        onError: (candidate, error) =>
+            log.warn({ error, call: candidate.ref.call.id }, "Summary failed; keeping the truncated head"),
+    });
+
+    // Rebuilt from `eligible`, not from the map, so the order does not depend on which model
+    // call finished first and a replay reads the same.
+    return eligible.flatMap((candidate) => {
+        const summary = summaries.get(candidate)?.trim();
+        return summary
+            ? [{ ref: candidate.ref, decision: candidate.decision, summary } satisfies SummaryCandidate]
+            : [];
+    });
 }
 
 /**
