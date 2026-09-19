@@ -25,7 +25,20 @@ export const PROFILER_SCOPE_NAMES = [
     "ts",
     "macos-mail",
     "chrome-devtools",
-    "ts",
+    "jev-listen",
+    "jev-route",
+    "jev-compact",
+    "jev-observe",
+    "jev-loop",
+    "jev-watch",
+    "jev-verify",
+    "jev-browser",
+    "jev-arena",
+    "jev-experiment",
+    "jev-evaluate",
+    "control-native",
+    "stt",
+    "tts",
 ] as const;
 
 export const PROFILING_DETAIL_VALUES = ["phases", "all"] as const;

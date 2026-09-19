@@ -1,4 +1,6 @@
+import { recordUsage } from "@genesiscz/utils/ai/usage";
 import { logger } from "@genesiscz/utils/logger";
+import { profiler } from "@genesiscz/utils/profile";
 import { createGateway } from "ai";
 import { resolveApiKey } from "./auth";
 import { describeGatewayFailure } from "./errors";
@@ -10,10 +12,45 @@ import {
     TypeSafeEvaluationProvider,
     VercelEvaluationProvider,
 } from "./providers";
-import { type EvaluationOptions, type EvaluationProviderId, evaluationProviderSchema } from "./types";
+import { loadJevSettings } from "./settings";
+import {
+    DEFAULT_EVALUATION_PROVIDER,
+    type EvaluationOptions,
+    type EvaluationProviderId,
+    evaluationProviderSchema,
+} from "./types";
 
 export type { EvaluationOptions, EvaluationResponse };
 export type Evaluator = (options: EvaluationCall) => Promise<EvaluationResponse>;
+
+const { log } = logger.scoped("jev-evaluate");
+const prof = profiler.scope("jev-evaluate");
+
+/**
+ * Running totals for this process, written into every "Jev evaluation done" line so the last
+ * line of any run states what the whole run spent. Reset only by process exit.
+ */
+const totals = { calls: 0, failures: 0, inputTokens: 0, outputTokens: 0, ms: 0 };
+
+function summarizeAnswers(answers: EvaluationResponse["answers"]): Record<string, string> {
+    const summary: Record<string, string> = {};
+    for (const [id, answer] of Object.entries(answers)) {
+        if (!answer) {
+            continue;
+        }
+
+        if (answer.type === "choice") {
+            const p = answer.probabilities?.[answer.choice];
+            summary[id] = `choice ${answer.choice}${p === undefined ? "" : ` p=${p.toFixed(2)}`}`;
+        } else if (answer.type === "boolean") {
+            summary[id] = `bool p=${answer.probability.toFixed(2)}`;
+        } else if (answer.type === "score") {
+            summary[id] = `score ${answer.score}`;
+        }
+    }
+
+    return summary;
+}
 export type EvaluationProviderFactory = (
     provider: EvaluationProviderId
 ) => Promise<{ adapter: EvaluationProvider; apiKey: string }>;
@@ -31,7 +68,9 @@ export async function createEvaluatorWithProviderFactory(
     options: EvaluationOptions,
     createProvider: EvaluationProviderFactory
 ): Promise<Evaluator> {
-    const defaultProvider = evaluationProviderSchema.parse(options.provider ?? "vercel");
+    const defaultProvider = evaluationProviderSchema.parse(
+        options.provider ?? (await loadJevSettings()).provider ?? DEFAULT_EVALUATION_PROVIDER
+    );
     const providers = new Map<EvaluationProviderId, Promise<{ adapter: EvaluationProvider; apiKey: string }>>();
     const providerFor = (provider: EvaluationProviderId) => {
         let resolved = providers.get(provider);
@@ -47,10 +86,46 @@ export async function createEvaluatorWithProviderFactory(
         const provider = evaluationProviderSchema.parse(merged.provider ?? defaultProvider);
         const { adapter, apiKey } = await providerFor(provider);
         const input = evaluationSchema.parse(call.input);
+        const questions = Object.keys(input.questions ?? {});
+        log.debug({ provider, questions, timeoutMs: merged.timeoutMs ?? 30000 }, "Jev evaluation start");
+        const stop = prof.start("evaluate");
         try {
-            return await adapter.evaluate({ ...merged, provider, input });
+            const response = await adapter.evaluate({ ...merged, provider, input });
+            const ms = stop();
+            const inputTokens = response.usage.inputTokens ?? 0;
+            const outputTokens = response.usage.outputTokens ?? 0;
+            totals.calls += 1;
+            totals.inputTokens += inputTokens;
+            totals.outputTokens += outputTokens;
+            totals.ms += ms;
+            log.info(
+                {
+                    provider,
+                    model: response.model,
+                    questions,
+                    answers: summarizeAnswers(response.answers),
+                    usage: response.usage,
+                    ms: Math.round(ms),
+                    totals: { ...totals, ms: Math.round(totals.ms) },
+                },
+                "Jev evaluation done"
+            );
+            // recordUsage never throws; it books the call for `tools ai usage` beside every other model.
+            void recordUsage({
+                app: "jev",
+                accountId: `jev:${provider}`,
+                provider: `jev-${provider}`,
+                modelId: response.model,
+                inputTokens,
+                outputTokens,
+                meta: { questions: questions.length },
+            });
+            return response;
         } catch (error) {
+            totals.failures += 1;
+            stop();
             if (merged.signal?.aborted) {
+                log.info({ provider, questions }, "Jev evaluation aborted by the caller");
                 throw new Error("Evaluation stopped.");
             }
             const message =
