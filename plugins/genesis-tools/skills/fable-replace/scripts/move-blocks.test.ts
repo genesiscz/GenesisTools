@@ -1,5 +1,9 @@
 import { describe, expect, test } from "bun:test";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { blockEndLine, docCommentStart, locateBlock } from "./move-blocks";
+import { parseSpec } from "./spec";
 
 const TRICKY = `import { a } from "b";
 
@@ -93,5 +97,87 @@ describe("locating a block to move", () => {
         expect(block.text).toContain("/// Doc above");
         expect(block.text.trimEnd().endsWith("}")).toBe(true);
         expect(block.text).not.toContain("let after");
+    });
+});
+
+describe("the spec language's move marker", () => {
+    /** Only some ops carry `text`; a move's paste is one of them. Narrow rather than cast. */
+    const pastedText = (op: unknown): string =>
+        typeof op === "object" && op !== null && "text" in op && typeof op.text === "string" ? op.text : "";
+
+    const fixture = (): string => {
+        const dir = mkdtempSync(join(tmpdir(), "fr-move-"));
+        writeFileSync(
+            join(dir, "from.ts"),
+            [
+                "export const keep = 1;",
+                "",
+                "/** Doc. */",
+                "export function moved(): string {",
+                '    return "a { b";',
+                "}",
+                "",
+            ].join("\n")
+        );
+        writeFileSync(join(dir, "to.ts"), "export const existing = 0;\n");
+        return dir;
+    };
+
+    test("one marker produces the cut and the paste, and the body is never written", () => {
+        const dir = fixture();
+        const edits = parseSpec({ text: "@@ from.ts\n<<< move to=to.ts symbol=moved\n>>>\n", cwd: dir });
+
+        expect(edits.map((edit) => edit.file).sort()).toEqual(["from.ts", "to.ts"]);
+        const cut = edits.find((edit) => edit.file === "from.ts");
+        const paste = edits.find((edit) => edit.file === "to.ts");
+        expect(cut?.ops?.[0]).toMatchObject({ replace: "" });
+        expect(pastedText(paste?.ops?.[0])).toContain("export function moved()");
+        expect(pastedText(paste?.ops?.[0])).toContain("/** Doc. */");
+    });
+
+    test("a move and an ordinary edit on the same target arrive as ONE file edit", () => {
+        const dir = fixture();
+        const edits = parseSpec({
+            text: [
+                "@@ from.ts",
+                "<<< move to=to.ts symbol=moved",
+                ">>>",
+                "@@ to.ts",
+                "<<<",
+                "export const existing = 0;",
+                "===",
+                "export const existing = 1;",
+                ">>>",
+                "",
+            ].join("\n"),
+            cwd: dir,
+        });
+
+        const target = edits.filter((edit) => edit.file === "to.ts");
+        expect(target).toHaveLength(1);
+        expect(target[0].ops).toHaveLength(2);
+    });
+
+    test("the marker refuses rather than guesses, naming the spec line", () => {
+        const dir = fixture();
+        const bad =
+            (spec: string): (() => unknown) =>
+            () =>
+                parseSpec({ text: spec, cwd: dir });
+
+        expect(bad("@@ from.ts\n<<< move symbol=moved\n>>>\n")).toThrow(/needs to=/);
+        expect(bad("@@ from.ts\n<<< move to=to.ts\n>>>\n")).toThrow(/exactly one of symbol=/);
+        expect(bad("@@ from.ts\n<<< move to=to.ts symbol=moved lines=1-2\n>>>\n")).toThrow(/exactly one of symbol=/);
+        expect(bad("@@ from.ts\n<<< move to=to.ts symbol=nope\n>>>\n")).toThrow(/no declaration of nope/);
+        expect(bad("@@ from.ts\n<<< move to=to.ts lines=oops\n>>>\n")).toThrow(/lines= must be/);
+        expect(bad("@@ from.ts\n<<< symbol=moved\n===\nx\n>>>\n")).toThrow(/only applies to move/);
+    });
+
+    test("lines= addresses a block that is not one declaration", () => {
+        const dir = fixture();
+        const edits = parseSpec({ text: "@@ from.ts\n<<< move to=to.ts lines=1-1\n>>>\n", cwd: dir });
+        const paste = edits.find((edit) => edit.file === "to.ts");
+        expect(pastedText(paste?.ops?.[0])).toContain("export const keep = 1;");
+        void readFileSync;
     });
 });

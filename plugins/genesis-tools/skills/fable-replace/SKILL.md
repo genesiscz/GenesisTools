@@ -73,6 +73,9 @@ skill loaded. Keep the quotes: an install path can contain spaces.
 | `<<< delete` (lines) | remove these lines, newline included |
 | `<<< block` (from `===` to `===` replacement) | replace the region between two anchors; empty replacement deletes it |
 | `<<< create` (content) | create a new file; refuses to overwrite an existing one |
+| `<<< move to=<path> symbol=<name>` | cut that declaration (doc comment included) out of this file and paste it into `<path>`; body empty |
+| `<<< move to=<path> lines=<first>-<last>` | same, for a block that is not one declaration |
+| `<<< move … at=after` / `at=before` (body is the anchor) | place it against an anchor in the target instead of appending |
 
 Per-file post-conditions go between `@@` and the first op: `expect: text` (must be present
 afterwards), `absent: text` (must be gone). Both repeatable. `# comments` and blank lines are
@@ -284,11 +287,21 @@ recon never found. A 50-file rename once reported zero MISS and was still broken
   that name the symbol. `leftoversCheck` (script) fails the run when the old name survives in
   prose while leaving the verified code written; `leftovers({ names, dirs })` is the manual form.
 
-## Moving code between files: `moves`
+## Moving code between files
 
 🛑 **Never retype a block to move it.** Deleting it here and typing it again there costs the body
 twice and turns one transcription slip into a rewrite nobody reviewed. Name the block instead; the
 text is cut and pasted byte for byte and is never authored again.
+
+From the CLI, a move is one marker:
+
+```
+@@ src/jev/commands/listen.ts
+<<< move to=src/jev/lib/cli-output.ts symbol=parseEnum
+>>>
+```
+
+From a script, `moves` takes the same three ways of naming a block:
 
 ```ts
 await run({

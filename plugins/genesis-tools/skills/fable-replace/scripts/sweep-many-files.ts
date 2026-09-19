@@ -307,7 +307,10 @@ export const run = async ({ edits, moves, ...opts }: RunParams): Promise<RunRepo
     // A move is two ordinary edits (cut here, paste there) that must land together, so it is
     // expanded up front and then carried by the same transaction as everything else.
     const expanded = moves?.length ? expandMoves(moves, { cwd: opts.cwd }) : [];
-    const allEdits = [...expanded, ...(edits ?? [])];
+    // A move's paste and an ordinary edit on the SAME target is the normal case: move a function
+    // in, then export it. The caller cannot merge across the two arrays, so the merge happens
+    // here. Order is preserved, so the paste lands before the edits that depend on it.
+    const allEdits = expanded.length ? mergeFileEdits([...expanded, ...(edits ?? [])]) : (edits ?? []);
     const dryRun = opts.dryRun || process.argv.includes("--dry");
     const verbose = opts.verbose ?? true;
     const throwOnFailure = opts.throwOnFailure ?? true;
