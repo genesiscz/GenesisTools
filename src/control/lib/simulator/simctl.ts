@@ -89,13 +89,27 @@ export async function bootedDevices(options: { signal?: AbortSignal } = {}): Pro
 export async function resolveDevice(options: { udid?: string; signal?: AbortSignal }): Promise<SimDevice> {
     const devices = await listDevices({ signal: options.signal });
     if (options.udid) {
-        const match = devices.find((device) => device.udid === options.udid || device.name === options.udid);
-        if (!match) {
+        // Names repeat across runtimes, so `--udid "iPhone 17 Pro"` can name several devices.
+        // Taking the first match reported "is Shutdown, not Booted" while a booted namesake sat
+        // right there. Prefer a booted match, and refuse only when the choice is genuinely
+        // ambiguous rather than when it merely looks it.
+        const matches = devices.filter((device) => device.udid === options.udid || device.name === options.udid);
+        if (matches.length === 0) {
             throw new Error(`No simulator named or identified by "${options.udid}".`);
         }
-        if (!match.booted) {
-            throw new Error(`Simulator ${match.name} (${match.udid}) is ${match.state}, not Booted.`);
+
+        const bootedMatches = matches.filter((device) => device.booted);
+        if (bootedMatches.length > 1) {
+            const named = bootedMatches.map((device) => `${device.name} (${device.udid})`).join(", ");
+            throw new Error(`"${options.udid}" names more than one booted simulator: ${named}. Pass an exact udid.`);
         }
+
+        const match = bootedMatches[0];
+        if (!match) {
+            const first = matches[0];
+            throw new Error(`Simulator ${first.name} (${first.udid}) is ${first.state}, not Booted.`);
+        }
+
         return match;
     }
     const booted = devices.filter((device) => device.booted);
@@ -133,11 +147,21 @@ export async function runningPid(options: {
     if (result.status !== 0) {
         return undefined;
     }
+    // `launchctl list` prints PID, status and LABEL. Matching the whole line by substring let a
+    // bundle id that is a prefix of another one ("com.acme.app" against "com.acme.app.helper")
+    // return the helper's pid, so the label column is compared on its own.
     for (const line of result.stdout.split("\n")) {
-        if (!line.includes(options.bundleId)) {
+        const columns = line.trim().split(/\s+/);
+        if (columns.length < 3) {
             continue;
         }
-        const pid = Number(line.trim().split(/\s+/)[0]);
+
+        const label = columns[columns.length - 1];
+        if (label !== options.bundleId && !label.startsWith(`${options.bundleId}.`)) {
+            continue;
+        }
+
+        const pid = Number(columns[0]);
         if (Number.isInteger(pid) && pid > 0) {
             return pid;
         }

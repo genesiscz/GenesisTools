@@ -29,13 +29,48 @@ interface SharedOptions {
     json?: boolean;
 }
 
+/**
+ * Read one numeric operand, or refuse it by name.
+ *
+ * `Number("abc")` is NaN, and NaN flowed all the way into the probe grid and the swipe maths,
+ * where it produced an empty sweep or a gesture to nowhere rather than an error naming the flag
+ * the caller mistyped.
+ */
+function numericOption(raw: string | undefined, flag: string, min: number, max: number): number | undefined {
+    if (raw === undefined) {
+        return undefined;
+    }
+
+    const value = Number(raw);
+
+    if (!Number.isFinite(value) || value < min || value > max) {
+        throw new Error(`${flag} must be a number from ${min} to ${max}, not ${SafeJSON.stringify(raw)}.`);
+    }
+
+    return value;
+}
+
+function directionOption(raw: string | undefined): "up" | "down" | "left" | "right" | undefined {
+    if (raw === undefined) {
+        return undefined;
+    }
+
+    // A bare cast accepted any string, and an unknown direction reached swipeForScroll as a
+    // vertical swipe by default, so a typo silently scrolled the wrong axis.
+    if (raw !== "up" && raw !== "down" && raw !== "left" && raw !== "right") {
+        throw new Error(`--direction must be up, down, left or right, not ${SafeJSON.stringify(raw)}.`);
+    }
+
+    return raw;
+}
+
 function driverOptions(options: SharedOptions) {
     return {
         udid: options.udid,
         bundleId: options.bundleId,
         probe: options.probe,
-        probeStep: options.probeStep === undefined ? undefined : Number(options.probeStep),
-        maxProbePoints: options.maxPoints === undefined ? undefined : Number(options.maxPoints),
+        probeStep: numericOption(options.probeStep, "--probe-step", 4, 400),
+        maxProbePoints: numericOption(options.maxPoints, "--max-points", 1, 20_000),
     };
 }
 
@@ -134,7 +169,7 @@ export function registerSimulatorCommands(program: Command): void {
             }
         });
 
-    sim.command("screenshot")
+    addFormatOption(sim.command("screenshot"))
         .description("Write a PNG of the simulator screen")
         .requiredOption("--path <file>", "output PNG path")
         .option("--udid <udid>", "device udid or name")
@@ -239,16 +274,16 @@ export function registerSimulatorCommands(program: Command): void {
                     const result = await actOnSimulator({
                         ...driverOptions(options),
                         chosenFrom,
-                        element: Number(options.element),
+                        element: numericOption(options.element, "--element", 0, 1999) ?? 0,
                         action: options.action as ControlAction,
                         value: options.text,
                         parameters: {
                             ...(options.keys ? { keys: options.keys } : {}),
-                            ...(options.direction
-                                ? { direction: options.direction as "up" | "down" | "left" | "right" }
+                            ...(directionOption(options.direction)
+                                ? { direction: directionOption(options.direction) }
                                 : {}),
-                            ...(options.pages ? { pages: Number(options.pages) } : {}),
-                            ...(options.pixels ? { pixels: Number(options.pixels) } : {}),
+                            ...(options.pages ? { pages: numericOption(options.pages, "--pages", 1, 20) } : {}),
+                            ...(options.pixels ? { pixels: numericOption(options.pixels, "--pixels", 1, 10_000) } : {}),
                         },
                     });
                     if (format === "json") {
