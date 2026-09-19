@@ -8,6 +8,7 @@ import {
 } from "@genesiscz/utils/table";
 import type { Command } from "commander";
 import pc from "picocolors";
+import { addFormatOption, type FormatOptions, resolveFormat } from "../lib/output-format";
 import {
     type AuditedApp,
     type CapabilityRoute,
@@ -251,16 +252,19 @@ function printAudit(report: ControlAuditReport): void {
 }
 
 export function registerPermissionsCommands(program: Command): void {
-    program
-        .command("doctor")
+    addFormatOption(program.command("doctor"))
         .description(
             "Accessibility, Screen Recording and Automation for tools control, each as granted/denied/not determined with the identity that needs it. Read-only, never prompts; exits 1 while something is missing."
         )
-        .option("--json", "raw JSON output")
-        .action((opts: { json?: boolean }) => {
+        .action((opts: FormatOptions) => {
+            const format = resolveFormat(opts, "tools control doctor");
+            if (!format) {
+                return;
+            }
+
             const report = controlDoctor();
 
-            if (opts.json) {
+            if (format === "json") {
                 out.result(report);
             } else {
                 printDoctor(report);
@@ -271,17 +275,20 @@ export function registerPermissionsCommands(program: Command): void {
             }
         });
 
-    program
-        .command("audit")
+    addFormatOption(program.command("audit"))
         .description(
             "Everything tools control changed or depends on: running apps with AXManualAccessibility / AXEnhancedUserInterface set (read live, without touching them), the grants and the identity holding each, and which binary every capability runs through. Read-only."
         )
         .option("--all", "include background-only processes (default: apps with a UI)")
-        .option("--json", "raw JSON output")
-        .action((opts: { all?: boolean; json?: boolean }) => {
+        .action((opts: FormatOptions & { all?: boolean }) => {
+            const format = resolveFormat(opts, "tools control audit");
+            if (!format) {
+                return;
+            }
+
             const report = controlAudit({ all: opts.all });
 
-            if (opts.json) {
+            if (format === "json") {
                 out.result(report);
             } else {
                 printAudit(report);

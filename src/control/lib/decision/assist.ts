@@ -52,6 +52,11 @@ export async function assistTask(options: {
     let hostDecision = options.hostDecision;
     try {
         let observation = await session.observe();
+        // The screen as it was before the most recent act. The judge needs it to tell an outcome
+        // that happened from a label that was already there; see rowsChanged in decisions.ts.
+        let beforeAct: typeof observation | undefined;
+        /** The label of the last thing acted on, for the repeated-target guard below. */
+        let lastActedLabel: string | undefined;
         while (true) {
             if (recovery.options.mode === "bounded" && authenticationBarrier(observation)) {
                 reason = "Authentication or permission UI requires user input.";
@@ -59,6 +64,7 @@ export async function assistTask(options: {
             }
             const judgment = await judgeOutcome({
                 observation,
+                before: beforeAct,
                 expect: options.expect ?? goal,
                 exact: options.exact,
                 evaluate: session.evaluate,
@@ -144,7 +150,17 @@ export async function assistTask(options: {
                     break;
                 }
 
+                if (namesTheSameThing(lastActedLabel, fanout.target.label)) {
+                    log.warn(
+                        { step: steps.length, target: fanout.target.label, previous: lastActedLabel },
+                        "assist: repeated-target guard stopped a second act on the same thing"
+                    );
+                    reason = repeatedTargetReason(fanout.target.label);
+                    break;
+                }
+
                 const beforeEvidence = SafeJSON.stringify(observedRows(observation));
+                beforeAct = observation;
                 const dispatched = await session.dispatch({ observation, candidate: fanout.target });
                 const fanoutStep: (typeof steps)[number] = {
                     fanout,
@@ -186,6 +202,9 @@ export async function assistTask(options: {
                     break;
                 }
 
+                // Only a dispatch that landed makes a second act on the same thing a repeat.
+                // A refusal is retried on purpose by the bounded recovery controller.
+                lastActedLabel = fanout.target.label;
                 observation = dispatched.after;
                 if (beforeEvidence === SafeJSON.stringify(observedRows(observation))) {
                     log.info(
@@ -194,6 +213,7 @@ export async function assistTask(options: {
                     );
                     const final = await judgeOutcome({
                         observation,
+                        before: beforeAct,
                         expect: options.expect ?? goal,
                         exact: options.exact,
                         evaluate: session.evaluate,
@@ -262,7 +282,17 @@ export async function assistTask(options: {
                     break;
                 }
             }
+            if (namesTheSameThing(lastActedLabel, resolution.selected.label)) {
+                log.warn(
+                    { step: steps.length, target: resolution.selected.label, previous: lastActedLabel },
+                    "assist: repeated-target guard stopped a second act on the same thing"
+                );
+                reason = repeatedTargetReason(resolution.selected.label);
+                break;
+            }
+
             const before = SafeJSON.stringify(observedRows(observation));
+            beforeAct = observation;
             const dispatched = await session.dispatch({ observation, candidate: resolution.selected });
             step.dispatchOk = dispatched.result.ok;
             step.observationError = dispatched.observationError;
@@ -292,6 +322,9 @@ export async function assistTask(options: {
                     dispatched.result.error ?? dispatched.observationError ?? "Action outcome is uncertain. No retry.";
                 break;
             }
+            // Only a dispatch that landed makes a second act on the same thing a repeat.
+            // A refusal is retried on purpose by the bounded recovery controller.
+            lastActedLabel = resolution.selected.label;
             observation = dispatched.after;
             if (before === SafeJSON.stringify(observedRows(observation))) {
                 log.info(
@@ -300,6 +333,7 @@ export async function assistTask(options: {
                 );
                 const final = await judgeOutcome({
                     observation,
+                    before: beforeAct,
                     expect: options.expect ?? goal,
                     exact: options.exact,
                     evaluate: session.evaluate,
@@ -336,4 +370,45 @@ export async function assistTask(options: {
         "assist finished"
     );
     return { status, reason, steps, judgments, recoveries: recovery.attempts, metrics };
+}
+
+/**
+ * Do two labels name the same thing?
+ *
+ * A row's label changes shape as the screen does. A conversation is "+1 (888) 555-1212,
+ * 01.01.2001" in the list and "+1 (888) 555-1212" once it is open, so a loop that could not tell
+ * them apart opened the conversation and then tapped its title, landing in contact details: one
+ * unwanted act past the goal.
+ *
+ * The rule is deliberately narrow: the two are the same thing when they are equal after dropping a
+ * trailing comma-separated segment that carries NO letters. A date, a time or a count is
+ * decoration a list adds; a word is not. That keeps "Camera" and "Camera Roll" as two targets, and
+ * "OK" and "OK, continue" as two targets, which a plain containment test got wrong.
+ *
+ * A false positive only stops the loop and asks the judge, so erring narrow costs at most one
+ * unwanted act; erring wide would stop real two-step tasks.
+ */
+export function namesTheSameThing(previous: string | undefined, next: string): boolean {
+    if (previous === undefined) {
+        return false;
+    }
+
+    const a = withoutDecoration(previous);
+    const b = withoutDecoration(next);
+    return a.length > 0 && a === b;
+}
+
+function withoutDecoration(label: string): string {
+    const normalised = label.toLowerCase().replace(/\s+/g, " ").trim();
+    const comma = normalised.lastIndexOf(",");
+    if (comma === -1) {
+        return normalised;
+    }
+
+    const tail = normalised.slice(comma + 1);
+    return /[a-z]/.test(tail) ? normalised : normalised.slice(0, comma).trim();
+}
+
+function repeatedTargetReason(label: string): string {
+    return `The previous act already targeted ${label.slice(0, 80)}; completion remains unverified. No second act on the same thing.`;
 }
