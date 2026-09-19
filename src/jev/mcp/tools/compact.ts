@@ -61,7 +61,4 @@ export async function handleJevCompact(
 export const jevCompactTool = {
     name: "jev_compact",
     description: JEV_COMPACT_DESCRIPTION,
-    schema: jevCompactInputSchema,
-    inputSchema: z.toJSONSchema(jevCompactInputSchema, { io: "input" }),
-    handler: handleJevCompact,
 } as const;

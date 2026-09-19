@@ -1,5 +1,5 @@
 import { type CustomTemplate, parseCustomTemplates } from "@app/jev/lib/screen/custom";
-import { DEFAULT_VERIFY_PURPOSES, listTemplates, PURPOSE_IDS, parsePurposes } from "@app/jev/lib/screen/templates";
+import { DEFAULT_VERIFY_PURPOSES, listTemplates, parsePurposes } from "@app/jev/lib/screen/templates";
 import { parseClaims, verifyClaims } from "@app/jev/lib/screen/verify";
 import type { Evaluator } from "@genesiscz/utils/ai/evaluation/service";
 import { logger } from "@genesiscz/utils/logger";
@@ -15,24 +15,6 @@ export const jevVerifyTool = {
     name: "jev_verify",
     description:
         "Score claims against a document with Jev and run purpose templates over it. Read-only: returns scores and the gate verdict, never edits anything.",
-    inputSchema: {
-        type: "object",
-        required: ["claims", "against"],
-        properties: {
-            claims: {
-                type: "string",
-                description: "JSON array of {id,text}, or one claim per line",
-            },
-            against: { type: "string", description: "The document text to judge the claims against" },
-            purpose: {
-                type: "string",
-                description: `Comma-separated purpose templates. Valid: ${PURPOSE_IDS.join(", ")}. Default: ${DEFAULT_VERIFY_PURPOSES.join(", ")}`,
-            },
-            task: { type: "string", description: "Task description for the relevance template" },
-            custom: { type: "string", description: "JSON array of extra templates" },
-            uri: { type: "string", description: "Label for the document in the result" },
-        },
-    },
 } as const;
 
 export interface JevVerifyArgs {

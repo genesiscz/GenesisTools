@@ -9,6 +9,7 @@ import { replayControl } from "@app/control/lib/decision/replay";
 import { replayResilience, resilienceCases } from "@app/control/lib/decision/resilience-replay";
 import { VisualCaptureStore } from "@app/control/lib/decision/visual-store";
 import { replayWait, waitCases } from "@app/control/lib/decision/wait-replay";
+import { parseCustomTemplates } from "@app/jev/lib/screen/custom";
 import { COMPACT_SOURCES, type CompactResult, compactSession, formatDecisionTable } from "@genesiscz/utils/ai/compact";
 import { type EvaluationProviderId, evaluationProviderSchema } from "@genesiscz/utils/ai/evaluation/types";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -164,6 +165,9 @@ export const verifyRequestSchema = z
         against: z.string().min(1).max(40000),
         purposes: z.array(z.string().max(60)).max(12).optional(),
         task: z.string().max(400).optional(),
+        // The CLI (--custom) and the MCP tool both accept extra templates. Leaving it out here
+        // made the same verification answerable only through two of its three doors.
+        custom: z.string().max(20000).optional(),
     })
     .strict();
 
@@ -180,6 +184,7 @@ export async function verifyRequest(options: {
         against: body.against,
         purposes: parsePurposes(body.purposes, DEFAULT_VERIFY_PURPOSES),
         ...(body.task ? { task: body.task } : {}),
+        ...(body.custom ? { custom: parseCustomTemplates(body.custom) } : {}),
         evaluate: options.evaluate ?? providerEvaluator(options.provider),
         ...(options.signal ? { signal: options.signal } : {}),
     });

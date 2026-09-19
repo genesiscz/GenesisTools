@@ -31,7 +31,32 @@ function gitHead(srcDir: string): string {
  * Entry scripts plus every file under each tool's `commands/` directory, because a subcommand
  * is declared there and editing it does not touch the directory's own mtime.
  */
+/**
+ * How long a computed stamp is reused before the tree is walked again.
+ *
+ * The stamp exists to decide whether a cached catalogue is stale, but computing it walks every
+ * tool directory and its `commands/` folder with synchronous `stat` calls. A CLI run pays that
+ * once, which is fine. The HTTP `/route` door and the `jev_route` MCP tool call `loadCatalogue`
+ * per request and hold nothing between them, so each request blocked the event loop on a full
+ * sync sweep just to confirm a cache that had not changed. Source files do not change several
+ * times a second, and a stale answer is bounded by this window.
+ */
+const STAMP_TTL_MS = 2000;
+const stampCache = new Map<string, { at: number; value: string }>();
+
 export function catalogueStamp(srcDir: string): string {
+    const cached = stampCache.get(srcDir);
+
+    if (cached && Date.now() - cached.at < STAMP_TTL_MS) {
+        return cached.value;
+    }
+
+    const value = walkCatalogueStamp(srcDir);
+    stampCache.set(srcDir, { at: Date.now(), value });
+    return value;
+}
+
+function walkCatalogueStamp(srcDir: string): string {
     const tools = discoverTools(srcDir);
     let newest = 0;
     let files = 0;
@@ -103,6 +128,14 @@ export async function loadCatalogue(options: {
 }): Promise<LoadedCatalogue> {
     const path = options.cachePath ?? catalogueCachePath();
     const started = performance.now();
+
+    // `--refresh` means "do not trust anything cached", so it must drop the memoised stamp too.
+    // Keeping it would let a refresh re-read the tree and still compare against a stamp computed
+    // up to two seconds ago, which is the one case where a stale stamp changes the answer.
+    if (options.refresh) {
+        stampCache.delete(options.srcDir);
+    }
+
     // The stamp carries the source directory as well as the mtimes, so a worktree never reads a
     // catalogue another checkout wrote to the same shared path.
     const stamp = `${options.srcDir}|${catalogueStamp(options.srcDir)}`;
