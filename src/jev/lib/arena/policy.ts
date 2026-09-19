@@ -1,7 +1,10 @@
 import type { EvaluationProviderId } from "@genesiscz/utils/ai/evaluation/types";
+import { profiler } from "@genesiscz/utils/profile";
 import { z } from "zod";
 import { evaluateRequest } from "../service";
 import { ARENA_ACTIONS, type ArenaDecision, type ArenaObservation } from "./types";
+
+const prof = profiler.scope("jev-arena");
 
 export const arenaObservationSchema = z
     .object({
@@ -46,6 +49,7 @@ export async function decideArena({
 }): Promise<ArenaDecision> {
     const state: ArenaObservation = arenaObservationSchema.parse(observation);
     const started = Date.now();
+    const stopDecide = prof.start("decide");
     const response = await evaluate({
         input: {
             state: {
@@ -77,6 +81,7 @@ export async function decideArena({
         provider,
         signal,
     });
+    stopDecide();
     const action = response.answers.action;
     const threat = response.answers.threat;
     const survival = response.answers.survival;
