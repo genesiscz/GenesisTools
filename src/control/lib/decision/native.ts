@@ -7,6 +7,7 @@ import {
     candidatesFor,
     hasAncestorRole,
     type Observation,
+    type ObservedElement,
     observationSchema,
     primaryWebArea,
     sameScope,
@@ -14,6 +15,46 @@ import {
 
 const { log } = logger.scoped("control-native");
 const prof = profiler.scope("control-native");
+
+/**
+ * The guard every driver runs before it acts, and the observed row it resolves.
+ *
+ * Two things are checked, and both are safety boundaries rather than conveniences. The scope
+ * check stops an act landing in an app or window that replaced the one that was observed. The
+ * admission check stops an act on a row that observation never offered, which is what keeps a
+ * model from naming a target it invented.
+ *
+ * It lives here, beside `ControlDriver`, because the iOS driver arrived and copied all of it
+ * verbatim, down to the two error strings. A boundary duplicated per driver is a boundary that
+ * gets fixed in one place and missed in the other.
+ *
+ * The resolved row is returned rather than asserted, because the drivers legitimately differ:
+ * the macOS one treats a missing row as "no web context", the simulator one refuses.
+ */
+export function admittedTarget(options: {
+    pinned: Observation | undefined;
+    observation: Observation;
+    candidate: Candidate;
+    parameters?: ActionParameters;
+    /** Names the surface in the refusal, e.g. "app/window" or "simulator app". */
+    surface: string;
+}): ObservedElement | undefined {
+    if (!options.pinned || !sameScope(options.pinned, options.observation)) {
+        throw new Error(`Action is outside the observed ${options.surface}.`);
+    }
+
+    const admitted = candidatesFor({
+        observation: options.observation,
+        action: options.candidate.action,
+        parameters: options.parameters,
+    }).some((item) => item.element === options.candidate.element && item.id === options.candidate.id);
+
+    if (!admitted) {
+        throw new Error("Action does not match an observed allowed candidate.");
+    }
+
+    return options.observation.elements.find((row) => row.index === options.candidate.element);
+}
 
 export interface DriverCall {
     signal?: AbortSignal;
@@ -239,18 +280,13 @@ export class NativeControlDriver implements ControlDriver {
         }
     ): Promise<AxResult> {
         call.signal?.throwIfAborted();
-        if (!this.pinned || !sameScope(this.pinned, call.observation)) {
-            throw new Error("Action is outside the observed app/window.");
-        }
-        const admitted = candidatesFor({
+        const target = admittedTarget({
+            pinned: this.pinned,
             observation: call.observation,
-            action: call.candidate.action,
+            candidate: call.candidate,
             parameters: call.parameters,
-        }).some((item) => item.element === call.candidate.element && item.id === call.candidate.id);
-        if (!admitted) {
-            throw new Error("Action does not match an observed allowed candidate.");
-        }
-        const target = call.observation.elements.find((row) => row.index === call.candidate.element);
+            surface: "app/window",
+        });
         const webTarget = target !== undefined && hasAncestorRole(call.observation.elements, target, "AXWebArea");
         const prepare =
             this.options.prepare === true ||

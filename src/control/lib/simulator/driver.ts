@@ -3,10 +3,9 @@ import { logger } from "@genesiscz/utils/logger";
 import { profiler } from "@genesiscz/utils/profile";
 import { Stopwatch } from "@genesiscz/utils/Stopwatch";
 import { type ActionParameters, actionParametersSchema, type ControlAction } from "../decision/action";
-import type { ControlDriver, DriverCall } from "../decision/native";
+import { admittedTarget, type ControlDriver, type DriverCall } from "../decision/native";
 import {
     type Candidate,
-    candidatesFor,
     type Observation,
     type ObservedElement,
     observedRows,
@@ -282,18 +281,13 @@ export class SimulatorControlDriver implements ControlDriver {
         }
     ): Promise<AxResult> {
         call.signal?.throwIfAborted();
-        if (!this.pinned || !sameScope(this.pinned, call.observation)) {
-            throw new Error("Action is outside the observed simulator app.");
-        }
-        const admitted = candidatesFor({
+        const target = admittedTarget({
+            pinned: this.pinned,
             observation: call.observation,
-            action: call.candidate.action,
+            candidate: call.candidate,
             parameters: call.parameters,
-        }).some((item) => item.element === call.candidate.element && item.id === call.candidate.id);
-        if (!admitted) {
-            throw new Error("Action does not match an observed allowed candidate.");
-        }
-        const target = call.observation.elements.find((row) => row.index === call.candidate.element);
+            surface: "simulator app",
+        });
         if (!target) {
             throw new Error("Observed element is no longer in the snapshot being acted on.");
         }
