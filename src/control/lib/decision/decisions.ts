@@ -1,4 +1,5 @@
 import type { EvaluationResponse, Evaluator } from "@genesiscz/utils/ai/evaluation/service";
+import { logger } from "@genesiscz/utils/logger";
 import { Stopwatch } from "@genesiscz/utils/Stopwatch";
 import { z } from "zod";
 import type { ActionParameters } from "./action";
@@ -30,7 +31,40 @@ export function confidenceFor(result: EvaluationResponse, id: string): number | 
             : undefined;
     return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
-export function admittedChoice({
+const { log } = logger.scoped("control-gate");
+
+/**
+ * The admission gate (minProbability 0.8, minMargin 0.15, minConfidence 0.7). Every verdict is
+ * logged with the numbers it was made on: a refusal at info, an admission at debug.
+ */
+export function admittedChoice(input: {
+    result: EvaluationResponse;
+    id: string;
+    allowed: string[];
+    policy?: DecisionPolicy;
+}) {
+    const verdict = decideAdmission(input);
+    const line = {
+        id: input.id,
+        allowed: input.allowed.length,
+        choice: verdict.choice,
+        admitted: verdict.admitted,
+        probability: Number(verdict.probability.toFixed(3)),
+        margin: Number(verdict.margin.toFixed(3)),
+        confidence: verdict.confidence,
+        reason: verdict.reason,
+        model: input.result.model,
+    };
+    if (verdict.admitted) {
+        log.debug(line, "admission gate passed");
+    } else {
+        log.info(line, "admission gate refused");
+    }
+
+    return verdict;
+}
+
+function decideAdmission({
     result,
     id,
     allowed,
@@ -187,13 +221,32 @@ export const exactExpectationSchema = z
         "An exact identifier or label is required."
     );
 export type ExactExpectation = z.infer<typeof exactExpectationSchema>;
-export async function judgeOutcome(
-    options: DecisionOptions & {
-        observation: Observation;
-        expect: string;
-        exact?: ExactExpectation;
-    }
-) {
+type OutcomeOptions = DecisionOptions & {
+    observation: Observation;
+    expect: string;
+    exact?: ExactExpectation;
+};
+
+/** Exact readback first, semantic judgement second; every verdict is logged with its basis. */
+export async function judgeOutcome(options: OutcomeOptions) {
+    const verdict = await decideOutcome(options);
+    log.info(
+        {
+            app: options.observation.app,
+            expect: options.expect.slice(0, 160),
+            exact: options.exact !== undefined,
+            status: verdict.status,
+            basis: verdict.basis,
+            evidence: verdict.evidence,
+            probabilities: verdict.probabilities,
+            ms: Math.round(verdict.verificationMs),
+        },
+        "outcome judged"
+    );
+    return verdict;
+}
+
+async function decideOutcome(options: OutcomeOptions) {
     const expected = z.string().trim().min(1).max(4000).parse(options.expect);
     const clock = new Stopwatch();
     options.signal?.throwIfAborted();

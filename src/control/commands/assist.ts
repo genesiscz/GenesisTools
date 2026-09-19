@@ -27,6 +27,7 @@ export function registerAssistCommand(program: Command) {
         .option("--max-requests <n>", "Maximum paid evaluations", "20")
         .option("--recovery [mode]", "Recovery: off or bounded", "off")
         .option("--chooser [mode]", "Target chooser: exact, jev or auto (Jev only; host handoff on uncertainty)", "jev")
+        .option("--no-fanout", "Restore the serial chooser instead of observe fan-out")
         .option(
             "--host-decision <json>",
             "Explicit host answer plus original packet; revalidated against current state"
@@ -47,6 +48,7 @@ export function registerAssistCommand(program: Command) {
                     remedies?: string;
                     chooser: string | boolean;
                     hostDecision?: string;
+                    fanout?: boolean;
                 }
             ) => {
                 const parsedMode = z.enum(["off", "bounded"]).safeParse(options.recovery);
@@ -72,6 +74,7 @@ export function registerAssistCommand(program: Command) {
                     const result = await assistTask({
                         goal: options.goal,
                         chooser: chooser.data,
+                        fanout: options.fanout !== false,
                         hostDecision,
                         recovery: { mode, remedies, maxRecoveries: Number(options.maxRecoveries) },
                         expect: options.expect,

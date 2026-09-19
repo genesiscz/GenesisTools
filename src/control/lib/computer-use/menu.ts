@@ -1,7 +1,12 @@
 import { randomUUID } from "node:crypto";
+import { logger } from "@genesiscz/utils/logger";
+import { profiler } from "@genesiscz/utils/profile";
 import { z } from "zod";
 import { elementLabel, observedElementSchema } from "../decision/observation";
 import type { NativeBridge } from "./session";
+
+const { log } = logger.scoped("control-menu");
+const prof = profiler.scope("control-native");
 
 const menuSchema = z.object({
     ok: z.literal(true),
@@ -29,15 +34,31 @@ export class NativeMenuSession {
         if (!this.records.has(options.app) && this.records.size >= 8) {
             throw new Error("Eight menu sessions are already retained; close one first.");
         }
+        const stopSee = prof.start("menu-see");
         const result = await this.native.run({
             args: ["menu-see", "--app", options.app, ...(options.top_menu ? ["--menu", options.top_menu] : [])],
             timeoutMs: options.timeout_ms ?? 10000,
             signal: options.signal,
         });
+        const seeMs = stopSee();
         if (!result.ok) {
+            log.warn(
+                { app: options.app, topMenu: options.top_menu, ms: seeMs, error: result.error },
+                "menu-see failed"
+            );
             throw new Error(result.error ?? "Native menu inspection failed.");
         }
         const snapshot = menuSchema.parse(result);
+        log.info(
+            {
+                app: options.app,
+                topMenu: options.top_menu,
+                rows: snapshot.elements.length,
+                retained: this.records.size,
+                ms: seeMs,
+            },
+            "menu-see ok"
+        );
         const record = {
             snapshot,
             revision: `${this.id}:menu:${++this.generation}`,
@@ -106,8 +127,13 @@ export class NativeMenuSession {
             throw new Error("Menu item does not expose the requested action.");
         }
         this.records.delete(options.app);
+        log.info(
+            { app: options.app, element: index, title: elementLabel(row).slice(0, 120), action: options.action },
+            "menu-act"
+        );
+        const stopAct = prof.start("menu-act");
         try {
-            return await this.native.run({
+            const result = await this.native.run({
                 args: [
                     "menu-act",
                     "--app",
@@ -122,7 +148,26 @@ export class NativeMenuSession {
                 timeoutMs: options.timeout_ms ?? 10000,
                 signal: options.signal,
             });
+            const actMs = stopAct();
+            if (result.ok) {
+                log.info({ app: options.app, element: index, ms: actMs }, "menu-act ok");
+            } else {
+                log.warn(
+                    {
+                        app: options.app,
+                        element: index,
+                        ms: actMs,
+                        dispatchState: result.dispatchState,
+                        error: result.error,
+                    },
+                    "menu-act failed"
+                );
+            }
+
+            return result;
         } catch (error) {
+            stopAct();
+            log.warn({ app: options.app, element: index, error }, "menu-act transport failed; delivery unknown");
             return {
                 ok: false,
                 dispatchState: "uncertain",

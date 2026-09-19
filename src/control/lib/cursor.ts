@@ -121,7 +121,7 @@ export function saveCursor(cursor: SoftwareCursor): void {
     }
 
     atomicWriteFileSync(path, SafeJSON.stringify(cursor, null, 2));
-    logger.debug({ cursor: cursor.name, pid: cursor.pid, windowId: cursor.windowId }, "saved software cursor");
+    logger.debug({ cursor: cursor.name, appPid: cursor.pid, windowId: cursor.windowId }, "saved software cursor");
 }
 
 export function moveSoftwareCursor(options: MoveSoftwareCursorOptions): AxResult {

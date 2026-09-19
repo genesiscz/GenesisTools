@@ -111,6 +111,12 @@ export interface Candidate {
     ancestors: string[];
     checked?: boolean;
     nearbyText?: string[];
+    /**
+     * The row's semantic identity as ax-tool computes it (role, labels, URL, state, ancestors and
+     * owning document). Stable across observations of the same thing, so it is what a freshness
+     * check should compare rather than a label that a live region may rewrite.
+     */
+    targetKey?: string;
 }
 
 function siblingText(rows: ObservedElement[]): Map<number, string[]> {
@@ -243,6 +249,7 @@ export function candidatesFor({
                 kind: elementKind(row),
                 identifier: row.AXIdentifier,
                 checked: checkedState(row),
+                ...(row.targetKey === undefined ? {} : { targetKey: row.targetKey }),
                 ...(context.has(row.index) ? { nearbyText: context.get(row.index) } : {}),
                 ancestors: ancestors
                     .map(elementLabel)
@@ -254,12 +261,29 @@ export function candidatesFor({
     }
     return candidates;
 }
+/** How many rows may be shown to a model before the caller must narrow the scope instead. */
+export const EVIDENCE_ROW_LIMIT = 300;
+
+/**
+ * Evidence rows for a model to read. Refuses a tree it would have to truncate, because a model
+ * shown a silently shortened list would reason about a screen that does not exist.
+ */
 export function observedEvidence(observation: Observation) {
-    if (observation.elements.length > 300) {
+    if (observation.elements.length > EVIDENCE_ROW_LIMIT) {
         throw new Error(
-            "More than 300 observation rows. Narrow the window/scope; evidence will not be silently truncated."
+            `More than ${EVIDENCE_ROW_LIMIT} observation rows. Narrow the window/scope; evidence will not be silently truncated.`
         );
     }
+
+    return observedRows(observation);
+}
+
+/**
+ * The same projection with no row limit, for comparing two observations of the same screen: the
+ * freshness gate and the readback diff. Nothing here reaches a model, and a comparison over a
+ * shortened list would be the unsafe one, so the limit would be backwards.
+ */
+export function observedRows(observation: Observation) {
     return observation.elements
         .filter((row) => row.visible !== false)
         .map((row) => ({
@@ -274,6 +298,9 @@ export function observedEvidence(observation: Observation) {
                     : String(row.AXValue ?? "").slice(0, 500),
             enabled: !disabled(row),
             ...(checkedState(row) === undefined ? {} : { checked: checkedState(row) }),
+            // The document URL is part of what was seen: a navigation that leaves the same labels on
+            // screen must still read as a change, both to Jev and to a freshness gate comparing evidence.
+            ...(row.role === "AXWebArea" && row.AXURL ? { url: row.AXURL.slice(0, 500) } : {}),
         }));
 }
 export function evidenceChoices(evidence: ReturnType<typeof observedEvidence>): Record<string, string> {

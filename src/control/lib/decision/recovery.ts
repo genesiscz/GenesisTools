@@ -1,9 +1,12 @@
 import { setTimeout as delay } from "node:timers/promises";
+import { logger } from "@genesiscz/utils/logger";
 import { z } from "zod";
 import type { AxResult } from "../runner";
 import { admittedChoice } from "./decisions";
 import { type Candidate, candidatesFor, type Observation, observedEvidence } from "./observation";
 import type { ControlSession } from "./session";
+
+const { log } = logger.scoped("control-recovery");
 
 export const refusalSchema = z.enum([
     "stale_observation",
@@ -81,7 +84,39 @@ export class RecoveryController {
     constructor(options: RecoveryOptions = {}) {
         this.options = recoveryOptionsSchema.parse(options);
     }
-    async recover({
+    /** One bounded recovery attempt; the outcome and the attempt record are logged every time. */
+    async recover(request: {
+        session: ControlSession;
+        category: Refusal;
+        observation?: Observation;
+        goal: string;
+    }): Promise<Observation | null> {
+        const index = this.attempts.length;
+        const fresh = await this.attemptRecovery(request);
+        const attempt = this.attempts[index];
+        log.info(
+            {
+                category: request.category,
+                mode: this.options.mode,
+                attempts: this.attempts.length,
+                maxRecoveries: this.options.maxRecoveries,
+                continued: fresh !== null,
+                attempt: attempt
+                    ? {
+                          category: attempt.category,
+                          status: attempt.status,
+                          reason: attempt.reason,
+                          selected: attempt.selected,
+                          candidates: attempt.candidates,
+                      }
+                    : null,
+            },
+            "recovery attempt"
+        );
+        return fresh;
+    }
+
+    private async attemptRecovery({
         session,
         category,
         observation,

@@ -1,3 +1,5 @@
+import { registerConfig } from "@genesiscz/utils/ai/evaluation/config-cli";
+import { logger } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
 import { registerAssistCommand } from "./assist";
 import { registerAwaitCommand } from "./await";
@@ -11,6 +13,7 @@ import { registerDiscoveryCommands } from "./discovery";
 import { registerDrawCommand } from "./draw";
 import { registerFillCommand } from "./fill";
 import { registerInteractCommands } from "./interact";
+import { registerObserveCommand } from "./observe";
 import { registerOsascriptCommand } from "./osascript";
 import { registerPermissionsCommands } from "./permissions";
 import { registerRecordPlanCommand } from "./record-plan";
@@ -26,6 +29,10 @@ import { registerWorkflowCommands } from "./workflow";
 
 export function registerControlCommands(program: Command): void {
     registerCaptureCommands(program);
+    registerConfig(program, (error) => {
+        logger.error({ error }, "control config failed");
+        process.exitCode = 1;
+    });
     registerAssistCommand(program);
     registerAwaitCommand(program);
     registerChooseCommand(program);
@@ -38,6 +45,7 @@ export function registerControlCommands(program: Command): void {
     registerPermissionsCommands(program);
     registerDrawCommand(program);
     registerInteractCommands(program);
+    registerObserveCommand(program);
     registerFillCommand(program);
     registerRecordPlanCommand(program);
     registerRunCommand(program);

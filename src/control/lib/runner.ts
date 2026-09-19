@@ -11,12 +11,14 @@ import {
     installedGenesisAppLauncher,
 } from "@genesiscz/utils/macos/genesis-app";
 import { boundedCommand } from "@genesiscz/utils/process/bounded-command";
+import { profiler } from "@genesiscz/utils/profile";
 import { Stopwatch } from "@genesiscz/utils/Stopwatch";
 import { captureNativeSources, nativeNeedsBuild, recordNativeBuild } from "./native-build";
 
 const GT_ROOT = join(import.meta.dir, "..", "..", "..");
 const BINARY_PATH = join(GT_ROOT, "native", "ax-tool", ".build", "release", "ax-tool");
 const SWIFT_SOURCE = join(GT_ROOT, "native", "ax-tool");
+const prof = profiler.scope("control-native");
 
 export const RECORD_DIR = join(env.tools.getHome(), ".genesis-tools", "control", "record");
 export const RECORD_SESSION = join(RECORD_DIR, "session.json");
@@ -470,20 +472,33 @@ export async function runAxAsync(options: {
     }
     logger.debug({ command: args[0], timeoutMs: remainingMs }, "Running asynchronous native control command");
     try {
-        return await runAxAsyncWithRecovery({
+        const interpreted = await runAxAsyncWithRecovery({
             args,
             timeoutMs: remainingMs,
             signal: options.signal,
             run: async (attemptTimeoutMs) => {
-                const result = await boundedCommand({
-                    command: axCommandLine(binary, args),
-                    timeoutMs: attemptTimeoutMs,
-                    maxBufferBytes: AX_STDOUT_BUDGET_BYTES,
-                    signal: options.signal,
-                });
+                const result = await prof.measureAsync(`ax-${args[0]}`, () =>
+                    boundedCommand({
+                        command: axCommandLine(binary, args),
+                        timeoutMs: attemptTimeoutMs,
+                        maxBufferBytes: AX_STDOUT_BUDGET_BYTES,
+                        signal: options.signal,
+                    })
+                );
                 return interpretNativeResult({ args, result, timeoutMs: attemptTimeoutMs });
             },
         });
+        logger.debug(
+            {
+                command: args[0],
+                ms: Math.round(clock.elapsedMs),
+                ok: interpreted.ok,
+                dispatchState: interpreted.dispatchState,
+                error: interpreted.error,
+            },
+            "Asynchronous native control command finished"
+        );
+        return interpreted;
     } catch (error) {
         logger.warn({ error, command: args[0] }, "Native transport failed; no retry");
         if (error instanceof GenesisAppUpdatingError) {

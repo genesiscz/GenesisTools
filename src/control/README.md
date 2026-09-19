@@ -307,6 +307,29 @@ Defaults are 8 action attempts, 20 model requests and 120 seconds. Native comman
 
 `bun src/control/scripts/live-smoke.ts --background-only --semantic` runs the real TypeSafe provider against a temporary AppKit fixture. It requires TYPESAFE_API_KEY, Accessibility and Screen Recording, makes paid requests, and terminates only its own verified fixture PID.
 
+### Observe fan-out
+
+```sh
+tools jev control observe --app Fixture --goal "Enable Show line numbers"
+tools control assist --app Fixture --goal "Enable Show line numbers" --no-fanout
+```
+
+`tools jev control observe` (`observeFanout` in `src/control/lib/decision/observe.ts`) takes one
+`see` and asks six questions in a single request: which target, which verb, whether the goal is
+already done, whether the view is blocked, whether to wait, and the risk of acting. Code branches
+on the answers instead of picking a target and separately judging the outcome.
+
+`control assist` uses this fan-out by default and keeps the same serial guards the older chooser
+path has always had: a checkbox or toggle is never dispatched twice while completion stays
+unverified (the double-toggle guard), a refusal goes through the bounded `RecoveryController`
+before giving up, and when an action produces no observable change between the before and after
+evidence, assist stops and asks a final `judgeOutcome` rather than repeating the action. Pass
+`--no-fanout` to restore the older serial chooser (`chooseCandidate` then a separate judge) for
+comparison.
+
+A refuted exact readback returns `{ status: "blocked", reason: "exact_readback_refuted" }`
+(`src/control/lib/decision/observe.ts`).
+
 ### Animated action cursor
 
 Applicable mutations show the bundled MIT-licensed Cua Default 2.0.0 vector cursor: cyan fill, white outline, soft glow, gentle float, animated action marks and a fading GenesisTools badge with foreground/background and AX/pixel context. Movement glides between resolved targets. Drag feedback follows delivered gesture points.
