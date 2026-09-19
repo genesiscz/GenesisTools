@@ -18,7 +18,7 @@ describe.if(optIn.e2e)("genesis-tools MCP server (stdio e2e)", () => {
         );
         const transport = new StdioClientTransport({
             command: process.execPath,
-            args: ["run", join(import.meta.dir, "../index.ts"), "mcp"],
+            args: ["run", join(import.meta.dir, "../index.ts")],
             env: {
                 ...env.getProcessEnv(),
                 CLAUDE_CODE_SESSION_ID: "e2e-sess",
@@ -67,7 +67,7 @@ describe.if(optIn.e2e)("genesis-tools MCP server (stdio e2e)", () => {
         );
         const transport = new StdioClientTransport({
             command: process.execPath,
-            args: ["run", join(import.meta.dir, "../index.ts"), "mcp"],
+            args: ["run", join(import.meta.dir, "../index.ts")],
             env: {
                 ...env.getProcessEnv(),
                 CLAUDE_CODE_SESSION_ID: "e2e-sess",

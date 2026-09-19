@@ -20,7 +20,11 @@ function buildProviders(): MCPProvider[] {
 export function buildInstallArgs(o: { agent?: string }): InstallArgs {
     const provider = o.agent === "codex" ? "codex" : "claude";
     // Stable global command (not the ephemeral worktree path) so the registration survives.
-    return { serverName: "genesis-tools", commandOrUrl: "tools claude mcp", options: { type: "stdio", provider } };
+    return {
+        serverName: "genesis-tools",
+        commandOrUrl: "tools genesis-tools-mcp",
+        options: { type: "stdio", provider },
+    };
 }
 
 export function registerMcpInstallCommand(mcp: Command): void {

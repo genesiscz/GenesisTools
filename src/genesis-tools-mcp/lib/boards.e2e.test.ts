@@ -107,7 +107,7 @@ describe.if(optIn.e2e)("boards MCP tools (stdio e2e against a real agent-mode de
 
             const transport = new StdioClientTransport({
                 command: process.execPath,
-                args: ["run", join(import.meta.dir, "../index.ts"), "mcp"],
+                args: ["run", join(import.meta.dir, "../index.ts")],
                 env: { ...env.getProcessEnv(), BOARDS_BASE_URL: base },
             });
             const client = new Client({ name: "boards-e2e", version: "1.0.0" });
@@ -211,7 +211,7 @@ describe.if(optIn.e2e)("boards MCP tools (stdio e2e against a real agent-mode de
 
             const transport = new StdioClientTransport({
                 command: process.execPath,
-                args: ["run", join(import.meta.dir, "../index.ts"), "mcp"],
+                args: ["run", join(import.meta.dir, "../index.ts")],
                 env: { ...env.getProcessEnv(), BOARDS_BASE_URL: base },
             });
             const client = new Client({ name: "boards-compose-e2e", version: "1.0.0" });

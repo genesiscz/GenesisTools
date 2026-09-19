@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { buildInstallArgs } from "./mcp-install";
+import { buildInstallArgs } from "@app/genesis-tools-mcp/lib/mcp-install";
 
 describe("buildInstallArgs", () => {
     it("targets the claude provider with a stdio command by default", () => {
@@ -7,7 +7,7 @@ describe("buildInstallArgs", () => {
         expect(a.serverName).toBe("genesis-tools");
         expect(a.options.type).toBe("stdio");
         expect(a.options.provider).toBe("claude");
-        expect(a.commandOrUrl).toContain("claude mcp");
+        expect(a.commandOrUrl).toBe("tools genesis-tools-mcp");
     });
 
     it("targets codex when --agent codex", () => {

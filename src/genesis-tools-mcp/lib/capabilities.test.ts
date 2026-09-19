@@ -26,7 +26,8 @@ const ALL = registry(
     "question_cancel",
     "boards_read",
     "handoff_post",
-    "annotate_image"
+    "annotate_image",
+    "jev_live"
 );
 
 afterEach(() => {
@@ -74,6 +75,7 @@ describe("filterRegistryByCapabilities", () => {
         expect(withCapabilities("boards")).toEqual(["boards_read"]);
         expect(withCapabilities("handoff")).toEqual(["handoff_post"]);
         expect(withCapabilities("annotate")).toEqual(["annotate_image"]);
+        expect(withCapabilities("jev")).toEqual(["jev_live"]);
     });
 
     test("an unset filter leaves every tool enabled", () => {
