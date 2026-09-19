@@ -38,6 +38,7 @@ const EXPECTED: Array<{ args: string[]; flags: string[] }> = [
     { args: ["wake"], flags: ["status"] },
     { args: ["control", "assist"], flags: ["--no-fanout"] },
     { args: ["control", "demo"], flags: ["--i-mean-it"] },
+    { args: ["evaluation"], flags: ["create", "run", "list", "rm"] },
 ];
 
 test("live policy commands advertise their flags", async () => {

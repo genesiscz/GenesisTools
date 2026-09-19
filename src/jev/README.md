@@ -16,11 +16,15 @@ tools jev evaluation create --name inbox --bundle inbox  # save a bundled exampl
 tools jev evaluation list
 tools jev evaluation run inbox --input "Can you speak next month?"
 tools jev evaluation run inbox --input @./message.txt
+tools jev evaluation run inbox --input "…" --model xai/grok-4-fast
 tools jev evaluation run hello                           # no model calls
 tools jev evaluation run detox --replay recording.json   # deterministic replay
 ```
 
+`llm` / `write` use the chat task default (`tools ai config default set chat …`). If none is set, pass `--model <ref>`.
+
 Programs are stored at `~/.genesis-tools/jev/probably/programs/<name>.prob`.
+Live provider proof: `RUN_LIVE=1 bun run test src/jev/lib/probably/providers.live.test.ts`.
 
 ## Dashboard
 
