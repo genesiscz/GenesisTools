@@ -48,6 +48,11 @@ export function createProbablyProvider(options: ProbablyProviderOptions = {}): P
                             ...(options.model ? { model: options.model } : {}),
                             maxTokens: 300,
                             temperature: 0.9,
+                            // The race decides when WE stop waiting; this decides when the
+                            // REQUEST stops. Without it a cancelled write left the provider
+                            // generating, holding capacity and billing tokens for an answer
+                            // that had already been abandoned.
+                            ...(signal ? { abortSignal: signal } : {}),
                         }),
                         abortPromise(signal),
                     ]);

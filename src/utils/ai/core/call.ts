@@ -65,6 +65,15 @@ export interface CallLLMOptions {
     headers?: Record<string, string | undefined>;
     /** Write streaming chunks to this writable (defaults to process.stdout) */
     streamTarget?: NodeJS.WritableStream;
+    /**
+     * Cancels the request itself, not just the caller's wait for it.
+     *
+     * `coreChat` has always accepted one; `CallLLMOptions` could not carry it, so a caller that
+     * raced `callLLM` against its own abort left the model call running. The race rejected, the
+     * request did not, and the provider kept generating, holding capacity and billing tokens for
+     * an answer nobody would read.
+     */
+    abortSignal?: AbortSignal;
 }
 
 export interface CallLLMResult {
@@ -417,6 +426,7 @@ async function runCall(target: CallTarget, options: CallLLMOptions): Promise<Cal
             maxTokens: options.maxTokens,
             temperature: options.temperature,
             headers: options.headers,
+            ...(options.abortSignal ? { abortSignal: options.abortSignal } : {}),
         });
 
         return { content: result.content, usage: result.usage };
@@ -446,6 +456,7 @@ async function runCall(target: CallTarget, options: CallLLMOptions): Promise<Cal
         maxTokens: options.maxTokens,
         temperature: options.temperature,
         headers: options.headers,
+        ...(options.abortSignal ? { abortSignal: options.abortSignal } : {}),
         stream: true,
         onChunk: write,
     });

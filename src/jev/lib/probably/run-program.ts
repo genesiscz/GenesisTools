@@ -71,7 +71,14 @@ export async function resolveProbablyInput(raw: string | undefined): Promise<Res
                 throw error;
             }
 
-            log.debug({ error, raw }, "treat --input as literal after path probe failed");
+            // The shape of the failure, never its content. `--input` is whatever the caller
+            // typed or pointed at, the day log keeps every debug record regardless of console
+            // level, and a parse error's own message can quote the text that failed. Logging
+            // nothing would breach the no-swallowed-errors rule, so the class and size stay.
+            log.debug(
+                { failure: error instanceof Error ? error.name : "unknown", chars: raw.length },
+                "treat --input as literal after path probe failed"
+            );
         }
     }
 
@@ -94,7 +101,10 @@ export async function resolveProbablyInput(raw: string | undefined): Promise<Res
                 throw error;
             }
 
-            log.debug({ error }, "treat brace --input as literal after JSON parse failed");
+            log.debug(
+                { failure: error instanceof Error ? error.name : "unknown", chars: raw.length },
+                "treat brace --input as literal after JSON parse failed"
+            );
         }
     }
 
