@@ -83,7 +83,9 @@ function describeTypeSafeFailure(error: unknown): string {
 }
 
 export async function evaluateRequest(options: EvaluationCall): Promise<EvaluationResponse> {
-    evaluationSchema.parse(options.input);
+    // The evaluator parses `input` against the same schema before it sends anything, so validating
+    // here as well charged every call a second full parse for an identical verdict and an
+    // identical error. That cost lands inside the arena and experiment loops, which run it per step.
     return (await createEvaluator(options))(options);
 }
 

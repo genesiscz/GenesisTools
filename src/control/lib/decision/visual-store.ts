@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
-import { createEvaluator } from "@genesiscz/utils/ai/evaluation/service";
+import { createEvaluator, type Evaluator } from "@genesiscz/utils/ai/evaluation/service";
 import type { EvaluationProviderId } from "@genesiscz/utils/ai/evaluation/types";
 import { TemporaryArtifacts } from "@genesiscz/utils/fs/temporary-artifacts";
 import { OperationBudget } from "@genesiscz/utils/operation-budget";
@@ -34,6 +34,14 @@ export class VisualCaptureStore {
     private readonly entries = new Map<string, Entry>();
     private readonly artifacts = new TemporaryArtifacts({ prefix: "jev-visual", maxFiles: 6 });
     private pending = 0;
+    /**
+     * One evaluator per provider for the life of the store, not one per `choose()`.
+     *
+     * `createEvaluator` resolves a credential out of the secret store. This store is a
+     * long-lived singleton on the API server, so creating one per choice re-paid that
+     * resolution on every visual decision the server ever made.
+     */
+    private readonly evaluators = new Map<EvaluationProviderId, Promise<Evaluator>>();
     private expiry?: ReturnType<typeof setTimeout>;
     private closed = false;
     constructor(
@@ -66,6 +74,18 @@ export class VisualCaptureStore {
             }
         }
     }
+    private evaluator(provider: EvaluationProviderId): Promise<Evaluator> {
+        const existing = this.evaluators.get(provider);
+
+        if (existing) {
+            return existing;
+        }
+
+        const created = createEvaluator({ provider });
+        this.evaluators.set(provider, created);
+        return created;
+    }
+
     private entry(id: string): Entry {
         this.prune();
         const entry = this.entries.get(z.string().uuid().parse(id));
@@ -175,7 +195,7 @@ export class VisualCaptureStore {
                         ? undefined
                         : async (call) => {
                               budget.take("request");
-                              const evaluate = await createEvaluator({ provider: options.provider });
+                              const evaluate = await this.evaluator(options.provider);
                               return evaluate({ ...call, timeoutMs: budget.remaining(), signal: budget.signal });
                           },
             });

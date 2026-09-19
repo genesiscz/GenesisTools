@@ -124,8 +124,13 @@ export class RecoveryController {
             wait: "Wait at most one second, then read fresh state and make a new decision.",
             stop: "Stop because safe recovery is unavailable or uncertain.",
         };
+        // Read once. The observation does not change inside this loop, and `candidatesFor` walks
+        // every element plus an ancestor pass, so recomputing it per remedy did that work up to
+        // ten times over for one identical answer.
+        const observed = candidatesFor({ observation: current });
+
         for (const remedy of this.options.remedies) {
-            const matches = candidatesFor({ observation: current }).filter(
+            const matches = observed.filter(
                 (candidate) =>
                     candidate.identifier === remedy.identifier &&
                     candidate.label === remedy.label &&
