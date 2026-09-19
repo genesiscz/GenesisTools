@@ -149,25 +149,24 @@ export async function invokeComputerTool(options: {
 export function createComputerMcpServer(options: { computer?: ComputerUse } = {}): Server {
     const computer = options.computer ?? new ComputerUse();
     const server = new Server({ name: "genesis-computer-use", version: "1.0.0" }, { capabilities: { tools: {} } });
-    server.setRequestHandler(
-        "tools/list",
-        async (): Promise<ListToolsResult> => ({
-            tools: (Object.keys(computerSchemas) as ComputerMethod[]).map((name) => ({
-                name,
-                description: descriptions[name],
-                inputSchema: z.toJSONSchema(computerSchemas[name], { io: "input" }) as Tool["inputSchema"],
-                annotations: {
-                    readOnlyHint: readOnly.has(name),
-                    destructiveHint: !readOnly.has(name),
-                    openWorldHint:
-                        !readOnly.has(name) ||
-                        name === "resolve_target" ||
-                        name === "resolve_visual_target" ||
-                        name === "verify_state",
-                },
-            })),
-        })
-    );
+    // Built once. The schemas, descriptions and read-only set are module constants, so answering
+    // `tools/list` used to re-derive a JSON Schema for all 27 tools on every request for a list
+    // that cannot change while the process lives.
+    const tools: ListToolsResult["tools"] = (Object.keys(computerSchemas) as ComputerMethod[]).map((name) => ({
+        name,
+        description: descriptions[name],
+        inputSchema: z.toJSONSchema(computerSchemas[name], { io: "input" }) as Tool["inputSchema"],
+        annotations: {
+            readOnlyHint: readOnly.has(name),
+            destructiveHint: !readOnly.has(name),
+            openWorldHint:
+                !readOnly.has(name) ||
+                name === "resolve_target" ||
+                name === "resolve_visual_target" ||
+                name === "verify_state",
+        },
+    }));
+    server.setRequestHandler("tools/list", async (): Promise<ListToolsResult> => ({ tools }));
     server.setRequestHandler("tools/call", async (request, context): Promise<CallToolResult> => {
         const name = request.params.name;
         if (!Object.hasOwn(computerSchemas, name)) {
