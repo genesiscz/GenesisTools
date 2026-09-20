@@ -89,16 +89,24 @@ function exact(value: number): string {
 
 function renderSymbol(symbol: SkeletonSymbol): string {
     const range = `L${symbol.startLine}-L${symbol.endLine}`;
-    const indent = symbol.depth > 0 ? "    " : "";
-    // A top-level signature already begins with its keyword, so printing the kind
-    // and name again beside it just repeats the line. Members carry no keyword.
-    const kind = symbol.depth > 0 ? `${pc.cyan(symbol.kind)} ` : "";
+    const indent = "    ".repeat(symbol.depth);
+    // Print the kind only when the signature does not already open with it. A class
+    // member carries no keyword and needs the tag; a namespace's `export const x`
+    // already says what it is, so tagging it produced "const export const x".
+    const opener = symbol.signature.replace(/^(export|declare)\s+/, "").split(/[\s(]/)[0] ?? "";
+    const kind = symbol.kind === opener ? "" : `${pc.cyan(symbol.kind)} `;
 
     return `${indent}- ${pc.dim(range.padEnd(12))} ${kind}${pc.white(symbol.signature)}`;
 }
 
 async function runSkeleton(files: string[], options: SkeletonOptions): Promise<void> {
-    const results: { file: string; symbols: SkeletonSymbol[]; types: ExpandedType[] }[] = [];
+    const results: {
+        file: string;
+        symbols: SkeletonSymbol[];
+        types: ExpandedType[];
+        totalLines: number;
+        coveredLines: number;
+    }[] = [];
 
     const targets: string[] = [];
 
@@ -136,7 +144,23 @@ async function runSkeleton(files: string[], options: SkeletonOptions): Promise<v
         const root = findProjectRoot(dirname(absolute)) ?? dirname(absolute);
         const types = options.types ? expandTypes(source, absolute, collectTypeNames(source), root) : [];
 
-        results.push({ file: relative(process.cwd(), absolute) || absolute, symbols, types });
+        // A skeleton omits silently, so report how much of the file it actually covers.
+        // A commander entrypoint used to print 7 declarations for 527 lines with no hint.
+        const seen = new Set<number>();
+
+        for (const symbol of symbols) {
+            for (let line = symbol.startLine; line <= symbol.endLine; line++) {
+                seen.add(line);
+            }
+        }
+
+        results.push({
+            file: relative(process.cwd(), absolute) || absolute,
+            symbols,
+            types,
+            totalLines: text.split("\n").length,
+            coveredLines: seen.size,
+        });
     }
 
     const report = (rendered: string): void => {
@@ -159,7 +183,8 @@ async function runSkeleton(files: string[], options: SkeletonOptions): Promise<v
         ui.raw("");
         ui.raw(
             `${pc.cyan("●")} ${results.length} file(s) · original ${exact(originalTokens)} tokens · ` +
-                `skeleton ${exact(skeletonTokens)} tokens · ${(saved * 100).toFixed(1)}% smaller`
+                `skeleton ${exact(skeletonTokens)} tokens · ${Math.abs(saved * 100).toFixed(1)}% ` +
+                `${saved < 0 ? "larger" : "smaller"}`
         );
     };
 
@@ -220,7 +245,12 @@ async function runSkeleton(files: string[], options: SkeletonOptions): Promise<v
 
     for (const result of results) {
         lines.push("");
-        lines.push(`${pc.bold("skeleton")} ${pc.green(result.file)} ${pc.dim(`(${result.symbols.length})`)}`);
+        const share = result.totalLines > 0 ? Math.round((100 * result.coveredLines) / result.totalLines) : 100;
+        const cover = `${result.symbols.length} decls · ${share}% of ${result.totalLines} lines`;
+
+        lines.push(
+            `${pc.bold("skeleton")} ${pc.green(result.file)} ${share < 60 ? pc.yellow(`(${cover})`) : pc.dim(`(${cover})`)}`
+        );
 
         if (result.symbols.length === 0) {
             const filtered = options.exported || options.topLevel;
@@ -240,16 +270,25 @@ async function runSkeleton(files: string[], options: SkeletonOptions): Promise<v
         lines.push(pc.bold(`  referenced types (${result.types.length})`));
 
         for (const type of result.types) {
-            const where = `${relative(process.cwd(), type.file) || type.file}:${type.startLine}`;
             lines.push("");
-            lines.push(`  ${pc.cyan(type.name)} ${pc.dim(where)}`);
+
+            if (type.external) {
+                lines.push(`  ${pc.cyan(type.name)} ${pc.dim(`— ${type.text}`)}`);
+                continue;
+            }
+
+            const where = `${relative(process.cwd(), type.file) || type.file}:${type.startLine}`;
+            const nested = type.depth > 1 ? pc.dim(" · reached through another type") : "";
+
+            lines.push(`  ${pc.cyan(type.name)} ${pc.dim(where)}${nested}`);
 
             for (const line of type.text.split("\n")) {
                 lines.push(`    ${pc.white(line)}`);
             }
 
             if (type.truncated) {
-                lines.push(pc.dim(`    … truncated at line ${type.startLine + 40}`));
+                // "truncated at line N" read as a cosmetic cut; it hid a whole field once.
+                lines.push(pc.yellow(`    … cut here, the rest of ${type.name} is not shown`));
             }
         }
     }
