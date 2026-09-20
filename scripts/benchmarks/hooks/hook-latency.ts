@@ -76,13 +76,18 @@ function median(values: number[]): number {
     return sorted.length % 2 === 0 ? ((sorted[middle - 1] ?? 0) + (sorted[middle] ?? 0)) / 2 : (sorted[middle] ?? 0);
 }
 
-function timeIt(command: string, args: string[], input: string): number {
+function timeIt(command: string, args: string[], input: string, env: Record<string, string> = {}): number {
     const values: number[] = [];
 
     for (let run = 0; run < RUNS + 3; run++) {
         const started = performance.now();
 
-        spawnSync(command, args, { input, encoding: "utf8", maxBuffer: 64_000_000 });
+        spawnSync(command, args, {
+            input,
+            encoding: "utf8",
+            maxBuffer: 64_000_000,
+            env: { ...process.env, ...env },
+        });
 
         const elapsed = performance.now() - started;
 
@@ -104,10 +109,14 @@ for (const stage of STAGES) {
     rows.push({ stage: stage.name, ms: Number(ms.toFixed(1)), budget, withinBudget: ms <= budget });
 }
 
+// `LEGACY_GUARD_AND_DIFF=1` turns the legacy guard and capture back on FOR THIS CALL. After
+// the cutover the wrapper is neutered, and without this the reference line timed an empty
+// script and still printed a figure that looked fine: 48 ms became 5.9 ms with no warning.
 const oldClean = timeIt(
     "sh",
     [OLD_WRAPPER],
-    SafeJSON.stringify({ ...base, hook_event_name: "PreToolUse", tool_input: { command: "git status --porcelain" } })
+    SafeJSON.stringify({ ...base, hook_event_name: "PreToolUse", tool_input: { command: "git status --porcelain" } }),
+    { LEGACY_GUARD_AND_DIFF: "1" }
 );
 
 out.println(`runs: ${RUNS} (median, 3 warmups discarded)   dirty files here: ${dirtyCount()}`);
