@@ -108,3 +108,36 @@ describe("classifyEvalError", () => {
         expect(classifyEvalError("")).toBe("failed");
     });
 });
+
+describe("newTab url encoding", () => {
+    /**
+     * `/json/new` takes its target as the endpoint's OWN query string, so an unencoded `&` in the
+     * target is read as a second parameter of /json/new and everything after it is dropped.
+     * Observed 2026-09-20: `?customerService=true&simulatedRoles=[...]` opened a tab on
+     * `?customerService=true`, which read as the app stripping the query rather than as our bug.
+     */
+    const endpointFor = (url: string) => `http://127.0.0.1:9222/json/new?${encodeURIComponent(url)}`;
+
+    test("a multi-parameter url survives the round trip", () => {
+        const target = "https://example.com/?alpha=1&beta=2&gamma=3";
+        const sent = new URL(endpointFor(target));
+
+        expect(decodeURIComponent(sent.search.slice(1))).toBe(target);
+    });
+
+    test("the raw interpolation this replaced loses everything after the first &", () => {
+        const target = "https://example.com/?alpha=1&beta=2";
+        const broken = new URL(`http://127.0.0.1:9222/json/new?${target}`);
+        const firstParam = broken.search.slice(1).split("&")[0];
+
+        expect(firstParam).toBe("https://example.com/?alpha=1");
+        expect(firstParam).not.toContain("beta");
+    });
+
+    test("already-encoded characters in the target are preserved", () => {
+        const target = "https://example.com/col?roles=%5BA%2CB%5D&cs=true";
+        const sent = new URL(endpointFor(target));
+
+        expect(decodeURIComponent(sent.search.slice(1))).toBe(target);
+    });
+});

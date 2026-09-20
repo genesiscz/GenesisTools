@@ -534,7 +534,11 @@ export async function attach(opts: { port?: number; url?: string; index?: number
  * attaching does not have to re-scan and guess which tab is the new one.
  */
 export async function newTab(port: number, url: string): Promise<Target> {
-    const r = await fetch(`http://127.0.0.1:${port}/json/new?${url}`, {
+    // The url is ENCODED, not interpolated raw. /json/new takes its target as this endpoint's own
+    // query string, so an unencoded `&` in the target is parsed as a second parameter OF /json/new
+    // and everything after it is silently dropped: ?a=1&b=2 opened a tab on ?a=1. That looked like
+    // the app stripping the query, which is a long way to chase a one-line bug.
+    const r = await fetch(`http://127.0.0.1:${port}/json/new?${encodeURIComponent(url)}`, {
         method: "PUT",
         signal: AbortSignal.timeout(TARGETS_TIMEOUT_MS),
     });

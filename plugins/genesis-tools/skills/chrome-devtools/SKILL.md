@@ -166,6 +166,29 @@ is looking at.
 `%TEMP%` — trust the paths the tool itself prints (guidance, doctor, `--help`) over
 the literal examples.
 
+## 🛑 `--match` sees TITLES too, so a DevTools window can win
+
+The trap the `net-panel` section describes is not confined to `net-panel`: **every** page verb
+matches on url OR title, and an open inspector's title is `DevTools - <host><path>`. So a pattern
+anchored on the end of a page url, `/auth-callback\?customerService=true$/`, matches the INSPECTOR
+whose title ends the same way, and `eval` runs against the DevTools frontend instead of the app.
+The giveaway is an answer full of `No throttling Fast 4G Slow 4G ...`: that is the Network panel's
+own DOM.
+
+Anchor on the scheme, which no DevTools title starts with:
+
+```bash
+# grabs the inspector when DevTools is open on that tab
+tools chrome-devtools eval --match '/auth-callback\?cs=true$/' '() => location.href'
+
+# grabs the page
+tools chrome-devtools eval --match '/^https:\/\/app\.example\.com\/auth-callback\?cs=true$/' '() => location.href'
+```
+
+Two open tabs on the same host where one url is a PREFIX of the other (`/col?cs=true` and
+`/col?cs=true&simulatedPartner=…`) cannot be told apart by substring at all — only an anchored
+regex picks the shorter one.
+
 ## 🛑 Do not pipe, do not tail raw
 
 | Never | Why | Instead |
