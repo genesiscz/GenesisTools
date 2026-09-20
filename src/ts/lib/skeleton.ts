@@ -21,6 +21,9 @@ function collapse(text: string): string {
         .trim()
         // A generic arrow keeps its `=>` when the body is cut away, which reads as unfinished.
         .replace(/=>$/, "")
+        .trim()
+        // `export const ui =` when the object literal is cut away, same reason.
+        .replace(/=$/, "")
         .trim();
 
     return single.length > MAX_SIGNATURE ? `${single.slice(0, MAX_SIGNATURE - 1)}…` : single;
@@ -105,6 +108,69 @@ export function extractSkeleton(source: ts.SourceFile): SkeletonSymbol[] {
         }
     };
 
+    /**
+     * An exported `const` whose value is an object literal is an API, not a value: `ui`,
+     * `logger`, `out` and `SafeJSON` are all this shape. Printing only the declaration head
+     * collapsed the whole surface into one truncated line, so a reader learned the name and
+     * nothing else — `ui.raw` and `ui.err` were invisible, and the file had to be opened.
+     *
+     * `as const`, `satisfies` and a plain parenthesis all wrap the literal, so unwrap before
+     * looking: `export const ui = ({ raw() {} })` is the same API as without the brackets.
+     */
+    const literalOf = (node: ts.Expression | undefined): ts.ObjectLiteralExpression | undefined => {
+        let current = node;
+
+        while (
+            current &&
+            (ts.isAsExpression(current) || ts.isSatisfiesExpression(current) || ts.isParenthesizedExpression(current))
+        ) {
+            current = current.expression;
+        }
+
+        return current && ts.isObjectLiteralExpression(current) ? current : undefined;
+    };
+
+    const visitObjectMembers = (literal: ts.ObjectLiteralExpression, depth: number): void => {
+        for (const property of literal.properties) {
+            if (ts.isMethodDeclaration(property)) {
+                push(property, "method", nameOf(property, source), signatureOf(property, source, property.body), depth);
+                continue;
+            }
+
+            if (ts.isGetAccessorDeclaration(property) || ts.isSetAccessorDeclaration(property)) {
+                const kind = ts.isGetAccessorDeclaration(property) ? "getter" : "setter";
+
+                push(property, kind, nameOf(property, source), signatureOf(property, source, property.body), depth);
+                continue;
+            }
+
+            if (ts.isPropertyAssignment(property)) {
+                const value = property.initializer;
+                const isFn = ts.isArrowFunction(value) || ts.isFunctionExpression(value);
+                const body = isFn ? (value as ts.ArrowFunction | ts.FunctionExpression).body : undefined;
+                const nested = literalOf(value);
+
+                push(
+                    property,
+                    isFn ? "method" : "field",
+                    nameOf(property, source),
+                    signatureOf(property, source, body ?? (nested ? nested : undefined)),
+                    depth
+                );
+
+                if (nested) {
+                    visitObjectMembers(nested, depth + 1);
+                }
+
+                continue;
+            }
+
+            if (ts.isShorthandPropertyAssignment(property)) {
+                push(property, "field", nameOf(property, source), property.getText(source), depth);
+            }
+        }
+    };
+
     const visitStatements = (statements: ts.NodeArray<ts.Statement>, depth: number): void => {
         for (const statement of statements) {
             if (ts.isFunctionDeclaration(statement)) {
@@ -174,13 +240,19 @@ export function extractSkeleton(source: ts.SourceFile): SkeletonSymbol[] {
                         (ts.isArrowFunction(initializer) || ts.isFunctionExpression(initializer));
                     const body = isFn ? (initializer as ts.ArrowFunction | ts.FunctionExpression).body : undefined;
 
+                    const literal = isFn ? undefined : literalOf(initializer);
+
                     push(
                         statement,
                         isFn ? "function" : "const",
                         nameOf(declaration, source),
-                        signatureOf(statement, source, body),
+                        signatureOf(statement, source, body ?? literal),
                         depth
                     );
+
+                    if (literal) {
+                        visitObjectMembers(literal, depth + 1);
+                    }
                 }
             } else if (ts.isExpressionStatement(statement) && ts.isCallExpression(statement.expression)) {
                 // A commander entrypoint is built from chained calls, which are expression

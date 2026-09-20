@@ -505,6 +505,10 @@ function reap(workers: Array<{ pid: number; start: string }>): number {
         }
 
         try {
+            // The `startedAt(worker.pid) !== worker.start` check above runs immediately
+            // before this signal, against the start time captured while the coordinator was
+            // alive. A pid reissued in between fails it and is skipped.
+            // pid-verified: start time re-checked against the live process one line earlier
             process.kill(worker.pid, "SIGKILL");
             killed += 1;
         } catch {

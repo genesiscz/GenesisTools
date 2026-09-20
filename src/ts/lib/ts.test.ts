@@ -574,6 +574,63 @@ export const scale = (value: number) => value * 2;
     });
 });
 
+describe("an exported const that is really an API", () => {
+    // `ui`, `logger`, `out` and `SafeJSON` are all object literals bound to a const. The
+    // declaration head alone collapsed the whole surface into one truncated line, so
+    // `ui.raw` and `ui.err` were invisible and the file had to be opened to find them.
+    const source = `export const ui = {
+    ok(msg: string): void {
+        write(msg);
+    },
+    kv(key: string, value: string, keyWidth = 9): void {
+        write(key);
+    },
+    get level(): string {
+        return "info";
+    },
+    raw: (msg: string): void => write(msg),
+    prefix: "gt",
+    nested: {
+        deep(): void {},
+    },
+};
+
+export const KEYS = ["a", "b"] as const;
+`;
+
+    const symbols = extractSkeleton(parseSource("ui.ts", source));
+    const byName = (name: string) => symbols.find((symbol) => symbol.name === name);
+
+    it("lists every member of the object, with its signature", () => {
+        expect(byName("ok")?.kind).toBe("method");
+        expect(byName("ok")?.signature).toBe("ok(msg: string): void");
+        expect(byName("kv")?.signature).toBe("kv(key: string, value: string, keyWidth = 9): void");
+        expect(byName("level")?.kind).toBe("getter");
+        expect(byName("raw")?.kind).toBe("method");
+        expect(byName("prefix")?.kind).toBe("field");
+    });
+
+    it("nests a nested object one level deeper", () => {
+        expect(byName("nested")?.depth).toBe(1);
+        expect(byName("deep")?.depth).toBe(2);
+    });
+
+    it("does not leave the declaration head ending in a bare `=`", () => {
+        expect(byName("ui")?.signature).toBe("export const ui");
+    });
+
+    it("unwraps a parenthesized object literal", () => {
+        const wrapped = extractSkeleton(parseSource("paren.ts", "export const api = ({ raw(): void {} });"));
+
+        expect(wrapped.find((symbol) => symbol.name === "raw")?.kind).toBe("method");
+    });
+
+    it("leaves a non-object const as one line", () => {
+        expect(byName("KEYS")?.kind).toBe("const");
+        expect(symbols.filter((symbol) => symbol.name === "a")).toEqual([]);
+    });
+});
+
 describe("expandTypes", () => {
     it("names the types a signature mentions and skips structural builtins", () => {
         const source = parseSource(

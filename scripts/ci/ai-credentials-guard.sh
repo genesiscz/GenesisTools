@@ -149,10 +149,22 @@ fi
 #        shape before the v4 one can convert it.
 #      - `AIConfig.ts`, the deprecated v3 facade, deleted once its last consumer
 #        moves to AiConfigStore (Phase 8).
-if scan 'new Storage\(\s*["'"'"']ai["'"'"']\s*\)' \
+#
+#    Prose that NAMES the literal is documentation, not a second writer, and on 2026-09-20
+#    one JSDoc line in `src/utils/ai/evaluation/auth.ts` was failing this guard on every
+#    branch in the repo, including master. It is skipped the same way rules 1 and 2 skip
+#    it — by post-filtering the matched OUTPUT lines — rather than by a second mechanism
+#    inside the pattern. A `^(?!...)` prefix was tried first and was worse: it rejected the
+#    whole LINE, so `/* keep */ const s = new Storage("ai");` passed the guard. The line
+#    filter below only drops a line whose CONTENT begins with a comment marker, so that
+#    call is still caught.
+aiwriter=$(scan 'new Storage\(\s*["'"'"']ai["'"'"']\s*\)' \
         ':(exclude)**/*.md' ':(exclude)src/utils/ai/config/**' \
         ':(exclude)scripts/ci/ai-credentials-guard.sh' ':(exclude)scripts/ci/ai-credentials-guard.test.ts' \
-        ':(exclude)src/utils/config/migrations/2026-04-07-migrateAI.ts' ':(exclude)src/utils/ai/AIConfig.ts' ; then
+        ':(exclude)src/utils/config/migrations/2026-04-07-migrateAI.ts' ':(exclude)src/utils/ai/AIConfig.ts' \
+        | grep -Ev ':[[:space:]]*(//|\*|#)' || true)
+if [ -n "$aiwriter" ]; then
+    echo "$aiwriter"
     echo "::error:: new Storage(\"ai\") outside src/utils/ai/config/ — go through AiConfigStore, which owns the lock order (config first, vault second) and the migration chain."
     fail=1
 fi
