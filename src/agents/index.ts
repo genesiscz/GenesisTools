@@ -4,6 +4,7 @@ import { runTool } from "@genesiscz/utils/cli";
 import { handleReadmeFlag } from "@genesiscz/utils/readme";
 import { Command } from "commander";
 import { registerDiscoverCommand } from "./commands/discover";
+import { registerHooksCommands } from "./commands/hooks";
 import { registerListenCommand } from "./commands/listen";
 import { registerLoginCommand } from "./commands/login";
 import { registerMessageCommand } from "./commands/message";
@@ -23,5 +24,6 @@ registerMessageCommand(program);
 registerRequestCommand(program);
 registerDiscoverCommand(program);
 registerListenCommand(program);
+registerHooksCommands(program);
 
 await runTool(program, { tool: "agents" });

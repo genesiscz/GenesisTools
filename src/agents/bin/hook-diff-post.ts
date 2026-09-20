@@ -1,0 +1,42 @@
+#!/usr/bin/env bun
+import { SafeJSON } from "@genesiscz/utils/json";
+import { loadHooksConfig } from "../lib/hooks/config";
+import { runDiffPost } from "../lib/hooks/diff/run";
+import { logDecision, setDiagLogPath, setMaxLogBytes } from "../lib/hooks/log";
+import { isTerminalTool, normalizeEvent, parseHookPayload } from "../lib/hooks/payload";
+
+if (process.env.AGENTS_HOOKS_DISABLE === "1") {
+    process.exit(0);
+}
+
+const config = loadHooksConfig();
+
+setDiagLogPath(config.logPath);
+setMaxLogBytes(config.maxLogBytes);
+
+const payload = parseHookPayload(await Bun.stdin.text());
+
+if (!payload || normalizeEvent(payload.event) !== "posttooluse" || !isTerminalTool(payload.tool)) {
+    process.exit(0);
+}
+
+const decision = runDiffPost(payload, config);
+
+logDecision(
+    {
+        at: new Date().toISOString(),
+        phase: "post",
+        harness: payload.harness,
+        session: payload.sessionId,
+        toolUseId: payload.toolUseId,
+        decision: decision.decision,
+        reason: decision.reason,
+        files: decision.files,
+    },
+    config.logPath
+);
+
+if (decision.message && !config.shadow) {
+    // systemMessage is the only field the USER sees; additionalContext is model-only.
+    process.stdout.write(SafeJSON.stringify({ systemMessage: decision.message }));
+}
