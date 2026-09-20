@@ -1,5 +1,5 @@
 import { openSync } from "node:fs";
-import { jsonlPath, stdoutLogPath } from "@app/task/lib/paths";
+import { jsonlPath, workerLogPath } from "@app/task/lib/paths";
 import type { TaskRunMode } from "@app/task/types";
 import { env } from "@genesiscz/utils/env";
 import { readJsonlFile } from "@genesiscz/utils/log-session/jsonl-reader";
@@ -65,7 +65,9 @@ export function spawnDetachedRunWorker(opts: {
 
     cmd.push("--", ...opts.command);
 
-    const logFd = openSync(stdoutLogPath(opts.session), "a");
+    // Not the session .log: OrderedCaptureWriter already mirrors every captured line there, so
+    // pointing the worker's own stdout at the same file writes every line a second time.
+    const logFd = openSync(workerLogPath(opts.session), "a");
 
     return Bun.spawn({
         cmd,

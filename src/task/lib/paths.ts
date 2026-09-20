@@ -40,6 +40,11 @@ export function stderrLogPath(session: string): string {
     return safeSessionPath(session, ".err.log");
 }
 
+/** The detached worker's own stdout/stderr. Never the session log: two writers on one file double every line. */
+export function workerLogPath(session: string): string {
+    return safeSessionPath(session, ".worker.log");
+}
+
 export function metaPath(session: string): string {
     return safeSessionPath(session, ".meta.json");
 }
