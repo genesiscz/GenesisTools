@@ -11,9 +11,14 @@ export interface ExpandedType {
     endLine: number;
     text: string;
     truncated: boolean;
+    /** How far from the queried signatures this type was found: 1 is direct. */
+    depth: number;
+    /** Set when the type lives in a package rather than this repo, so it is named but not expanded. */
+    external?: string;
 }
 
 const MAX_TYPE_LINES = 40;
+const MAX_TYPES = 40;
 const CANDIDATE_SUFFIXES = ["", ".ts", ".tsx", ".mts", ".cts", "/index.ts", "/index.tsx"];
 
 /** Structural helpers and globals are noise here: the point is the project's own types. */
@@ -44,7 +49,7 @@ const BUILTIN = new Set([
 ]);
 
 /** Type positions only: a body's locals are not part of the API this prints. */
-export function collectTypeNames(source: ts.SourceFile): string[] {
+export function collectTypeNamesIn(root: ts.Node): string[] {
     const names = new Set<string>();
 
     const visit = (node: ts.Node): void => {
@@ -69,12 +74,31 @@ export function collectTypeNames(source: ts.SourceFile): string[] {
             }
         }
 
+        // `type A = z.infer<typeof aSchema>` carries every field on the schema const,
+        // so follow the `typeof` to it. Without this the whole config layer printed
+        // as one useless line per type.
+        if (ts.isTypeQueryNode(node) && ts.isIdentifier(node.exprName)) {
+            names.add(node.exprName.text);
+        }
+
+        // `interface A extends B` is a heritage clause, not a type reference, so the
+        // base's fields were invisible however deep the walk went.
+        if (ts.isExpressionWithTypeArguments(node) && ts.isIdentifier(node.expression)) {
+            if (!BUILTIN.has(node.expression.text)) {
+                names.add(node.expression.text);
+            }
+        }
+
         ts.forEachChild(node, visit);
     };
 
-    ts.forEachChild(source, visit);
+    ts.forEachChild(root, visit);
 
     return [...names].sort();
+}
+
+export function collectTypeNames(source: ts.SourceFile): string[] {
+    return collectTypeNamesIn(source);
 }
 
 function tsconfigPaths(root: string): { baseUrl: string; paths: Record<string, string[]> } {
@@ -147,6 +171,14 @@ function declarationFor(source: ts.SourceFile, name: string): ts.Statement | nul
         if (named && statement.name?.getText(source) === name) {
             return statement;
         }
+
+        if (ts.isVariableStatement(statement)) {
+            for (const declaration of statement.declarationList.declarations) {
+                if (declaration.name.getText(source) === name) {
+                    return statement;
+                }
+            }
+        }
     }
 
     return null;
@@ -176,7 +208,13 @@ function importSpecifierFor(source: ts.SourceFile, name: string): string | null 
     return null;
 }
 
-function toExpanded(source: ts.SourceFile, node: ts.Statement, name: string, file: string): ExpandedType {
+function toExpanded(
+    source: ts.SourceFile,
+    node: ts.Statement,
+    name: string,
+    file: string,
+    depth: number
+): ExpandedType {
     const startLine = source.getLineAndCharacterOfPosition(node.getStart(source)).line + 1;
     const endLine = source.getLineAndCharacterOfPosition(node.getEnd()).line + 1;
     const lines = source.text.slice(node.getStart(source), node.getEnd()).split("\n");
@@ -188,42 +226,103 @@ function toExpanded(source: ts.SourceFile, node: ts.Statement, name: string, fil
         endLine,
         text: lines.slice(0, MAX_TYPE_LINES).join("\n"),
         truncated: lines.length > MAX_TYPE_LINES,
+        depth,
     };
 }
 
 /** Same file first, then one hop through the import that introduced the name. */
-export function expandTypes(source: ts.SourceFile, file: string, names: string[], root: string): ExpandedType[] {
+export function expandTypes(
+    source: ts.SourceFile,
+    file: string,
+    names: string[],
+    root: string,
+    maxDepth = 2
+): ExpandedType[] {
     const found: ExpandedType[] = [];
+    const seen = new Set<string>();
+    const queue: { name: string; source: ts.SourceFile; file: string; depth: number }[] = names.map((name) => ({
+        name,
+        source,
+        file,
+        depth: 1,
+    }));
 
-    for (const name of names) {
-        const local = declarationFor(source, name);
+    while (queue.length > 0 && found.length < MAX_TYPES) {
+        const job = queue.shift();
 
-        if (local) {
-            found.push(toExpanded(source, local, name, file));
+        if (!job || seen.has(job.name)) {
             continue;
         }
 
-        const specifier = importSpecifierFor(source, name);
+        seen.add(job.name);
 
-        if (!specifier) {
-            continue;
-        }
+        let declaration = declarationFor(job.source, job.name);
+        let declarationSource = job.source;
+        let declarationFile = job.file;
 
-        const target = resolveSpecifier(file, specifier, root);
+        if (!declaration) {
+            const specifier = importSpecifierFor(job.source, job.name);
 
-        if (!target) {
-            continue;
-        }
-
-        try {
-            const imported = parseSource(target, readFileSync(target, "utf8"));
-            const declaration = declarationFor(imported, name);
-
-            if (declaration) {
-                found.push(toExpanded(imported, declaration, name, target));
+            if (!specifier) {
+                continue;
             }
-        } catch {
-            // An unreadable or unparsable module simply contributes no type.
+
+            const target = resolveSpecifier(job.file, specifier, root);
+
+            if (!target) {
+                // Only a BARE specifier is a package. A relative path that fails to
+                // resolve is a missing file, and claiming it lives in a package is a lie.
+                if (specifier.startsWith(".")) {
+                    continue;
+                }
+
+                // Name the package rather than dropping it silently, so the reader
+                // knows why it is not expanded.
+                found.push({
+                    name: job.name,
+                    file: specifier,
+                    startLine: 0,
+                    endLine: 0,
+                    text: `declared in "${specifier}", outside this repo`,
+                    truncated: false,
+                    depth: job.depth,
+                    external: specifier,
+                });
+                continue;
+            }
+
+            try {
+                declarationSource = parseSource(target, readFileSync(target, "utf8"));
+                declarationFile = target;
+                declaration = declarationFor(declarationSource, job.name);
+            } catch {
+                continue;
+            }
+        }
+
+        if (!declaration) {
+            continue;
+        }
+
+        found.push(toExpanded(declarationSource, declaration, job.name, declarationFile, job.depth));
+
+        // One more hop: a field type, a union member or an `extends` base of a type we
+        // just printed. Without this, `SpeakOptions extends TTSOptions` showed no fields.
+        // A type alias is only another name for something, so following it does not
+        // spend a level. That is what lets `X = z.infer<typeof xSchema>` reach the schema.
+        const nextDepth = ts.isTypeAliasDeclaration(declaration) ? job.depth : job.depth + 1;
+
+        if (nextDepth <= maxDepth) {
+            for (const nested of collectTypeNamesIn(declaration)) {
+                if (!seen.has(nested)) {
+                    queue.push({
+                        name: nested,
+                        source: declarationSource,
+                        file: declarationFile,
+                        depth: nextDepth,
+                    });
+                }
+            }
         }
     }
 
