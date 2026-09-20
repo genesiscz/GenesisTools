@@ -41,5 +41,10 @@ test("Claude Code plumbing is filtered but a slash command still names itself", 
 
     // The user did invoke this, and the command name is more use in a listing than what follows.
     expect(isWrapperUserText("<command-message>research</command-message>")).toBe(false);
+    expect(isWrapperUserText("<command-name>/rename</command-name><command-args>board-polish</command-args>")).toBe(
+        false
+    );
+    expect(isWrapperUserText("<command-name>/clear</command-name><command-args></command-args>")).toBe(true);
+    expect(isWrapperUserText("<command-name>/compact</command-name>")).toBe(true);
     expect(isWrapperUserText("## Context for the refactor I want")).toBe(false);
 });

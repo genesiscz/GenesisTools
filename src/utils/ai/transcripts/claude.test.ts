@@ -143,17 +143,32 @@ describe("claudeMessagesToTurns", () => {
         expect(turns[0]?.tools.map((t) => t.result)).toEqual(["struct A", "struct B"]);
     });
 
-    test("slash-command XML becomes a slash name", () => {
+    test("slash-command XML becomes a slash name plus its arguments", () => {
         const turns = claudeMessagesToTurns([
             user({
                 uuid: "u1",
                 message: {
                     role: "user",
-                    content: "<command-message><command-name>speckit.implement</command-name></command-message>",
+                    content:
+                        "<command-message><command-name>speckit.implement</command-name>" +
+                        "<command-args>the login screen</command-args></command-message>",
                 },
             }),
         ]);
-        expect(turns[0]?.text).toBe("/speckit.implement");
+        expect(turns[0]?.text).toBe("/speckit.implement the login screen");
+    });
+
+    test("a slash command with no arguments leaves no turn text", () => {
+        const turns = claudeMessagesToTurns([
+            user({
+                uuid: "u1",
+                message: {
+                    role: "user",
+                    content: "<command-message><command-name>clear</command-name></command-message>",
+                },
+            }),
+        ]);
+        expect(turns[0]?.text ?? "").toBe("");
     });
 });
 

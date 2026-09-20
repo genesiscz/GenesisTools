@@ -218,14 +218,32 @@ describe("listSessionRows", () => {
             record({
                 filePath: path,
                 sessionId: "cmd-id",
-                customTitle: "<command-message><command-name>speckit.implement</command-name></command-message>",
+                customTitle:
+                    "<command-message><command-name>speckit.implement</command-name>" +
+                    "<command-args>the login screen</command-args></command-message>",
                 mtime: NOW - 5 * MIN,
             }),
         ];
         tails.set(path, [OPUS_LINE]);
 
         const rows = await listSessionRows({ hours: 6, now: NOW });
-        expect(rows[0]?.title).toBe("/speckit.implement");
+        expect(rows[0]?.title).toBe("/speckit.implement the login screen");
+    });
+
+    test("an argument-less command title falls through to the first real prompt", async () => {
+        const path = "/tmp/clear.jsonl";
+        listing.sessions = [
+            record({
+                filePath: path,
+                sessionId: "clear-id",
+                customTitle: "<command-name>/clear</command-name><command-args></command-args>",
+                mtime: NOW - 5 * MIN,
+            }),
+        ];
+        tails.set(path, [OPUS_LINE]);
+
+        const rows = await listSessionRows({ hours: 6, now: NOW });
+        expect(rows[0]?.title).toBe("prompt");
     });
 
     test("minRows appends older sessions after the hours window", async () => {

@@ -266,7 +266,7 @@ test("a harness-block title becomes a readable one-line name", async () => {
         const hits = await loadClaudeResumeCandidates({ query: id, cwd: "/projects/shop", adapter });
 
         expect(hits).toHaveLength(1);
-        expect(hits[0]?.name).toBe("/resume");
+        expect(hits[0]?.name).toBe("/resume reports-02");
         expect(hits[0]?.name).not.toContain("\n");
     } finally {
         db.close();
