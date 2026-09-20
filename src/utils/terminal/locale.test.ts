@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { env } from "@genesiscz/utils/env";
-import { buildTerminalSpawnEnv, resolveUtf8Locale } from "@genesiscz/utils/terminal/locale";
+import { buildTerminalSpawnEnv, resolveUtf8Locale, stripTestSandboxEnv } from "@genesiscz/utils/terminal/locale";
 
 describe("terminal locale", () => {
     test("resolveUtf8Locale keeps an existing UTF-8 LANG", () => {
@@ -62,5 +62,42 @@ describe("terminal locale", () => {
 
         expect(env.COLORTERM).toBe("24bit");
         expect(env.CLAUDE_CODE_TMUX_TRUECOLOR).toBe("0");
+    });
+
+    test("buildTerminalSpawnEnv drops a test sandbox home from the child env", () => {
+        const spawned = buildTerminalSpawnEnv({
+            PATH: "/bin",
+            GENESIS_TOOLS_HOME: "/tmp/gt-test-tmp-abc/gt-test-home-xyz",
+            GENESIS_TEST_TMP_ROOT: "/tmp/gt-test-tmp-abc",
+            TMPDIR: "/tmp/gt-test-tmp-abc",
+            NODE_ENV: "test",
+        });
+
+        expect(spawned.GENESIS_TOOLS_HOME).toBeUndefined();
+        expect(spawned.GENESIS_TEST_TMP_ROOT).toBeUndefined();
+        expect(spawned.TMPDIR).toBeUndefined();
+        expect(spawned.NODE_ENV).toBeUndefined();
+        expect(spawned.PATH).toBe("/bin");
+    });
+
+    test("buildTerminalSpawnEnv keeps a real TMPDIR and a non-test NODE_ENV", () => {
+        const spawned = buildTerminalSpawnEnv({
+            PATH: "/bin",
+            TMPDIR: "/var/folders/6w/T/",
+            NODE_ENV: "development",
+        });
+
+        expect(spawned.TMPDIR).toBe("/var/folders/6w/T/");
+        expect(spawned.NODE_ENV).toBe("development");
+    });
+
+    test("stripTestSandboxEnv leaves a TMPDIR outside the sandbox root alone", () => {
+        const stripped = stripTestSandboxEnv({
+            GENESIS_TEST_TMP_ROOT: "/tmp/gt-test-tmp-abc",
+            TMPDIR: "/var/folders/6w/T/",
+        });
+
+        expect(stripped.TMPDIR).toBe("/var/folders/6w/T/");
+        expect(stripped.GENESIS_TEST_TMP_ROOT).toBeUndefined();
     });
 });

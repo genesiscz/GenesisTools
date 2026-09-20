@@ -3,7 +3,7 @@ import { logger } from "@genesiscz/utils/logger";
 import { argvWithChildDeadline as wrapArgvWithChildDeadline } from "@genesiscz/utils/process/child-deadline";
 import { capture } from "@genesiscz/utils/process/ps";
 import { profiler } from "@genesiscz/utils/profile";
-import { buildTerminalSpawnEnv } from "@genesiscz/utils/terminal/locale";
+import { buildTerminalSpawnEnv, stripTestSandboxEnv } from "@genesiscz/utils/terminal/locale";
 import { resolveTmuxBin } from "@genesiscz/utils/tmux/bin";
 import type { TmuxSessionInfo } from "@genesiscz/utils/tmux/types";
 
@@ -480,6 +480,55 @@ export async function currentTmuxSessionName(): Promise<string | undefined> {
 const SERVER_PERSIST_TTL_MS = 60_000;
 let lastServerPersistAt = 0;
 
+/** `show-environment -g` output as a record; `-KEY` lines (explicit unsets) are skipped. */
+export function parseTmuxEnvironment(stdout: string): NodeJS.ProcessEnv {
+    const parsed: NodeJS.ProcessEnv = {};
+
+    for (const line of stdout.split("\n")) {
+        const eq = line.indexOf("=");
+
+        if (eq <= 0 || line.startsWith("-")) {
+            continue;
+        }
+
+        parsed[line.slice(0, eq)] = line.slice(eq + 1);
+    }
+
+    return parsed;
+}
+
+/**
+ * Names the server global env still carries from a `bun test` founder. tmux
+ * freezes its founder's environment and seeds every later session from it, so a
+ * suite that bootstrapped the shared server hands its throwaway
+ * `GENESIS_TOOLS_HOME` to dashboard terminals for as long as the server lives.
+ * See {@link stripTestSandboxEnv} for the incident this comes from.
+ */
+function sandboxKeysIn(globalEnv: NodeJS.ProcessEnv): string[] {
+    const cleaned = stripTestSandboxEnv({ ...globalEnv });
+    return Object.keys(globalEnv).filter((key) => !(key in cleaned));
+}
+
+async function poisonedServerEnvKeys(bin: string): Promise<string[]> {
+    const result = await runTmux([bin, "show-environment", "-g"]);
+
+    if (result.exitCode !== 0) {
+        logger.debug(
+            { exitCode: result.exitCode, detail: tmuxErrorDetail(result.stderr) },
+            "ensureTmuxServerPersists: show-environment failed; sandbox scrub skipped"
+        );
+        return [];
+    }
+
+    const keys = sandboxKeysIn(parseTmuxEnvironment(result.stdout));
+
+    if (keys.length > 0) {
+        logger.warn({ keys }, "tmux server global env carries a test sandbox; unsetting for new sessions");
+    }
+
+    return keys;
+}
+
 export async function ensureTmuxServerPersists(tmuxBin?: string): Promise<void> {
     if (Date.now() - lastServerPersistAt < SERVER_PERSIST_TTL_MS) {
         return;
@@ -496,9 +545,11 @@ export async function ensureTmuxServerPersists(tmuxBin?: string): Promise<void> 
 
     // -u = unset; -g = global. set-environment runs FIRST in the chain so any
     // session created immediately after this call gets the clean env.
+    const sandboxKeys = await poisonedServerEnvKeys(bin);
     const result = await runTmux([
         bin,
         ...chainTmuxCommands([
+            ...sandboxKeys.map((key) => ["set-environment", "-gu", key]),
             ["set-environment", "-gu", "NO_COLOR"],
             ["set-environment", "-gu", "CARGO_TERM_COLOR"],
             ["set-environment", "-gu", "PIP_NO_COLOR"],

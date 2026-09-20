@@ -62,6 +62,41 @@ export function resolveUtf8Locale(): string {
     return "en_US.UTF-8";
 }
 
+/**
+ * Test-sandbox markers. A `bun test` run redirects the whole tool home with
+ * `GENESIS_TOOLS_HOME` (plus a private `TMPDIR` under `GENESIS_TEST_TMP_ROOT`),
+ * so any terminal that inherits them reads an EMPTY, throwaway `~/.genesis-tools`
+ * and reports every account, token and config as missing. Observed 2026-09-18:
+ * a suite run on 2026-09-14 started the shared tmux server, tmux captured that
+ * sandbox env globally, and four days of dashboard terminals inherited it —
+ * `tools cc run <account>` answered "No accounts with a long-lived token" while
+ * the real vault was intact, and `tools dev-dashboard ui restart` stopped the
+ * live agent using a state file inside the deleted sandbox.
+ */
+export const TEST_SANDBOX_ENV_KEYS = ["GENESIS_TOOLS_HOME", "GENESIS_TEST_TMP_ROOT"] as const;
+
+/** Remove the sandbox redirect IN PLACE so a spawned terminal sees the real home. */
+export function stripTestSandboxEnv(target: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+    const tmpRoot = target.GENESIS_TEST_TMP_ROOT;
+
+    for (const key of TEST_SANDBOX_ENV_KEYS) {
+        delete target[key];
+    }
+
+    // NODE_ENV/TMPDIR are legitimate variables in general, so only the test
+    // values go: "test", and a TMPDIR that lives inside the sandbox root (which
+    // is deleted when the suite ends, breaking every later mkdtemp in the pane).
+    if (target.NODE_ENV === "test") {
+        delete target.NODE_ENV;
+    }
+
+    if (tmpRoot && target.TMPDIR?.startsWith(tmpRoot)) {
+        delete target.TMPDIR;
+    }
+
+    return target;
+}
+
 export function buildTerminalSpawnEnv(base: NodeJS.ProcessEnv = env.getProcessEnv()): NodeJS.ProcessEnv {
     const locale = resolveUtf8Locale();
 
@@ -76,7 +111,7 @@ export function buildTerminalSpawnEnv(base: NodeJS.ProcessEnv = env.getProcessEn
     // overlay positives below. Strips intentionally include FORCE_COLOR/CLICOLOR_FORCE
     // even though we re-set them — the parent's value may be "0", and a later spread
     // would otherwise resurrect it.
-    const childEnv: NodeJS.ProcessEnv = { ...base };
+    const childEnv: NodeJS.ProcessEnv = stripTestSandboxEnv({ ...base });
     delete childEnv.NO_COLOR;
     delete childEnv.FORCE_COLOR;
     delete childEnv.CLICOLOR_FORCE;

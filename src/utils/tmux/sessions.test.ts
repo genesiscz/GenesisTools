@@ -7,10 +7,12 @@ import {
     buildTmuxSpawnEnv,
     createTmuxSession,
     createTmuxSessionRunning,
+    ensureTmuxServerPersists,
     getTmuxScrollState,
     listTmuxSessionActivePanes,
     listTmuxSessionCommands,
     listTmuxSessions,
+    parseTmuxEnvironment,
     renameTmuxSession,
     scrollTmuxToFraction,
     sessionExists,
@@ -532,6 +534,68 @@ describe("tmux spawn wedge guard", () => {
         expect(calls).toBe(1);
         expect(a.get("s")?.command).toBe("sh");
         expect(b.get("s")?.command).toBe("sh");
+    });
+
+    test("ensureTmuxServerPersists unsets a test sandbox captured in the server global env", async () => {
+        setTmuxBinForTests("/mock/tmux");
+        const calls: string[][] = [];
+        setTmuxSpawnSyncForTests((cmd) => {
+            calls.push(cmd);
+
+            if (cmd.includes("show-environment")) {
+                return {
+                    exitCode: 0,
+                    stdout: [
+                        "GENESIS_TOOLS_HOME=/tmp/gt-test-tmp-abc/gt-test-home-xyz",
+                        "GENESIS_TEST_TMP_ROOT=/tmp/gt-test-tmp-abc",
+                        "TMPDIR=/tmp/gt-test-tmp-abc",
+                        "NODE_ENV=test",
+                        "PATH=/bin",
+                        "-NO_COLOR",
+                    ].join("\n"),
+                };
+            }
+
+            return { exitCode: 0, stdout: "" };
+        });
+
+        await ensureTmuxServerPersists();
+
+        const batch = calls.find((cmd) => cmd.includes("set-option"))?.join(" ") ?? "";
+        expect(batch).toContain("set-environment -gu GENESIS_TOOLS_HOME");
+        expect(batch).toContain("set-environment -gu GENESIS_TEST_TMP_ROOT");
+        expect(batch).toContain("set-environment -gu TMPDIR");
+        expect(batch).toContain("set-environment -gu NODE_ENV");
+        expect(batch).not.toContain("set-environment -gu PATH");
+    });
+
+    test("ensureTmuxServerPersists leaves a clean server global env untouched", async () => {
+        setTmuxBinForTests("/mock/tmux");
+        const calls: string[][] = [];
+        setTmuxSpawnSyncForTests((cmd) => {
+            calls.push(cmd);
+
+            if (cmd.includes("show-environment")) {
+                return { exitCode: 0, stdout: "PATH=/bin\nTMPDIR=/var/folders/6w/T/\nNODE_ENV=development" };
+            }
+
+            return { exitCode: 0, stdout: "" };
+        });
+
+        await ensureTmuxServerPersists();
+
+        const batch = calls.find((cmd) => cmd.includes("set-option"))?.join(" ") ?? "";
+        expect(batch).toContain("set-environment -gu NO_COLOR");
+        expect(batch).not.toContain("TMPDIR");
+        expect(batch).not.toContain("NODE_ENV");
+    });
+
+    test("parseTmuxEnvironment keeps values with '=' and skips removal markers", () => {
+        const parsed = parseTmuxEnvironment("FOO=a=b\n-BAR\nBAZ=\n");
+
+        expect(parsed.FOO).toBe("a=b");
+        expect(parsed.BAR).toBeUndefined();
+        expect(parsed.BAZ).toBe("");
     });
 
     test.each([["src/utils/tmux/sessions.ts"], ["src/utils/tmux/snapshot.ts"]])(
