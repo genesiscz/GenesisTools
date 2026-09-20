@@ -517,6 +517,56 @@ export const scale = (value: number) => value * 2;
         expect(barrel[0]?.depth).toBe(0);
     });
 
+    it("lists interface fields, which used to be omitted entirely", () => {
+        const fields = extractSkeleton(
+            parseSource("shape.ts", `export interface Point {\n    x: number;\n    label?: string;\n}\n`)
+        );
+
+        expect(fields.map((symbol) => symbol.name)).toEqual(["Point", "x", "label"]);
+        expect(fields[1]).toMatchObject({ kind: "field", depth: 1, signature: "x: number;" });
+    });
+
+    it("does not drag a member's JSDoc into the declaration head", () => {
+        const [head] = extractSkeleton(
+            parseSource("doc.ts", `export interface Doc {\n    /** a long comment */\n    id: string;\n}\n`)
+        );
+
+        expect(head?.signature).toBe("export interface Doc");
+    });
+
+    it("reports a namespace and a declare module with their bodies", () => {
+        const nested = extractSkeleton(
+            parseSource(
+                "ns.ts",
+                `namespace NS {\n    export const x = 1;\n}\ndeclare module "pkg" {\n    export const y: number;\n}\n`
+            )
+        );
+
+        expect(nested.map((symbol) => symbol.kind)).toEqual(["namespace", "const", "namespace", "const"]);
+        expect(nested[1]?.depth).toBe(1);
+    });
+
+    it("treats a class arrow property as a method", () => {
+        const cls = extractSkeleton(
+            parseSource("cls.ts", `export class A {\n    handler = (e: string): void => {};\n}\n`)
+        );
+
+        expect(cls[1]).toMatchObject({ kind: "method", name: "handler", depth: 1 });
+    });
+
+    it("reports a top-level call, so a commander entrypoint is not blank", () => {
+        const calls = extractSkeleton(parseSource("entry.ts", `registerCommands(program);\n`));
+
+        expect(calls).toHaveLength(1);
+        expect(calls[0]).toMatchObject({ kind: "call", signature: "registerCommands(program);" });
+    });
+
+    it("drops the dangling arrow from a generic arrow signature", () => {
+        const [arrow] = extractSkeleton(parseSource("g.ts", `export const id = <T,>(v: T): T => v;\n`));
+
+        expect(arrow?.signature.endsWith("=>")).toBe(false);
+    });
+
     it("keeps interfaces, types and classes as top-level entries", () => {
         expect(byName("Shape")?.kind).toBe("interface");
         expect(byName("Id")?.kind).toBe("type");
@@ -573,6 +623,39 @@ export function load(account: Account): Local {
         expect(byName("Account")?.file).toBe(join(root, "types/account.ts"));
         expect(byName("Account")?.text).toContain("label?: string;");
         expect(byName("Account")?.truncated).toBe(false);
+    });
+
+    it("follows an extends base and names a package it cannot open", () => {
+        write(
+            "deep/base.ts",
+            `export interface Inner {\n    deep: boolean;\n}\nexport interface Base {\n    id: string;\n    inner: Inner;\n}\n`
+        );
+        const entry = write(
+            "deep/entry.ts",
+            `import type { Base } from "./base";\nimport type { Far } from "some-package";\nexport interface Near extends Base {\n    far: Far;\n}\nexport function take(near: Near): void {}\n`
+        );
+
+        const source = parseSource(entry, readFileSync(entry, "utf8"));
+        const expanded = expandTypes(source, entry, collectTypeNames(source), root);
+        const byName = (name: string) => expanded.find((type) => type.name === name);
+
+        expect(byName("Base")?.text).toContain("id: string;");
+        expect(byName("Base")?.depth).toBe(1);
+        expect(byName("Inner")?.depth).toBe(2);
+        expect(byName("Inner")?.text).toContain("deep: boolean;");
+        expect(byName("Far")?.external).toBe("some-package");
+    });
+
+    it("follows a typeof alias to the value it names", () => {
+        const entry = write(
+            "alias/entry.ts",
+            `export const shape = { a: 1 };\nexport type Shape = typeof shape;\nexport function use(s: Shape): void {}\n`
+        );
+
+        const source = parseSource(entry, readFileSync(entry, "utf8"));
+        const expanded = expandTypes(source, entry, collectTypeNames(source), root);
+
+        expect(expanded.find((type) => type.name === "shape")?.text).toContain("a: 1");
     });
 
     it("returns nothing for a type it cannot resolve", () => {
