@@ -1,5 +1,41 @@
 # tools ts
 
+> **What is in this TypeScript file, and where does the startup time of an entry point go?**
+
+Two independent command groups: `skeleton` answers the first question, `imports` the second.
+
+---
+
+## `tools ts skeleton <paths...>`
+
+Prints one line per declaration, so you can read a file's API without its bodies.
+
+```
+skeleton src/utils/tokens.ts (3 decls · 62% of 76 lines)
+- L9-L11       export function estimateTokens(text: string): number
+- L19-L30      export function countTokens(text: string): number
+```
+
+A path may be a file or a directory. Directories are walked recursively, skipping `node_modules`,
+`dist`, `build`, `coverage`, dot-directories, `*.d.ts` and test files (`--tests` includes tests).
+
+| Flag | Effect |
+|------|--------|
+| `--exported` | Only exported top-level declarations |
+| `--top-level` | Skip class, interface and namespace members |
+| `--types` | Print the full declaration of every type the signatures name, following imports, tsconfig `paths` aliases, `extends` bases and `typeof` aliases, two levels deep |
+| `--json` | Columnar JSON: fields named once, rows positional |
+| `--toon` | TOON, the same data in a tabular text form |
+| `--tests` | Include `*.test.ts` / `*.spec.ts` |
+| `--exact-tokens` | Count tokens with `@anthropic-ai/tokenizer` instead of the chars-per-token estimate |
+
+**The header is the honesty check.** `(12 decls · 36% of 527 lines)` means 64% of that file is not
+represented. A skeleton lists declarations, so a file built from chained expression statements or
+long function bodies will show a low percentage. Below 60% the figure turns yellow. Read the file
+when you need a body, a string literal, a comment, control flow or a nested closure.
+
+---
+
 > **Where does the startup time of a TypeScript entry point go, and why?**
 
 `tools ts imports analyze <entry>` prints the import tree of a file with a measured cost per module, then explains each slow module: a native addon, a top-level await, work at module scope, a barrel that drags in more than the caller uses, or an import cycle. Three companion commands turn the same measurement into actions: which imports to make lazy, which barrels to bypass, which cycles to break.
