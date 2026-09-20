@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PROFILER_SCOPE_NAMES } from "@genesiscz/utils/profile";
@@ -12,6 +12,8 @@ import { buildGraph, isLoadTimeEdge, isMeasuredEdge, labelFor, packageNameOf, po
 import { findLazyCandidates } from "./lazy";
 import type { WorkerSample } from "./measure";
 import { parseModule } from "./parse";
+import { extractSkeleton, parseSource } from "./skeleton";
+import { collectTypeNames, expandTypes } from "./type-expand";
 
 let root: string;
 
@@ -449,5 +451,138 @@ describe("parsePositive", () => {
 describe("profiler scope", () => {
     it("registers ts so PROFILE=ts and --scopes can name it", () => {
         expect(PROFILER_SCOPE_NAMES).toContain("ts");
+    });
+});
+
+describe("extractSkeleton", () => {
+    const source = `export const LIMIT = 5;
+export function add(a: number, b: number): number {
+    return a + b;
+}
+function hidden(): void {}
+export interface Shape {
+    area(): number;
+}
+export type Id = string;
+export class Box {
+    constructor(private size: number) {}
+    get volume(): number {
+        return this.size ** 3;
+    }
+    grow(by: number): void {
+        this.size += by;
+    }
+}
+export const scale = (value: number) => value * 2;
+`;
+
+    const symbols = extractSkeleton(parseSource("demo.ts", source));
+    const byName = (name: string) => symbols.find((symbol) => symbol.name === name);
+
+    it("captures the signature head without the body", () => {
+        expect(byName("add")?.signature).toBe("export function add(a: number, b: number): number");
+        expect(byName("add")?.kind).toBe("function");
+    });
+
+    it("records the line span of a declaration", () => {
+        expect(byName("add")?.startLine).toBe(2);
+        expect(byName("add")?.endLine).toBe(4);
+    });
+
+    it("marks exported declarations and leaves local ones unexported", () => {
+        expect(byName("add")?.exported).toBe(true);
+        expect(byName("hidden")?.exported).toBe(false);
+    });
+
+    it("treats an arrow constant as a function and a plain constant as a const", () => {
+        expect(byName("scale")?.kind).toBe("function");
+        expect(byName("LIMIT")?.kind).toBe("const");
+    });
+
+    it("descends into class and interface members at depth 1", () => {
+        expect(byName("grow")).toMatchObject({ kind: "method", depth: 1 });
+        expect(byName("volume")?.kind).toBe("getter");
+        expect(byName("constructor")?.kind).toBe("constructor");
+        expect(byName("area")).toMatchObject({ kind: "method", depth: 1 });
+        expect(byName("Box")?.depth).toBe(0);
+    });
+
+    it("reports a re-export barrel, which declares nothing but is not empty", () => {
+        const barrel = extractSkeleton(
+            parseSource("barrel.ts", `export { parseTurnEvents, toWorkerEvents } from "./worker-stream";\n`)
+        );
+
+        expect(barrel).toHaveLength(1);
+        expect(barrel[0]).toMatchObject({ kind: "re-export", name: "parseTurnEvents, toWorkerEvents", exported: true });
+        expect(barrel[0]?.depth).toBe(0);
+    });
+
+    it("keeps interfaces, types and classes as top-level entries", () => {
+        expect(byName("Shape")?.kind).toBe("interface");
+        expect(byName("Id")?.kind).toBe("type");
+        expect(byName("Box")?.kind).toBe("class");
+    });
+});
+
+describe("expandTypes", () => {
+    it("names the types a signature mentions and skips structural builtins", () => {
+        const source = parseSource(
+            "demo.ts",
+            `import type { Account } from "./account";
+export interface Local { id: string }
+export function load(account: Account, cache: Map<string, Local>): Promise<Local[]> {
+    const ignored: Local = cache.get("x") as Local;
+    return Promise.resolve([ignored]);
+}
+`
+        );
+
+        const names = collectTypeNames(source);
+        expect(names).toContain("Account");
+        expect(names).toContain("Local");
+        expect(names).not.toContain("Map");
+        expect(names).not.toContain("Promise");
+    });
+
+    it("resolves a same-file declaration and follows a relative import", () => {
+        write(
+            "types/account.ts",
+            `export interface Account {
+    id: string;
+    label?: string;
+}
+`
+        );
+        const entry = write(
+            "types/entry.ts",
+            `import type { Account } from "./account";
+export interface Local {
+    ok: boolean;
+}
+export function load(account: Account): Local {
+    return { ok: Boolean(account) };
+}
+`
+        );
+
+        const source = parseSource(entry, readFileSync(entry, "utf8"));
+        const expanded = expandTypes(source, entry, collectTypeNames(source), root);
+        const byName = (name: string) => expanded.find((type) => type.name === name);
+
+        expect(byName("Local")?.file).toBe(entry);
+        expect(byName("Account")?.file).toBe(join(root, "types/account.ts"));
+        expect(byName("Account")?.text).toContain("label?: string;");
+        expect(byName("Account")?.truncated).toBe(false);
+    });
+
+    it("returns nothing for a type it cannot resolve", () => {
+        const source = parseSource(
+            "demo.ts",
+            `import type { Missing } from "./nowhere";
+export function use(value: Missing): void {}
+`
+        );
+
+        expect(expandTypes(source, join(root, "demo.ts"), collectTypeNames(source), root)).toEqual([]);
     });
 });
