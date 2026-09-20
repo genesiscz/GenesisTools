@@ -336,8 +336,17 @@ export class Browser {
         return this.conn.send("Storage.setCookies", { cookies: cookies as unknown as Record<string, unknown>[] });
     }
 
+    /**
+     * Expires the cookie through `Storage.setCookies` rather than calling `Network.deleteCookies`.
+     *
+     * This class holds a BROWSER-level connection (that is how `Storage.getCookies` can see every
+     * domain at once), and the `Network` domain does not exist there: the call came back
+     * `{"code":-32601,"message":"'Network.deleteCookies' wasn't found"}`. Setting the same
+     * name/domain/path with an expiry in the past is the browser-level equivalent and stays
+     * surgical, unlike `Storage.clearCookies`, which would take every cookie in the browser.
+     */
     deleteCookie(name: string, domain: string, path = "/") {
-        return this.conn.send("Network.deleteCookies", { name, domain, path });
+        return this.setCookies([{ name, value: "", domain, path, expires: 0 } as unknown as CdpCookie]);
     }
 
     /** Delete every cookie matching the predicate; returns what was deleted. */
@@ -491,7 +500,26 @@ export class NoMatchingTabError extends Error {
     }
 }
 
-/** Pick a page target. A given `url` must hit; never fall back to the first tab. */
+/** Thrown when --match names SEVERAL open tabs; carries them so the caller can list them. */
+export class AmbiguousTabError extends Error {
+    constructor(
+        readonly wanted: string,
+        readonly matches: { title?: string; url: string }[]
+    ) {
+        super(`"${wanted}" matches ${matches.length} tabs`);
+        this.name = "AmbiguousTabError";
+    }
+}
+
+/**
+ * Pick a page target. A given `url` must hit; never fall back to the first tab, and never pick one
+ * of several silently.
+ *
+ * URL matches beat title matches. An open inspector's title is `DevTools - <host><path>`, so a
+ * pattern anchored on the end of a page url also matches the INSPECTOR for that page, and a plain
+ * `find` handed back the DevTools frontend: `eval` then returned the Network panel's own DOM
+ * instead of the app's. Ranking url above title makes the page win whenever one matches at all.
+ */
 export function pickPageTarget<T extends { type?: string; title?: string; url: string }>(
     list: T[],
     opts: { url?: string; index?: number; port?: number } = {}
@@ -501,12 +529,18 @@ export function pickPageTarget<T extends { type?: string; title?: string; url: s
 
     if (wanted) {
         const matches = makeMatcher(wanted);
-        const t = pages.find((x) => matches(x.url) || matches(x.title ?? ""));
-        if (!t) {
+        const byUrl = pages.filter((x) => matches(x.url));
+        const hits = byUrl.length > 0 ? byUrl : pages.filter((x) => matches(x.title ?? ""));
+
+        if (hits.length === 0) {
             throw new NoMatchingTabError(wanted, closeTabCandidates(pages, wanted));
         }
 
-        return t;
+        if (hits.length > 1) {
+            throw new AmbiguousTabError(wanted, hits);
+        }
+
+        return hits[0] as T;
     }
 
     const t = pages[opts.index ?? 0];

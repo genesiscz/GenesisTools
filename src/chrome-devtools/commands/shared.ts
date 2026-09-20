@@ -4,7 +4,7 @@ import { suggestCommand } from "@genesiscz/utils/cli";
 import { logger, out } from "@genesiscz/utils/logger";
 import { inspectPidFile, writePidFile } from "@genesiscz/utils/process/pidfile";
 import type { Command } from "commander";
-import { attach, NoMatchingTabError, type Page, probe } from "../lib/cdp.ts";
+import { AmbiguousTabError, attach, NoMatchingTabError, type Page, probe } from "../lib/cdp.ts";
 import { DEFAULT_CAPTURE_CHANNELS } from "../lib/channels.ts";
 import { captureDir, ensureCaptureDir, readLastPort, recorderPidPath } from "../lib/paths.ts";
 import { artifactPath } from "../lib/platform.ts";
@@ -195,6 +195,44 @@ export async function attachTab(opts: { port?: string; match?: string }): Promis
             process.exit(1);
         }
 
+        if (err instanceof AmbiguousTabError) {
+            out.log.error(`${err.message} on port ${port}. Refusing to guess which one you meant.`);
+            out.log.info(
+                `Matched:\n${err.matches.map((m, i) => `    [${i + 1}] ${m.title ?? ""} :: ${m.url}`).join("\n")}`
+            );
+            const distinct = [...new Set(err.matches.map((m) => m.url))];
+
+            if (distinct.length === 1) {
+                // Anchoring cannot help here: every match is the same url in a different tab.
+                out.log.info(
+                    `All ${err.matches.length} are the SAME url, so no --match can separate them. Close the duplicates, ` +
+                        "or open one fresh tab and work in that:"
+                );
+                out.log.info(`    ${suggest(["nav", distinct[0] ?? "<url>", "--new", "--port", String(port)])}`);
+            } else {
+                out.log.info(
+                    "Narrow it. An anchored regex is the only thing that separates a url that is a PREFIX of another:"
+                );
+
+                for (const url of distinct.slice(0, 3)) {
+                    out.log.info(
+                        `    ${suggest(["<verb>", "--match", `/^${anchorFor(url)}$/`, "--port", String(port)])}`
+                    );
+                }
+
+                if (distinct.length < err.matches.length) {
+                    out.log.info(
+                        `  ! ${err.matches.length - distinct.length} of these share a url with another tab, so an anchor still lands on more than one.`
+                    );
+                }
+            }
+
+            out.log.info(
+                `  see them all first:     ${suggest(["targets", "--match", err.wanted, "--port", String(port)])}`
+            );
+            process.exit(1);
+        }
+
         out.log.error(err instanceof Error ? err.message : String(err));
         out.log.info(`See open tabs first: ${suggest(["targets", "--port", String(port)])}`);
         process.exit(1);
@@ -295,4 +333,9 @@ export function startRecorderBackground(port: number): { started: boolean; pid: 
     log.debug({ port, pid: child.pid }, "recorder spawned");
 
     return { started: true, pid: child.pid };
+}
+
+/** A url turned into a regex body, so the suggestion can be pasted verbatim. */
+function anchorFor(url: string): string {
+    return url.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&");
 }
