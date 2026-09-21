@@ -222,7 +222,7 @@ export async function attachTab(opts: { port?: string; match?: string }): Promis
 
                 if (distinct.length < err.matches.length) {
                     out.log.info(
-                        `  ! ${err.matches.length - distinct.length} of these share a url with another tab, so an anchor still lands on more than one.`
+                        `  ⚠ ${err.matches.length - distinct.length} of these share a url with another tab, so an anchor still lands on more than one.`
                     );
                 }
             }
