@@ -10,6 +10,37 @@ import { genesisAppLauncher } from "@genesiscz/utils/macos/genesis-app";
 
 // --- Configuration ---
 const SRC_DIR_NAME = "src";
+
+/**
+ * Where the checkout lives. `__dirname` alone breaks under `bun build --compile`,
+ * because it then points inside the binary: discovery found an empty tree and the
+ * wrapper exited 0 having run nothing, which benchmarks as a 16x speed-up.
+ *
+ * Order: the root baked in at compile time, then an explicit override, then the
+ * directory this script sits in. A root without `src/` is not a checkout, and an
+ * unusable root is a hard error rather than a silent success.
+ */
+function resolveWorkspaceRoot() {
+    // 🛑 `__dirname` FIRST, always. `./tools` run from a worktree must execute that
+    // worktree's code, never the main checkout's. Consulting the environment first
+    // would make a worktree silently run main, which is the exact trap this repo
+    // already documents. The env vars exist only for a compiled binary, where
+    // `__dirname` points inside the executable and carries no `src/`.
+    const candidates = [resolve(__dirname), process.env.GENESIS_TOOLS_ROOT, process.env.GENESIS_TOOLS_PATH];
+
+    for (const candidate of candidates) {
+        if (candidate && existsSync(join(candidate, SRC_DIR_NAME))) {
+            return candidate;
+        }
+    }
+
+    console.error(
+        "tools: no GenesisTools checkout found. Looked at GENESIS_TOOLS_ROOT, GENESIS_TOOLS_PATH and " +
+            `${resolve(__dirname)}. A compiled build needs the root baked in with ` +
+            "`bun build --compile --define process.env.GENESIS_TOOLS_ROOT='\"/path/to/checkout\"'`."
+    );
+    process.exit(1);
+}
 const INDEX_FILE_NAMES = ["index.ts", "index.tsx"];
 const SCRIPT_EXTENSIONS = [".ts", ".tsx"];
 
@@ -109,7 +140,7 @@ function resolveToolAlias(scriptId, srcDir) {
 }
 
 async function executeTool(scriptId, scriptArgs) {
-    const workspaceRoot = resolve(__dirname); // Assumes the script is run from the root
+    const workspaceRoot = resolveWorkspaceRoot();
     const srcDir = join(workspaceRoot, SRC_DIR_NAME);
 
     const alias = resolveToolAlias(scriptId, srcDir);
@@ -351,7 +382,7 @@ function signalToNumber(signal: NodeJS.Signals): number | undefined {
 // --- Main Logic ---
 async function main() {
     const args = process.argv.slice(2);
-    const workspaceRoot = resolve(__dirname);
+    const workspaceRoot = resolveWorkspaceRoot();
     const srcDir = join(workspaceRoot, SRC_DIR_NAME);
 
     if (args.length === 0) {
