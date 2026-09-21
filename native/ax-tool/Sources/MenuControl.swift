@@ -60,6 +60,7 @@ func cmdMenu(_ command: String) {
             index = selected
         }
         let pid = resolveApp(appName)
+        let startingFrontmost = frontmostPid()
         let launch = try observedLaunch(pid)
         if let token {
             try token.validate(pid:pid,launch:launch,digest:token.digest,element:index,count:4000,now:Date().timeIntervalSince1970)
@@ -92,7 +93,7 @@ func cmdMenu(_ command: String) {
         guard axActionNames(element).contains(action) else { throw SnapshotError.invalid("menu item does not expose the requested AX action") }
         try dispatchMenuAction(token:token,pid:pid,launch:launch,digest:tree.digest,element:index,count:tree.elements.count,
             now:Date().timeIntervalSince1970,frontmost:frontmostPid() == pid,
-            enabled:(axAttribute(element,"AXEnabled") as? NSNumber)?.boolValue != false) {
+            enabled:(axAttribute(element,"AXEnabled") as? NSNumber)?.boolValue != false, action: {
             AXUIElementSetMessagingTimeout(element,3)
             let frame = axFrame(element)
             if frame.width > 0, frame.height > 0 {
@@ -103,15 +104,20 @@ func cmdMenu(_ command: String) {
             let fresh = try menuTree(pid, depth: token.depth, rootTitle: rootTitle)
             _ = try token.validate(pid: pid, launch: observedLaunch(pid), digest: fresh.digest,
                 element: index, count: fresh.elements.count, now: Date().timeIntervalSince1970)
-            guard frontmostPid() == pid else { throw SnapshotError.refusal(.focusMismatch, "menu lost focus while presenting cursor") }
+            // Same rule as the outer guard: a press that must open a tracking menu needs the key
+            // window, while AXPick and AXCancel do not, so they must not fail here either.
+            guard frontmostPid() == pid || !menuActionRequiresFrontmost(action) else {
+                throw SnapshotError.refusal(.focusMismatch, "menu lost focus while presenting cursor")
+            }
             started = true
             let result = AXUIElementPerformAction(element,action as CFString)
             guard result == .success else { throw ObservedTreeError("menu action failed or timed out (AX \(result.rawValue)); inspect before doing anything else") }
-        }
         // Always report WHICH row was pressed, not just its index. Without the title, a caller
         // cannot tell a correct press from the stale-index press described above.
+        }, axAction: action)
         jsonOutput(["ok":true,"surface":"menu","action":action,"element":index,"title":elementTitle,"pid":pid,
-                    "dispatchState":"dispatched","refreshRequired":true])
+                    "dispatchState":"dispatched","refreshRequired":true,
+                    "frontmostChanged":frontmostPid() != startingFrontmost])
     } catch {
         jsonOutput(["ok":false,"error":error.localizedDescription,"dispatchState":started ? "uncertain" : "not_started",
                     "refusal":(error as? SnapshotError)?.category.rawValue ?? "refused"])

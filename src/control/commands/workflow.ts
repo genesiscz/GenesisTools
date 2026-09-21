@@ -54,6 +54,7 @@ interface WorkflowOptions {
     keys?: string;
     double?: boolean;
     hold?: boolean;
+    activate?: boolean;
     dwell?: string;
     coords?: string;
     background?: boolean;
@@ -422,6 +423,10 @@ export function registerWorkflowCommands(program: Command): void {
         )
         .option("--background", "click/move/drag/scroll: deliver without explicit activation or pointer movement")
         .option(
+            "--no-activate",
+            "key/type/paste/select/set: deliver to the target process without bringing it frontmost. Keys already route through CGEvent.postToPid, so this waives only the key-window requirement; the focused-element check still decides where the text lands. Every result reports frontmostChanged."
+        )
+        .option(
             "--prepare",
             "Element click/key/text: focus, reveal and revalidate the same observed target before input"
         )
@@ -569,6 +574,11 @@ export function registerWorkflowCommands(program: Command): void {
 
             if (opts.hold) {
                 args.push("--hold");
+            }
+
+            // Commander maps `--no-activate` to `activate: false`.
+            if (opts.activate === false) {
+                args.push("--no-activate");
             }
 
             if (opts.background) {

@@ -84,6 +84,10 @@ public struct SnapshotDispatchContext {
     public let targetEnabled: Bool
     public let windowFocused: Bool
     public let inputFocused: Bool
+    /// Deliver input to an app that is NOT frontmost. Keys already go through CGEvent.postToPid,
+    /// which cannot leave the target process, so the key window is not what makes delivery safe —
+    /// the pid routing is. Requiring it only forced every text action to steal the user's focus.
+    public let allowUnfocusedInput: Bool
     public let operation: SnapshotDispatchOperation
 
     public init(
@@ -98,6 +102,7 @@ public struct SnapshotDispatchContext {
         targetEnabled: Bool,
         windowFocused: Bool,
         inputFocused: Bool,
+        allowUnfocusedInput: Bool = false,
         operation: SnapshotDispatchOperation
     ) {
         self.token = token
@@ -111,6 +116,7 @@ public struct SnapshotDispatchContext {
         self.targetEnabled = targetEnabled
         self.windowFocused = windowFocused
         self.inputFocused = inputFocused
+        self.allowUnfocusedInput = allowUnfocusedInput
         self.operation = operation
     }
 }
@@ -135,8 +141,11 @@ public func dispatchSnapshotAction<Result>(
     if case .pointer(background: false) = context.operation, !context.windowFocused {
         throw SnapshotDispatchError.rejected("wrong frontmost app/window; focus explicitly and refresh", category: .focusMismatch)
     }
-    if context.operation == .input, !context.windowFocused {
-        throw SnapshotDispatchError.rejected("wrong frontmost app/window; focus explicitly and refresh", category: .focusMismatch)
+    // 🛑 Only the KEY WINDOW requirement is waived. The focused-element check below stays, because
+    // that is what decides where the text lands inside the app; without it an unfocused send would
+    // type into whatever field the app last had, which is a different bug entirely.
+    if context.operation == .input, !context.windowFocused, !context.allowUnfocusedInput {
+        throw SnapshotDispatchError.rejected("wrong frontmost app/window; focus explicitly, or pass --no-activate to deliver without taking focus", category: .focusMismatch)
     }
     if context.operation == .input, !context.inputFocused {
         throw SnapshotDispatchError.rejected("focus changed before input; no action dispatched", category: .focusMismatch)

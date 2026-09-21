@@ -35,6 +35,7 @@ final class SnapshotDispatchTests: XCTestCase {
         targetEnabled: Bool = true,
         windowFocused: Bool = true,
         inputFocused: Bool = true,
+        allowUnfocusedInput: Bool = false,
         operation: SnapshotDispatchOperation = .mutation
     ) -> SnapshotDispatchContext {
         SnapshotDispatchContext(
@@ -49,6 +50,7 @@ final class SnapshotDispatchTests: XCTestCase {
             targetEnabled: targetEnabled,
             windowFocused: windowFocused,
             inputFocused: inputFocused,
+            allowUnfocusedInput: allowUnfocusedInput,
             operation: operation
         )
     }
@@ -148,7 +150,28 @@ final class SnapshotDispatchTests: XCTestCase {
     func testInputOperationWithWrongWindowFocusDoesNotReachPrimitiveDispatch() {
         assertRejected(
             makeContext(windowFocused: false, operation: .input),
-            message: "wrong frontmost app/window; focus explicitly and refresh"
+            message: "wrong frontmost app/window; focus explicitly, or pass --no-activate to deliver without taking focus"
+        )
+    }
+
+    func testNoActivateDeliversInputToAnAppThatIsNotFrontmost() throws {
+        // The point of --no-activate: keys already route through CGEvent.postToPid, which cannot
+        // leave the target process, so the key window is not what makes delivery safe.
+        var reached = false
+        try dispatchSnapshotAction(
+            context: makeContext(windowFocused: false, allowUnfocusedInput: true, operation: .input),
+            primitiveDispatch: { reached = true }
+        )
+
+        XCTAssertTrue(reached)
+    }
+
+    func testNoActivateStillRequiresTheFocusedElement() {
+        // 🛑 The other half. Only the KEY WINDOW requirement is waived: which element has focus
+        // still decides where the text lands, so waiving that too would type into the wrong field.
+        assertRejected(
+            makeContext(inputFocused: false, allowUnfocusedInput: true, operation: .input),
+            message: "focus changed before input; no action dispatched"
         )
     }
 

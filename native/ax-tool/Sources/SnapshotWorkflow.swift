@@ -489,6 +489,14 @@ func cmdSee(appName _: String) {
 }
 
 private func workflowFrontWindow(_ window: ObservedWindow, pid: pid_t, element: AXUIElement? = nil) {
+    // Root gate rather than one guard per call site: this function is reached from nine places on
+    // the input paths, and patching the two I happened to test would have left the rest stealing
+    // focus. --no-activate is only accepted for key/type/paste/select/set, so an early return here
+    // cannot loosen a pointer action.
+    if workflowFlag("--no-activate") {
+        return
+    }
+
     let currentFrontmost = frontmostPid()
     guard currentFrontmost == pid,
           let focused = axAttribute(AXUIElementCreateApplication(pid), "AXFocusedWindow"),
@@ -575,6 +583,9 @@ private func workflowFocus(_ window: ObservedWindow, pid: pid_t, element: AXUIEl
 func cmdAct(appName _: String) {
     workflowDispatchState = "not_started"
     let appName = workflowParse("act")
+    // Martin's requirement, made testable: a caller must be able to tell whether driving the app
+    // disturbed the user. Reported on EVERY act result, not only the ones that tried not to.
+    let startingFrontmost = frontmostPid()
     guard let raw = workflowArgument("--snapshot"), raw.count < 65536,
           let data = Data(base64Encoded: raw),
           let token = try? JSONDecoder().decode(SnapshotToken.self, from: data) else {
@@ -692,7 +703,8 @@ func cmdAct(appName _: String) {
         observedWindowID: Int(window.id), observedTreeDigest: tree.digest, observedElementIndex: elementIndex,
         observedElementCount: tree.elements.count, observedAt: Date().timeIntervalSince1970,
         targetEnabled: (axAttribute(element, "AXEnabled") as? Bool) != false,
-        windowFocused: windowFocused, inputFocused: inputFocused, operation: operation)
+        windowFocused: windowFocused, inputFocused: inputFocused,
+        allowUnfocusedInput: workflowFlag("--no-activate"), operation: operation)
     func validateAfterFeedback() throws {
         let freshWindow = workflowWindowByID(token.window, pid: pid)
         let fresh = workflowTree(freshWindow.ax, depth: token.depth, scope: token.effectiveScope)
@@ -721,7 +733,9 @@ func cmdAct(appName _: String) {
                 now: Date().timeIntervalSince1970)
         }
         if operation == .input {
-            if action == "key" && CFEqual(element, window.ax) { workflowFrontWindow(freshWindow, pid: pid) }
+            if action == "key", CFEqual(element, window.ax), !workflowFlag("--no-activate") {
+                workflowFrontWindow(freshWindow, pid: pid)
+            }
             else { workflowFrontWindow(freshWindow, pid: pid, element: element) }
         }
     }
@@ -1198,7 +1212,7 @@ func cmdAct(appName _: String) {
     default:
         workflowFailure("unsupported action")
     }
-    var payload: [String: Any] = ["ok": actionOK, "action": action, "element": elementIndex, "pid": pid, "windowId": window.id, "dispatchState": "dispatched"]
+    var payload: [String: Any] = ["ok": actionOK, "action": action, "element": elementIndex, "pid": pid, "windowId": window.id, "dispatchState": "dispatched", "frontmostChanged": frontmostPid() != startingFrontmost]
     payload.merge(actionExtras) { _, new in new }
     if workflowFlag("--refresh") {
         // Derive it from the result. workflowAfterState has three failure returns — the

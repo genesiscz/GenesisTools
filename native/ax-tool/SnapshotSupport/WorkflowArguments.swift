@@ -29,7 +29,7 @@ public struct WorkflowArguments {
                 "--suffix", "--selection", "--format", "--path", "--region", "--target-key", "--dwell",
                 "--revalidate-scope",
             ]
-            flagOptions = ["--background", "--double", "--refresh", "--no-cursor", "--no-image", "--prepare", "--replace", "--hold"]
+            flagOptions = ["--background", "--double", "--refresh", "--no-cursor", "--no-image", "--prepare", "--replace", "--hold", "--no-activate"]
         default:
             throw WorkflowArgumentError.invalid("unknown workflow command \(command)")
         }
@@ -133,6 +133,10 @@ public struct WorkflowArguments {
         try reject(["--background"], unless: ["click", "move", "drag", "scroll"])
         try reject(["--coords", "--region"], unless: ["click", "move", "drag", "scroll", "hover"])
         try reject(["--dwell", "--hold"], unless: ["hover"])
+        try reject(["--no-activate"], unless: ["key", "type", "paste", "select", "set"])
+        if flags.contains("--no-activate"), flags.contains("--prepare") {
+            throw WorkflowArgumentError.invalid("--no-activate contradicts --prepare, which focuses and raises the target before acting")
+        }
         try reject(["--prefix", "--suffix", "--selection", "--range"], unless: ["select"])
         try reject(["--format"], unless: ["paste"])
         try reject(["--replace"], unless: ["paste"])
