@@ -22,8 +22,8 @@ describe("parseOpenDirs / serializeOpenDirs", () => {
 
 describe("expandedDirsForNote", () => {
     it("adds every ancestor folder of the note path", () => {
-        const next = expandedDirsForNote("ČEZ/bun/Analysis.md", parseOpenDirs("other"));
-        expect([...next].sort()).toEqual(["other", "ČEZ", "ČEZ/bun"].sort());
+        const next = expandedDirsForNote("Acme/bun/Analysis.md", parseOpenDirs("other"));
+        expect([...next].sort()).toEqual(["other", "Acme", "Acme/bun"].sort());
     });
 
     it("a top-level note adds no folders", () => {
@@ -33,9 +33,9 @@ describe("expandedDirsForNote", () => {
 
 describe("expandedDirsForFolderToggle", () => {
     it("adds on expand and removes on collapse", () => {
-        const opened = expandedDirsForFolderToggle("ČEZ", true, new Set());
-        expect(opened.has("ČEZ")).toBe(true);
-        const closed = expandedDirsForFolderToggle("ČEZ", false, opened);
-        expect(closed.has("ČEZ")).toBe(false);
+        const opened = expandedDirsForFolderToggle("Acme", true, new Set());
+        expect(opened.has("Acme")).toBe(true);
+        const closed = expandedDirsForFolderToggle("Acme", false, opened);
+        expect(closed.has("Acme")).toBe(false);
     });
 });

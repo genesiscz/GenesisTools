@@ -15,7 +15,7 @@ export interface OriginInfo {
  * Which host a remote URL points at. Pure, so the shapes are pinned by tests:
  * scp-like (`git@host:o/r.git`), ssh/https URLs with or without a user and a
  * port. GitHub is `github.com` itself; anything with `gitlab` in the host
- * (`gitlab.com`, `gitlab.apps.corp`) is GitLab; everything else has no driver.
+ * (`gitlab.com`, `gitlab.internal.example`) is GitLab; everything else has no driver.
  */
 export function classifyOriginUrl(url: string): OriginInfo {
     const trimmed = url.trim();
