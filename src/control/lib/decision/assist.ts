@@ -25,6 +25,8 @@ export async function assistTask(options: {
     chooser?: ChooserMode;
     hostDecision?: HostDecision;
     fanout?: boolean;
+    /** Judge the postcondition BEFORE the first action, for a goal that may already be satisfied. */
+    checkFirst?: boolean;
 }) {
     const goal = z.string().trim().min(1).max(4000).parse(options.goal);
     const session = new ControlSession(options);
@@ -45,6 +47,10 @@ export async function assistTask(options: {
     }> = [];
     const judgments: Array<Awaited<ReturnType<typeof judgeOutcome>>> = [];
     let status: "verified" | "stopped" | "unknown" = "stopped";
+    // How the world looked before this loop did anything. "unmet" is the ordinary case and the
+    // reason the loop exists; "already-satisfied" is the only legitimate zero-action success.
+    let initialState: "unmet" | "already-satisfied" = "unmet";
+    let firstPass = true;
     let reason = "";
     let reobservations = 0;
     let lastRefusal: ReturnType<typeof actionRefusal> | undefined;
@@ -62,23 +68,49 @@ export async function assistTask(options: {
                 reason = "Authentication or permission UI requires user input.";
                 break;
             }
-            const judgment = await judgeOutcome({
-                observation,
-                before: beforeAct,
-                expect: options.expect ?? goal,
-                exact: options.exact,
-                evaluate: session.evaluate,
-                signal: session.budget.signal,
-            });
-            judgments.push(judgment);
-            if (judgment.status === "verified") {
-                status = "verified";
-                reason = "The observed postcondition is verified.";
-                break;
-            }
-            if (judgment.status === "refuted" && judgment.basis === "semantic") {
-                reason = "Observed failure contradicts the goal; stopped for inspection.";
-                break;
+            // 🛑 At t0 the goal is normally NOT yet true — that is the entire reason to act. Judging
+            // here and reading "not satisfied" as "contradicted" killed every open-this-window task
+            // before it took a single step. Measured on Flow 2026-09-21 with the goal "open the
+            // overflow menu, then choose Statistics": status stopped, 0 actions, 1 paid request,
+            // 1.0 s, contradicted 0.9, and the counterexample was the app's own HUD window. So the
+            // default is to act and judge the result; the t0 judge is opt-in, for an idempotent
+            // goal that may already be done. Skipping it also saves one paid request per task.
+            const beforeFirstAction = firstPass;
+            firstPass = false;
+
+            // An EXACT expectation is a local readback: it spends no request and cannot mistake
+            // "not yet true" for "contradicted", so it is always safe at t0 and is how an
+            // already-done task reports zero actions. Only the paid semantic judge is deferred.
+            if (!beforeFirstAction || options.checkFirst === true || options.exact !== undefined) {
+                const judgment = await judgeOutcome({
+                    observation,
+                    before: beforeAct,
+                    expect: options.expect ?? goal,
+                    exact: options.exact,
+                    evaluate: session.evaluate,
+                    signal: session.budget.signal,
+                });
+                judgments.push(judgment);
+
+                if (judgment.status === "verified") {
+                    status = "verified";
+
+                    if (beforeFirstAction) {
+                        initialState = "already-satisfied";
+                        reason = "The postcondition was already satisfied; no action was taken.";
+                    } else {
+                        reason = "The observed postcondition is verified.";
+                    }
+
+                    break;
+                }
+
+                // A refutation may only stop a loop that produced the state being judged. Before the
+                // first action there is no such state: the goal is merely not true yet.
+                if (judgment.status === "refuted" && judgment.basis === "semantic" && !beforeFirstAction) {
+                    reason = "Observed failure contradicts the goal; stopped for inspection.";
+                    break;
+                }
             }
             if (session.budget.actions >= session.budget.limits.maxActions) {
                 reason = "Action budget exhausted before the goal was verified.";
@@ -361,6 +393,7 @@ export async function assistTask(options: {
         {
             status,
             reason,
+            initialState,
             steps: steps.length,
             judgments: judgments.length,
             recoveries: recovery.attempts.length,
@@ -369,7 +402,7 @@ export async function assistTask(options: {
         },
         "assist finished"
     );
-    return { status, reason, steps, judgments, recoveries: recovery.attempts, metrics };
+    return { status, reason, initialState, steps, judgments, recoveries: recovery.attempts, metrics };
 }
 
 /**

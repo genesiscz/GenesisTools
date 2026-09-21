@@ -297,6 +297,13 @@ export class NativeControlDriver implements ControlDriver {
             value: call.value,
             parameters: call.parameters,
         });
+        // Root fix, not a call-site patch: every press candidate whose row lacks AXPress arrives
+        // here carrying the action it does expose, so the dispatcher performs that one instead of
+        // sending an AXPress the element would refuse.
+        if (call.candidate.action === "press" && call.candidate.axAction) {
+            actionArgs = ["--action", "perform", "--ax-action", call.candidate.axAction];
+        }
+
         if (prepare && target && webTarget) {
             if (call.candidate.action === "set" && ["AXTextField", "AXTextArea", "AXComboBox"].includes(target.role)) {
                 actionArgs = ["--action", "paste", "--text", call.value ?? "", "--format", "text", "--replace"];

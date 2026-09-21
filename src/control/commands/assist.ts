@@ -34,6 +34,10 @@ export function registerAssistCommand(program: Command) {
         )
         .option("--max-recoveries <n>", "Separate recovery attempt cap", "2")
         .option("--remedies <json>", "File with explicitly authorized dismiss/back targets")
+        .option(
+            "--check-first",
+            "Judge the postcondition BEFORE the first action, for an idempotent goal that may already be satisfied. Off by default: an unmet goal at t0 is the normal starting state, not a failure, and skipping this check saves one paid evaluation."
+        )
         .option("--exact-id <id>", "Use a unique AXIdentifier for completion readback")
         .option("--exact-value <text>", "Exact completion value")
         .action(
@@ -49,6 +53,7 @@ export function registerAssistCommand(program: Command) {
                     chooser: string | boolean;
                     hostDecision?: string;
                     fanout?: boolean;
+                    checkFirst?: boolean;
                 }
             ) => {
                 const parsedMode = z.enum(["off", "bounded"]).safeParse(options.recovery);
@@ -74,6 +79,7 @@ export function registerAssistCommand(program: Command) {
                     const result = await assistTask({
                         goal: options.goal,
                         chooser: chooser.data,
+                        checkFirst: options.checkFirst === true,
                         fanout: options.fanout !== false,
                         hostDecision,
                         recovery: { mode, remedies, maxRecoveries: Number(options.maxRecoveries) },

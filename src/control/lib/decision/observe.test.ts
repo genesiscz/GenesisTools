@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { evaluationSchema } from "@genesiscz/utils/ai/evaluation/evaluate";
 import type { EvaluationResponse, Evaluator } from "@genesiscz/utils/ai/evaluation/service";
-import { type Observation, observedEvidence } from "./observation";
+import { candidatesFor, type Observation, observedEvidence } from "./observation";
 import { observeFanout } from "./observe";
 
 function evaluation(answers: EvaluationResponse["answers"]): EvaluationResponse {
@@ -155,4 +155,79 @@ test("observed evidence carries the document URL of a web area and nothing else 
         elements: [{ ...browser.elements[0], AXURL: "https://example.test/invoices" }, ...browser.elements.slice(1)],
     });
     expect(navigated).not.toEqual(evidence);
+});
+
+/**
+ * t7 — a menu button is "pressed" by showing its menu, and a menu item by picking it. Neither
+ * exposes AXPress, and an AXPress-only filter made Flow's whole overflow menu invisible to the
+ * chooser: `assist` abstained with no_certain_act after paying for the request. Measured on
+ * design.yugen.Flow 2026-09-21.
+ */
+test("a press candidate carries the AX action its row actually exposes", () => {
+    const rows: Observation["elements"] = [
+        { index: 0, depth: 0, role: "AXWindow", actions: ["AXRaise"], x: 0, y: 0, width: 400, height: 300 },
+        {
+            index: 1,
+            depth: 1,
+            role: "AXMenuButton",
+            AXDescription: "menu.dots.vertical.custom",
+            actions: ["AXCancel", "AXShowMenu"],
+            x: 10,
+            y: 10,
+            width: 32,
+            height: 32,
+        },
+        {
+            index: 2,
+            depth: 1,
+            role: "AXMenuItem",
+            AXTitle: "Settings",
+            actions: ["AXCancel", "AXPick", "AXPress"],
+            x: 10,
+            y: 50,
+            width: 196,
+            height: 24,
+        },
+        {
+            index: 3,
+            depth: 1,
+            role: "AXButton",
+            AXTitle: "Start",
+            actions: ["AXPress"],
+            x: 10,
+            y: 90,
+            width: 60,
+            height: 24,
+        },
+    ];
+    const candidates = candidatesFor({ observation: { ...observation, elements: rows }, action: "press" });
+    const byRole = new Map(candidates.map((candidate) => [candidate.role, candidate]));
+
+    // The menu button is now choosable, and says AXShowMenu is how to press it.
+    expect(byRole.get("AXMenuButton")?.axAction).toBe("AXShowMenu");
+
+    // A row that exposes AXPress keeps AXPress, so nothing carries an override it does not need.
+    expect(byRole.get("AXMenuItem")?.axAction).toBeUndefined();
+    expect(byRole.get("AXButton")?.axAction).toBeUndefined();
+});
+
+/** The other half: a row exposing none of the three press actions is still not a candidate. */
+test("a row with no pressable action is still refused", () => {
+    const rows: Observation["elements"] = [
+        { index: 0, depth: 0, role: "AXWindow", actions: ["AXRaise"], x: 0, y: 0, width: 400, height: 300 },
+        {
+            index: 1,
+            depth: 1,
+            role: "AXStaticText",
+            AXValue: "05:00",
+            actions: ["AXCancel"],
+            x: 10,
+            y: 10,
+            width: 60,
+            height: 20,
+        },
+    ];
+    const candidates = candidatesFor({ observation: { ...observation, elements: rows }, action: "press" });
+
+    expect(candidates.filter((candidate) => candidate.role === "AXStaticText")).toHaveLength(0);
 });
