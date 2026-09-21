@@ -1,12 +1,14 @@
-import { existsSync, readFileSync, rmSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, readFileSync, rmSync, statSync } from "node:fs";
+import { dirname, join } from "node:path";
 import type { DiffConfig, HooksConfig } from "../config";
 import { gitOut } from "../git";
 import { hookDiag } from "../log";
 import { callDir, safeSegment } from "../paths";
 import type { HookPayload } from "../payload";
-import { beforeCopy } from "./before";
+import { beforeCopy, leftOutOfCapture } from "./before";
+import { claimChange } from "./claim";
 import { type ChangedFile, changedFiles } from "./collect";
+import { namedChanges } from "./named";
 import { highlightRange, hunkRange, renderBlock, renderPatch } from "./render";
 
 export interface DiffDecision {
@@ -34,6 +36,69 @@ function patchFor(file: ChangedFile, before: string | null, config: DiffConfig):
     }
 
     return gitOut(file.root, ["diff", "HEAD", context, "--", file.path]);
+}
+
+/**
+ * The rendered block for one changed file, or `null` when the diff turned out empty. A
+ * DELETED file always renders: its block is the header alone when git has no patch for it.
+ */
+function blockFrom(file: ChangedFile, patch: string, hadBefore: boolean, config: DiffConfig): string | null {
+    // Highlight only the lines the hunks touch, never the whole file. A deleted one has
+    // nothing left on disk to highlight.
+    const highlighted = file.deleted ? [] : highlightRange(file.path, hunkRange(patch), config);
+    const rendered = renderPatch(patch, highlighted, config);
+
+    if (rendered.body.length === 0 && !file.deleted) {
+        return null;
+    }
+
+    return renderBlock(file, rendered, hadBefore, config);
+}
+
+/**
+ * Takes the one render of this file state, so two sessions sharing a repository do not both
+ * print the same change. A deleted file has no stat to key on and uses a fixed sentinel.
+ */
+function claim(path: string, deleted: boolean, config: DiffConfig, session: string | undefined): boolean {
+    if (!config.dedupeAcrossSessions) {
+        return true;
+    }
+
+    let mtimeMs = 0;
+    let size = -1;
+
+    if (!deleted) {
+        try {
+            const stat = statSync(path);
+
+            mtimeMs = stat.mtimeMs;
+            size = stat.size;
+        } catch (err) {
+            // It vanished between the render and here. Claiming a state we cannot read would
+            // key on the sentinel and could silence a real deletion later.
+            hookDiag("Could not stat a rendered file to claim it", { err, path });
+            return true;
+        }
+    }
+
+    return claimChange({ path, mtimeMs, size }, session);
+}
+
+/** Why nothing was printed. Each case needs a different fix, so they read differently. */
+function silentReason(covered: number, uncaptured: number, claimed: number): string {
+    if (covered > 0) {
+        return "every changed file was already rendered natively";
+    }
+
+    if (claimed > 0) {
+        return `${claimed} changed file(s) were already rendered by another session`;
+    }
+
+    if (uncaptured > 0) {
+        return `${uncaptured} changed file(s) had no captured before-state, over the capture cap`;
+    }
+
+    return "no change since this command began";
 }
 
 export function runDiffPost(payload: HookPayload, config: HooksConfig): DiffDecision {
@@ -70,6 +135,8 @@ export function runDiffPost(payload: HookPayload, config: HooksConfig): DiffDeci
     const blocks: string[] = [];
     const files: string[] = [];
     let covered = 0;
+    let uncaptured = 0;
+    let claimed = 0;
 
     for (const root of roots) {
         // The cap short-circuits the ROOT loop too. Breaking only the inner loop still called
@@ -90,18 +157,86 @@ export function runDiffPost(payload: HookPayload, config: HooksConfig): DiffDeci
             }
 
             const before = file.deleted ? null : beforeCopy(dir, root, file.path);
-            const patch = patchFor(file, before, config.diff);
-            // Highlight only the lines the hunks touch, never the whole file.
-            const highlighted = file.deleted ? [] : highlightRange(file.path, hunkRange(patch), config.diff);
-            const rendered = renderPatch(patch, highlighted, config.diff);
 
-            if (rendered.body.length === 0 && !file.deleted) {
+            if (before === null && file.untracked && !file.deleted && leftOutOfCapture(dir, root, file.path)) {
+                // It was already on disk when the command began, and its before-state did not
+                // fit the capture budget. Diffing it against `/dev/null` would claim the
+                // command wrote every line of it, so the honest answer is to say nothing.
+                uncaptured += 1;
+                continue;
+            }
+
+            const block = blockFrom(file, patchFor(file, before, config.diff), before !== null, config.diff);
+
+            if (block === null) {
+                continue;
+            }
+
+            if (!claim(file.path, file.deleted, config.diff, payload.sessionId)) {
+                claimed += 1;
                 continue;
             }
 
             files.push(file.path);
-            blocks.push(renderBlock(file, rendered, before !== null, config.diff));
+            blocks.push(block);
         }
+    }
+
+    // Files the command NAMED rather than worked in. They are read from a copy, so this adds
+    // no git process unless one of them actually changed.
+    for (const change of namedChanges(dir)) {
+        if (blocks.length >= config.diff.maxFiles) {
+            break;
+        }
+
+        if (native.has(change.path)) {
+            covered += 1;
+            continue;
+        }
+
+        if (files.includes(change.path)) {
+            // Already rendered above: a named path can also sit inside a captured root.
+            continue;
+        }
+
+        if (change.before === null && !change.deleted && !config.diff.namedPathsShowCreated) {
+            // A file this command created, known only because the command named it. That is
+            // a scratch file far more often than not, and the command's own output already
+            // says what it wrote. An edit to a file that ALREADY existed still renders.
+            continue;
+        }
+
+        const file: ChangedFile = {
+            path: change.path,
+            root: dirname(change.path),
+            // "Added" is right only when there was genuinely no before-state.
+            untracked: change.before === null,
+            deleted: change.deleted,
+        };
+        // Always `--no-index`, in both directions: a named path may live outside every
+        // repository, so `git diff HEAD` is not available to it. A deletion is the copy
+        // against `/dev/null`, which is what gives the removed lines.
+        const patch = gitOut(file.root, [
+            "diff",
+            "--no-index",
+            `-U${config.diff.contextLines}`,
+            "--",
+            change.before ?? "/dev/null",
+            change.deleted ? "/dev/null" : change.path,
+        ]);
+        const block = blockFrom(file, patch, change.before !== null, config.diff);
+
+        if (block === null) {
+            continue;
+        }
+
+        if (!claim(change.path, change.deleted, config.diff, payload.sessionId)) {
+            claimed += 1;
+            continue;
+        }
+
+        files.push(change.path);
+        blocks.push(block);
     }
 
     try {
@@ -111,12 +246,7 @@ export function runDiffPost(payload: HookPayload, config: HooksConfig): DiffDeci
     }
 
     if (blocks.length === 0) {
-        return {
-            decision: "silent",
-            reason:
-                covered > 0 ? "every changed file was already rendered natively" : "no change since this command began",
-            files: [],
-        };
+        return { decision: "silent", reason: silentReason(covered, uncaptured, claimed), files: [] };
     }
 
     return { decision: "emitted", reason: "rendered a diff the harness did not", message: blocks.join("\n\n"), files };

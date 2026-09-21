@@ -1,7 +1,7 @@
 import { readdirSync, rmdirSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { hookDiag } from "./log";
-import { hookDataRoot } from "./paths";
+import { claimsRoot, hookDataRoot } from "./paths";
 
 export interface StaleCapture {
     path: string;
@@ -114,6 +114,41 @@ export function collectStaleCaptures(options: {
                 // recursive: a capture written between the loop and here must survive.
                 removeIfEmpty(diffDir);
                 removeIfEmpty(join(root, harness, session));
+            }
+        }
+    }
+
+    // Render claims live beside the captures, one tiny file per path ever printed. They are
+    // never swept by a session sweep: a claim outlives the session that took it, on purpose,
+    // so a later session cannot reprint a change just because the first one ended.
+    if (!options.sessionId) {
+        for (const claim of safeList(claimsRoot())) {
+            const path = join(claimsRoot(), claim);
+            let stat: ReturnType<typeof statSync>;
+
+            try {
+                stat = statSync(path);
+            } catch (err) {
+                hookDiag("Could not stat a render claim", { err, path });
+                continue;
+            }
+
+            const ageMs = options.now - stat.mtimeMs;
+
+            if (ageMs < horizonMs) {
+                kept += 1;
+                continue;
+            }
+
+            removed.push({ path, ageMs, bytes: stat.size });
+            bytes += stat.size;
+
+            if (write) {
+                try {
+                    rmSync(path, { force: true });
+                } catch (err) {
+                    hookDiag("Could not remove a stale render claim", { err, path });
+                }
             }
         }
     }

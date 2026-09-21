@@ -13,12 +13,13 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { DEFAULT_HOOKS_CONFIG } from "../config";
+import { DEFAULT_HOOKS_CONFIG, type DiffConfig } from "../config";
 import { callDir, sessionDir } from "../paths";
 import type { HookPayload } from "../payload";
 import { beforeCopy } from "./before";
 import { capturePre, captureRoots } from "./capture";
 import { changedFiles } from "./collect";
+import { namedArguments } from "./command-paths";
 import { hunkRange, renderPatch } from "./render";
 import { runDiffPost } from "./run";
 
@@ -46,12 +47,12 @@ function payload(overrides: Partial<HookPayload> = {}): HookPayload {
     };
 }
 
-function begin(overrides: Partial<HookPayload> = {}): HookPayload {
+function begin(overrides: Partial<HookPayload> = {}, diff: DiffConfig = DEFAULT_HOOKS_CONFIG.diff): HookPayload {
     calls += 1;
 
     const next = payload(overrides);
 
-    capturePre(next, DEFAULT_HOOKS_CONFIG.diff);
+    capturePre(next, diff);
 
     return next;
 }
@@ -576,5 +577,415 @@ describe("an ambiguous cd target is refused, not guessed", () => {
         expect(
             captureRoots({ ...payload(), command: "cd /nonexistent-zzz-9 && ls" }, DEFAULT_HOOKS_CONFIG.diff)
         ).toEqual([repo]);
+    });
+});
+
+describe("files the command NAMES rather than works in", () => {
+    // Both shapes below were measured on 2026-09-21 producing a silent
+    // `no change since this command began` while the file really had changed.
+    const plain = { ...DEFAULT_HOOKS_CONFIG, diff: { ...DEFAULT_HOOKS_CONFIG.diff, highlight: "none" as const } };
+    let vault: string;
+    let outside: string;
+
+    beforeAll(() => {
+        vault = realpathSync(mkdtempSync(join(tmpdir(), "gt-vault-")));
+
+        const run = (args: string[]) =>
+            spawnSync("git", ["-C", vault, ...args], { encoding: "utf8", env: process.env });
+
+        run(["init", "-q"]);
+        run(["config", "user.email", "probe@local"]);
+        run(["config", "user.name", "probe"]);
+        writeFileSync(join(vault, "wrapup.md"), "alpha\nbravo\ncharlie\n");
+        run(["add", "-A"]);
+        run(["commit", "-qm", "init"]);
+
+        outside = realpathSync(mkdtempSync(join(tmpdir(), "gt-outside-")));
+        writeFileSync(join(outside, "MEMORY.md"), "one\ntwo\nthree\n");
+    });
+
+    afterAll(() => {
+        rmSync(vault, { recursive: true, force: true });
+        rmSync(outside, { recursive: true, force: true });
+    });
+
+    it("renders an edit to a repository the command names but never enters", () => {
+        const note = join(vault, "wrapup.md");
+        const current = begin({ command: `bun /x/resolve.ts log "${note}"` });
+
+        writeFileSync(note, "alpha\nBRAVO-NAMED\ncharlie\n");
+
+        const decision = runDiffPost(current, plain);
+
+        expect(decision.decision).toBe("emitted");
+        expect(decision.files).toContain(note);
+        expect(decision.message).toContain("BRAVO-NAMED");
+        expect(decision.message).toContain("Updated");
+    });
+
+    it("renders an edit in a directory that is not a git repository at all", () => {
+        const note = join(outside, "MEMORY.md");
+        const current = begin({ command: `bun /x/cli.ts --out=${note}` });
+
+        writeFileSync(note, "one\nTWO-OUTSIDE-GIT\nthree\n");
+
+        expect(runDiffPost(current, plain).message).toContain("TWO-OUTSIDE-GIT");
+    });
+
+    it("stays quiet about a scratch file the command created, and prints it when asked", () => {
+        // Two consecutive calls writing /tmp reports each got a 30-line block of a file the
+        // command had just described in its own output. A creation found only through a
+        // named path is off by default; an edit to a file that already existed still prints.
+        const quiet = join(outside, "created-quiet.md");
+        const off = begin({ command: `bun /x/cli.ts ${quiet}` });
+
+        writeFileSync(quiet, "brand\nnew\n");
+
+        expect(runDiffPost(off, plain).files).not.toContain(quiet);
+
+        const loud = join(outside, "created-loud.md");
+        const diff = { ...DEFAULT_HOOKS_CONFIG.diff, highlight: "none" as const, namedPathsShowCreated: true };
+        const on = begin({ command: `bun /x/cli.ts ${loud}` }, diff);
+
+        writeFileSync(loud, "brand\nnew\n");
+
+        const decision = runDiffPost(on, { ...plain, diff });
+
+        expect(decision.message).toContain("Added");
+        expect(decision.message).toContain("brand");
+    });
+
+    it("renders a file the command removes as Deleted, with its lines", () => {
+        const doomed = join(outside, "doomed.md");
+
+        writeFileSync(doomed, "gone\nsoon\n");
+
+        const current = begin({ command: `bun /x/cli.ts ${doomed}` });
+
+        rmSync(doomed);
+
+        const decision = runDiffPost(current, plain);
+
+        expect(decision.message).toContain("Deleted");
+        expect(decision.message).toContain("gone");
+    });
+
+    it("stays silent when the named file did not change", () => {
+        const current = begin({ command: `bun /x/cli.ts ${join(vault, "wrapup.md")}` });
+
+        expect(runDiffPost(current, plain).decision).toBe("silent");
+    });
+
+    it("stands down for a named file the harness already rendered", () => {
+        const note = join(vault, "wrapup.md");
+        const current = begin({ command: `bun /x/cli.ts ${note}`, nativeDiffFiles: [note] });
+
+        writeFileSync(note, "alpha\nNATIVE-ALREADY\ncharlie\n");
+
+        const decision = runDiffPost(current, plain);
+
+        expect(decision.decision).toBe("silent");
+        expect(decision.reason).toContain("already rendered natively");
+    });
+
+    it("renders a file inside the cwd repository only once", () => {
+        const tracked = join(repo, "kept.ts");
+        const current = begin({ command: `bun /x/cli.ts ${tracked}` });
+
+        writeFileSync(tracked, "alpha\nONCE-ONLY\ncharlie\ndelta\necho\n");
+
+        const decision = runDiffPost(current, plain);
+
+        expect(decision.files.filter((path) => path === tracked)).toHaveLength(1);
+        expect(decision.message?.match(/ONCE-ONLY/g)).toHaveLength(1);
+
+        git(["checkout", "--", "kept.ts"]);
+    });
+
+    it("watchNamedPaths:false turns the pass off, and true is what turns it on", () => {
+        const note = join(vault, "wrapup.md");
+        const run = (watchNamedPaths: boolean, marker: string) => {
+            const diff = { ...DEFAULT_HOOKS_CONFIG.diff, highlight: "none" as const, watchNamedPaths };
+            const current = begin({ command: `bun /x/cli.ts ${note}` }, diff);
+
+            writeFileSync(note, `alpha\n${marker}\ncharlie\n`);
+
+            return runDiffPost(current, { ...plain, diff });
+        };
+
+        // The ON arm is the positive control: without it, a pass that never ran at all would
+        // pass the OFF assertion.
+        expect(run(true, "WATCHED").message).toContain("WATCHED");
+        expect(run(false, "NOT-WATCHED").files).toEqual([]);
+    });
+
+    it("records an oversize named file as skipped instead of copying it", () => {
+        const big = join(outside, "big.md");
+
+        writeFileSync(big, "x".repeat(4096));
+
+        const current = payload({ command: `tee ${big}` });
+
+        calls += 1;
+        current.toolUseId = `call-big-${calls}`;
+
+        const result = capturePre(current, { ...DEFAULT_HOOKS_CONFIG.diff, maxNamedPathBytes: 1024 });
+
+        expect(result.named).toBe(0);
+        expect(result.skipped.join(" ")).toContain("named-path cap");
+    });
+
+    it("does not read a path out of a heredoc BODY", () => {
+        const note = join(vault, "wrapup.md");
+
+        expect(namedArguments(`bun /x/cli.ts <<'EOF'\n- see ${note}\nEOF`, [vault])).not.toContain(note);
+    });
+
+    it("finds a quoted path, which the scanner blanks out of the token stream", () => {
+        const note = join(vault, "wrapup.md");
+
+        expect(namedArguments(`bun /x/cli.ts log "${note}"`, [vault])).toContain(note);
+    });
+
+    it.each([
+        ["a URL", "curl https://example.com/a/b"],
+        ["a variable", 'bun x "$HOME/note.md"'],
+    ])("refuses %s", (_label, command) => {
+        expect(namedArguments(command, [vault])).toEqual([]);
+    });
+
+    it("never turns a command substitution into a path that exists", () => {
+        // The scanner lifts `$( … )` into its own unit, so what is left of the token can
+        // still look like a path. It must never resolve onto a real file.
+        const found = namedArguments(`bun x $(cat which)/wrapup.md`, [vault]);
+
+        expect(found).not.toContain(join(vault, "wrapup.md"));
+        expect(found.filter((path) => existsSync(path))).toEqual([]);
+    });
+});
+
+describe("two sessions sharing one repository", () => {
+    // Three Claude sessions routinely write into one Obsidian vault. A file session B writes
+    // during session A's command window is newer than A's stamp, so without a claim every
+    // session prints every session's edits.
+    const plain = { ...DEFAULT_HOOKS_CONFIG, diff: { ...DEFAULT_HOOKS_CONFIG.diff, highlight: "none" as const } };
+    let shared: string;
+
+    beforeAll(() => {
+        shared = join(repo, "shared.ts");
+        writeFileSync(shared, "one\ntwo\nthree\n");
+        git(["add", "-A"]);
+        git(["commit", "-qm", "shared"]);
+    });
+
+    afterAll(() => {
+        for (const session of ["gt-diff-a", "gt-diff-b", "gt-diff-c"]) {
+            rmSync(sessionDir("claude", session), { recursive: true, force: true });
+        }
+    });
+
+    it("prints the change once, not once per session", () => {
+        const a = begin({ sessionId: "gt-diff-a", toolUseId: "share-1" });
+        const b = begin({ sessionId: "gt-diff-b", toolUseId: "share-1" });
+
+        writeFileSync(shared, "one\nSHARED-ONCE\nthree\n");
+
+        const first = runDiffPost(a, plain);
+        const second = runDiffPost(b, plain);
+
+        expect(first.files).toContain(shared);
+        expect(first.message).toContain("SHARED-ONCE");
+        expect(second.files).not.toContain(shared);
+        expect(second.message ?? "").not.toContain("SHARED-ONCE");
+    });
+
+    it("prints the NEXT change to the same file again", () => {
+        const c = begin({ sessionId: "gt-diff-c", toolUseId: "share-2" });
+
+        writeFileSync(shared, "one\nSHARED-SECOND-EDIT\nthree\n");
+
+        expect(runDiffPost(c, plain).message).toContain("SHARED-SECOND-EDIT");
+    });
+
+    it("lets the same session render its own claim, so a retry is not silenced", () => {
+        const again = begin({ sessionId: "gt-diff-c", toolUseId: "share-3" });
+
+        writeFileSync(shared, "one\nSAME-SESSION-AGAIN\nthree\n");
+
+        expect(runDiffPost(again, plain).message).toContain("SAME-SESSION-AGAIN");
+
+        const retry = begin({ sessionId: "gt-diff-c", toolUseId: "share-4" });
+
+        // No further edit: the state is unchanged, so the claim is this session's own.
+        expect(runDiffPost(retry, plain).files).not.toContain(shared);
+    });
+
+    it("dedupeAcrossSessions:false lets both sessions print it", () => {
+        const diff = { ...DEFAULT_HOOKS_CONFIG.diff, highlight: "none" as const, dedupeAcrossSessions: false };
+        const a = begin({ sessionId: "gt-diff-a", toolUseId: "loose-1" }, diff);
+        const b = begin({ sessionId: "gt-diff-b", toolUseId: "loose-1" }, diff);
+
+        writeFileSync(shared, "one\nBOTH-PRINT\nthree\n");
+
+        expect(runDiffPost(a, { ...plain, diff }).message).toContain("BOTH-PRINT");
+        expect(runDiffPost(b, { ...plain, diff }).message).toContain("BOTH-PRINT");
+
+        git(["checkout", "--", "shared.ts"]);
+    });
+});
+
+describe("a tree too dirty to capture whole", () => {
+    // Measured 2026-09-21 on the Obsidian vault: 64 dirty entries, 43 MB, 8 MB cap, of which
+    // three data files were 34 MB. The old all-or-nothing rule cost a 30 KB note its
+    // before-state, and the post phase then printed the whole note as `Added` on every call.
+    const plain = { ...DEFAULT_HOOKS_CONFIG, diff: { ...DEFAULT_HOOKS_CONFIG.diff, highlight: "none" as const } };
+    let big: string;
+    let small: string;
+
+    beforeAll(() => {
+        big = realpathSync(mkdtempSync(join(tmpdir(), "gt-bigtree-")));
+
+        const run = (args: string[]) => spawnSync("git", ["-C", big, ...args], { encoding: "utf8", env: process.env });
+
+        run(["init", "-q"]);
+        run(["config", "user.email", "probe@local"]);
+        run(["config", "user.name", "probe"]);
+        writeFileSync(join(big, "seed.txt"), "seed\n");
+        run(["add", "-A"]);
+        run(["commit", "-qm", "init"]);
+
+        // One blob far over the budget, beside the small note that matters.
+        writeFileSync(join(big, "blob.bin"), "x".repeat(400_000));
+        small = join(big, "note.md");
+        writeFileSync(small, "alpha\nbravo\ncharlie\n");
+    });
+
+    afterAll(() => {
+        rmSync(big, { recursive: true, force: true });
+    });
+
+    it("still captures the small file, so its diff is a delta and not the whole file", () => {
+        const diff = { ...DEFAULT_HOOKS_CONFIG.diff, highlight: "none" as const, maxCaptureBytes: 100_000 };
+        const current = begin({ cwd: big, toolUseId: "bigtree-1" }, diff);
+
+        writeFileSync(small, "alpha\nBRAVO-DELTA\ncharlie\n");
+
+        const decision = runDiffPost(current, { ...plain, diff });
+
+        expect(decision.message).toContain("BRAVO-DELTA");
+        expect(decision.message).toContain("Updated");
+        expect(decision.message).not.toContain("Added");
+        expect(decision.message).toContain("(+1 -1)");
+    });
+
+    it("never reports a file it could not capture as one the command created", () => {
+        // Budget below even the small file, so nothing in this root has a before-state.
+        const diff = { ...DEFAULT_HOOKS_CONFIG.diff, highlight: "none" as const, maxCaptureBytes: 1 };
+        const current = begin({ cwd: big, toolUseId: "bigtree-2" }, diff);
+
+        writeFileSync(small, "alpha\nNOT-ADDED\ncharlie\n");
+
+        const decision = runDiffPost(current, { ...plain, diff });
+
+        expect(decision.decision).toBe("silent");
+        expect(decision.reason).toContain("no captured before-state");
+    });
+});
+
+describe("a path with a non-ASCII name", () => {
+    // 🛑 git reports NFC, macOS tar stores NFD. Measured 2026-09-21 on a note in an accented
+    // directory: `tar -xOf` with git's NFC name exits 1 with no output, with the NFD name it
+    // returns all 54 KB. The before-state was therefore always missing, and every accented
+    // note printed IN FULL as `Added` on every command, nine times on one file before it was
+    // caught.
+    const plain = { ...DEFAULT_HOOKS_CONFIG, diff: { ...DEFAULT_HOOKS_CONFIG.diff, highlight: "none" as const } };
+    let accented: string;
+
+    beforeAll(() => {
+        mkdirSync(join(repo, "Ünïcöde"), { recursive: true });
+        accented = join(repo, "Ünïcöde", "Ärchiv-Nöte.md");
+        writeFileSync(accented, "alpha\nbravo\ncharlie\n");
+    });
+
+    it("keeps the before-state of an untracked file, so it is Updated and not re-Added", () => {
+        const current = begin({ toolUseId: "accented-1" });
+
+        writeFileSync(accented, "alpha\nBRAVO-DIACRITICS\ncharlie\n");
+
+        const decision = runDiffPost(current, plain);
+
+        expect(decision.files).toContain(accented);
+        expect(decision.message).toContain("BRAVO-DIACRITICS");
+        expect(decision.message).toContain("Updated");
+        expect(decision.message).not.toContain("Added");
+        expect(decision.message).toContain("(+1 -1)");
+    });
+
+    it("extracts the same bytes the capture put in", () => {
+        writeFileSync(accented, "one\ntwo\n");
+
+        const current = begin({ toolUseId: "accented-2" });
+        const dir = callDir(current.harness, current.sessionId ?? "", current.toolUseId ?? "");
+
+        writeFileSync(accented, "one\nTWO-CHANGED\n");
+
+        const copy = beforeCopy(dir, repo, accented);
+
+        expect(copy).not.toBeNull();
+        expect(readFileSync(copy as string, "utf8")).toBe("one\ntwo\n");
+    });
+});
+
+describe("the capture budget sees what an entry really weighs", () => {
+    // 🛑 A wholly-untracked DIRECTORY is ONE status entry and a whole tree on disk, and
+    // `statSync` reports the inode. Measured 2026-09-21: an 11.2 MB untracked directory
+    // weighed in at 704 bytes and sailed through a cap of eight million, which is how a
+    // budgeted capture still wrote tens of megabytes per command.
+    let tree: string;
+
+    beforeAll(() => {
+        tree = realpathSync(mkdtempSync(join(tmpdir(), "gt-budget-")));
+
+        const run = (args: string[]) => spawnSync("git", ["-C", tree, ...args], { encoding: "utf8", env: process.env });
+
+        run(["init", "-q"]);
+        run(["config", "user.email", "probe@local"]);
+        run(["config", "user.name", "probe"]);
+        writeFileSync(join(tree, "seed.txt"), "seed\n");
+        run(["add", "-A"]);
+        run(["commit", "-qm", "init"]);
+
+        // One untracked directory that is small by inode and large by contents.
+        mkdirSync(join(tree, "bulk"), { recursive: true });
+        writeFileSync(join(tree, "bulk", "big.bin"), "x".repeat(300_000));
+        writeFileSync(join(tree, "note.md"), "alpha\nbravo\n");
+    });
+
+    afterAll(() => {
+        rmSync(tree, { recursive: true, force: true });
+    });
+
+    it("leaves a heavy untracked directory out and still captures the small file beside it", () => {
+        const diff = { ...DEFAULT_HOOKS_CONFIG.diff, highlight: "none" as const, maxCaptureFileBytes: 100_000 };
+        const current = begin({ cwd: tree, toolUseId: "budget-1" }, diff);
+
+        writeFileSync(join(tree, "note.md"), "alpha\nBRAVO-SMALL\n");
+
+        const decision = runDiffPost(current, { ...DEFAULT_HOOKS_CONFIG, diff });
+
+        expect(decision.message).toContain("BRAVO-SMALL");
+        expect(decision.message).toContain("Updated");
+    });
+
+    it("reports the heavy directory as left out rather than silently capturing it", () => {
+        const diff = { ...DEFAULT_HOOKS_CONFIG.diff, maxCaptureFileBytes: 100_000 };
+        const current = payload({ cwd: tree, toolUseId: "budget-2" });
+
+        calls += 1;
+
+        const result = capturePre(current, diff);
+
+        expect(result.skipped.join(" ")).toContain("per-entry");
+        expect(result.skipped.join(" ")).toContain("1 of 2 dirty entries left out");
     });
 });

@@ -36,6 +36,7 @@ logDecision(
         reason: "captured the before state of dirty files",
         roots: result.roots,
         captured: result.captured,
+        named: result.named,
         skipped: result.skipped,
     },
     config.logPath

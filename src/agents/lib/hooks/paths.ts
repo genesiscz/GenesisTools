@@ -63,3 +63,14 @@ export function sessionDir(harness: string, sessionId: string): string {
 export function callDir(harness: string, sessionId: string, toolUseId: string): string {
     return join(sessionDir(harness, sessionId), "diff", requireSegment("tool call id", toolUseId));
 }
+
+/**
+ * Sibling of `hookDataRoot()`, holding one tiny record per rendered file change.
+ *
+ * It is deliberately NOT under the data root: `collectStaleCaptures` walks that as
+ * `<harness>/<session>/diff/<call>`, and a directory of loose files there would be read as a
+ * harness full of sessions.
+ */
+export function claimsRoot(): string {
+    return join(tmpdir(), "GenesisTools", "ai", "hooks", "claims");
+}

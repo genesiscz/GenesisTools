@@ -15,8 +15,38 @@ export interface DiffConfig {
     untrackedExpansionCap: number;
     maxCaptureFiles: number;
     maxCaptureBytes: number;
+    /**
+     * Per-ENTRY ceiling, checked before the total. A file bigger than this is left out on its
+     * own merits: the render shows at most `maxLinesPerFile` lines of it, so copying megabytes
+     * to produce thirty lines buys nothing. Measured on a 65-entry tree of 43.7 MB, a 256 KB
+     * ceiling keeps 58 entries in 1.8 MB.
+     */
+    maxCaptureFileBytes: number;
     highlight: "bat" | "none";
     standDownWhenNative: boolean;
+    /**
+     * Also watch files the command NAMES as a path, not only those inside a git root it
+     * works in. It is what makes an edit to a vault note, a `~/.claude` memory file or any
+     * other path outside the cwd repository visible at all. Costs one `stat` per path-shaped
+     * token and one copy per existing file; no extra git process in either phase.
+     */
+    watchNamedPaths: boolean;
+    maxNamedPaths: number;
+    maxNamedPathBytes: number;
+    /**
+     * Whether a file the command CREATED, and that is known only because the command named
+     * it, is printed. Off, because that file is almost always scratch: measured 2026-09-21,
+     * two consecutive calls each wrote a report into the system temp directory and each got
+     * a 30-line block of a file the command had just described in its own output. A file
+     * created INSIDE a git root is unaffected; this covers only named paths.
+     */
+    namedPathsShowCreated: boolean;
+    /**
+     * Print one file change at most ONCE across every session on the machine. Sessions share
+     * repositories, and a file another session writes during this command's window is newer
+     * than this command's stamp, so without this every session prints every session's edits.
+     */
+    dedupeAcrossSessions: boolean;
 }
 
 export interface GuardConfig {
@@ -116,8 +146,14 @@ export const DEFAULT_HOOKS_CONFIG: HooksConfig = {
         untrackedExpansionCap: 200,
         maxCaptureFiles: 400,
         maxCaptureBytes: 8_000_000,
+        maxCaptureFileBytes: 256_000,
         highlight: "bat",
         standDownWhenNative: true,
+        watchNamedPaths: true,
+        maxNamedPaths: 8,
+        maxNamedPathBytes: 2_000_000,
+        namedPathsShowCreated: false,
+        dedupeAcrossSessions: true,
     },
     logPath: defaultLogPath(),
     shadow: true,

@@ -65,11 +65,14 @@ if (!denied && config.diff.enabled) {
             harness: payload.harness,
             session: payload.sessionId,
             toolUseId: payload.toolUseId,
-            decision: capture.roots.length > 0 ? "stamped" : "skip",
+            decision: capture.roots.length > 0 || capture.named > 0 ? "stamped" : "skip",
             reason:
-                capture.roots.length > 0 ? "captured the before state of dirty files" : "no git repository to capture",
+                capture.roots.length > 0 || capture.named > 0
+                    ? "captured the before state of dirty files"
+                    : "no git repository and no named path to capture",
             roots: capture.roots,
             captured: capture.captured,
+            named: capture.named,
             skipped: capture.skipped,
         },
         config.logPath
