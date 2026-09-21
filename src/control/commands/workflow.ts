@@ -3,8 +3,10 @@ import { suggestEnumFlag } from "@genesiscz/utils/cli";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
+import { replayWorkflow } from "../lib/decision/workflow";
 import { runAx } from "../lib/runner";
 import { diffSnapshots, type SnapshotRow } from "../lib/snapshot-diff";
+import { type ControlOptions, controlDriver, lazyEvaluator, observationOptions, withSigintAbort } from "./decision";
 
 const ACTIONS = [
     "get",
@@ -588,4 +590,98 @@ export function registerWorkflowCommands(program: Command): void {
             out.result(result);
             process.exitCode = result.ok ? 0 : 1;
         });
+}
+
+/**
+ * The CLI door for `replayWorkflow`, the same core the MCP `run_workflow` tool calls.
+ *
+ * It was reachable from the MCP server and from a Bun import, and from nowhere on the command
+ * line: `rg run_workflow src/control/commands` returned nothing. So a multi-step sequence — press
+ * this, then that, then check — could not be expressed by a CLI caller at all, and a live session
+ * driving a real app had to hand-roll one see/act pair per step and lose every guard the workflow
+ * runner provides between them. That is the failure the repo's one-core-three-doors rule exists to
+ * prevent, and it is the second instance of it found in this area in one day.
+ *
+ * The plan format is `workflowPlanSchema`: {version:1, app, scope?, windowTitle?, steps:[…]}. Each
+ * step names an action, a selector, an intent and a postcondition. Supplied values stay local and
+ * are passed by reference, never inlined into the plan.
+ */
+export function registerWorkflowRunCommand(program: Command): void {
+    const workflow = program
+        .command("workflow")
+        .description(
+            "Run a versioned multi-step plan inside one pinned app window, with a fresh postcondition per step and one shared deadline. This is the CLI door to the same runner the MCP `run_workflow` tool uses."
+        );
+
+    observationOptions(
+        workflow
+            .command("run")
+            .description(
+                "Replay a workflow plan file. Exact postconditions make no model call; a semantic postcondition or selector repair requires --jev."
+            )
+    )
+        .requiredOption("--plan <file>", "JSON workflow plan: {version:1, app, steps:[…]}")
+        .option("--values <file>", "JSON object of named values the plan refers to by valueRef; they stay local")
+        .option("--jev", "Allow semantic postconditions and semantic selector choice")
+        .option("--rebind", "Allow Jev to repair a selector that no longer matches; implies --jev")
+        .option("--max-steps <n>", "Maximum steps to dispatch", "20")
+        .option("--max-requests <n>", "Maximum paid evaluations", "30")
+        .action(
+            async (
+                options: ControlOptions & {
+                    plan: string;
+                    values?: string;
+                    jev?: boolean;
+                    rebind?: boolean;
+                    maxSteps: string;
+                    maxRequests: string;
+                }
+            ) => {
+                const plan = SafeJSON.parse(await Bun.file(options.plan).text());
+                const values = options.values
+                    ? (SafeJSON.parse(await Bun.file(options.values).text()) as Record<string, string>)
+                    : undefined;
+
+                // The plan names the app, so the driver must be built from it rather than from
+                // --app. Passing both and disagreeing would pin the window of one app and dispatch
+                // the steps of another.
+                const app = (plan as { app?: unknown }).app;
+
+                if (typeof app !== "string" || app.trim().length === 0) {
+                    out.log.error('the plan must name the app it drives: {"version":1,"app":"…","steps":[…]}');
+                    process.exitCode = 1;
+                    return;
+                }
+
+                if (options.app !== undefined && options.app !== app) {
+                    out.log.error(
+                        `--app ${options.app} disagrees with the plan's app ${app}; drop --app or fix the plan`
+                    );
+                    process.exitCode = 1;
+                    return;
+                }
+
+                await withSigintAbort(async (signal) => {
+                    const result = await replayWorkflow({
+                        plan,
+                        values,
+                        rebind: options.rebind === true,
+                        jev: options.jev === true || options.rebind === true,
+                        driver: controlDriver({ ...options, app }),
+                        evaluate: lazyEvaluator(program),
+                        signal,
+                        limits: {
+                            timeoutMs: Number(options.timeout),
+                            maxActions: Number(options.maxSteps),
+                            maxRequests: Number(options.maxRequests),
+                        },
+                    });
+                    out.result(result);
+
+                    if (result.status !== "verified") {
+                        process.exitCode = 1;
+                    }
+                });
+            }
+        );
 }

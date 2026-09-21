@@ -26,7 +26,7 @@ import { registerSimulatorCommands } from "./simulator";
 import { registerStateCommands } from "./state";
 import { registerVerifyCommands } from "./verify";
 import { registerVisualCommand } from "./visual";
-import { registerWorkflowCommands } from "./workflow";
+import { registerWorkflowCommands, registerWorkflowRunCommand } from "./workflow";
 
 export function registerControlCommands(program: Command): void {
     registerCaptureCommands(program);
@@ -59,4 +59,5 @@ export function registerControlCommands(program: Command): void {
     registerVerifyCommands(program);
     registerVisualCommand(program);
     registerWorkflowCommands(program);
+    registerWorkflowRunCommand(program);
 }

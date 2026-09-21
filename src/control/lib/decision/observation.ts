@@ -12,6 +12,11 @@ const rowSchema = z
             .string()
             .regex(/^[a-f0-9]{64}$/)
             .optional(),
+        /** The same identity before volatile sibling text is folded in; see stableKey in ax-tool. */
+        stableKey: z
+            .string()
+            .regex(/^[a-f0-9]{64}$/)
+            .optional(),
         AXTitle: z.string().optional(),
         AXDescription: z.string().optional(),
         AXValue: z.union([z.string(), z.number(), z.boolean()]).optional(),
@@ -117,6 +122,12 @@ export interface Candidate {
      * check should compare rather than a label that a live region may rewrite.
      */
     targetKey?: string;
+    /**
+     * The identity a live-updating window cannot move. `targetKey` folds in neighbouring static
+     * text, so a clock beside a button rewrites that button's targetKey every second; this one is
+     * computed before that binding and is what `--revalidate-scope element` compares.
+     */
+    stableKey?: string;
     /**
      * The AX action to perform for a `press` candidate whose row does NOT expose AXPress: a menu
      * button exposes AXShowMenu, a menu item AXPick. The chooser's vocabulary stays "press the
@@ -272,6 +283,7 @@ export function candidatesFor({
                 identifier: row.AXIdentifier,
                 checked: checkedState(row),
                 ...(row.targetKey === undefined ? {} : { targetKey: row.targetKey }),
+                ...(row.stableKey === undefined ? {} : { stableKey: row.stableKey }),
                 ...(context.has(row.index) ? { nearbyText: context.get(row.index) } : {}),
                 ancestors: ancestors
                     .map(elementLabel)

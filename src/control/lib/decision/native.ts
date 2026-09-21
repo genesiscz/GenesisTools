@@ -318,6 +318,12 @@ export class NativeControlDriver implements ControlDriver {
         }
         if (prepare && PREPARABLE_ACTIONS.has(call.candidate.action)) {
             actionArgs.push("--prepare", ...(target?.targetKey ? ["--target-key", target.targetKey] : []));
+        } else if (target?.stableKey) {
+            // Without this every act against a window with a clock in it refuses as
+            // stale_observation: the whole-tree digest moves once a second, so the snapshot is
+            // already out of date by the time the dispatch runs. Pinning the target's stable
+            // identity checks the thing we are acting on instead of the whole screen.
+            actionArgs.push("--target-key", target.stableKey, "--revalidate-scope", "element");
         }
         log.info(
             {
