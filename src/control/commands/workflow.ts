@@ -36,6 +36,7 @@ interface WorkflowOptions {
     windowIndex?: string;
     windowId?: string;
     windowTitle?: string;
+    menu?: string;
     depth?: string;
     scope?: string | boolean;
     path?: string;
@@ -44,6 +45,7 @@ interface WorkflowOptions {
     action?: string | boolean;
     value?: string;
     axAction?: string;
+    expectTitle?: string;
     direction?: string | boolean;
     text?: string;
     keys?: string;
@@ -218,6 +220,29 @@ function resolveWindowTitle(app: string, substring: string): { index: number } |
     return { error: `${verb} "${substring}" in ${app}. Windows:\n${candidates || "  (none)"}` };
 }
 
+/**
+ * The surface a see/menu-see snapshot token was taken from.
+ *
+ * The token is base64 JSON carrying its own `surface`, so `act` can route a menu snapshot to the
+ * native menu dispatcher without the caller naming the surface twice. That is the whole reason
+ * this folds into see/act rather than living as a `control menu` pair: a second command would be
+ * a second addressing scheme for the same indexes, and a caller reading `control --help` would
+ * still have to know the menu door exists before finding it.
+ */
+function snapshotSurface(token: string): "menu" | "window" {
+    try {
+        const decoded = SafeJSON.parse(Buffer.from(token, "base64").toString("utf8"), { strict: true });
+
+        return (decoded as { surface?: unknown }).surface === "menu" ? "menu" : "window";
+    } catch (error) {
+        // An unreadable token is not this function's refusal to make: the native side validates
+        // it and says why. Treat it as the ordinary surface and let that refusal through.
+        logger.debug({ error }, "snapshot token is not readable base64 JSON; treating it as a window snapshot");
+
+        return "window";
+    }
+}
+
 export function registerWorkflowCommands(program: Command): void {
     program
         .command("see")
@@ -232,7 +257,14 @@ export function registerWorkflowCommands(program: Command): void {
             "select the window whose title contains this (case-insensitive); 0 or 2+ matches exit 1 with the candidates"
         )
         .option("--depth <n>", "tree depth, 1–50; refuses truncated trees", "20")
-        .option("--scope [name]", "window (default) or chrome (omit web-area descendants for browser controls)")
+        .option(
+            "--scope [name]",
+            "window (default), chrome (omit web-area descendants for browser controls), or menu (the app's MENU BAR; pair with --menu to descend into one top-level menu)"
+        )
+        .option(
+            "--menu <title>",
+            "with --scope menu: descend into exactly this top-level menu instead of listing the bar"
+        )
         .option("--path <png>", "save screenshot here (default: unique temporary PNG)")
         .option("--no-image", "Read AX state without creating a screenshot")
         .option("--perception [mode]", "Native local OCR regions bound to this screenshot: ocr")
@@ -243,9 +275,31 @@ export function registerWorkflowCommands(program: Command): void {
             "a previous see result for the same window; output carries changes and only the rows that moved"
         )
         .action((opts: WorkflowOptions) => {
-            if (opts.scope !== undefined && !["window", "chrome"].includes(String(opts.scope))) {
-                logger.error(suggestEnumFlag("tools control see", "--scope", ["window", "chrome"]));
+            if (opts.scope !== undefined && !["window", "chrome", "menu"].includes(String(opts.scope))) {
+                logger.error(suggestEnumFlag("tools control see", "--scope", ["window", "chrome", "menu"]));
                 process.exitCode = 1;
+                return;
+            }
+
+            if (opts.menu !== undefined && opts.scope !== "menu") {
+                logger.error("--menu names a top-level menu and only applies to --scope menu");
+                process.exitCode = 1;
+                return;
+            }
+
+            // 🛑 The menu surface is a different native command with a different root, so none of
+            // the window flags below apply to it. Routing here keeps one verb for the caller while
+            // refusing the combinations that would silently be ignored.
+            if (opts.scope === "menu") {
+                const menuArgs = ["menu-see", "--app", opts.app];
+
+                if (opts.menu !== undefined) {
+                    menuArgs.push("--menu", opts.menu);
+                }
+
+                const menuResult = runAx(menuArgs, 30_000);
+                out.result(menuResult);
+                process.exitCode = menuResult.ok ? 0 : 1;
                 return;
             }
             if (opts.perception !== undefined && opts.perception !== "ocr") {
@@ -322,14 +376,21 @@ export function registerWorkflowCommands(program: Command): void {
     program
         .command("act")
         .description(
-            "Act on an element from see after validating app instance, window, age and tree. Refuses stale refs; never retries or falls back. Output is JSON. Run see again after every action. Default click/type/key require the target window already focused; focus is explicit. click --background uses window-addressed delivery without moving the pointer."
+            "Act on an element from see after validating app instance, window, age and tree. Refuses stale refs; never retries or falls back. Output is JSON. Run see again after every action. Default click/type/key require the target window already focused; focus is explicit. click --background uses window-addressed delivery without moving the pointer. A `see --scope menu` snapshot is routed to the menu dispatcher automatically and takes --action perform (with --ax-action, default AXPress) or --action press."
         )
         .requiredOption("--app <name>", "same app instance as the snapshot")
         .requiredOption("--snapshot <token>", "opaque token returned by see")
         .option("--element <n>", "element index copied from that snapshot; alternative to click --coords")
         .option("--action [name]", `one of: ${ACTIONS.join(", ")}`)
         .option("--value <text>", "set: AXValue text, read back to verify; no keystrokes")
-        .option("--ax-action <name>", "perform: exact action from the element's actions list")
+        .option(
+            "--ax-action <name>",
+            "perform: exact action from the element's actions list. With a `see --scope menu` snapshot this is the menu item's action and defaults to AXPress."
+        )
+        .option(
+            "--expect-title <text>",
+            "menu snapshots: refuse unless the row at --element carries exactly this title. Menu indexes shift between observations, so pass the title you read beside the index."
+        )
         .option("--direction [name]", "scroll: direction up, down, left or right; page or pixel wheel mode")
         .option("--text <text>", "type/select/paste: text; type is single-line and limited to 256 UTF-16 units")
         .option(
@@ -337,7 +398,10 @@ export function registerWorkflowCommands(program: Command): void {
             "key: comma-separated modifiers cmd,ctrl,alt,shift plus a letter, digit, return, tab, escape, backspace or arrow"
         )
         .option("--double", "click: double-click the observed element")
-        .option("--coords <x,y>", "click/move/drag/scroll: global screen point from this screenshot")
+        .option(
+            "--coords <x,y>",
+            "click/move/drag/scroll: GLOBAL LOGICAL screen point, the frame a see row reports as its `screen` rect (negative display origins included). NOT screenshot pixels: that is the same row's `source` rect."
+        )
         .option(
             "--region <id>",
             "click/move/drag/scroll: observed OCR region ID; revalidates pixels and consumes capture"
@@ -383,6 +447,46 @@ export function registerWorkflowCommands(program: Command): void {
                     process.exitCode = 1;
                     return;
                 }
+            }
+
+            // A menu snapshot indexes a menu tree, not a window tree, and the native side keeps
+            // them apart. Reading the surface off the token means the caller says it once, in
+            // `see --scope menu`, instead of again here.
+            if (snapshotSurface(opts.snapshot!) === "menu") {
+                if (opts.action !== "perform" && opts.action !== "press") {
+                    logger.error(
+                        `a menu snapshot takes --action perform (with --ax-action) or --action press; got "${String(opts.action)}"`
+                    );
+                    process.exitCode = 1;
+                    return;
+                }
+
+                if (opts.element === undefined) {
+                    logger.error("a menu snapshot needs --element <n> from that same see --scope menu");
+                    process.exitCode = 1;
+                    return;
+                }
+
+                const menuArgs = [
+                    "menu-act",
+                    "--app",
+                    opts.app,
+                    "--snapshot",
+                    opts.snapshot!,
+                    "--element",
+                    String(opts.element),
+                    "--action",
+                    opts.axAction ?? "AXPress",
+                ];
+
+                if (opts.expectTitle !== undefined) {
+                    menuArgs.push("--expect-title", opts.expectTitle);
+                }
+
+                const menuResult = runAx(menuArgs);
+                out.result(menuResult);
+                process.exitCode = menuResult.ok ? 0 : 1;
+                return;
             }
 
             const args = [

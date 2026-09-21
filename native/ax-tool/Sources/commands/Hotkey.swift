@@ -22,6 +22,14 @@ let KEY_MAP: [String: UInt16] = [
     "f7": 98, "f8": 100, "f9": 101, "f10": 109, "f11": 103, "f12": 111,
     "-": 27, "=": 24, "[": 33, "]": 30, "\\": 42, ";": 41, "'": 39,
     ",": 43, ".": 47, "/": 44, "`": 50,
+    // A comma cannot be written as itself: it is the separator between parts, so `cmd,,`
+    // parses as two empty parts and cmd+comma — the standard Preferences shortcut, and the
+    // most reliable way into any app's settings window — had no spelling at all. Every
+    // punctuation key gets a word as well, so none of them depends on shell quoting either.
+    "comma": 43, "period": 47, "dot": 47, "slash": 44, "backslash": 42,
+    "semicolon": 41, "quote": 39, "apostrophe": 39, "minus": 27, "dash": 27,
+    "equal": 24, "equals": 24, "leftbracket": 33, "rightbracket": 30,
+    "backtick": 50, "grave": 50,
 ]
 
 func cmdHotkey(keys: String) {
@@ -50,7 +58,7 @@ func cmdHotkey(keys: String) {
                 keyCode = code
                 foundKey = true
             } else {
-                errorExit("unknown key: \(part). Use: a-z, 0-9, return, tab, space, escape, delete, up/down/left/right, f1-f12, or modifiers cmd/shift/alt/ctrl/fn")
+                errorExit("unknown key: \(part). Use: a-z, 0-9, return, tab, space, escape, delete, up/down/left/right, f1-f12, punctuation by name (comma, period, slash, backslash, semicolon, quote, minus, equal, leftbracket, rightbracket, backtick) or as itself except comma, or modifiers cmd/shift/alt/ctrl/fn")
             }
         }
     }

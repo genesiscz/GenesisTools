@@ -57,6 +57,6 @@ func visualPerception(image: CGImage, png: Data, pid: pid_t, launch: Double, win
     let encoded = try JSONEncoder().encode(identity)
     let metadata = try JSONSerialization.jsonObject(with: encoded) as? [String: Any] ?? [:]
     return (identity, ["capture": metadata, "regions": descriptions, "method": options?.ocr == true ? "vision-ocr" : "screenshot",
-        "coordinates": "source pixels, top-left origin; screen rectangles are logical points", "expiresInSeconds": 30,
+        "coordinates": "region rects: `source` is screenshot pixels with a top-left origin, `screen` is global logical points, and `screen` is the frame act --coords takes", "expiresInSeconds": 30,
         "knownAxInputsExcluded": true])
 }

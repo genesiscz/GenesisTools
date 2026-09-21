@@ -4,7 +4,7 @@ import Foundation
 import SnapshotSupport
 
 private func menuArguments(_ command: String) throws -> [String:String] {
-    let values: Set<String> = command == "menu-see" ? ["--app","--menu"] : ["--app","--snapshot","--element","--action"]
+    let values: Set<String> = command == "menu-see" ? ["--app","--menu"] : ["--app","--snapshot","--element","--action","--expect-title"]
     var parsed: [String:String] = [:]
     let input = Array(args.dropFirst(2))
     var index = 0
@@ -77,6 +77,17 @@ func cmdMenu(_ command: String) {
             throw SnapshotError.refusal(.missingTarget,"menu index outside current observation")
         }
         let element = tree.elements[index]
+        // Menu indexes are positions in a live tree, not identities: the same menu observed with
+        // the app focused can carry MORE rows than the same menu observed unfocused, so an index
+        // carried over from an earlier read presses a different item and reports success. Measured
+        // on Flow 2026-09-21: row 45 was "Statistics" in one read and "Fullscreen" in the next, and
+        // pressing the stale index silently fullscreened the app. The snapshot digest cannot catch
+        // this, because the caller correctly passed the FRESH token and only the index was stale.
+        let elementTitle = axStringAttribute(element, "AXTitle") ?? ""
+        if let expected = input["--expect-title"], expected != elementTitle {
+            throw SnapshotError.refusal(.missingTarget,
+                "menu row \(index) is titled \"\(elementTitle)\", not \"\(expected)\"; read the menu again and take the index from that same result")
+        }
         let action = input["--action"] ?? "AXPress"
         guard axActionNames(element).contains(action) else { throw SnapshotError.invalid("menu item does not expose the requested AX action") }
         try dispatchMenuAction(token:token,pid:pid,launch:launch,digest:tree.digest,element:index,count:tree.elements.count,
@@ -97,7 +108,9 @@ func cmdMenu(_ command: String) {
             let result = AXUIElementPerformAction(element,action as CFString)
             guard result == .success else { throw ObservedTreeError("menu action failed or timed out (AX \(result.rawValue)); inspect before doing anything else") }
         }
-        jsonOutput(["ok":true,"surface":"menu","action":action,"element":index,"pid":pid,
+        // Always report WHICH row was pressed, not just its index. Without the title, a caller
+        // cannot tell a correct press from the stale-index press described above.
+        jsonOutput(["ok":true,"surface":"menu","action":action,"element":index,"title":elementTitle,"pid":pid,
                     "dispatchState":"dispatched","refreshRequired":true])
     } catch {
         jsonOutput(["ok":false,"error":error.localizedDescription,"dispatchState":started ? "uncertain" : "not_started",

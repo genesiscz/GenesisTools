@@ -62,10 +62,10 @@ if args.count < 2 || args[1] == "--help" || args[1] == "-h" {
                       (inserts at the CURRENT cursor; --end jumps to end first, --clear replaces all)
       ax-tool scroll  --app <name> [<target>|--coords x,y] --direction up|down|left|right [--amount n]
                       (no --direction + target = AXScrollToVisible: bring element into view)
-      ax-tool screenshot --app <name> --path <file.png> [--window W] [--crop x,y,w,h] [--annotate [--all]]
+      ax-tool screenshot --app <name> --path <file.png> [--window W | --window-id ID] [--crop x,y,w,h] [--annotate [--all]]
                       --crop is PIXELS of the captured image; --window fails loud on 0/2+ matches
                       --annotate draws numbered boxes on interactable elements + legend in JSON
-      ax-tool ocr     --app <name> | --image <path> [--crop x,y,w,h]   Vision OCR: text blocks + pixel boxes
+      ax-tool ocr     --app <name> [--window W | --window-id ID] | --image <path> [--crop x,y,w,h]   Vision OCR: text blocks + pixel boxes
       ax-tool capture --mode window|screen|region [--app <name> | --window-id ID] [--window-title T] [--window-index N]
                       [--screen-index N] [--region x,y,w,h] --duration <seconds> [--active-fps 8] [--idle-fps 2]
                       [--threshold 2.5] [--video-out f.mp4] [--out DIR]   ScreenCaptureKit recording: change-sampled

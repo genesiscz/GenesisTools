@@ -339,11 +339,12 @@ export function registerInteractCommands(program: Command): void {
     program
         .command("screenshot")
         .description(
-            "Window screenshot via CGWindowList. --window fails loud on 0 or 2+ title matches; unscoped picks the largest window. --annotate draws numbered boxes on interactable elements + returns a legend."
+            "Window screenshot via CGWindowList. --window fails loud on 0 or 2+ title matches; --window-id takes the exact id `see` reported and is the only way to reach one of two same-titled windows; unscoped picks the largest window. --annotate draws numbered boxes on interactable elements + returns a legend."
         )
         .requiredOption("--app <name>", "app process name")
         .requiredOption("--path <file>", "output PNG path")
         .option("--window <title>", "target specific window by title substring")
+        .option("--window-id <id>", "target the exact window id `see` reported; reaches one of two same-titled windows")
         .option("--crop <x,y,w,h>", "crop in PIXELS of the captured image (origin top-left)")
         .option("--annotate", "draw numbered boxes around interactable elements (legend in JSON)")
         .option("--all", "with --annotate: box EVERY element with id/desc/title, not just interactable roles")
@@ -353,6 +354,10 @@ export function registerInteractCommands(program: Command): void {
             const axArgs = ["screenshot", "--app", opts.app, "--path", opts.path];
             if (opts.window) {
                 axArgs.push("--window", opts.window);
+            }
+
+            if (opts.windowId) {
+                axArgs.push("--window-id", String(opts.windowId));
             }
             if (opts.crop) {
                 axArgs.push("--crop", opts.crop);
@@ -388,6 +393,7 @@ export function registerInteractCommands(program: Command): void {
         .option("--app <name>", "capture this app's window and OCR it")
         .option("--image <path>", "OCR an existing image file instead")
         .option("--window <title>", "with --app: target a specific window by title substring")
+        .option("--window-id <id>", "with --app: the exact window id `see` reported")
         .option("--crop <x,y,w,h>", "restrict OCR to this pixel region of the image")
         .option("--json", "raw JSON output")
         .option("--pretty", "indent JSON output (default compact)")
@@ -403,6 +409,10 @@ export function registerInteractCommands(program: Command): void {
                 axArgs.push("--app", opts.app);
                 if (opts.window) {
                     axArgs.push("--window", opts.window);
+                }
+
+                if (opts.windowId) {
+                    axArgs.push("--window-id", String(opts.windowId));
                 }
             }
             if (opts.crop) {

@@ -183,6 +183,14 @@ export function registerDiscoveryCommands(program: Command): void {
                     `  ${pc.cyan(String(a.name ?? "?").padEnd(32))} ${String(a.pid).padEnd(8)} ${pc.dim(String(a.bundleId ?? ""))}${front}`
                 );
             }
+
+            // Absence from this list is not absence from the machine.
+            const hiddenBackground = Number(result.hiddenBackgroundApps ?? 0);
+
+            if (hiddenBackground > 0) {
+                const hint = `${hiddenBackground} background/menu-bar apps hidden (pass --all to include them)`;
+                out.println(pc.dim(`  ${hint}`));
+            }
         });
 
     program

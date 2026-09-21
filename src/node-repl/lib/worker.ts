@@ -78,6 +78,22 @@ const replApi = {
 
 globalThis.nodeRepl = replApi;
 
+/**
+ * stdout carries the line protocol, so a bare console.log corrupts it: the parent cannot parse the
+ * line, warns, drops it, and the turn still reports ok — the output is simply lost. Console output
+ * belongs in the turn's text beside nodeRepl.write, and is mirrored to stderr so a live session
+ * still sees it without a byte reaching the protocol channel.
+ */
+const consoleSink = console as unknown as Record<string, (...args: unknown[]) => void>;
+
+for (const method of ["log", "info", "warn", "error", "debug", "trace", "dir"]) {
+    consoleSink[method] = (...args: unknown[]): void => {
+        const line = args.map((value) => (typeof value === "string" ? value : Bun.inspect(value))).join(" ");
+        output.push(line);
+        process.stderr.write(`${line}\n`);
+    };
+}
+
 async function runTurn(code: string): Promise<Response["text"]> {
     const script = new vm.Script(rewriteTurn(code), {
         filename: "repl-turn.js",

@@ -60,6 +60,21 @@ private func workflowFailure(_ error: Error) -> Never {
     workflowFailure(error.localizedDescription, category: category)
 }
 
+/// A refusal that omits the rectangle it was compared against sends the caller hunting: a window
+/// that repositioned itself between `see` and `act` is indistinguishable from a coordinate that was
+/// always wrong. Name the received point, the window and its bounds, so one read settles which.
+private func describeOutsideWindow(point: CGPoint, window: ObservedWindow) -> String {
+    func whole(_ value: Double) -> Int {
+        return Int(value.rounded())
+    }
+
+    let bounds = window.bounds
+    let received = "\(whole(point.x)),\(whole(point.y))"
+    let rectangle = "\(whole(bounds.origin.x)),\(whole(bounds.origin.y)) \(whole(bounds.width))x\(whole(bounds.height))"
+    return "coordinate \(received) is outside snapshot window \(window.id), whose bounds are \(rectangle); "
+        + "both are global logical points, and a window that moved since see needs a fresh see"
+}
+
 private var workflowInput: WorkflowArguments?
 
 private func workflowArgument(_ flag: String) -> String? {
@@ -779,7 +794,7 @@ func cmdAct(appName _: String) {
             }
             let point = CGPoint(x: numbers[0], y: numbers[1])
             guard window.bounds.contains(point) else {
-                throw WindowEventError.unavailable("coordinate is outside the snapshot window")
+                throw WindowEventError.unavailable(describeOutsideWindow(point: point, window: window))
             }
             return point
         }

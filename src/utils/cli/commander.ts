@@ -3,7 +3,7 @@ import { env } from "@genesiscz/utils/env";
 import { setBaseBinding, setConsoleLevel } from "@genesiscz/utils/logger";
 import { consoleFloorFor } from "@genesiscz/utils/logging/tool-policy";
 import type { Command } from "commander";
-import { enhanceHelp, setSuggestCommandProgram, showHelpAfterErrorDeep } from "./executor";
+import { enhanceHelp, markRequiredOptionsDeep, setSuggestCommandProgram, showHelpAfterErrorDeep } from "./executor";
 // `logger` itself is intentionally NOT imported here — runTool only drives the
 // console gate / base binding via the setters above (importing the logger
 // value into commander.ts would risk a commander↔logger value cycle).
@@ -232,6 +232,10 @@ export async function runTool(
     // Commander does not inherit this setting. Without the recursion `tools ts imports analyze`
     // printed `error: missing required argument 'entry'` and nothing else.
     showHelpAfterErrorDeep(program);
+
+    // Paired with the line above: the help that error prints is only enough to fix the command
+    // line in one go if a required option is visibly required.
+    markRequiredOptionsDeep(program);
 
     if (opts.enhanceHelp) {
         enhanceHelp(program);
