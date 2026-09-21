@@ -315,13 +315,74 @@ private func workflowSnapshotOnce(appName: String, pid: pid_t, launch: Double, w
 /// Wait until two consecutive reads agree, so a post-action snapshot describes a UI that has
 /// finished moving. Sky settles on AXObserver notifications; polling the digest needs no run
 /// loop subscription. Capped at one second.
-private func workflowSettle(_ window: AXUIElement, depth: Int, scope: String) throws -> ObservedTreeData {
+/// Wait for the menu a press was supposed to open, and press once more if it never arrived.
+///
+/// 🛑 The second press is safe ONLY because it is state-verified. A menu button TOGGLES, so a
+/// blind retry closes exactly what the first press opened. This one runs only when a fresh read
+/// proves that NO menu is open in the window, and a press with nothing open cannot close anything.
+/// An unreadable tree counts as "something is open", because guessing the other way is the one
+/// mistake that undoes the caller's work.
+///
+/// Measured 2026-09-22 driving a live SwiftUI menu button: a press issued while the previous menu
+/// was still dismissing was swallowed, once in five attempts, and the refresh then returned a tree
+/// with no menu while reporting success.
+private func workflowAwaitOpenedMenu(window: ObservedWindow, owner: Int, element: AXUIElement,
+                                     depth: Int, scope: String) -> [String: Any] {
+    func state() -> (ours: Bool, any: Bool) {
+        guard let tree = try? observedTree(window.ax, depth: depth, scope: scope) else { return (false, true) }
+
+        return (openMenuIndex(owner: owner, rows: tree.rows) != nil, treeCarriesOpenMenu(tree.rows))
+    }
+
+    func waitForOurs(_ seconds: TimeInterval) -> (ours: Bool, any: Bool) {
+        let deadline = Date().addingTimeInterval(seconds)
+        var seen = state()
+        while !seen.ours, Date() < deadline {
+            Thread.sleep(forTimeInterval: 0.05)
+            seen = state()
+        }
+
+        return seen
+    }
+
+    let first = waitForOurs(1.5)
+    if first.ours {
+        return ["menuOpened": true]
+    }
+
+    guard !first.any else {
+        return ["menuOpened": false,
+                "menuNote": "a menu is open in this window, but not the one this control owns; not pressing again"]
+    }
+
+    workflowAXAction(element, action: "AXPress")
+    let second = waitForOurs(1.5)
+
+    return ["menuOpened": second.ours, "menuPressRetried": true]
+}
+
+/// What `--refresh` is waiting for, when the action it follows is known to start something.
+private struct SettleExpectation {
+    let name: String
+    let timeout: TimeInterval
+    let holds: ([[String: Any]]) -> Bool
+}
+
+/// 🛑 Two equal reads mean the tree is not moving. That is NOT the same as the tree having
+/// finished what the action started, because a tree that has not BEGUN to change reads identical
+/// twice in 50 ms as well. Measured 2026-09-22 against a live SwiftUI menu button: the press
+/// returned `.success` at once, the menu was built a moment later, and 2 of 5 refreshes returned a
+/// tree with no menu in it while all 5 reported `ok: true`.
+///
+/// So a caller that knows what it started says so, and stability alone stops being the proof.
+private func workflowSettle(_ window: AXUIElement, depth: Int, scope: String,
+                            awaiting: SettleExpectation? = nil) throws -> ObservedTreeData {
     var previous = try observedTree(window, depth: depth, scope: scope)
-    let deadline = Date().addingTimeInterval(1)
+    let deadline = Date().addingTimeInterval(awaiting?.timeout ?? 1)
     while Date() < deadline {
         Thread.sleep(forTimeInterval: 0.05)
         let next = try observedTree(window, depth: depth, scope: scope)
-        if next.digest == previous.digest {
+        if next.digest == previous.digest, awaiting?.holds(next.rows) ?? true {
             return next
         }
         previous = next
@@ -333,16 +394,28 @@ private func workflowSettle(_ window: AXUIElement, depth: Int, scope: String) th
 /// the action failing: the action was dispatched, and the caller must not retry it just because
 /// the UI was still moving.
 private func workflowAfterState(appName: String, pid: pid_t, launch: Double, window: ObservedWindow,
-                                token: SnapshotToken) -> [String: Any] {
+                                token: SnapshotToken, awaiting: SettleExpectation? = nil) -> [String: Any] {
     do {
         let current = try observedWindow(window.ax, pid: pid)
-        let settled = try workflowSettle(current.ax, depth: token.depth, scope: token.effectiveScope)
+        let settled = try workflowSettle(current.ax, depth: token.depth, scope: token.effectiveScope, awaiting: awaiting)
         guard let index = axWindows(AXUIElementCreateApplication(pid)).firstIndex(where: { CFEqual($0, current.ax) }) else {
             return ["ok": false, "error": "window list changed after the action; run see again"]
         }
-        return try workflowSnapshot(appName: appName, pid: pid, launch: launch, window: current, index: index,
+        var snapshot = try workflowSnapshot(appName: appName, pid: pid, launch: launch, window: current, index: index,
                                     depth: token.depth, scope: token.effectiveScope,
                                     path: workflowArgument("--path"), settled: settled, captureImage: !workflowFlag("--no-image"))
+        if let awaiting {
+            // Judged on the rows actually RETURNED, not on the settle's last read. That is the
+            // claim the caller needs: is the thing in the snapshot I am holding.
+            let arrived = awaiting.holds((snapshot["elements"] as? [[String: Any]]) ?? [])
+            snapshot["awaited"] = ["what": awaiting.name, "arrived": arrived,
+                                   "timeoutSeconds": awaiting.timeout]
+            if !arrived {
+                snapshot["note"] = "\(awaiting.name) did not appear within \(awaiting.timeout)s; the action was dispatched, so inspect before repeating it"
+            }
+        }
+
+        return snapshot
     } catch let unstable as SnapshotUnstable {
         return ["ok": false, "error": unstable.message, "changedElements": unstable.changes]
     } catch {
@@ -767,6 +840,17 @@ func cmdAct(appName _: String) {
     case "type", "key", "paste": operation = .input
     default: operation = .mutation
     }
+    // 🛑 Pressing a menu button TOGGLES it. A second press closes the menu the first one opened,
+    // and reports exactly the same success, so a caller retrying after a refresh that came back
+    // empty gets the opposite of what it asked for and cannot tell. Refuse, and name the way out.
+    let axActionRequested = action == "perform" ? (workflowArgument("--ax-action") ?? "") : "AXPress"
+    let opensMenu = ["press", "perform"].contains(action)
+        && pressOpensMenu(role: axStringAttribute(element, "AXRole"), axAction: axActionRequested)
+    if opensMenu, openMenuIndex(owner: elementIndex, rows: tree.rows) != nil {
+        workflowFailure("the menu this control opens is already open; pick an item with"
+            + " --action perform --ax-action AXPick on the item, or close it with"
+            + " --action perform --ax-action AXCancel on this same control", category: .refused)
+    }
     let app = AXUIElementCreateApplication(pid)
     let focusedWindow = axAttribute(app, "AXFocusedWindow")
     let focusedInput = axAttribute(app, "AXFocusedUIElement")
@@ -853,9 +937,31 @@ func cmdAct(appName _: String) {
         return
     case "press":
         workflowAXAction(element, action: "AXPress")
+        if opensMenu {
+            actionExtras.merge(workflowAwaitOpenedMenu(window: window, owner: elementIndex, element: element,
+                                                       depth: token.depth, scope: token.effectiveScope)) { _, new in new }
+        }
     case "perform":
         guard let name = workflowArgument("--ax-action") else {
             workflowFailure("perform requires --ax-action from the observed actions list")
+        }
+        // Only the open AXMenu exposes AXCancel, and an in-window menu has no AXIdentifier of its
+        // own, so a caller that opened it by identifier could not close it the same way. Delegate
+        // from the control the caller already named: opening and closing stay symmetrical.
+        if name == "AXCancel", !axActionNames(element).contains("AXCancel"),
+           pressOpensMenu(role: axStringAttribute(element, "AXRole"), axAction: "AXPress") {
+            // A close is a request for a state, not for an event. An in-window menu dismisses
+            // itself on a click elsewhere or after a while, so a caller tidying up after a read
+            // would otherwise fail for having been beaten to it, and could not tell that apart
+            // from having named the wrong control.
+            guard let menu = openMenuIndex(owner: elementIndex, rows: tree.rows) else {
+                actionExtras["menuAlreadyClosed"] = true
+                break
+            }
+
+            workflowAXAction(tree.elements[menu], action: "AXCancel")
+            actionExtras["cancelledMenuElement"] = menu
+            break
         }
         workflowAXAction(element, action: name)
     case "set":
@@ -1339,7 +1445,13 @@ func cmdAct(appName _: String) {
         // yields `{ok: false}` with no new token. Hard-coding `false` told the agent its
         // token was still good, and SKILL.md teaches agents to key on exactly this field,
         // so the agent went on to reuse a token that no longer matched the tree.
-        let after = workflowAfterState(appName: appName, pid: pid, launch: launch, window: window, token: token)
+        // 3 seconds, not the ordinary 1: a menu that has to be built costs more than a label that
+        // has to change, and waiting is cheap next to returning a tree the menu is missing from.
+        let awaiting = opensMenu
+            ? SettleExpectation(name: "the opened menu", timeout: 3, holds: { treeCarriesOpenMenu($0) })
+            : nil
+        let after = workflowAfterState(appName: appName, pid: pid, launch: launch, window: window, token: token,
+                                       awaiting: awaiting)
         let refreshed = (after["ok"] as? Bool) ?? false
         payload["refreshRequired"] = !refreshed
         payload["after"] = after

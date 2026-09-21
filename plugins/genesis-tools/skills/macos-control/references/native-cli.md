@@ -41,6 +41,18 @@ Read the current output, choose the observed index, and check exit/status. `afte
 the refreshed tree/token. If readback fails after dispatch, inspect once to establish what
 happened; do not repeat the input. The API performs these checks internally and owns refs.
 
+`act --by-identifier AX_IDENTIFIER` replaces the snapshot entirely: one process observes the app
+and dispatches against that same read, so no `see` runs first and no token exists to go stale. It
+searches every window of the app, or only `--window-index N`, to `--depth N` (default 20). It
+refuses when the identifier matches zero elements (naming the windows it could not read, and the
+SwiftUI identifier propagation that shadows per-control ids) or more than one (listing every
+candidate). It cannot be combined with `--snapshot`, `--element`, `--coords`, `--region`,
+`--target-key` or `--revalidate-scope`; the identifier is both the selector and the identity.
+
+```bash
+tools control act --app APP --by-identifier focus-hud-primary --action press
+```
+
 | Native action | Extra arguments | Focus |
 | --- | --- | --- |
 | `get` | none | Read only |
@@ -58,6 +70,16 @@ happened; do not repeat the input. The API performs these checks internally and 
 window before focus/reveal. It does not permit arbitrary repair. Browser document and nearby
 row text participate in fingerprints. Changed or ambiguous targets refuse. `--prepare` does
 not make coordinate evidence survive a layout change.
+
+Pressing an `AXMenuButton` or `AXPopUpButton` opens an in-window menu, and that is not an ordinary
+press. `AXUIElementPerformAction` returns before the menu exists, so the press waits for the menu
+to arrive and reports `menuOpened`; if the press was swallowed it presses once more, only after a
+fresh read proves no menu is open, and reports `menuPressRetried`. `--refresh` waits up to three
+seconds for the menu rows and reports `after.awaited {what, arrived, timeoutSeconds}`. A press
+TOGGLES, so pressing a control whose menu is already open is refused rather than silently closing
+it. Close it with `--action perform --ax-action AXCancel` on that same control: the open `AXMenu`
+carries no identifier of its own, so the action is delegated to it, and a menu that is already
+closed answers `menuAlreadyClosed` instead of failing.
 
 `see` exposes raw keys such as `AXTitle`, `AXDescription`, `AXIdentifier`, `AXValue`, `AXModal`;
 the API uses normalized `label`, `identifier`, `value` and actions `{raw,name}`. Do not print
