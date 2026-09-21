@@ -112,8 +112,18 @@ public struct VisualCaptureIdentity: Codable {
         self.scaleX = Double(transform.sourceWidth) / bounds.width
         self.scaleY = Double(transform.sourceHeight) / bounds.height
     }
+    /// `requirePixelMatch: false` keeps every identity and geometry check and drops only the
+    /// whole-window pixel equality.
+    ///
+    /// 🛑 A window that repaints on a timer can NEVER present the same pixels twice: measured
+    /// 2026-09-21 on a countdown HUD, every coordinate action refused with "window pixels changed
+    /// since capture" no matter how fast the pair was issued. Pixel equality is a proxy for "the
+    /// screen still looks like the one you measured against", and it is the wrong proxy for a live
+    /// window. The app, the window id, the geometry and the 30-second expiry still all apply, so a
+    /// coordinate can still never be used against a different window or a moved one.
     public func validate(pid: Int32, launch: Double, windowID: Int, bounds: VisualRect,
-                         pixelHash: String, width: Int, height: Int, now: Double) throws {
+                         pixelHash: String, width: Int, height: Int, now: Double,
+                         requirePixelMatch: Bool = true) throws {
         guard UUID(uuidString: id) != nil, self.pid == pid, self.launch == launch,
               self.windowID == windowID, self.bounds == bounds else {
             throw VisualCaptureError.scopeChanged("visual capture app/window or geometry changed; observe again")
@@ -121,8 +131,11 @@ public struct VisualCaptureIdentity: Codable {
         guard now.isFinite, created.isFinite, now >= created, now - created <= 30 else {
             throw VisualCaptureError.stale("visual capture expired; observe again")
         }
-        guard self.pixelHash == pixelHash, width == transform.sourceWidth, height == transform.sourceHeight else {
-            throw VisualCaptureError.stale("window pixels changed since capture; observe again")
+        guard width == transform.sourceWidth, height == transform.sourceHeight else {
+            throw VisualCaptureError.stale("window pixel dimensions changed since capture; observe again")
+        }
+        guard !requirePixelMatch || self.pixelHash == pixelHash else {
+            throw VisualCaptureError.stale("window pixels changed since capture; observe again, or pass --revalidate-scope element for a window that repaints")
         }
     }
     public func center(of regionID: String) throws -> CGPoint {
@@ -199,8 +212,9 @@ public func consumeVisualCapture(_ capture: VisualCaptureIdentity, directory: UR
 
 public func admitVisualCapture(capture: VisualCaptureIdentity, pid: Int32, launch: Double,
     windowID: Int, bounds: VisualRect, pixelHash: String, width: Int, height: Int, now: Double,
-    consume: () throws -> Void) throws {
+    requirePixelMatch: Bool = true, consume: () throws -> Void) throws {
     try capture.validate(pid: pid, launch: launch, windowID: windowID, bounds: bounds,
-                         pixelHash: pixelHash, width: width, height: height, now: now)
+                         pixelHash: pixelHash, width: width, height: height, now: now,
+                         requirePixelMatch: requirePixelMatch)
     try consume()
 }

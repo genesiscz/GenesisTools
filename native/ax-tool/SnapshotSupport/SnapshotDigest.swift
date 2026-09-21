@@ -19,7 +19,58 @@ public func snapshotTargetKey(_ row: [String:Any], ancestors: [[String:Any]] = [
     return try snapshotDigest([["target":target,"ancestors":context,"document":document]])
 }
 
+/// The identity to use when the app gave this element an AXIdentifier.
+///
+/// 🛑 `snapshotTargetKey` folds in AXValue, AXTitle and AXDescription, for the element AND for its
+/// ancestors. On a live window every one of those moves: measured 2026-09-21 on a countdown HUD,
+/// the container's AXDescription read "Flow, 11 minutes 52 seconds remain" and the primary button's
+/// own label alternated Pause/Resume as a RESULT of pressing it. So the key that was supposed to
+/// survive churn was itself rewritten by the churn, and re-resolution failed half the time.
+///
+/// An AXIdentifier is the one attribute an app author sets precisely so a machine can find the
+/// thing again, and it does not change when the label does. Ancestors contribute only their
+/// identifiers here, never their text, for the same reason.
+///
+/// Returns nil when there is no identifier, and the caller keeps the richer key: without one,
+/// role and text are all that distinguish two sibling buttons.
+public func snapshotStableKey(_ row: [String:Any], ancestors: [[String:Any]] = []) throws -> String? {
+    guard let id = row["AXIdentifier"] as? String, !id.isEmpty else { return nil }
+    let identity: [String: Any] = [
+        "role": row["role"] as? String ?? "",
+        "subrole": row["AXSubrole"] as? String ?? "",
+        "identifier": id,
+    ]
+    let ancestorIdentifiers = ancestors.suffix(4).compactMap { $0["AXIdentifier"] as? String }
+
+    // 🛑 NOT "identity": snapshotDigest strips a key by that name, because an AX wrapper hash
+    // belongs to a client connection rather than to the observed UI. Naming the payload "identity"
+    // silently deleted it, and every element with the same role then hashed to one value: measured
+    // here as 14 rows with distinct identifiers sharing a single key.
+    return try snapshotDigest([["target": identity, "ancestorIdentifiers": ancestorIdentifiers]])
+}
+
+/// Undo the identifier-based stable key wherever that identifier is not unique.
+///
+/// An AXIdentifier is only an identity if ONE element carries it. Apps reuse them for repeated
+/// rows — measured here, four `focus-hud-mix` rows in one HUD — and SwiftUI propagates a
+/// container's identifier to every descendant, which can make dozens share one. Keeping the
+/// identifier-based key there would turn a previously actionable row into a permanent
+/// "ambiguous" refusal, so those rows go back to the richer key that still tells them apart.
+public func demoteSharedStableKeys(_ rows: inout [[String: Any]]) {
+    var counts: [String: Int] = [:]
+    for row in rows {
+        guard let id = row["AXIdentifier"] as? String, !id.isEmpty else { continue }
+        counts[id, default: 0] += 1
+    }
+
+    for index in rows.indices {
+        guard let id = rows[index]["AXIdentifier"] as? String, (counts[id] ?? 0) > 1 else { continue }
+        rows[index]["stableKey"] = rows[index]["targetKey"]
+    }
+}
+
 public func preparedTargetIndex(key: String, rows: [[String:Any]], field: String = "targetKey") throws -> Int {
+
     let matches = rows.indices.filter { rows[$0][field] as? String == key }
     guard matches.count == 1, let index = matches.first else {
         throw SnapshotError.refusal(.missingTarget,"observed target changed, disappeared or became ambiguous")

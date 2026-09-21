@@ -699,12 +699,23 @@ func cmdAct(appName _: String) {
         && focusedWindow.map { CFGetTypeID($0) == AXUIElementGetTypeID() && CFEqual($0, window.ax) } == true
     let inputFocused = (action == "key" && CFEqual(element, window.ax))
         || focusedInput.map { CFGetTypeID($0) == AXUIElementGetTypeID() && CFEqual($0, element) } == true
+    // A panel that can never be key cannot satisfy a frontmost precondition, so asking it to is a
+    // wall rather than a guard. The CG layer is read from the live window list; AppKit also gives
+    // such windows a floating/dialog subrole, and either signal is enough.
+    let windowLayer = (CGWindowListCopyWindowInfo(.optionIncludingWindow, window.id) as? [[CFString: Any]])?
+        .first(where: { ($0[kCGWindowNumber] as? CGWindowID) == window.id })?[kCGWindowLayer] as? Int
+    let nonActivatingPanel = windowCannotBecomeKey(layer: windowLayer,
+                                                   subrole: axStringAttribute(window.ax, "AXSubrole"))
+    if nonActivatingPanel {
+        ActionCursor.suppressedForNonActivatingPanel = true
+    }
     let context = SnapshotDispatchContext(token: dispatchToken, observedPID: pid, observedProcessLaunch: launch,
         observedWindowID: Int(window.id), observedTreeDigest: tree.digest, observedElementIndex: elementIndex,
         observedElementCount: tree.elements.count, observedAt: Date().timeIntervalSince1970,
         targetEnabled: (axAttribute(element, "AXEnabled") as? Bool) != false,
         windowFocused: windowFocused, inputFocused: inputFocused,
-        allowUnfocusedInput: workflowFlag("--no-activate"), operation: operation)
+        allowUnfocusedInput: workflowFlag("--no-activate") || nonActivatingPanel,
+        windowCanBecomeKey: !nonActivatingPanel, operation: operation)
     func validateAfterFeedback() throws {
         let freshWindow = workflowWindowByID(token.window, pid: pid)
         let fresh = workflowTree(freshWindow.ax, depth: token.depth, scope: token.effectiveScope)
@@ -859,6 +870,7 @@ func cmdAct(appName _: String) {
             try admitVisualCapture(capture: visual, pid: pid, launch: try observedLaunch(pid), windowID: Int(liveWindow.id),
                 bounds: VisualRect(liveWindow.bounds), pixelHash: try visualPixelHash(currentImage),
                 width: currentImage.width, height: currentImage.height, now: Date().timeIntervalSince1970,
+                requirePixelMatch: revalidateScope != "element",
                 consume: { try consumeVisualCapture(visual) })
             visualAdmitted = true
             workflowDispatchState = "uncertain"
@@ -898,7 +910,7 @@ func cmdAct(appName _: String) {
                 // alone decides which window receives the mouse-moved. Requiring the key window
                 // here would make hover steal focus to do its job, which is the opposite of what
                 // it is for.
-                if !background && action != "hover" {
+                if !background && action != "hover" && !nonActivatingPanel {
                     guard frontmostPid() == pid,
                           let focused = axAttribute(AXUIElementCreateApplication(pid), "AXFocusedWindow"),
                           CFGetTypeID(focused) == AXUIElementGetTypeID(), CFEqual(focused, window.ax) else {
@@ -1234,6 +1246,11 @@ func cmdAct(appName _: String) {
         workflowFailure("unsupported action")
     }
     var payload: [String: Any] = ["ok": actionOK, "action": action, "element": elementIndex, "pid": pid, "windowId": window.id, "dispatchState": "dispatched", "frontmostChanged": frontmostPid() != startingFrontmost]
+    if nonActivatingPanel {
+        // Report it, so a caller reading the result knows the frontmost guard did not apply and
+        // why, rather than wondering whether it was silently skipped.
+        payload["nonActivatingPanel"] = true
+    }
 
     payload.merge(actionExtras) { _, new in new }
     if workflowFlag("--refresh") {

@@ -88,6 +88,9 @@ public struct SnapshotDispatchContext {
     /// which cannot leave the target process, so the key window is not what makes delivery safe —
     /// the pid routing is. Requiring it only forced every text action to steal the user's focus.
     public let allowUnfocusedInput: Bool
+    /// False for a non-activating panel. The frontmost guard below is then skipped, because the
+    /// window it would wait for can never arrive.
+    public let windowCanBecomeKey: Bool
     public let operation: SnapshotDispatchOperation
 
     public init(
@@ -103,6 +106,7 @@ public struct SnapshotDispatchContext {
         windowFocused: Bool,
         inputFocused: Bool,
         allowUnfocusedInput: Bool = false,
+        windowCanBecomeKey: Bool = true,
         operation: SnapshotDispatchOperation
     ) {
         self.token = token
@@ -117,6 +121,7 @@ public struct SnapshotDispatchContext {
         self.windowFocused = windowFocused
         self.inputFocused = inputFocused
         self.allowUnfocusedInput = allowUnfocusedInput
+        self.windowCanBecomeKey = windowCanBecomeKey
         self.operation = operation
     }
 }
@@ -138,7 +143,8 @@ public func dispatchSnapshotAction<Result>(
     guard context.operation == .read || context.targetEnabled else {
         throw SnapshotDispatchError.rejected("element is disabled; no action dispatched", category: .missingTarget)
     }
-    if case .pointer(background: false) = context.operation, !context.windowFocused {
+    if case .pointer(background: false) = context.operation, !context.windowFocused,
+       context.windowCanBecomeKey {
         throw SnapshotDispatchError.rejected("wrong frontmost app/window; focus explicitly and refresh", category: .focusMismatch)
     }
     // 🛑 Only the KEY WINDOW requirement is waived. The focused-element check below stays, because
