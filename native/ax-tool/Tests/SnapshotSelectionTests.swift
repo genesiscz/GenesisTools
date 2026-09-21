@@ -101,3 +101,39 @@ final class QueryRankingTests: XCTestCase {
         XCTAssertEqual(rankedQueryMatches(candidates, query: nil, requiredAction: nil), [0, 1])
     }
 }
+
+/// The multi-collision wording, as a pure function so it can be pinned without an app.
+///
+/// The rule mirrors `sharedIdentifierHint` in ElementQuery: the worst offender is named, and any
+/// OTHER identifier that is shared at or above the same threshold is counted. Naming only the
+/// worst one sends the reader back for a second pass once they have fixed it.
+func sharedIdentifierSummary(_ counts: [String: Int], threshold: Int = 5) -> (id: String, count: Int, others: Int)? {
+    guard let (id, count) = counts.max(by: { $0.value < $1.value }), count >= threshold else { return nil }
+
+    return (id, count, counts.filter { $0.key != id && $0.value >= threshold }.count)
+}
+
+final class SharedIdentifierHintTests: XCTestCase {
+    func testTheWorstOffenderIsNamedWithItsCount() {
+        // The real instance the diagnostic found on its first run against a live app.
+        let summary = sharedIdentifierSummary(["session-fork-badge": 15, "unique-a": 1, "unique-b": 1])
+
+        XCTAssertEqual(summary?.id, "session-fork-badge")
+        XCTAssertEqual(summary?.count, 15)
+        XCTAssertEqual(summary?.others, 0)
+    }
+
+    func testSeveralCollisionsAreCounted() {
+        let summary = sharedIdentifierSummary(["worst": 20, "also": 9, "and-another": 5, "fine": 2])
+
+        XCTAssertEqual(summary?.id, "worst")
+        XCTAssertEqual(summary?.others, 2, "a reader who fixes the worst one must know two remain")
+    }
+
+    // The other half: an app with ordinary repetition must produce no hint at all, or the
+    // diagnostic becomes noise on every miss.
+    func testOrdinaryRepetitionIsNotFlagged() {
+        XCTAssertNil(sharedIdentifierSummary(["row": 4, "cell": 3]))
+        XCTAssertNil(sharedIdentifierSummary([:]))
+    }
+}

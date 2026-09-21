@@ -420,7 +420,7 @@ export function registerWorkflowCommands(program: Command): void {
         )
         .option(
             "--frame <name>",
-            "window | screen (default screen). `window` reads --coords relative to the window's CURRENT origin, so the point survives the window moving between see and act. The result echoes coordinateFrame, requestedPoint and the resolvedPoint it acted on."
+            "window | screen (default screen). `window` reads --coords relative to the window's CURRENT origin, so the point survives the window moving between see and act. The result echoes coordinateFrame, requestedPoint and the resolvedPoint it acted on. Against a window whose text updates it also needs --target-key <the window row's stableKey> --revalidate-scope element, because --coords and --element are mutually exclusive and the whole-tree digest otherwise refuses as stale."
         )
         .option(
             "--region <id>",

@@ -144,7 +144,14 @@ func sharedIdentifierHint(_ appElement: AXUIElement) -> String? {
 
     guard let (id, count) = counts.max(by: { $0.value < $1.value }), count >= 5 else { return nil }
 
-    return "\(count) elements in this app all report the identifier \"\(id)\". SwiftUI propagates a container's .accessibilityIdentifier to every descendant, which shadows per-control identifiers; .accessibilityElement(children: .contain) on the root restores them."
+    // One app can have several propagating containers. Naming only the worst offender sends the
+    // reader back for a second pass once they have fixed it, so say how many others look the same.
+    let others = counts.filter { $0.key != id && $0.value >= 5 }.count
+    let alsoShared = others == 0
+        ? ""
+        : " \(others) other identifier\(others == 1 ? " is" : "s are") shared this way."
+
+    return "\(count) elements in this app all report the identifier \"\(id)\".\(alsoShared) SwiftUI propagates a container's .accessibilityIdentifier to every descendant, which shadows per-control identifiers; .accessibilityElement(children: .contain) on the root restores them."
 }
 
 func findByAttributes(_ root: AXUIElement, role: String?, title: String?,
