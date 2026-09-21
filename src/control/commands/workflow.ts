@@ -9,6 +9,7 @@ import { diffSnapshots, type SnapshotRow } from "../lib/snapshot-diff";
 const ACTIONS = [
     "get",
     "press",
+    "hover",
     "click",
     "move",
     "drag",
@@ -50,11 +51,14 @@ interface WorkflowOptions {
     text?: string;
     keys?: string;
     double?: boolean;
+    hold?: boolean;
+    dwell?: string;
     coords?: string;
     background?: boolean;
     prepare?: boolean;
     replace?: boolean;
     targetKey?: string;
+    revalidateScope?: string;
     button?: string | boolean;
     to?: string;
     duration?: string;
@@ -399,6 +403,14 @@ export function registerWorkflowCommands(program: Command): void {
         )
         .option("--double", "click: double-click the observed element")
         .option(
+            "--hold",
+            "hover: leave the real pointer on the target instead of putting it back. A control revealed by hover exists only while the pointer is over it, so hold it when the next act must press one. Restore with `control restore`."
+        )
+        .option(
+            "--dwell <ms>",
+            "hover: hold the real pointer on the target for this long, 1–10000, default 400. The tree is read DURING the hold and returned as `during`, with a `revealed` list of what appeared; the pointer is then put back where it was."
+        )
+        .option(
             "--coords <x,y>",
             "click/move/drag/scroll: GLOBAL LOGICAL screen point, the frame a see row reports as its `screen` rect (negative display origins included). NOT screenshot pixels: that is the same row's `source` rect."
         )
@@ -411,7 +423,14 @@ export function registerWorkflowCommands(program: Command): void {
             "--prepare",
             "Element click/key/text: focus, reveal and revalidate the same observed target before input"
         )
-        .option("--target-key <hash>", "With --prepare: native targetKey from the observed row")
+        .option(
+            "--target-key <hash>",
+            "Native targetKey from the observed row; identity for --prepare or --revalidate-scope element"
+        )
+        .option(
+            "--revalidate-scope <scope>",
+            "element | window | app (default window). `element` checks only that the row at --element still carries --target-key, so a window whose clock or status text ticks stays actionable instead of refusing every act with stale_observation."
+        )
         .option("--replace", "paste with --prepare: select all, paste once and verify exact field readback")
         .option("--button [name]", "click: left, right or middle")
         .option("--to <x,y>", "drag: global destination point")
@@ -510,6 +529,7 @@ export function registerWorkflowCommands(program: Command): void {
                 ["value", opts.value],
                 ["element", opts.element],
                 ["target-key", opts.targetKey],
+                ["revalidate-scope", opts.revalidateScope],
                 ["coords", opts.coords],
                 ["region", opts.region],
                 ["ax-action", opts.axAction],
@@ -519,6 +539,7 @@ export function registerWorkflowCommands(program: Command): void {
                 ["button", opts.button],
                 ["to", opts.to],
                 ["duration", opts.duration],
+                ["dwell", opts.dwell],
                 ["pages", opts.pages],
                 ["pixels", opts.pixels],
                 ["range", opts.range],
@@ -542,6 +563,10 @@ export function registerWorkflowCommands(program: Command): void {
 
             if (opts.replace) {
                 args.push("--replace");
+            }
+
+            if (opts.hold) {
+                args.push("--hold");
             }
 
             if (opts.background) {

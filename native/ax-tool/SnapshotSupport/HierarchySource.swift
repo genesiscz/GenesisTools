@@ -136,6 +136,10 @@ public func buildObservedTree(root: AXUIElement, source: HierarchySource, depth:
         }
         while let last = ancestry.last, last.depth >= level { ancestry.removeLast() }
         row["targetKey"] = try snapshotTargetKey(row,ancestors:ancestry.map { $0.row })
+        // The same identity BEFORE sibling text is folded in. A clock beside a button is a
+        // sibling, so targetKey changes every second and cannot identify anything in a window
+        // that updates. stableKey is what --revalidate-scope element compares.
+        row["stableKey"] = row["targetKey"]
         ancestry.append((level,row))
         tree.elements.append(element)
         tree.frames.append(frame)

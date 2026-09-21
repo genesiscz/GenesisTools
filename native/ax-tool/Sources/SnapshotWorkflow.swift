@@ -604,9 +604,17 @@ func cmdAct(appName _: String) {
     var window = workflowWindowByID(token.window, pid: pid)
     var tree = workflowTree(window.ax, depth: token.depth, scope: token.effectiveScope)
     var dispatchToken = token
-    if workflowFlag("--prepare"), let key = workflowArgument("--target-key") {
+    // The prepared path already re-resolved the target by identity and reissued the token against
+    // the FRESH tree, which is exactly what a ticking window needs. It was reachable only through
+    // --prepare, which forces a foreground element action, so a background caller had no way to
+    // survive a clock: Flow's HUD refused every see→act pair with "UI changed; run see again".
+    // --revalidate-scope element opens the same door without the focus requirement.
+    let revalidateScope = workflowArgument("--revalidate-scope") ?? "window"
+    if let key = workflowArgument("--target-key"), workflowFlag("--prepare") || revalidateScope == "element" {
         do {
-            elementIndex = try preparedTargetIndex(key:key,rows:tree.rows)
+            elementIndex = revalidateScope == "element"
+                ? try resolvedTargetIndex(key:key,rows:tree.rows)
+                : try preparedTargetIndex(key:key,rows:tree.rows)
             dispatchToken = SnapshotToken(pid:pid,launch:launch,window:Int(window.id),depth:token.depth,
                 digest:tree.digest,created:token.created,scope:token.effectiveScope)
         } catch { workflowFailure(error) }
@@ -688,10 +696,21 @@ func cmdAct(appName _: String) {
     func validateAfterFeedback() throws {
         let freshWindow = workflowWindowByID(token.window, pid: pid)
         let fresh = workflowTree(freshWindow.ax, depth: token.depth, scope: token.effectiveScope)
-        if prepared, let key = tree.rows[elementIndex]["targetKey"] as? String {
-            let currentIndex = try preparedTargetIndex(key: key, rows: fresh.rows)
-            try validatePreparedTarget(before: tree.rows[elementIndex], after: fresh.rows[currentIndex],
-                sameElement: CFEqual(element, fresh.elements[currentIndex]))
+        // 🛑 The else branch below compares the WHOLE fresh tree digest, so a window with a running
+        // clock fails here even after the target was pinned by identity: the second read is a
+        // second later. Any caller that pinned an identity gets re-resolved against the fresh tree
+        // instead. Element scope pins the stable identity, because targetKey folds in sibling text
+        // and a clock beside a button is a sibling.
+        let identityField = prepared ? "targetKey" : "stableKey"
+        let identityPinned = prepared || (revalidateScope == "element" && workflowArgument("--target-key") != nil)
+        if identityPinned, let key = tree.rows[elementIndex][identityField] as? String {
+            let currentIndex = try preparedTargetIndex(key: key, rows: fresh.rows, field: identityField)
+
+            if prepared {
+                try validatePreparedTarget(before: tree.rows[elementIndex], after: fresh.rows[currentIndex],
+                    sameElement: CFEqual(element, fresh.elements[currentIndex]))
+            }
+
             try validateModalTarget(rows: fresh.rows, target: currentIndex)
             _ = try dispatchToken.validate(pid: pid, launch: observedLaunch(pid), window: Int(freshWindow.id),
                 digest: dispatchToken.digest, element: currentIndex, count: fresh.elements.count,
@@ -783,7 +802,7 @@ func cmdAct(appName _: String) {
         }
     case "focus":
         workflowFocus(window, pid:pid, element:element)
-    case "scroll", "click", "move", "drag":
+    case "scroll", "click", "move", "drag", "hover":
         let background = workflowFlag("--background")
         let frame = tree.frames[elementIndex]
         func parsePoint(_ raw: String) throws -> CGPoint {
@@ -847,7 +866,12 @@ func cmdAct(appName _: String) {
                 }), axFrame(window.ax) == window.bounds, axFrame(target) == expectedTargetFrame else {
                     throw WindowEventError.unavailable("window or element geometry changed; inspect before retrying")
                 }
-                if !background {
+                // The frontmost guard exists so a CLICK or a KEY lands in the window the caller
+                // named. A hover sends neither: it moves the pointer, and the pointer's position
+                // alone decides which window receives the mouse-moved. Requiring the key window
+                // here would make hover steal focus to do its job, which is the opposite of what
+                // it is for.
+                if !background && action != "hover" {
                     guard frontmostPid() == pid,
                           let focused = axAttribute(AXUIElementCreateApplication(pid), "AXFocusedWindow"),
                           CFGetTypeID(focused) == AXUIElementGetTypeID(), CFEqual(focused, window.ax) else {
@@ -932,7 +956,47 @@ func cmdAct(appName _: String) {
             let point = try rawCoords.map(parsePoint) ?? CGPoint(x: frame.midX, y: frame.midY)
             _ = try verifyPoint(point, pin: .element)
             let factory = try WindowEventFactory(windowID: Int(window.id), bounds: window.bounds)
-            if action == "move" {
+            if action == "hover" {
+                // 🛑 `move` posts a window-addressed mouseMoved to the pid. That never moves the
+                // hardware pointer, so a SwiftUI .onHover tracking area never fires and a toolbar
+                // revealed by hover stays invisible: measured on Flow 2026-09-21, the tree was
+                // byte-identical before and after a dispatched move. Hover therefore warps the real
+                // cursor, holds it, READS THE TREE WHILE IT IS STILL THERE, and puts the pointer
+                // back. Observing after the restore would always miss the thing hover revealed.
+                let dwellMs = workflowArgument("--dwell") == nil ? 400 : workflowInteger("--dwell")
+                guard (1...10000).contains(dwellMs) else {
+                    throw WindowEventError.unavailable("--dwell must be 1–10000 milliseconds")
+                }
+                let origin = CGEvent(source: nil)?.location
+                let before = Set(tree.rows.compactMap { $0["AXTitle"] as? String }).union(
+                    tree.rows.compactMap { $0["AXDescription"] as? String })
+                ActionCursor.emit("move", point: point, background: false, target: rawCoords == nil ? "ax" : "pixel")
+                CGWarpMouseCursorPosition(point)
+                if let moved = CGEvent(mouseEventSource: nil, mouseType: .mouseMoved,
+                                       mouseCursorPosition: point, mouseButton: .left) {
+                    moved.post(tap: .cghidEventTap)
+                }
+                Thread.sleep(forTimeInterval: Double(dwellMs) / 1000.0)
+                let during = workflowAfterState(appName: appName, pid: pid, launch: launch, window: window, token: token)
+                // --hold leaves the pointer on the target. A control revealed by hover exists only
+                // while the pointer is over it, so restoring here would delete the thing the next
+                // act wants to press. The caller owns putting it back, with `control restore`.
+                let hold = workflowFlag("--hold")
+                if let origin, !hold {
+                    CGWarpMouseCursorPosition(origin)
+                }
+                let rows = (during["elements"] as? [[String: Any]]) ?? []
+                let after = Set(rows.compactMap { $0["AXTitle"] as? String }).union(
+                    rows.compactMap { $0["AXDescription"] as? String })
+                actionExtras["dwellMs"] = dwellMs
+                actionExtras["during"] = during
+                // What the hover REVEALED. Without this a caller has to diff two trees itself to
+                // learn whether the hover did anything at all.
+                actionExtras["revealed"] = after.subtracting(before).sorted()
+                actionExtras["pointerRestored"] = origin != nil && !hold
+                actionExtras["pointerHeld"] = hold
+                workflowDispatchState = "dispatched"
+            } else if action == "move" {
                 let event = try factory.mouse(type: .mouseMoved, point: point, clickCount: 0)
                 try dispatchAfterPresentation(present: {
                     ActionCursor.emit("move", point: point, background: background, target: rawCoords == nil ? "ax" : "pixel")

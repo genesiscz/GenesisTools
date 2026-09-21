@@ -2,6 +2,7 @@ import { z } from "zod";
 
 export const controlActions = [
     "press",
+    "hover",
     "set",
     "click",
     "focus",
@@ -31,11 +32,13 @@ export const actionParametersSchema = z
         button: z.enum(["left", "right", "middle"]).optional(),
         count: z.number().int().min(1).max(2).optional(),
         background: z.boolean().optional(),
+        dwell: z.number().int().min(1).max(10000).optional(),
     })
     .strict();
 export type ActionParameters = z.infer<typeof actionParametersSchema>;
 const allowed: Record<ControlAction, string[]> = {
     press: [],
+    hover: ["dwell"],
     set: [],
     focus: [],
     key: ["keys"],
@@ -76,6 +79,10 @@ export function nativeActionArguments(options: {
         }
         args.push("--keys", p.keys);
     }
+    if (action === "hover" && p.dwell !== undefined) {
+        args.push("--dwell", String(p.dwell));
+    }
+
     if (action === "perform") {
         if (!p.axAction) {
             throw new Error("perform requires parameters.axAction.");

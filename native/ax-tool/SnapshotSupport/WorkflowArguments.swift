@@ -26,9 +26,10 @@ public struct WorkflowArguments {
             valueOptions = [
                 "--app", "--snapshot", "--element", "--action", "--value", "--ax-action", "--direction", "--text",
                 "--keys", "--coords", "--button", "--to", "--duration", "--pages", "--pixels", "--range", "--prefix",
-                "--suffix", "--selection", "--format", "--path", "--region", "--target-key",
+                "--suffix", "--selection", "--format", "--path", "--region", "--target-key", "--dwell",
+                "--revalidate-scope",
             ]
-            flagOptions = ["--background", "--double", "--refresh", "--no-cursor", "--no-image", "--prepare", "--replace"]
+            flagOptions = ["--background", "--double", "--refresh", "--no-cursor", "--no-image", "--prepare", "--replace", "--hold"]
         default:
             throw WorkflowArgumentError.invalid("unknown workflow command \(command)")
         }
@@ -77,7 +78,7 @@ public struct WorkflowArguments {
             }
         }
         if command == "act" {
-            guard let action = parsedValues["--action"], ["get", "press", "click", "move", "drag", "set", "perform", "focus", "scroll", "type", "key", "select", "paste"].contains(action) else {
+            guard let action = parsedValues["--action"], ["get", "press", "click", "move", "drag", "set", "perform", "focus", "scroll", "type", "key", "select", "paste", "hover"].contains(action) else {
                 throw WorkflowArgumentError.invalid("--action required and must name a supported action")
             }
             guard parsedValues["--snapshot"] != nil else {
@@ -104,16 +105,34 @@ public struct WorkflowArguments {
         }
 
         try reject(["--button", "--double"], unless: ["click"])
-        try reject(["--prepare", "--target-key"], unless: ["press","click","key","type","paste","select","set"])
+        try reject(["--prepare"], unless: ["press","click","key","type","paste","select","set"])
+        // A target key is the row's identity, so it is useful to every action that names a row,
+        // not only to the prepared ones. It is what lets a live-updating window stay actionable.
+        try reject(["--target-key"], unless: ["press","click","key","type","paste","select","set","perform","hover","move","scroll","get"])
+        let revalidateScope = values["--revalidate-scope"] ?? "window"
+        guard ["element", "window", "app"].contains(revalidateScope) else {
+            throw WorkflowArgumentError.invalid("--revalidate-scope must be element, window or app")
+        }
         if let key = values["--target-key"] {
-            guard flags.contains("--prepare"), key.count == 64, key.allSatisfy({ $0.isHexDigit }) else {
-                throw WorkflowArgumentError.invalid("--target-key requires --prepare and a native target fingerprint")
+            guard flags.contains("--prepare") || revalidateScope == "element", key.count == 64,
+                  key.allSatisfy({ $0.isHexDigit }) else {
+                throw WorkflowArgumentError.invalid("--target-key needs --prepare or --revalidate-scope element, plus a native target fingerprint")
             }
+        }
+        // 🛑 Element scope skips the whole-tree digest, so without an identity to check there would
+        // be nothing left guarding the index. Refuse rather than silently act on whatever moved
+        // into that position.
+        if revalidateScope == "element", values["--target-key"] == nil {
+            throw WorkflowArgumentError.invalid("--revalidate-scope element requires --target-key from the row you observed")
         }
         if flags.contains("--prepare"), flags.contains("--background") || values["--coords"] != nil || values["--region"] != nil {
             throw WorkflowArgumentError.invalid("--prepare requires a foreground element action, not coordinates or regions")
         }
-        try reject(["--background", "--coords", "--region"], unless: ["click", "move", "drag", "scroll"])
+        // hover deliberately excluded from --background: the whole point is to move the REAL
+        // pointer, and a window-addressed event does not.
+        try reject(["--background"], unless: ["click", "move", "drag", "scroll"])
+        try reject(["--coords", "--region"], unless: ["click", "move", "drag", "scroll", "hover"])
+        try reject(["--dwell", "--hold"], unless: ["hover"])
         try reject(["--prefix", "--suffix", "--selection", "--range"], unless: ["select"])
         try reject(["--format"], unless: ["paste"])
         try reject(["--replace"], unless: ["paste"])

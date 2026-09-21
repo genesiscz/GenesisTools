@@ -19,12 +19,25 @@ public func snapshotTargetKey(_ row: [String:Any], ancestors: [[String:Any]] = [
     return try snapshotDigest([["target":target,"ancestors":context,"document":document]])
 }
 
-public func preparedTargetIndex(key: String, rows: [[String:Any]]) throws -> Int {
-    let matches = rows.indices.filter { rows[$0]["targetKey"] as? String == key }
+public func preparedTargetIndex(key: String, rows: [[String:Any]], field: String = "targetKey") throws -> Int {
+    let matches = rows.indices.filter { rows[$0][field] as? String == key }
     guard matches.count == 1, let index = matches.first else {
         throw SnapshotError.refusal(.missingTarget,"observed target changed, disappeared or became ambiguous")
     }
     return index
+}
+
+/// Resolve by the volatile identity first, then the stable one.
+///
+/// A caller copies one hash out of a `see` row and should not have to know which of the two it
+/// is. Trying targetKey first keeps the prepared path byte-identical; falling back to stableKey is
+/// what lets a window with a running clock be acted on at all.
+public func resolvedTargetIndex(key: String, rows: [[String:Any]]) throws -> Int {
+    if let index = try? preparedTargetIndex(key: key, rows: rows) {
+        return index
+    }
+
+    return try preparedTargetIndex(key: key, rows: rows, field: "stableKey")
 }
 
 public func bindTargetsToBrowserDocument(_ rows: inout [[String: Any]]) throws {
@@ -34,6 +47,10 @@ public func bindTargetsToBrowserDocument(_ rows: inout [[String: Any]]) throws {
     for index in rows.indices {
         guard let key = rows[index]["targetKey"] as? String else { continue }
         rows[index]["targetKey"] = try snapshotDigest([["target": key, "browserDocuments": urls]])
+
+        if let stable = rows[index]["stableKey"] as? String {
+            rows[index]["stableKey"] = try snapshotDigest([["target": stable, "browserDocuments": urls]])
+        }
     }
 }
 
