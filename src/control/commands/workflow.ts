@@ -57,6 +57,7 @@ interface WorkflowOptions {
     activate?: boolean;
     dwell?: string;
     coords?: string;
+    frame?: string;
     background?: boolean;
     prepare?: boolean;
     replace?: boolean;
@@ -415,7 +416,11 @@ export function registerWorkflowCommands(program: Command): void {
         )
         .option(
             "--coords <x,y>",
-            "click/move/drag/scroll: GLOBAL LOGICAL screen point, the frame a see row reports as its `screen` rect (negative display origins included). NOT screenshot pixels: that is the same row's `source` rect."
+            "click/move/drag/scroll/hover: a point, read in the frame --frame names. Default `screen` means a GLOBAL LOGICAL screen point, the frame a see row reports as its `screen` rect (negative display origins included). NOT screenshot pixels: that is the same row's `source` rect."
+        )
+        .option(
+            "--frame <name>",
+            "window | screen (default screen). `window` reads --coords relative to the window's CURRENT origin, so the point survives the window moving between see and act. The result echoes coordinateFrame, requestedPoint and the resolvedPoint it acted on."
         )
         .option(
             "--region <id>",
@@ -538,6 +543,7 @@ export function registerWorkflowCommands(program: Command): void {
                 ["target-key", opts.targetKey],
                 ["revalidate-scope", opts.revalidateScope],
                 ["coords", opts.coords],
+                ["frame", opts.frame],
                 ["region", opts.region],
                 ["ax-action", opts.axAction],
                 ["direction", opts.direction],

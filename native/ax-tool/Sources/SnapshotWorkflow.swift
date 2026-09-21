@@ -819,16 +819,29 @@ func cmdAct(appName _: String) {
     case "scroll", "click", "move", "drag", "hover":
         let background = workflowFlag("--background")
         let frame = tree.frames[elementIndex]
+        // 🛑 The default stays `screen`, NOT `window` as the spec asked. Flipping it would silently
+        // reinterpret every coordinate an existing caller already passes: a global point read as
+        // window-relative usually still lands INSIDE the window, so there is no refusal and no
+        // error — just a click in the wrong place. A caller who wants a point that survives the
+        // window moving opts in with --frame window, and that is the one this documents.
+        let coordinateFrame = workflowArgument("--frame") ?? "screen"
         func parsePoint(_ raw: String) throws -> CGPoint {
             let parts = raw.split(separator: ",", omittingEmptySubsequences: false)
             let numbers = parts.compactMap { Double($0.trimmingCharacters(in: .whitespaces)) }
             guard parts.count == 2, numbers.count == 2, numbers.allSatisfy({ $0.isFinite }) else {
-                throw WindowEventError.unavailable("coordinates require finite global screen points x,y")
+                throw WindowEventError.unavailable("coordinates require two finite numbers x,y")
             }
-            let point = CGPoint(x: numbers[0], y: numbers[1])
+            let given = CGPoint(x: numbers[0], y: numbers[1])
+            // A window-relative point is resolved against the window's CURRENT origin, which is
+            // the whole point: the HUD that moved from -459,-1057 to -64,-922 between two calls
+            // keeps the same window-relative coordinates.
+            let point = coordinateFrame == "window"
+                ? CGPoint(x: window.bounds.origin.x + given.x, y: window.bounds.origin.y + given.y)
+                : given
             guard window.bounds.contains(point) else {
                 throw WindowEventError.unavailable(describeOutsideWindow(point: point, window: window))
             }
+
             return point
         }
         var visualAdmitted = false
@@ -968,6 +981,14 @@ func cmdAct(appName _: String) {
                 throw WindowEventError.unavailable("element center is outside its window/scroll clip")
             }
             let point = try rawCoords.map(parsePoint) ?? CGPoint(x: frame.midX, y: frame.midY)
+            // A caller that passed a window-relative point cannot otherwise tell WHERE it landed,
+            // and that is the number to compare against a screenshot or a later observation.
+            if let raw = rawCoords {
+                actionExtras["coordinateFrame"] = coordinateFrame
+                actionExtras["requestedPoint"] = raw
+                actionExtras["resolvedPoint"] = ["x": snapshotPx(point.x), "y": snapshotPx(point.y)]
+            }
+
             _ = try verifyPoint(point, pin: .element)
             let factory = try WindowEventFactory(windowID: Int(window.id), bounds: window.bounds)
             if action == "hover" {
@@ -1213,6 +1234,7 @@ func cmdAct(appName _: String) {
         workflowFailure("unsupported action")
     }
     var payload: [String: Any] = ["ok": actionOK, "action": action, "element": elementIndex, "pid": pid, "windowId": window.id, "dispatchState": "dispatched", "frontmostChanged": frontmostPid() != startingFrontmost]
+
     payload.merge(actionExtras) { _, new in new }
     if workflowFlag("--refresh") {
         // Derive it from the result. workflowAfterState has three failure returns — the

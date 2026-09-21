@@ -27,7 +27,7 @@ public struct WorkflowArguments {
                 "--app", "--snapshot", "--element", "--action", "--value", "--ax-action", "--direction", "--text",
                 "--keys", "--coords", "--button", "--to", "--duration", "--pages", "--pixels", "--range", "--prefix",
                 "--suffix", "--selection", "--format", "--path", "--region", "--target-key", "--dwell",
-                "--revalidate-scope",
+                "--revalidate-scope", "--frame",
             ]
             flagOptions = ["--background", "--double", "--refresh", "--no-cursor", "--no-image", "--prepare", "--replace", "--hold", "--no-activate"]
         default:
@@ -132,6 +132,16 @@ public struct WorkflowArguments {
         // pointer, and a window-addressed event does not.
         try reject(["--background"], unless: ["click", "move", "drag", "scroll"])
         try reject(["--coords", "--region"], unless: ["click", "move", "drag", "scroll", "hover"])
+        try reject(["--frame"], unless: ["click", "move", "drag", "scroll", "hover"])
+        if let frame = values["--frame"] {
+            guard ["window", "screen"].contains(frame) else {
+                throw WorkflowArgumentError.invalid("--frame must be window or screen")
+            }
+
+            guard values["--coords"] != nil || values["--to"] != nil else {
+                throw WorkflowArgumentError.invalid("--frame describes how --coords is read; supply coordinates")
+            }
+        }
         try reject(["--dwell", "--hold"], unless: ["hover"])
         try reject(["--no-activate"], unless: ["key", "type", "paste", "select", "set"])
         if flags.contains("--no-activate"), flags.contains("--prepare") {
