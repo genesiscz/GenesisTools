@@ -59,3 +59,45 @@ final class SnapshotSelectionTests: XCTestCase {
         )
     }
 }
+
+final class QueryRankingTests: XCTestCase {
+    private func group(_ label: String?) -> QueryCandidate {
+        QueryCandidate(title: nil, label: label, identifier: "focus-studio", actions: ["AXShowMenu"])
+    }
+
+    private func button(_ label: String) -> QueryCandidate {
+        QueryCandidate(title: nil, label: label, identifier: "focus-studio", actions: ["AXPress"])
+    }
+
+    func testAContainerNeverWinsAPressQuery() {
+        // The reported bug, as data. The container arrives FIRST because the walk is pre-order,
+        // and it matched because it aggregates its children's labels. It cannot press.
+        let candidates = [group("Previous range Next range"), button("Previous range")]
+        let ranked = rankedQueryMatches(candidates, query: "Previous range", requiredAction: "AXPress")
+
+        XCTAssertEqual(ranked, [1], "the button must win, not the group that merely contains its words")
+    }
+
+    func testAnExactLabelBeatsAPressableElementThatOnlyContainsTheWords() {
+        // Exact match runs BEFORE the action filter on purpose: reversing them would let any
+        // pressable row outrank the control the caller actually named.
+        let candidates = [button("Previous range and more"), button("Previous range")]
+
+        XCTAssertEqual(rankedQueryMatches(candidates, query: "Previous range", requiredAction: "AXPress"), [1])
+    }
+
+    func testNarrowingNeverEmptiesTheSet() {
+        // When NOTHING can perform the verb, keep every match so the caller gets an honest
+        // ambiguity or a named refusal, never a silent "no such element".
+        let candidates = [group("Previous range"), group("Previous range")]
+
+        XCTAssertEqual(rankedQueryMatches(candidates, query: "Previous range", requiredAction: "AXPress"), [0, 1])
+    }
+
+    // The other half: with no verb and no exact hit, ranking must not reorder or drop anything.
+    func testWithoutAVerbTheMatchesAreUntouched() {
+        let candidates = [group("alpha"), button("beta")]
+
+        XCTAssertEqual(rankedQueryMatches(candidates, query: nil, requiredAction: nil), [0, 1])
+    }
+}

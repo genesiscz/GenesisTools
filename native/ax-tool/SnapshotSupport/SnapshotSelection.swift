@@ -89,3 +89,52 @@ public func snapshotSelection(
         throw SnapshotError.invalid("selection mode is unsupported")
     }
 }
+
+/// One candidate a `--q` / `--text` lookup matched, reduced to what ranking needs.
+public struct QueryCandidate {
+    public let title: String?
+    public let label: String?
+    public let identifier: String?
+    public let actions: [String]
+
+    public init(title: String?, label: String?, identifier: String?, actions: [String]) {
+        self.title = title
+        self.label = label
+        self.identifier = identifier
+        self.actions = actions
+    }
+}
+
+/// Which of the matched candidates should still be considered, by index.
+///
+/// 🛑 The walk that produces these matches is pre-order, so an ANCESTOR always arrives first. A
+/// SwiftUI container that aggregates its children's labels therefore beat the button inside it:
+/// reported 2026-09-21, `press --q "Previous range"` selected the window's root group, which
+/// exposes no AXPress at all, performed nothing and reported success.
+///
+/// Order matters and is not interchangeable. An EXACT label match is applied first, so a container
+/// that merely CONTAINS the words loses to the control actually named. Only then does the ability
+/// to perform the verb decide, which breaks the remaining ancestor/descendant ties. Doing it the
+/// other way round would let an unrelated but pressable element outrank the named button.
+///
+/// Each filter is skipped when it would empty the set: narrowing to nothing would turn a findable
+/// element into "no match", which is a worse answer than an ambiguous one.
+public func rankedQueryMatches(_ candidates: [QueryCandidate], query: String?,
+                               requiredAction: String?) -> [Int] {
+    var pool = Array(candidates.indices)
+
+    if let query, pool.count > 1 {
+        let exact = pool.filter { index in
+            let candidate = candidates[index]
+            return candidate.title == query || candidate.label == query || candidate.identifier == query
+        }
+        if !exact.isEmpty { pool = exact }
+    }
+
+    if let requiredAction, pool.count > 1 {
+        let able = pool.filter { candidates[$0].actions.contains(requiredAction) }
+        if !able.isEmpty { pool = able }
+    }
+
+    return pool
+}

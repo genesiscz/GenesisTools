@@ -106,6 +106,47 @@ func targetSearchDepth() -> Int {
     return 15
 }
 
+/// Narrow a query's matches toward the thing the caller can actually act on.
+///
+/// `findByAttributes` is a pre-order walk that appends a node BEFORE its children, so an ancestor
+/// always sits at index 0. A SwiftUI container that aggregates its children's labels therefore beat
+/// the button it contains: reported 2026-09-21, `press --q "Previous range"` pressed the window's
+/// root group, which exposes no AXPress at all, and reported success while nothing happened.
+///
+/// Order, and it matters: an EXACT label match beats a container that merely contains the words,
+/// and only then does the ability to perform the verb decide. Doing it the other way round would
+/// let an unrelated but pressable element outrank the button the caller named.
+func rankQueryMatches(_ elements: [AXUIElement], query: String?, requiredAction: String?) -> [AXUIElement] {
+    let candidates = elements.map {
+        QueryCandidate(title: axStringAttribute($0, "AXTitle"),
+                       label: axStringAttribute($0, "AXDescription"),
+                       identifier: axStringAttribute($0, "AXIdentifier"),
+                       actions: axActionNames($0))
+    }
+
+    return rankedQueryMatches(candidates, query: query, requiredAction: requiredAction).map { elements[$0] }
+}
+
+/// The diagnostic for a lookup that found nothing: does this app give many elements ONE identifier?
+///
+/// SwiftUI propagates a container's `.accessibilityIdentifier` to every descendant, so one modifier
+/// on a root view makes every control report the same id and shadows the per-control ones. That
+/// looks exactly like "my identifier is wrong" or "the app is broken", and cost a real session
+/// twenty minutes. `.accessibilityElement(children: .contain)` on the root is the fix.
+func sharedIdentifierHint(_ appElement: AXUIElement) -> String? {
+    var counts: [String: Int] = [:]
+    for window in axWindows(appElement) {
+        for element in collectElements(window) {
+            guard let id = element.identifier, !id.isEmpty else { continue }
+            counts[id, default: 0] += 1
+        }
+    }
+
+    guard let (id, count) = counts.max(by: { $0.value < $1.value }), count >= 5 else { return nil }
+
+    return "\(count) elements in this app all report the identifier \"\(id)\". SwiftUI propagates a container's .accessibilityIdentifier to every descendant, which shadows per-control identifiers; .accessibilityElement(children: .contain) on the root restores them."
+}
+
 func findByAttributes(_ root: AXUIElement, role: String?, title: String?,
                        value: String?, desc: String?, subrole: String? = nil,
                        text: String? = nil, searchAll: Bool = false, exact: Bool = false,
@@ -145,10 +186,15 @@ func findByAttributes(_ root: AXUIElement, role: String?, title: String?,
     return results
 }
 
-func resolveElement(_ appElement: AXUIElement, _ appName: String, ignoreTextFlag: Bool = false) -> AXUIElement {
+func resolveElement(_ appElement: AXUIElement, _ appName: String, ignoreTextFlag: Bool = false,
+                    requiredAction: String? = nil) -> AXUIElement {
     if let id = argValue("--id") {
         guard let el = findInApp(appElement, id: id) else {
-            errorExit("element not found: \(id) in \(appName)")
+            // Say what was searched and how deep, and name the one mistake that produces this
+            // result while the identifier is perfectly correct.
+            var message = "element not found: \(id) in \(appName) (searched every window to depth 50)"
+            if let hint = sharedIdentifierHint(appElement) { message += ". \(hint)" }
+            errorExit(message)
         }
         return el
     }
@@ -178,6 +224,7 @@ func resolveElement(_ appElement: AXUIElement, _ appName: String, ignoreTextFlag
             all.append(contentsOf: findByAttributes(w, role: role, title: title, value: nil,
                 desc: desc, subrole: subrole, text: s, searchAll: q != nil, exact: exact))
         }
+        all = rankQueryMatches(all, query: s, requiredAction: requiredAction)
         if all.count == 1 { return all[0] }
         if all.count > 1 {
             var candidates: [[String: Any]] = []
@@ -194,7 +241,7 @@ func resolveElement(_ appElement: AXUIElement, _ appName: String, ignoreTextFlag
                 "count": all.count, "candidates": candidates])
             exit(1)
         }
-        errorExit("no element matching '\(s)' with given filters in \(appName)")
+        errorExit("no element matching '\(s)' with given filters in \(appName) at --depth \(targetSearchDepth()); deeply nested UIs can exceed it, so retry with --depth 40")
     }
     if let q = q, role == nil && title == nil && desc == nil && subrole == nil {
         let isRegex = parseRegex(q) != nil
@@ -204,6 +251,7 @@ func resolveElement(_ appElement: AXUIElement, _ appName: String, ignoreTextFlag
                 all.append(contentsOf: findByAttributes(w, role: nil, title: nil, value: nil,
                                                          desc: nil, text: q, searchAll: true))
             }
+            all = rankQueryMatches(all, query: q, requiredAction: requiredAction)
             if all.count == 1 { return all[0] }
             if all.count > 1 {
                 var candidates: [[String: Any]] = []
@@ -220,7 +268,7 @@ func resolveElement(_ appElement: AXUIElement, _ appName: String, ignoreTextFlag
                     "count": all.count, "candidates": candidates])
                 exit(1)
             }
-            errorExit("no element matching '\(q)' in \(appName)")
+            errorExit("no element matching '\(q)' in \(appName) at --depth \(targetSearchDepth()); retry with --depth 40")
         }
         let levels: [(String, (AXUIElement) -> [AXUIElement])] = [
             ("id",      { _ in findInApp(appElement, id: q).map { [$0] } ?? [] }),
@@ -234,6 +282,7 @@ func resolveElement(_ appElement: AXUIElement, _ appName: String, ignoreTextFlag
             var all: [AXUIElement] = []
             if lvl == "id" { all = search(appElement) }
             else { for w in scopedWindows { all.append(contentsOf: search(w)) } }
+            all = rankQueryMatches(all, query: q, requiredAction: requiredAction)
             if all.count == 1 { return all[0] }
             if all.count > 1 {
                 var candidates: [[String: Any]] = []
@@ -289,6 +338,7 @@ func resolveElement(_ appElement: AXUIElement, _ appName: String, ignoreTextFlag
             var all: [AXUIElement] = []
             if lvl == "id" { all = search(appElement) }
             else { for w in scopedWindows { all.append(contentsOf: search(w)) } }
+            all = rankQueryMatches(all, query: t, requiredAction: requiredAction)
             if all.count == 1 { return all[0] }
             if all.count > 1 {
                 var candidates: [[String: Any]] = []
