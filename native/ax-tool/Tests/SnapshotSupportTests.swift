@@ -179,3 +179,26 @@ extension SnapshotSupportTests {
         XCTAssertThrowsError(try foreign.validate(pid:42,launch:123,digest:"menu-tree",element:1,count:3,now:1001))
     }
 }
+
+final class CursorFeedbackGateTests: XCTestCase {
+    func testNoActivateSwitchesTheOverlayOff() {
+        // 🛑 This is the regression test for the no-focus-steal requirement. Showing the overlay
+        // activates this process, so feedback during a --no-activate act took the focus the caller
+        // explicitly asked to keep. Measured: cmux -> ax-tool with feedback, cmux -> cmux without.
+        XCTAssertFalse(cursorFeedbackEnabled(arguments: ["ax-tool", "act", "--no-activate"], environment: [:]))
+    }
+
+    func testNoCursorAndTheEnvironmentSwitchStillWork() {
+        XCTAssertFalse(cursorFeedbackEnabled(arguments: ["ax-tool", "act", "--no-cursor"], environment: [:]))
+        XCTAssertFalse(cursorFeedbackEnabled(arguments: ["ax-tool", "act"],
+                                             environment: ["GENESIS_CONTROL_CURSOR": "off"]))
+    }
+
+    // The other half: an ordinary act must still show feedback, or a guard that disabled
+    // everything would pass the cases above while silently removing the visible proof of input.
+    func testAnOrdinaryActStillShowsFeedback() {
+        XCTAssertTrue(cursorFeedbackEnabled(arguments: ["ax-tool", "act", "--action", "press"], environment: [:]))
+        XCTAssertTrue(cursorFeedbackEnabled(arguments: ["ax-tool", "act"],
+                                            environment: ["GENESIS_CONTROL_CURSOR": "on"]))
+    }
+}
