@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
+import type { DiffCategory } from "./diff/classify";
 
 export type HookOutcome = "allow" | "context" | "warn" | "block";
 export type HarnessName = "claude" | "codex" | "grok";
@@ -47,6 +48,15 @@ export interface DiffConfig {
      * than this command's stamp, so without this every session prints every session's edits.
      */
     dedupeAcrossSessions: boolean;
+    /**
+     * Which KINDS of change are printed. `source` is anything that is not one of the others.
+     *
+     * `log` and `generated` ship OFF: a jest run redirected into `/tmp/z1.log` and truncated
+     * by the next run rendered as 27 lines of stack trace nobody asked for. `formatting`
+     * ships ON, because its detection is a heuristic and a wrongly-labelled change should
+     * still be seen; turn it off once a formatter is noisy in your loop.
+     */
+    categories: Record<DiffCategory, boolean>;
 }
 
 export interface GuardConfig {
@@ -154,6 +164,7 @@ export const DEFAULT_HOOKS_CONFIG: HooksConfig = {
         maxNamedPathBytes: 2_000_000,
         namedPathsShowCreated: false,
         dedupeAcrossSessions: true,
+        categories: { source: true, formatting: true, log: false, generated: false },
     },
     logPath: defaultLogPath(),
     shadow: true,
@@ -194,7 +205,14 @@ export function loadHooksConfig(): HooksConfig {
             // stopped working.
             longCommand: { ...DEFAULT_HOOKS_CONFIG.guard.longCommand, ...stored.guard?.longCommand },
         },
-        diff: { ...DEFAULT_HOOKS_CONFIG.diff, ...stored.diff },
+        diff: {
+            ...DEFAULT_HOOKS_CONFIG.diff,
+            ...stored.diff,
+            // Merged FIELD BY FIELD for the same reason `longCommand` is: a hand-edited
+            // `hooks.json` that turns one category on would otherwise blank every other one,
+            // and `undefined` reads as "hidden".
+            categories: { ...DEFAULT_HOOKS_CONFIG.diff.categories, ...stored.diff?.categories },
+        },
         shadow: stored.shadow ?? DEFAULT_HOOKS_CONFIG.shadow,
         logCommands: stored.logCommands ?? DEFAULT_HOOKS_CONFIG.logCommands,
         maxLogBytes: stored.maxLogBytes ?? DEFAULT_HOOKS_CONFIG.maxLogBytes,

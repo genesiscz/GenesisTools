@@ -1,5 +1,6 @@
 import { spawnSync } from "node:child_process";
 import type { DiffConfig } from "../config";
+import type { DiffCategory } from "./classify";
 import type { ChangedFile } from "./collect";
 
 const DIM = "\u001b[2m";
@@ -131,15 +132,24 @@ export function renderPatch(patch: string, highlighted: string[], _config: DiffC
     return { body, added, removed };
 }
 
-export function renderBlock(file: ChangedFile, patch: RenderedPatch, hadBefore: boolean, config: DiffConfig): string {
+export function renderBlock(
+    file: ChangedFile,
+    patch: RenderedPatch,
+    hadBefore: boolean,
+    config: DiffConfig,
+    category: DiffCategory = "source"
+): string {
     // "Added" only when there was genuinely no before state, so a whole-file render
     // never reads as though one command wrote every line.
     const verb = file.deleted ? "Deleted" : !hadBefore && file.untracked ? "Added" : "Updated";
     const shown = patch.body.slice(0, config.maxLinesPerFile);
     const elided = patch.body.length - shown.length;
+    // The kind is named only when it is NOT plain source, so the common block is unchanged
+    // and the one that is here on sufferance says why it is here.
+    const kind = category === "source" ? "" : ` ${DIM}· ${category}${OFF}`;
 
     return [
-        `${BOLD}${verb} ${file.path}${OFF} ${DIM}(+${patch.added} -${patch.removed})${OFF}`,
+        `${BOLD}${verb} ${file.path}${OFF} ${DIM}(+${patch.added} -${patch.removed})${OFF}${kind}`,
         ...shown,
         ...(elided > 0 ? [`${DIM}${" ".repeat(GUTTER)}  … ${elided} more lines${OFF}`] : []),
     ].join("\n");

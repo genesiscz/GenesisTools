@@ -18,6 +18,7 @@ import { callDir, sessionDir } from "../paths";
 import type { HookPayload } from "../payload";
 import { beforeCopy } from "./before";
 import { capturePre, captureRoots } from "./capture";
+import { classifyChange, type DiffCategory } from "./classify";
 import { changedFiles } from "./collect";
 import { namedArguments } from "./command-paths";
 import { hunkRange, renderPatch } from "./render";
@@ -987,5 +988,104 @@ describe("the capture budget sees what an entry really weighs", () => {
 
         expect(result.skipped.join(" ")).toContain("per-entry");
         expect(result.skipped.join(" ")).toContain("1 of 2 dirty entries left out");
+    });
+});
+
+describe("what KIND of change it is", () => {
+    // A jest run redirected into a scratch log, truncated by the next run, rendered as 27
+    // lines of stack trace. A formatter pass renders as a wall of lines that say what they
+    // said before. Neither is a change anyone asked to see.
+    const cases: [string, string, DiffCategory][] = [
+        ["a scratch log", "/tmp/z1.log", "log"],
+        ["a log by extension", "/repo/run.out", "log"],
+        ["a file in a logs directory", "/repo/logs/today.txt", "log"],
+        ["a lockfile", "/repo/bun.lock", "generated"],
+        ["a snapshot", "/repo/__snapshots__/a.snap", "generated"],
+        ["a build artifact", "/repo/dist/index.js", "generated"],
+        ["a junit report", "/repo/junit.xml", "generated"],
+        ["plain source", "/repo/src/index.ts", "source"],
+        ["a logger module is NOT a log", "/repo/src/logger/logs.ts", "source"],
+    ];
+
+    it.each(cases)("calls %s %s", (_label, path, expected) => {
+        expect(classifyChange(path, "@@ -1 +1 @@\n-one\n+two\n")).toBe(expected);
+    });
+
+    it("calls a reindentation formatting, and a real edit source", () => {
+        const reindented = "@@ -1,2 +1,2 @@\n-  const a = 1;\n-\tconst b = 2;\n+    const a = 1;\n+    const b = 2;\n";
+        const reordered =
+            "@@ -1,2 +1,2 @@\n-import b from 'b';\n-import a from 'a';\n+import a from 'a';\n+import b from 'b';\n";
+        const real = "@@ -1,2 +1,2 @@\n-const a = 1;\n-const b = 2;\n+const a = 1;\n+const b = 99;\n";
+
+        expect(classifyChange("/repo/src/x.ts", reindented)).toBe("formatting");
+        expect(classifyChange("/repo/src/x.ts", reordered)).toBe("formatting");
+        expect(classifyChange("/repo/src/x.ts", real)).toBe("source");
+    });
+
+    it("never calls a brand new file formatting, however tidy it is", () => {
+        expect(classifyChange("/repo/src/new.ts", "@@ -0,0 +1,2 @@\n+const a = 1;\n+const b = 2;\n")).toBe("source");
+    });
+});
+
+describe("hiding a kind of change", () => {
+    const base = { ...DEFAULT_HOOKS_CONFIG, diff: { ...DEFAULT_HOOKS_CONFIG.diff, highlight: "none" as const } };
+    let scratch: string;
+
+    beforeAll(() => {
+        scratch = realpathSync(mkdtempSync(join(tmpdir(), "gt-kinds-")));
+    });
+
+    afterAll(() => {
+        rmSync(scratch, { recursive: true, force: true });
+    });
+
+    /** One command that rewrites a log the way a redirected test run does. */
+    function runOver(log: string, categories: Partial<Record<string, boolean>>) {
+        writeFileSync(log, "console.error\n  at saga.ts:33:13\n  at next\n");
+
+        const diff = {
+            ...DEFAULT_HOOKS_CONFIG.diff,
+            highlight: "none" as const,
+            categories: { ...DEFAULT_HOOKS_CONFIG.diff.categories, ...categories },
+        };
+        const current = begin({ command: `bun /x/jest.ts > ${log}`, toolUseId: `kind-${calls}` }, diff);
+
+        writeFileSync(log, "console.error\n");
+
+        return runDiffPost(current, { ...base, diff });
+    }
+
+    it("hides a scratch log by default and says so, and prints it when asked", () => {
+        const quiet = runOver(join(scratch, "z1.log"), {});
+
+        expect(quiet.files).toEqual([]);
+        expect(quiet.reason).toContain("a kind this config hides");
+        expect(quiet.reason).toContain("log");
+
+        const loud = runOver(join(scratch, "z2.log"), { log: true });
+
+        expect(loud.decision).toBe("emitted");
+        expect(loud.message).toContain("z2.log");
+    });
+
+    it("names the kind in the header, so a block that is on sufferance says why", () => {
+        const loud = runOver(join(scratch, "z3.log"), { log: true });
+
+        expect(loud.message).toContain("· log");
+    });
+
+    it("leaves a plain source block untagged", () => {
+        const note = join(scratch, "plain.ts");
+
+        writeFileSync(note, "one\ntwo\n");
+
+        const current = begin({ command: `bun /x/cli.ts ${note}`, toolUseId: `kind-src-${calls}` });
+
+        writeFileSync(note, "one\nTWO-REAL\n");
+
+        const decision = runDiffPost(current, base);
+
+        expect(decision.message).toContain("TWO-REAL");
+        expect(decision.message).not.toContain("·");
     });
 });

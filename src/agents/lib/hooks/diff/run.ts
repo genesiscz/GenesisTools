@@ -7,6 +7,7 @@ import { callDir, safeSegment } from "../paths";
 import type { HookPayload } from "../payload";
 import { beforeCopy, leftOutOfCapture } from "./before";
 import { claimChange } from "./claim";
+import { classifyChange, type DiffCategory } from "./classify";
 import { type ChangedFile, changedFiles } from "./collect";
 import { namedChanges } from "./named";
 import { highlightRange, hunkRange, renderBlock, renderPatch } from "./render";
@@ -42,7 +43,22 @@ function patchFor(file: ChangedFile, before: string | null, config: DiffConfig):
  * The rendered block for one changed file, or `null` when the diff turned out empty. A
  * DELETED file always renders: its block is the header alone when git has no patch for it.
  */
-function blockFrom(file: ChangedFile, patch: string, hadBefore: boolean, config: DiffConfig): string | null {
+function blockFrom(
+    file: ChangedFile,
+    patch: string,
+    hadBefore: boolean,
+    config: DiffConfig,
+    suppressed: Map<DiffCategory, number>
+): string | null {
+    // The KIND is decided before any rendering work, so a category that is switched off
+    // costs one classification rather than a `bat` spawn and a full render.
+    const category = classifyChange(file.path, patch);
+
+    if (!config.categories[category]) {
+        suppressed.set(category, (suppressed.get(category) ?? 0) + 1);
+        return null;
+    }
+
     // Highlight only the lines the hunks touch, never the whole file. A deleted one has
     // nothing left on disk to highlight.
     const highlighted = file.deleted ? [] : highlightRange(file.path, hunkRange(patch), config);
@@ -52,7 +68,7 @@ function blockFrom(file: ChangedFile, patch: string, hadBefore: boolean, config:
         return null;
     }
 
-    return renderBlock(file, rendered, hadBefore, config);
+    return renderBlock(file, rendered, hadBefore, config, category);
 }
 
 /**
@@ -85,7 +101,18 @@ function claim(path: string, deleted: boolean, config: DiffConfig, session: stri
 }
 
 /** Why nothing was printed. Each case needs a different fix, so they read differently. */
-function silentReason(covered: number, uncaptured: number, claimed: number): string {
+function silentReason(
+    covered: number,
+    uncaptured: number,
+    claimed: number,
+    suppressed: Map<DiffCategory, number>
+): string {
+    if (suppressed.size > 0) {
+        const kinds = [...suppressed].map(([kind, count]) => `${count} ${kind}`).join(", ");
+
+        return `every changed file was a kind this config hides: ${kinds}`;
+    }
+
     if (covered > 0) {
         return "every changed file was already rendered natively";
     }
@@ -137,6 +164,7 @@ export function runDiffPost(payload: HookPayload, config: HooksConfig): DiffDeci
     let covered = 0;
     let uncaptured = 0;
     let claimed = 0;
+    const suppressed = new Map<DiffCategory, number>();
 
     for (const root of roots) {
         // The cap short-circuits the ROOT loop too. Breaking only the inner loop still called
@@ -166,7 +194,13 @@ export function runDiffPost(payload: HookPayload, config: HooksConfig): DiffDeci
                 continue;
             }
 
-            const block = blockFrom(file, patchFor(file, before, config.diff), before !== null, config.diff);
+            const block = blockFrom(
+                file,
+                patchFor(file, before, config.diff),
+                before !== null,
+                config.diff,
+                suppressed
+            );
 
             if (block === null) {
                 continue;
@@ -224,7 +258,7 @@ export function runDiffPost(payload: HookPayload, config: HooksConfig): DiffDeci
             change.before ?? "/dev/null",
             change.deleted ? "/dev/null" : change.path,
         ]);
-        const block = blockFrom(file, patch, change.before !== null, config.diff);
+        const block = blockFrom(file, patch, change.before !== null, config.diff, suppressed);
 
         if (block === null) {
             continue;
@@ -246,7 +280,7 @@ export function runDiffPost(payload: HookPayload, config: HooksConfig): DiffDeci
     }
 
     if (blocks.length === 0) {
-        return { decision: "silent", reason: silentReason(covered, uncaptured, claimed), files: [] };
+        return { decision: "silent", reason: silentReason(covered, uncaptured, claimed, suppressed), files: [] };
     }
 
     return { decision: "emitted", reason: "rendered a diff the harness did not", message: blocks.join("\n\n"), files };
