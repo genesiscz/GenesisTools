@@ -8,6 +8,7 @@ import {
     realpathSync,
     rmSync,
     statSync,
+    utimesSync,
     writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -1087,5 +1088,79 @@ describe("hiding a kind of change", () => {
 
         expect(decision.message).toContain("TWO-REAL");
         expect(decision.message).not.toContain("·");
+    });
+});
+
+describe("a command that edits AND commits in the same call", () => {
+    // Measured 2026-09-21 in a live session: five commands edited the same file, four of them
+    // finished with `git commit` and rendered nothing, the one that did not commit rendered.
+    // `git status` is silent about a file the command just committed, because it is clean.
+    const plain = { ...DEFAULT_HOOKS_CONFIG, diff: { ...DEFAULT_HOOKS_CONFIG.diff, highlight: "none" as const } };
+    let repo2: string;
+
+    const run = (args: string[]) => spawnSync("git", ["-C", repo2, ...args], { encoding: "utf8", env: process.env });
+
+    beforeAll(() => {
+        repo2 = realpathSync(mkdtempSync(join(tmpdir(), "gt-commits-")));
+        run(["init", "-q"]);
+        run(["config", "user.email", "probe@local"]);
+        run(["config", "user.name", "probe"]);
+        writeFileSync(join(repo2, "note.md"), "one\ntwo\nthree\n");
+        run(["add", "-A"]);
+        run(["commit", "-qm", "init"]);
+    });
+
+    afterAll(() => {
+        rmSync(repo2, { recursive: true, force: true });
+    });
+
+    it("renders the edit even though the commit made the file clean again", () => {
+        const note = join(repo2, "note.md");
+        const current = begin({ cwd: repo2, toolUseId: "commit-1" });
+
+        writeFileSync(note, "one\nEDIT-THEN-COMMIT\nthree\n");
+        run(["add", "-A"]);
+        run(["commit", "-qm", "same call"]);
+
+        const decision = runDiffPost(current, plain);
+
+        expect(decision.files).toContain(note);
+        expect(decision.message).toContain("EDIT-THEN-COMMIT");
+        expect(decision.message).toContain("(+1 -1)");
+    });
+
+    it("does not blame the command for a commit that only moved HEAD", () => {
+        // A commit of something staged by an EARLIER command: the file's mtime predates this
+        // capture, so the mtime filter keeps it out.
+        const older = join(repo2, "staged-earlier.md");
+
+        writeFileSync(older, "old\ncontent\n");
+        run(["add", "-A"]);
+
+        const past = Date.now() / 1000 - 3600;
+
+        utimesSync(older, past, past);
+
+        const current = begin({ cwd: repo2, toolUseId: "commit-2" });
+
+        run(["commit", "-qm", "commit only"]);
+
+        expect(runDiffPost(current, plain).files).not.toContain(older);
+    });
+
+    it("still works in a repository that has no commits at all", () => {
+        const empty = realpathSync(mkdtempSync(join(tmpdir(), "gt-empty-")));
+
+        spawnSync("git", ["-C", empty, "init", "-q"], { encoding: "utf8", env: process.env });
+
+        const current = begin({ cwd: empty, toolUseId: "commit-3" });
+
+        writeFileSync(join(empty, "fresh.md"), "brand\nnew\n");
+
+        const decision = runDiffPost(current, plain);
+
+        expect(decision.message).toContain("brand");
+
+        rmSync(empty, { recursive: true, force: true });
     });
 });

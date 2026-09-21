@@ -2,7 +2,7 @@ import { spawnSync } from "node:child_process";
 import { chmodSync, type Dirent, lstatSync, mkdirSync, readdirSync, type Stats, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { DiffConfig } from "../config";
-import { gitOut, isDeleted, statusEntries } from "../git";
+import { gitOut, isDeleted, objectId, statusEntries } from "../git";
 import { hookDiag } from "../log";
 import { callDir, safeSegment } from "../paths";
 import type { HookPayload } from "../payload";
@@ -62,25 +62,40 @@ function tighten(path: string): void {
  * are watched individually instead, by `captureNamed`.
  */
 export function captureRoots(payload: HookPayload, config: DiffConfig): string[] {
-    return rootsOf(commandDirs(payload.command, payload.cwd), config);
+    return rootsOf(commandDirs(payload.command, payload.cwd), config).map((entry) => entry.root);
 }
 
-function rootsOf(dirs: string[], config: DiffConfig): string[] {
-    const roots: string[] = [];
+/**
+ * The toplevel AND the HEAD it is on, in ONE `git rev-parse`.
+ *
+ * The HEAD is what lets the post phase notice a commit the command made: a file that was
+ * edited and committed in the same call is clean again, so `git status` never mentions it.
+ * Asking for it separately would be a second 8 ms spawn per directory on the hot path;
+ * asking for both at once is free. An empty repository has no HEAD, and rev-parse then
+ * echoes the literal `HEAD` and exits 128, which `objectId` rejects.
+ */
+function rootsOf(dirs: string[], config: DiffConfig): CapturedRoot[] {
+    const roots: CapturedRoot[] = [];
 
     for (const dir of dirs) {
         if (roots.length >= config.maxRoots) {
             break;
         }
 
-        const top = gitOut(dir, ["rev-parse", "--show-toplevel"], { quiet: true }).trim();
+        const lines = gitOut(dir, ["rev-parse", "--show-toplevel", "HEAD"], { quiet: true }).split("\n");
+        const top = (lines[0] ?? "").trim();
 
-        if (top.length > 0 && !roots.includes(top)) {
-            roots.push(top);
+        if (top.length > 0 && !roots.some((entry) => entry.root === top)) {
+            roots.push({ root: top, head: objectId((lines[1] ?? "").trim()) });
         }
     }
 
     return roots;
+}
+
+interface CapturedRoot {
+    root: string;
+    head: string | null;
 }
 
 interface CapturePlan {
@@ -220,7 +235,8 @@ function entryBytes(path: string, limit: number): number {
  */
 export function capturePre(payload: HookPayload, config: DiffConfig): CaptureResult {
     const dirs = commandDirs(payload.command, payload.cwd);
-    const roots = rootsOf(dirs, config);
+    const captured_roots = rootsOf(dirs, config);
+    const roots = captured_roots.map((entry) => entry.root);
     const wanted = config.watchNamedPaths ? namedArguments(payload.command, dirs) : [];
     const skipped: string[] = [];
     let captured = 0;
@@ -258,6 +274,8 @@ export function capturePre(payload: HookPayload, config: DiffConfig): CaptureRes
     skipped.push(...named.skipped);
     writePrivateFile(join(dir, "stamp"), String(Math.floor(Date.now() / 1000)));
     writePrivateFile(join(dir, "roots.txt"), roots.length > 0 ? `${roots.join("\n")}\n` : "");
+    // One line per root, aligned by index with roots.txt. An empty line means "no HEAD".
+    writePrivateFile(join(dir, "heads.txt"), captured_roots.map((entry) => entry.head ?? "").join("\n"));
 
     roots.forEach((root, index) => {
         // A DELETED path is excluded: it is gone from disk, so `tar` cannot stat it and

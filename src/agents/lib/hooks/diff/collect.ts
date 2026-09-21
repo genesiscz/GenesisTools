@@ -1,5 +1,6 @@
-import { statSync } from "node:fs";
+import { existsSync, statSync } from "node:fs";
 import { resolve } from "node:path";
+import type { StatusEntry } from "@genesiscz/utils/git/porcelain";
 import type { DiffConfig } from "../config";
 import { gitOut, isDeleted, isUntrackedDirectory, statusEntries } from "../git";
 
@@ -27,10 +28,24 @@ function touchedSince(path: string, since: number): boolean {
  * entry is expanded. `-uall` globally is banned in this repo for memory reasons, so only the
  * directories that actually appear get expanded.
  */
-export function changedFiles(root: string, since: number, config: DiffConfig): ChangedFile[] {
+export interface ChangedSource {
+    /** The status this call already read, so the post phase does not spawn `git status` twice. */
+    entries: StatusEntry[];
+    /** Repo-relative paths a commit made DURING the command, which status no longer reports. */
+    committed: string[];
+}
+
+export function changedFiles(root: string, since: number, config: DiffConfig, source?: ChangedSource): ChangedFile[] {
     const entries: ChangedFile[] = [];
 
-    for (const entry of statusEntries(root)) {
+    // A file the command edited AND COMMITTED is clean by the time the post phase looks, so
+    // `git status` does not mention it at all. Measured 2026-09-21: an edit alone rendered,
+    // the same edit followed by `git commit` in the same call rendered nothing.
+    for (const name of source?.committed ?? []) {
+        entries.push({ path: resolve(root, name), untracked: false, deleted: !existsSync(resolve(root, name)), root });
+    }
+
+    for (const entry of source?.entries ?? statusEntries(root)) {
         const untracked = entry.kind === "untracked";
         const deleted = isDeleted(entry);
 

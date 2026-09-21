@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, rmSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { DiffConfig, HooksConfig } from "../config";
-import { gitOut } from "../git";
+import { committedPaths, gitOut, objectId, statusOf } from "../git";
 import { hookDiag } from "../log";
 import { callDir, safeSegment } from "../paths";
 import type { HookPayload } from "../payload";
@@ -25,7 +25,7 @@ export interface DiffDecision {
  * that was clean when the command began. Passing a path that does not exist to
  * `--no-index` yields exit 128 and an empty patch, which reads exactly like "no change".
  */
-function patchFor(file: ChangedFile, before: string | null, config: DiffConfig): string {
+function patchFor(file: ChangedFile, before: string | null, config: DiffConfig, base: string): string {
     const context = `-U${config.contextLines}`;
 
     if (before) {
@@ -36,7 +36,10 @@ function patchFor(file: ChangedFile, before: string | null, config: DiffConfig):
         return gitOut(file.root, ["diff", "--no-index", context, "--", "/dev/null", file.path]);
     }
 
-    return gitOut(file.root, ["diff", "HEAD", context, "--", file.path]);
+    // `base` is the HEAD the command STARTED on, not today's HEAD. The two differ exactly
+    // when the command committed, and diffing a just-committed file against the commit that
+    // created it reports nothing at all.
+    return gitOut(file.root, ["diff", base, context, "--", file.path]);
 }
 
 /**
@@ -152,6 +155,8 @@ export function runDiffPost(payload: HookPayload, config: HooksConfig): DiffDeci
     const roots = readFileSync(rootsFile, "utf8")
         .split("\n")
         .filter((line) => line.length > 0);
+    const headsPath = join(dir, "heads.txt");
+    const heads = existsSync(headsPath) ? readFileSync(headsPath, "utf8").split("\n") : [];
     const stampPath = join(dir, "stamp");
     const since = existsSync(stampPath) ? Number(readFileSync(stampPath, "utf8").trim()) * 1000 : Date.now() - 20_000;
     // The stand-down is per FILE. The harness emits a payload on every call once the
@@ -166,15 +171,25 @@ export function runDiffPost(payload: HookPayload, config: HooksConfig): DiffDeci
     let claimed = 0;
     const suppressed = new Map<DiffCategory, number>();
 
-    for (const root of roots) {
+    roots.forEach((root, index) => {
         // The cap short-circuits the ROOT loop too. Breaking only the inner loop still called
         // `changedFiles` for every remaining root, and that is a `git status` plus an
         // `ls-files` per root, on the hot path, for output already capped away.
         if (blocks.length >= config.diff.maxFiles) {
-            break;
+            return;
         }
 
-        for (const file of changedFiles(root, since, config.diff)) {
+        // ONE status read per root, reused for the entries AND the current HEAD: porcelain
+        // v2's `--branch` header already carries the oid, so noticing a commit costs nothing
+        // until one has actually happened.
+        const summary = statusOf(root);
+        const startedOn = objectId(heads[index]?.trim());
+        const nowOn = objectId(summary.branch?.oid);
+        const moved = startedOn !== null && nowOn !== null && startedOn !== nowOn;
+        const base = moved && startedOn ? startedOn : "HEAD";
+        const committed = moved && startedOn && nowOn ? committedPaths(root, startedOn, nowOn) : [];
+
+        for (const file of changedFiles(root, since, config.diff, { entries: summary.entries, committed })) {
             if (blocks.length >= config.diff.maxFiles) {
                 break;
             }
@@ -196,7 +211,7 @@ export function runDiffPost(payload: HookPayload, config: HooksConfig): DiffDeci
 
             const block = blockFrom(
                 file,
-                patchFor(file, before, config.diff),
+                patchFor(file, before, config.diff, base),
                 before !== null,
                 config.diff,
                 suppressed
@@ -214,7 +229,7 @@ export function runDiffPost(payload: HookPayload, config: HooksConfig): DiffDeci
             files.push(file.path);
             blocks.push(block);
         }
-    }
+    });
 
     // Files the command NAMED rather than worked in. They are read from a copy, so this adds
     // no git process unless one of them actually changed.
