@@ -145,12 +145,10 @@ function literalFingerprint(lines: string[]): string {
 }
 
 function parseJson<T>(text: string): T {
-    // biome-ignore lint/style/noRestrictedGlobals: standalone script without access to SafeJSON
     return JSON.parse(text);
 }
 
 function stringifyJson(value: unknown): string {
-    // biome-ignore lint/style/noRestrictedGlobals: standalone script without access to SafeJSON
     return JSON.stringify(value, null, 2);
 }
 

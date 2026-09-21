@@ -13,7 +13,6 @@ import { homedir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 import { harnessOf } from "./harness";
 
-// biome-ignore lint/style/noRestrictedGlobals: standalone hook script — cannot import @app/utils/json
 const SafeJSON = JSON;
 
 /**

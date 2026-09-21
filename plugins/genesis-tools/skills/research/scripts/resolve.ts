@@ -108,7 +108,6 @@ async function cmdResolve(args: Record<string, string>): Promise<void> {
 
     const emit = (payload: Record<string, unknown>): void => {
         console.log(
-            // biome-ignore lint/style/noRestrictedGlobals: standalone script without access to SafeJSON
             JSON.stringify(
                 {
                     project: ctx.toplevel,
@@ -232,7 +231,6 @@ async function cmdConfig(): Promise<void> {
     const config = await loadConfig();
 
     console.log(
-        // biome-ignore lint/style/noRestrictedGlobals: standalone script without access to SafeJSON
         JSON.stringify(
             {
                 config: PLUGIN_CONFIG_PATH,

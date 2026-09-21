@@ -134,6 +134,16 @@
             }
         },
         {
+            "includes": ["plugins/**"],
+            "linter": {
+                "rules": {
+                    "style": {
+                        "noRestrictedGlobals": "off"
+                    }
+                }
+            }
+        },
+        {
             "includes": ["src/spotify/page/**"],
             "linter": {
                 "rules": {

@@ -648,7 +648,6 @@ describe("log command JSON", () => {
         expect(exit).toBe(0);
         expect(stderr).toBe("");
 
-        // biome-ignore lint/style/noRestrictedGlobals: standalone script without access to SafeJSON
         const json = JSON.parse(stdout);
         expect(json.logged).toBe(true);
         expect(json.file).toBe(file);

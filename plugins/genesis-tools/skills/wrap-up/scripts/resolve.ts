@@ -398,7 +398,6 @@ async function cmdResolve(args: Record<string, string> = {}) {
 
     if (override.kind === "failed") {
         console.log(
-            // biome-ignore lint/style/noRestrictedGlobals: standalone script without access to SafeJSON
             JSON.stringify(
                 {
                     found: false,
@@ -432,7 +431,6 @@ async function cmdResolve(args: Record<string, string> = {}) {
         const hint = registerHint(ctx, override.dir);
 
         console.log(
-            // biome-ignore lint/style/noRestrictedGlobals: standalone script without access to SafeJSON
             JSON.stringify(
                 {
                     found: true,
@@ -500,7 +498,6 @@ async function cmdResolve(args: Record<string, string> = {}) {
             const entry: Entry = { projectDir: ctx.toplevel, obsidianDir: docDir };
             const { docPath, docPathSource } = resolveDocPath(entry, ctx, args.doc);
             console.log(
-                // biome-ignore lint/style/noRestrictedGlobals: standalone script without access to SafeJSON
                 JSON.stringify(
                     {
                         found: true,
@@ -537,7 +534,6 @@ async function cmdResolve(args: Record<string, string> = {}) {
         }
 
         console.log(
-            // biome-ignore lint/style/noRestrictedGlobals: standalone script without access to SafeJSON
             JSON.stringify(
                 {
                     found: false,
@@ -573,7 +569,6 @@ async function cmdResolve(args: Record<string, string> = {}) {
     // wrong target.
     const hint = registerHint(ctx, exact ? entry.obsidianDir : "<dir the user confirms>");
     console.log(
-        // biome-ignore lint/style/noRestrictedGlobals: standalone script without access to SafeJSON
         JSON.stringify(
             {
                 found: true,
@@ -642,7 +637,6 @@ async function cmdDoctor() {
 
     const issues = auditRegistry(reg.entries, (p) => present.has(p));
     console.log(
-        // biome-ignore lint/style/noRestrictedGlobals: standalone script without access to SafeJSON
         JSON.stringify(
             {
                 registry: await registryPath(),
@@ -667,7 +661,6 @@ async function cmdEntries(args: Record<string, string> = {}) {
     );
 
     console.log(
-        // biome-ignore lint/style/noRestrictedGlobals: standalone script without access to SafeJSON
         JSON.stringify(
             {
                 project: ctx.toplevel,
@@ -750,7 +743,6 @@ async function cmdRegister(args: Record<string, string>) {
     reg.entries.push(entry);
     await saveRegistry(reg);
     console.log(
-        // biome-ignore lint/style/noRestrictedGlobals: standalone script without access to SafeJSON
         JSON.stringify(
             { registered: entry, registry: await registryPath(), docPath: derivedDocPath(entry, ctx.branch) },
             null,
@@ -1003,7 +995,6 @@ async function cmdLog(file: string) {
 
     await writeAtomic(absFile, built.body);
     console.log(
-        // biome-ignore lint/style/noRestrictedGlobals: standalone script without access to SafeJSON
         JSON.stringify(
             {
                 logged: true,

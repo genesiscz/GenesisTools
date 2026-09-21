@@ -81,7 +81,6 @@ async function readJson(path: string, label: string): Promise<Json | null> {
     }
 
     try {
-        // biome-ignore lint/style/noRestrictedGlobals: standalone script without access to SafeJSON
         const parsed = JSON.parse(await file.text());
 
         return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed) ? (parsed as Json) : null;
@@ -120,7 +119,6 @@ export async function writePluginSection(key: string, value: Json, label = key):
 
     config[key] = value;
     await ensureDir(PLUGIN_CONFIG_PATH);
-    // biome-ignore lint/style/noRestrictedGlobals: standalone script without access to SafeJSON
     await writeAtomic(PLUGIN_CONFIG_PATH, `${JSON.stringify(config, null, 2)}\n`);
 }
 

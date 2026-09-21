@@ -2,7 +2,6 @@ import { afterEach, describe, expect, it } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { SafeJSON } from "@genesiscz/utils/json";
 
 /**
  * The migrations, end to end, against a sandboxed home.
@@ -37,11 +36,11 @@ afterEach(() => {
 
 function write(path: string, body: unknown): void {
     mkdirSync(dirname(path), { recursive: true });
-    writeFileSync(path, typeof body === "string" ? body : SafeJSON.stringify(body, null, 2));
+    writeFileSync(path, typeof body === "string" ? body : JSON.stringify(body, null, 2));
 }
 
 function read(path: string): Record<string, unknown> {
-    return SafeJSON.parse(readFileSync(path, "utf8"));
+    return JSON.parse(readFileSync(path, "utf8"));
 }
 
 async function run(
@@ -160,7 +159,7 @@ describe("vault registry migration", () => {
         const { code, stdout } = await run(WRAPUP, home, ["doctor"]);
 
         expect(code).toBe(0);
-        expect(SafeJSON.parse(stdout).entries).toBe(2);
+        expect(JSON.parse(stdout).entries).toBe(2);
         expect(read(p.registry).entries).toEqual(entries);
         expect(existsSync(p.legacyRegistry)).toBe(false);
         expect(archived(p.legacyRegistry)).toHaveLength(1);
@@ -212,8 +211,8 @@ describe("vault registry migration", () => {
 
         const { stdout } = await run(WRAPUP, home, ["doctor"]);
 
-        expect(SafeJSON.parse(stdout).registry).toBe(custom);
-        expect(SafeJSON.parse(stdout).entries).toBe(1);
+        expect(JSON.parse(stdout).registry).toBe(custom);
+        expect(JSON.parse(stdout).entries).toBe(1);
         expect(existsSync(p.legacyRegistry)).toBe(true);
         expect(existsSync(p.registry)).toBe(false);
     });
@@ -226,7 +225,7 @@ describe("vault registry migration", () => {
         const { code, stdout } = await run(WRAPUP, home, ["doctor"]);
 
         expect(code).toBe(0);
-        expect(SafeJSON.parse(stdout).entries).toBe(0);
+        expect(JSON.parse(stdout).entries).toBe(0);
         expect(existsSync(p.legacyRegistry)).toBe(true);
     });
 });

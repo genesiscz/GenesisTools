@@ -56,7 +56,6 @@ export async function migrateRegistry(label: string): Promise<void> {
             const entries = Array.isArray(legacy.entries) ? legacy.entries : [];
 
             await ensureDir(VAULT_REGISTRY_PATH);
-            // biome-ignore lint/style/noRestrictedGlobals: standalone script without access to SafeJSON
             await writeAtomic(VAULT_REGISTRY_PATH, `${JSON.stringify({ entries }, null, 2)}\n`);
         },
     });
@@ -83,7 +82,6 @@ export async function loadRegistry(path: string, label: string): Promise<Registr
     }
 
     try {
-        // biome-ignore lint/style/noRestrictedGlobals: standalone script without access to SafeJSON
         const parsed = JSON.parse(await file.text());
 
         return Array.isArray(parsed?.entries) ? parsed : { entries: [] };
@@ -98,7 +96,6 @@ export async function loadRegistry(path: string, label: string): Promise<Registr
 
 export async function saveRegistry(path: string, registry: Registry): Promise<void> {
     await ensureDir(path);
-    // biome-ignore lint/style/noRestrictedGlobals: standalone script without access to SafeJSON
     await writeAtomic(path, `${JSON.stringify(registry, null, 2)}\n`);
 }
 

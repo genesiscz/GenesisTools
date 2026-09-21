@@ -1,6 +1,5 @@
 import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
-import { SafeJSON } from "@genesiscz/utils/json";
 import { CLAUDE_REMINDER, CODEX_REMINDER, GROK_REMINDER, harnessOf, reminderFor } from "./agents-talk-hint";
 
 const HOOK = join(import.meta.dir, "agents-talk-hint.ts");
@@ -36,14 +35,14 @@ describe("harnessOf", () => {
 describe("the hook as Claude Code and Codex run it", () => {
     test("Claude gets the narrow nudge, scoped to handoff-to swarms", async () => {
         const result = await runHook(
-            SafeJSON.stringify({
+            JSON.stringify({
                 session_id: "s",
                 transcript_path: "/Users/u/.claude/projects/-Users-u-repo/s.jsonl",
                 hook_event_name: "SessionStart",
             })
         );
         expect(result.exitCode).toBe(0);
-        const parsed = SafeJSON.parse(result.stdout);
+        const parsed = JSON.parse(result.stdout);
         expect(parsed.hookSpecificOutput.hookEventName).toBe("SessionStart");
         expect(parsed.hookSpecificOutput.additionalContext).toBe(CLAUDE_REMINDER);
         expect(CLAUDE_REMINDER).toContain("gt:handoff-to");
@@ -52,7 +51,7 @@ describe("the hook as Claude Code and Codex run it", () => {
 
     test("Codex is told never to invoke the skill and what to use instead", async () => {
         const result = await runHook(
-            SafeJSON.stringify({
+            JSON.stringify({
                 session_id: "01a0",
                 transcript_path: "/Users/u/.codex-personal/sessions/2026/09/09/rollout-2026-09-09T16-51-21-01a0.jsonl",
                 hook_event_name: "SessionStart",
@@ -60,7 +59,7 @@ describe("the hook as Claude Code and Codex run it", () => {
             })
         );
         expect(result.exitCode).toBe(0);
-        expect(SafeJSON.parse(result.stdout).hookSpecificOutput.additionalContext).toBe(CODEX_REMINDER);
+        expect(JSON.parse(result.stdout).hookSpecificOutput.additionalContext).toBe(CODEX_REMINDER);
         expect(CODEX_REMINDER).toMatch(/never invoke/i);
         expect(CODEX_REMINDER).toContain("send_message");
     });

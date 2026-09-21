@@ -104,7 +104,6 @@ export async function runResolver(
     }
 
     try {
-        // biome-ignore lint/style/noRestrictedGlobals: standalone script without access to SafeJSON
         const parsed = JSON.parse(raw);
 
         if (typeof parsed?.dir !== "string" || !parsed.dir) {
