@@ -27,7 +27,7 @@ public struct WorkflowArguments {
                 "--app", "--snapshot", "--element", "--action", "--value", "--ax-action", "--direction", "--text",
                 "--keys", "--coords", "--button", "--to", "--duration", "--pages", "--pixels", "--range", "--prefix",
                 "--suffix", "--selection", "--format", "--path", "--region", "--target-key", "--dwell",
-                "--revalidate-scope", "--frame",
+                "--revalidate-scope", "--frame", "--by-identifier", "--window-index", "--depth",
             ]
             flagOptions = ["--background", "--double", "--refresh", "--no-cursor", "--no-image", "--prepare", "--replace", "--hold", "--no-activate"]
         default:
@@ -81,14 +81,27 @@ public struct WorkflowArguments {
             guard let action = parsedValues["--action"], ["get", "press", "click", "move", "drag", "set", "perform", "focus", "scroll", "type", "key", "select", "paste", "hover"].contains(action) else {
                 throw WorkflowArgumentError.invalid("--action required and must name a supported action")
             }
-            guard parsedValues["--snapshot"] != nil else {
-                throw WorkflowArgumentError.invalid("--snapshot required")
+            // --by-identifier observes and dispatches inside ONE process, so there is no token to
+            // carry and nothing for a second process to invalidate between the two steps. A token
+            // AND an identifier would be two answers to "which element", so only one is accepted.
+            let hasIdentifier = parsedValues["--by-identifier"] != nil
+            if hasIdentifier {
+                guard parsedValues["--snapshot"] == nil else {
+                    throw WorkflowArgumentError.invalid("--by-identifier observes the app itself and cannot also take a --snapshot token")
+                }
+            } else {
+                guard parsedValues["--snapshot"] != nil else {
+                    throw WorkflowArgumentError.invalid("--snapshot required, or --by-identifier to observe and act in one step")
+                }
             }
             let hasElement = parsedValues["--element"] != nil
             let hasCoordinates = parsedValues["--coords"] != nil
             let hasRegion = parsedValues["--region"] != nil
-            guard [hasElement, hasCoordinates, hasRegion].filter({ $0 }).count == 1 else {
-                throw WorkflowArgumentError.invalid("act requires exactly one of --element, --coords or --region")
+            guard [hasElement, hasIdentifier, hasCoordinates, hasRegion].filter({ $0 }).count == 1 else {
+                throw WorkflowArgumentError.invalid("act requires exactly one of --element, --by-identifier, --coords or --region")
+            }
+            if !hasIdentifier, parsedValues["--window-index"] != nil || parsedValues["--depth"] != nil {
+                throw WorkflowArgumentError.invalid("--window-index and --depth describe the observation --by-identifier makes; a snapshot already carries both")
             }
             try Self.validateAction(action, values: parsedValues, flags: parsedFlags)
         }
@@ -140,6 +153,15 @@ public struct WorkflowArguments {
 
             guard values["--coords"] != nil || values["--to"] != nil else {
                 throw WorkflowArgumentError.invalid("--frame describes how --coords is read; supply coordinates")
+            }
+        }
+        if values["--by-identifier"] != nil {
+            guard values["--target-key"] == nil else {
+                throw WorkflowArgumentError.invalid("--by-identifier already names the identity; --target-key comes from a snapshot row")
+            }
+
+            guard values["--revalidate-scope"] == nil else {
+                throw WorkflowArgumentError.invalid("--by-identifier revalidates by identifier already; --revalidate-scope applies to a snapshot")
             }
         }
         try reject(["--dwell", "--hold"], unless: ["hover"])

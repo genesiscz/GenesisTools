@@ -580,16 +580,106 @@ private func workflowFocus(_ window: ObservedWindow, pid: pid_t, element: AXUIEl
         workflowFrontWindow(window, pid: pid, element: CFEqual(element, window.ax) ? nil : element)
 }
 
+/// `act --by-identifier`: find the one element in this app carrying that AXIdentifier.
+///
+/// This is the whole one-process door. It walks the app's windows itself, refuses unless exactly
+/// one row carries the identifier, and mints the token from the SAME tree it is about to dispatch
+/// against. There is therefore no gap for the world to move in, which is what every guard on the
+/// `--snapshot` path exists to detect.
+///
+/// A window that cannot be observed is SKIPPED, not fatal. `observedWindow` refuses a minimized or
+/// geometry-less window, and an app the user left one window collapsed in would otherwise be
+/// undrivable through this door even when the target is plainly visible in another.
+private func workflowIdentifierTarget(appName: String, pid: pid_t, launch: Double, identifier: String)
+    -> (window: ObservedWindow, tree: ObservedTreeData, element: Int, token: SnapshotToken) {
+    let depth = workflowInteger("--depth", defaultValue: 20)
+    let windows = axWindows(AXUIElementCreateApplication(pid))
+    guard !windows.isEmpty else {
+        workflowFailure("no AX windows for \(appName); verify permissions and app state")
+    }
+    var considered = Array(windows.indices)
+    if workflowArgument("--window-index") != nil {
+        let requested = workflowInteger("--window-index")
+        guard windows.indices.contains(requested) else {
+            workflowFailure("--window-index outside current window list")
+        }
+        considered = [requested]
+    }
+    var observed: [(index: Int, window: ObservedWindow, tree: ObservedTreeData)] = []
+    var skipped: [String] = []
+    for index in considered {
+        do {
+            let window = try observedWindow(windows[index], pid: pid)
+            observed.append((index, window, try observedTree(window.ax, depth: depth, scope: "window")))
+        } catch {
+            skipped.append("\(index): \(error.localizedDescription)")
+        }
+    }
+    guard !observed.isEmpty else {
+        workflowFailure("no window of \(appName) could be observed"
+            + (skipped.isEmpty ? "" : "; " + skipped.joined(separator: "; ")), category: .missingTarget)
+    }
+    let searched = observed.map {
+        IdentifierWindow(index: $0.index, title: axStringAttribute($0.window.ax, "AXTitle") ?? "", rows: $0.tree.rows)
+    }
+    do {
+        let target = try resolveIdentifierTarget(identifier, app: appName, depth: depth, windows: searched,
+                                                 skipped: skipped)
+        guard let hit = observed.first(where: { $0.index == target.window }) else {
+            workflowFailure("window list changed while resolving the identifier; act again", category: .scopeChanged)
+        }
+
+        return (hit.window, hit.tree, target.element,
+                SnapshotToken(pid: pid, launch: launch, window: Int(hit.window.id), depth: depth,
+                              digest: hit.tree.digest, created: Date().timeIntervalSince1970, scope: "window"))
+    } catch {
+        workflowFailure(error)
+    }
+}
+
 func cmdAct(appName _: String) {
     workflowDispatchState = "not_started"
     let appName = workflowParse("act")
     // Martin's requirement, made testable: a caller must be able to tell whether driving the app
     // disturbed the user. Reported on EVERY act result, not only the ones that tried not to.
     let startingFrontmost = frontmostPid()
-    guard let raw = workflowArgument("--snapshot"), raw.count < 65536,
-          let data = Data(base64Encoded: raw),
-          let token = try? JSONDecoder().decode(SnapshotToken.self, from: data) else {
-        workflowFailure("invalid --snapshot token; run see again")
+    // Two ways in, differing only in WHERE the observation happened. A --snapshot token was minted
+    // by an earlier `see` in another process, so everything below it is there to prove the world
+    // did not move in between. --by-identifier observes here and mints its own token from that
+    // read, so a caller who knows what an element is called never runs `see` at all.
+    let byIdentifier = workflowArgument("--by-identifier")
+    let action = workflowArgument("--action")!
+    workflowPermissions()
+    let pid = resolveApp(appName)
+    let launch = workflowLaunch(pid)
+    let token: SnapshotToken
+    var elementIndex: Int
+    var window: ObservedWindow
+    var tree: ObservedTreeData
+    if let identifier = byIdentifier {
+        let resolved = workflowIdentifierTarget(appName: appName, pid: pid, launch: launch, identifier: identifier)
+        token = resolved.token
+        elementIndex = resolved.element
+        window = resolved.window
+        tree = resolved.tree
+    } else {
+        guard let raw = workflowArgument("--snapshot"), raw.count < 65536,
+              let data = Data(base64Encoded: raw),
+              let decoded = try? JSONDecoder().decode(SnapshotToken.self, from: data) else {
+            workflowFailure("invalid --snapshot token; run see again")
+        }
+        token = decoded
+        elementIndex = workflowArgument("--coords") == nil && workflowArgument("--region") == nil
+            ? workflowInteger("--element") : 0
+        do {
+            // Validate the token before walking a tree or converting an untrusted window ID.
+            _ = try token.validate(pid: pid, launch: launch, window: token.window, digest: token.digest,
+                                   element: elementIndex, count: 4000, now: Date().timeIntervalSince1970)
+        } catch {
+            workflowFailure(error)
+        }
+        window = workflowWindowByID(token.window, pid: pid)
+        tree = workflowTree(window.ax, depth: token.depth, scope: token.effectiveScope)
     }
     var rawCoords = workflowArgument("--coords")
     if let region = workflowArgument("--region") {
@@ -599,21 +689,6 @@ func cmdAct(appName _: String) {
             rawCoords = "\(point.x),\(point.y)"
         } catch { workflowFailure(error) }
     }
-
-    var elementIndex = rawCoords == nil ? workflowInteger("--element") : 0
-    let action = workflowArgument("--action")!
-    workflowPermissions()
-    let pid = resolveApp(appName)
-    let launch = workflowLaunch(pid)
-    do {
-        // Validate the token before walking a tree or converting an untrusted window ID.
-        _ = try token.validate(pid: pid, launch: launch, window: token.window, digest: token.digest,
-                               element: elementIndex, count: 4000, now: Date().timeIntervalSince1970)
-    } catch {
-        workflowFailure(error)
-    }
-    var window = workflowWindowByID(token.window, pid: pid)
-    var tree = workflowTree(window.ax, depth: token.depth, scope: token.effectiveScope)
     var dispatchToken = token
     // The prepared path already re-resolved the target by identity and reissued the token against
     // the FRESH tree, which is exactly what a ticking window needs. It was reachable only through
@@ -725,7 +800,12 @@ func cmdAct(appName _: String) {
         // instead. Element scope pins the stable identity, because targetKey folds in sibling text
         // and a clock beside a button is a sibling.
         let identityField = prepared ? "targetKey" : "stableKey"
-        let identityPinned = prepared || (revalidateScope == "element" && workflowArgument("--target-key") != nil)
+        // --by-identifier pinned the row by the one attribute an app author sets for a machine, so
+        // re-resolve by that same stable identity. Falling back to the whole-tree digest would
+        // refuse every act on a window with a clock in it, which is exactly the bug this door is
+        // meant to remove rather than reintroduce.
+        let identityPinned = prepared || byIdentifier != nil
+            || (revalidateScope == "element" && workflowArgument("--target-key") != nil)
         if identityPinned, let key = tree.rows[elementIndex][identityField] as? String {
             let currentIndex = try preparedTargetIndex(key: key, rows: fresh.rows, field: identityField)
 

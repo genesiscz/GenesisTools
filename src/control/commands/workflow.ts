@@ -44,6 +44,7 @@ interface WorkflowOptions {
     scope?: string | boolean;
     path?: string;
     snapshot?: string;
+    byIdentifier?: string;
     element?: string;
     action?: string | boolean;
     value?: string;
@@ -387,8 +388,14 @@ export function registerWorkflowCommands(program: Command): void {
             "Act on an element from see after validating app instance, window, age and tree. Refuses stale refs; never retries or falls back. Output is JSON. Run see again after every action. Default click/type/key require the target window already focused; focus is explicit. click --background uses window-addressed delivery without moving the pointer. A `see --scope menu` snapshot is routed to the menu dispatcher automatically and takes --action perform (with --ax-action, default AXPress) or --action press."
         )
         .requiredOption("--app <name>", "same app instance as the snapshot")
-        .requiredOption("--snapshot <token>", "opaque token returned by see")
+        .option("--snapshot <token>", "opaque token returned by see; omit it only with --by-identifier")
         .option("--element <n>", "element index copied from that snapshot; alternative to click --coords")
+        .option(
+            "--by-identifier <id>",
+            "act on the one element carrying this exact AXIdentifier, with no prior see and no snapshot token: this process observes the app and dispatches against the same read. Refuses when the identifier matches zero or more than one element, naming every candidate. Pair with --window-index and --depth to scope the observation."
+        )
+        .option("--window-index <n>", "with --by-identifier: search only this zero-based AX window")
+        .option("--depth <n>", "with --by-identifier: observation depth, 1–50", "20")
         .option("--action [name]", `one of: ${ACTIONS.join(", ")}`)
         .option("--value <text>", "set: AXValue text, read back to verify; no keystrokes")
         .option(
@@ -480,10 +487,20 @@ export function registerWorkflowCommands(program: Command): void {
                 }
             }
 
+            if ((opts.snapshot === undefined) === (opts.byIdentifier === undefined)) {
+                logger.error(
+                    opts.snapshot === undefined
+                        ? "act needs --snapshot <token> from see, or --by-identifier <id> to observe and act in one step"
+                        : "--by-identifier observes the app itself and cannot also take a --snapshot token"
+                );
+                process.exitCode = 1;
+                return;
+            }
+
             // A menu snapshot indexes a menu tree, not a window tree, and the native side keeps
             // them apart. Reading the surface off the token means the caller says it once, in
             // `see --scope menu`, instead of again here.
-            if (snapshotSurface(opts.snapshot!) === "menu") {
+            if (opts.snapshot !== undefined && snapshotSurface(opts.snapshot) === "menu") {
                 if (opts.action !== "perform" && opts.action !== "press") {
                     logger.error(
                         `a menu snapshot takes --action perform (with --ax-action) or --action press; got "${String(opts.action)}"`
@@ -520,16 +537,11 @@ export function registerWorkflowCommands(program: Command): void {
                 return;
             }
 
-            const args = [
-                "act",
-                "--app",
-                opts.app,
-                "--snapshot",
-                opts.snapshot!,
+            const args = ["act", "--app", opts.app, "--action", opts.action];
 
-                "--action",
-                opts.action,
-            ];
+            if (opts.snapshot !== undefined) {
+                args.push("--snapshot", opts.snapshot);
+            }
 
             if (opts.action === "type" && opts.text !== undefined && opts.text.length > 256) {
                 logger.error("type text exceeds 256 UTF-16 units; use paste for longer text");
@@ -540,6 +552,11 @@ export function registerWorkflowCommands(program: Command): void {
             for (const [flag, value] of [
                 ["value", opts.value],
                 ["element", opts.element],
+                ["by-identifier", opts.byIdentifier],
+                // Commander defaults --depth, so a snapshot caller would otherwise always send it
+                // and be refused. Both only ever accompany the identifier.
+                ["window-index", opts.byIdentifier === undefined ? undefined : opts.windowIndex],
+                ["depth", opts.byIdentifier === undefined ? undefined : opts.depth],
                 ["target-key", opts.targetKey],
                 ["revalidate-scope", opts.revalidateScope],
                 ["coords", opts.coords],
