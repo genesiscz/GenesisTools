@@ -131,6 +131,73 @@ function mappedPackageDir(config: TsConfigShape, configPath: string): string | n
 }
 
 /**
+ * The nearest `tsconfig.json` at or above `dir`, or null.
+ *
+ * Bun applies the paths of the NEAREST tsconfig only, never a merge up the chain. That bound
+ * is what makes the mapping safe at the home directory, and it is also the single way the
+ * mapping fails: a project carrying its own tsconfig hides the ancestor completely.
+ */
+export function nearestConfigFor(dir: string): string | null {
+    let current = resolve(dir);
+
+    for (;;) {
+        const candidate = join(current, "tsconfig.json");
+
+        if (existsSync(candidate)) {
+            return candidate;
+        }
+
+        const parent = dirname(current);
+
+        if (parent === current) {
+            return null;
+        }
+
+        current = parent;
+    }
+}
+
+/**
+ * The config that HIDES our mapping from files in `dir`, or null.
+ *
+ * Only a real shadow counts: a nearer config that carries no mapping of ours, while some
+ * config above it does. Without this the failure is silent and looks like a broken install,
+ * when the fix is simply to run the install against that nearer project instead.
+ */
+export function shadowedByFor(dir: string): string | null {
+    const nearest = nearestConfigFor(dir);
+
+    if (nearest === null) {
+        return null;
+    }
+
+    const read = readConfig(nearest);
+
+    if (read.state === "parsed" && mappedPackageDir(read.config, nearest) !== null) {
+        return null;
+    }
+
+    let current = dirname(dirname(nearest));
+
+    for (;;) {
+        const candidate = join(current, "tsconfig.json");
+        const above = readConfig(candidate);
+
+        if (above.state === "parsed" && mappedPackageDir(above.config, candidate) !== null) {
+            return nearest;
+        }
+
+        const parent = dirname(current);
+
+        if (parent === current) {
+            return null;
+        }
+
+        current = parent;
+    }
+}
+
+/**
  * Whether a bare `@genesiscz/utils` import would resolve for a file in `dir`.
  *
  * 🛑 Accurate only in a process that has NOT just changed the filesystem underneath it. Bun
@@ -302,6 +369,10 @@ export interface LinkStatus {
     current: boolean;
     /** Whether a bare import actually resolves from `root`. The only claim that matters. */
     resolves: boolean;
+    /** The tsconfig Bun will actually read for files in this root. */
+    nearestConfig: string | null;
+    /** Set when a nearer tsconfig hides the mapping. Naming it IS the fix. */
+    shadowedBy: string | null;
 }
 
 /** Reads the mapping state for one root without changing anything. */
@@ -323,6 +394,8 @@ export function linkStatusFor(root: string): LinkStatus {
         // ⚠️ Deliberately independent of the mapping: a repo with its own node_modules
         // resolves without one, and reporting "not installed" there would be true but useless.
         resolves: packageResolvesFrom(absoluteRoot),
+        nearestConfig: nearestConfigFor(absoluteRoot),
+        shadowedBy: shadowedByFor(absoluteRoot),
     };
 }
 

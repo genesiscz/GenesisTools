@@ -110,6 +110,36 @@ The mapping names the checkout the command was run from. Move that checkout and 
 
 ---
 
+## 🛑 The one way it fails: a nearer tsconfig
+
+Bun reads the **nearest** tsconfig and applies only its `paths`. There is no merge up the
+chain. That bound is what makes a home-directory mapping safe, and it is also the single way
+the mapping stops working: a project carrying its own `tsconfig.json` hides the ancestor
+completely, even when its own config says nothing about paths.
+
+This is not hypothetical. A notes tree is rarely only notes: any folder in it that grew a
+small Bun or TypeScript project carries its own `tsconfig.json`, and every document beneath
+that folder is then cut off from the ancestor mapping. One real tree measured on 2026-09-22
+held **six** such configs, none of them related to documents. Find yours with:
+
+```bash
+find <your notes root> -name tsconfig.json -not -path '*/node_modules/*'
+```
+
+`tools link status` detects this and names the offending file, because otherwise the failure
+looks like a broken install rather than a shadowed one:
+
+```
+▲  /…/some-project/tsconfig.json is nearer, and carries no mapping of ours.
+●  Bun reads only the nearest tsconfig, so that file hides the one above it.
+●  tools link install --root /…/some-project
+```
+
+Running that merges the mapping into that project's own config, keeping every other setting
+and comment it holds.
+
+---
+
 ## Rejected alternatives, each measured
 
 Bun 1.4.2, macOS, 2026-09-22. None of these is a matter of taste.
@@ -117,10 +147,12 @@ Bun 1.4.2, macOS, 2026-09-22. None of these is a matter of taste.
 | Mechanism | Why not |
 |---|---|
 | `node_modules` symlink at an ancestor | Works, but an empty or near-empty `node_modules` **disables Bun's auto-install** for every file beneath it. Measured: `picocolors` resolved from `/tmp` and failed from the home directory. That silently breaks loose scripts that used to run |
-| Runtime `Bun.plugin` `onResolve` | **Never consulted for a bare specifier.** Positive control: the same plugin's hook fired for a relative specifier in the same process, and `onLoad` fired for real files, while the bare specifier went straight to the node resolver |
+| Runtime `Bun.plugin` `onResolve` | **Never consulted for a bare specifier.** Positive control: the same plugin's hook fired for a relative specifier in the same process, and `onLoad` fired for real files. This is [oven-sh/bun#12261](https://github.com/oven-sh/bun/issues/12261): the `could_be_plugin` pre-filter only lets a specifier reach `onResolve` when it carries an extension or a namespace prefix. Fix PR #40398 is open and unmerged |
 | `bun link` | Registers a package for a later `bun link <name>`. Puts nothing on the resolution path by itself |
 | Publishing to npm | Works, and hands consumers a **snapshot** while the repo runs live code |
 | A loader with an alias option (`jiti`) | Works, and only for imports **we** perform. `bun doc.ts` never calls our loader, so it still fails. Measured both arms |
+| `NODE_PATH` pointing at a folder of symlinks | Works on all four arms, and does **not** poison auto-install. Loses because it must be in the environment before Bun starts, so it dies for anything not launched from your shell: an editor's run button, a launchd job, a GUI app |
+| Global `~/.bunfig.toml` + `preload` | Bun's docs state `bun run` and `bun <file>` never read the global bunfig |
 
 The last row is the one that decides it: the requirement is that the same file works under
 `bun doc.ts` **and** under a GenesisTools command. Only the tsconfig mapping satisfies both.

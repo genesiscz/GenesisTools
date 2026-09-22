@@ -8,7 +8,9 @@ import {
     linkIsSound,
     linkStatusFor,
     linkUtilsPackage,
+    nearestConfigFor,
     PACKAGE_NAME,
+    shadowedByFor,
     unlinkUtilsPackage,
     utilsPackageDir,
 } from "./package-link";
@@ -372,6 +374,88 @@ describe("resolution through an ancestor config", () => {
 
         linkUtilsPackage({ root });
 
+        expect(await run()).toBe(0);
+    });
+});
+
+describe("shadowing", () => {
+    // 🛑 Bun applies the paths of the NEAREST tsconfig only, never a merge up the chain. That
+    // bound is what makes a home-directory mapping safe, and it is also the single way the
+    // mapping fails. Measured 2026-09-22 on a real notes tree: six unrelated tsconfigs sat
+    // under it, each hiding a home-directory mapping from every document beneath it.
+    function nest(root: string, ...parts: string[]): string {
+        const dir = join(root, ...parts);
+        mkdirSync(dir, { recursive: true });
+
+        return dir;
+    }
+
+    test("nearestConfigFor finds the closest config above a directory", () => {
+        const root = scratch();
+        const inner = nest(root, "project", "src");
+        linkUtilsPackage({ root });
+        writeFileSync(configPathFor(join(root, "project")), "{}");
+
+        expect(nearestConfigFor(inner)).toBe(configPathFor(join(root, "project")));
+    });
+
+    test("names the nearer config that hides our mapping", () => {
+        const root = scratch();
+        const project = nest(root, "project");
+        linkUtilsPackage({ root });
+        writeFileSync(configPathFor(project), '{ "compilerOptions": { "strict": true } }');
+
+        expect(shadowedByFor(project)).toBe(configPathFor(project));
+    });
+
+    test("is not a shadow when the nearer config carries the mapping itself", () => {
+        const root = scratch();
+        const project = nest(root, "project");
+        linkUtilsPackage({ root });
+        linkUtilsPackage({ root: project });
+
+        expect(shadowedByFor(project)).toBeNull();
+    });
+
+    test("is not a shadow when no ancestor carries a mapping at all", () => {
+        const root = scratch();
+        const project = nest(root, "project");
+        writeFileSync(configPathFor(project), "{}");
+
+        // Nothing above it maps the package, so the nearer file hides nothing.
+        expect(shadowedByFor(project)).toBeNull();
+    });
+
+    test("🛑 a nearer config really does break resolution, and installing into it fixes it", async () => {
+        const root = scratch();
+        const project = nest(root, "project", "src");
+        const probe = join(project, "probe.ts");
+        writeFileSync(
+            probe,
+            'import { formatBytes } from "@genesiscz/utils/format";\nconsole.log(typeof formatBytes);\n'
+        );
+
+        const run = async (): Promise<number> => {
+            // `env` is required: without it Bun does not forward the test temp root.
+            const proc = Bun.spawn(["bun", probe], {
+                cwd: project,
+                env: process.env,
+                stdout: "pipe",
+                stderr: "pipe",
+            });
+
+            return await proc.exited;
+        };
+
+        linkUtilsPackage({ root });
+        expect(await run()).toBe(0);
+
+        // A project with its own tsconfig hides the ancestor mapping completely.
+        writeFileSync(configPathFor(join(root, "project")), '{ "compilerOptions": { "strict": true } }');
+        expect(await run()).not.toBe(0);
+
+        // Installing into that project merges the mapping in and restores it.
+        linkUtilsPackage({ root: join(root, "project") });
         expect(await run()).toBe(0);
     });
 });

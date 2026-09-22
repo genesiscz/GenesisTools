@@ -18,8 +18,8 @@
  */
 
 import { homedir } from "node:os";
-import { isAbsolute, resolve } from "node:path";
-import { runTool } from "@genesiscz/utils/cli";
+import { dirname, isAbsolute, resolve } from "node:path";
+import { runTool, suggestCommand } from "@genesiscz/utils/cli";
 import { logger, out } from "@genesiscz/utils/logger";
 import {
     linkStatusFor,
@@ -77,6 +77,26 @@ program
         }
 
         out.println(table.toString());
+
+        // 🛑 The one way this mechanism fails, and it is otherwise silent: Bun reads only the
+        // NEAREST tsconfig, so a project carrying its own hides an ancestor mapping entirely.
+        // Without naming the file, it looks like a broken install rather than a shadowed one.
+        for (const root of roots) {
+            const status = linkStatusFor(root);
+
+            if (status.shadowedBy === null) {
+                continue;
+            }
+
+            out.log.warn(`${status.shadowedBy} is nearer, and carries no mapping of ours.`);
+            out.log.info("Bun reads only the nearest tsconfig, so that file hides the one above it.");
+            out.log.info(
+                suggestCommand("tools link", {
+                    replaceCommand: ["install", "--root", dirname(status.shadowedBy)],
+                })
+            );
+        }
+
         renderCliSection("Columns");
         out.println(`  ${pc.dim("MAPPING")}   whether this root's tsconfig.json maps the package`);
         out.println(`  ${pc.dim("RESOLVES")}  whether a bare import actually works from that root`);
