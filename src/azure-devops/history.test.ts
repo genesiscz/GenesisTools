@@ -3,14 +3,14 @@ import { computeAssignmentPeriods, computeStatePeriods } from "@app/azure-devops
 import type { WorkItemUpdate } from "@app/azure-devops/types";
 
 /**
- * Bug 261311 as the updates API returns it: each `revisedDate` is the moment the NEXT revision
+ * A bug as the updates API returns it: each `revisedDate` is the moment the NEXT revision
  * replaced the update, and the latest one carries the 9999 sentinel. The real moments sit in
  * `System.ChangedDate`.
  */
 function update(rev: number, changed: string, revised: string, fields: WorkItemUpdate["fields"]): WorkItemUpdate {
     return {
         id: rev,
-        workItemId: 261311,
+        workItemId: 100001,
         rev,
         revisedBy: { displayName: "Testerová Jana (QT1)" },
         revisedDate: revised,
@@ -63,7 +63,7 @@ describe("an update whose moment cannot be recovered", () => {
     /** No `System.ChangedDate`, no `System.AuthorizedDate`, and the 9999 sentinel on `revisedDate`. */
     const undated: WorkItemUpdate = {
         id: 40,
-        workItemId: 261311,
+        workItemId: 100001,
         rev: 40,
         revisedBy: { displayName: "Tester One" },
         revisedDate: "9999-01-01T00:00:00Z",
