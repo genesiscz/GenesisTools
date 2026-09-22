@@ -15,14 +15,16 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { DEFAULT_HOOKS_CONFIG, type DiffConfig } from "../config";
-import { callDir, sessionDir } from "../paths";
+import { isDeleted, statusEntries } from "../git";
+import { callDir, claimsRoot, sessionDir } from "../paths";
 import type { HookPayload } from "../payload";
 import { beforeCopy } from "./before";
 import { capturePre, captureRoots } from "./capture";
+import { claimChange } from "./claim";
 import { classifyChange, type DiffCategory } from "./classify";
 import { changedFiles } from "./collect";
-import { namedArguments } from "./command-paths";
-import { hunkRange, renderPatch } from "./render";
+import { commandDirs, namedArguments } from "./command-paths";
+import { assembleMessage, type DiffBlock, hasContext, highlightRange, hunkRange, renderPatch } from "./render";
 import { runDiffPost } from "./run";
 
 let repo: string;
@@ -126,7 +128,7 @@ describe("renderPatch", () => {
             " three",
         ].join("\n");
 
-        const rendered = renderPatch(patch, [], DEFAULT_HOOKS_CONFIG.diff);
+        const rendered = renderPatch(patch);
 
         expect(rendered.added).toBe(1);
         expect(rendered.removed).toBe(1);
@@ -134,7 +136,16 @@ describe("renderPatch", () => {
     });
 
     it("returns an empty body when there is no hunk", () => {
-        expect(renderPatch("", [], DEFAULT_HOOKS_CONFIG.diff).body).toEqual([]);
+        expect(renderPatch("").body).toEqual([]);
+    });
+
+    it("tags which lines are the change, because that is what the budget spends on first", () => {
+        const patch = ["@@ -1,3 +1,3 @@", " one", "-two", "+TWO", " three"].join("\n");
+        const rendered = renderPatch(patch);
+
+        expect(rendered.body.map((line) => line.changed)).toEqual([false, true, true, false]);
+        // A context line carries its absolute number, which is how colour is found later.
+        expect(rendered.body.map((line) => line.at)).toEqual([1, null, null, 3]);
     });
 });
 
@@ -731,7 +742,7 @@ describe("files the command NAMES rather than works in", () => {
         calls += 1;
         current.toolUseId = `call-big-${calls}`;
 
-        const result = capturePre(current, { ...DEFAULT_HOOKS_CONFIG.diff, maxNamedPathBytes: 1024 });
+        const result = capturePre(current, { ...DEFAULT_HOOKS_CONFIG.diff, maxNamedPathMB: 0.001 });
 
         expect(result.named).toBe(0);
         expect(result.skipped.join(" ")).toContain("named-path cap");
@@ -809,7 +820,7 @@ describe("two sessions sharing one repository", () => {
         expect(runDiffPost(c, plain).message).toContain("SHARED-SECOND-EDIT");
     });
 
-    it("lets the same session render its own claim, so a retry is not silenced", () => {
+    it("prints a later edit by the same session, then not the unchanged state again", () => {
         const again = begin({ sessionId: "gt-diff-c", toolUseId: "share-3" });
 
         writeFileSync(shared, "one\nSAME-SESSION-AGAIN\nthree\n");
@@ -818,7 +829,9 @@ describe("two sessions sharing one repository", () => {
 
         const retry = begin({ sessionId: "gt-diff-c", toolUseId: "share-4" });
 
-        // No further edit: the state is unchanged, so the claim is this session's own.
+        // No further edit, so the mtime is older than this call's stamp. This is the `since`
+        // filter, NOT the claim: the claim's own behaviour is pinned in "the render claim,
+        // on its own", because an edit always moves the mtime and never repeats a key.
         expect(runDiffPost(retry, plain).files).not.toContain(shared);
     });
 
@@ -867,7 +880,7 @@ describe("a tree too dirty to capture whole", () => {
     });
 
     it("still captures the small file, so its diff is a delta and not the whole file", () => {
-        const diff = { ...DEFAULT_HOOKS_CONFIG.diff, highlight: "none" as const, maxCaptureBytes: 100_000 };
+        const diff = { ...DEFAULT_HOOKS_CONFIG.diff, highlight: "none" as const, maxCaptureMB: 0.1 };
         const current = begin({ cwd: big, toolUseId: "bigtree-1" }, diff);
 
         writeFileSync(small, "alpha\nBRAVO-DELTA\ncharlie\n");
@@ -882,7 +895,7 @@ describe("a tree too dirty to capture whole", () => {
 
     it("never reports a file it could not capture as one the command created", () => {
         // Budget below even the small file, so nothing in this root has a before-state.
-        const diff = { ...DEFAULT_HOOKS_CONFIG.diff, highlight: "none" as const, maxCaptureBytes: 1 };
+        const diff = { ...DEFAULT_HOOKS_CONFIG.diff, highlight: "none" as const, maxCaptureMB: 0.000001 };
         const current = begin({ cwd: big, toolUseId: "bigtree-2" }, diff);
 
         writeFileSync(small, "alpha\nNOT-ADDED\ncharlie\n");
@@ -968,7 +981,7 @@ describe("the capture budget sees what an entry really weighs", () => {
     });
 
     it("leaves a heavy untracked directory out and still captures the small file beside it", () => {
-        const diff = { ...DEFAULT_HOOKS_CONFIG.diff, highlight: "none" as const, maxCaptureFileBytes: 100_000 };
+        const diff = { ...DEFAULT_HOOKS_CONFIG.diff, highlight: "none" as const, maxCaptureFileMB: 0.1 };
         const current = begin({ cwd: tree, toolUseId: "budget-1" }, diff);
 
         writeFileSync(join(tree, "note.md"), "alpha\nBRAVO-SMALL\n");
@@ -980,7 +993,7 @@ describe("the capture budget sees what an entry really weighs", () => {
     });
 
     it("reports the heavy directory as left out rather than silently capturing it", () => {
-        const diff = { ...DEFAULT_HOOKS_CONFIG.diff, maxCaptureFileBytes: 100_000 };
+        const diff = { ...DEFAULT_HOOKS_CONFIG.diff, maxCaptureFileMB: 0.1 };
         const current = payload({ cwd: tree, toolUseId: "budget-2" });
 
         calls += 1;
@@ -1129,6 +1142,29 @@ describe("a command that edits AND commits in the same call", () => {
         expect(decision.message).toContain("(+1 -1)");
     });
 
+    it("renders a file ONCE when the command commits it and then edits it again", () => {
+        // Such a file is in the committed list AND still in `git status`, so it used to be
+        // collected twice and rendered twice. `dedupeAcrossSessions` is off on purpose: the
+        // claim ledger would mask the duplicate, and this pins the collector itself.
+        const diff = { ...plain.diff, dedupeAcrossSessions: false };
+        const twice = join(repo2, "twice.md");
+
+        writeFileSync(twice, "one\ntwo\n");
+        run(["add", "-A"]);
+        run(["commit", "-qm", "seed twice"]);
+
+        const current = begin({ cwd: repo2, toolUseId: "commit-4" }, diff);
+
+        writeFileSync(twice, "one\nCOMMITTED-EDIT\n");
+        run(["add", "-A"]);
+        run(["commit", "-qm", "commit inside the call"]);
+        writeFileSync(twice, "one\nCOMMITTED-EDIT\nAND-AGAIN\n");
+
+        const decision = runDiffPost(current, { ...plain, diff });
+
+        expect(decision.files.filter((path) => path === twice)).toHaveLength(1);
+    });
+
     it("does not blame the command for a commit that only moved HEAD", () => {
         // A commit of something staged by an EARLIER command: the file's mtime predates this
         // capture, so the mtime filter keeps it out.
@@ -1162,5 +1198,335 @@ describe("a command that edits AND commits in the same call", () => {
         expect(decision.message).toContain("brand");
 
         rmSync(empty, { recursive: true, force: true });
+    });
+});
+
+describe("a deletion that is still sitting in `git status`", () => {
+    // `git status` reports a deletion until it is committed, and a deletion has no mtime, so
+    // the `since` filter that gates every edit cannot gate it. Measured 2026-09-21 on one
+    // `git rm --cached`: 14 renders over seven minutes, one per later command in that
+    // repository, 13 of them spurious.
+    const plain = { ...DEFAULT_HOOKS_CONFIG, diff: { ...DEFAULT_HOOKS_CONFIG.diff, highlight: "none" as const } };
+
+    beforeAll(() => {
+        writeFileSync(join(repo, "doomed.ts"), "one\ntwo\nthree\n");
+        git(["add", "-A"]);
+        git(["commit", "-qm", "doomed"]);
+    });
+
+    afterAll(() => {
+        git(["checkout", "--", "doomed.ts"]);
+        rmSync(sessionDir("claude", "gt-diff-gone"), { recursive: true, force: true });
+    });
+
+    it("renders the removal once, on the command that made it", () => {
+        const removing = begin({ sessionId: "gt-diff-gone", toolUseId: "gone-1" }, plain.diff);
+
+        rmSync(join(repo, "doomed.ts"));
+
+        const decision = runDiffPost(removing, plain);
+
+        expect(decision.message).toContain("Deleted");
+        expect(decision.message).toContain("two");
+    });
+
+    it("says nothing on the next command, though git still reports the deletion", () => {
+        // The precondition, asserted rather than assumed: git has not forgotten it.
+        expect(statusEntries(repo).some((entry) => entry.path === "doomed.ts" && isDeleted(entry))).toBe(true);
+
+        const later = begin({ sessionId: "gt-diff-gone", toolUseId: "gone-2" }, plain.diff);
+        const decision = runDiffPost(later, plain);
+
+        expect(decision.decision).toBe("silent");
+        expect(decision.reason).toContain("already happened before this command began");
+    });
+});
+
+describe("the render claim, on its own", () => {
+    const solo = "gt-diff-claim-solo";
+    // NOT `join(repo, …)`: `repo` is assigned in a `beforeAll`, so a describe body reading it
+    // throws at collection time. `claimChange` only ever hashes the path, never stats it.
+    const one = join(tmpdir(), "gt-claim-unit-one.ts");
+    const two = join(tmpdir(), "gt-claim-unit-two.ts");
+
+    afterAll(() => {
+        for (const path of [one, two]) {
+            rmSync(join(claimsRoot(), `${Bun.hash(path).toString(36)}.json`), { force: true });
+        }
+    });
+
+    it("does not let ONE session print the same state twice", () => {
+        const key = { path: one, mtimeMs: 1_700_000_000_000, size: 42 };
+
+        expect(claimChange(key, solo)).toBe(true);
+        expect(claimChange(key, solo)).toBe(false);
+    });
+
+    it("still prints the NEXT state of that same path", () => {
+        expect(claimChange({ path: two, mtimeMs: 1, size: 10 }, solo)).toBe(true);
+        expect(claimChange({ path: two, mtimeMs: 2, size: 10 }, solo)).toBe(true);
+    });
+});
+
+describe("one message, fitted to what the harness will actually show", () => {
+    // Measured 2026-09-21 over 206 PostToolUse messages in one session: the largest shown
+    // whole was 9814 bytes, the smallest cut was about 10138, and 13 of the 206 were cut. A
+    // cut message keeps the first file and loses the last, silently.
+    const block = (name: string, lines: number): DiffBlock => ({
+        head: `head ${name}`,
+        body: Array.from({ length: lines }, (_, index) => ({
+            text: `${name} line ${index} ${"x".repeat(40)}`,
+            changed: false,
+            at: index + 1,
+        })),
+    });
+    const budget = (bytes: number) => ({ ...DEFAULT_HOOKS_CONFIG.diff, maxMessageBytes: bytes });
+
+    it("never exceeds maxMessageBytes", () => {
+        expect(assembleMessage([block("a", 60), block("b", 60)], budget(600)).length).toBeLessThanOrEqual(600);
+    });
+
+    it("keeps EVERY header, because losing the last file is the bug being fixed", () => {
+        const message = assembleMessage([block("a", 200), block("b", 1)], budget(400));
+
+        expect(message).toContain("head a");
+        expect(message).toContain("head b");
+    });
+
+    it("does not let a large diff starve a one-line change listed after it", () => {
+        expect(assembleMessage([block("big", 200), block("small", 1)], budget(900))).toContain("small line 0");
+    });
+
+    it("says how many lines it dropped", () => {
+        expect(assembleMessage([block("a", 50)], budget(300))).toMatch(/… \d+ more lines/);
+    });
+
+    it("leaves a message that already fits completely alone", () => {
+        const message = assembleMessage([block("a", 3)], budget(9_000));
+
+        expect(message).toContain("a line 2");
+        expect(message).not.toMatch(/more lines/);
+    });
+
+    it("still caps one file at maxLinesPerFile", () => {
+        const message = assembleMessage([block("a", 200)], { ...budget(500_000), maxLinesPerFile: 4 });
+
+        expect(message.split("\n").filter((line) => line.startsWith("a line")).length).toBe(4);
+    });
+});
+
+describe("a harness that cannot show a diff", () => {
+    const plain = { ...DEFAULT_HOOKS_CONFIG, diff: { ...DEFAULT_HOOKS_CONFIG.diff, highlight: "none" as const } };
+
+    it("renders nothing for grok, on a call that really did change a file", () => {
+        const current = begin({ harness: "grok" });
+
+        writeFileSync(join(repo, "kept.ts"), "alpha\nGROK-EDIT\ncharlie\ndelta\necho\n");
+
+        const decision = runDiffPost(current, plain);
+
+        expect(decision.decision).toBe("skip");
+        expect(decision.message).toBeUndefined();
+
+        git(["checkout", "--", "kept.ts"]);
+        rmSync(sessionDir("grok", "gt-diff-test"), { recursive: true, force: true });
+    });
+
+    it("still renders the same change for claude, so the gate is the harness and nothing else", () => {
+        const current = begin();
+
+        writeFileSync(join(repo, "kept.ts"), "alpha\nCLAUDE-EDIT\ncharlie\ndelta\necho\n");
+
+        const decision = runDiffPost(current, plain);
+
+        expect(decision.decision).toBe("emitted");
+        expect(decision.message).toContain("CLAUDE-EDIT");
+
+        git(["checkout", "--", "kept.ts"]);
+    });
+});
+
+describe("the budget buys the change before the context", () => {
+    // One four-line edit, rendered the way git emits it: context lines FIRST. Every line is
+    // about 95 bytes, so a budget can be set to a whole number of them.
+    const edit = (name: string): DiffBlock => ({
+        head: `head ${name}`,
+        body: [
+            { text: `${name} context one ${"x".repeat(80)}`, changed: false, at: 1 },
+            { text: `${name} context two ${"x".repeat(80)}`, changed: false, at: 2 },
+            { text: `${name} context three ${"x".repeat(78)}`, changed: false, at: 3 },
+            { text: `${name} CHANGED plus ${"x".repeat(78)}`, changed: true, at: null },
+            { text: `${name} CHANGED minus ${"x".repeat(77)}`, changed: true, at: null },
+            { text: `${name} context four ${"x".repeat(79)}`, changed: false, at: 4 },
+        ],
+    });
+    const budget = (bytes: number) => ({ ...DEFAULT_HOOKS_CONFIG.diff, maxMessageBytes: bytes });
+
+    it("prints the added and removed lines and not the context around them", () => {
+        const message = assembleMessage([edit("a")], budget(300));
+
+        expect(message).toContain("CHANGED plus");
+        expect(message).toContain("CHANGED minus");
+        expect(message).not.toContain("context");
+    });
+
+    it("gives EVERY file of a wide sweep a real change line", () => {
+        // The measured failure, 2026-09-22: 15 parity contracts, each a four-line edit, and
+        // every block printed two context lines and elided all eight of its changed lines.
+        const names = Array.from({ length: 15 }, (_, index) => `f${String(index + 1).padStart(2, "0")}`);
+        const message = assembleMessage(
+            names.map((name) => edit(name)),
+            budget(2_200)
+        );
+
+        for (const name of names) {
+            expect(message).toContain(`${name} CHANGED plus`);
+            expect(message).not.toContain(`${name} context`);
+        }
+    });
+
+    it("does not buy syntax colour for a context line the budget will not print", () => {
+        const one = edit("a");
+        let spawns = 0;
+
+        one.colour = () => {
+            spawns += 1;
+            return [];
+        };
+
+        assembleMessage([one], budget(300));
+
+        expect(spawns).toBe(0);
+    });
+
+    it("refuses the spawn when context prints but the colour would not fit beside it", () => {
+        const one = edit("a");
+        let spawns = 0;
+
+        one.colour = () => {
+            spawns += 1;
+            return [];
+        };
+
+        // A budget that fits every plain line and nothing more. `bat` adds at least 22 bytes
+        // per line, so the spawn could only be refused line by line afterwards.
+        const message = assembleMessage([one], budget(650));
+
+        expect(message).toContain("context one");
+        expect(message).not.toMatch(/more lines/);
+        expect(spawns).toBe(0);
+    });
+
+    it("does buy it, once, for the context lines that do print", () => {
+        const one = edit("a");
+        let spawns = 0;
+
+        one.colour = () => {
+            spawns += 1;
+            return ["TINTED one", "TINTED two", "TINTED three", "TINTED four"];
+        };
+
+        const message = assembleMessage([one], budget(100_000));
+
+        expect(spawns).toBe(1);
+        expect(message).toContain("TINTED one");
+    });
+});
+
+describe("a `cd` through a variable the command set itself", () => {
+    // Measured 2026-09-22: a sweep written as `P=<worktree>` then `cd "$P"` left the hook
+    // watching the session cwd, which was a DIFFERENT checkout. Two edited files produced no
+    // diff, and the decision log recorded the wrong repository as the only root.
+    let other: string;
+
+    beforeAll(() => {
+        other = realpathSync(mkdtempSync(join(tmpdir(), "gt-cdvar-")));
+    });
+
+    afterAll(() => {
+        rmSync(other, { recursive: true, force: true });
+    });
+
+    it("follows a double-quoted reference", () => {
+        expect(commandDirs(`P=${other}\ncd "$P" && bun x`, repo)).toEqual([repo, other]);
+    });
+
+    it("follows a bare and a braced reference", () => {
+        expect(commandDirs(`P=${other}\ncd $P && bun x`, repo)).toEqual([repo, other]);
+        expect(commandDirs(`P=${other}\ncd \${P} && bun x`, repo)).toEqual([repo, other]);
+    });
+
+    it("refuses a SINGLE-quoted reference, which the shell does not expand", () => {
+        expect(commandDirs(`P=${other}\ncd '$P' && bun x`, repo)).toEqual([repo]);
+    });
+
+    it("🛑 never reads the environment, only what the command assigned", () => {
+        // `$HOME` always resolves in this process, and it is never what the command saw.
+        expect(commandDirs('cd "$HOME" && bun x', repo)).toEqual([repo]);
+        expect(commandDirs('cd "$NOT_SET_ANYWHERE" && bun x', repo)).toEqual([repo]);
+    });
+
+    it("refuses a reference the command only partly builds", () => {
+        expect(commandDirs(`P=${other}\ncd "$P/sub" && bun x`, repo)).toEqual([repo]);
+    });
+
+    it("does not read the assignment itself as a file the command named", () => {
+        const named = namedArguments(`P=${other}\ncd "$P" && bun x`, [repo]);
+
+        expect(named.filter((path) => path.includes("P="))).toEqual([]);
+    });
+});
+
+describe("highlighting is skipped when nothing would use it", () => {
+    // 🛑 One `bat` spawn per changed file sits on the hot path. Measured 2026-09-22 on a
+    // 15-file change that rewrote every line: 597 ms with highlighting against 159 ms
+    // without, for BYTE-IDENTICAL output, because only CONTEXT lines are ever coloured.
+    const batty = { ...DEFAULT_HOOKS_CONFIG.diff, highlight: "bat" as const };
+    const range = { from: 1, to: 4 };
+    const rewrite = "@@ -1,2 +1,2 @@\n-old one\n-old two\n+new one\n+new two";
+    const edited = "@@ -1,3 +1,3 @@\n kept line\n-old two\n+new two\n kept three";
+    const batPresent = spawnSync("bat", ["--version"], { encoding: "utf8", env: process.env }).status === 0;
+
+    it("sees a context line, or its absence", () => {
+        expect(hasContext(rewrite)).toBe(false);
+        expect(hasContext(edited)).toBe(true);
+    });
+
+    it("returns nothing for a patch that rewrote every line", () => {
+        // 🛑 The file must EXIST. Pointed at a missing path, `bat` exits non-zero and the
+        // function returns [] whether the skip is there or not, so the test passed for the
+        // wrong reason and a planted regression went unnoticed.
+        const file = join(repo, "rewritten.ts");
+
+        writeFileSync(file, "const kept = 1;\nconst two = 2;\nconst three = 3;\n");
+
+        expect(highlightRange(file, range, batty, rewrite)).toEqual([]);
+
+        if (batPresent) {
+            // The positive control for this very assertion: same file, same range, same
+            // config, and the ONLY difference is a patch that has context.
+            expect(highlightRange(file, range, batty, edited).length).toBeGreaterThan(0);
+        }
+    });
+
+    it("still highlights a patch that KEPT lines, which is the normal case", () => {
+        if (!batPresent) {
+            // CI images do not all carry `bat`, and the point here is the negative control:
+            // the skip above must not have disabled highlighting outright.
+            expect(hasContext(edited)).toBe(true);
+            return;
+        }
+
+        const file = join(repo, "highlight-me.ts");
+
+        writeFileSync(file, "const kept = 1;\nconst two = 2;\nconst three = 3;\n");
+
+        expect(highlightRange(file, range, batty, edited).length).toBeGreaterThan(0);
+    });
+
+    it("still returns nothing when highlighting is off entirely", () => {
+        const off = { ...DEFAULT_HOOKS_CONFIG.diff, highlight: "none" as const };
+
+        expect(highlightRange(join(repo, "anything.ts"), range, off, edited)).toEqual([]);
     });
 });

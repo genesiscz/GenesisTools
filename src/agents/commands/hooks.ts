@@ -9,7 +9,9 @@ import type { Command } from "commander";
 import pc from "picocolors";
 import {
     DEFAULT_HOOKS_CONFIG,
+    diffFor,
     type HarnessName,
+    type HooksConfig,
     hooksConfigPath,
     lastConfigLoadError,
     loadHooksConfig,
@@ -33,6 +35,15 @@ const HARNESSES: readonly HarnessName[] = ["claude", "codex", "grok"];
 
 function isHarness(value: string): value is HarnessName {
     return (HARNESSES as readonly string[]).includes(value);
+}
+
+/** Which harnesses render the diff, so a harness that is switched off is visible at a glance. */
+function perHarnessDiff(config: HooksConfig): string {
+    return HARNESSES.map((harness) => {
+        const resolved = diffFor(config, harness);
+
+        return `${harness} ${resolved.enabled ? "on" : pc.yellow("off")}`;
+    }).join(" · ");
 }
 
 export function registerHooksCommands(program: Command): void {
@@ -154,9 +165,10 @@ export function registerHooksCommands(program: Command): void {
             table.push(["diff.enabled", String(config.diff.enabled)]);
             table.push(["diff.maxFiles", String(config.diff.maxFiles)]);
             table.push(["diff.standDownWhenNative", String(config.diff.standDownWhenNative)]);
+            table.push(["diff per harness", perHarnessDiff(config)]);
             table.push(["shadow", config.shadow ? "ON (decides, says nothing)" : "off (it speaks)"]);
             table.push(["log", config.logPath]);
-            table.push(["log rotates at", `${config.maxLogBytes} bytes, keeping one generation`]);
+            table.push(["log rotates at", `${config.maxLogMB} MB, keeping one generation`]);
             out.println(table.toString());
 
             const wired = existsSync(claudeSettingsPath())

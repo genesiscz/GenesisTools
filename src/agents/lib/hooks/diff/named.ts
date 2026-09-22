@@ -1,7 +1,7 @@
 import { chmodSync, copyFileSync, mkdirSync, readFileSync, type Stats, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
-import type { DiffConfig } from "../config";
+import { type DiffConfig, megabytes } from "../config";
 import { hookDiag } from "../log";
 
 /**
@@ -74,10 +74,10 @@ export function captureNamed(dir: string, paths: string[], config: DiffConfig): 
             continue;
         }
 
-        if (stat.size > config.maxNamedPathBytes) {
+        if (stat.size > megabytes(config.maxNamedPathMB)) {
             // Recorded rather than silent: without the copy there is no before-state, so the
             // post phase cannot diff it and the absence must be explainable from the log.
-            skipped.push(`${path}: ${stat.size} bytes, over the ${config.maxNamedPathBytes} named-path cap`);
+            skipped.push(`${path}: ${stat.size} bytes, over the ${config.maxNamedPathMB} MB named-path cap`);
             continue;
         }
 

@@ -7,22 +7,39 @@ import type { DiffCategory } from "./diff/classify";
 export type HookOutcome = "allow" | "context" | "warn" | "block";
 export type HarnessName = "claude" | "codex" | "grok";
 
+/**
+ * A configured MB figure in bytes. Decimal, because these caps are read against file sizes
+ * people quote in MB, not against memory pages.
+ *
+ * The config says MB rather than bytes so a ceiling is legible at a glance: `8` instead of
+ * `8_000_000`, which is the shape a misplaced zero hides in.
+ */
+export function megabytes(mb: number): number {
+    return Math.round(mb * 1_000_000);
+}
+
 export interface DiffConfig {
     enabled: boolean;
+    /**
+     * How many changed files one message may name. Every file that fits gets its header, and
+     * `maxMessageBytes` then decides how much of each DIFF is shown. So raising this trades
+     * depth per file for breadth: at 15 a wide sweep is fully listed, and each file shows a
+     * few lines rather than thirty.
+     */
     maxFiles: number;
     maxLinesPerFile: number;
     contextLines: number;
     maxRoots: number;
     untrackedExpansionCap: number;
     maxCaptureFiles: number;
-    maxCaptureBytes: number;
+    maxCaptureMB: number;
     /**
      * Per-ENTRY ceiling, checked before the total. A file bigger than this is left out on its
      * own merits: the render shows at most `maxLinesPerFile` lines of it, so copying megabytes
-     * to produce thirty lines buys nothing. Measured on a 65-entry tree of 43.7 MB, a 256 KB
+     * to produce thirty lines buys nothing. Measured on a 65-entry tree of 43.7 MB, a 0.256 MB
      * ceiling keeps 58 entries in 1.8 MB.
      */
-    maxCaptureFileBytes: number;
+    maxCaptureFileMB: number;
     highlight: "bat" | "none";
     standDownWhenNative: boolean;
     /**
@@ -33,7 +50,7 @@ export interface DiffConfig {
      */
     watchNamedPaths: boolean;
     maxNamedPaths: number;
-    maxNamedPathBytes: number;
+    maxNamedPathMB: number;
     /**
      * Whether a file the command CREATED, and that is known only because the command named
      * it, is printed. Off, because that file is almost always scratch: measured 2026-09-21,
@@ -49,6 +66,20 @@ export interface DiffConfig {
      */
     dedupeAcrossSessions: boolean;
     /**
+     * The most bytes ONE message may carry, escape codes included.
+     *
+     * 🛑 The harness has its own ceiling, and breaching it loses the TAIL silently. Measured
+     * 2026-09-21 across 206 PostToolUse messages in one session: the largest shown whole was
+     * 9814 bytes, the smallest replaced by `Output too large (9.9KB)` was about 10138, and 13
+     * of the 206 (6%) were cut. A cut message keeps the FIRST file and drops the last, which
+     * is usually the one the command was about: one call rendered `parity.ts` and `proofs.ts`,
+     * and only `parity.ts` survived.
+     *
+     * `maxFiles` and `maxLinesPerFile` cannot prevent this on their own, because a bat-coloured
+     * line costs about 175 bytes rather than its visible width.
+     */
+    maxMessageBytes: number;
+    /**
      * Which KINDS of change are printed. `source` is anything that is not one of the others.
      *
      * `log` and `generated` ship OFF: a jest run redirected into `/tmp/z1.log` and truncated
@@ -57,6 +88,38 @@ export interface DiffConfig {
      * still be seen; turn it off once a formatter is noisy in your loop.
      */
     categories: Record<DiffCategory, boolean>;
+    /**
+     * Per-harness overrides, applied over everything above once the harness is known.
+     *
+     * A diff is only worth rendering where the harness will actually SHOW it, and that is a
+     * property of the harness, not of the repository or the command.
+     */
+    harnesses: Partial<Record<HarnessName, DiffOverrides>>;
+}
+
+/** What one harness may override. Anything absent falls through to the shared `diff` block. */
+export type DiffOverrides = Partial<Omit<DiffConfig, "categories" | "harnesses">> & {
+    categories?: Partial<Record<DiffCategory, boolean>>;
+};
+
+/**
+ * The diff settings in force for one harness.
+ *
+ * `categories` merges field by field for the same reason the stored config does: an override
+ * that turns one kind on must not blank the other three.
+ */
+export function diffFor(config: HooksConfig, harness: HarnessName | undefined): DiffConfig {
+    const override = harness ? config.diff.harnesses[harness] : undefined;
+
+    if (!override) {
+        return config.diff;
+    }
+
+    return {
+        ...config.diff,
+        ...override,
+        categories: { ...config.diff.categories, ...override.categories },
+    };
 }
 
 export interface GuardConfig {
@@ -94,7 +157,7 @@ export interface HooksConfig {
      * forever, and while `logCommands` is `"shadow"` it accumulates every command verbatim.
      * One generation is kept (`<log>.1`), so the ceiling is twice this.
      */
-    maxLogBytes: number;
+    maxLogMB: number;
 }
 
 /**
@@ -149,28 +212,52 @@ export const DEFAULT_HOOKS_CONFIG: HooksConfig = {
     },
     diff: {
         enabled: true,
-        maxFiles: 3,
+        maxFiles: 15,
         maxLinesPerFile: 30,
         contextLines: 3,
         maxRoots: 4,
         untrackedExpansionCap: 200,
         maxCaptureFiles: 400,
-        maxCaptureBytes: 8_000_000,
-        maxCaptureFileBytes: 256_000,
+        maxCaptureMB: 8,
+        maxCaptureFileMB: 0.256,
         highlight: "bat",
         standDownWhenNative: true,
         watchNamedPaths: true,
         maxNamedPaths: 8,
-        maxNamedPathBytes: 2_000_000,
+        maxNamedPathMB: 2,
         namedPathsShowCreated: false,
         dedupeAcrossSessions: true,
+        maxMessageBytes: 9_000,
         categories: { source: true, formatting: true, log: false, generated: false },
+        harnesses: {
+            // 🛑 OFF for Grok, because Grok cannot show a diff. Observed 2026-09-22 on a real
+            // PostToolUse message: it prints the escape sequences as literal text (`[1mUpdated`
+            // with the ESC byte eaten), and it cuts the message after about 200 characters,
+            // ending `-impo… [+7768 chars]`. So one file HEADER already overflows it, and no
+            // setting of `maxMessageBytes` or `highlight` makes 200 characters a diff. The
+            // capture is skipped too, so a Grok session pays nothing for a render it cannot
+            // have. Claude and Codex both render it correctly and are unaffected.
+            grok: { enabled: false },
+        },
     },
     logPath: defaultLogPath(),
     shadow: true,
     logCommands: "shadow",
-    maxLogBytes: 16_000_000,
+    maxLogMB: 16,
 };
+
+/** One entry per harness, each merged over the shipped one rather than replacing it. */
+function mergedHarnesses(
+    stored: Partial<Record<HarnessName, DiffOverrides>> | undefined
+): Partial<Record<HarnessName, DiffOverrides>> {
+    const merged: Partial<Record<HarnessName, DiffOverrides>> = { ...DEFAULT_HOOKS_CONFIG.diff.harnesses };
+
+    for (const [harness, override] of Object.entries(stored ?? {})) {
+        merged[harness as HarnessName] = { ...merged[harness as HarnessName], ...override };
+    }
+
+    return merged;
+}
 
 /**
  * Synchronous on purpose: three hook entrypoints call this before they read stdin, and
@@ -212,10 +299,13 @@ export function loadHooksConfig(): HooksConfig {
             // `hooks.json` that turns one category on would otherwise blank every other one,
             // and `undefined` reads as "hidden".
             categories: { ...DEFAULT_HOOKS_CONFIG.diff.categories, ...stored.diff?.categories },
+            // Same field-by-field reason, one level deeper: a stored override for Codex must
+            // not delete the shipped Grok one, which is what turns the diff off there.
+            harnesses: mergedHarnesses(stored.diff?.harnesses),
         },
         shadow: stored.shadow ?? DEFAULT_HOOKS_CONFIG.shadow,
         logCommands: stored.logCommands ?? DEFAULT_HOOKS_CONFIG.logCommands,
-        maxLogBytes: stored.maxLogBytes ?? DEFAULT_HOOKS_CONFIG.maxLogBytes,
+        maxLogMB: stored.maxLogMB ?? DEFAULT_HOOKS_CONFIG.maxLogMB,
         logPath: stored.logPath ?? defaultLogPath(),
     };
 }

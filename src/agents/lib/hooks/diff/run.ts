@@ -1,16 +1,16 @@
 import { existsSync, readFileSync, rmSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
-import type { DiffConfig, HooksConfig } from "../config";
+import { type DiffConfig, diffFor, type HooksConfig } from "../config";
 import { committedPaths, gitOut, objectId, statusOf } from "../git";
 import { hookDiag } from "../log";
 import { callDir, safeSegment } from "../paths";
 import type { HookPayload } from "../payload";
-import { beforeCopy, leftOutOfCapture } from "./before";
+import { alreadyGone, beforeCopy, leftOutOfCapture } from "./before";
 import { claimChange } from "./claim";
 import { classifyChange, type DiffCategory } from "./classify";
 import { type ChangedFile, changedFiles } from "./collect";
 import { namedChanges } from "./named";
-import { highlightRange, hunkRange, renderBlock, renderPatch } from "./render";
+import { assembleMessage, type DiffBlock, highlightRange, hunkRange, renderBlock, renderPatch } from "./render";
 
 export interface DiffDecision {
     decision: "emitted" | "silent" | "skip";
@@ -52,7 +52,7 @@ function blockFrom(
     hadBefore: boolean,
     config: DiffConfig,
     suppressed: Map<DiffCategory, number>
-): string | null {
+): DiffBlock | null {
     // The KIND is decided before any rendering work, so a category that is switched off
     // costs one classification rather than a `bat` spawn and a full render.
     const category = classifyChange(file.path, patch);
@@ -62,16 +62,22 @@ function blockFrom(
         return null;
     }
 
-    // Highlight only the lines the hunks touch, never the whole file. A deleted one has
-    // nothing left on disk to highlight.
-    const highlighted = file.deleted ? [] : highlightRange(file.path, hunkRange(patch), config);
-    const rendered = renderPatch(patch, highlighted, config);
+    const rendered = renderPatch(patch);
 
     if (rendered.body.length === 0 && !file.deleted) {
         return null;
     }
 
-    return renderBlock(file, rendered, hadBefore, config, category);
+    const block = renderBlock(file, rendered, hadBefore, category);
+
+    // Highlight only the lines the hunks touch, never the whole file, and only once the
+    // budget has decided a context line will really be printed. A deleted file has nothing
+    // left on disk to highlight.
+    if (!file.deleted) {
+        block.colour = () => highlightRange(file.path, hunkRange(patch), config, patch);
+    }
+
+    return block;
 }
 
 /**
@@ -108,6 +114,7 @@ function silentReason(
     covered: number,
     uncaptured: number,
     claimed: number,
+    stale: number,
     suppressed: Map<DiffCategory, number>
 ): string {
     if (suppressed.size > 0) {
@@ -121,19 +128,26 @@ function silentReason(
     }
 
     if (claimed > 0) {
-        return `${claimed} changed file(s) were already rendered by another session`;
+        // Not "by another session" any more: a session also dedupes against itself.
+        return `${claimed} changed file(s) had already been rendered`;
     }
 
     if (uncaptured > 0) {
         return `${uncaptured} changed file(s) had no captured before-state, over the capture cap`;
     }
 
+    if (stale > 0) {
+        return `${stale} deletion(s) had already happened before this command began`;
+    }
+
     return "no change since this command began";
 }
 
 export function runDiffPost(payload: HookPayload, config: HooksConfig): DiffDecision {
-    if (!config.diff.enabled) {
-        return { decision: "skip", reason: "diff disabled in config", files: [] };
+    const diff = diffFor(config, payload.harness);
+
+    if (!diff.enabled) {
+        return { decision: "skip", reason: `diff disabled in config for ${payload.harness}`, files: [] };
     }
 
     const session = safeSegment(payload.sessionId);
@@ -163,19 +177,20 @@ export function runDiffPost(payload: HookPayload, config: HooksConfig): DiffDeci
     // feature is on, and it is empty whenever the change landed outside the cwd repo,
     // so treating its mere presence as "already rendered" silences this exactly where
     // it is needed.
-    const native = new Set(config.diff.standDownWhenNative ? payload.nativeDiffFiles : []);
-    const blocks: string[] = [];
+    const native = new Set(diff.standDownWhenNative ? payload.nativeDiffFiles : []);
+    const blocks: DiffBlock[] = [];
     const files: string[] = [];
     let covered = 0;
     let uncaptured = 0;
     let claimed = 0;
+    let stale = 0;
     const suppressed = new Map<DiffCategory, number>();
 
     roots.forEach((root, index) => {
         // The cap short-circuits the ROOT loop too. Breaking only the inner loop still called
         // `changedFiles` for every remaining root, and that is a `git status` plus an
         // `ls-files` per root, on the hot path, for output already capped away.
-        if (blocks.length >= config.diff.maxFiles) {
+        if (blocks.length >= diff.maxFiles) {
             return;
         }
 
@@ -189,13 +204,22 @@ export function runDiffPost(payload: HookPayload, config: HooksConfig): DiffDeci
         const base = moved && startedOn ? startedOn : "HEAD";
         const committed = moved && startedOn && nowOn ? committedPaths(root, startedOn, nowOn) : [];
 
-        for (const file of changedFiles(root, since, config.diff, { entries: summary.entries, committed })) {
-            if (blocks.length >= config.diff.maxFiles) {
+        for (const file of changedFiles(root, since, diff, { entries: summary.entries, committed })) {
+            if (blocks.length >= diff.maxFiles) {
                 break;
             }
 
             if (native.has(file.path)) {
                 covered += 1;
+                continue;
+            }
+
+            if (file.deleted && alreadyGone(dir, root, file.path)) {
+                // It was already deleted when this command began, so this command did not
+                // delete it. A deletion carries no mtime and therefore bypasses the `since`
+                // filter every edit passes, which made `git status` reprint it on every
+                // later command until someone committed it.
+                stale += 1;
                 continue;
             }
 
@@ -209,19 +233,13 @@ export function runDiffPost(payload: HookPayload, config: HooksConfig): DiffDeci
                 continue;
             }
 
-            const block = blockFrom(
-                file,
-                patchFor(file, before, config.diff, base),
-                before !== null,
-                config.diff,
-                suppressed
-            );
+            const block = blockFrom(file, patchFor(file, before, diff, base), before !== null, diff, suppressed);
 
             if (block === null) {
                 continue;
             }
 
-            if (!claim(file.path, file.deleted, config.diff, payload.sessionId)) {
+            if (!claim(file.path, file.deleted, diff, payload.sessionId)) {
                 claimed += 1;
                 continue;
             }
@@ -234,7 +252,7 @@ export function runDiffPost(payload: HookPayload, config: HooksConfig): DiffDeci
     // Files the command NAMED rather than worked in. They are read from a copy, so this adds
     // no git process unless one of them actually changed.
     for (const change of namedChanges(dir)) {
-        if (blocks.length >= config.diff.maxFiles) {
+        if (blocks.length >= diff.maxFiles) {
             break;
         }
 
@@ -248,7 +266,7 @@ export function runDiffPost(payload: HookPayload, config: HooksConfig): DiffDeci
             continue;
         }
 
-        if (change.before === null && !change.deleted && !config.diff.namedPathsShowCreated) {
+        if (change.before === null && !change.deleted && !diff.namedPathsShowCreated) {
             // A file this command created, known only because the command named it. That is
             // a scratch file far more often than not, and the command's own output already
             // says what it wrote. An edit to a file that ALREADY existed still renders.
@@ -268,18 +286,18 @@ export function runDiffPost(payload: HookPayload, config: HooksConfig): DiffDeci
         const patch = gitOut(file.root, [
             "diff",
             "--no-index",
-            `-U${config.diff.contextLines}`,
+            `-U${diff.contextLines}`,
             "--",
             change.before ?? "/dev/null",
             change.deleted ? "/dev/null" : change.path,
         ]);
-        const block = blockFrom(file, patch, change.before !== null, config.diff, suppressed);
+        const block = blockFrom(file, patch, change.before !== null, diff, suppressed);
 
         if (block === null) {
             continue;
         }
 
-        if (!claim(change.path, change.deleted, config.diff, payload.sessionId)) {
+        if (!claim(change.path, change.deleted, diff, payload.sessionId)) {
             claimed += 1;
             continue;
         }
@@ -295,8 +313,13 @@ export function runDiffPost(payload: HookPayload, config: HooksConfig): DiffDeci
     }
 
     if (blocks.length === 0) {
-        return { decision: "silent", reason: silentReason(covered, uncaptured, claimed, suppressed), files: [] };
+        return { decision: "silent", reason: silentReason(covered, uncaptured, claimed, stale, suppressed), files: [] };
     }
 
-    return { decision: "emitted", reason: "rendered a diff the harness did not", message: blocks.join("\n\n"), files };
+    return {
+        decision: "emitted",
+        reason: "rendered a diff the harness did not",
+        message: assembleMessage(blocks, diff),
+        files,
+    };
 }

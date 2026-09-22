@@ -1,7 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { chmodSync, type Dirent, lstatSync, mkdirSync, readdirSync, type Stats, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { DiffConfig } from "../config";
+import { type DiffConfig, megabytes } from "../config";
 import { gitOut, isDeleted, objectId, statusEntries } from "../git";
 import { hookDiag } from "../log";
 import { callDir, safeSegment } from "../paths";
@@ -118,9 +118,11 @@ interface CapturePlan {
  * as one the command created.
  */
 function planCapture(root: string, files: string[], config: DiffConfig): CapturePlan {
+    const fileCap = megabytes(config.maxCaptureFileMB);
+    const totalCap = megabytes(config.maxCaptureMB);
     const sized = files.map((file) => ({
         file,
-        size: entryBytes(join(root, file), config.maxCaptureFileBytes),
+        size: entryBytes(join(root, file), fileCap),
     }));
 
     sized.sort((left, right) => left.size - right.size);
@@ -130,8 +132,8 @@ function planCapture(root: string, files: string[], config: DiffConfig): Capture
     let bytes = 0;
 
     for (const entry of sized) {
-        const overFile = entry.size > config.maxCaptureFileBytes;
-        const overTotal = bytes + entry.size > config.maxCaptureBytes;
+        const overFile = entry.size > fileCap;
+        const overTotal = bytes + entry.size > totalCap;
 
         if (overFile || overTotal || take.length >= config.maxCaptureFiles) {
             left.push(entry.file);
@@ -144,7 +146,7 @@ function planCapture(root: string, files: string[], config: DiffConfig): Capture
 
     const reason =
         left.length > 0
-            ? `${left.length} of ${files.length} dirty entries left out, over the ${config.maxCaptureFileBytes} per-entry / ${config.maxCaptureBytes} total / ${config.maxCaptureFiles} entry cap`
+            ? `${left.length} of ${files.length} dirty entries left out, over the ${config.maxCaptureFileMB} MB per-entry / ${config.maxCaptureMB} MB total / ${config.maxCaptureFiles} entry cap`
             : null;
 
     return { take, left, reason };
@@ -278,13 +280,20 @@ export function capturePre(payload: HookPayload, config: DiffConfig): CaptureRes
     writePrivateFile(join(dir, "heads.txt"), captured_roots.map((entry) => entry.head ?? "").join("\n"));
 
     roots.forEach((root, index) => {
+        const entries = statusEntries(root);
         // A DELETED path is excluded: it is gone from disk, so `tar` cannot stat it and
         // exits 1, and one such entry discards the whole archive — the root then loses its
         // before-state for every file. Observed on 2026-09-20 during a `git rm`. The post
         // phase renders a deletion from `git diff HEAD` and needs no captured copy.
-        const files = statusEntries(root)
-            .filter((entry) => !isDeleted(entry))
-            .map((entry) => entry.path);
+        const files = entries.filter((entry) => !isDeleted(entry)).map((entry) => entry.path);
+        // Excluding them from the archive also leaves the post phase unable to tell a
+        // deletion this command MADE from one that was already sitting in `git status`.
+        // Writing the names down is what closes that. See `alreadyGone` for the measurement.
+        const gone = entries.filter(isDeleted).map((entry) => entry.path);
+
+        if (gone.length > 0) {
+            writePrivateFile(join(dir, `${index + 1}.gone`), `${gone.join("\n")}\n`);
+        }
 
         if (files.length === 0) {
             return;

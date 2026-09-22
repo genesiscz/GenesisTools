@@ -9,7 +9,7 @@
  * what leaves an orphaned capture under /tmp for the collector to find later.
  */
 import { SafeJSON } from "@genesiscz/utils/json";
-import { keepsCommand, loadHooksConfig } from "../lib/hooks/config";
+import { keepsCommand, loadHooksConfig, megabytes } from "../lib/hooks/config";
 import { capturePre } from "../lib/hooks/diff/capture";
 import { evaluateGuard } from "../lib/hooks/guard";
 import { logDecision, setDiagLogPath, setMaxLogBytes } from "../lib/hooks/log";
@@ -23,7 +23,7 @@ if (process.env.AGENTS_HOOKS_DISABLE === "1") {
 const config = loadHooksConfig();
 
 setDiagLogPath(config.logPath);
-setMaxLogBytes(config.maxLogBytes);
+setMaxLogBytes(megabytes(config.maxLogMB));
 
 const payload = parseHookPayload(await Bun.stdin.text());
 

@@ -44,6 +44,11 @@ export function plainArgument(raw: string | null): string | null {
     return value;
 }
 
+/** `NAME=` at the head of a token: a shell assignment, never a path. */
+const ASSIGNMENT = /^([A-Za-z_][A-Za-z0-9_]*)=/;
+/** A bare variable reference, with or without braces. */
+const VARIABLE = /^\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?$/;
+
 function scan(command: string, what: string): ShellScan | null {
     try {
         return scanShell(command);
@@ -54,6 +59,72 @@ function scan(command: string, what: string): ShellScan | null {
     }
 }
 
+/**
+ * Values the command assigns to ITSELF, so `P=/some/dir && cd "$P"` can be followed.
+ *
+ * 🛑 The command's own text is the only source. The environment is never read, because a
+ * `$HOME` or a `$PWD` resolved from this process is not what the command saw, and a wrong
+ * directory handed to `git -C` is a wrong answer rather than a missing one.
+ *
+ * Measured 2026-09-22: a `fable-replace` sweep written as `P=<worktree>` then `cd "$P"` left
+ * the hook watching the session cwd, which was a DIFFERENT checkout, so two edited files
+ * produced no diff at all. Assignments are the common shape for a long path.
+ *
+ * Only a value `plainArgument` already accepts is recorded, and an assignment stops the scan
+ * of its own element: in shell, assignments prefix a command, so the first token that is not
+ * one begins the arguments.
+ */
+function assignments(command: string, scanned: ShellScan): Map<string, string> {
+    const known = new Map<string, string>();
+
+    for (const unit of scanned.units) {
+        for (const statement of unit) {
+            for (const element of splitPipeline(statement)) {
+                for (const token of tokenize(element)) {
+                    const raw = rawToken(command, token);
+                    const head = ASSIGNMENT.exec(raw);
+                    const name = head?.[1];
+
+                    if (!head || !name) {
+                        break;
+                    }
+
+                    const value = plainArgument(raw.slice(head[0].length));
+
+                    if (value) {
+                        known.set(name, value);
+                    }
+                }
+            }
+        }
+    }
+
+    return known;
+}
+
+/**
+ * The value of a `$NAME` the command set earlier, or `null`.
+ *
+ * Single quotes do not expand in shell, so `'$P'` is the literal text and must never be
+ * substituted. Anything more involved than a bare reference (`${P:-/tmp}`, `$P/sub`) is
+ * refused, for the same reason `plainArgument` refuses a substitution.
+ */
+function variableValue(raw: string | null, known: Map<string, string>): string | null {
+    if (!raw) {
+        return null;
+    }
+
+    const quoted = /^(['"])(.*)\1$/.exec(raw);
+
+    if (quoted?.[1] === "'") {
+        return null;
+    }
+
+    const name = VARIABLE.exec(quoted?.[2] ?? raw)?.[1];
+
+    return name ? (known.get(name) ?? null) : null;
+}
+
 /** Each `cd` argument the command names, in order, read from the ORIGINAL text. */
 function cdTargets(command: string): string[] {
     const targets: string[] = [];
@@ -62,6 +133,8 @@ function cdTargets(command: string): string[] {
     if (!scanned) {
         return targets;
     }
+
+    const known = assignments(command, scanned);
 
     for (const unit of scanned.units) {
         for (const statement of unit) {
@@ -74,7 +147,8 @@ function cdTargets(command: string): string[] {
                     continue;
                 }
 
-                const target = plainArgument(nextRawArgument(command, token.start + token.text.length));
+                const raw = nextRawArgument(command, token.start + token.text.length);
+                const target = plainArgument(raw) ?? variableValue(raw, known);
 
                 if (target) {
                     targets.push(target);
@@ -147,6 +221,16 @@ function add(into: string[], raw: string | null, bases: string[]): void {
     const plain = plainArgument(raw);
 
     if (plain === null) {
+        return;
+    }
+
+    // `P=/some/dir` is an assignment, not an argument. Reading it as a path joined the whole
+    // token onto the cwd and produced `<cwd>/P=/some/dir`, which can never exist and cost one
+    // of the few named slots. The assignment itself is followed by `assignments` instead.
+    // `P=/some/dir` is an assignment, not an argument. Reading it as a path joined the whole
+    // token onto the cwd and produced `<cwd>/P=/some/dir`, which can never exist and cost one
+    // of the few named slots. The assignment itself is followed by `assignments` instead.
+    if (ASSIGNMENT.test(plain)) {
         return;
     }
 

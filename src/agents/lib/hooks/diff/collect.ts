@@ -65,5 +65,18 @@ export function changedFiles(root: string, since: number, config: DiffConfig, so
         entries.push({ path: resolve(root, entry.path), untracked, deleted, root });
     }
 
-    return entries.filter((entry) => entry.deleted || touchedSince(entry.path, since));
+    const seen = new Set<string>();
+
+    // A file the command committed AND then edited again appears in BOTH lists above, and
+    // rendered twice in one call. The committed entry is kept: it is the one that knows the
+    // path is tracked.
+    return entries.filter((entry) => {
+        if (seen.has(entry.path)) {
+            return false;
+        }
+
+        seen.add(entry.path);
+
+        return entry.deleted || touchedSince(entry.path, since);
+    });
 }

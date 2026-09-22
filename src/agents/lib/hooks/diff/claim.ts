@@ -14,7 +14,7 @@ import { claimsRoot } from "../paths";
  * appending to sibling notes in one vault, every session ends up printing every note.
  *
  * 🛑 What this fixes and what it cannot. It guarantees one file STATE is printed at most
- * once, by whichever post phase reaches it first. It cannot split a single file that two
+ * once, by whichever post phase reaches it first, in ANY session and on any later call. It cannot split a single file that two
  * sessions both wrote inside overlapping windows: the hook only ever sees a before copy and
  * an after copy, so those two sets of edits are one diff and no amount of bookkeeping
  * separates them. That case is rare (it needs two writers of the SAME file within about a
@@ -86,8 +86,13 @@ export function claimChange(key: ClaimKey, session: string | undefined): boolean
     }
 
     if (sameChange(held, key)) {
-        // Our own earlier claim in the same call is fine; another session's is not.
-        return held.session === session;
+        // 🛑 The holder's session is deliberately NOT consulted. It used to be, so a session
+        // never deduped against itself, and the guarantee in this file's header held only
+        // between sessions. Nothing proved that allowance: disabling it on 2026-09-21 left
+        // all 83 tests green, while the one test named for it passed on the `since` filter
+        // instead. An edit changes the mtime and so never lands here; the state that DOES
+        // repeat is a deletion, whose key is a fixed sentinel.
+        return false;
     }
 
     try {

@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-import { loadHooksConfig } from "../lib/hooks/config";
+import { diffFor, loadHooksConfig, megabytes } from "../lib/hooks/config";
 import { capturePre } from "../lib/hooks/diff/capture";
 import { logDecision, setDiagLogPath, setMaxLogBytes } from "../lib/hooks/log";
 import { isTerminalTool, normalizeEvent, parseHookPayload } from "../lib/hooks/payload";
@@ -11,7 +11,7 @@ if (process.env.AGENTS_HOOKS_DISABLE === "1") {
 const config = loadHooksConfig();
 
 setDiagLogPath(config.logPath);
-setMaxLogBytes(config.maxLogBytes);
+setMaxLogBytes(megabytes(config.maxLogMB));
 
 const payload = parseHookPayload(await Bun.stdin.text());
 
@@ -19,11 +19,15 @@ if (!payload || normalizeEvent(payload.event) !== "pretooluse" || !isTerminalToo
     process.exit(0);
 }
 
-if (!config.diff.enabled) {
+// Resolved per harness, so a harness that cannot SHOW a diff never pays for the capture
+// either: no `git status`, no tar, no copies, nothing to sweep in the post phase.
+const diff = diffFor(config, payload.harness);
+
+if (!diff.enabled) {
     process.exit(0);
 }
 
-const result = capturePre(payload, config.diff);
+const result = capturePre(payload, diff);
 
 logDecision(
     {

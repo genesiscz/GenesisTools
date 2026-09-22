@@ -33,6 +33,41 @@ function rootIndex(dir: string, root: string): number {
  * forever. Observed 2026-09-21 on a wrap-up note in the Obsidian vault: four calls, four
  * whole-file renders, +157 then +284 then +448 then +647.
  */
+/**
+ * Whether this path was ALREADY deleted when the command began.
+ *
+ * A deletion has no mtime, so it cannot pass the `since` filter an edit passes: `changedFiles`
+ * admits every deletion git reports, unconditionally. That is right for the command that made
+ * the deletion and wrong for every command after it, because `git status` keeps reporting a
+ * deletion until it is staged away or committed.
+ *
+ * Measured 2026-09-21 on a `git rm --cached` of one file: the removal rendered 14 times over
+ * seven minutes, once per later command that worked in that repository, and stopped only when
+ * the deletion was committed. 13 of the 14 were spurious.
+ */
+export function alreadyGone(dir: string, root: string, absolute: string): boolean {
+    const index = rootIndex(dir, root);
+
+    if (index < 0) {
+        return false;
+    }
+
+    const listPath = join(dir, `${index + 1}.gone`);
+
+    if (!existsSync(listPath)) {
+        return false;
+    }
+
+    // git never collapses deletions the way it collapses an untracked directory, so every
+    // entry here is a whole path and an exact match is the right test.
+    const member = relative(root, absolute).normalize("NFC");
+
+    return readFileSync(listPath, "utf8")
+        .split("\n")
+        .filter(Boolean)
+        .some((entry) => entry.normalize("NFC") === member);
+}
+
 export function leftOutOfCapture(dir: string, root: string, absolute: string): boolean {
     const index = rootIndex(dir, root);
 
