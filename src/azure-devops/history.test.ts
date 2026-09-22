@@ -59,6 +59,36 @@ describe("computeStatePeriods", () => {
     });
 });
 
+describe("an update whose moment cannot be recovered", () => {
+    /** No `System.ChangedDate`, no `System.AuthorizedDate`, and the 9999 sentinel on `revisedDate`. */
+    const undated: WorkItemUpdate = {
+        id: 40,
+        workItemId: 261311,
+        rev: 40,
+        revisedBy: { displayName: "Tester One" },
+        revisedDate: "9999-01-01T00:00:00Z",
+        fields: { "System.State": { oldValue: "Development", newValue: "Testing" } },
+        url: "",
+    };
+
+    test("does not become a period boundary dated today", () => {
+        // The old `|| update.revisedDate` handed the sentinel to sanitizeDate, which replaced
+        // it with the CURRENT time, so a revision with no recoverable date was reported as
+        // having happened now and matched every date window.
+        const periods = computeStatePeriods([...UPDATES, undated]);
+        const today = new Date().toISOString().slice(0, 10);
+
+        for (const period of periods) {
+            expect(period.startDate.slice(0, 10)).not.toBe(today);
+            expect(period.endDate?.slice(0, 10) ?? "").not.toBe(today);
+        }
+    });
+
+    test("the dated updates around it still form their periods", () => {
+        expect(computeStatePeriods([...UPDATES, undated]).length).toBe(computeStatePeriods(UPDATES).length);
+    });
+});
+
 describe("computeAssignmentPeriods", () => {
     test("dates assignments by the changed date too", () => {
         const periods = computeAssignmentPeriods(UPDATES);

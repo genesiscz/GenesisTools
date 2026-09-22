@@ -112,7 +112,16 @@ export function renderSymbol(symbol: SkeletonSymbol): string {
     // 🛑 Matching the kind against the keyword alone was not enough: an arrow-function const
     // is kinded `function` while its keyword is `const`, which rendered as
     // "function export const fn = (x: number)". ANY declaration keyword is self-describing.
-    const opener = symbol.signature.replace(/^(export|declare)\s+/, "").split(/[\s(]/)[0] ?? "";
+    // Every leading modifier is stripped, not just one: `export async function load()` left
+    // `async` as the opener, which is not a declaration keyword, so the kind was printed
+    // anyway and rendered as "function export async function load()".
+    const opener =
+        symbol.signature
+            .replace(
+                /^(?:(?:export|declare|default|async|abstract|static|public|private|protected|override|readonly)\s+)+/,
+                ""
+            )
+            .split(/[\s(]/)[0] ?? "";
     const evident = symbol.kind === opener || DECLARATION_KEYWORDS.has(opener);
     const kind = evident ? "" : `${pc.cyan(symbol.kind)} `;
 

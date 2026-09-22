@@ -331,7 +331,7 @@ tools azure-devops --create --type Bug --title "Error in checkout" --severity "A
 | `iterations`   | List the project's sprints (alias `sprints`)      |
 | `sprint`       | List the work items of one sprint              |
 | `history mentions` | Comments that named a user, in a date window |
-| `history search` | Work items by assignee and state; `--wiql --current` is server-side, `--all-projects` and `--exclude-state Closed` widen it |
+| `history search` | Work items by assignee and state; `--wiql --current` is server-side, `--all-projects` widens the project scope, `--exclude-state Closed` narrows the results |
 | `ancestors`    | Walk a work item's parent chain up to the root  |
 | `tree`         | Parents, children and related items of one work item |
 

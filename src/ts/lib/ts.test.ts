@@ -860,6 +860,15 @@ describe("renderSymbol", () => {
         expect(line("export const fn = (x: number) => x + 1;\n")).not.toContain("function export const");
     });
 
+    it("strips every leading modifier, not just the first", () => {
+        // `export abstract class Base` left `abstract` as the opener, which is not a
+        // declaration keyword, so the tag was printed and read "class export abstract class".
+        expect(line("export abstract class Base {\n    id = 1;\n}\n")).not.toContain("class export abstract");
+        expect(line("export async function load(): Promise<void> {\n    return;\n}\n")).not.toContain(
+            "function export async"
+        );
+    });
+
     it("still tags a member, which carries no keyword of its own", () => {
         const wide = Array.from({ length: 12 }, (_, i) => `    keyNumber${i}: "value number ${i}",`).join("\n");
 

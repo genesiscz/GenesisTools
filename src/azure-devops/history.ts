@@ -88,9 +88,19 @@ function sanitizeDate(date: string): string {
     return isSentinelDate(date) ? new Date().toISOString() : date;
 }
 
-/** When the update was made: its changed date, never `revisedDate`, which is when the next revision replaced it. */
+/**
+ * When the update was made: its changed date, never `revisedDate`, which is when the NEXT
+ * revision replaced it. Empty when no real date can be recovered.
+ *
+ * 🛑 The old `|| update.revisedDate` defeated the sentinel handling it was meant to complete.
+ * `resolveUpdateDate` already tries both field dates and a non-sentinel `revisedDate`, so it
+ * returns `""` only when every candidate is absent or is the `9999-01-01` sentinel. Falling
+ * back to `revisedDate` there handed the sentinel to `sanitizeDate`, which turned it into the
+ * CURRENT time: a two-year-old undated revision was reported as having happened today, and it
+ * then matched every date window instead of being excluded from all of them.
+ */
 function updateMoment(update: WorkItemUpdate): string {
-    return sanitizeDate(resolveUpdateDate(update) || update.revisedDate);
+    return resolveUpdateDate(update);
 }
 
 function computeDurationMinutes(start: string, end: string): number {
@@ -117,6 +127,13 @@ export function computeAssignmentPeriods(updates: WorkItemUpdate[]): AssignmentP
 
         const newAssignee = (assignedToChange.newValue as IdentityRef)?.displayName ?? null;
         const changeDate = updateMoment(update);
+
+        // An update whose moment cannot be recovered cannot delimit a period: using it would
+        // date the boundary to whatever `sanitizeDate` invents. Skipping it closes the
+        // previous period at the next DATED update instead, which is the honest boundary.
+        if (!changeDate) {
+            continue;
+        }
 
         // Close previous period
         if (currentAssignee && periodStart) {
@@ -174,6 +191,11 @@ export function computeStatePeriods(updates: WorkItemUpdate[]): StatePeriod[] {
 
         const newState = stateChange.newValue as string | undefined;
         const changeDate = updateMoment(update);
+
+        // Same reason as in computeAssignmentPeriods: an undated update cannot be a boundary.
+        if (!changeDate) {
+            continue;
+        }
 
         // Close previous period
         if (currentState && periodStart) {
