@@ -33,8 +33,18 @@ export type HeaderCase =
 /** A measured width for a string. Swap it to make CJK or emoji columns line up differently. */
 export type StringLength = (value: string) => number;
 
-/** One record in a table. Keys may be dot paths when the source is nested. */
-export type Row = Record<string, unknown>;
+/**
+ * One record in a table. Keys may be dot paths when the source is nested.
+ *
+ * 🛑 `object`, not `Record<string, unknown>`. A TypeScript `interface` has no implicit index
+ * signature, so `interface Item { id: number }` is NOT assignable to `Record<string, unknown>`
+ * — and every document module that declared its data with an interface, which is what the
+ * scaffolder generates, failed to typecheck on its table block. A type alias would have
+ * worked and an interface would not, which is not a distinction a caller should have to know.
+ * Values are read through `getPath`, which takes `unknown`, so nothing here needs the index
+ * signature at runtime.
+ */
+export type Row = object;
 
 /**
  * One table column.

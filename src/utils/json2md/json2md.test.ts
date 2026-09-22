@@ -726,6 +726,21 @@ describe("three-file pattern", () => {
         expect(await Bun.file(written.outPath).text()).not.toContain("HUMAN LINE");
     });
 
+    test("the recorded regenerate command does not depend on the current directory", async () => {
+        // It is written into a durable file that someone else, standing somewhere else, is
+        // meant to run. A cwd-relative path recorded "tools json2md build ../../../../../…".
+        const dir = await scratch();
+        const modulePath = join(dir, "doc.ts");
+        await Bun.write(join(dir, "doc.json"), SafeJSONStringify({ items: [{ id: 1, name: "one" }] }));
+
+        const built = await writeDocument(modulePath, definitionFor("./doc.json"));
+        const stamped = await Bun.file(built.outPath).text();
+        const recorded = decodeURIComponent(stamped.match(/command=([^\s]+)/)?.[1] ?? "");
+
+        expect(recorded).not.toContain("..");
+        expect(recorded).toBe(`tools json2md build ${modulePath}`);
+    });
+
     test("dry-run reports without touching the file", async () => {
         const dir = await scratch();
         const modulePath = join(dir, "doc.ts");

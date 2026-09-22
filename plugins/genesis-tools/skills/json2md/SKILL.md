@@ -55,6 +55,27 @@ tools json2md build ./reports/ConversionRegistry.ts
 tools json2md check ./reports/ConversionRegistry.ts
 ```
 
+### 🛑 Outside this repo, run `tools link install` once
+
+The import below is the same everywhere. It resolves inside GenesisTools already; anywhere else
+— an Obsidian vault, a notes folder, `/tmp` — it needs one setup command, once per machine:
+
+```bash
+tools link install          # links under your home directory
+tools link status           # check it, and whether the import actually resolves
+```
+
+`tools json2md init` detects this and stops with that exact command rather than scaffolding a
+module that cannot build.
+
+Why it is needed: Bun resolves a bare specifier from the **importing file's** folder, so nothing
+json2md does at call time can fix it, and `bun doc.ts` fails the same way. Resolution walks up
+looking for `node_modules/@genesiscz/utils`, so one symlink at an ancestor answers for
+everything beneath it. See `tools link --readme`.
+
+⚠️ Do **not** hand-write an absolute path to `document-file.ts` instead. It works, and it
+commits a home directory into whatever repo the document lives in, so it runs on one machine.
+
 The `.ts` looks like this:
 
 ```ts

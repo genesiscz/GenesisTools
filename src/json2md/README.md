@@ -95,6 +95,24 @@ tools json2md check ./reports/ConversionRegistry.ts
 `build` is idempotent: it rebuilds at the file's own recorded timestamp first, so an unchanged
 document keeps its original generated-at and never appears as a spurious diff.
 
+### 🛑 Outside this repo, run `tools link install` once
+
+The generated module always carries `@genesiscz/utils/json2md/document-file`, wherever it
+lands. That resolves inside this repo already; anywhere else it needs one command per machine:
+
+```bash
+tools link install     # links under your home directory
+tools link status      # check it
+```
+
+`init` detects a root where the package does not resolve and stops with that command rather
+than scaffolding a module whose first build would fail.
+
+Bun resolves a bare specifier from the importing file's folder, so nothing this tool does at
+call time can fix it, and `bun doc.ts` fails the same way. Resolution walks up looking for
+`node_modules/@genesiscz/utils`, so one symlink at an ancestor answers for everything below.
+Full detail in `tools link --readme`.
+
 ### Hand-edit detection
 
 Every generated file ends with a stamp recording the hash of the body **as the generator wrote

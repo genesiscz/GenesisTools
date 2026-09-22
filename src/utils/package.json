@@ -306,6 +306,11 @@
             "types": "./packages.ts",
             "default": "./packages.ts"
         },
+        "./package-link": {
+            "bun": "./package-link.ts",
+            "types": "./package-link.ts",
+            "default": "./package-link.ts"
+        },
         "./paths": {
             "bun": "./paths.ts",
             "types": "./paths.ts",

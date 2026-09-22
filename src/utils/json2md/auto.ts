@@ -405,7 +405,9 @@ function convertNode(
                 return [
                     {
                         mermaid: {
-                            nodes: rows.map((row) => ({
+                            // `Row` is `object` so an interface can be a row; these fields are
+                            // read by name, and `looksLikeTree` has already checked they exist.
+                            nodes: (rows as Array<Record<string, unknown>>).map((row) => ({
                                 id: String(row.id),
                                 label: String(row.name ?? row.title ?? row.label ?? row.id),
                                 parent:
