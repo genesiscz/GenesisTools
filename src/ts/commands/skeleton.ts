@@ -1,4 +1,4 @@
-import { existsSync, readdirSync, statSync } from "node:fs";
+import { type Dirent, existsSync, readdirSync, statSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { countTokens } from "@anthropic-ai/tokenizer";
 import { toToon } from "@app/json/lib/toon";
@@ -34,7 +34,15 @@ function isSource(path: string, includeTests: boolean): boolean {
     return includeTests || !TEST_FILE.test(path);
 }
 
-/** A directory argument expands to every source file under it, so `skeleton src/ts` works. */
+/**
+ * A directory argument expands to every source file under it, so `skeleton src/ts` works.
+ *
+ * ⚠️ `existsSync` does not make the later `statSync` and `readdirSync` atomic. A path can
+ * vanish or become unreadable between the two — a build writing into the tree, a worktree
+ * being removed — and an escaping exception aborted the whole command before it printed
+ * anything for the files it had already walked. An unreadable entry is skipped and logged
+ * instead, because a partial skeleton is worth more than a stack trace.
+ */
 function collectFiles(input: string, includeTests: boolean): string[] {
     const absolute = resolve(input);
 
@@ -42,13 +50,28 @@ function collectFiles(input: string, includeTests: boolean): string[] {
         return [];
     }
 
-    if (!statSync(absolute).isDirectory()) {
-        return [absolute];
+    try {
+        if (!statSync(absolute).isDirectory()) {
+            return [absolute];
+        }
+    } catch (err) {
+        logger.debug({ path: absolute, err }, "skeleton: could not stat a path, skipping it");
+
+        return [];
     }
 
     const found: string[] = [];
+    let entries: Dirent[];
 
-    for (const entry of readdirSync(absolute, { withFileTypes: true })) {
+    try {
+        entries = readdirSync(absolute, { withFileTypes: true });
+    } catch (err) {
+        logger.debug({ path: absolute, err }, "skeleton: could not read a directory, skipping it");
+
+        return [];
+    }
+
+    for (const entry of entries) {
         if (entry.isDirectory()) {
             if (!SKIP_DIRECTORIES.has(entry.name) && !entry.name.startsWith(".")) {
                 found.push(...collectFiles(join(absolute, entry.name), includeTests));
