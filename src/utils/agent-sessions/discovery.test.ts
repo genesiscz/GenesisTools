@@ -358,6 +358,40 @@ test("Grok discovery is chat-first and excludes usage telemetry", async () => {
         summary: "Other summary",
     });
     expect(second?.metadataPaths).toEqual([realpathSync(summaryPath)]);
+    expect(second?.metadata?.isSubagent).toBe(false);
+});
+
+test("Grok discovery treats session_kind subagent as a subagent in the user home", async () => {
+    const home = mkdtempSync(join(tmpdir(), "gt-discovery-grok-subagent-"));
+    const root = join(home, "sessions");
+    const mainDir = join(root, encodeURIComponent("/projects/shop"), ID_A);
+    const childDir = join(root, encodeURIComponent("/projects/shop"), ID_B);
+    mkdirSync(mainDir, { recursive: true });
+    mkdirSync(childDir, { recursive: true });
+    writeFileSync(join(mainDir, "chat_history.jsonl"), line({ type: "user", content: "main" }));
+    writeFileSync(
+        join(mainDir, "summary.json"),
+        SafeJSON.stringify({ info: { id: ID_A, cwd: "/projects/shop" }, session_kind: "primary" }, { strict: true })
+    );
+    writeFileSync(join(childDir, "chat_history.jsonl"), line({ type: "user", content: "child" }));
+    writeFileSync(
+        join(childDir, "summary.json"),
+        SafeJSON.stringify(
+            { info: { id: ID_B, cwd: "/projects/shop" }, generated_title: "Delegated", session_kind: "subagent" },
+            { strict: true }
+        )
+    );
+
+    const all = await discoverGrokHistorySources([root]);
+    const child = all.sources.find((source) => source.metadata?.sessionId === ID_B);
+    expect(child?.metadata?.isSubagent).toBe(true);
+    expect(all.sources.find((source) => source.metadata?.sessionId === ID_A)?.metadata?.isSubagent).toBe(false);
+
+    const mains = await discoverGrokHistorySources([root], { excludeAgents: true });
+    expect(mains.sources.map((source) => source.metadata?.sessionId)).toEqual([ID_A]);
+
+    const agents = await discoverGrokHistorySources([root], { agentsOnly: true });
+    expect(agents.sources.map((source) => source.metadata?.sessionId)).toEqual([ID_B]);
 });
 
 test("discovery accepts a pre-session_meta Codex rollout and keeps its root complete", async () => {

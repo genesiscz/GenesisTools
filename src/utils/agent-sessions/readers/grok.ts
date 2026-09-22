@@ -41,6 +41,8 @@ interface GrokSummary {
      * "went cold" card for a session nobody had touched since the day before.
      */
     lastActiveAt: string | null;
+    /** `summary.json` `session_kind`. `"subagent"` is a delegated Grok Build worker. */
+    sessionKind: string | null;
 }
 
 function asText(value: JsonValue | undefined): string {
@@ -484,6 +486,7 @@ async function readSummary(
             createdAt: null,
             updatedAt: null,
             lastActiveAt: null,
+            sessionKind: null,
         };
     }
     let row: JsonRecord;
@@ -499,6 +502,7 @@ async function readSummary(
             createdAt: null,
             updatedAt: null,
             lastActiveAt: null,
+            sessionKind: null,
         };
     }
     const info = asRecord(row.info);
@@ -510,6 +514,7 @@ async function readSummary(
         createdAt: validTimestamp(asText(row.created_at)),
         updatedAt: validTimestamp(asText(row.updated_at)),
         lastActiveAt: validTimestamp(asText(row.last_active_at)),
+        sessionKind: asText(row.session_kind) || null,
     };
 }
 
@@ -614,7 +619,10 @@ export async function readGrokMetadata(
             cwd,
             mtime: chatStat.mtimeMs,
             firstTimestamp,
-            isSubagent: source.root.includes("worker"),
+            isSubagent:
+                source.root.includes("worker") ||
+                summary.sessionKind === "subagent" ||
+                source.metadata?.isSubagent === true,
             allUserText: userParts.length > 0 ? userParts.join(" ") : null,
             sourceHome: source.sourceHome,
             nativeId,
@@ -635,7 +643,7 @@ export type GrokHistoryOperations = Pick<NativeSessionReader<"grok">, "parserVer
 
 export function createGrokHistoryOperations(): GrokHistoryOperations {
     return {
-        parserVersion: "3",
+        parserVersion: "4",
         readMetadata: readGrokMetadata,
         scan: scanGrokRecords,
         readRecords: readGrokRecords,

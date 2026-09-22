@@ -73,6 +73,7 @@ async function readSummary(options: {
     const summaryText = text(summary.session_summary);
     const updated = date(summary.updated_at ?? summary.created_at);
     const created = date(summary.created_at);
+    const sessionKind = text(summary.session_kind);
     return {
         path,
         metadata: {
@@ -82,7 +83,9 @@ async function readSummary(options: {
             ...(summaryText ? { summary: summaryText } : {}),
             ...(updated ? { mtime: updated } : {}),
             ...(created ? { createdAt: created } : {}),
-            isSubagent: options.worker,
+            // A Grok Build subagent is a sibling session under the same home, not a worker-home
+            // directory. `summary.json` says so with `session_kind: "subagent"`.
+            isSubagent: options.worker || sessionKind === "subagent",
         },
         fingerprint: raw,
     };
@@ -119,13 +122,6 @@ export async function discoverGrokHistorySources(
 
     const sources: Array<NativeSessionSource<"grok">> = [];
     for (const [directory, chat] of [...byDirectory.entries()].sort(([left], [right]) => left.localeCompare(right))) {
-        const worker = isWorkerRoot(chat.root);
-        if (options.agentsOnly && !worker) {
-            continue;
-        }
-        if (options.excludeAgents && worker) {
-            continue;
-        }
         const chatPath = chat.snake ?? chat.camel;
         if (!chatPath) {
             continue;
@@ -133,10 +129,17 @@ export async function discoverGrokHistorySources(
         const summary = await readSummary({
             directory,
             root: chat.root,
-            worker,
+            worker: isWorkerRoot(chat.root),
             issues,
             incompleteRoots,
         });
+        const subagent = summary.metadata?.isSubagent === true || isWorkerRoot(chat.root);
+        if (options.agentsOnly && !subagent) {
+            continue;
+        }
+        if (options.excludeAgents && subagent) {
+            continue;
+        }
         const cwd = summary.metadata?.cwd ?? layoutCwd(chatPath);
         if (options.project && cwd) {
             const project = cwd.split(/[\\/]/).filter(Boolean).pop();

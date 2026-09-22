@@ -432,7 +432,7 @@ test("the operations factory binds metadata, scan, and selected reads", async ()
     }
     const selected = await operations.readRecords(source, { locators: ["jsonl:1"] });
 
-    expect(operations.parserVersion).toBe("3");
+    expect(operations.parserVersion).toBe("4");
     expect(metadata.metadata?.firstPrompt).toBe("factory query");
     expect(metadata.metadata?.boundedFields).toEqual(["firstTimestamp", "lastTimestamp"]);
     expect(scanned.map((record) => record.locator)).toEqual(["jsonl:1"]);
@@ -580,6 +580,47 @@ test("last_active_at wins over a summary rewritten with no new turn", async () =
     const result = await readGrokMetadata(source);
 
     expect(result.metadata?.lastTimestamp).toBe("2026-09-01T10:05:00.000Z");
+    expect(result.metadata?.isSubagent).toBe(false);
+});
+
+test("session_kind subagent is a subagent even in the user's own grok home", async () => {
+    const home = mkdtempSync(join(tmpdir(), "gt-grok-subagent-"));
+    const root = join(home, "sessions");
+    const directory = join(root, encodeURIComponent(CWD), SESSION_ID);
+    mkdirSync(directory, { recursive: true });
+    const chatPath = join(directory, "chat_history.jsonl");
+    const summaryPath = join(directory, "summary.json");
+    writeFileSync(
+        chatPath,
+        line({
+            type: "user",
+            content: [{ type: "text", text: "You are the Goal Plan Writer." }],
+        })
+    );
+    writeFileSync(
+        summaryPath,
+        SafeJSON.stringify(
+            {
+                info: { id: SESSION_ID, cwd: CWD },
+                generated_title: "Write the plan",
+                session_kind: "subagent",
+            },
+            { strict: true }
+        )
+    );
+    const source: NativeSessionSource<"grok"> = {
+        kind: "grok",
+        root,
+        sourceHome: home,
+        filePath: chatPath,
+        dataPaths: [chatPath],
+        metadataPaths: [summaryPath],
+    };
+
+    const result = await readGrokMetadata(source);
+
+    expect(result.metadata?.isSubagent).toBe(true);
+    expect(result.metadata?.customTitle).toBe("Write the plan");
 });
 
 // Re-homed from grok-sessions.test.ts, which only reached this through a wrapper that had no
