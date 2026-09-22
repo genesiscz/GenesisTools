@@ -4,25 +4,22 @@
  * 🛑 Order matters: truncate first, escape second. Escaping first and cutting afterwards can
  * land the cut between a backslash and the pipe it escapes, which leaves a trailing backslash
  * that escapes the column separator and merges two columns. That bug is live in
- * a sibling repo `src/kibana/output.ts` today, and `escape.test.ts` pins that this module avoids it.
+ * a downstream console table renderer today, and the tests pin that this module avoids it.
  */
 
 import type { LineBreakStrategy, OverflowStrategy, StringLength } from "./types";
 
 /**
- * The canonical `ansi-regex` pattern.
+ * The canonical `ansi-regex` pattern, built from a string rather than a regex literal.
  *
  * ⚠️ The order of the alternatives is load-bearing. A version whose first branch can match
  * the empty string strips only the `ESC[` prefix and leaves `31mred` behind, so a coloured
  * cell measures eight cells wide instead of three.
- */
-/**
- * Built from a string rather than written as a regex literal.
  *
- * Matching control characters is the whole point here: ESC (U+001B), CSI (U+009B) and BEL
- * (U+0007) are what an ANSI sequence is made of. A regex literal containing them trips
- * `lint/suspicious/noControlCharactersInRegex`, and suppressing a rule that is right in
- * general is worse than keeping the source free of literal control bytes.
+ * It is assembled from a string because matching control characters is the whole point here:
+ * ESC (U+001B), CSI (U+009B) and BEL (U+0007) are what an ANSI sequence is made of. A regex
+ * literal containing them trips `lint/suspicious/noControlCharactersInRegex`, and suppressing
+ * a rule that is right in general is worse than keeping the source free of control bytes.
  */
 const ANSI_PATTERN =
     "[\\u001B\\u009B][[\\]()#;?]*" +

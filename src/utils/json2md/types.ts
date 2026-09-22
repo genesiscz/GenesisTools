@@ -2,7 +2,7 @@
  * Public types for `@genesiscz/utils/json2md`.
  *
  * The core never prints. Every renderer returns a string, so the same functions serve the
- * `tools json2md` CLI, an MCP tool, an HTTP route, and a sibling repo's vendored copy.
+ * `tools json2md` CLI, an MCP tool, an HTTP route, and a downstream vendored copy.
  */
 
 /** Column alignment in a GitHub table. */

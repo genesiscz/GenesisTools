@@ -126,7 +126,7 @@ const PACKAGE_SPECIFIER = "@genesiscz/utils/json2md/document-file";
 /**
  * The import the scaffolded module should use for `defineDocument`.
  *
- * Inside a repo that maps `@genesiscz/utils` (GenesisTools itself, or a sibling repo with the
+ * Inside a repo that maps `@genesiscz/utils` (GenesisTools itself, or a downstream repo with the
  * vendored copy) the package specifier is right. Anywhere else it would not resolve, so the
  * template falls back to an absolute path and the generated document still runs.
  */

@@ -3,7 +3,7 @@
 > **Render JSON as Markdown: tables, lists, sections, callouts, details and mermaid.**
 
 `src/json2md/` is a thin CLI. Everything that renders lives in `@genesiscz/utils/json2md`
-(`src/utils/json2md/`), so a sibling repo and any other consumer wrap the same core without going
+(`src/utils/json2md/`), so a downstream repo and any other consumer wrap the same core without going
 through a CLI.
 
 ---
