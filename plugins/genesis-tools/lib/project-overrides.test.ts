@@ -59,14 +59,32 @@ describe("overrideFor", () => {
 });
 
 describe("fillPlaceholders", () => {
-    it("gives <project> the main checkout and <worktree> the one in use", () => {
+    it("gives <project> the main checkout and <worktree> the one in use, each shell-quoted", () => {
         expect(
             fillPlaceholders("r --cwd <cwd> --project <project> --worktree <worktree> --branch <branch>", worktree)
-        ).toBe("r --cwd /repos/acme-wt-login --project /repos/acme --worktree /repos/acme-wt-login --branch fix/login");
+        ).toBe(
+            "r --cwd '/repos/acme-wt-login' --project '/repos/acme' --worktree '/repos/acme-wt-login' --branch 'fix/login'"
+        );
     });
 
     it("falls back to the toplevel for <project> outside a worktree", () => {
-        expect(fillPlaceholders("<project>", main)).toBe("/repos/acme");
+        expect(fillPlaceholders("<project>", main)).toBe("'/repos/acme'");
+    });
+
+    it("a branch name cannot break out of the shell command", () => {
+        // git permits `;`, `$`, backticks and spaces in a branch name, and the filled string
+        // goes to `sh -c`. Unquoted, checking out a branch would run arbitrary commands.
+        const hostile = { ...main, branch: `x'; touch /tmp/pwned; echo '` };
+        const filled = fillPlaceholders("resolve --branch <branch>", hostile);
+
+        expect(filled).toBe(`resolve --branch 'x'\\''; touch /tmp/pwned; echo '\\'''`);
+        expect(filled.startsWith("resolve --branch '")).toBe(true);
+    });
+
+    it("the quoted value still reaches the resolver intact", async () => {
+        const { output } = await runResolver(`echo '{"dir":"'<branch>'"}'`, { ...main, branch: "fix/login" }, "test");
+
+        expect(output?.dir).toBe("fix/login");
     });
 });
 

@@ -70,13 +70,31 @@ export function overrideFor(overrides: ProjectOverrides, ctx: Ctx): { key: strin
     return null;
 }
 
-/** `<cwd>`, `<project>`, `<worktree>` and `<branch>` filled in from the resolved context. */
+/**
+ * Single-quotes a value for `sh -c`.
+ *
+ * Inlined rather than imported: a runtime plugin file is copied out of this checkout and run
+ * where `@genesiscz/*` does not resolve.
+ */
+function shQuote(value: string): string {
+    return `'${value.replaceAll("'", `'\\''`)}'`;
+}
+
+/**
+ * `<cwd>`, `<project>`, `<worktree>` and `<branch>` filled in from the resolved context.
+ *
+ * 🛑 Every substituted value is shell-quoted. The result is handed to `sh -c`, and a branch
+ * name is not a safe token: git permits `;`, `$`, backticks and spaces, so an unquoted
+ * `<branch>` turns a checkout name into arbitrary command execution on the developer's
+ * machine. The resolver command itself is the user's own config and is deliberately a shell
+ * line; the values interpolated INTO it are not.
+ */
 export function fillPlaceholders(command: string, ctx: Ctx): string {
     return command
-        .replaceAll("<cwd>", ctx.cwd)
-        .replaceAll("<project>", ctx.mainProject || ctx.toplevel)
-        .replaceAll("<worktree>", ctx.toplevel)
-        .replaceAll("<branch>", ctx.branch);
+        .replaceAll("<cwd>", shQuote(ctx.cwd))
+        .replaceAll("<project>", shQuote(ctx.mainProject || ctx.toplevel))
+        .replaceAll("<worktree>", shQuote(ctx.toplevel))
+        .replaceAll("<branch>", shQuote(ctx.branch));
 }
 
 export interface ResolverOutput {
