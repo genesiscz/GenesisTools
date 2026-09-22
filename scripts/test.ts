@@ -1,9 +1,9 @@
 #!/usr/bin/env bun
-import { execFileSync } from "node:child_process";
 import { cpus } from "node:os";
 import { dirname, join } from "node:path";
 import { maxRunMs, profileArgs } from "./test-args";
 import { diagnose, lockStamp, STAMP_FILE } from "./test-deps";
+import { descendantsOf, reap } from "./test-reap";
 
 /**
  * `bun test` wrapper that refuses to run against a broken dependency tree.
@@ -395,130 +395,6 @@ const hasExplicitPaths = args.some((arg) => !arg.startsWith("-"));
  * runner, so fifteen minutes only ever fires on a real stall.
  * `GENESIS_TOOLS_TEST_MAX_MINUTES` raises it, and 0 turns it off.
  */
-
-/**
- * `ps` start time for `pid`, whitespace-normalised — the discriminator that separates
- * "this pid" from "a pid the kernel reissued to someone else".
- *
- * `kill -0` cannot do this: it succeeds for whoever holds the number now. The bun failure
- * mode this tripwire fires on burns hundreds of pids a second, so liveness is not identity.
- * Returns null when `ps` cannot answer, and the caller then declines to kill: refusing is
- * always safe, killing a stranger is not.
- */
-function startedAt(pid: number): string | null {
-    try {
-        const started = execFileSync("ps", ["-p", String(pid), "-o", "lstart="], { encoding: "utf8" })
-            .replace(/\s+/g, " ")
-            .trim();
-
-        return started.length > 0 ? started : null;
-    } catch {
-        // `ps` exits non-zero for a pid that is already gone. That is the ordinary case here
-        // and means the same to the caller as any other read failure: no identity, so no
-        // kill. This file predates the dependency repair it performs, so it has no logger.
-        return null;
-    }
-}
-
-/**
- * Every descendant of `root`, each paired with the start time that proves its identity,
- * from ONE `ps` snapshot taken while `root` is still alive.
- *
- * It must be taken first, before the kill: the moment the coordinator dies its workers
- * reparent to pid 1 and the ppid chain that names them is gone for good.
- */
-function descendantsOf(root: number): Array<{ pid: number; start: string }> {
-    let table: string;
-
-    try {
-        table = execFileSync("ps", ["-Ao", "pid=,ppid=,lstart="], { encoding: "utf8" });
-    } catch {
-        // No process table means nothing to walk. The coordinator kill below still happens;
-        // only the descendant sweep is lost.
-        return [];
-    }
-
-    const children = new Map<number, number[]>();
-    const starts = new Map<number, string>();
-
-    for (const line of table.split("\n")) {
-        const match = /^\s*(\d+)\s+(\d+)\s+(.+)$/.exec(line);
-
-        if (match === null) {
-            continue;
-        }
-
-        const [, pidText, ppidText, startText] = match;
-
-        if (pidText === undefined || ppidText === undefined || startText === undefined) {
-            continue;
-        }
-
-        const pid = Number(pidText);
-        const ppid = Number(ppidText);
-        starts.set(pid, startText.replace(/\s+/g, " ").trim());
-        const siblings = children.get(ppid);
-
-        if (siblings === undefined) {
-            children.set(ppid, [pid]);
-        } else {
-            siblings.push(pid);
-        }
-    }
-
-    const found: Array<{ pid: number; start: string }> = [];
-    const queue = [root];
-
-    while (queue.length > 0) {
-        const next = queue.shift();
-
-        if (next === undefined) {
-            break;
-        }
-
-        for (const child of children.get(next) ?? []) {
-            const start = starts.get(child);
-
-            if (start !== undefined) {
-                found.push({ pid: child, start });
-            }
-
-            queue.push(child);
-        }
-    }
-
-    return found;
-}
-
-/**
- * SIGKILL each worker that is still the process the snapshot saw, and count the kills.
- *
- * Identity is re-checked immediately before every signal, against the start time captured
- * while the coordinator was alive. A pid reissued in between fails that check and is spared.
- */
-function reap(workers: Array<{ pid: number; start: string }>): number {
-    let killed = 0;
-
-    for (const worker of workers) {
-        if (startedAt(worker.pid) !== worker.start) {
-            continue;
-        }
-
-        try {
-            // The `startedAt(worker.pid) !== worker.start` check above runs immediately
-            // before this signal, against the start time captured while the coordinator was
-            // alive. A pid reissued in between fails it and is skipped.
-            // pid-verified: start time re-checked against the live process one line earlier
-            process.kill(worker.pid, "SIGKILL");
-            killed += 1;
-        } catch {
-            // The worker exited between the identity check and the signal, which is the
-            // outcome this loop wanted. Nothing to report.
-        }
-    }
-
-    return killed;
-}
 
 // Set once the tripwire has killed a phase, so finish() withholds the marker.
 let stalled = false;
