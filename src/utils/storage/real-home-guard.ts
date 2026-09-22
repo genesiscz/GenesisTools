@@ -2,6 +2,7 @@ import { realpathSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { env } from "@genesiscz/utils/env";
+import { isTestProcess, testProcessReason } from "@genesiscz/utils/test-process";
 
 /**
  * Refuse, during `bun test`, to write anywhere under the user's REAL
@@ -20,13 +21,20 @@ import { env } from "@genesiscz/utils/env";
  * this shape: a process-wide singleton with an `invalidate()` that no test calls.
  *
  * `test-sandbox.ts` already guards this, but only for test files that opt in, and
- * neither incident was in a file that had. So this check is ALWAYS ON under
- * `NODE_ENV=test` (which `bun test` sets), and it is checked at WRITE time
- * against the resolved path rather than at construction time — the whole failure
- * is that the path was resolved too early.
+ * neither incident was in a file that had. So this check is ALWAYS ON, and it is
+ * checked at WRITE time against the resolved path rather than at construction
+ * time — the whole failure is that the path was resolved too early.
  *
- * Production is unaffected: the first line returns immediately when NODE_ENV is
- * not "test".
+ * 🛑 "Always on" used to mean `NODE_ENV=test`, and that was a hole. `bun test`
+ * sets NODE_ENV only when it is not ALREADY set (oven-sh/bun#4118, closed as
+ * working-as-intended), so any parent that exports `NODE_ENV=development`
+ * disables the guard silently. Measured 2026-09-22: the Claude Code process on
+ * this machine carried that value, and a full run wrote a probe log into the
+ * real store. `guardReason()` now answers with three process signals plus the
+ * one that needs no process detection at all — an installed sandbox home.
+ *
+ * Production is unaffected: `GENESIS_TOOLS_HOME` is unset there, `Bun.main` is
+ * not a test file, and the preload flag is set only by `bun test`.
  */
 
 /** Deliberate opt-out for a test that genuinely must touch the real home. */
@@ -48,8 +56,39 @@ export function realGenesisToolsRoot(): string {
     return join(homedir(), ".genesis-tools");
 }
 
-export function isTestProcess(): boolean {
-    return env.get("NODE_ENV") === "test";
+export { isTestProcess };
+
+/**
+ * True when a sandbox home is installed, so the real store is out of bounds for THIS process
+ * whatever else is true of it.
+ *
+ * 🛑 This is the signal that needs no test detection at all, and it is the strongest one here.
+ * `GENESIS_TOOLS_HOME` is unset in production, so it can never fire for a real user; it is set
+ * only by `preload-test-sandbox.ts` and by a caller that deliberately redirected the store. When
+ * it IS set and a write still resolves into the real `~/.genesis-tools`, that write is by
+ * definition the bug this file exists to catch: a path resolved before the sandbox existed.
+ * Asking "is this a test?" is a proxy for that question, and a proxy can be wrong. This cannot.
+ */
+function sandboxInstalled(): boolean {
+    if (!env.tools.hasExplicitHome()) {
+        return false;
+    }
+
+    return canonical(env.tools.getHome()) !== canonical(homedir());
+}
+
+/**
+ * Why the guard is armed for this process, or `null` when it is not.
+ *
+ * `entrypoint` exists so a test can ask what a NON-test process would see. Inside `bun test`
+ * `Bun.main` is always a test file, so that signal cannot otherwise be switched off.
+ */
+export function guardReason(entrypoint?: string): string | null {
+    if (sandboxInstalled()) {
+        return "a GENESIS_TOOLS_HOME sandbox is installed, so the real store is out of bounds";
+    }
+
+    return testProcessReason(entrypoint);
 }
 
 /**
@@ -93,7 +132,9 @@ function canonical(path: string): string {
  * merely impure, while a write is data loss.
  */
 export function assertTestSafePath(targetPath: string, operation: string): void {
-    if (!isTestProcess()) {
+    const reason = guardReason();
+
+    if (reason === null) {
         return;
     }
 
@@ -107,6 +148,7 @@ export function assertTestSafePath(targetPath: string, operation: string): void 
 
     throw new Error(
         `Refusing to ${operation} "${targetPath}" from a test: that is the REAL ~/.genesis-tools, not a sandbox.\n` +
+            `Guard armed by: ${reason}.\n` +
             `A Storage instance or a cached singleton (AIConfig, AiConfigStore) resolved its path before the test\n` +
             `sandbox was installed, or outlived the teardown that removed it.\n` +
             `Fix the test: set GENESIS_TOOLS_HOME to a mkdtemp dir BEFORE the module under test is imported, and\n` +
