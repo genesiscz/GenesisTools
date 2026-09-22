@@ -44,6 +44,11 @@ through to the registry: fix the resolver rather than letting the log land somew
     "research": { "dir": "~/Vault/Acme/Research" } } } } }
 ```
 
+🛑 **The `<cwd>`, `<project>`, `<worktree>` and `<branch>` placeholders arrive SHELL-QUOTED.**
+The filled command goes to `sh -c`, and git permits `;`, `$`, backticks and spaces in a branch
+name, so an unquoted value would let a checkout name run commands. Write the placeholder bare;
+wrapping it yourself (`'<cwd>'`) produces `''/repos/acme''` and passes an empty argument.
+
 The `consumers` block is per plugin on purpose: wrap-up and research share the config and the
 registry, never a single directory.
 

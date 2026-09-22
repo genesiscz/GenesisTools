@@ -25,7 +25,7 @@ import { classifyChange, type DiffCategory } from "./classify";
 import { changedFiles } from "./collect";
 import { commandDirs, namedArguments } from "./command-paths";
 import { assembleMessage, type DiffBlock, hasContext, highlightRange, hunkRange, renderPatch } from "./render";
-import { runDiffPost } from "./run";
+import { runDiffPost, silentReason } from "./run";
 
 let repo: string;
 let calls = 0;
@@ -1038,6 +1038,39 @@ describe("what KIND of change it is", () => {
 
     it("never calls a brand new file formatting, however tidy it is", () => {
         expect(classifyChange("/repo/src/new.ts", "@@ -0,0 +1,2 @@\n+const a = 1;\n+const b = 2;\n")).toBe("source");
+    });
+});
+
+describe("silentReason", () => {
+    const hidden = new Map([["log", 2] as const]);
+
+    it("names one cause on its own terms when only one holds", () => {
+        expect(silentReason(0, 0, 0, 0, hidden)).toBe("every changed file was a kind this config hides: 2 log");
+        expect(silentReason(3, 0, 0, 0, new Map())).toBe("every changed file was already rendered natively");
+        expect(silentReason(0, 0, 2, 0, new Map())).toBe("2 changed file(s) had already been rendered");
+        expect(silentReason(0, 1, 0, 0, new Map())).toBe(
+            "1 changed file(s) had no captured before-state, over the capture cap"
+        );
+        expect(silentReason(0, 0, 0, 4, new Map())).toBe(
+            "4 deletion(s) had already happened before this command began"
+        );
+        expect(silentReason(0, 0, 0, 0, new Map())).toBe("no change since this command began");
+    });
+
+    it("reports a mix as a mix, instead of claiming the first cause was everything", () => {
+        // The suppressed branch used to come first and say "every changed file was a kind
+        // this config hides" while files had also been rendered natively — so the reader
+        // went and changed the wrong setting.
+        const reason = silentReason(1, 0, 0, 0, hidden);
+
+        expect(reason).toBe("nothing left to print: a kind this config hides (2 log); 1 already rendered natively");
+        expect(reason).not.toContain("every changed file");
+    });
+
+    it("lists every cause that holds, in a fixed order", () => {
+        expect(silentReason(1, 2, 3, 4, hidden)).toBe(
+            "nothing left to print: a kind this config hides (2 log); 1 already rendered natively; 3 already rendered; 2 with no captured before-state, over the capture cap; 4 deletion(s) already gone before this command began"
+        );
     });
 });
 

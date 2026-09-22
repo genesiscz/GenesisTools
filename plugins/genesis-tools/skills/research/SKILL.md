@@ -244,6 +244,18 @@ before it runs:
 | `<worktree>` | the checkout actually in use, which differs from `<project>` inside a linked worktree |
 | `<branch>` | the resolved branch |
 
+🛑 **Every value arrives SHELL-QUOTED.** The filled command is handed to `sh -c`, and a branch
+name is not a safe token: git permits `;`, `$`, backticks and spaces, so an unquoted value
+would turn a checkout name into arbitrary command execution. So write the placeholder bare:
+
+```bash
+# right — the quoting is already there
+bun ~/.genesis-tools/plugins/resolvers/acme.ts --cwd <cwd> --branch <branch>
+
+# wrong — this produces ''/repos/acme'' and the resolver receives an empty argument
+bun ~/.genesis-tools/plugins/resolvers/acme.ts --cwd '<cwd>'
+```
+
 Pass only what the resolver needs. Anything else it wants (a remote, an API, a directory
 listing) it fetches itself.
 

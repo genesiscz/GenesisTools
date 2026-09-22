@@ -112,8 +112,13 @@ function claim(path: string, deleted: boolean, config: DiffConfig, session: stri
     return claimChange({ path, mtimeMs, size }, session);
 }
 
-/** Why nothing was printed. Each case needs a different fix, so they read differently. */
-function silentReason(
+/**
+ * Why nothing was printed. Each case needs a different fix, so they read differently.
+ *
+ * Exported for its tests: the multi-cause string is the whole point of this function and
+ * building every combination end to end costs a temp repo per case.
+ */
+export function silentReason(
     covered: number,
     uncaptured: number,
     claimed: number,

@@ -1,4 +1,7 @@
 import { describe, expect, it } from "bun:test";
+import { existsSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { Ctx } from "./git-context.ts";
 import {
     fillPlaceholders,
@@ -85,6 +88,30 @@ describe("fillPlaceholders", () => {
         const { output } = await runResolver(`echo '{"dir":"'<branch>'"}'`, { ...main, branch: "fix/login" }, "test");
 
         expect(output?.dir).toBe("fix/login");
+    });
+
+    it("a hostile branch really does run through sh -c without executing", async () => {
+        // Asserting on the filled string alone proves the quoting looks right. This runs it,
+        // so the claim is that nothing executed, not that nothing appeared to.
+        const marker = join(tmpdir(), `gt-inject-${process.pid}-${Date.now()}.txt`);
+        // The payload must be one that injects when UNQUOTED and is inert when quoted. A
+        // payload carrying its own quotes (`x'; touch …; echo '`) is shaped to escape THIS
+        // implementation's quoting and, left unquoted, merely echoes as a literal — so it
+        // would pass either way and prove nothing.
+        const hostile = { ...main, branch: `x; touch ${marker}` };
+        const { output, error } = await runResolver(
+            `echo '{"dir":"/ok"}' && echo <branch> >/dev/null`,
+            hostile,
+            "test"
+        );
+
+        expect(existsSync(marker)).toBe(false);
+        expect(error).toBeUndefined();
+        expect(output?.dir).toBe("/ok");
+
+        if (existsSync(marker)) {
+            rmSync(marker, { force: true });
+        }
     });
 });
 
