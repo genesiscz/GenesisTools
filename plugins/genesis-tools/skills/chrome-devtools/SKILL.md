@@ -166,16 +166,21 @@ is looking at.
 `%TEMP%` — trust the paths the tool itself prints (guidance, doctor, `--help`) over
 the literal examples.
 
-## 🛑 `--match` sees TITLES too, so a DevTools window can win
+## `--match` sees TITLES too, but the url now outranks them
 
-The trap the `net-panel` section describes is not confined to `net-panel`: **every** page verb
-matches on url OR title, and an open inspector's title is `DevTools - <host><path>`. So a pattern
-anchored on the end of a page url, `/auth-callback\?customerService=true$/`, matches the INSPECTOR
-whose title ends the same way, and `eval` runs against the DevTools frontend instead of the app.
-The giveaway is an answer full of `No throttling Fast 4G Slow 4G ...`: that is the Network panel's
-own DOM.
+**every** page verb matches on url OR title, and an open inspector's title is
+`DevTools - <host><path>`. A pattern anchored on the end of a page url,
+`/auth-callback\?customerService=true$/`, therefore also matches the INSPECTOR whose title ends
+the same way.
 
-Anchor on the scheme, which no DevTools title starts with:
+⚠️ **The url is ranked above the title, so this is no longer the trap it was.** `pickPageTarget`
+collects url matches first and only falls back to titles when NO url matched at all, so the page
+wins whenever one matches. `eval` returning the Network panel's own DOM — an answer full of
+`No throttling Fast 4G Slow 4G ...` — was the old symptom and should not recur.
+
+The title fallback still exists, and it is what lets `--match "Checkout page"` work. It only
+bites when nothing matches by url, which is also when a stray inspector is the only candidate.
+Anchoring on the scheme, which no DevTools title starts with, removes the ambiguity entirely:
 
 ```bash
 # grabs the inspector when DevTools is open on that tab
