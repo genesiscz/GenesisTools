@@ -15,13 +15,25 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import type { FileEdit, Op } from "./types";
 
-/** Where the moved block lands in the target file. */
-export type MoveAnchor = "end" | "start" | { after: string } | { before: string };
+/**
+ * Where the moved block lands in the target file.
+ *
+ * There is no `"start"`: the sweep engine has no prepend op, so a top-of-file placement can
+ * only be expressed as `{ before: "<first declaration>" }`. Advertising `"start"` and
+ * silently appending instead is worse than not offering it.
+ */
+export type MoveAnchor = "end" | { after: string } | { before: string };
 
 export interface MoveSpec {
     /** File the block is cut from. */
     from: string;
-    /** File the block is pasted into. May be the same file (a move within one file). */
+    /**
+     * File the block is pasted into. Must differ from `from`.
+     *
+     * A same-file move is rejected rather than supported: the cut edit asserts the block text
+     * is `absentAfter`, and a paste back into the same file would make that assertion fail on
+     * every move. Reordering inside one file is an ordinary `block` op, not a move.
+     */
     to: string;
     /**
      * Name the block by its declaration: `actOnSurface`, `ListenView`, `NativeControlDriver`.
@@ -56,12 +68,71 @@ const DECLARATION = (symbol: string): RegExp =>
     );
 
 /**
+ * Characters after which a `/` opens a regular-expression literal rather than dividing.
+ *
+ * `""` covers the start of a line. Anything else (a letter, a digit, `)`, `]`) means the `/`
+ * follows a value, so it is division.
+ */
+const REGEX_MAY_FOLLOW = new Set([
+    "",
+    "(",
+    ",",
+    "=",
+    ":",
+    "[",
+    "!",
+    "&",
+    "|",
+    "?",
+    "{",
+    "}",
+    ";",
+    "+",
+    "-",
+    "*",
+    "%",
+    "~",
+    "^",
+    "<",
+    ">",
+]);
+
+/**
+ * Index of the `/` that closes the regular-expression literal opening at `start`.
+ *
+ * Returns -1 when the literal does not close on this line, in which case the caller treats
+ * the `/` as ordinary code. A `/` inside a `[...]` character class does not close it.
+ */
+function regexLiteralEnd(line: string, start: number): number {
+    let inClass = false;
+
+    for (let i = start + 1; i < line.length; i++) {
+        const char = line[i];
+
+        if (char === "\\") {
+            i++;
+            continue;
+        }
+
+        if (char === "[") {
+            inClass = true;
+        } else if (char === "]") {
+            inClass = false;
+        } else if (char === "/" && !inClass) {
+            return i;
+        }
+    }
+
+    return -1;
+}
+
+/**
  * The line where the block that starts at `from` closes.
  *
  * Counts brackets while skipping the places a bracket is not code: line comments, block comments,
- * single and double quoted strings, and template literals. A naive depth count reads the `{` in
- * `"a { b"` as an opening brace and then takes the rest of the file with it, which is exactly the
- * failure that makes an automated move untrustworthy.
+ * single and double quoted strings, template literals, and regular-expression literals. A naive
+ * depth count reads the `{` in `"a { b"` as an opening brace and then takes the rest of the file
+ * with it, which is exactly the failure that makes an automated move untrustworthy.
  */
 export function blockEndLine(lines: string[], from: number): number {
     let depth = 0;
@@ -71,6 +142,8 @@ export function blockEndLine(lines: string[], from: number): number {
     for (let index = from; index < lines.length; index++) {
         const line = lines[index];
         let quote: string | null = null;
+        /** Last non-whitespace code character, which decides whether `/` divides or opens a regex. */
+        let previous = "";
         for (let i = 0; i < line.length; i++) {
             const char = line[i];
             const next = line[i + 1];
@@ -110,13 +183,30 @@ export function blockEndLine(lines: string[], from: number): number {
                 continue;
             }
 
+            // A regular-expression literal can carry an unbalanced brace: `const p = /}/;`
+            // would otherwise close the block early and the move would cut the wrong span.
+            // Only a `/` in expression position opens one; after a value it is division.
+            // ⚠️ The test is the previous character, so `return /}/` is not covered — a
+            // keyword ends in a letter, which reads as a value here.
+            if (char === "/" && REGEX_MAY_FOLLOW.has(previous)) {
+                const end = regexLiteralEnd(line, i);
+
+                if (end !== -1) {
+                    i = end;
+                    previous = ")";
+                    continue;
+                }
+            }
+
             if (char === '"' || char === "'") {
                 quote = char;
+                previous = char;
                 continue;
             }
 
             if (char === "`") {
                 inTemplate = true;
+                previous = char;
                 continue;
             }
 
@@ -125,6 +215,7 @@ export function blockEndLine(lines: string[], from: number): number {
             if (char === "{") {
                 depth++;
                 opened = true;
+                previous = char;
                 continue;
             }
 
@@ -133,6 +224,10 @@ export function blockEndLine(lines: string[], from: number): number {
                 if (opened && depth <= 0) {
                     return index;
                 }
+            }
+
+            if (char.trim() !== "") {
+                previous = char;
             }
         }
 
@@ -148,7 +243,11 @@ export function blockEndLine(lines: string[], from: number): number {
 /** The first line of the doc comment attached directly above `line`, or `line` itself. */
 export function docCommentStart(lines: string[], line: number): number {
     let index = line - 1;
-    while (index >= 0 && lines[index].trim().length === 0) {
+
+    // A blank line directly above means nothing is attached to this block. This was a `while`
+    // whose body returned unconditionally, so it never looped and read as a broken scan; `if`
+    // states the same behaviour honestly.
+    if (index >= 0 && lines[index].trim().length === 0) {
         return line;
     }
 
@@ -231,7 +330,9 @@ export function expandMoves(moves: MoveSpec[], options: { cwd?: string } = {}): 
     const edits: FileEdit[] = [];
     for (const move of moves) {
         if (move.from === move.to) {
-            throw new Error("move: `from` and `to` are the same file; use an ordinary op instead");
+            throw new Error(
+                "move: `from` and `to` are the same file. A move is a cut plus a paste, and the cut asserts the block is gone, which a paste back into the same file would contradict. Reorder within one file with a `block` op instead."
+            );
         }
 
         const source = read(move.from);
@@ -254,7 +355,7 @@ export function expandMoves(moves: MoveSpec[], options: { cwd?: string } = {}): 
 
         const anchor = move.at ?? "end";
         const paste: Op =
-            anchor === "end" || anchor === "start"
+            anchor === "end"
                 ? { kind: "append", text: `\n${block.text}\n`, label: `${label}: paste` }
                 : "after" in anchor
                   ? {
