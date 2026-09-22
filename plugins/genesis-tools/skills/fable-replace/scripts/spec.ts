@@ -147,8 +147,12 @@ const parseModifiers = (raw: string, line: number): Modifiers => {
             mods.symbol = value;
         } else if (key === "lines" && value !== undefined) {
             mods.lines = value;
-        } else if ((key === "at" || key === "before" || key === "after") && value !== undefined) {
+        } else if (key === "at" && value !== undefined) {
             mods.at = value;
+        } else if ((key === "before" || key === "after") && value !== undefined) {
+            // Not an alias: storing the VALUE in `at` turned `before=foo` into the misleading
+            // `at= takes "before" or "after", got "foo"`. The anchor text is the body.
+            fail(line, `write at=${key} and put the anchor text in the body; ${key}= is not a modifier`);
         } else {
             fail(
                 line,
@@ -171,6 +175,7 @@ const parseModifiers = (raw: string, line: number): Modifiers => {
         ["to", mods.to],
         ["symbol", mods.symbol],
         ["lines", mods.lines],
+        ["at", mods.at],
     ] as const) {
         if (value !== undefined && mods.kind !== "move") {
             fail(line, `${key}= only applies to move, not ${mods.kind}`);
