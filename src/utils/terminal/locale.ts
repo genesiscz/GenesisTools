@@ -1,4 +1,5 @@
 import { execSync } from "node:child_process";
+import { sep } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
 import { shellQuote } from "@genesiscz/utils/shell/quote";
@@ -83,6 +84,14 @@ export function stripTestSandboxEnv(target: NodeJS.ProcessEnv): NodeJS.ProcessEn
         delete target[key];
     }
 
+    // Declared here rather than at module scope so the rule sits beside its only caller.
+    const isInside = (candidate: string, root: string): boolean => {
+        const normalised = candidate.endsWith(sep) ? candidate.slice(0, -1) : candidate;
+        const base = root.endsWith(sep) ? root.slice(0, -1) : root;
+
+        return normalised === base || normalised.startsWith(`${base}${sep}`);
+    };
+
     // NODE_ENV/TMPDIR are legitimate variables in general, so only the test
     // values go: "test", and a TMPDIR that lives inside the sandbox root (which
     // is deleted when the suite ends, breaking every later mkdtemp in the pane).
@@ -90,7 +99,10 @@ export function stripTestSandboxEnv(target: NodeJS.ProcessEnv): NodeJS.ProcessEn
         delete target.NODE_ENV;
     }
 
-    if (tmpRoot && target.TMPDIR?.startsWith(tmpRoot)) {
+    // A prefix test alone also matches a SIBLING: `/tmp/gt-test-abc-user` starts with
+    // `/tmp/gt-test-abc` without being inside it, and deleting its TMPDIR breaks a sandbox
+    // that was never ours. The path must be the root itself or sit under a separator.
+    if (tmpRoot && target.TMPDIR && isInside(target.TMPDIR, tmpRoot)) {
         delete target.TMPDIR;
     }
 

@@ -587,8 +587,12 @@ async function cmdResolve(args: Record<string, string> = {}) {
                 alternatives: alternatives.map(({ entry: raw, score }) => ({
                     obsidianDir: forConsumer(raw, CONSUMER).obsidianDir,
                     docPath: derivedDocPath(forConsumer(raw, CONSUMER), ctx.branch),
-                    branch: alt.branch ?? null,
-                    worktreeDir: alt.worktreeDir ?? null,
+                    // `raw`, not `alt`: the binding was renamed and these two lines were
+                    // missed. `alt` is bound nowhere in this file, so any run that found an
+                    // alternative threw a ReferenceError. `plugins/**` sits outside the
+                    // tsconfig `include`, so tsgo never saw it.
+                    branch: raw.branch ?? null,
+                    worktreeDir: raw.worktreeDir ?? null,
                     score,
                 })),
                 warnings: resolutionWarnings({ entry, ctx, alternatives, docExists, docPathSource, siblingDocs }),

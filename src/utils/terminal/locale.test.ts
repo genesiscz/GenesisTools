@@ -100,4 +100,33 @@ describe("terminal locale", () => {
         expect(stripped.TMPDIR).toBe("/var/folders/6w/T/");
         expect(stripped.GENESIS_TEST_TMP_ROOT).toBeUndefined();
     });
+
+    test("stripTestSandboxEnv leaves a SIBLING of the sandbox root alone", () => {
+        // A bare `startsWith` also matches this path, and deleting its TMPDIR would break a
+        // sandbox that never belonged to this run.
+        const stripped = stripTestSandboxEnv({
+            GENESIS_TEST_TMP_ROOT: "/tmp/gt-test-tmp-abc",
+            TMPDIR: "/tmp/gt-test-tmp-abc-user",
+        });
+
+        expect(stripped.TMPDIR).toBe("/tmp/gt-test-tmp-abc-user");
+    });
+
+    test("stripTestSandboxEnv still removes a TMPDIR nested inside the sandbox root", () => {
+        const stripped = stripTestSandboxEnv({
+            GENESIS_TEST_TMP_ROOT: "/tmp/gt-test-tmp-abc",
+            TMPDIR: "/tmp/gt-test-tmp-abc/nested/deeper",
+        });
+
+        expect(stripped.TMPDIR).toBeUndefined();
+    });
+
+    test("stripTestSandboxEnv tolerates a trailing separator on either side", () => {
+        const stripped = stripTestSandboxEnv({
+            GENESIS_TEST_TMP_ROOT: "/tmp/gt-test-tmp-abc/",
+            TMPDIR: "/tmp/gt-test-tmp-abc",
+        });
+
+        expect(stripped.TMPDIR).toBeUndefined();
+    });
 });
