@@ -8,14 +8,13 @@
  * lives anywhere but inside this repo. Bun resolves a bare specifier from the IMPORTING
  * file's folder, so no tool can fix it at call time.
  *
- * Resolution walks UP from that file looking for `node_modules/<package>`, so one symlink at
- * an ancestor directory answers for everything beneath it, under plain `bun file.ts` exactly
- * as under a tool. This installs that one symlink.
+ * One `tsconfig.json` with a `paths` mapping at an ancestor directory answers for every file
+ * beneath it, under plain `bun file.ts` exactly as under a tool. This writes that one file.
  *
  *   tools link status              is it installed, and does the import actually resolve
- *   tools link install             link under the home directory
- *   tools link install --root DIR  link under a narrower root
- *   tools link uninstall           remove it
+ *   tools link install             map it under the home directory
+ *   tools link install --root DIR  map it under a narrower root
+ *   tools link uninstall           remove the mapping
  */
 
 import { homedir } from "node:os";
@@ -41,32 +40,21 @@ function absolute(path: string): string {
     return isAbsolute(path) ? path : resolve(process.cwd(), path);
 }
 
-/**
- * Absolute, always.
- *
- * This is a setup tool: every path it prints names a place the user may have to go and look
- * at. A cwd-relative form rendered the home directory as `../../..` when run from inside the
- * repo, which is shorter and tells the reader nothing.
- */
-function short(path: string): string {
-    return path;
-}
-
 program
     .command("status", { isDefault: true })
-    .description("Show whether the link is installed and whether the import resolves")
-    .option("--root <dir>", "root to report on, repeatable order: this one, then the home directory")
+    .description("Show whether the mapping is installed and whether the import resolves")
+    .option("--root <dir>", "root to report on; defaults to the home directory and the current one")
     .action((flags: { root?: string }) => {
         const roots = flags.root ? [absolute(flags.root)] : [homedir(), process.cwd()];
 
-        renderCliHeader("package link", `${PACKAGE_NAME} → ${short(utilsPackageDir())}`);
+        renderCliHeader("package link", `${PACKAGE_NAME} → ${utilsPackageDir()}`);
 
-        const table = createBoxTable(["ROOT", "LINK", "RESOLVES", "POINTS AT"]);
+        const table = createBoxTable(["ROOT", "MAPPING", "RESOLVES", "POINTS AT"]);
 
         for (const root of roots) {
             const status = linkStatusFor(root);
-            const link = status.occupied
-                ? formatDotStatus("err", "occupied")
+            const mapping = status.occupied
+                ? formatDotStatus("err", "unreadable")
                 : status.pointsAt === null
                   ? formatDotStatus("dim", "absent")
                   : status.dangling
@@ -76,21 +64,21 @@ program
                       : formatDotStatus("warn", "other checkout");
 
             table.push([
-                // The root is always absolute here. `short()` would render the home directory
-                // as `../../..` from inside the repo, which names nothing a reader can act on.
+                // Always absolute. A cwd-relative form rendered the home directory as
+                // `../../..` when run from inside the repo, which names nothing actionable.
                 pc.white(root),
-                link,
+                mapping,
                 // ⚠️ These two are independent on purpose. A repo with its own node_modules
-                // resolves with no link at all, and a link can exist while something nearer
-                // shadows it. Reporting only one of them would be true and useless.
+                // resolves with no mapping at all, and a mapping can exist while a nearer
+                // tsconfig shadows it. Reporting only one of them would be true and useless.
                 status.resolves ? formatDotStatus("ok", "yes") : formatDotStatus("err", "no"),
-                status.pointsAt === null ? pc.dim("—") : pc.dim(short(status.pointsAt)),
+                status.pointsAt === null ? pc.dim("—") : pc.dim(status.pointsAt),
             ]);
         }
 
         out.println(table.toString());
         renderCliSection("Columns");
-        out.println(`  ${pc.dim("LINK")}      whether this root has the node_modules symlink`);
+        out.println(`  ${pc.dim("MAPPING")}   whether this root's tsconfig.json maps the package`);
         out.println(`  ${pc.dim("RESOLVES")}  whether a bare import actually works from that root`);
         out.println("");
         out.println(`  ${pc.dim("Install with")}  tools link install`);
@@ -98,9 +86,9 @@ program
 
 program
     .command("install")
-    .description("Create the node_modules symlink so files under the root can import the package")
-    .option("--root <dir>", "directory to link under; everything beneath it resolves", homedir())
-    .option("--force", "replace a symlink that points at a different checkout")
+    .description("Write the tsconfig paths mapping so files under the root can import the package")
+    .option("--root <dir>", "directory to map under; everything beneath it resolves", homedir())
+    .option("--force", "replace a mapping that points at a different checkout")
     .action((flags: { root: string; force?: boolean }) => {
         const root = absolute(flags.root);
         const result = linkUtilsPackage({ root, force: flags.force === true });
@@ -108,14 +96,14 @@ program
         logger.debug({ root, outcome: result.outcome, target: result.target }, "link: install");
 
         if (result.outcome === "occupied") {
-            out.log.error(`${short(result.linkPath)} exists and is not a symlink. Leaving it alone.`);
+            out.log.error(`${result.configPath} is not a JSON object (${result.existing}). Leaving it alone.`);
             process.exitCode = 1;
 
             return;
         }
 
         if (result.outcome === "points-elsewhere") {
-            out.log.error(`${short(result.linkPath)} points at ${short(result.existing ?? "?")}.`);
+            out.log.error(`${result.configPath} maps the package to ${result.existing ?? "?"}.`);
             out.log.info("That belongs to another checkout. Re-run with --force to repoint it.");
             process.exitCode = 1;
 
@@ -124,40 +112,48 @@ program
 
         const verb =
             result.outcome === "created"
-                ? "Linked"
-                : result.outcome === "repaired"
-                  ? "Repaired a dangling link:"
-                  : "Already linked";
+                ? "Wrote"
+                : result.outcome === "merged"
+                  ? "Added the mapping to"
+                  : result.outcome === "repaired"
+                    ? "Repaired a stale mapping in"
+                    : "Already mapped in";
 
-        out.log.success(`${verb} ${short(result.linkPath)} → ${short(result.target)}`);
+        out.log.success(`${verb} ${result.configPath} → ${result.target}`);
 
-        // Creating a file proves nothing; resolving through it does.
+        // Writing a file proves nothing; resolving through it does.
         if (result.resolves) {
-            out.log.info(`Files under ${short(root)} can now import ${PACKAGE_NAME} directly.`);
+            out.log.info(`Files under ${root} with no tsconfig of their own can now import ${PACKAGE_NAME}.`);
         } else {
-            out.log.error("The link exists but the package still does not resolve from there.");
+            out.log.error("The mapping exists but its target is not a valid package directory.");
             process.exitCode = 1;
         }
     });
 
 program
     .command("uninstall")
-    .description("Remove the symlink")
-    .option("--root <dir>", "directory it was linked under", homedir())
+    .description("Remove the mapping")
+    .option("--root <dir>", "directory it was mapped under", homedir())
     .option("--force", "remove even when it points at a different checkout")
     .action((flags: { root: string; force?: boolean }) => {
         const root = absolute(flags.root);
         const result = unlinkUtilsPackage({ root, force: flags.force === true });
 
+        if (result.legacyRemoved) {
+            // Worth its own line: an empty node_modules left behind disables Bun's
+            // auto-install for every file under this root.
+            out.log.success("Removed the node_modules symlink from the earlier mechanism, and its empty folders.");
+        }
+
         if (result.outcome === "occupied") {
-            out.log.error(`${short(result.linkPath)} is a real directory, not our symlink. Leaving it alone.`);
+            out.log.error(`${result.configPath} is not a JSON object (${result.existing}). Leaving it alone.`);
             process.exitCode = 1;
 
             return;
         }
 
         if (result.outcome === "points-elsewhere") {
-            out.log.error(`${short(result.linkPath)} points at ${short(result.existing ?? "?")}, another checkout.`);
+            out.log.error(`${result.configPath} maps the package to ${result.existing ?? "?"}, another checkout.`);
             out.log.info("Re-run with --force if you are sure.");
             process.exitCode = 1;
 
@@ -165,12 +161,16 @@ program
         }
 
         if (result.outcome === "absent") {
-            out.log.info(`Nothing to remove at ${short(result.linkPath)}.`);
+            out.log.info(`Nothing of ours to remove at ${result.configPath}.`);
 
             return;
         }
 
-        out.log.success(`Removed ${short(result.linkPath)}.`);
+        out.log.success(
+            result.configRemoved
+                ? `Removed ${result.configPath}; it held nothing else.`
+                : `Removed the mapping from ${result.configPath}; its other settings are untouched.`
+        );
     });
 
 async function main(): Promise<void> {

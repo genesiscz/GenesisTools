@@ -101,7 +101,7 @@ The generated module always carries `@genesiscz/utils/json2md/document-file`, wh
 lands. That resolves inside this repo already; anywhere else it needs one command per machine:
 
 ```bash
-tools link install     # links under your home directory
+tools link install     # one tsconfig under your home directory
 tools link status      # check it
 ```
 
@@ -109,9 +109,10 @@ tools link status      # check it
 than scaffolding a module whose first build would fail.
 
 Bun resolves a bare specifier from the importing file's folder, so nothing this tool does at
-call time can fix it, and `bun doc.ts` fails the same way. Resolution walks up looking for
-`node_modules/@genesiscz/utils`, so one symlink at an ancestor answers for everything below.
-Full detail in `tools link --readme`.
+call time can fix it, and `bun doc.ts` fails the same way. The fix is one `tsconfig.json`
+carrying a `paths` mapping at an ancestor directory: Bun reads the **nearest** tsconfig above
+the importing file and applies it before any `node_modules` walk. A project with its own
+tsconfig is therefore unaffected. Full detail in `tools link --readme`.
 
 ### Hand-edit detection
 

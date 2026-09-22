@@ -9,57 +9,134 @@
  *     // Cannot find package '@genesiscz/utils' imported from /…/some/vault/note.ts
  *
  * Bun resolves a bare specifier from the IMPORTING file's folder, not from the tool's, so
- * nothing the tool does at call time can fix it. A `Bun.plugin` `onResolve` hook does not
- * help either: resolution happens before a runtime plugin sees the specifier (measured
- * 2026-09-22 — the plugin's hook is never called for this case).
+ * nothing the tool does at call time can fix it.
  *
- * What does work is the ordinary resolution algorithm itself. It walks UP from the importing
- * file looking for `node_modules/<package>`, so ONE symlink at an ancestor directory answers
- * for every file beneath it, under plain `bun file.ts` exactly as under a tool. Linking at the
- * home directory covers everything; linking at a narrower root keeps the blast radius small.
+ * The fix is one `tsconfig.json` carrying a `paths` mapping at an ancestor directory. Bun
+ * reads the NEAREST tsconfig above the importing file and applies its `paths` before any
+ * `node_modules` walk, so a single file answers for every descendant, under plain
+ * `bun file.ts` exactly as under a tool.
  *
- * ⚠️ It is machine-wide within that root. A project beneath it with no closer `node_modules`
- * entry will now resolve `@genesiscz/utils` where it previously failed, which can mask a
- * genuinely missing dependency. Prefer the narrowest root that covers the files you need.
+ * ⚠️ Measured alternatives, all rejected (2026-09-22, Bun 1.4.2):
+ *
+ * - A `node_modules` symlink works, but an empty or near-empty `node_modules` DISABLES Bun's
+ *   auto-install for every file beneath it. `picocolors` resolved from /tmp and failed from
+ *   the home directory. That breaks loose scripts that previously ran.
+ * - A runtime `Bun.plugin` `onResolve` hook is never consulted for a BARE specifier. Proved
+ *   with a positive control: the same plugin's hook fired for a relative specifier in the
+ *   same process, and `onLoad` fired for real files, while the bare specifier went straight
+ *   to the node resolver.
+ * - `bun link` registers a package for later `bun link <name>`; it puts nothing on the
+ *   resolution path by itself.
+ * - Publishing to npm works, but hands consumers a SNAPSHOT while the repo runs live code.
+ *
+ * 🛑 The blast radius is bounded by the nearest-tsconfig rule, which is the whole reason this
+ * mechanism is safe at the home directory: a project with its OWN tsconfig never sees this
+ * mapping. Only files with no tsconfig of their own — loose scripts and vault documents,
+ * exactly the target — resolve through it.
  */
 
-import { existsSync, lstatSync, mkdirSync, readFileSync, readlinkSync, rmSync, symlinkSync } from "node:fs";
+import {
+    existsSync,
+    lstatSync,
+    mkdirSync,
+    readdirSync,
+    readFileSync,
+    readlinkSync,
+    rmdirSync,
+    rmSync,
+    writeFileSync,
+} from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 
 export const PACKAGE_NAME = "@genesiscz/utils";
 
+/** The wildcard key. Every subpath import goes through it, so it is the authoritative entry. */
+const WILDCARD_KEY = `${PACKAGE_NAME}/*`;
+
 /**
  * The package directory of the checkout this code is running from.
  *
  * This module lives AT the package root, so its own directory is the answer. That is what
- * makes the link point at the running checkout rather than at a path written down once.
+ * makes the mapping point at the running checkout rather than at a path written down once.
  */
 export function utilsPackageDir(): string {
     return import.meta.dir;
 }
 
-/**
- * Where a symlink actually points, as an absolute path.
- *
- * `readlinkSync` returns the link EXACTLY as stored, and a link created by a package manager
- * is usually relative (`../../src/utils`). Comparing that raw string against an absolute
- * target reports every relative link as belonging to a different checkout.
- */
-function linkTarget(linkPath: string): string {
-    const raw = readlinkSync(linkPath);
+/** `<root>/tsconfig.json` — the one file this module writes. */
+export function configPathFor(root: string): string {
+    return join(resolve(root), "tsconfig.json");
+}
 
-    return resolve(dirname(linkPath), raw);
+interface TsConfigShape {
+    compilerOptions?: { baseUrl?: string; paths?: Record<string, string[]> };
+    files?: unknown;
+    include?: unknown;
+    [key: string]: unknown;
+}
+
+type ReadOutcome =
+    | { state: "absent" }
+    | { state: "parsed"; config: TsConfigShape }
+    | { state: "unreadable"; reason: string };
+
+/**
+ * Reads the config, preserving comments.
+ *
+ * `SafeJSON` is comment-json backed, so a tsconfig carrying `//` comments and trailing commas
+ * survives a parse/stringify round trip. A hand-written tsconfig usually has both, and
+ * silently stripping a user's comments would be a destructive edit disguised as a merge.
+ */
+function readConfig(configPath: string): ReadOutcome {
+    if (!existsSync(configPath)) {
+        return { state: "absent" };
+    }
+
+    try {
+        const parsed = SafeJSON.parse(readFileSync(configPath, "utf8"));
+
+        if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+            return { state: "unreadable", reason: "not a JSON object" };
+        }
+
+        return { state: "parsed", config: parsed as TsConfigShape };
+    } catch (error) {
+        return { state: "unreadable", reason: error instanceof Error ? error.message : String(error) };
+    }
+}
+
+/**
+ * The checkout an existing mapping names, as an ABSOLUTE path, or null when there is none.
+ *
+ * 🛑 A `paths` target is usually written relative, and TypeScript resolves it against
+ * `baseUrl` when that is set and against the config file's own directory otherwise. Comparing
+ * the raw string to an absolute path reports every relative mapping as another checkout — this
+ * repo's own tsconfig says `./src/utils`, and the status table called it "other checkout".
+ */
+function mappedPackageDir(config: TsConfigShape, configPath: string): string | null {
+    const entry = config.compilerOptions?.paths?.[WILDCARD_KEY];
+    const first = Array.isArray(entry) ? entry[0] : undefined;
+
+    if (typeof first !== "string" || !first.endsWith("/*")) {
+        return null;
+    }
+
+    const baseUrl = config.compilerOptions?.baseUrl;
+    const configDir = dirname(configPath);
+    const base = typeof baseUrl === "string" ? resolve(configDir, baseUrl) : configDir;
+
+    return resolve(base, first.slice(0, -2));
 }
 
 /**
  * Whether a bare `@genesiscz/utils` import would resolve for a file in `dir`.
  *
  * 🛑 Accurate only in a process that has NOT just changed the filesystem underneath it. Bun
- * caches module resolution per process, so calling this immediately after creating the link
- * returns the cached miss and reports a correct install as broken. Use `linkIsSound` for
- * that case, and this one from a fresh process such as `status`.
+ * caches module resolution per process, so calling this immediately after writing the config
+ * returns the cached miss and reports a correct install as broken. Use `linkIsSound` for that
+ * case, and this one from a fresh process such as `status`.
  */
 export function packageResolvesFrom(dir: string): boolean {
     try {
@@ -72,11 +149,11 @@ export function packageResolvesFrom(dir: string): boolean {
 }
 
 /**
- * Structural check that a link will work, without asking the resolver.
+ * Structural check that a mapping will work, without asking the resolver.
  *
- * The target must be a directory carrying a `package.json` whose `name` is the package.
- * That is exactly what node resolution looks for, so it answers the same question the
- * resolver would, and it is immune to the per-process resolution cache.
+ * The target must be a directory carrying a `package.json` whose `name` is the package. That
+ * is what the mapping points at, so it answers the same question the resolver would, and it
+ * is immune to the per-process resolution cache.
  */
 export function linkIsSound(target: string): boolean {
     const manifest = join(target, "package.json");
@@ -95,110 +172,131 @@ export function linkIsSound(target: string): boolean {
 }
 
 export type LinkOutcome =
-    /** The symlink was created. */
+    /** The config did not exist and was written. */
     | "created"
+    /** The mapping was added to a config that already existed. */
+    | "merged"
     /** It already pointed at this checkout; nothing to do. */
     | "already"
     /** It pointed at a path that no longer exists, and was repointed at this checkout. */
     | "repaired"
-    /** A symlink is there but points at another LIVE checkout. Not replaced without `force`. */
+    /** It points at another LIVE checkout. Not replaced without `force`. */
     | "points-elsewhere"
-    /** A real file or directory is there. Never replaced. */
+    /** A file is there that is not a JSON object. Never overwritten. */
     | "occupied";
 
 export interface LinkResult {
     outcome: LinkOutcome;
-    /** `<root>/node_modules/@genesiscz/utils`. */
-    linkPath: string;
-    /** Where it points, or would point. */
+    /** `<root>/tsconfig.json`. */
+    configPath: string;
+    /** Where the mapping points, or would point. */
     target: string;
-    /** What was already there, when something was. */
+    /** What was already mapped, when something was. */
     existing?: string;
     /** Whether the specifier actually resolves from `root` now. The only real proof. */
     resolves: boolean;
 }
 
 export interface LinkOptions {
-    /** Directory to link under. Everything beneath it resolves. Defaults to the home directory. */
+    /** Directory to act on. Everything beneath it resolves. Defaults to the home directory. */
     root?: string;
-    /** Replace a symlink that points somewhere else. Never replaces a real directory. */
+    /** Replace a mapping that points at a different checkout. Never overwrites a foreign file. */
     force?: boolean;
 }
 
 /**
- * Creates the ancestor `node_modules` symlink, idempotently.
+ * Writes the ancestor `tsconfig.json` mapping, idempotently.
  *
- * 🛑 Never clobbers. A real directory or file at the target path is reported and left alone:
- * something else put it there and this function does not know what depends on it. A symlink
- * pointing at a different checkout is also left alone unless `force` is passed, because
- * silently repointing it would move every consumer beneath that root onto another tree.
+ * 🛑 Never clobbers. A file that is not a JSON object is reported and left alone. A mapping
+ * naming a different LIVE checkout is left alone unless `force` is passed, because silently
+ * repointing it would move every consumer beneath that root onto another tree. Every other
+ * key in an existing config is preserved, comments included.
  */
 export function linkUtilsPackage(options: LinkOptions = {}): LinkResult {
     const root = resolve(options.root ?? homedir());
     const target = utilsPackageDir();
-    const scopeDir = join(root, "node_modules", PACKAGE_NAME.split("/")[0] as string);
-    const linkPath = join(scopeDir, PACKAGE_NAME.split("/")[1] as string);
-    const finish = (outcome: LinkOutcome, existing?: string): LinkResult => ({
-        outcome,
-        linkPath,
-        target,
-        existing,
-        // Structural, not resolver-based: this function may have just created the symlink,
-        // and Bun would still be serving the cached miss from before it existed.
-        resolves: linkIsSound(target) && (outcome === "created" || packageResolvesFrom(root)),
-    });
+    const configPath = configPathFor(root);
+    const read = readConfig(configPath);
 
-    let existing: string | undefined;
-    let stale = false;
+    if (read.state === "unreadable") {
+        return { outcome: "occupied", configPath, target, existing: read.reason, resolves: false };
+    }
 
-    try {
-        const stat = lstatSync(linkPath);
+    const fresh = read.state === "absent";
+    const config: TsConfigShape = read.state === "parsed" ? read.config : {};
+    const existing = read.state === "parsed" ? mappedPackageDir(config, configPath) : null;
+    let outcome: LinkOutcome = fresh ? "created" : "merged";
 
-        if (!stat.isSymbolicLink()) {
-            return finish("occupied", "a real file or directory");
-        }
-
-        existing = linkTarget(linkPath);
-
+    if (existing !== null) {
         if (existing === target) {
-            return finish("already", existing);
+            return {
+                outcome: "already",
+                configPath,
+                target,
+                existing,
+                resolves: linkIsSound(target) && packageResolvesFrom(root),
+            };
         }
 
-        // A link whose target no longer exists is not another install, it is a dangling one:
+        // A mapping whose target no longer exists is not another install, it is a stale one:
         // the checkout it named was moved or deleted. Repointing it needs no confirmation,
-        // because nothing can be depending on a path that is not there. `src/scripts/lib/store.ts`
+        // because nothing can depend on a path that is not there. `src/scripts/lib/store.ts`
         // heals its generated tsconfig the same way, for the same reason.
-        stale = !existsSync(existing);
-
-        if (!stale && options.force !== true) {
-            return finish("points-elsewhere", existing);
+        if (!existsSync(existing)) {
+            outcome = "repaired";
+        } else if (options.force !== true) {
+            return {
+                outcome: "points-elsewhere",
+                configPath,
+                target,
+                existing,
+                resolves: linkIsSound(existing) && packageResolvesFrom(root),
+            };
         }
-    } catch {
-        // Nothing there, which is the ordinary case.
     }
 
-    mkdirSync(scopeDir, { recursive: true });
+    const compilerOptions = config.compilerOptions ?? {};
+    const paths = compilerOptions.paths ?? {};
 
-    if (existing !== undefined) {
-        // Only reached for a stale link, or with `force`, and only ever for a symlink.
-        rmSync(linkPath, { force: true });
+    paths[PACKAGE_NAME] = [join(target, "index.ts")];
+    paths[WILDCARD_KEY] = [join(target, "*")];
+    compilerOptions.paths = paths;
+    config.compilerOptions = compilerOptions;
+
+    // 🛑 An editor's TypeScript server treats the directory holding a tsconfig as a project
+    // root and indexes every file beneath it. At the home directory that is the whole machine.
+    // Empty `files` and `include` say "this project contains no files", which costs Bun
+    // nothing: it reads `compilerOptions.paths` and ignores both (measured 2026-09-22).
+    // Only set on a config we are creating — a real project's own `include` is not ours.
+    if (fresh) {
+        config.files = [];
+        config.include = [];
     }
 
-    symlinkSync(target, linkPath, "dir");
+    mkdirSync(dirname(configPath), { recursive: true });
+    writeFileSync(configPath, `${SafeJSON.stringify(config, null, 4)}\n`);
 
-    return finish(stale ? "repaired" : "created", existing);
+    return {
+        outcome,
+        configPath,
+        target,
+        existing: existing ?? undefined,
+        // Structural, not resolver-based: this function just wrote the config, and Bun would
+        // still be serving the cached miss from before it existed.
+        resolves: linkIsSound(target),
+    };
 }
 
 export interface LinkStatus {
     root: string;
-    linkPath: string;
-    /** What the running checkout would link to. */
+    configPath: string;
+    /** What the running checkout would map to. */
     target: string;
-    /** Where the link points now, or null when there is no link. */
+    /** Where the mapping points now, or null when there is none. */
     pointsAt: string | null;
-    /** True when something is there that is not a symlink. */
+    /** True when a file is there that this tool cannot safely edit. */
     occupied: boolean;
-    /** True when the link points at a path that no longer exists. `install` repairs it. */
+    /** True when the mapping names a path that no longer exists. `install` repairs it. */
     dangling: boolean;
     /** Whether `pointsAt` matches this checkout. */
     current: boolean;
@@ -206,85 +304,181 @@ export interface LinkStatus {
     resolves: boolean;
 }
 
-/** Reads the link state for one root without changing anything. */
+/** Reads the mapping state for one root without changing anything. */
 export function linkStatusFor(root: string): LinkStatus {
     const absoluteRoot = resolve(root);
     const target = utilsPackageDir();
-    const linkPath = join(absoluteRoot, "node_modules", ...PACKAGE_NAME.split("/"));
-
-    let pointsAt: string | null = null;
-    let occupied = false;
-
-    try {
-        const stat = lstatSync(linkPath);
-
-        if (stat.isSymbolicLink()) {
-            pointsAt = linkTarget(linkPath);
-        } else {
-            occupied = true;
-        }
-    } catch {
-        // No entry, which is the ordinary "not installed" case.
-    }
+    const configPath = configPathFor(absoluteRoot);
+    const read = readConfig(configPath);
+    const pointsAt = read.state === "parsed" ? mappedPackageDir(read.config, configPath) : null;
 
     return {
         root: absoluteRoot,
-        linkPath,
+        configPath,
         target,
         pointsAt,
-        occupied,
+        occupied: read.state === "unreadable",
         dangling: pointsAt !== null && !existsSync(pointsAt),
         current: pointsAt === target,
-        // ⚠️ Deliberately independent of the link: a repo with its own node_modules resolves
-        // without one, and reporting "not installed" there would be true but useless.
+        // ⚠️ Deliberately independent of the mapping: a repo with its own node_modules
+        // resolves without one, and reporting "not installed" there would be true but useless.
         resolves: packageResolvesFrom(absoluteRoot),
     };
 }
 
 export type UnlinkOutcome =
-    /** The symlink was removed. */
+    /** The mapping was removed. */
     | "removed"
-    /** Nothing was there. */
+    /** There was nothing of ours to remove. */
     | "absent"
-    /** A real file or directory is there. Never removed. */
+    /** A file is there that is not a JSON object. Never touched. */
     | "occupied"
-    /** A symlink pointing at a DIFFERENT checkout. Not removed without `force`. */
+    /** The mapping names a DIFFERENT checkout. Not removed without `force`. */
     | "points-elsewhere";
 
 export interface UnlinkResult {
     outcome: UnlinkOutcome;
-    linkPath: string;
+    configPath: string;
     existing?: string;
+    /** True when a `node_modules` symlink from the earlier mechanism was cleaned up too. */
+    legacyRemoved: boolean;
+    /** True when the config held nothing else and the file itself was removed. */
+    configRemoved: boolean;
 }
 
 /**
- * Removes the symlink this module created.
+ * Removes the `node_modules` symlink the FIRST version of this tool installed, plus the empty
+ * directories it leaves behind.
  *
- * 🛑 Only ever removes a SYMLINK, and by default only one pointing at this checkout. A real
- * directory is someone's installed dependency; a symlink to another checkout belongs to
- * another install. Neither is ours to delete.
+ * 🛑 An empty `node_modules` is not harmless leftover. Bun stops auto-installing packages for
+ * every file beneath a directory that has one, so a husk at the home directory breaks loose
+ * scripts that used to run (measured 2026-09-22: `picocolors` resolved from /tmp and failed
+ * from the home directory). Pruning the directories is part of the removal, not tidiness.
  */
-export function unlinkUtilsPackage(options: LinkOptions = {}): UnlinkResult {
-    const root = resolve(options.root ?? homedir());
-    const linkPath = join(root, "node_modules", ...PACKAGE_NAME.split("/"));
+function removeLegacySymlink(root: string, force: boolean): boolean {
+    const modulesDir = join(root, "node_modules");
+    const scopeDir = join(modulesDir, PACKAGE_NAME.split("/")[0] as string);
+    const linkPath = join(scopeDir, PACKAGE_NAME.split("/")[1] as string);
 
     try {
-        const stat = lstatSync(linkPath);
-
-        if (!stat.isSymbolicLink()) {
-            return { outcome: "occupied", linkPath, existing: "a real file or directory" };
+        if (!lstatSync(linkPath).isSymbolicLink()) {
+            return false;
         }
 
-        const existing = linkTarget(linkPath);
+        // `readlinkSync` returns the link exactly as stored, and a package manager stores it
+        // relative to the link's own directory. Comparing that raw string against an absolute
+        // target reads every relative link as belonging to a different checkout.
+        const points = resolve(dirname(linkPath), readlinkSync(linkPath));
 
-        if (existing !== utilsPackageDir() && options.force !== true) {
-            return { outcome: "points-elsewhere", linkPath, existing };
+        if (points !== utilsPackageDir() && !force) {
+            return false;
         }
 
         rmSync(linkPath, { force: true });
-
-        return { outcome: "removed", linkPath, existing };
     } catch {
-        return { outcome: "absent", linkPath };
+        return false;
     }
+
+    for (const dir of [scopeDir, modulesDir]) {
+        try {
+            if (readdirSync(dir).length === 0) {
+                rmdirSync(dir);
+            }
+        } catch {
+            // Not empty, or not there. Either way it is not ours to remove.
+        }
+    }
+
+    return true;
+}
+
+/** True when nothing but our own scaffolding is left, so the file itself can go. */
+function isScaffoldOnly(config: TsConfigShape): boolean {
+    for (const [key, value] of Object.entries(config)) {
+        if (key === "files" || key === "include") {
+            if (Array.isArray(value) && value.length === 0) {
+                continue;
+            }
+
+            return false;
+        }
+
+        if (key !== "compilerOptions") {
+            return false;
+        }
+
+        const options = value as { paths?: Record<string, string[]> } | undefined;
+
+        if (options === undefined) {
+            continue;
+        }
+
+        const rest = Object.entries(options).filter(([name]) => name !== "paths");
+
+        if (rest.length > 0 || Object.keys(options.paths ?? {}).length > 0) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+/**
+ * Removes the mapping this module wrote.
+ *
+ * 🛑 Only ever removes OUR two keys, and by default only when they name this checkout. Every
+ * other key, and every comment, survives. The file itself is removed only when nothing but
+ * empty scaffolding is left, so a real project config is never deleted.
+ */
+export function unlinkUtilsPackage(options: LinkOptions = {}): UnlinkResult {
+    const root = resolve(options.root ?? homedir());
+    const configPath = configPathFor(root);
+    const force = options.force === true;
+    const legacyRemoved = removeLegacySymlink(root, force);
+    const read = readConfig(configPath);
+
+    if (read.state === "unreadable") {
+        return { outcome: "occupied", configPath, existing: read.reason, legacyRemoved, configRemoved: false };
+    }
+
+    const existing = read.state === "parsed" ? mappedPackageDir(read.config, configPath) : null;
+
+    if (existing === null) {
+        return {
+            outcome: legacyRemoved ? "removed" : "absent",
+            configPath,
+            legacyRemoved,
+            configRemoved: false,
+        };
+    }
+
+    if (existing !== utilsPackageDir() && !force) {
+        return { outcome: "points-elsewhere", configPath, existing, legacyRemoved, configRemoved: false };
+    }
+
+    const config = (read as { config: TsConfigShape }).config;
+    const paths = config.compilerOptions?.paths;
+
+    if (paths !== undefined) {
+        delete paths[PACKAGE_NAME];
+        delete paths[WILDCARD_KEY];
+
+        if (Object.keys(paths).length === 0) {
+            delete config.compilerOptions?.paths;
+        }
+    }
+
+    if (config.compilerOptions !== undefined && Object.keys(config.compilerOptions).length === 0) {
+        delete config.compilerOptions;
+    }
+
+    const configRemoved = isScaffoldOnly(config);
+
+    if (configRemoved) {
+        rmSync(configPath, { force: true });
+    } else {
+        writeFileSync(configPath, `${SafeJSON.stringify(config, null, 4)}\n`);
+    }
+
+    return { outcome: "removed", configPath, existing, legacyRemoved, configRemoved };
 }

@@ -58,10 +58,10 @@ tools json2md check ./reports/ConversionRegistry.ts
 ### 🛑 Outside this repo, run `tools link install` once
 
 The import below is the same everywhere. It resolves inside GenesisTools already; anywhere else
-— an Obsidian vault, a notes folder, `/tmp` — it needs one setup command, once per machine:
+— an Obsidian vault, a notes folder, a scratch project — it needs one setup command, once per machine:
 
 ```bash
-tools link install          # links under your home directory
+tools link install          # writes one tsconfig under your home directory
 tools link status           # check it, and whether the import actually resolves
 ```
 
@@ -69,9 +69,10 @@ tools link status           # check it, and whether the import actually resolves
 module that cannot build.
 
 Why it is needed: Bun resolves a bare specifier from the **importing file's** folder, so nothing
-json2md does at call time can fix it, and `bun doc.ts` fails the same way. Resolution walks up
-looking for `node_modules/@genesiscz/utils`, so one symlink at an ancestor answers for
-everything beneath it. See `tools link --readme`.
+json2md does at call time can fix it, and `bun doc.ts` fails the same way. The fix is one
+`tsconfig.json` with a `paths` mapping at an ancestor directory, which Bun applies before any
+`node_modules` walk. Bun reads only the **nearest** tsconfig, so a project that has its own is
+never touched by it. See `tools link --readme`.
 
 ⚠️ Do **not** hand-write an absolute path to `document-file.ts` instead. It works, and it
 commits a home directory into whatever repo the document lives in, so it runs on one machine.
