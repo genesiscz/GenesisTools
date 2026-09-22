@@ -169,6 +169,15 @@ describe("the one ai-config writer", () => {
         expect(code).toBe(1);
     });
 
+    test("a real call with a colon-then-comment later in the line is still caught", async () => {
+        // The filter used to match `: //` ANYWHERE in `path:line:content`, so a ternary or an
+        // object key followed by a comment hid the call on the same line.
+        const { code, output } = await runGuard({ "writer.ts": 'const s = flag ? new Storage("ai") : // none' });
+
+        expect(output).toContain("outside src/utils/ai/config/");
+        expect(code).toBe(1);
+    });
+
     test("a trailing comment on a real call is still caught", async () => {
         const { code } = await runGuard({ "writer.ts": 'const s = new Storage("ai"); // deliberate' });
 

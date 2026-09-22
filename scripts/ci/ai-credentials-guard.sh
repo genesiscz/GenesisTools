@@ -124,7 +124,7 @@ scan() {
 #    comment lines and backticked mentions are dropped from the results.
 argless=$(scan '(await\s+)?create(OpenAI|Groq|Anthropic|GoogleGenerativeAI|OpenAICompatible)\(\s*\)' \
         ':(exclude)**/*.md' ':(exclude)scripts/ci/ai-credentials-guard.sh' ':(exclude)scripts/ci/ai-credentials-guard.test.ts' \
-        | grep -Ev ':[[:space:]]*(//|\*|#)' | grep -Fv '`create' || true)
+        | grep -Ev '^[^:]*:[0-9]+:[[:space:]]*(//|\*|#)' | grep -Fv '`create' || true)
 if [ -n "$argless" ]; then
     echo "$argless"
     echo "::error:: argless provider factory — the SDK would read the API key from its own env var, unauditably. Pass an explicit apiKey from resolveCredential()/resolveProviderApiKey()."
@@ -162,7 +162,7 @@ aiwriter=$(scan 'new Storage\(\s*["'"'"']ai["'"'"']\s*\)' \
         ':(exclude)**/*.md' ':(exclude)src/utils/ai/config/**' \
         ':(exclude)scripts/ci/ai-credentials-guard.sh' ':(exclude)scripts/ci/ai-credentials-guard.test.ts' \
         ':(exclude)src/utils/config/migrations/2026-04-07-migrateAI.ts' ':(exclude)src/utils/ai/AIConfig.ts' \
-        | grep -Ev ':[[:space:]]*(//|\*|#)' || true)
+        | grep -Ev '^[^:]*:[0-9]+:[[:space:]]*(//|\*|#)' || true)
 if [ -n "$aiwriter" ]; then
     echo "$aiwriter"
     echo "::error:: new Storage(\"ai\") outside src/utils/ai/config/ — go through AiConfigStore, which owns the lock order (config first, vault second) and the migration chain."
