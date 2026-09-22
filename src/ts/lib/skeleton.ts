@@ -13,7 +13,7 @@ export interface SkeletonSymbol {
 
 const MAX_SIGNATURE = 160;
 
-function collapse(text: string): string {
+function collapsed(text: string): { text: string; truncated: boolean } {
     const single = text
         .replace(/\s+/g, " ")
         .trim()
@@ -24,9 +24,18 @@ function collapse(text: string): string {
         .trim()
         // `export const ui =` when the object literal is cut away, same reason.
         .replace(/=$/, "")
-        .trim();
+        .trim()
+        // A source trailing comma reads as damage once the value is on one line: `{ "a": 1, }`.
+        // Anchored at the very end, so a comma inside a string literal is never touched.
+        .replace(/,\s*([}\]])$/, " $1");
 
-    return single.length > MAX_SIGNATURE ? `${single.slice(0, MAX_SIGNATURE - 1)}…` : single;
+    return single.length > MAX_SIGNATURE
+        ? { text: `${single.slice(0, MAX_SIGNATURE - 1)}…`, truncated: true }
+        : { text: single, truncated: false };
+}
+
+function collapse(text: string): string {
+    return collapsed(text).text;
 }
 
 function isExported(node: ts.Node): boolean {
@@ -54,6 +63,28 @@ function headOf(node: ts.Node, source: ts.SourceFile, members: ts.NodeArray<ts.N
 
 function nameOf(node: ts.NamedDeclaration, source: ts.SourceFile): string {
     return node.name ? node.name.getText(source) : "<anonymous>";
+}
+
+/**
+ * `--exported`: the exported declarations, WITH the members that belong to them.
+ *
+ * 🛑 A member is kept only when its OWN parent survived. Filtering on `depth > 0` alone kept
+ * every private declaration's members, and the list is flat and ordered, so they then read as
+ * members of the previous surviving declaration. Measured 2026-09-22 on a file holding
+ * `export const shown = { "k": 1 }` above `const hidden = { "k": 2 }`: the skeleton reported
+ * `shown` as carrying BOTH fields. The only tell was a child whose line span sits outside its
+ * parent's, which the `--json` and `--toon` forms give a reader no reason to check.
+ */
+export function exportedOnly(symbols: SkeletonSymbol[]): SkeletonSymbol[] {
+    let keeping = false;
+
+    return symbols.filter((symbol) => {
+        if (symbol.depth === 0) {
+            keeping = symbol.exported;
+        }
+
+        return keeping;
+    });
 }
 
 export function extractSkeleton(source: ts.SourceFile): SkeletonSymbol[] {
@@ -130,6 +161,57 @@ export function extractSkeleton(source: ts.SourceFile): SkeletonSymbol[] {
         return current && ts.isObjectLiteralExpression(current) ? current : undefined;
     };
 
+    /**
+     * `true` when a literal is plain DATA: no method, no accessor, no function-valued
+     * property, at any depth. Such a literal has no API surface to list.
+     */
+    const isDataOnly = (literal: ts.ObjectLiteralExpression): boolean =>
+        literal.properties.every((property) => {
+            if (
+                ts.isMethodDeclaration(property) ||
+                ts.isGetAccessorDeclaration(property) ||
+                ts.isSetAccessorDeclaration(property)
+            ) {
+                return false;
+            }
+
+            if (ts.isPropertyAssignment(property)) {
+                const value = property.initializer;
+
+                if (ts.isArrowFunction(value) || ts.isFunctionExpression(value)) {
+                    return false;
+                }
+
+                const nested = literalOf(value);
+
+                return nested ? isDataOnly(nested) : true;
+            }
+
+            return true;
+        });
+
+    /**
+     * The whole declaration with its literal INLINE, or `null` when it must be expanded.
+     *
+     * Expanding is right for a facade, where the members ARE the API. It is noise for a
+     * value: `export const shown = { "k": 1 }` cost a head row plus a field row, and the two
+     * together said less than the single line the source already had.
+     *
+     * 🛑 Size alone is the wrong test, and was tried first. It inlines a SHORT facade too,
+     * and `export const api = ({ raw(): void {} })` then stops reporting `raw` as a method.
+     * So both conditions hold: the literal must be plain data, AND the whole declaration must
+     * still fit `MAX_SIGNATURE`. An inlined literal therefore shows every key it has.
+     */
+    const inlineLiteral = (node: ts.Node, literal: ts.ObjectLiteralExpression): string | null => {
+        if (!isDataOnly(literal)) {
+            return null;
+        }
+
+        const whole = collapsed(source.text.slice(node.getStart(source), literal.getEnd()));
+
+        return whole.truncated ? null : whole.text;
+    };
+
     const visitObjectMembers = (literal: ts.ObjectLiteralExpression, depth: number): void => {
         for (const property of literal.properties) {
             if (ts.isMethodDeclaration(property)) {
@@ -149,16 +231,17 @@ export function extractSkeleton(source: ts.SourceFile): SkeletonSymbol[] {
                 const isFn = ts.isArrowFunction(value) || ts.isFunctionExpression(value);
                 const body = isFn ? (value as ts.ArrowFunction | ts.FunctionExpression).body : undefined;
                 const nested = literalOf(value);
+                const inline = nested ? inlineLiteral(property, nested) : null;
 
                 push(
                     property,
                     isFn ? "method" : "field",
                     nameOf(property, source),
-                    signatureOf(property, source, body ?? (nested ? nested : undefined)),
+                    inline ?? signatureOf(property, source, body ?? (nested ? nested : undefined)),
                     depth
                 );
 
-                if (nested) {
+                if (nested && inline === null) {
                     visitObjectMembers(nested, depth + 1);
                 }
 
@@ -241,16 +324,21 @@ export function extractSkeleton(source: ts.SourceFile): SkeletonSymbol[] {
                     const body = isFn ? (initializer as ts.ArrowFunction | ts.FunctionExpression).body : undefined;
 
                     const literal = isFn ? undefined : literalOf(initializer);
+                    // `const a = {…}, b = {…}` shares one statement, so a slice anchored at the
+                    // statement start would carry the earlier declaration into the later one's
+                    // signature. Only a lone declaration can be inlined from that anchor.
+                    const alone = statement.declarationList.declarations.length === 1;
+                    const inline = literal && alone ? inlineLiteral(statement, literal) : null;
 
                     push(
                         statement,
                         isFn ? "function" : "const",
                         nameOf(declaration, source),
-                        signatureOf(statement, source, body ?? literal),
+                        inline ?? signatureOf(statement, source, body ?? literal),
                         depth
                     );
 
-                    if (literal) {
+                    if (literal && inline === null) {
                         visitObjectMembers(literal, depth + 1);
                     }
                 }
