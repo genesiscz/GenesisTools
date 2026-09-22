@@ -69,9 +69,11 @@ program
                 ? formatDotStatus("err", "occupied")
                 : status.pointsAt === null
                   ? formatDotStatus("dim", "absent")
-                  : status.current
-                    ? formatDotStatus("ok", "current")
-                    : formatDotStatus("warn", "other checkout");
+                  : status.dangling
+                    ? formatDotStatus("warn", "dangling")
+                    : status.current
+                      ? formatDotStatus("ok", "current")
+                      : formatDotStatus("warn", "other checkout");
 
             table.push([
                 // The root is always absolute here. `short()` would render the home directory
@@ -120,9 +122,14 @@ program
             return;
         }
 
-        out.log.success(
-            `${result.outcome === "created" ? "Linked" : "Already linked"} ${short(result.linkPath)} → ${short(result.target)}`
-        );
+        const verb =
+            result.outcome === "created"
+                ? "Linked"
+                : result.outcome === "repaired"
+                  ? "Repaired a dangling link:"
+                  : "Already linked";
+
+        out.log.success(`${verb} ${short(result.linkPath)} → ${short(result.target)}`);
 
         // Creating a file proves nothing; resolving through it does.
         if (result.resolves) {

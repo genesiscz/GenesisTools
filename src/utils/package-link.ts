@@ -99,7 +99,9 @@ export type LinkOutcome =
     | "created"
     /** It already pointed at this checkout; nothing to do. */
     | "already"
-    /** A symlink is there but points somewhere else. Not replaced without `force`. */
+    /** It pointed at a path that no longer exists, and was repointed at this checkout. */
+    | "repaired"
+    /** A symlink is there but points at another LIVE checkout. Not replaced without `force`. */
     | "points-elsewhere"
     /** A real file or directory is there. Never replaced. */
     | "occupied";
@@ -147,6 +149,7 @@ export function linkUtilsPackage(options: LinkOptions = {}): LinkResult {
     });
 
     let existing: string | undefined;
+    let stale = false;
 
     try {
         const stat = lstatSync(linkPath);
@@ -161,7 +164,13 @@ export function linkUtilsPackage(options: LinkOptions = {}): LinkResult {
             return finish("already", existing);
         }
 
-        if (options.force !== true) {
+        // A link whose target no longer exists is not another install, it is a dangling one:
+        // the checkout it named was moved or deleted. Repointing it needs no confirmation,
+        // because nothing can be depending on a path that is not there. `src/scripts/lib/store.ts`
+        // heals its generated tsconfig the same way, for the same reason.
+        stale = !existsSync(existing);
+
+        if (!stale && options.force !== true) {
             return finish("points-elsewhere", existing);
         }
     } catch {
@@ -171,13 +180,13 @@ export function linkUtilsPackage(options: LinkOptions = {}): LinkResult {
     mkdirSync(scopeDir, { recursive: true });
 
     if (existing !== undefined) {
-        // Only reached with `force`, and only for a symlink whose target was just read.
+        // Only reached for a stale link, or with `force`, and only ever for a symlink.
         rmSync(linkPath, { force: true });
     }
 
     symlinkSync(target, linkPath, "dir");
 
-    return finish("created", existing);
+    return finish(stale ? "repaired" : "created", existing);
 }
 
 export interface LinkStatus {
@@ -189,6 +198,8 @@ export interface LinkStatus {
     pointsAt: string | null;
     /** True when something is there that is not a symlink. */
     occupied: boolean;
+    /** True when the link points at a path that no longer exists. `install` repairs it. */
+    dangling: boolean;
     /** Whether `pointsAt` matches this checkout. */
     current: boolean;
     /** Whether a bare import actually resolves from `root`. The only claim that matters. */
@@ -222,6 +233,7 @@ export function linkStatusFor(root: string): LinkStatus {
         target,
         pointsAt,
         occupied,
+        dangling: pointsAt !== null && !existsSync(pointsAt),
         current: pointsAt === target,
         // ⚠️ Deliberately independent of the link: a repo with its own node_modules resolves
         // without one, and reporting "not installed" there would be true but useless.

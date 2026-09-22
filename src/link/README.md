@@ -83,4 +83,50 @@ missing dependency in an unrelated project. Use `--root` to narrow it when that 
 vault, or one project tree, rather than the whole home directory.
 
 The link points at the checkout the command was run from. Move that checkout and the link
-dangles; `tools link status` reports it and `tools link install` repairs it.
+dangles; `tools link status` reports it as `dangling` and `tools link install` repairs it
+without `--force`, because nothing can depend on a path that is not there.
+
+---
+
+## This is not a new trick
+
+The repo already resolves its **own** bare `@genesiscz/utils/*` imports this exact way:
+
+```
+node_modules/@genesiscz/utils -> ../../src/utils
+```
+
+That symlink has been there since 2026-09-01. `tools link install` applies the same mechanism
+to a root outside the repo; it does not invent a pattern.
+
+## Related mechanisms, already solving this differently
+
+Three other places in this repo answer "code outside the repo needs to reach repo code". None
+is wrong, and none should be converted to use this tool:
+
+| Where | Mechanism |
+|---|---|
+| `src/artifact/lib/vite.ts` (`baseResolve`) | A Vite `resolve.alias` entry. The files are served through a dev server, so the bundler resolves them |
+| `src/scripts/lib/store.ts` (`ensureStoreScaffold`) | A generated `tsconfig.json` with `paths` at `~/.genesis-tools/scripts/`, rewritten when it no longer points at the current checkout. That self-healing idea is where this tool's `repaired` outcome came from |
+| `src/cmux/lib/capture-installer.ts` (`bundleRuntime`) | A `Bun.build` `onResolve` plugin redirecting one import at BUNDLE time. The output runs standalone with no repo nearby |
+
+⚠️ A **runtime** `Bun.plugin` `onResolve` hook does not work for this problem, unlike the
+build-time one above. Measured 2026-09-22: resolution happens before the hook is consulted.
+
+## 🛑 Not a licence to break plugin standalone-ness
+
+`scripts/ci/check-plugin-standalone.ts` fails CI on any `@genesiscz/*` import under
+`plugins/**`, because plugin files are copied out of this checkout and run where the repo is
+not nearby. Several of them inline small helpers for exactly that reason.
+
+Do **not** use this link to justify importing the package there. The rule's value is that a
+plugin needs zero setup, and the plugin cache destination is not a path we control. A
+home-rooted link would probably resolve for a copy under `$HOME`, but "probably" is not the
+contract that rule provides.
+
+## Other code that could hit the same failure
+
+- `src/utils/json2md/document-file.ts` (`loadDocumentModule`) — the case this was built for.
+- `src/node-repl/lib/worker.ts` — the REPL can `import()` any absolute path. A single-file
+  snippet is fine; an external multi-file module whose own imports use the bare specifier
+  would hit it.
