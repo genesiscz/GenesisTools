@@ -185,3 +185,27 @@ describe("resolveOverride", () => {
         expect(resolved.kind === "dir" && resolved.dir.includes("~")).toBe(false);
     });
 });
+
+describe("review fixes", () => {
+    it("the worktree's own block wins even when the main block is listed first", () => {
+        // Keys used to be walked in file order, so the first match won and a worktree block
+        // listed after its main checkout's never applied.
+        const both: ProjectOverrides = {
+            "/repos/acme": { appliesToWorktrees: true, rule: "main" },
+            "/repos/acme-wt-login": { rule: "worktree" },
+        };
+
+        expect(overrideFor(both, worktree)?.override.rule).toBe("worktree");
+        expect(overrideFor(both, main)?.override.rule).toBe("main");
+    });
+
+    it("refuses resolver warnings that are not a list of strings", async () => {
+        const bad = await runResolver(`printf '{"dir":"/v","warnings":"not-a-list"}'`, main, "test");
+        const mixed = await runResolver(`printf '{"dir":"/v","warnings":["ok",3]}'`, main, "test");
+        const good = await runResolver(`printf '{"dir":"/v","warnings":["ok"]}'`, main, "test");
+
+        expect(bad.error).toContain("not a list of strings");
+        expect(mixed.error).toContain("not a list of strings");
+        expect(good.output?.warnings).toEqual(["ok"]);
+    });
+});

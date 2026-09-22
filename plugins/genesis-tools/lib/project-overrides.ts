@@ -56,18 +56,25 @@ export async function loadProjectOverrides(label: string): Promise<ProjectOverri
  * homes; a block keyed directly on the worktree still wins for that worktree.
  */
 export function overrideFor(overrides: ProjectOverrides, ctx: Ctx): { key: string; override: ProjectOverride } | null {
-    const candidates = [ctx.toplevel, ctx.mainProject].filter((path): path is string => Boolean(path));
+    const keyed = Object.keys(overrides ?? {}).map((key) => ({
+        key: expandHome(key),
+        override: overrides[key] as ProjectOverride,
+    }));
+    // The worktree's own block first, then the main checkout's. Walking the keys in file order
+    // let a main-checkout block listed first shadow a worktree block, so which one applied
+    // depended on how config.json happened to be ordered.
+    const exact = keyed.find((entry) => entry.key === ctx.toplevel);
 
-    for (const key of Object.keys(overrides ?? {})) {
-        const expanded = expandHome(key);
-        const override = overrides[key] as ProjectOverride;
-
-        if (candidates.includes(expanded) && (expanded === ctx.toplevel || override.appliesToWorktrees !== false)) {
-            return { key: expanded, override };
-        }
+    if (exact) {
+        return exact;
     }
 
-    return null;
+    return (
+        keyed.find(
+            (entry) =>
+                Boolean(ctx.mainProject) && entry.key === ctx.mainProject && entry.override.appliesToWorktrees !== false
+        ) ?? null
+    );
 }
 
 /**
@@ -126,6 +133,17 @@ export async function runResolver(
 
         if (typeof parsed?.dir !== "string" || !parsed.dir) {
             return { error: `resolverCommand returned no "dir": ${raw.slice(0, 200)}` };
+        }
+
+        // The resolver is an arbitrary shell line, so its `warnings` is untrusted too: a
+        // string or an object there used to flow into a field typed `string[]` and break the
+        // spreads and joins that render it.
+        if (parsed.warnings !== undefined) {
+            if (!Array.isArray(parsed.warnings) || parsed.warnings.some((item: unknown) => typeof item !== "string")) {
+                return {
+                    error: `resolverCommand returned "warnings" that is not a list of strings: ${raw.slice(0, 200)}`,
+                };
+            }
         }
 
         return { output: parsed as ResolverOutput };
