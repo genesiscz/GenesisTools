@@ -9,7 +9,7 @@ import {
 } from "@genesiscz/utils/json2md/document-file";
 import { type CheckResult, stripStamp, type Verdict } from "@genesiscz/utils/json2md/integrity";
 import { logger, out } from "@genesiscz/utils/logger";
-import { PACKAGE_NAME, packageResolvesFrom } from "@genesiscz/utils/package-link";
+import { PACKAGE_NAME, packageResolvesFrom, shadowedByFor } from "@genesiscz/utils/package-link";
 import { createBoxTable, formatDotStatus, renderCliHeader } from "@genesiscz/utils/table";
 import type { Command } from "commander";
 import pc from "picocolors";
@@ -342,8 +342,28 @@ function registerInit(program: Command): void {
             // build would fail with a resolution error that reads like a bug in the document.
             if (!packageResolvesFrom(dirname(modulePath))) {
                 out.log.warn(`${PACKAGE_NAME} does not resolve from ${short(dirname(modulePath))} yet.`);
-                out.log.info("One command fixes it for every file under your home directory:");
-                out.log.info(suggestCommand("tools link", { replaceCommand: ["install"] }));
+
+                // 🛑 Two different causes, two different fixes. A home-directory install cannot
+                // reach a folder whose own tsconfig shadows it, so suggesting one there sends
+                // the user to a command that will report success and change nothing.
+                const shadowedBy = shadowedByFor(dirname(modulePath));
+
+                if (shadowedBy === null) {
+                    out.log.info("One command fixes it for every file under your home directory:");
+                    out.log.info(suggestCommand("tools link", { replaceCommand: ["install"] }));
+                } else {
+                    // Absolute, not `short()`: this names a place the user has to go and act
+                    // on, and a cwd-relative form renders it as `../../..`, which tells them
+                    // nothing. The same reasoning governs every path `tools link` prints.
+                    out.log.info(`${shadowedBy} is nearer, and Bun reads only the nearest tsconfig.`);
+                    out.log.info("So it hides any mapping above it. Install into that project instead:");
+                    out.log.info(
+                        suggestCommand("tools link", {
+                            replaceCommand: ["install", "--root", dirname(shadowedBy)],
+                        })
+                    );
+                }
+
                 out.log.info(`Then: tools json2md build ${short(modulePath)}`);
                 process.exitCode = 1;
 

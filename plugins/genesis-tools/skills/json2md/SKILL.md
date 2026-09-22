@@ -65,8 +65,13 @@ tools link install          # writes one tsconfig under your home directory
 tools link status           # check it, and whether the import actually resolves
 ```
 
-`tools json2md init` detects this and stops with that exact command rather than scaffolding a
-module that cannot build.
+`tools json2md init` detects this and stops with the right command rather than scaffolding a
+module that cannot build. There are two causes and two different fixes, and it tells them apart.
+
+🛑 **If it still does not resolve, a nearer `tsconfig.json` is hiding the mapping.** Bun reads
+only the nearest one, so a folder that grew its own small project cuts off every document
+beneath it. `tools link status` names the offending file and prints the install scoped to that project.
+
 
 Why it is needed: Bun resolves a bare specifier from the **importing file's** folder, so nothing
 json2md does at call time can fix it, and `bun doc.ts` fails the same way. The fix is one

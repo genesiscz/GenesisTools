@@ -106,7 +106,13 @@ tools link status      # check it
 ```
 
 `init` detects a root where the package does not resolve and stops with that command rather
-than scaffolding a module whose first build would fail.
+than scaffolding a module whose first build would fail. It distinguishes the two causes and
+prints the matching fix, because a home-directory install cannot reach a shadowed folder.
+
+🛑 **If it still does not resolve, a nearer `tsconfig.json` is hiding the mapping.** Bun reads
+only the nearest one, so a folder that grew its own small project cuts off every document
+beneath it. `tools link status` names the offending file and prints the install scoped to that project.
+
 
 Bun resolves a bare specifier from the importing file's folder, so nothing this tool does at
 call time can fix it, and `bun doc.ts` fails the same way. The fix is one `tsconfig.json`
