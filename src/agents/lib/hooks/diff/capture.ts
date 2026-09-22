@@ -1,6 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { chmodSync, type Dirent, lstatSync, mkdirSync, readdirSync, type Stats, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { tmpdir } from "node:os";
+import { join, relative, sep } from "node:path";
 import { type DiffConfig, megabytes } from "../config";
 import { gitOut, isDeleted, objectId, statusEntries } from "../git";
 import { hookDiag } from "../log";
@@ -26,8 +27,59 @@ export interface CaptureResult {
 const DIR_MODE = 0o700;
 const FILE_MODE = 0o600;
 
-function makePrivateDir(dir: string): void {
+/**
+ * True when every existing directory from `<tmpdir>/GenesisTools` down to `dir` belongs to this
+ * user and is a real directory, not a link.
+ *
+ * 🛑 The leaf's 0700 protects its contents, but not the leaf itself. On a shared `/tmp` another
+ * user can create `GenesisTools/` first; owning an ancestor lets them rename our fresh leaf away
+ * and put their own directory in its place between the `mkdir` and the `tar`, and the copies of
+ * dirty files (a `.env` included) then land where they can read them. Refusing is the only safe
+ * answer, because we cannot take ownership of their directory.
+ */
+function ownsCaptureTree(dir: string): boolean {
+    const uid = process.getuid?.();
+
+    if (uid === undefined) {
+        return true;
+    }
+
+    const base = join(tmpdir(), "GenesisTools");
+    const tail = relative(base, dir).split(sep).filter(Boolean);
+    let current = base;
+
+    for (const segment of ["", ...tail]) {
+        current = segment === "" ? current : join(current, segment);
+
+        try {
+            const stat = lstatSync(current);
+
+            if (stat.isSymbolicLink() || !stat.isDirectory() || stat.uid !== uid) {
+                hookDiag("Refusing to capture: a directory in the capture path belongs to another user or is a link", {
+                    path: current,
+                    owner: stat.uid,
+                });
+
+                return false;
+            }
+        } catch {
+            return true;
+        }
+    }
+
+    return true;
+}
+
+function makePrivateDir(dir: string): boolean {
+    if (!ownsCaptureTree(dir)) {
+        return false;
+    }
+
     mkdirSync(dir, { recursive: true, mode: DIR_MODE });
+
+    if (!ownsCaptureTree(dir)) {
+        return false;
+    }
 
     try {
         // `mkdirSync`'s mode is masked by the umask, and the parents may pre-date this call.
@@ -35,6 +87,8 @@ function makePrivateDir(dir: string): void {
     } catch (err) {
         hookDiag("Could not tighten the capture directory mode", { err, dir });
     }
+
+    return true;
 }
 
 function writePrivateFile(path: string, contents: string): void {
@@ -266,7 +320,9 @@ export function capturePre(payload: HookPayload, config: DiffConfig): CaptureRes
 
     const dir = callDir(payload.harness, session, call);
 
-    makePrivateDir(dir);
+    if (!makePrivateDir(dir)) {
+        return { roots, captured, named: 0, skipped };
+    }
 
     // The named-path pass runs FIRST so a capture with no git root still produces a call
     // directory. The post phase gates on `roots.txt`, and returning early when `roots` was

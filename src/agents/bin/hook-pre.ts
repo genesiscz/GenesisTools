@@ -8,15 +8,16 @@
  * entirely: the command will not run, so there is nothing to diff, and capturing anyway is
  * what leaves an orphaned capture under /tmp for the collector to find later.
  */
+import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { keepsCommand, loadHooksConfig, megabytes } from "../lib/hooks/config";
+import { diffFor, keepsCommand, loadHooksConfig, megabytes } from "../lib/hooks/config";
 import { capturePre } from "../lib/hooks/diff/capture";
 import { evaluateGuard } from "../lib/hooks/guard";
 import { logDecision, setDiagLogPath, setMaxLogBytes } from "../lib/hooks/log";
 import { isTerminalTool, normalizeEvent, parseHookPayload } from "../lib/hooks/payload";
 import { bumpContextCounts, safeSessionId } from "../lib/hooks/state";
 
-if (process.env.AGENTS_HOOKS_DISABLE === "1") {
+if (env.isFlag("AGENTS_HOOKS_DISABLE")) {
     process.exit(0);
 }
 
@@ -55,8 +56,13 @@ logDecision(
 
 const denied = verdict?.outcome === "block" && !config.shadow;
 
-if (!denied && config.diff.enabled) {
-    const capture = capturePre(payload, config.diff);
+// Per harness, exactly as the post phase reads it. The shared `config.diff` captured for a
+// harness whose diff is off (leaving dirty-file copies behind until GC) and skipped one whose
+// override turns it on, so the post phase then found no capture.
+const diff = diffFor(config, payload.harness);
+
+if (!denied && diff.enabled) {
+    const capture = capturePre(payload, diff);
 
     logDecision(
         {

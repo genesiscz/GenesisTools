@@ -1,10 +1,11 @@
 #!/usr/bin/env bun
+import { env } from "@genesiscz/utils/env";
 import { loadHooksConfig, megabytes } from "../lib/hooks/config";
 import { collectStaleCaptures } from "../lib/hooks/gc";
 import { logDecision, setDiagLogPath, setMaxLogBytes } from "../lib/hooks/log";
 import { parseHookPayload } from "../lib/hooks/payload";
 
-if (process.env.AGENTS_HOOKS_DISABLE === "1") {
+if (env.isFlag("AGENTS_HOOKS_DISABLE")) {
     process.exit(0);
 }
 

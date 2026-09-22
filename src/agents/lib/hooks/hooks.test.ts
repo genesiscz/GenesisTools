@@ -4,7 +4,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { DEFAULT_HOOKS_CONFIG, diffFor, keepsCommand, lastConfigLoadError, loadHooksConfig } from "./config";
+import {
+    DEFAULT_HOOKS_CONFIG,
+    diffFor,
+    keepsCommand,
+    lastConfigLoadError,
+    lastConfigProblems,
+    loadHooksConfig,
+} from "./config";
 import { collectStaleCaptures, parseHorizon } from "./gc";
 import { evaluateCommand, evaluateGuard } from "./guard";
 import { guardFromLegacy } from "./import-config";
@@ -650,6 +657,29 @@ describe("config read robustness", () => {
             // "no config file" for a file that is plainly there.
             expect(loadHooksConfig().guard.longCommand).toEqual({ lines: 30, chars: 2500 });
             expect(lastConfigLoadError()).toBeDefined();
+        });
+
+        rmSync(home, { recursive: true, force: true });
+    });
+
+    it("puts a non-numeric cap back to its default and says so", async () => {
+        // A hand-edited `"maxFiles": "15"` reached the hot path as a string, where
+        // `blocks.length >= "15"` compares as text. Now it falls back and doctor names it.
+        const home = mkdtempSync(join(tmpdir(), "gt-cfg-types-"));
+
+        mkdirSync(join(home, ".genesis-tools", "agents"), { recursive: true });
+        writeFileSync(
+            join(home, ".genesis-tools", "agents", "hooks.json"),
+            SafeJSON.stringify({ diff: { maxFiles: "15" }, guard: { longCommand: { lines: null } } })
+        );
+
+        await env.testing.withOverrides({ GENESIS_TOOLS_HOME: home }, () => {
+            const config = loadHooksConfig();
+
+            expect(config.diff.maxFiles).toBe(DEFAULT_HOOKS_CONFIG.diff.maxFiles);
+            expect(config.guard.longCommand.lines).toBe(DEFAULT_HOOKS_CONFIG.guard.longCommand.lines);
+            expect(lastConfigProblems().join("\n")).toContain('diff.maxFiles is "15"');
+            expect(lastConfigProblems().join("\n")).toContain("guard.longCommand.lines is null");
         });
 
         rmSync(home, { recursive: true, force: true });

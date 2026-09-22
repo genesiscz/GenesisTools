@@ -14,6 +14,7 @@ import {
     type HooksConfig,
     hooksConfigPath,
     lastConfigLoadError,
+    lastConfigProblems,
     loadHooksConfig,
 } from "../lib/hooks/config";
 import { collectStaleCaptures, parseHorizon } from "../lib/hooks/gc";
@@ -183,6 +184,10 @@ export function registerHooksCommands(program: Command): void {
             wiring.push(["dist points at", distTarget]);
             out.println(wiring.toString());
 
+            for (const problem of lastConfigProblems()) {
+                ui.warn(problem);
+            }
+
             const loadError = lastConfigLoadError() as NodeJS.ErrnoException | undefined;
             const isDefault = SafeJSON.stringify(config) === SafeJSON.stringify(DEFAULT_HOOKS_CONFIG);
 
@@ -201,7 +206,9 @@ export function registerHooksCommands(program: Command): void {
 
     hooks
         .command("install")
-        .description("Wire the three hooks into the harness settings, additively")
+        .description(
+            "Wire the three hooks into Claude Code's ~/.claude/settings.json, additively (Codex and Grok are not wired by this command)"
+        )
         .option("--dist <path>", "Stable path the settings entries call (default: the agents dist symlink)")
         .option("--target <path>", "Checkout the dist symlink points at (default: this checkout)")
         .option("--write", "Actually write; without it this is a dry run")

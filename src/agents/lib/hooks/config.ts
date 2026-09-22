@@ -186,6 +186,33 @@ export function lastConfigLoadError(): unknown {
     return lastLoadError;
 }
 
+let lastProblems: string[] = [];
+
+/** Fields of the stored config that were ignored because their value had the wrong type. */
+export function lastConfigProblems(): string[] {
+    return lastProblems;
+}
+
+/**
+ * Every numeric field of `merged` that is not a finite number is put back to its default, and
+ * reported. A hand-edited `"maxFiles": "15"` used to reach the PreToolUse hot path as a string,
+ * where `blocks.length >= "15"` quietly compares as text; `hooks doctor` now names it.
+ */
+function repairNumbers<T extends object>(merged: T, defaults: T, path: string): T {
+    const repaired = { ...merged } as Record<string, unknown>;
+
+    for (const [key, fallback] of Object.entries(defaults as Record<string, unknown>)) {
+        const value = repaired[key];
+
+        if (typeof fallback === "number" && !(typeof value === "number" && Number.isFinite(value))) {
+            lastProblems.push(`${path}.${key} is ${SafeJSON.stringify(value)}, not a number; using ${fallback}`);
+            repaired[key] = fallback;
+        }
+    }
+
+    return repaired as T;
+}
+
 export function defaultLogPath(): string {
     return join(env.tools.getHome(), ".genesis-tools", "logs", "agents-hooks.jsonl");
 }
@@ -291,6 +318,7 @@ export function loadHooksConfig(): HooksConfig {
     let stored: Partial<HooksConfig> | null = null;
 
     lastLoadError = undefined;
+    lastProblems = [];
 
     try {
         stored = SafeJSON.parse(readFileSync(path, "utf8")) as Partial<HooksConfig>;
@@ -304,7 +332,7 @@ export function loadHooksConfig(): HooksConfig {
         return { ...DEFAULT_HOOKS_CONFIG, logPath: defaultLogPath() };
     }
 
-    return {
+    const merged: HooksConfig = {
         guard: {
             ...DEFAULT_HOOKS_CONFIG.guard,
             ...stored.guard,
@@ -336,6 +364,19 @@ export function loadHooksConfig(): HooksConfig {
         logCommands: stored.logCommands ?? DEFAULT_HOOKS_CONFIG.logCommands,
         maxLogMB: stored.maxLogMB ?? DEFAULT_HOOKS_CONFIG.maxLogMB,
         logPath: stored.logPath ?? defaultLogPath(),
+    };
+
+    return {
+        ...repairNumbers(merged, { ...DEFAULT_HOOKS_CONFIG, logPath: merged.logPath }, "hooks"),
+        guard: {
+            ...repairNumbers(merged.guard, DEFAULT_HOOKS_CONFIG.guard, "guard"),
+            longCommand: repairNumbers(
+                merged.guard.longCommand,
+                DEFAULT_HOOKS_CONFIG.guard.longCommand,
+                "guard.longCommand"
+            ),
+        },
+        diff: repairNumbers(merged.diff, DEFAULT_HOOKS_CONFIG.diff, "diff"),
     };
 }
 

@@ -4,15 +4,18 @@ import {
     existsSync,
     mkdirSync,
     mkdtempSync,
+    readdirSync,
     readFileSync,
     realpathSync,
     rmSync,
     statSync,
+    symlinkSync,
     utimesSync,
     writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { DEFAULT_HOOKS_CONFIG, type DiffConfig } from "../config";
 import { isDeleted, statusEntries } from "../git";
@@ -415,6 +418,75 @@ describe("the emergency stop", () => {
         expect(run.stdout).toContain("git-checkout-overwrites-file");
 
         rmSync(home, { recursive: true, force: true });
+    });
+});
+
+describe("review fixes", () => {
+    function runPre(home: string, session: string): void {
+        const entry = join(import.meta.dir, "..", "..", "..", "bin", "hook-pre.ts");
+
+        spawnSync("bun", [entry], {
+            input: SafeJSON.stringify({
+                hook_event_name: "PreToolUse",
+                tool_name: "Bash",
+                cwd: repo,
+                session_id: session,
+                tool_use_id: "call-1",
+                tool_input: { command: "cat kept.ts" },
+            }),
+            encoding: "utf8",
+            env: { ...process.env, GENESIS_TOOLS_HOME: home, AGENTS_HOOKS_DISABLE: "" },
+        });
+    }
+
+    it("the installed pre hook honours a per-harness diff override", () => {
+        // It sized and gated the capture with the shared `config.diff`, so a harness whose diff
+        // is off still had its dirty files copied, and the post phase then skipped the cleanup.
+        const off = mkdtempSync(join(tmpdir(), "gt-harness-off-"));
+        const on = mkdtempSync(join(tmpdir(), "gt-harness-on-"));
+
+        for (const [home, diff] of [
+            [off, { enabled: true, harnesses: { claude: { enabled: false } } }],
+            [on, { enabled: true }],
+        ] as const) {
+            mkdirSync(join(home, ".genesis-tools", "agents"), { recursive: true });
+            writeFileSync(
+                join(home, ".genesis-tools", "agents", "hooks.json"),
+                SafeJSON.stringify({ shadow: false, diff })
+            );
+        }
+
+        writeFileSync(join(repo, "kept.ts"), "alpha\nHARNESS-PROBE\n");
+        runPre(off, "harness-off");
+        runPre(on, "harness-on");
+
+        expect(existsSync(callDir("claude", "harness-off", "call-1"))).toBe(false);
+        expect(existsSync(callDir("claude", "harness-on", "call-1"))).toBe(true);
+
+        git(["checkout", "--", "kept.ts"]);
+        rmSync(off, { recursive: true, force: true });
+        rmSync(on, { recursive: true, force: true });
+    });
+
+    it("refuses to capture through a capture tree it does not own", async () => {
+        // On a shared /tmp another user can create `GenesisTools/` first and swap our leaf
+        // between the mkdir and the tar. A link in the chain is the case a test can build.
+        const root = realpathSync(mkdtempSync(join(tmpdir(), "gt-owner-")));
+        const elsewhere = realpathSync(mkdtempSync(join(tmpdir(), "gt-elsewhere-")));
+
+        symlinkSync(elsewhere, join(root, "GenesisTools"));
+        writeFileSync(join(repo, "kept.ts"), "alpha\nOWNER-PROBE\n");
+
+        await env.testing.withOverrides({ TMPDIR: root }, () => {
+            calls += 1;
+            capturePre(payload({ toolUseId: "owner-1" }), DEFAULT_HOOKS_CONFIG.diff);
+        });
+
+        expect(readdirSync(elsewhere)).toEqual([]);
+
+        git(["checkout", "--", "kept.ts"]);
+        rmSync(root, { recursive: true, force: true });
+        rmSync(elsewhere, { recursive: true, force: true });
     });
 });
 
