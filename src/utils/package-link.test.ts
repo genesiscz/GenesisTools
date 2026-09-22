@@ -357,7 +357,13 @@ describe("resolution through an ancestor config", () => {
         );
 
         const run = async (): Promise<number> => {
-            const proc = Bun.spawn(["bun", probe], { cwd: deep, stdout: "pipe", stderr: "pipe" });
+            // `env` is required: without it Bun does not forward the test temp root to the child.
+            const proc = Bun.spawn(["bun", probe], {
+                cwd: deep,
+                env: process.env,
+                stdout: "pipe",
+                stderr: "pipe",
+            });
 
             return await proc.exited;
         };
