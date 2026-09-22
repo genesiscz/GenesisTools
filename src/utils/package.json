@@ -225,6 +225,26 @@
             "types": "./json-schema.ts",
             "default": "./json-schema.ts"
         },
+        "./json2md": {
+            "bun": "./json2md/index.ts",
+            "types": "./json2md/index.ts",
+            "default": "./json2md/index.ts"
+        },
+        "./json2md/document-file": {
+            "bun": "./json2md/document-file.ts",
+            "types": "./json2md/document-file.ts",
+            "default": "./json2md/document-file.ts"
+        },
+        "./json2md/integrity": {
+            "bun": "./json2md/integrity.ts",
+            "types": "./json2md/integrity.ts",
+            "default": "./json2md/integrity.ts"
+        },
+        "./json2md/select": {
+            "bun": "./json2md/select.ts",
+            "types": "./json2md/select.ts",
+            "default": "./json2md/select.ts"
+        },
         "./jsonl": {
             "bun": "./jsonl.ts",
             "types": "./jsonl.ts",
