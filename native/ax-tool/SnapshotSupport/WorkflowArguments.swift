@@ -123,8 +123,10 @@ public struct WorkflowArguments {
         // not only to the prepared ones. It is what lets a live-updating window stay actionable.
         try reject(["--target-key"], unless: ["press","click","key","type","paste","select","set","perform","hover","move","scroll","get"])
         let revalidateScope = values["--revalidate-scope"] ?? "window"
-        guard ["element", "window", "app"].contains(revalidateScope) else {
-            throw WorkflowArgumentError.invalid("--revalidate-scope must be element, window or app")
+        // `app` used to be accepted and behaved exactly like `window`: nothing ever implemented
+        // an app-wide revalidation, so the flag promised a scope it did not check.
+        guard ["element", "window"].contains(revalidateScope) else {
+            throw WorkflowArgumentError.invalid("--revalidate-scope must be element or window")
         }
         if let key = values["--target-key"] {
             guard flags.contains("--prepare") || revalidateScope == "element", key.count == 64,
