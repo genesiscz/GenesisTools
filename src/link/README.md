@@ -153,9 +153,15 @@ Bun 1.4.2, macOS, 2026-09-22. None of these is a matter of taste.
 | A loader with an alias option (`jiti`) | Works, and only for imports **we** perform. `bun doc.ts` never calls our loader, so it still fails. Measured both arms |
 | `NODE_PATH` pointing at a folder of symlinks | Works on all four arms, and does **not** poison auto-install. Loses because it must be in the environment before Bun starts, so it dies for anything not launched from your shell: an editor's run button, a launchd job, a GUI app |
 | Global `~/.bunfig.toml` + `preload` | Bun's docs state `bun run` and `bun <file>` never read the global bunfig |
+| `package.json` `"imports"` (`#` prefix) | The only other ancestor-shaped mechanism, and the same walk-up shape as `paths`. It remaps **only** specifiers starting with `#`, so adopting it means rewriting every import site away from `@genesiscz/utils/...` |
+| `bun link`, `install.globalDir`, `workspace:`, `file:` | All reduce to the same requirement: the consuming location needs its own `package.json` and `node_modules` |
 
-The last row is the one that decides it: the requirement is that the same file works under
+The `jiti` row is the one that decides it: the requirement is that the same file works under
 `bun doc.ts` **and** under a GenesisTools command. Only the tsconfig mapping satisfies both.
+
+This table is meant to end the question. It was built from measurement first and corroborated
+against Bun's docs, its issue tracker and its resolver source, so treat a new suggestion here as
+already answered unless it comes with a run that contradicts a row.
 
 ---
 
