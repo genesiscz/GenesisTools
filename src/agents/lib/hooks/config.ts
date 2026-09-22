@@ -241,6 +241,13 @@ export const DEFAULT_HOOKS_CONFIG: HooksConfig = {
         },
     },
     logPath: defaultLogPath(),
+    // 🛑 `shadow: true` AND `logCommands: "shadow"` together mean `keepsCommand()` is true out
+    // of the box, so EVERY Bash command this machine runs through a hook is written verbatim
+    // to `logPath`. That is the point of shadow mode — the old and new guards cannot be
+    // compared on real traffic without the command text — but it is a local file holding
+    // whatever was typed, secrets included. It is capped at `maxLogMB` with one generation
+    // kept, and it stops accumulating commands as soon as either of these two is changed.
+    // Setting `logCommands: "never"` keeps shadow mode and drops the command text.
     shadow: true,
     logCommands: "shadow",
     maxLogMB: 16,

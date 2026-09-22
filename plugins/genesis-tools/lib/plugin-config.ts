@@ -18,6 +18,14 @@
  * too. That is why the migrations live here and run from the plugin scripts themselves rather
  * than from a one-off script on one machine.
  *
+ * ⚠️ TWO of the three are wired, not all three. `LEGACY_PATHS.registry` migrates from
+ * `vault-registry.ts` and `LEGACY_PATHS.research` from the research resolver, each on the
+ * first run of the consumer that owns it. `LEGACY_PATHS.obsidian` is declared and reachable
+ * but nothing calls it: the `obsidian` section is read by the question tool and the dev
+ * dashboard, neither of which is a genesis-tools plugin script, so there is no first run here
+ * to hang it on. It is left declared rather than deleted so the path stays named in one
+ * place, and so whoever wires that consumer has the migration waiting.
+ *
  * Standalone by design: plugin skill scripts run under bare `bun <path>` with no access to
  * `@genesiscz/utils`, so this module imports nothing outside node builtins and Bun.
  */

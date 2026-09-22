@@ -301,7 +301,13 @@ From the CLI, a move is one marker:
 >>>
 ```
 
-From a script, `moves` takes the same three ways of naming a block:
+⚠️ **The marker names a block by `symbol=` or `lines=` only.** `between` exists in the script
+form below, where the two anchors can carry spaces; a marker modifier is whitespace-split, so
+there is no token syntax for it. Use `lines=` from a marker, or the script form for `between`.
+`at=` takes `before` or `after` and the body is then the anchor: there is no `start`, because
+the engine has no prepend op.
+
+From a script, `moves` takes three ways of naming a block:
 
 ```ts
 await run({

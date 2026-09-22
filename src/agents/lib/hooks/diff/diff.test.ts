@@ -1115,6 +1115,21 @@ describe("hiding a kind of change", () => {
         expect(loud.message).toContain("z2.log");
     });
 
+    it("hides a generated file by default too, and prints it when asked", () => {
+        // Only the `log` category was exercised end to end. `generated` ships off as well,
+        // and nothing proved the default or the override actually reached the renderer.
+        const quiet = runOver(join(scratch, "bun.lock"), {});
+
+        expect(quiet.files).toEqual([]);
+        expect(quiet.reason).toContain("a kind this config hides");
+        expect(quiet.reason).toContain("generated");
+
+        const loud = runOver(join(scratch, "bun.lock"), { generated: true });
+
+        expect(loud.decision).toBe("emitted");
+        expect(loud.message).toContain("bun.lock");
+    });
+
     it("names the kind in the header, so a block that is on sufferance says why", () => {
         const loud = runOver(join(scratch, "z3.log"), { log: true });
 
