@@ -184,6 +184,16 @@ const parseModifiers = (raw: string, line: number): Modifiers => {
         if ((mods.symbol === undefined) === (mods.lines === undefined)) {
             fail(line, "move needs exactly one of symbol=<name> or lines=<first>-<last>");
         }
+
+        // `at=` used to accept any string: only `before` was tested, so `at=start`, `at=end`
+        // and `at=typo` all fell through to `after` and the block landed somewhere the spec
+        // never asked for. There is no `start`: the engine has no prepend op.
+        if (mods.at !== undefined && mods.at !== "before" && mods.at !== "after") {
+            fail(
+                line,
+                `at= takes "before" or "after", got "${mods.at}". A move with no at= appends to the end of the target; there is no "start" anchor, because the engine has no prepend op.`
+            );
+        }
     }
     if (mods.optional && (mods.kind === "append" || mods.kind === "create")) {
         fail(line, `optional has no meaning for ${mods.kind}: it cannot miss`);
@@ -251,8 +261,24 @@ const buildOp = (
         // A move spans two files, so it cannot be an op on this section. It resolves here, against
         // the file on disk, and contributes the cut and the paste as ordinary edits that the
         // runner merges with everything else.
+        // An `at=` with no body, or a body with no `at=`, is a spec the author got wrong:
+        // one silently appended and the other silently discarded the anchor text.
+        if (mods.at !== undefined && a === "") {
+            fail(
+                line,
+                `move: at=${mods.at} needs a body — the anchor text in the target file to place the block against`
+            );
+        }
+
+        if (mods.at === undefined && a !== "") {
+            fail(
+                line,
+                "move: a body is an anchor, so it needs at=before or at=after. Without one the block is appended and the body would be ignored."
+            );
+        }
+
         const at =
-            mods.at === undefined || a === ""
+            mods.at === undefined
                 ? undefined
                 : mods.at === "before"
                   ? ({ before: a } as const)

@@ -201,6 +201,23 @@ describe("the spec language's move marker", () => {
         expect(bad("@@ from.ts\n<<< symbol=moved\n===\nx\n>>>\n")).toThrow(/only applies to move/);
     });
 
+    test("at= takes only before or after, and an anchor and its at= arrive together", () => {
+        const dir = fixture();
+        const bad =
+            (spec: string): (() => unknown) =>
+            () =>
+                parseSpec({ text: spec, cwd: dir });
+
+        // Only `before` was ever tested, so `at=start`, `at=end` and `at=typo` all fell
+        // through to `after` and the block landed somewhere the spec never asked for.
+        expect(bad("@@ from.ts\n<<< move to=to.ts symbol=moved at=start\nanchor\n>>>\n")).toThrow(
+            /at= takes "before" or "after"/
+        );
+        expect(bad("@@ from.ts\n<<< move to=to.ts symbol=moved at=typo\nanchor\n>>>\n")).toThrow(/got "typo"/);
+        expect(bad("@@ from.ts\n<<< move to=to.ts symbol=moved at=after\n>>>\n")).toThrow(/needs a body/);
+        expect(bad("@@ from.ts\n<<< move to=to.ts symbol=moved\nanchor\n>>>\n")).toThrow(/at=before or at=after/);
+    });
+
     test("lines= addresses a block that is not one declaration", () => {
         const dir = fixture();
         const edits = parseSpec({ text: "@@ from.ts\n<<< move to=to.ts lines=1-1\n>>>\n", cwd: dir });
