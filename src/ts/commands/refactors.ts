@@ -14,36 +14,29 @@ import {
     runRefactors,
     type Severity,
 } from "../lib/refactors";
-import { addFormatOptions, addScanOptions, type FormatCliFlags, type ScanCliFlags } from "./options";
+import {
+    addFormatOptions,
+    addScanOptions,
+    type FormatCliFlags,
+    numberArg,
+    runUsage,
+    type ScanCliFlags,
+} from "./options";
 
 interface RefactorsCliOptions extends FormatCliFlags, ScanCliFlags {
     include?: string;
-    minLines?: string;
-    similarity?: string;
-    maxFunctionLines?: string;
-    maxParams?: string;
-    maxDeclarations?: string;
-    limit?: string;
+    minLines?: number;
+    similarity?: number;
+    maxFunctionLines?: number;
+    maxParams?: number;
+    maxDeclarations?: number;
+    limit?: number;
     locals?: boolean;
     includePatterns?: boolean;
     includeSameFile?: boolean;
 }
 
 const SEVERITY_MARK: Record<Severity, string> = { high: "🛑", medium: "⚠️", low: "❗" };
-
-function numberOption(raw: string | undefined, fallback: number, flag: string): number {
-    if (raw === undefined) {
-        return fallback;
-    }
-
-    const value = Number(raw);
-
-    if (Number.isNaN(value)) {
-        throw new Error(`${flag} wants a number, got ${raw}`);
-    }
-
-    return value;
-}
 
 function colourFor(severity: Severity): (text: string) => string {
     if (severity === "high") {
@@ -191,7 +184,7 @@ async function runRefactorsCommand(paths: string[], options: RefactorsCliOptions
 
     const format = resolveFormat(options);
     const analysers = resolveAnalysers(options.include);
-    const limit = numberOption(options.limit, 40, "--limit");
+    const limit = options.limit ?? 40;
     const needsImports = analysers.some(
         (analyser) => analyser.name === "shadowed" || analyser.name === "unused-exports"
     );
@@ -212,11 +205,11 @@ async function runRefactorsCommand(paths: string[], options: RefactorsCliOptions
         entries: loaded.entries,
         modules: loaded.modules,
         options: {
-            minLines: numberOption(options.minLines, 3, "--min-lines"),
-            similarity: numberOption(options.similarity, 0.8, "--similarity"),
-            maxFunctionLines: numberOption(options.maxFunctionLines, 60, "--max-function-lines"),
-            maxParams: numberOption(options.maxParams, 4, "--max-params"),
-            maxDeclarations: numberOption(options.maxDeclarations, 40, "--max-declarations"),
+            minLines: options.minLines ?? 3,
+            similarity: options.similarity ?? 0.8,
+            maxFunctionLines: options.maxFunctionLines ?? 60,
+            maxParams: options.maxParams ?? 4,
+            maxDeclarations: options.maxDeclarations ?? 40,
             limit,
             includePatterns: options.includePatterns === true,
             includeSameFile: options.includeSameFile === true,
@@ -256,20 +249,44 @@ export function registerRefactorsCommands(program: Command): void {
             "--include <list>",
             `Comma-separated analysers, or "all", or "help" to list them (default: ${DEFAULT_ANALYSERS.join(",")})`
         )
-        .option("--min-lines <n>", "Ignore declarations shorter than this (default 3)")
-        .option("--similarity <ratio>", "How alike two bodies must be, 0 to 1 (default 0.8)")
-        .option("--max-function-lines <n>", "A function longer than this is reported (default 60)")
-        .option("--max-params <n>", "More positional parameters than this is reported (default 4)")
-        .option("--max-declarations <n>", "A file with more top-level declarations is reported (default 40)")
+        .option(
+            "--min-lines <n>",
+            "Ignore declarations shorter than this (default 3)",
+            numberArg({ min: 1, integer: true })
+        )
+        .option(
+            "--similarity <ratio>",
+            "How alike two bodies must be, 0 to 1 (default 0.8)",
+            numberArg({ min: 0, max: 1 })
+        )
+        .option(
+            "--max-function-lines <n>",
+            "A function longer than this is reported (default 60)",
+            numberArg({ min: 1, integer: true })
+        )
+        .option(
+            "--max-params <n>",
+            "More positional parameters than this is reported (default 4)",
+            numberArg({ min: 1, integer: true })
+        )
+        .option(
+            "--max-declarations <n>",
+            "A file with more top-level declarations is reported (default 40)",
+            numberArg({ min: 1, integer: true })
+        )
         .option("--locals", "Also consider declarations inside function bodies")
         .option("--include-patterns", "Keep the duplicate groups that look like a deliberate repeated shape")
         .option("--include-same-file", "Keep the duplicate groups whose copies all live in one file")
-        .option("--limit <n>", "Show at most this many recommendations (default 40)");
+        .option(
+            "--limit <n>",
+            "Show at most this many recommendations (default 40)",
+            numberArg({ min: 1, integer: true })
+        );
 
     addScanOptions(command);
     addFormatOptions(command);
 
     command.action(async (paths: string[], options: RefactorsCliOptions) => {
-        await runRefactorsCommand(paths, options);
+        await runUsage(command, () => runRefactorsCommand(paths, options));
     });
 }

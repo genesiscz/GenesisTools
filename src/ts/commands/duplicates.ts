@@ -6,32 +6,25 @@ import pc from "picocolors";
 import { type DuplicateGroup, type DuplicateReport, findDuplicates } from "../lib/duplicates";
 import { emit, resolveFormat } from "../lib/format";
 import { loadFiles } from "../lib/load";
-import { addFormatOptions, addScanOptions, type FormatCliFlags, type ScanCliFlags } from "./options";
+import {
+    addFormatOptions,
+    addScanOptions,
+    type FormatCliFlags,
+    numberArg,
+    runUsage,
+    type ScanCliFlags,
+} from "./options";
 
 interface DuplicatesCliOptions extends FormatCliFlags, ScanCliFlags {
-    minLines?: string;
-    similarity?: string;
+    minLines?: number;
+    similarity?: number;
     kinds?: string;
     locals?: boolean;
     recommend?: boolean;
     includePatterns?: boolean;
     includeSameFile?: boolean;
     includeNameCollisions?: boolean;
-    limit?: string;
-}
-
-function numberOption(raw: string | undefined, fallback: number, flag: string): number {
-    if (raw === undefined) {
-        return fallback;
-    }
-
-    const value = Number(raw);
-
-    if (Number.isNaN(value)) {
-        throw new Error(`${flag} wants a number, got ${raw}`);
-    }
-
-    return value;
+    limit?: number;
 }
 
 function headline(group: DuplicateGroup): string {
@@ -177,7 +170,7 @@ function renderMarkdown(report: DuplicateReport, limit: number): Block[] {
 
 async function runDuplicates(paths: string[], options: DuplicatesCliOptions): Promise<void> {
     const format = resolveFormat(options);
-    const limit = numberOption(options.limit, 40, "--limit");
+    const limit = options.limit ?? 40;
     const loaded = await loadFiles(paths, {
         tests: options.tests === true,
         ignore: options.ignore,
@@ -191,8 +184,8 @@ async function runDuplicates(paths: string[], options: DuplicatesCliOptions): Pr
     }
 
     const report = findDuplicates(loaded.entries, {
-        minLines: numberOption(options.minLines, 3, "--min-lines"),
-        similarity: numberOption(options.similarity, 0.8, "--similarity"),
+        minLines: options.minLines ?? 3,
+        similarity: options.similarity ?? 0.8,
         kinds: options.kinds?.split(",").map((kind) => kind.trim()),
         includePatterns: options.includePatterns === true,
         includeSameFile: options.includeSameFile === true,
@@ -251,20 +244,28 @@ export function registerDuplicatesCommands(program: Command): void {
         .alias("dupes")
         .description("The same code written more than once, whether or not the copies share a name")
         .argument("<paths...>", "Files or directories; a directory is walked recursively")
-        .option("--min-lines <n>", "Ignore declarations shorter than this (default 3)")
-        .option("--similarity <ratio>", "How alike two bodies must be, 0 to 1 (default 0.8)")
+        .option(
+            "--min-lines <n>",
+            "Ignore declarations shorter than this (default 3)",
+            numberArg({ min: 1, integer: true })
+        )
+        .option(
+            "--similarity <ratio>",
+            "How alike two bodies must be, 0 to 1 (default 0.8)",
+            numberArg({ min: 0, max: 1 })
+        )
         .option("--kinds <list>", "Comma-separated declaration kinds to compare")
         .option("--locals", "Also compare declarations inside function bodies")
         .option("--recommend", "Pick the copy to keep and write the edit that removes the others")
         .option("--include-patterns", "Show the groups that look like a deliberate repeated shape")
         .option("--include-same-file", "Show groups whose copies all live in one file")
         .option("--include-name-collisions", "Also list same-name declarations whose code differs")
-        .option("--limit <n>", "Show at most this many groups (default 40)");
+        .option("--limit <n>", "Show at most this many groups (default 40)", numberArg({ min: 1, integer: true }));
 
     addScanOptions(command);
     addFormatOptions(command);
 
     command.action(async (paths: string[], options: DuplicatesCliOptions) => {
-        await runDuplicates(paths, options);
+        await runUsage(command, () => runDuplicates(paths, options));
     });
 }

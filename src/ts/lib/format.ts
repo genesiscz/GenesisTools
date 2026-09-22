@@ -31,37 +31,54 @@ export function isMachineFormat(format: OutputFormat): boolean {
 }
 
 /**
- * The shorthand flags and `--format` resolve to one value. `--format` wins when both are given,
- * because naming the format explicitly is the more deliberate of the two.
+ * A mistake in how the command was called, as opposed to a bug. The command layer prints its
+ * message as a one-line usage error instead of letting it escape as a stack trace.
+ */
+export class UsageError extends Error {}
+
+/**
+ * The shorthand flags and `--format` resolve to one value.
+ *
+ * 🛑 Two different answers are a usage error, not a precedence rule. `--md --json` used to print
+ * JSON silently, so a caller that asked for both learned nothing about which one it got.
+ * Repeating the same answer (`--format json --json`) is fine.
  */
 export function resolveFormat(flags: FormatFlags): OutputFormat {
+    const asked: OutputFormat[] = [];
+
     if (flags.format !== undefined) {
         const wanted = flags.format.toLowerCase();
 
         if (!OUTPUT_FORMATS.includes(wanted as OutputFormat)) {
-            throw new Error(`Unknown --format ${flags.format}. Use one of: ${OUTPUT_FORMATS.join(", ")}`);
+            throw new UsageError(`Unknown --format ${flags.format}. Use one of: ${OUTPUT_FORMATS.join(", ")}`);
         }
 
-        return wanted as OutputFormat;
+        asked.push(wanted as OutputFormat);
     }
 
     if (flags.jsonCompact) {
-        return "json-compact";
+        asked.push("json-compact");
     }
 
     if (flags.json) {
-        return "json";
+        asked.push("json");
     }
 
     if (flags.md) {
-        return "md";
+        asked.push("md");
     }
 
     if (flags.toon) {
-        return "toon";
+        asked.push("toon");
     }
 
-    return "text";
+    const distinct = [...new Set(asked)];
+
+    if (distinct.length > 1) {
+        throw new UsageError(`Pick one output format; got ${distinct.join(" and ")}`);
+    }
+
+    return distinct[0] ?? "text";
 }
 
 export interface Rendered {
@@ -73,6 +90,11 @@ export interface Rendered {
     json: () => unknown;
     /** The columnar form. Falls back to `json` when a report has no tabular shape. */
     compact?: () => unknown;
+    /**
+     * The object rows reshaped for TOON, whose tables only hold scalars: a nested array in one
+     * column turns the whole table back into a list of separate objects. Falls back to `json`.
+     */
+    toon?: () => unknown;
 }
 
 /**
@@ -106,7 +128,12 @@ export function emit(format: OutputFormat, rendered: Rendered): string {
     }
 
     if (format === "toon") {
-        const text = toToon((rendered.compact ?? rendered.json)() as never);
+        // TOON gets the OBJECT rows, never the positional ones. TOON turns an array of objects
+        // that share their keys into one table with the keys named once, which is exactly what
+        // the columnar form does by hand; feeding it positional arrays defeated that and cost
+        // 15% more tokens than `--json-compact` (measured 2026-09-22 on src/utils: 493k tokens
+        // against 428k). From the object rows it lands at 433k, level with the columnar form.
+        const text = toToon((rendered.toon ?? rendered.json)() as never);
 
         out.print(text);
 

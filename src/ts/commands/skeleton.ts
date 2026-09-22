@@ -11,7 +11,14 @@ import { emit, isMachineFormat, resolveFormat } from "../lib/format";
 import { loadFiles } from "../lib/load";
 import { exportedOnly, type SkeletonSymbol } from "../lib/skeleton";
 import { collectTypeNames, type ExpandedType, expandTypes } from "../lib/type-expand";
-import { addFormatOptions, addScanOptions, type FormatCliFlags, type ScanCliFlags } from "./options";
+import {
+    addFormatOptions,
+    addScanOptions,
+    type FormatCliFlags,
+    numberArg,
+    runUsage,
+    type ScanCliFlags,
+} from "./options";
 
 interface SkeletonOptions extends FormatCliFlags, ScanCliFlags {
     exported?: boolean;
@@ -21,7 +28,7 @@ interface SkeletonOptions extends FormatCliFlags, ScanCliFlags {
     includeNames?: boolean;
     includeHash?: boolean;
     includeLocals?: boolean;
-    functionContext?: string;
+    functionContext?: number;
 }
 
 /**
@@ -111,11 +118,7 @@ function coverageOf(result: Pick<SkeletonResult, "symbols" | "totalLines" | "cov
 
 async function runSkeleton(paths: string[], options: SkeletonOptions): Promise<void> {
     const format = resolveFormat(options);
-    const context = options.functionContext === undefined ? 0 : Number.parseInt(options.functionContext, 10);
-
-    if (Number.isNaN(context) || context < 0) {
-        throw new Error(`--function-context wants a whole number of lines, got ${options.functionContext}`);
-    }
+    const context = options.functionContext ?? 0;
 
     const loaded = await loadFiles(paths, {
         tests: options.tests === true,
@@ -224,8 +227,11 @@ async function runSkeleton(paths: string[], options: SkeletonOptions): Promise<v
 
         row.signature = symbol.signature;
 
-        if (context > 0 && symbol.body) {
-            row.body = symbol.body;
+        // Every row carries the same keys, even a declaration with no body. TOON turns an array
+        // of objects into one table only when their keys match, so a missing `body` on one row
+        // would drop the whole file back to a list of separate objects.
+        if (context > 0) {
+            row.body = symbol.body ?? [];
             row.bodyTruncated = symbol.bodyTruncated === true;
         }
 
@@ -353,6 +359,19 @@ async function runSkeleton(paths: string[], options: SkeletonOptions): Promise<v
 
             return blocks;
         },
+        toon: () => ({
+            files: results.map((result) => ({
+                file: result.file,
+                ...coverageOf(result),
+                symbols: result.symbols.map((symbol) => {
+                    const row = objectOf(symbol);
+
+                    return Array.isArray(row.body) ? { ...row, body: row.body.join("\n") } : row;
+                }),
+                ...(result.types.length > 0 ? { types: result.types } : {}),
+            })),
+            stats: { files: results.length, originalChars: loaded.originalChars, originalTokens },
+        }),
         json: () => ({
             files: results.map((result) => ({
                 file: result.file,
@@ -415,13 +434,17 @@ export function registerSkeletonCommands(program: Command): void {
         .option("--include-names", "Add the name and kind of every declaration as their own fields")
         .option("--include-hash", "Add a fingerprint of each declaration, with its own name blanked out")
         .option("--include-locals", "Also collect declarations inside function bodies")
-        .option("--function-context <lines>", "Print the first N lines of each body under its signature")
+        .option(
+            "--function-context <lines>",
+            "Print the first N lines of each body under its signature",
+            numberArg({ min: 0, integer: true })
+        )
         .option("--exact-tokens", "Count tokens with the BPE encoder instead of the chars-per-token estimate");
 
     addScanOptions(command);
     addFormatOptions(command);
 
     command.action(async (paths: string[], options: SkeletonOptions) => {
-        await runSkeleton(paths, options);
+        await runUsage(command, () => runSkeleton(paths, options));
     });
 }

@@ -60,7 +60,8 @@ describe("findDuplicates", () => {
         expect(report.groups[0]?.reason).toBe("identical");
         expect(report.groups[0]?.copies).toBe(3);
         expect(report.groups[0]?.canonical?.file).toBe("src/a/one.ts");
-        expect(report.groups[0]?.action).toContain("delete the local copies");
+        // No copy lives in a shared module, so the edit is a lift, not "import from src/a/one.ts".
+        expect(report.groups[0]?.action).toContain("no copy lives in a shared module");
     });
 
     it("finds a copy that was renamed", () => {

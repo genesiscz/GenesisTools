@@ -78,7 +78,8 @@ export interface DuplicateOptions {
 }
 
 const DEFAULT_KINDS = ["function", "method", "class", "interface", "type", "enum", "const"];
-const DEFAULT_SHARED_DIRS = ["utils", "util", "lib", "shared", "common", "core", "helpers"];
+/** Path segments that mark a module as the shared home for a helper. */
+export const SHARED_DIRS = ["utils", "util", "lib", "shared", "common", "core", "helpers"];
 const SHINGLE_SIZE = 4;
 const HASH_COUNT = 64;
 const BANDS = 16;
@@ -203,9 +204,31 @@ function commonPrefix(paths: string[]): string {
 }
 
 /**
- * Repetition the authors meant, rather than a copy-paste defect. Three shapes qualify, and all
- * three require the copies to sit under one directory deeper than the scan root, because a
- * family of parallel files is what makes repetition deliberate.
+ * True when the file names share a stem of four or more letters at the start or the end, so they
+ * read as one family: `LandingScreen.ts` and `BillingScreen.ts`, or `StoreOrders.ts` and
+ * `StoreUsers.ts`.
+ */
+function isNamingFamily(files: string[]): boolean {
+    const stems = files.map((file) => file.slice(file.lastIndexOf("/") + 1).replace(/\.[cm]?[jt]sx?$/, ""));
+    const reversed = stems.map((stem) => [...stem].reverse().join(""));
+    const sharedStart = (words: string[]): number => {
+        const first = words[0] ?? "";
+        let length = 0;
+
+        while (length < first.length && words.every((word) => word[length] === first[length])) {
+            length += 1;
+        }
+
+        return length;
+    };
+
+    return Math.max(sharedStart(stems), sharedStart(reversed)) >= 4;
+}
+
+/**
+ * Repetition the authors meant, rather than a copy-paste defect. Three shapes qualify, and each
+ * needs its own evidence that the copies form a family: a subtree below the scan root, file names
+ * that differ only by number, or file names built on one stem.
  *
  * 🛑 Directory alone is NOT enough, and trying it first is what produced the noise this
  * function exists to remove. Measured 2026-09-22 on a sibling repo: `requireToken` is copied five
@@ -239,20 +262,24 @@ function patternReasonOf(members: DuplicateMember[], scanRoot: string): string |
 
     // A method the whole family implements. The fix is a base class or a mixin, which is a
     // design decision, not the import this report would otherwise recommend.
-    if (allMethods && members.length >= 4) {
+    //
+    // 🛑 "A family" needs evidence: the copies sit below the scan root, or their files are named
+    // as one (`*Screen.ts`, `*Page.ts`). Without that, four unrelated classes that each pasted
+    // the same `save()` were hidden as a pattern, because every file shares SOME parent.
+    if (allMethods && members.length >= 4 && (shared.length > scanRoot.length || isNamingFamily(files))) {
         return `${members.length} classes under ${shared}/ implement this method`;
     }
 
     // Parallel implementations, each given its own name: one per screen, per scenario, per
     // route. Four across a subtree, or three inside one directory.
     //
-    // ⚠️ This is the weakest of the three, so it is the only one that also requires the copies
-    // to sit BELOW the scan root. Without that, scanning one directory would call every
-    // differently named group in it deliberate, and `--kinds` plus a narrow path is exactly
-    // how somebody drills into a directory they already suspect.
+    // ⚠️ This is the weakest of the three, so it needs family evidence on top of the distinct
+    // names: a subtree below the scan root, or file names built on one stem. Without that,
+    // scanning one directory would call every differently named group in it deliberate, and
+    // `--kinds` plus a narrow path is exactly how somebody drills into a directory they suspect.
     if (
         distinctNames &&
-        shared.length > scanRoot.length &&
+        (shared.length > scanRoot.length || isNamingFamily(files)) &&
         (members.length >= 4 || (members.length >= 3 && sameDirectory))
     ) {
         return `${members.length} differently named copies, all under ${shared}/`;
@@ -306,19 +333,35 @@ function pickCanonical(members: DuplicateMember[], sharedDirs: string[]): Duplic
     })[0] as DuplicateMember;
 }
 
-function actionFor(group: Omit<DuplicateGroup, "action" | "score">, canonical: DuplicateMember): string {
+function actionFor(
+    group: Omit<DuplicateGroup, "action" | "score">,
+    canonical: DuplicateMember,
+    sharedDirs: string[]
+): string {
     const others = group.members.filter((member) => member !== canonical);
     const renames = others.filter((member) => member.name !== canonical.name).length;
     const steps: string[] = [];
 
-    if (!canonical.exported) {
-        steps.push(`export \`${canonical.name}\` from ${canonical.file}`);
-    }
+    // 🛑 When no copy already lives in a shared module, pointing the others at the "best" copy
+    // tells them to import from a command file or a feature file, which is how the duplication
+    // started. Say so, and name where the shared home belongs instead.
+    if (!isShared(canonical.file, sharedDirs)) {
+        const home = commonPrefix(group.members.map((member) => member.file)) || ".";
 
-    steps.push(
-        `import \`${canonical.name}\` from ${canonical.file} in ${others.length} file${others.length === 1 ? "" : "s"}` +
-            ` and delete the local cop${others.length === 1 ? "y" : "ies"}`
-    );
+        steps.push(
+            `no copy lives in a shared module: move the body of ${canonical.file}:${canonical.startLine} into one ` +
+                `under ${home}/ and import it in all ${group.members.length} files`
+        );
+    } else {
+        if (!canonical.exported) {
+            steps.push(`export \`${canonical.name}\` from ${canonical.file}`);
+        }
+
+        steps.push(
+            `import \`${canonical.name}\` from ${canonical.file} in ${others.length} file${others.length === 1 ? "" : "s"}` +
+                ` and delete the local cop${others.length === 1 ? "y" : "ies"}`
+        );
+    }
 
     if (renames > 0) {
         steps.push(`${renames} of them use another name, so rename at the call sites`);
@@ -335,7 +378,7 @@ export function findDuplicates(entries: FileSymbols[], options: DuplicateOptions
     const minLines = options.minLines ?? 3;
     const threshold = options.similarity ?? 0.8;
     const kinds = new Set(options.kinds ?? DEFAULT_KINDS);
-    const sharedDirs = options.sharedDirs ?? DEFAULT_SHARED_DIRS;
+    const sharedDirs = options.sharedDirs ?? SHARED_DIRS;
     const scanRoot = commonPrefix(entries.map((entry) => entry.file));
 
     const candidates: Candidate[] = [];
@@ -542,7 +585,7 @@ export function findDuplicates(entries: FileSymbols[], options: DuplicateOptions
         groups.push({
             ...base,
             canonical,
-            action: canonical ? actionFor(base, canonical) : null,
+            action: canonical ? actionFor(base, canonical, sharedDirs) : null,
             score: Number((wastedLines * similarity * nameBoost).toFixed(2)),
         });
     }

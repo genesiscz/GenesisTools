@@ -1,4 +1,4 @@
-import type { DuplicateOptions, FileSymbols } from "../duplicates";
+import { type DuplicateOptions, type FileSymbols, SHARED_DIRS } from "../duplicates";
 import type { ParsedModule } from "../types";
 
 export type AnalyserName =
@@ -59,11 +59,8 @@ export interface Analyser {
     run: (input: RefactorInput) => Recommendation[];
 }
 
-/** Path segments that mark a module as the shared home for a helper. */
-export const SHARED_SEGMENTS = ["utils", "util", "lib", "shared", "common", "core", "helpers"];
-
 export function isSharedModule(file: string): boolean {
-    return file.split("/").some((segment) => SHARED_SEGMENTS.includes(segment));
+    return file.split("/").some((segment) => SHARED_DIRS.includes(segment));
 }
 
 /** Every name a module pulls in, under whatever local alias it uses. */

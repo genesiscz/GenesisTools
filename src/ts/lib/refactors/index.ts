@@ -1,3 +1,4 @@
+import { UsageError } from "../format";
 import { duplicatesAnalyser } from "./duplicates";
 import { godFilesAnalyser } from "./godFiles";
 import { longFunctionsAnalyser } from "./longFunctions";
@@ -43,7 +44,9 @@ export function resolveAnalysers(include: string | undefined): Analyser[] {
     const unknown = wanted.filter((name) => !ANALYSER_NAMES.includes(name as AnalyserName));
 
     if (unknown.length > 0) {
-        throw new Error(`Unknown analyser: ${unknown.join(", ")}. Use one of: ${ANALYSER_NAMES.join(", ")}, or "all".`);
+        throw new UsageError(
+            `Unknown analyser: ${unknown.join(", ")}. Use one of: ${ANALYSER_NAMES.join(", ")}, "all" or "help".`
+        );
     }
 
     return ANALYSERS.filter((analyser) => wanted.includes(analyser.name));

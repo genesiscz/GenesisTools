@@ -5,8 +5,13 @@
 Four command groups. `skeleton` prints a file's API. `duplicates` finds code written more than
 once. `refactors` ranks what to change. `imports` answers the startup-cost question.
 
-Every one of them takes `--format text|md|json|json-compact|toon`, with `--md`, `--json`,
-`--json-compact` and `--toon` as shorthands.
+`skeleton`, `duplicates` and `refactors` take `--format text|md|json|json-compact|toon`, with
+`--md`, `--json`, `--json-compact` and `--toon` as shorthands. Asking for two different formats is
+a usage error. `imports` keeps its own `--json` and does not take `--format`.
+
+Measured 2026-09-22 with Anthropic's tokenizer on `skeleton src/utils`: `--json` 643k tokens,
+`--json-compact` 428k, `--toon` 433k. TOON is built from the object rows, so it is a table with
+the keys named once; pick it when a reader wants field names, `--json-compact` when a parser does.
 
 🛑 **`--json` changed meaning on 2026-09-22.** It used to be the columnar form; that is now
 `--json-compact`. `--json` is the readable object form. A script that reads `cols` and positional
