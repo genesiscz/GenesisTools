@@ -84,8 +84,34 @@ describe("an update whose moment cannot be recovered", () => {
         }
     });
 
-    test("the dated updates around it still form their periods", () => {
-        expect(computeStatePeriods([...UPDATES, undated]).length).toBe(computeStatePeriods(UPDATES).length);
+    test("a trailing one still moves the item into its new state", () => {
+        // It used to be skipped outright, so the item was reported as still in Development
+        // after an update that moved it to Testing.
+        const periods = computeStatePeriods([...UPDATES, undated]);
+        const last = periods.at(-1);
+
+        expect(last?.state).toBe("Testing");
+        expect(last?.endDate).toBeNull();
+        expect(last?.startDate).toBe("2026-09-17T16:33:14Z");
+    });
+
+    test("a middle one keeps its state as a zero-length period instead of losing it", () => {
+        // Closed (dated) -> Blocked (undated) -> Development (dated): the Blocked transition
+        // used to vanish. Its span cannot be dated, so it stays with Closed, and Blocked is kept.
+        const middle: WorkItemUpdate = {
+            ...undated,
+            id: 32,
+            rev: 32,
+            fields: { "System.State": { newValue: "Blocked" } },
+        };
+        const periods = computeStatePeriods([...UPDATES, middle]);
+
+        expect(periods.map((p) => [p.state, p.startDate, p.endDate])).toEqual([
+            ["Testing", "2026-08-02T21:21:00Z", "2026-08-05T13:23:48Z"],
+            ["Closed", "2026-08-05T13:23:48Z", "2026-09-17T16:33:14Z"],
+            ["Blocked", "2026-09-17T16:33:14Z", "2026-09-17T16:33:14Z"],
+            ["Development", "2026-09-17T16:33:14Z", null],
+        ]);
     });
 });
 

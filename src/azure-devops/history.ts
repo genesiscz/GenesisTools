@@ -103,6 +103,41 @@ function updateMoment(update: WorkItemUpdate): string {
     return resolveUpdateDate(update);
 }
 
+/**
+ * When each update happened, in rev order. An update whose moment cannot be recovered borrows
+ * the next dated moment, or the last dated one when nothing dated follows it; only a history with
+ * no dated update at all is left empty.
+ *
+ * 🛑 Skipping an undated update, the first fix for the today-dated boundary, dropped its
+ * TRANSITION as well as its date: a middle one vanished and its time went to the state before
+ * it, and a trailing one left the item reported in a state it had already left. Borrowing a
+ * neighbour's moment keeps every transition, invents no time, and never dates anything today.
+ */
+function momentsOf(sorted: WorkItemUpdate[]): string[] {
+    const moments = sorted.map(updateMoment);
+    let next = "";
+
+    for (let index = moments.length - 1; index >= 0; index -= 1) {
+        if (moments[index]) {
+            next = moments[index] as string;
+        } else {
+            moments[index] = next;
+        }
+    }
+
+    let previous = "";
+
+    for (let index = 0; index < moments.length; index += 1) {
+        if (moments[index]) {
+            previous = moments[index] as string;
+        } else {
+            moments[index] = previous;
+        }
+    }
+
+    return moments;
+}
+
 function computeDurationMinutes(start: string, end: string): number {
     return Math.round((new Date(sanitizeDate(end)).getTime() - new Date(sanitizeDate(start)).getTime()) / 60000);
 }
@@ -118,19 +153,18 @@ export function computeAssignmentPeriods(updates: WorkItemUpdate[]): AssignmentP
 
     let currentAssignee: string | null = null;
     let periodStart: string | null = null;
+    const moments = momentsOf(sorted);
 
-    for (const update of sorted) {
+    for (const [index, update] of sorted.entries()) {
         const assignedToChange = update.fields?.["System.AssignedTo"];
         if (!assignedToChange) {
             continue;
         }
 
         const newAssignee = (assignedToChange.newValue as IdentityRef)?.displayName ?? null;
-        const changeDate = updateMoment(update);
+        const changeDate = moments[index];
 
-        // An update whose moment cannot be recovered cannot delimit a period: using it would
-        // date the boundary to whatever `sanitizeDate` invents. Skipping it closes the
-        // previous period at the next DATED update instead, which is the honest boundary.
+        // Empty only when no update in the whole history carries a moment.
         if (!changeDate) {
             continue;
         }
@@ -175,8 +209,9 @@ export function computeStatePeriods(updates: WorkItemUpdate[]): StatePeriod[] {
     let currentState: string | null = null;
     let currentAssignee: string | null = null;
     let periodStart: string | null = null;
+    const moments = momentsOf(sorted);
 
-    for (const update of sorted) {
+    for (const [index, update] of sorted.entries()) {
         const stateChange = update.fields?.["System.State"];
         const assignedToChange = update.fields?.["System.AssignedTo"];
 
@@ -190,9 +225,8 @@ export function computeStatePeriods(updates: WorkItemUpdate[]): StatePeriod[] {
         }
 
         const newState = stateChange.newValue as string | undefined;
-        const changeDate = updateMoment(update);
+        const changeDate = moments[index];
 
-        // Same reason as in computeAssignmentPeriods: an undated update cannot be a boundary.
         if (!changeDate) {
             continue;
         }
