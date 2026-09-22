@@ -246,6 +246,21 @@ export const DEFAULT_HOOKS_CONFIG: HooksConfig = {
     maxLogMB: 16,
 };
 
+/** One guard entry per harness, each merged over the shipped one rather than replacing it. */
+function mergedGuardHarnesses(
+    stored: Partial<Record<HarnessName, Record<string, HookOutcome>>> | undefined
+): Partial<Record<HarnessName, Record<string, HookOutcome>>> {
+    const merged: Partial<Record<HarnessName, Record<string, HookOutcome>>> = {
+        ...DEFAULT_HOOKS_CONFIG.guard.harnesses,
+    };
+
+    for (const [harness, override] of Object.entries(stored ?? {})) {
+        merged[harness as HarnessName] = { ...merged[harness as HarnessName], ...override };
+    }
+
+    return merged;
+}
+
 /** One entry per harness, each merged over the shipped one rather than replacing it. */
 function mergedHarnesses(
     stored: Partial<Record<HarnessName, DiffOverrides>> | undefined
@@ -291,6 +306,13 @@ export function loadHooksConfig(): HooksConfig {
             // `chars >= undefined` is always false, so the character threshold silently
             // stopped working.
             longCommand: { ...DEFAULT_HOOKS_CONFIG.guard.longCommand, ...stored.guard?.longCommand },
+            // `default`, `harnesses` and `models` need the same field-by-field treatment, and
+            // for the same reason: a hand-edited `hooks.json` that sets one rule for Codex
+            // would otherwise delete the shipped Grok entry, silently re-enabling a guard
+            // that was deliberately turned off there.
+            default: { ...DEFAULT_HOOKS_CONFIG.guard.default, ...stored.guard?.default },
+            harnesses: mergedGuardHarnesses(stored.guard?.harnesses),
+            models: { ...DEFAULT_HOOKS_CONFIG.guard.models, ...stored.guard?.models },
         },
         diff: {
             ...DEFAULT_HOOKS_CONFIG.diff,

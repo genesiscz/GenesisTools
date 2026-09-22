@@ -120,9 +120,26 @@ function silentReason(
     stale: number,
     suppressed: Map<DiffCategory, number>
 ): string {
-    if (suppressed.size > 0) {
-        const kinds = [...suppressed].map(([kind, count]) => `${count} ${kind}`).join(", ");
+    const kinds = [...suppressed].map(([kind, count]) => `${count} ${kind}`).join(", ");
 
+    // Several causes can hold at once, and each single-cause message below says "every" or
+    // names a count as if it were the whole story. Reporting only the first one then states
+    // something false: files really were hidden, but they were not the only reason nothing
+    // printed, and the reader fixes the wrong thing. So a mix is reported as a mix.
+    const causes: Array<[boolean, string]> = [
+        [suppressed.size > 0, `a kind this config hides (${kinds})`],
+        [covered > 0, `${covered} already rendered natively`],
+        [claimed > 0, `${claimed} already rendered`],
+        [uncaptured > 0, `${uncaptured} with no captured before-state, over the capture cap`],
+        [stale > 0, `${stale} deletion(s) already gone before this command began`],
+    ];
+    const active = causes.filter(([holds]) => holds);
+
+    if (active.length > 1) {
+        return `nothing left to print: ${active.map(([, text]) => text).join("; ")}`;
+    }
+
+    if (suppressed.size > 0) {
         return `every changed file was a kind this config hides: ${kinds}`;
     }
 

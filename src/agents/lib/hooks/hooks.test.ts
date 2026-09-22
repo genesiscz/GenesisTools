@@ -596,6 +596,49 @@ describe("config read robustness", () => {
         rmSync(home, { recursive: true, force: true });
     });
 
+    it("merges guard.harnesses per harness, keeping the shipped entries a stored one omits", async () => {
+        const home = mkdtempSync(join(tmpdir(), "gt-cfg-harness-"));
+
+        mkdirSync(join(home, ".genesis-tools", "agents"), { recursive: true });
+        writeFileSync(
+            join(home, ".genesis-tools", "agents", "hooks.json"),
+            SafeJSON.stringify({ guard: { harnesses: { codex: { "find-from-root": "allow" } } } })
+        );
+
+        await env.testing.withOverrides({ GENESIS_TOOLS_HOME: home }, () => {
+            const guard = loadHooksConfig().guard;
+
+            // A shallow spread replaced the whole harnesses map, so an override for one
+            // harness deleted the shipped Grok entry and silently re-enabled a guard that
+            // was deliberately turned off there.
+            expect(guard.harnesses.grok?.["zsh-glob-qualifier"]).toBe("allow");
+            expect(guard.harnesses.codex?.["zsh-glob-qualifier"]).toBe("allow");
+            expect(guard.harnesses.codex?.["find-from-root"]).toBe("allow");
+        });
+
+        rmSync(home, { recursive: true, force: true });
+    });
+
+    it("merges guard.default and guard.models rather than replacing them", async () => {
+        const home = mkdtempSync(join(tmpdir(), "gt-cfg-default-"));
+
+        mkdirSync(join(home, ".genesis-tools", "agents"), { recursive: true });
+        writeFileSync(
+            join(home, ".genesis-tools", "agents", "hooks.json"),
+            SafeJSON.stringify({ guard: { default: { "find-from-root": "allow" } } })
+        );
+
+        await env.testing.withOverrides({ GENESIS_TOOLS_HOME: home }, () => {
+            const guard = loadHooksConfig().guard;
+
+            expect(guard.default["find-from-root"]).toBe("allow");
+            expect(guard.contextCapPerSession).toBe(3);
+            expect(guard.models).toEqual(DEFAULT_HOOKS_CONFIG.guard.models);
+        });
+
+        rmSync(home, { recursive: true, force: true });
+    });
+
     it("reports a config file that exists but cannot be read", async () => {
         const home = mkdtempSync(join(tmpdir(), "gt-cfg-bad-"));
 
