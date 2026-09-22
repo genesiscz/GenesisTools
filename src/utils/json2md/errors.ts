@@ -28,7 +28,9 @@ export type Json2mdErrorCode =
     /** A document module had no `defineDocument` default export. */
     | "NO_DOCUMENT_EXPORT"
     /** A document's data file is missing. */
-    | "DATA_NOT_FOUND";
+    | "DATA_NOT_FOUND"
+    /** `defineDocument` was called with a field of the wrong shape. */
+    | "INVALID_DEFINITION";
 
 export interface Json2mdErrorOptions {
     /** RFC 6901 pointer to the offending value, for example `/items/3/name`. */
