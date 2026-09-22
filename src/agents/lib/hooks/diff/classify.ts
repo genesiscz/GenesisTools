@@ -114,6 +114,11 @@ function isFormattingOnly(patch: string): boolean {
 /**
  * The path decides first, because it is certain: a `.log` full of reformatted lines is still
  * a log. Only then is the patch inspected, which is the one category that has to be inferred.
+ *
+ * 🛑 `path` must be REPO-RELATIVE. The directory rules above test every segment, so an
+ * absolute path drags in ancestors outside the checkout: a repo living under `~/build/` or
+ * `~/dist/` would classify every file as `generated` and the whole diff would fall silent.
+ * Callers hold the root (`ChangedFile.root`) and relativise before calling.
  */
 export function classifyChange(path: string, patch: string): DiffCategory {
     return pathCategory(path) ?? (isFormattingOnly(patch) ? "formatting" : "source");

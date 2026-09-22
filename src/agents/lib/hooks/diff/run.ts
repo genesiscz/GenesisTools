@@ -1,5 +1,5 @@
 import { existsSync, readFileSync, rmSync, statSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, join, relative } from "node:path";
 import { type DiffConfig, diffFor, type HooksConfig } from "../config";
 import { committedPaths, gitOut, objectId, statusOf } from "../git";
 import { hookDiag } from "../log";
@@ -55,7 +55,10 @@ function blockFrom(
 ): DiffBlock | null {
     // The KIND is decided before any rendering work, so a category that is switched off
     // costs one classification rather than a `bat` spawn and a full render.
-    const category = classifyChange(file.path, patch);
+    // `file.path` is ABSOLUTE (collect.ts resolves it against the root), and the directory
+    // rules test every segment, so it is relativised first. A checkout under `~/build/` would
+    // otherwise classify every file as generated and the diff would print nothing.
+    const category = classifyChange(relative(file.root, file.path) || file.path, patch);
 
     if (!config.categories[category]) {
         suppressed.set(category, (suppressed.get(category) ?? 0) + 1);

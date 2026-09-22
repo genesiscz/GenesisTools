@@ -684,6 +684,45 @@ export function load(account: Account): Local {
         expect(byName("Account")?.truncated).toBe(false);
     });
 
+    it("keeps two same-named types from different files instead of collapsing them", () => {
+        // A bare-name dedupe key made the first `Options` suppress the second, so a signature
+        // naming both printed one declaration and silently dropped the other.
+        write(
+            "types/reader.ts",
+            `export interface Options {
+    readerOnly: string;
+}
+`
+        );
+        write(
+            "types/writer.ts",
+            `interface Options {
+    writerOnly: number;
+}
+export interface Result {
+    opts: Options;
+}
+`
+        );
+        const entry = write(
+            "types/both.ts",
+            `import type { Options } from "./reader";
+import type { Result } from "./writer";
+export function run(a: Options, b: Result): void {
+    void a;
+    void b;
+}
+`
+        );
+
+        const source = parseSource(entry, readFileSync(entry, "utf8"));
+        const expanded = expandTypes(source, entry, collectTypeNames(source), root);
+        const bodies = expanded.map((type) => type.text).join("\n");
+
+        expect(bodies).toContain("readerOnly");
+        expect(bodies).toContain("writerOnly");
+    });
+
     it("follows an extends base and names a package it cannot open", () => {
         write(
             "deep/base.ts",

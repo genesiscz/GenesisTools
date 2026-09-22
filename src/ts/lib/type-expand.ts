@@ -239,7 +239,12 @@ export function expandTypes(
     maxDepth = 2
 ): ExpandedType[] {
     const found: ExpandedType[] = [];
+    // Keyed by FILE and name, not by name alone. Two different types can share a name across
+    // files — `Options`, `Result`, `Config` are everywhere — and a bare-name key made the
+    // first one seen suppress every other, so a signature naming two distinct `Options`
+    // printed only one and silently dropped the other.
     const seen = new Set<string>();
+    const keyOf = (file: string, name: string): string => `${file}::${name}`;
     const queue: { name: string; source: ts.SourceFile; file: string; depth: number }[] = names.map((name) => ({
         name,
         source,
@@ -250,11 +255,11 @@ export function expandTypes(
     while (queue.length > 0 && found.length < MAX_TYPES) {
         const job = queue.shift();
 
-        if (!job || seen.has(job.name)) {
+        if (!job || seen.has(keyOf(job.file, job.name))) {
             continue;
         }
 
-        seen.add(job.name);
+        seen.add(keyOf(job.file, job.name));
 
         let declaration = declarationFor(job.source, job.name);
         let declarationSource = job.source;
@@ -314,7 +319,7 @@ export function expandTypes(
 
         if (nextDepth <= maxDepth) {
             for (const nested of collectTypeNamesIn(declaration)) {
-                if (!seen.has(nested)) {
+                if (!seen.has(keyOf(declarationFile, nested))) {
                     queue.push({
                         name: nested,
                         source: declarationSource,
