@@ -236,6 +236,11 @@ async function runSkeleton(files: string[], options: SkeletonOptions): Promise<v
                     exported: symbol.exported,
                     signature: symbol.signature,
                 })),
+                // `--types` resolves declarations for every format, and `--json` carries
+                // them. Omitting them here made `--types --toon` return nothing the flag
+                // asked for, silently. It sits outside `symbols` so the tabular form the
+                // comment above depends on is unaffected.
+                ...(result.types.length > 0 ? { types: result.types } : {}),
             })),
         };
         const text = toToon(payload);
