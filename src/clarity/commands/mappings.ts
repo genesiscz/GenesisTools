@@ -339,6 +339,7 @@ async function runAssign(date: string, options: MappingsOptions): Promise<void> 
         }
     }
 
+    const previousIds = config.mappings.map((mapping) => mapping.adoWorkItemId);
     config.mappings = applyAssignments({ mappings: config.mappings, pairs });
     await saveConfig(config);
 
@@ -358,12 +359,15 @@ async function runAssign(date: string, options: MappingsOptions): Promise<void> 
     }
 
     const replacedIds = new Set(replaced.map((entry) => entry.pair.workItemId));
+    const existedBefore = new Set(previousIds);
+    const toAssigned = (pair: AssignmentPair) => ({ workItemId: pair.workItemId, clarityTaskId: pair.task.taskId });
 
     renderReceipt(
         assignReceipt({
-            created: pairs
-                .filter((pair) => !replacedIds.has(pair.workItemId))
-                .map((pair) => ({ workItemId: pair.workItemId, clarityTaskId: pair.task.taskId })),
+            created: pairs.filter((pair) => !existedBefore.has(pair.workItemId)).map(toAssigned),
+            refreshed: pairs
+                .filter((pair) => existedBefore.has(pair.workItemId) && !replacedIds.has(pair.workItemId))
+                .map(toAssigned),
             replaced: replaced.map((entry) => ({
                 workItemId: entry.pair.workItemId,
                 clarityTaskId: entry.pair.task.taskId,

@@ -146,9 +146,12 @@ export interface ReplacedMapping extends AssignedMapping {
 export function assignReceipt({
     created,
     replaced,
+    refreshed = [],
 }: {
     created: AssignedMapping[];
     replaced: ReplacedMapping[];
+    /** Re-assigned to the task they already had: only the stored title changed, nothing to undo. */
+    refreshed?: AssignedMapping[];
 }): Receipt {
     const summary: string[] = [];
 
@@ -160,8 +163,12 @@ export function assignReceipt({
         summary.push(`${plural(replaced.length, "mapping")} replaced`);
     }
 
-    if (summary.length === 0) {
-        return { summary: [] };
+    if (refreshed.length > 0) {
+        summary.push(`${plural(refreshed.length, "mapping")} refreshed`);
+    }
+
+    if (created.length === 0 && replaced.length === 0) {
+        return { summary };
     }
 
     const undo = ["mappings"];

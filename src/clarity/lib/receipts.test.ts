@@ -48,6 +48,18 @@ describe("unlinkReceipt", () => {
 });
 
 describe("assignReceipt", () => {
+    // Re-assigning a work item to the task it already has only refreshes the stored title. Calling it
+    // "created" offered `--unlink` as the undo, which would delete a mapping that predates the run.
+    test("reports a same-task re-assign as refreshed, with nothing to undo", () => {
+        const receipt = assignReceipt({
+            created: [],
+            replaced: [],
+            refreshed: [{ workItemId: 311530, clarityTaskId: 8902059 }],
+        });
+
+        expect(receipt).toEqual({ summary: ["1 mapping refreshed"] });
+    });
+
     test("counts created and replaced mappings apart", () => {
         const receipt = assignReceipt({
             created: [{ workItemId: 302920, clarityTaskId: 8898018 }],
