@@ -169,7 +169,8 @@ const ANTHROPIC_ENTRIES: CatalogEntry[] = [
         displayName: "Claude Fable 5.1",
         contextWindow: 1_000_000,
         thinking: "reasoning",
-        pricing: { inputPer1M: 10, outputPer1M: 50, cachedCreatePer1M: 12.5, cachedReadPer1M: 1 },
+        // Fable 5.1 cut cache reads to a quarter of Fable 5's $1 (platform.claude.com, 2026-09-23).
+        pricing: { inputPer1M: 10, outputPer1M: 50, cachedCreatePer1M: 12.5, cachedReadPer1M: 0.25 },
         aliases: ["fable"],
         flags: { native1m: true, cli: { label: "Fable 5.1 (1M native)" } },
     }),
