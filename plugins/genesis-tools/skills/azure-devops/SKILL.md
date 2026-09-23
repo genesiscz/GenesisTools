@@ -25,6 +25,10 @@ tools azure-devops wiki get <url|id|path>        # Page details + markdown (--im
 tools azure-devops wiki search "<text>"          # Full-text search over wiki pages
 tools azure-devops wiki history <page>           # Commits that changed a page
 tools azure-devops wiki diff <page> [from] [to]  # What an edit changed (default: the last one)
+tools azure-devops comment list <id>             # Comments, newest first (--format json)
+tools azure-devops comment add <id> --file x.md  # Post markdown (--text, --file - for stdin, --html)
+tools azure-devops comment edit <id> <commentId> --file x.md   # Replace a comment's text
+tools azure-devops comment delete <id> <commentId>
 tools azure-devops workitem-create               # Create work item
 tools azure-devops timelog configure             # Interactive: setup API key, user, allowed types
 tools azure-devops timelog types                 # List available time types
@@ -69,6 +73,13 @@ tools azure-devops wiki search "<feature id or words>"   # find the page first
 
 Before trusting an analysis you read earlier, check the details table's **Last change** row, or run
 `wiki history`: a page edited after you read it may have changed the requirement.
+
+### Work item comments
+
+Post, edit and delete comments with `comment`, never with a hand-built `az` token and `curl`. The
+text goes as markdown. Keep the draft in a file, post it with `comment add <id> --file draft.md`,
+and apply corrections with `comment edit <id> <commentId> --file draft.md`, so the thread keeps one
+comment instead of a trail of reposts.
 
 ### Sprint backlog
 

@@ -12,6 +12,7 @@
  *   tools azure-devops workitem-create [options]
  *   tools azure-devops timelog <subcommand> [options]
  *   tools azure-devops wiki <list|pages|get|search|history> [options]
+ *   tools azure-devops comment <list|add|edit|delete> <workitem> [options]
  */
 
 import { exitWithAuthGuide, exitWithSslGuide, isAuthError, isSslError } from "@app/azure-devops/cli.utils";
@@ -31,6 +32,7 @@ handleReadmeFlag(import.meta.url);
 
 // Import command registration functions
 import { registerAncestorsCommand } from "@app/azure-devops/commands/ancestors";
+import { registerCommentCommand } from "@app/azure-devops/commands/comment";
 import { registerConfigureCommand } from "@app/azure-devops/commands/configure";
 import { registerDashboardCommand } from "@app/azure-devops/commands/dashboard";
 import { registerHistoryCommand } from "@app/azure-devops/commands/history";
@@ -76,6 +78,7 @@ registerTimelogCommand(program);
 registerHistoryCommand(program);
 registerSprintCommands(program);
 registerWikiCommand(program);
+registerCommentCommand(program);
 
 function showHelpFull(): void {
     out.println(`
@@ -96,6 +99,7 @@ Commands:
   iterations             List the project's sprints (alias: sprints)
   sprint [nameOrPath]    List the work items of one sprint
   wiki <subcommand>      Wikis: list, pages, get, search, history, diff
+  comment <subcommand>   Work item comments: list, add, edit, delete
 
 Global Options:
   --team <name>          Optional team; narrows team-scoped lists (overrides config.team)
@@ -203,6 +207,12 @@ Wiki Commands:
   tools azure-devops wiki search "<text>"          Full-text search over the pages
   tools azure-devops wiki history <page>           Commits that changed the page
   tools azure-devops wiki diff <page> [from] [to]  What an edit changed (default: the last one)
+
+Comment Commands:
+  tools azure-devops comment list <id>                     Comments, newest first (--format json)
+  tools azure-devops comment add <id> --file note.md       Post markdown (--text "...", --file - for stdin, --html)
+  tools azure-devops comment edit <id> <commentId> --file note.md   Replace a comment's text
+  tools azure-devops comment delete <id> <commentId>       Delete a comment
 
 History Commands:
   tools azure-devops history show <id>          Show history for a work item

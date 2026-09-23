@@ -23,6 +23,28 @@ export interface CommentsResponse {
     }>;
 }
 
+export type CommentFormat = "markdown" | "html";
+
+/** One work item comment as the Comments API (7.1-preview.4) returns it */
+export interface WorkItemCommentApi {
+    id: number;
+    workItemId: number;
+    version: number;
+    text: string;
+    renderedText?: string;
+    format?: CommentFormat;
+    createdBy: { displayName: string };
+    createdDate: string;
+    modifiedDate?: string;
+    url: string;
+}
+
+export interface WorkItemCommentsApiResponse {
+    totalCount: number;
+    count: number;
+    comments: WorkItemCommentApi[];
+}
+
 /** Raw response from dashboards list */
 export interface DashboardsListResponse {
     value: Array<{ id: string; name: string; groupId?: string }>;

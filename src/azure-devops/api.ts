@@ -6,6 +6,7 @@
  */
 
 import type {
+    CommentFormat,
     CommentsResponse,
     Dashboard,
     DashboardDetailResponse,
@@ -25,6 +26,8 @@ import type {
     WikiRecursionLevel,
     WikiSearchResponse,
     WikiV2,
+    WorkItemCommentApi,
+    WorkItemCommentsApiResponse,
 } from "@app/azure-devops/api.types";
 import { loadTeamMembersCache, saveTeamMembersCache } from "@app/azure-devops/cache";
 import { AzAuthError, extractAzLoginSuggestion } from "@app/azure-devops/cli.utils";
@@ -249,6 +252,16 @@ export class Api {
         url: string,
         options: { body?: unknown; contentType?: string; description?: string } = {}
     ): Promise<T> {
+        const response = await this.send(method, url, options);
+
+        return response.json();
+    }
+
+    private async send(
+        method: "GET" | "POST" | "PUT" | "DELETE" | "PATCH",
+        url: string,
+        options: { body?: unknown; contentType?: string; description?: string } = {}
+    ): Promise<Response> {
         const { body, contentType = "application/json", description } = options;
         const shortUrl = url.replace(this.config.org, "").slice(0, 80);
 
@@ -283,7 +296,7 @@ export class Api {
             throw new Error(`API Error ${response.status}: ${errorText}`);
         }
 
-        return response.json();
+        return response;
     }
 
     /**
@@ -524,6 +537,68 @@ export class Api {
         }
 
         return result;
+    }
+
+    private static commentsUrl(
+        config: AzureConfig,
+        workItemId: number,
+        { commentId, format }: { commentId?: number; format?: CommentFormat } = {}
+    ): string {
+        const segments = ["workItems", String(workItemId), "comments"];
+
+        if (commentId !== undefined) {
+            segments.push(String(commentId));
+        }
+
+        return Api.witUrlPreview(config, segments, { format }, "7.1-preview.4");
+    }
+
+    /** The comments of one work item, newest first. Errors propagate, unlike the bulk fetch. */
+    async getComments(workItemId: number): Promise<WorkItemCommentApi[]> {
+        const url = Api.witUrlPreview(
+            this.config,
+            ["workItems", String(workItemId), "comments"],
+            { $top: "200", order: "desc" },
+            "7.1-preview.4"
+        );
+        const data = await this.get<WorkItemCommentsApiResponse>(url, `comments #${workItemId}`);
+
+        return data.comments ?? [];
+    }
+
+    async addComment({
+        workItemId,
+        text,
+        format,
+    }: {
+        workItemId: number;
+        text: string;
+        format: CommentFormat;
+    }): Promise<WorkItemCommentApi> {
+        const url = Api.commentsUrl(this.config, workItemId, { format });
+
+        return this.post<WorkItemCommentApi>(url, { text }, "application/json", `add comment #${workItemId}`);
+    }
+
+    async updateComment({
+        workItemId,
+        commentId,
+        text,
+        format,
+    }: {
+        workItemId: number;
+        commentId: number;
+        text: string;
+        format: CommentFormat;
+    }): Promise<WorkItemCommentApi> {
+        const url = Api.commentsUrl(this.config, workItemId, { commentId, format });
+
+        return this.patch<WorkItemCommentApi>(url, { text }, "application/json", `edit comment ${commentId}`);
+    }
+
+    async deleteComment({ workItemId, commentId }: { workItemId: number; commentId: number }): Promise<void> {
+        const url = Api.commentsUrl(this.config, workItemId, { commentId });
+        await this.send("DELETE", url, { description: `delete comment ${commentId}` });
     }
 
     private async fetchComments(ids: number[]): Promise<Map<number, Comment[]>> {
