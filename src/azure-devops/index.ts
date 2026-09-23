@@ -11,6 +11,7 @@
  *   tools azure-devops list
  *   tools azure-devops workitem-create [options]
  *   tools azure-devops timelog <subcommand> [options]
+ *   tools azure-devops wiki <list|pages|get|search|history> [options]
  */
 
 import { exitWithAuthGuide, exitWithSslGuide, isAuthError, isSslError } from "@app/azure-devops/cli.utils";
@@ -37,6 +38,7 @@ import { registerQueryCommand, setWorkItemHandler } from "@app/azure-devops/comm
 import { registerSprintCommands } from "@app/azure-devops/commands/sprint";
 import { registerTimelogCommand } from "@app/azure-devops/commands/timelog";
 import { registerTreeCommand } from "@app/azure-devops/commands/tree";
+import { registerWikiCommand } from "@app/azure-devops/commands/wiki";
 import { handleWorkItem, registerWorkitemCommand } from "@app/azure-devops/commands/workitem";
 import { registerWorkitemCacheCommand } from "@app/azure-devops/commands/workitem-cache";
 import { registerWorkitemCreateCommand } from "@app/azure-devops/commands/workitem-create";
@@ -73,6 +75,7 @@ registerDashboardCommand(program);
 registerTimelogCommand(program);
 registerHistoryCommand(program);
 registerSprintCommands(program);
+registerWikiCommand(program);
 
 function showHelpFull(): void {
     out.println(`
@@ -92,6 +95,7 @@ Commands:
   history                Work item history commands (show, search, sync)
   iterations             List the project's sprints (alias: sprints)
   sprint [nameOrPath]    List the work items of one sprint
+  wiki <subcommand>      Wikis: list, pages, get, search, history, diff
 
 Global Options:
   --team <name>          Optional team; narrows team-scoped lists (overrides config.team)
@@ -191,6 +195,14 @@ Sprint Commands:
   tools azure-devops sprint "Sprint 17" --order   One sprint in Backlog order
   # These never use @CurrentIteration: that macro needs a team context and
   # fails with VS402612. An explicit [System.IterationPath] predicate is used.
+
+Wiki Commands:
+  tools azure-devops wiki list                     The project's wikis
+  tools azure-devops wiki pages [path] --depth 2   Page tree under a path
+  tools azure-devops wiki get <url|id|path>        Page details + markdown (--images, -o, -f json)
+  tools azure-devops wiki search "<text>"          Full-text search over the pages
+  tools azure-devops wiki history <page>           Commits that changed the page
+  tools azure-devops wiki diff <page> [from] [to]  What an edit changed (default: the last one)
 
 History Commands:
   tools azure-devops history show <id>          Show history for a work item
