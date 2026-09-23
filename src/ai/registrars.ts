@@ -21,6 +21,7 @@ export const AI_REGISTRARS: LazyRegistrar[] = [
         load: async () => (await import("./commands/accounts/login")).registerAiProviderLoginCommands,
     },
     { names: ["config"], load: async () => (await import("./commands/config")).registerConfigCommands },
+    { names: ["gate"], load: async () => (await import("./commands/gate")).registerGateCommands },
     { names: ["sessions"], load: async () => (await import("./commands/sessions")).registerSessionsCommands },
     { names: ["statusline"], load: async () => (await import("./commands/statusline")).registerStatuslineCommands },
     { names: ["tokens"], load: async () => (await import("./commands/tokens")).registerTokensCommands },

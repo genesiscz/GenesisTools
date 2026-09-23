@@ -8,6 +8,7 @@ import {
     codexOAuth,
     extractAccountId,
     extractEmail,
+    extractExpiry,
     readCodexAuthJson,
     TOKEN_REQUEST_TIMEOUT_MS,
     writeCodexAuthJson,
@@ -71,6 +72,21 @@ describe("writeCodexAuthJson", () => {
 
         expect(read?.accountId).toBeUndefined();
         expect(extractAccountId(read?.accessToken ?? "")).toBe("acct-from-claims");
+    });
+});
+
+describe("extractExpiry", () => {
+    const jwt = (claims: Record<string, unknown>) =>
+        `h.${Buffer.from(SafeJSON.stringify(claims, { strict: true })).toString("base64url")}.s`;
+
+    test("reads exp as epoch milliseconds", () => {
+        expect(extractExpiry(jwt({ exp: 1_800_000_000 }))).toBe(1_800_000_000_000);
+    });
+
+    test("no exp, a non-number exp, or not a JWT gives undefined", () => {
+        expect(extractExpiry(jwt({ sub: "x" }))).toBeUndefined();
+        expect(extractExpiry(jwt({ exp: "soon" }))).toBeUndefined();
+        expect(extractExpiry("not-a-jwt")).toBeUndefined();
     });
 });
 

@@ -29,7 +29,14 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 
 const BILLING_SALT = "59cf53e54c78";
-const CC_VERSION = "2.1.78";
+/**
+ * The Claude Code version the billing block claims. Anthropic gates models on it: on
+ * 2026-09-23 Opus 5.5 answered "Claude Code 2.1.78 does not support this model; version
+ * 2.1.280 or newer is required" (`claude_code_version_too_old`), while Sonnet 5 and Haiku
+ * still passed. A replay with 2.1.280 and the same salt returned 200, so the salt is not
+ * per-version. Bump this when a new model demands it; keep it at or below the installed CLI.
+ */
+const CC_VERSION = "2.1.280";
 
 /** System prompt line required by subscription OAuth API. */
 export const SUBSCRIPTION_SYSTEM_PREFIX = "You are Claude Code, Anthropic's official CLI for Claude.";

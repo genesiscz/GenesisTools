@@ -270,6 +270,68 @@ export function batchCwd(pids: number[]): Map<number, string> {
     return values;
 }
 
+/**
+ * The executable each pid runs, from the kernel (`lsof -d txt`, whose first `txt` entry per process is the
+ * binary itself). Unlike `ps ... command=`, this cannot be spoofed with a custom argv[0]. A pid lsof cannot
+ * inspect is simply absent.
+ */
+export function batchExecutables(pids: number[]): Map<number, string> {
+    const values = new Map<number, string>();
+
+    for (const batch of chunk(pids, PS_BATCH_SIZE)) {
+        const result = captureSync("lsof", ["-a", "-d", "txt", "-p", batch.join(",")]);
+        const lines = result.stdout.split("\n").slice(1);
+
+        for (const line of lines) {
+            if (line.trim() === "") {
+                continue;
+            }
+
+            const parts = line.trim().split(/\s+/);
+
+            if (parts.length < 9) {
+                continue;
+            }
+
+            const pid = Number.parseInt(parts[1], 10);
+            const path = parts.slice(8).join(" ");
+
+            if (Number.isNaN(pid) || !path.startsWith("/") || values.has(pid)) {
+                continue;
+            }
+
+            values.set(pid, path);
+        }
+    }
+
+    return values;
+}
+
+/**
+ * The command line of each pid followed by its environment as `KEY=value` tokens, from
+ * `ps eww` (macOS and Linux print the environment of processes the caller owns; other users'
+ * processes come back as the bare command). Callers scan it for variables that load code.
+ */
+export function batchCommandWithEnvironment(pids: number[]): Map<number, string> {
+    const values = new Map<number, string>();
+
+    for (const batch of chunk(pids, PS_BATCH_SIZE)) {
+        const result = captureSync("ps", ["eww", "-o", "pid=,command=", "-p", batch.join(",")]);
+
+        for (const line of result.stdout.split("\n")) {
+            const match = line.match(/^\s*(\d+)\s+(.*)$/);
+
+            if (match === null) {
+                continue;
+            }
+
+            values.set(Number.parseInt(match[1], 10), match[2]);
+        }
+    }
+
+    return values;
+}
+
 /** Parse the stdout of `ps -axo pid=,pcpu=,rss=,command=`. Unparseable lines are skipped. */
 export function parsePsList(stdout: string): PsListRow[] {
     const rows: PsListRow[] = [];
