@@ -5,7 +5,7 @@ Drive xAI's `grok` CLI as an isolated headless worker. This is the grok counterp
 ## Commands
 
 ```bash
-tools grok spawn --name fix-auth --cwd /abs/project --prompt-file /tmp/brief.md [--readonly] [--model grok-4.6] [--auth api-key] [--no-skills] [--no-rules]
+tools grok spawn --name fix-auth --cwd /abs/project --prompt-file /tmp/brief.md [--readonly] [--model grok-4.7] [--auth api-key] [--no-skills] [--no-rules]
 tools grok run --resume                  # native Grok resumes its most recent session
 tools grok run --resume "auth callback"  # indexed search by id, title, or transcript
 tools grok resume [query]                # alias of TUI resume

@@ -9,7 +9,7 @@ import { isObject } from "@genesiscz/utils/object";
  * than what either upstream accepts, and xAI hard-400s the PARAMETER itself on
  * most models — so an unmapped stamp turned every suffixed request into a
  * failure. Researched against official docs 2026-08-20:
- * - https://docs.x.ai/docs/guides/reasoning — grok-4.6 takes low|medium|high|xhigh,
+ * - https://docs.x.ai/docs/guides/reasoning — grok-4.7 and grok-4.6 take low|medium|high|xhigh,
  *   grok-4.5 takes low|medium|high (xhigh self-downgrades to high upstream),
  *   grok-4.20 takes the four values (they select agent count there); legacy
  *   grok-3-mini takes low|high. Models outside these families reject the field
@@ -27,7 +27,7 @@ const XAI_EFFORT_ORDER = ["low", "medium", "high", "xhigh"] as const;
 const PROXY_TO_XAI: Record<string, string> = { minimal: "low", max: "xhigh" };
 
 const XAI_EFFORT_MODELS: Array<{ test: RegExp; allowed: readonly string[] }> = [
-    { test: /^grok-4\.6/, allowed: XAI_EFFORT_ORDER },
+    { test: /^grok-4\.[67]/, allowed: XAI_EFFORT_ORDER },
     { test: /^grok-4\.20/, allowed: XAI_EFFORT_ORDER },
     { test: /^grok-4\.5/, allowed: ["low", "medium", "high"] },
     { test: /^grok-3-mini/, allowed: ["low", "high"] },

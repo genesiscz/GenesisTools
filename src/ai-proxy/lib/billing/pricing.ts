@@ -41,6 +41,7 @@ interface ModelRate extends RatePair {
 }
 
 const LONG_CONTEXT_THRESHOLD = 200_000;
+const OPENAI_LONG_CONTEXT = 272_000;
 
 const OPUS_45_PLUS: ModelRate = { inputUsdPerMTok: 5, outputUsdPerMTok: 25 };
 const OPUS_PRE_45: ModelRate = { inputUsdPerMTok: 15, outputUsdPerMTok: 75 };
@@ -82,13 +83,38 @@ const RATE_GROUPS: Array<{ ids: string[]; rate: ModelRate }> = [
     { ids: ["claude-sonnet-4-6"], rate: SONNET_4_FLAT },
     { ids: ["claude-sonnet-4-5"], rate: SONNET_4_LONG_CTX },
     { ids: ["claude-haiku-4-5"], rate: HAIKU_4_5 },
+    // GPT-6 bills the whole request at 2x input / 1.5x output above 272K input tokens.
+    {
+        ids: ["gpt-6-astra"],
+        rate: {
+            inputUsdPerMTok: 10,
+            outputUsdPerMTok: 50,
+            rules: [{ contextFrom: OPENAI_LONG_CONTEXT, inputUsdPerMTok: 20, outputUsdPerMTok: 75 }],
+        },
+    },
+    {
+        ids: ["gpt-6-sol"],
+        rate: {
+            inputUsdPerMTok: 2,
+            outputUsdPerMTok: 10,
+            rules: [{ contextFrom: OPENAI_LONG_CONTEXT, inputUsdPerMTok: 4, outputUsdPerMTok: 15 }],
+        },
+    },
+    {
+        ids: ["gpt-6-luna"],
+        rate: {
+            inputUsdPerMTok: 0.1,
+            outputUsdPerMTok: 0.5,
+            rules: [{ contextFrom: OPENAI_LONG_CONTEXT, inputUsdPerMTok: 0.2, outputUsdPerMTok: 0.75 }],
+        },
+    },
     { ids: ["gpt-5.6-sol"], rate: { inputUsdPerMTok: 5, outputUsdPerMTok: 30 } },
     { ids: ["gpt-5.6-terra"], rate: { inputUsdPerMTok: 2.5, outputUsdPerMTok: 15 } },
     { ids: ["gpt-5.6-luna"], rate: { inputUsdPerMTok: 1, outputUsdPerMTok: 6 } },
     { ids: ["gpt-5.5"], rate: { inputUsdPerMTok: 5, outputUsdPerMTok: 30 } },
     { ids: ["gpt-5-codex"], rate: { inputUsdPerMTok: 1.25, outputUsdPerMTok: 10 } },
     {
-        ids: ["grok-4.6", "grok-4.5"],
+        ids: ["grok-4.7", "grok-4.6", "grok-4.5"],
         rate: {
             inputUsdPerMTok: 2,
             outputUsdPerMTok: 6,

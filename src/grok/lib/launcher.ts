@@ -98,7 +98,7 @@ export const grokLauncher: AgentLauncher = {
             ...(account === undefined ? {} : { account }),
             ...(legacy.prompt === undefined ? {} : { prompt: legacy.prompt }),
             ...(legacy.promptFile === undefined ? {} : { promptFile: legacy.promptFile }),
-            model: legacy.model ?? "grok-4.6",
+            model: legacy.model ?? "grok-4.7",
             readOnly: legacy.readonly === true,
             ...(legacy.workerHome === undefined ? {} : { workerHome: legacy.workerHome }),
             ...(legacy.auth === undefined ? {} : { auth: legacy.auth }),

@@ -13,6 +13,22 @@ describe("estimateCostUsd", () => {
         );
     });
 
+    it("bills GPT-6 at its own rates, doubling input above 272K", () => {
+        const million = { prompt_tokens: 1_000_000, completion_tokens: 1_000_000 };
+
+        expect(estimateCostUsd("gpt-6-sol", { prompt_tokens: 100_000, completion_tokens: 100_000 })).toBeCloseTo(
+            1.2,
+            10
+        );
+        expect(estimateCostUsd("gpt-6-luna", { prompt_tokens: 100_000, completion_tokens: 100_000 })).toBeCloseTo(
+            0.06,
+            10
+        );
+        // Above 272K the whole request bills at 2x input and 1.5x output.
+        expect(estimateCostUsd("gpt-6-astra", million)).toBeCloseTo(20 + 75, 10);
+        expect(estimateCostUsd("grok-4.7", { prompt_tokens: 100_000 })).toBeCloseTo(0.2, 10);
+    });
+
     it("bills Opus 5.5 at its own rate, not the Opus 5 group's", () => {
         expect(
             estimateCostUsd("claude-opus-5-5", { prompt_tokens: 1_000_000, completion_tokens: 1_000_000 })

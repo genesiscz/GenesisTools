@@ -52,6 +52,11 @@ output above 272K, and Fast doubling whichever band applies. They are separate
 catalog entries rather than aliases of `gpt-5.6`, which is why the suffix ladder
 below no longer peels them.
 
+`gpt-6-sol` and `gpt-6-luna` follow the same shape at half the GPT-5.6 promotional
+price, verified 2026-09-23 against `developers.openai.com`. Sol is
+$2/$0.20/$2.50/$10 and Luna is $0.10/$0.01/$0.125/$0.50, with the same 272K band
+and Fast doubling.
+
 Tier changes are read from `thread_settings_applied.thread_settings` and explicit
 `turn_context` fields, and survive incremental parser resumes.
 Recorded `service_tier: priority` and `fast` select Fast rates. Missing tiers use
