@@ -1,4 +1,4 @@
-# Grok mechanics (grok-4.6 via `tools grok`)
+# Grok mechanics (grok-4.7 via `tools grok`)
 
 Read this after `gt:handoff-to` has picked Grok and the readiness gate has passed.
 

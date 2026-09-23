@@ -1,6 +1,6 @@
 ---
 name: handoff-to
-description: Offload work to another model or agent, and pick which one (Codex/GPT-6 Astra and GPT-5.6, grok, sonnet, opus, fable). Triggers on "give this to codex", "let codex implement this", "run codex on this", "codex subagent", "tools codex", "give this to grok", "run grok on this", "offload this", "hand this off", "second opinion from GPT", "second opinion from grok", "parallelize this across models", "which model should do X" — and use it proactively whenever a bounded, well-specified task should go to a worker while this session reviews.
+description: Offload work to another model or agent, and pick which one (Codex/GPT-6 Astra, Sol and Luna, grok, sonnet, opus, fable). Triggers on "give this to codex", "let codex implement this", "run codex on this", "codex subagent", "tools codex", "give this to grok", "run grok on this", "offload this", "hand this off", "second opinion from GPT", "second opinion from grok", "parallelize this across models", "which model should do X" — and use it proactively whenever a bounded, well-specified task should go to a worker while this session reviews.
 ---
 
 # handoff-to — pick the worker, then dispatch
@@ -9,7 +9,7 @@ This file answers two questions: **who does it**, and **is it ready to leave**. 
 
 | Worker | Dispatch via |
 |---|---|
-| Codex / GPT-6 Astra / GPT-5.6 Sol, Terra, Luna | Read `references/codex.md` — **mandatory**; never hand-roll `tools codex` or `codex exec` from memory |
+| Codex / GPT-6 Astra, Sol, Luna | Read `references/codex.md` — **mandatory**; never hand-roll `tools codex` or `codex exec` from memory |
 | Grok / grok-4.x | Read `references/grok.md` — never hand-roll a bare `grok -p` (isolation and safety flags are non-obvious) |
 | sonnet / opus / fable executed inside Claude Code | `Agent` with `model:`, or `Workflow` for fan-out — **the default when Claude Code is the host** |
 | Claude executed from Codex, on a **different account**, or as headless `claude -p` | Read `references/claude.md` — a native Codex GPT subagent may drive `tools claude worker`, but `spawn_agent` itself does not select a Claude model |
@@ -24,30 +24,41 @@ Higher = better. **Cost** = what is actually paid (not list price). **Intelligen
 
 | model | cost | intelligence | taste |
 |---|---|---|---|
-| gpt-6-astra | unscored | unscored | unscored |
-| gpt-5.6-sol | 9 | 8 | 5 |
-| gpt-5.6-terra | 9 | 7 | 5 |
-| gpt-5.6-luna | unscored | unscored | unscored |
-| grok-4.6 | 7 | 6 | 4 |
+| fable-5-1 | 2 | 10 | 9 |
+| gpt-6-astra | 2 | 9 | 7 |
+| opus-5-5 | 5 | 9 | 9 |
+| gpt-6-sol | 8 | 8 | 6 |
+| gpt-6-luna | 10 | 7 | 5 |
+| grok-4.7 | 7 | 7 | 5 |
 | sonnet-5 | 5 | 5 | 7 |
-| opus-5 | 4 | 8 | 8 |
-| fable-5-1 | 2 | 9 | 9 |
-| fable-5 | 2 | 9 | 9 |
 
-Astra and Luna have no measured local numeric scores here. Use the Codex task table below;
-subscription quota and API-equivalent cost are different measures. Do not infer that a worker is free.
+<!-- updated 2026-09-23: GPT-6 Sol/Luna, Opus 5.5 and grok-4.7 scored from launch benchmarks; opus-5, fable-5, gpt-5.6-* and grok-4.6 rows retired -->
 
-grok-4.6 scores are provisional (added 2026-08-26, one session of evidence); re-rank after real use.
+List prices per MTok (input/output), from the vendor pages on 2026-09-23: fable-5-1 and gpt-6-astra
+$10/$50, opus-5-5 $4/$20, gpt-6-sol $2/$10, gpt-6-luna $0.10/$0.50, grok-4.7 $2/$6, sonnet-5 $3/$15.
+GPT-6 prompts above 272K input tokens bill 2x input and 1.5x output; grok-4.7 bills 2x above 200K.
+Subscription quota and API-equivalent cost are different measures. Do not infer that a worker is free.
+
+Launch benchmarks behind the scores (vendor-reported, different harnesses, so read them as tiers, not ranks):
+
+- Terminal-Bench 4.0: opus-5-5 66.4%, gpt-6-astra 57.7%, fable-5-1 55.8%, grok-4.7 37.6%.
+- DeepSWE v1.1: gpt-6-astra 74.1%, grok-4.7 71.0% (high), gpt-6-sol 68.8% (max), fable-5-1 67.4%, gpt-6-luna 66.6% (max).
+- FrontierCode v1.1 Main: opus-5-5 54.4%, gpt-6-astra 53.3%, fable-5-1 50.3 to 50.9%.
+- Humanity's Last Exam with tools: fable-5-1 65.0%, gpt-6-astra 57.2%. Artificial Analysis Coding Agent Index: fable-5-1 70, gpt-6-astra 67.
+
+fable-5-1 keeps intelligence 10 for the hardest ambiguous reasoning; opus-5-5 matches or beats it on agentic
+coding at 40% of the price, so it is the default Claude worker for work that ships. The grok-4.7 scores are
+provisional (added 2026-09-23 from launch data only); re-rank after real use.
 
 How to apply:
 
 - Defaults, not limits. Standing permission to override: if a cheaper model's output misses the bar, rerun with a smarter one without asking. **Judge the output, not the price tag. Escalating costs less than shipping mediocre work.**
 - Cost is a tie-breaker only. When axes conflict for anything that ships: intelligence > taste > cost.
-- Codex mechanical work uses Luna, bounded exploration uses Terra, and implementation requiring judgment uses Sol. Use Astra for the difficult cases described below.
+- Codex mechanical work and bounded exploration use Luna, and implementation requiring judgment uses Sol. Use Astra for the difficult cases described below.
 - Anything user-facing (UI, copy, API design) needs taste ≥ 7.
-- Claude plan/implementation reviews: fable-5-1 (fable-5 is the same tier) or opus-5. Codex code-review workers use gpt-5.6-sol unless the user requests another model.
+- Claude plan/implementation reviews: opus-5-5 by default, fable-5-1 when the problem needs the deepest reasoning. Codex code-review workers use gpt-6-sol unless the user requests another model.
 - Never Haiku for work that ships (thin wrapper/relay agents are fine).
-- GPT-6 Astra and GPT-5.6 Sol/Terra/Luna use native Codex collaboration when exposed by the host, or the Codex CLI otherwise. Codex native run aliases include Astra, Sol, Terra and Luna; see its reference for named-account launch. Grok supports subscription and explicit API-key worker auth as described in its reference. Claude models use Claude Code's `Agent`/`Workflow`, or the separate process in `references/claude.md`. A native Codex GPT subagent can drive that process, but remains the driver rather than the Claude execution model.
+- GPT-6 Astra, Sol and Luna use native Codex collaboration when exposed by the host, or the Codex CLI otherwise. Codex native run aliases include Astra, Sol and Luna (Terra still maps to `gpt-5.6-terra`); see its reference for named-account launch. Grok supports subscription and explicit API-key worker auth as described in its reference. Claude models use Claude Code's `Agent`/`Workflow`, or the separate process in `references/claude.md`. A native Codex GPT subagent can drive that process, but remains the driver rather than the Claude execution model.
 - **Spreading load across Claude accounts is a billing decision, not a quality one.** `references/claude.md` changes who pays; it does not change how good the model is. Pick the model first from this table, then decide which account runs it.
 - Grok's niche: cheap parallel second opinions and bounded fix-it work in a scratch dir or worktree. Its harness has no mid-turn approvals, so route work needing supervised writes in a live checkout to Codex instead.
 
@@ -58,9 +69,9 @@ Set a model explicitly; an Astra parent should not make every worker Astra.
 
 | Task | Model | Default effort |
 |---|---|---|
-| Mechanical extraction, formatting, simple lookups, or a fully specified small edit | `gpt-5.6-luna` | low |
-| Bounded repository exploration, tracing an established call path, or gathering evidence | `gpt-5.6-terra` | medium |
-| Normal implementation, reproducible debugging, and code review | `gpt-5.6-sol` | medium; high for complex reviews |
+| Mechanical extraction, formatting, simple lookups, or a fully specified small edit | `gpt-6-luna` | low |
+| Bounded repository exploration, tracing an established call path, or gathering evidence | `gpt-6-luna` | medium |
+| Normal implementation, reproducible debugging, and code review | `gpt-6-sol` | medium; high for complex reviews |
 | Difficult cross-system reasoning, ambiguous failures, or an evidence-backed escalation | `gpt-6-astra` | high |
 
 Astra is the escalation tier, not the default for exploration. Keep the cheaper worker's
