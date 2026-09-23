@@ -144,24 +144,19 @@ await Bun.sleep(1 << 30);
 }
 
 /**
- * Counts `/bin/sh` children of the running process. Inlined into a generated child rather than
- * imported, because these children load the guard from a bare path with no repo alias graph.
+ * Counts the watchdogs guarding the running process. They are detached (reparented to launchd),
+ * so they are found by the `self=<pid>` marker in their argv, anchored like watchdogRunning().
+ * Inlined into a generated child rather than imported, because these children load the guard
+ * from a bare path with no repo alias graph.
  */
 const COUNT_OWN_SHELLS = `
 function countOwnShells() {
-    const ps = Bun.spawnSync(["ps", "-Ao", "ppid,comm"]);
+    const found = Bun.spawnSync(["pgrep", "-f", "self=" + process.pid + "([^0-9]|$)"]);
 
-    if (ps.stderr.toString().trim().length > 0) {
-        throw new Error("ps failed: " + ps.stderr.toString());
-    }
-
-    return ps.stdout
+    return found.stdout
         .toString()
         .split("\\n")
-        .filter((line) => {
-            const parts = line.trim().split(/\\s+/);
-            return parts.length >= 2 && Number(parts[0]) === process.pid && /sh$/.test(parts[1] ?? "");
-        }).length;
+        .filter((line) => line.trim().length > 0).length;
 }
 
 /**
@@ -344,6 +339,31 @@ impostor.kill("SIGKILL");
 `);
 
         expect(count).toBe("1");
+    }, 30_000);
+
+    /**
+     * The per-file check starts no process, so liveness alone would trust a pid the kernel
+     * reissued. The heartbeat closes that: a recorded pid that is alive but has stopped beating
+     * is not trusted, and a fresh watchdog is installed beside it.
+     */
+    test("a live recorded pid whose heartbeat is stale is not trusted", async () => {
+        const count = await runProbeChild(`
+import { utimesSync } from "node:fs";
+
+installOrphanWorkerGuard();
+await settleShells(1);
+
+const startSecond = Math.round((Date.now() - process.uptime() * 1000) / 1000);
+const beat = "/tmp/genesis-orphan-guard/" + process.pid + "-" + startSecond + ".pid.beat";
+const old = new Date(Date.now() - 60_000);
+utimesSync(beat, old, old);
+
+installOrphanWorkerGuard();
+await settleShells(2);
+writeFileSync(RESULT_FILE, String(countOwnShells()));
+`);
+
+        expect(count).toBe("2");
     }, 30_000);
 
     // The preload installs the guard in every test process, so a watchdog that only

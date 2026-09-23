@@ -1,5 +1,5 @@
-import { execFileSync, spawn } from "node:child_process";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 // Relative on purpose: the ban below is on the `@genesiscz/*` alias graph, and this module
 // imports nothing itself, so a relative path keeps the guard loadable from a /tmp repro.
 import { isProcessAlive } from "../process-alive";
@@ -62,28 +62,35 @@ function recordedWatchdogPid(notePath: string): number {
     }
 }
 
-/** The marker `installOrphanWorkerGuard` puts on ITS OWN watchdog's command line. */
-function watchdogMarker(selfPid: number): string {
-    return `self=${selfPid}`;
+/** The file the watchdog rewrites on every poll, next to the note that names it. */
+function beatPathFor(notePath: string): string {
+    return `${notePath}.beat`;
 }
 
 /**
- * Whether `pid` is genuinely the watchdog `installOrphanWorkerGuard(selfPid)` started, not
- * merely a live process that reused its number.
+ * Whether the recorded watchdog is still ours and still running, WITHOUT starting a process.
  *
- * A pidfile that records only a number is unverifiable forever after — `pid-safety-guard.sh`
- * says exactly that, though its own regex does not catch this file (the variable here is
- * `notePath`, not `...pid...`). The watchdog's shell script embeds `self=<selfPid>` in its own
- * argv, so a recycled pid belonging to an unrelated program will not carry it, and the guard
- * installs a fresh watchdog instead of trusting a stranger. Never used to decide whom to
- * signal — only ever probed — so a `ps` failure degrades to "not verified, install anyway"
- * rather than to a thrown error.
+ * 🛑 This check runs once per test FILE, and it must not fork. A child that exits while an
+ * `--isolate` worker switches files is never reaped, and the worker then spins at 100% CPU
+ * instead of starting the next file (measured 2026-09-23 on bun 1.4.2: 2 stalls in 10 runs
+ * while this check still ran `ps`, 0 in 20 with the guard off). The old identity probe was a
+ * `ps -o command=` per file, so it was itself one of the children that caused the hang.
+ *
+ * Identity now comes from a heartbeat instead of argv. Only the watchdog (and the installer,
+ * once, at launch) writes `<note>.beat`, inside the 0700 note directory, so a fresh beat means
+ * the recorded pid was our watchdog within the last few polls. A pid the kernel reissued to a
+ * stranger stops beating, so after at most three polls the guard installs a fresh watchdog
+ * rather than trusting it. Liveness is a signal-0, which starts no process.
  */
-function isOurWatchdog(pid: number, selfPid: number): boolean {
+function isLiveWatchdog(notePath: string, pid: number, pollSeconds: number): boolean {
+    if (!isProcessAlive(pid)) {
+        return false;
+    }
+
     try {
-        const command = execFileSync("ps", ["-p", String(pid), "-o", "command="], { encoding: "utf8" });
-        return command.includes(watchdogMarker(selfPid));
+        return Date.now() - statSync(beatPathFor(notePath)).mtimeMs < pollSeconds * 3000;
     } catch {
+        // No beat on disk: the note was not written by an install that also launched a loop.
         return false;
     }
 }
@@ -157,6 +164,8 @@ export function buildWatchdogScript(args: {
     parentStart: string;
     /** Seconds between polls; defaults to POLL_SECONDS. See installOrphanWorkerGuard. */
     pollSeconds?: number;
+    /** Heartbeat file rewritten on every poll; see isLiveWatchdog. Omitted in the script tests. */
+    beatPath?: string;
 }): string {
     return [
         `parent=${args.parentPid}`,
@@ -164,6 +173,7 @@ export function buildWatchdogScript(args: {
         `selfstart=${shQuote(args.selfStart)}`,
         `parentstart=${shQuote(args.parentStart)}`,
         "while :; do",
+        ...(args.beatPath ? [`  : > ${shQuote(args.beatPath)}`] : []),
         '  if ! kill -0 "$self"; then',
         "    exit 0",
         "  fi",
@@ -193,6 +203,9 @@ export function buildWatchdogScript(args: {
 function rememberWatchdog(notePath: string, watchdogPid: number): void {
     try {
         writeFileSync(notePath, String(watchdogPid), { mode: 0o600 });
+        // The first beat comes from here, not from the loop: the next file can install within
+        // milliseconds, before the backgrounded shell has run its first line.
+        writeFileSync(beatPathFor(notePath), "", { mode: 0o600 });
     } catch {
         // An unwritable note only costs deduplication, never the guard itself: the next
         // evaluation reads nothing back and installs again, which is the old behaviour.
@@ -209,10 +222,11 @@ function rememberWatchdog(notePath: string, watchdogPid: number): void {
  * never fires. macOS also has no `PR_SET_PDEATHSIG`. The guard is therefore a sibling
  * `/bin/sh` that `kill -0`s the original parent and `SIGKILL`s this pid when it is gone.
  *
- * `unref()` so the helper does not keep a finished worker's event loop alive. That
- * detaches the helper but does not end it, so the loop also watches the guarded pid
- * and exits with it — otherwise every finished worker in a long test run would leave
- * a polling shell behind, and the eventual kill could name a recycled pid.
+ * The helper is launched detached (see `launchDetached`), so it never keeps a finished
+ * worker's event loop alive and is never the worker's child. It does not end by itself, so
+ * the loop also watches the guarded pid and exits with it — otherwise every finished worker
+ * in a long test run would leave a polling shell behind, and the eventual kill could name a
+ * recycled pid.
  *
  * No `@genesiscz/*` imports: isolate workers and `/tmp` repro scripts must load this
  * file without the repo alias graph.
@@ -244,8 +258,8 @@ export function installOrphanWorkerGuard(options?: {
     }
 
     const notePath = noteFileFor(selfPid);
-    const recordedPid = recordedWatchdogPid(notePath);
-    if (isProcessAlive(recordedPid) && isOurWatchdog(recordedPid, selfPid)) {
+    const pollSeconds = pollInterval(options?.pollSeconds);
+    if (isLiveWatchdog(notePath, recordedWatchdogPid(notePath), pollSeconds)) {
         return;
     }
 
@@ -284,17 +298,51 @@ export function installOrphanWorkerGuard(options?: {
         return;
     }
 
-    const proc = spawn(
-        "/bin/sh",
-        ["-c", buildWatchdogScript({ parentPid, selfPid, selfStart, parentStart, pollSeconds: options?.pollSeconds })],
-        {
-            stdio: "ignore",
-        }
-    );
+    const script = buildWatchdogScript({
+        parentPid,
+        selfPid,
+        selfStart,
+        parentStart,
+        pollSeconds,
+        beatPath: beatPathFor(notePath),
+    });
+    const watchdogPid = launchDetached(script);
 
-    proc.unref();
+    if (watchdogPid !== null) {
+        rememberWatchdog(notePath, watchdogPid);
+    }
+}
 
-    if (proc.pid !== undefined) {
-        rememberWatchdog(notePath, proc.pid);
+/**
+ * Start the watchdog so that it is NOT a child of this worker, and return its pid.
+ *
+ * 🛑 A direct child hangs the test run. Under `--isolate` the watchdog of an earlier test file
+ * dies while the worker is between files, the worker never reaps it, and the worker then spins
+ * at 100% CPU before it starts the next file. Measured 2026-09-23 on bun 1.4.2 with a 329-file
+ * run: 5 stalls in 8 runs, every stalled worker holding `<defunct>` children, and 0 stalls in 20
+ * runs with the guard disabled. Detaching the loop alone cut it to 2 in 10; removing the per-file
+ * `ps` probe as well (see isLiveWatchdog) brought it to 0 in 12. The old note that the first
+ * file's watchdog "is reliably dead by its second" fits the same picture, though what ended
+ * those shells was never measured directly.
+ *
+ * So an intermediate `/bin/sh` backgrounds the loop and exits at once. `execFileSync` waits for
+ * and reaps that intermediate before it returns, and the loop is reparented to launchd, so the
+ * worker owns no long-lived child at all. The loop keeps `self=<pid>` in its argv (a
+ * backgrounded subshell is a fork of the same `sh -c`), so pgrep and the tests still find it.
+ * `execFileSync` also forks before it returns, which a tight `for (;;)` after install needs.
+ */
+function launchDetached(script: string): number | null {
+    try {
+        const out = execFileSync("/bin/sh", ["-c", `(\n${script}\n) </dev/null >/dev/null 2>&1 &\necho $!`], {
+            encoding: "utf8",
+            stdio: ["ignore", "pipe", "ignore"],
+        });
+        const pid = Number.parseInt(out.trim(), 10);
+
+        return Number.isFinite(pid) && pid > 0 ? pid : null;
+    } catch {
+        // No shell, or it refused to fork: the worker runs unguarded, which is the state a
+        // failed install always meant. There is no logger here, by the no-imports rule above.
+        return null;
     }
 }
