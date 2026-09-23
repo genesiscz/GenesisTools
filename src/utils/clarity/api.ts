@@ -85,6 +85,23 @@ export class ClarityApi {
         }
     }
 
+    /**
+     * Tasks whose name starts with `prefix`, across every investment. Unlike a timesheet's rows this
+     * also finds a task that exists in Clarity but was never added to any timesheet.
+     */
+    async searchTasks(prefix: string): Promise<Array<{ taskId: number; code: string; name: string }>> {
+        const filter = encodeURIComponent(`(name startsWith '${prefix.replace(/'/g, "''")}')`);
+        const response = await this.request<{
+            _results?: Array<{ _internalId: number; code?: string; name?: string }>;
+        }>(`/tasks?filter=${filter}`);
+
+        return (response?._results ?? []).map((task) => ({
+            taskId: task._internalId,
+            code: task.code ?? "",
+            name: task.name ?? "",
+        }));
+    }
+
     /** Fetch a full timesheet with all time entries */
     async getTimesheet(timesheetId: number): Promise<TimesheetResponse> {
         return this.request<TimesheetResponse>(`/private/timesheet?filter=(timesheetId = ${timesheetId})`);

@@ -1,10 +1,13 @@
+import { Api } from "@app/azure-devops/api";
 import { formatMinutes } from "@app/azure-devops/timelog-api";
+import { requireConfig as requireAdoConfig } from "@app/azure-devops/utils";
 import { type ClarityMapping, requireConfig, saveConfig } from "@app/clarity/config";
 import { type AssignmentView, buildAssignmentView } from "@app/clarity/lib/assignment-view";
 import {
     type AssignmentPair,
     type AssignmentRow,
     applyAssignments,
+    fillPairTitles,
     recommendedPairsFor,
     removeAssignments,
     serialiseAssignmentRow,
@@ -258,9 +261,46 @@ function collectPairs(view: AssignmentView, options: MappingsOptions): Assignmen
     return pairs;
 }
 
+/**
+ * A work item with no hours in the month has no row, so its title is read from Azure DevOps.
+ * Without this the mapping stores the bare id as the title.
+ */
+async function withAdoTitles(pairs: AssignmentPair[]): Promise<AssignmentPair[]> {
+    const missing = pairs.filter((pair) => !pair.title).map((pair) => pair.workItemId);
+
+    if (missing.length === 0) {
+        return pairs;
+    }
+
+    const lookup = new Map<number, { title: string; type?: string }>();
+
+    try {
+        const items = await new Api(requireAdoConfig()).getWorkItems(missing, { comments: false });
+
+        for (const [id, item] of items) {
+            const type = item.rawFields?.["System.WorkItemType"];
+            lookup.set(id, { title: item.title, type: type ? String(type) : undefined });
+        }
+    } catch (error) {
+        out.warn(
+            pc.yellow(
+                `  could not read ${missing.length} work item title(s) from Azure DevOps: ${error instanceof Error ? error.message : String(error)}`
+            )
+        );
+    }
+
+    const filled = fillPairTitles(pairs, lookup);
+
+    for (const pair of filled.filter((candidate) => !candidate.title)) {
+        out.warn(pc.yellow(`  #${pair.workItemId}: no title found, the mapping stores the id instead`));
+    }
+
+    return filled;
+}
+
 async function runAssign(date: string, options: MappingsOptions): Promise<void> {
     const view = await buildAssignmentView(date);
-    const pairs = collectPairs(view, options);
+    const pairs = await withAdoTitles(collectPairs(view, options));
 
     if (pairs.length === 0) {
         out.println("Nothing to assign.");

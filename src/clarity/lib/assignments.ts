@@ -122,6 +122,25 @@ export function serialiseAssignmentRow(row: AssignmentRow): SerialisedAssignment
     };
 }
 
+/**
+ * Fill the title and type of pairs whose work item had no hours in the month, and so no row to
+ * take them from. A title the month already supplied wins.
+ */
+export function fillPairTitles(
+    pairs: AssignmentPair[],
+    lookup: Map<number, { title: string; type?: string }>
+): AssignmentPair[] {
+    return pairs.map((pair) => {
+        const found = lookup.get(pair.workItemId);
+
+        if (pair.title || !found) {
+            return pair;
+        }
+
+        return { ...pair, title: found.title, type: pair.type ?? found.type };
+    });
+}
+
 /** Add or replace mappings for the given pairs, leaving every other mapping untouched. */
 export function applyAssignments({
     mappings,
