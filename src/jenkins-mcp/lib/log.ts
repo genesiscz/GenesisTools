@@ -1,4 +1,4 @@
-import { appendFile, mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { logger } from "@genesiscz/utils/logger";
 import type { AxiosInstance } from "axios";
 import { slugifyJobPath } from "./format";
@@ -188,59 +188,34 @@ export async function fetchLog(
 ): Promise<LogResult> {
     const maxBytes = opts.maxBytes ?? MAX_BYTES;
     const storage = getJenkinsMcpStorage();
-    // Persistent cache dir holds the offset sidecars; /tmp/jenkins-mcp holds the log blobs.
+    // Persistent cache dir holds the complete markers; $TMPDIR/jenkins-mcp holds the log blobs.
     await storage.ensureDirs();
     await mkdir(storage.getLogDir(), { recursive: true });
 
     const file = storage.getLogPath(slugifyJobPath(jobPath), buildNumber, opts.nodeId);
 
+    // A log saved while the build still ran is incomplete, so only a fetch that
+    // started after the build finished leaves a reusable cache.
+    const finalBeforeFetch = await isBuildFinal(client, jobPath, buildNumber);
+    const completeMarker = storage.getCompleteMarkerPath(file);
     const cached = await readCachedLog(jobPath, buildNumber, opts.nodeId, maxBytes);
-    if (cached && (await isBuildFinal(client, jobPath, buildNumber))) {
+
+    if (cached && finalBeforeFetch && (await fileExists(completeMarker))) {
         logger.debug(`Reusing cached Jenkins log ${file} (${cached.sizeBytes}B, ${cached.lineCount} lines)`);
         return cached;
     }
 
-    let raw: string;
-    let nodeStatus: string | undefined;
-
-    if (opts.nodeId) {
-        // Fetch the whole node log in one shot via /log/?consoleFull. The wfapi/log
-        // endpoint is unsuitable here: at least on Jenkins 2.x it returns 10KB
-        // chunks and IGNORES the `start` query parameter on subsequent calls, so
-        // pagination loops forever and accumulates duplicated content. The HTML
-        // log viewer endpoint returns the full text in a single response.
-        const res = await client.get(`/${jobPath}/${buildNumber}/execution/node/${opts.nodeId}/log/?consoleFull`, {
-            responseType: "text",
-            maxContentLength: maxBytes * 4, // HTML inflates ~3-4x vs decoded text
-            transformResponse: [(d) => d as string],
-        });
-
-        if (res.status === 404) {
-            throw new Error(`Node ${opts.nodeId} not found on build ${buildNumber}`);
-        }
-
-        if (res.status !== 200) {
-            throw new Error(`consoleFull returned ${res.status}`);
-        }
-
-        raw = parseConsoleFullHtml(typeof res.data === "string" ? res.data : "");
-
-        // Pull nodeStatus from a cheap wfapi describe call — consoleFull doesn't include it.
-        try {
-            const meta = await client.get(`/${jobPath}/${buildNumber}/execution/node/${opts.nodeId}/wfapi/describe`);
-            if (meta.status === 200) {
-                nodeStatus = (meta.data as { status?: string }).status;
-            }
-        } catch {
-            // nodeStatus is non-critical; cache hits already omit it.
-        }
-    } else {
-        return await fetchWholeBuildLog(client, jobPath, buildNumber, file, maxBytes);
-    }
+    const { raw, nodeStatus } = opts.nodeId
+        ? await fetchNodeLog({ client, jobPath, buildNumber, nodeId: opts.nodeId, maxBytes })
+        : { raw: await fetchConsoleText({ client, jobPath, buildNumber, maxBytes }), nodeStatus: undefined };
 
     const truncated = raw.length >= maxBytes;
     const content = stripJenkinsHtml(raw);
     await writeFile(file, content, "utf8");
+
+    if (finalBeforeFetch) {
+        await writeFile(completeMarker, new Date().toISOString(), "utf8");
+    }
 
     const lineCount = content === "" ? 0 : content.split("\n").length - (content.endsWith("\n") ? 1 : 0);
     const sizeBytes = Buffer.byteLength(content, "utf8");
@@ -249,32 +224,62 @@ export async function fetchLog(
     return { path: file, content, sizeBytes, lineCount, nodeStatus, truncated };
 }
 
-/**
- * Whole-build incremental fetch. Persists the X-Text-Size cursor in a tiny
- * `<cache>.offset` sidecar so subsequent calls (e.g. polling an in-progress
- * build) only request the new bytes and append to the cache file. For final
- * builds with a complete cache, the GET returns an empty body in one round-trip
- * — basically free.
- */
-async function fetchWholeBuildLog(
-    client: AxiosInstance,
-    jobPath: string,
-    buildNumber: string,
-    file: string,
-    maxBytes: number
-): Promise<LogResult> {
-    let priorOffset = 0;
-    let cacheExists = false;
-    try {
-        await stat(file);
-        cacheExists = true;
-        priorOffset = await readOffsetSidecar(file);
-    } catch {
-        // No cache yet — full fresh fetch.
+interface LogRequest {
+    client: AxiosInstance;
+    jobPath: string;
+    buildNumber: string;
+    maxBytes: number;
+}
+
+async function fetchNodeLog({
+    client,
+    jobPath,
+    buildNumber,
+    nodeId,
+    maxBytes,
+}: LogRequest & { nodeId: string }): Promise<{ raw: string; nodeStatus?: string }> {
+    // Fetch the whole node log in one shot via /log/?consoleFull. The wfapi/log
+    // endpoint is unsuitable here: at least on Jenkins 2.x it returns 10KB
+    // chunks and IGNORES the `start` query parameter on subsequent calls, so
+    // pagination loops forever and accumulates duplicated content. The HTML
+    // log viewer endpoint returns the full text in a single response.
+    const res = await client.get(`/${jobPath}/${buildNumber}/execution/node/${nodeId}/log/?consoleFull`, {
+        responseType: "text",
+        maxContentLength: maxBytes * 4, // HTML inflates ~3-4x vs decoded text
+        transformResponse: [(d) => d as string],
+    });
+
+    if (res.status === 404) {
+        throw new Error(`Node ${nodeId} not found on build ${buildNumber}`);
     }
 
-    const res = await client.get(`/${jobPath}/${buildNumber}/logText/progressiveText`, {
-        params: { start: priorOffset },
+    if (res.status !== 200) {
+        throw new Error(`consoleFull returned ${res.status}`);
+    }
+
+    const raw = parseConsoleFullHtml(typeof res.data === "string" ? res.data : "");
+    let nodeStatus: string | undefined;
+
+    // Pull nodeStatus from a cheap wfapi describe call — consoleFull doesn't include it.
+    try {
+        const meta = await client.get(`/${jobPath}/${buildNumber}/execution/node/${nodeId}/wfapi/describe`);
+        if (meta.status === 200) {
+            nodeStatus = (meta.data as { status?: string }).status;
+        }
+    } catch {
+        // nodeStatus is non-critical; cache hits already omit it.
+    }
+
+    return { raw, nodeStatus };
+}
+
+/**
+ * Whole-build log via `/consoleText`, in one request. `progressiveText` is not used: for a
+ * running build it returns about 1 MB of text while `X-Text-Size` reports the full size,
+ * so an offset cursor silently skips the rest of the log.
+ */
+async function fetchConsoleText({ client, jobPath, buildNumber, maxBytes }: LogRequest): Promise<string> {
+    const res = await client.get(`/${jobPath}/${buildNumber}/consoleText`, {
         responseType: "text",
         maxContentLength: maxBytes,
         transformResponse: [(d) => d as string],
@@ -285,51 +290,19 @@ async function fetchWholeBuildLog(
     }
 
     if (res.status !== 200) {
-        throw new Error(`progressiveText returned ${res.status}`);
+        throw new Error(`consoleText returned ${res.status}`);
     }
 
-    const headers = res.headers as Record<string, string | undefined>;
-    const newOffset = Number(headers["x-text-size"] ?? priorOffset);
-    const deltaRaw = typeof res.data === "string" ? res.data : "";
-    const deltaContent = stripJenkinsHtml(deltaRaw);
-
-    if (priorOffset === 0 || !cacheExists) {
-        await writeFile(file, deltaContent, "utf8");
-    } else if (deltaContent.length > 0) {
-        await appendFile(file, deltaContent, "utf8");
-    }
-
-    if (newOffset > priorOffset) {
-        await writeOffsetSidecar(file, newOffset);
-    }
-
-    const content = await readFile(file, "utf8");
-    const lineCount = content === "" ? 0 : content.split("\n").length - (content.endsWith("\n") ? 1 : 0);
-    const sizeBytes = Buffer.byteLength(content, "utf8");
-    logger.debug(`Whole-build log ${file} now ${sizeBytes}B / ${lineCount} lines (offset ${newOffset})`);
-
-    return {
-        path: file,
-        content,
-        sizeBytes,
-        lineCount,
-        nodeStatus: undefined,
-        truncated: sizeBytes >= maxBytes,
-    };
+    return typeof res.data === "string" ? res.data : "";
 }
 
-async function readOffsetSidecar(cachePath: string): Promise<number> {
+async function fileExists(path: string): Promise<boolean> {
     try {
-        const raw = await readFile(getJenkinsMcpStorage().getOffsetPath(cachePath), "utf8");
-        const n = Number(raw.trim());
-        return Number.isFinite(n) && n >= 0 ? n : 0;
+        await stat(path);
+        return true;
     } catch {
-        return 0;
+        return false;
     }
-}
-
-async function writeOffsetSidecar(cachePath: string, offset: number): Promise<void> {
-    await writeFile(getJenkinsMcpStorage().getOffsetPath(cachePath), String(offset), "utf8");
 }
 
 /**

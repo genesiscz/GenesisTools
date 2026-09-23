@@ -8,12 +8,10 @@ const TOOL_NAME = "jenkins-mcp";
  * Per-tool storage wrapper for the Jenkins MCP server.
  *
  * Logs themselves are large, regenerable blobs and live in the OS temp dir
- * (`$TMPDIR/jenkins-mcp/`). Small persistent metadata — the X-Text-Size offset
- * sidecars used by the incremental whole-build tail — lives under
- * `~/.genesis-tools/jenkins-mcp/cache/`, so an OS `/tmp` wipe doesn't lose
- * cursor state across reboots. (When the temp log is absent on next read,
- * `fetchLog` notices and refetches from offset=0, so any stale offset is
- * harmless.)
+ * (`$TMPDIR/jenkins-mcp/`). Small persistent metadata — the markers that a log
+ * was fetched after its build finished — lives under
+ * `~/.genesis-tools/jenkins-mcp/cache/`. (When the temp log is absent on next
+ * read, `fetchLog` refetches it, so a marker without its log is harmless.)
  */
 export class JenkinsMcpStorage extends Storage {
     private readonly logDir: string;
@@ -28,18 +26,18 @@ export class JenkinsMcpStorage extends Storage {
         return this.logDir;
     }
 
-    /** Absolute path of a per-build (optionally per-node) log file in /tmp. */
+    /** Absolute path of a per-build (optionally per-node) log file in `$TMPDIR/jenkins-mcp/`. */
     getLogPath(slug: string, buildNumber: string, nodeId?: string): string {
         const name = nodeId ? `${slug}-${buildNumber}-node${nodeId}.log` : `${slug}-${buildNumber}.log`;
         return join(this.logDir, name);
     }
 
     /**
-     * Absolute path of the `<basename>.offset` sidecar under the persistent
-     * cache dir (`~/.genesis-tools/jenkins-mcp/cache/<basename>.log.offset`).
+     * Marker that a log was fetched after its build had finished, so the cached
+     * copy is complete (`~/.genesis-tools/jenkins-mcp/cache/<basename>.log.complete`).
      */
-    getOffsetPath(logPath: string): string {
-        return join(this.getCacheDir(), `${basename(logPath)}.offset`);
+    getCompleteMarkerPath(logPath: string): string {
+        return join(this.getCacheDir(), `${basename(logPath)}.complete`);
     }
 }
 
