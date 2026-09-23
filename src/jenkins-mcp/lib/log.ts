@@ -183,10 +183,11 @@ export async function readCachedLog(
 export async function fetchLog(
     client: AxiosInstance,
     jobPath: string,
-    buildNumber: string,
+    buildRef: string,
     opts: LogFetchOpts = {}
 ): Promise<LogResult> {
     const maxBytes = opts.maxBytes ?? MAX_BYTES;
+    const buildNumber = await resolveBuildNumber(client, jobPath, buildRef);
     const storage = getJenkinsMcpStorage();
     // Persistent cache dir holds the complete markers; $TMPDIR/jenkins-mcp holds the log blobs.
     await storage.ensureDirs();
@@ -222,6 +223,29 @@ export async function fetchLog(
     logger.debug(`Wrote Jenkins log to ${file} (${sizeBytes}B, ${lineCount} lines)`);
 
     return { path: file, content, sizeBytes, lineCount, nodeStatus, truncated };
+}
+
+/**
+ * The log cache is keyed by build number, so an alias such as `lastBuild` is resolved
+ * first. Caching under the alias would keep serving an older build once it is complete.
+ */
+export async function resolveBuildNumber(client: AxiosInstance, jobPath: string, buildRef: string): Promise<string> {
+    if (/^\d+$/.test(buildRef)) {
+        return buildRef;
+    }
+
+    const res = await client.get(`/${jobPath}/${buildRef}/api/json`, { params: { tree: "number" } });
+    const data: unknown = res.data;
+    const number =
+        typeof data === "object" && data !== null && "number" in data && typeof data.number === "number"
+            ? data.number
+            : undefined;
+
+    if (res.status !== 200 || number === undefined) {
+        throw new Error(`Could not resolve build ${buildRef} of ${jobPath} (HTTP ${res.status})`);
+    }
+
+    return String(number);
 }
 
 interface LogRequest {

@@ -2,7 +2,15 @@ import { describe, expect, it } from "bun:test";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { fetchLog, grepLog, isBuildFinal, parseConsoleFullHtml, readCachedLog, stripJenkinsHtml } from "./log";
+import {
+    fetchLog,
+    grepLog,
+    isBuildFinal,
+    parseConsoleFullHtml,
+    readCachedLog,
+    resolveBuildNumber,
+    stripJenkinsHtml,
+} from "./log";
 import { getJenkinsMcpStorage } from "./storage";
 
 const LOG_DIR = join(tmpdir(), "jenkins-mcp");
@@ -324,6 +332,42 @@ describe("fetchLog (whole-build)", () => {
         expect(await Bun.file(getJenkinsMcpStorage().getCompleteMarkerPath(file)).exists()).toBe(false);
 
         await cleanup(file);
+    });
+});
+
+describe("resolveBuildNumber", () => {
+    function numberClient(status: number, data: unknown) {
+        const urls: string[] = [];
+        const client = {
+            get: async (url: string) => {
+                urls.push(url);
+                return { status, data };
+            },
+        } as unknown as import("axios").AxiosInstance;
+
+        return { client, urls };
+    }
+
+    it("keeps a numeric build without asking Jenkins", async () => {
+        const { client, urls } = numberClient(500, null);
+
+        expect(await resolveBuildNumber(client, "job/app", "42")).toBe("42");
+        expect(urls).toHaveLength(0);
+    });
+
+    it("resolves an alias such as lastBuild to its number", async () => {
+        const { client, urls } = numberClient(200, { number: 128 });
+
+        expect(await resolveBuildNumber(client, "job/app", "lastBuild")).toBe("128");
+        expect(urls).toEqual(["/job/app/lastBuild/api/json"]);
+    });
+
+    it("names the alias when Jenkins cannot resolve it", async () => {
+        const { client } = numberClient(404, {});
+
+        await expect(resolveBuildNumber(client, "job/app", "lastFailedBuild")).rejects.toThrow(
+            "Could not resolve build lastFailedBuild of job/app (HTTP 404)"
+        );
     });
 });
 

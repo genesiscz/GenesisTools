@@ -102,6 +102,10 @@ export async function runCli(argv: string[]): Promise<void> {
 
                 const lines = r.content.split("\n");
 
+                if (lines.at(-1) === "") {
+                    lines.pop();
+                }
+
                 if (opts.head !== undefined) {
                     const first = lines.slice(0, opts.head);
                     out.println(`--- head (${first.length}) ---`);
