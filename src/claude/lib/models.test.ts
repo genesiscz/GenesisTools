@@ -22,7 +22,7 @@ describe("resolveModelSpec", () => {
         const res = resolveModelSpec("opus");
         expect(res.kind).toBe("exact");
         if (res.kind === "exact") {
-            expect(res.model.id).toBe("claude-opus-5");
+            expect(res.model.id).toBe("claude-opus-5-5");
         }
     });
 

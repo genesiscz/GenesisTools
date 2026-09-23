@@ -116,13 +116,30 @@ function anthropic(entry: {
  */
 const ANTHROPIC_ENTRIES: CatalogEntry[] = [
     anthropic({
+        id: "claude-opus-5-5",
+        family: "opus",
+        displayName: "Claude Opus 5.5",
+        contextWindow: 1_000_000,
+        thinking: "reasoning",
+        // Fast mode (Claude API only) bills 2x standard.
+        pricing: {
+            inputPer1M: 4,
+            outputPer1M: 20,
+            cachedCreatePer1M: 5,
+            cachedReadPer1M: 0.2,
+            rules: [{ serviceTier: "fast", inputPer1M: 8, outputPer1M: 40 }],
+        },
+        aliases: ["opus"],
+        releasedAt: "2026-09-22",
+        flags: { native1m: true, cli: { label: "Opus 5.5 (1M native)" } },
+    }),
+    anthropic({
         id: "claude-opus-5",
         family: "opus",
         displayName: "Claude Opus 5",
         contextWindow: 1_000_000,
         thinking: "reasoning",
         pricing: { inputPer1M: 5, outputPer1M: 25, cachedCreatePer1M: 6.25, cachedReadPer1M: 0.5 },
-        aliases: ["opus"],
         releasedAt: "2026-07-24",
         flags: { native1m: true, cli: { label: "Opus 5 (1M native)" } },
     }),

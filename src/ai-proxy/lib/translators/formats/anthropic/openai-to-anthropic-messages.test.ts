@@ -151,6 +151,83 @@ describe("openAiChatToAnthropicMessages", () => {
         expect(body.tool_choice).toEqual({ type: "tool", name: "search" });
     });
 
+    describe("Opus 5.5 request rules", () => {
+        const OPUS_55 = "claude-opus-5-5";
+        const searchTool = [{ type: "function", function: { name: "search", parameters: { type: "object" } } }];
+
+        it("sends adaptive thinking with an effort level, never a budget", () => {
+            const body = openAiChatToAnthropicMessages(
+                { messages: [{ role: "user", content: "yo" }], max_tokens: 80000, reasoning_effort: "xhigh" },
+                { model: OPUS_55 }
+            );
+
+            expect(body.thinking).toEqual({ type: "adaptive" });
+            expect(body.output_config).toEqual({ effort: "xhigh" });
+        });
+
+        it("drops sampling params the model rejects and keeps the effort", () => {
+            const body = openAiChatToAnthropicMessages(
+                {
+                    messages: [{ role: "user", content: "yo" }],
+                    reasoning_effort: "minimal",
+                    temperature: 0.2,
+                    top_p: 0.9,
+                },
+                { model: OPUS_55 }
+            );
+
+            expect(body.temperature).toBeUndefined();
+            expect(body.top_p).toBeUndefined();
+            expect(body.output_config).toEqual({ effort: "low" });
+        });
+
+        it("turns a forced tool choice into auto", () => {
+            for (const tool_choice of ["required", { type: "function", function: { name: "search" } }]) {
+                const body = openAiChatToAnthropicMessages(
+                    { messages: [{ role: "user", content: "go" }], tools: searchTool, tool_choice },
+                    { model: OPUS_55 }
+                );
+
+                expect(body.tool_choice).toEqual({ type: "auto" });
+            }
+        });
+
+        it("keeps a forced tool choice on Opus 5, which still accepts it", () => {
+            const body = openAiChatToAnthropicMessages(
+                { messages: [{ role: "user", content: "go" }], tools: searchTool, tool_choice: "required" },
+                { model: "claude-opus-5" }
+            );
+
+            expect(body.tool_choice).toEqual({ type: "any" });
+        });
+
+        it("closes a trailing assistant turn with a user turn, since prefill is a 400", () => {
+            const history = {
+                messages: [
+                    { role: "user", content: "write json" },
+                    { role: "assistant", content: "{" },
+                ],
+            };
+
+            expect(openAiChatToAnthropicMessages(history, { model: OPUS_55 }).messages).toEqual([
+                { role: "user", content: [{ type: "text", text: "write json" }] },
+                { role: "assistant", content: [{ type: "text", text: "{" }] },
+                { role: "user", content: [{ type: "text", text: "(continue)" }] },
+            ]);
+            // Haiku 4.5 still accepts a prefill, so its history is left alone.
+            expect(openAiChatToAnthropicMessages(history, { model: MODEL }).messages.at(-1)?.role).toBe("assistant");
+        });
+
+        it("clamps xhigh to high on Opus 4.6, which predates it", () => {
+            const body = openAiChatToAnthropicMessages(
+                { messages: [{ role: "user", content: "yo" }], reasoning_effort: "xhigh" },
+                { model: "claude-opus-4-6" }
+            );
+
+            expect(body.output_config).toEqual({ effort: "high" });
+        });
+    });
+
     it("maps tool_choice 'none' to Anthropic's native none while keeping tools", () => {
         const body = openAiChatToAnthropicMessages(
             {

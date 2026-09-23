@@ -1,3 +1,4 @@
+import { type AnthropicEffort, anthropicRequestRules } from "@genesiscz/utils/ai/anthropic/models";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { isObject } from "@genesiscz/utils/object";
 
@@ -86,7 +87,8 @@ export interface AnthropicMessagesBody {
     stream?: boolean;
     tools?: AnthropicTool[];
     tool_choice?: AnthropicToolChoice;
-    thinking?: { type: "enabled"; budget_tokens: number };
+    thinking?: { type: "enabled"; budget_tokens: number } | { type: "adaptive" };
+    output_config?: { effort: AnthropicEffort };
 }
 
 /**
@@ -101,6 +103,16 @@ const THINKING_BUDGET_BY_EFFORT: Record<string, number> = {
     high: 16384,
     xhigh: 32768,
     max: 65536,
+};
+
+/** The same vocabulary for adaptive-thinking models, which take an effort level instead of a budget. */
+const ADAPTIVE_EFFORT: Record<string, AnthropicEffort> = {
+    minimal: "low",
+    low: "low",
+    medium: "medium",
+    high: "high",
+    xhigh: "xhigh",
+    max: "max",
 };
 
 export interface OpenAiToAnthropicOptions {
@@ -316,7 +328,19 @@ function mapTools(tools: unknown): AnthropicTool[] | undefined {
     return mapped.length > 0 ? mapped : undefined;
 }
 
-function mapToolChoice(toolChoice: unknown): AnthropicToolChoice | undefined {
+function mapToolChoice(toolChoice: unknown, forcedAllowed: boolean): AnthropicToolChoice | undefined {
+    const choice = mapOpenAiToolChoice(toolChoice);
+
+    // Opus 5.5 and Fable 5.1 answer a forced choice with a 400. `auto` keeps the
+    // tools callable; the forcing itself cannot be carried over.
+    if (!forcedAllowed && (choice?.type === "any" || choice?.type === "tool")) {
+        return { type: "auto" };
+    }
+
+    return choice;
+}
+
+function mapOpenAiToolChoice(toolChoice: unknown): AnthropicToolChoice | undefined {
     if (toolChoice === "auto") {
         return { type: "auto" };
     }
@@ -373,6 +397,15 @@ export function openAiChatToAnthropicMessages(
         messages.unshift({ role: "user", content: [{ type: "text", text: "(continue)" }] });
     }
 
+    const rules = anthropicRequestRules(options.model);
+
+    // A history that ends on an assistant turn is a prefill, which Opus 4.6 and
+    // later reject with a 400. A closing user turn keeps the request valid; the
+    // model then answers instead of continuing the assistant text verbatim.
+    if (!rules.prefill && messages.at(-1)?.role === "assistant") {
+        messages.push({ role: "user", content: [{ type: "text", text: "(continue)" }] });
+    }
+
     const result: AnthropicMessagesBody = {
         model: options.model,
         max_tokens: body.max_tokens ?? body.max_completion_tokens ?? options.maxTokensDefault ?? DEFAULT_MAX_TOKENS,
@@ -385,11 +418,13 @@ export function openAiChatToAnthropicMessages(
         result.system = system;
     }
 
-    if (typeof body.temperature === "number") {
+    // Opus 4.7 and later reject temperature/top_p with a 400, so a pinned
+    // sampling value is dropped there rather than failing the whole request.
+    if (rules.sampling && typeof body.temperature === "number") {
         result.temperature = body.temperature;
     }
 
-    if (typeof body.top_p === "number") {
+    if (rules.sampling && typeof body.top_p === "number") {
         result.top_p = body.top_p;
     }
 
@@ -410,7 +445,20 @@ export function openAiChatToAnthropicMessages(
     // and top_p below 0.95, so a request that pins its own sampling keeps it and
     // skips thinking — silently overriding the client's sampling would be the
     // worse translation.
-    if (typeof body.reasoning_effort === "string" && result.temperature === undefined && result.top_p === undefined) {
+    // Opus 4.6 and later take adaptive thinking plus an effort level;
+    // `budget_tokens` is a 400 on Opus 4.7+, and Opus 5.5 cannot turn thinking off.
+    if (typeof body.reasoning_effort === "string" && rules.thinking === "adaptive") {
+        const effort = ADAPTIVE_EFFORT[body.reasoning_effort.trim().toLowerCase()];
+
+        if (effort) {
+            result.thinking = { type: "adaptive" };
+            result.output_config = { effort: effort === "xhigh" ? rules.effortCeiling : effort };
+        }
+    } else if (
+        typeof body.reasoning_effort === "string" &&
+        result.temperature === undefined &&
+        result.top_p === undefined
+    ) {
         const budget = THINKING_BUDGET_BY_EFFORT[body.reasoning_effort.trim().toLowerCase()];
         const maxTokens = typeof result.max_tokens === "number" ? result.max_tokens : DEFAULT_MAX_TOKENS;
 
@@ -428,7 +476,7 @@ export function openAiChatToAnthropicMessages(
     if (tools) {
         result.tools = tools;
 
-        const toolChoice = mapToolChoice(body.tool_choice);
+        const toolChoice = mapToolChoice(body.tool_choice, rules.forcedToolChoice);
 
         if (toolChoice) {
             result.tool_choice = toolChoice;

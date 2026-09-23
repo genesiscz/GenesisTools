@@ -64,6 +64,7 @@ const GROK_4_20: ModelRate = { inputUsdPerMTok: 2, outputUsdPerMTok: 6 };
  */
 const RATE_GROUPS: Array<{ ids: string[]; rate: ModelRate }> = [
     { ids: ["claude-fable-5-1", "claude-fable-5"], rate: { inputUsdPerMTok: 25, outputUsdPerMTok: 125 } },
+    { ids: ["claude-opus-5-5"], rate: { inputUsdPerMTok: 4, outputUsdPerMTok: 20 } },
     {
         ids: ["claude-opus-5", "claude-opus-4-8", "claude-opus-4-7", "claude-opus-4-6", "claude-opus-4-5"],
         rate: OPUS_45_PLUS,

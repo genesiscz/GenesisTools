@@ -57,6 +57,55 @@ export function inferAnthropicContextWindow(id: string): number {
     return /sonnet-5|fable-5|opus-5|opus-4-[678]|sonnet-4-6/.test(id) ? 1_000_000 : 200_000;
 }
 
+export type AnthropicEffort = "low" | "medium" | "high" | "xhigh" | "max";
+
+/**
+ * What a Messages request may carry for a given model. The API answers a
+ * forbidden field with a 400, so a translator must ask before it emits one.
+ */
+export interface AnthropicRequestRules {
+    /** "adaptive" takes `thinking: {type: "adaptive"}` + `output_config.effort`; "budget" takes `budget_tokens`. */
+    thinking: "adaptive" | "budget";
+    /** `temperature` / `top_p` are accepted (removed from Opus 4.7 on). */
+    sampling: boolean;
+    /** `tool_choice` `any` / `tool` are accepted (removed on Opus 5.5 and Fable 5.1). */
+    forcedToolChoice: boolean;
+    /** A trailing assistant turn (prefill) is accepted (removed from Opus 4.6 / Sonnet 4.6 on). */
+    prefill: boolean;
+    /** Highest effort below `max` the model knows; `xhigh` arrived with Opus 4.7. */
+    effortCeiling: "high" | "xhigh";
+}
+
+function claudeVersion(id: string): { family: string; version: number } | null {
+    // `claude-opus-5-5` → 5.5, `claude-haiku-4-5-20251001` → 4.5, `claude-opus-4-20250514` → 4.
+    const match = /^claude-(opus|sonnet|haiku|fable|mythos)-(\d+)(?:-(\d{1,2}))?(?!\d)/.exec(id);
+
+    if (!match) {
+        return null;
+    }
+
+    return { family: match[1], version: Number(match[2]) + (match[3] ? Number(match[3]) / 10 : 0) };
+}
+
+export function anthropicRequestRules(id: string): AnthropicRequestRules {
+    const parsed = claudeVersion(id);
+
+    if (!parsed || parsed.family === "haiku") {
+        return { thinking: "budget", sampling: true, forcedToolChoice: true, prefill: true, effortCeiling: "high" };
+    }
+
+    const { family, version } = parsed;
+    const fableTier = family === "fable" || family === "mythos";
+
+    return {
+        thinking: fableTier || version >= 4.6 ? "adaptive" : "budget",
+        sampling: !fableTier && version < 4.7,
+        forcedToolChoice: fableTier ? version < 5.1 : !(family === "opus" && version >= 5.5),
+        prefill: !fableTier && version < 4.6,
+        effortCeiling: fableTier || version >= 4.7 ? "xhigh" : "high",
+    };
+}
+
 interface AnthropicModelsResponse {
     data: Array<{ id: string; display_name: string }>;
 }

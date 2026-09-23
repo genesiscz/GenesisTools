@@ -217,7 +217,7 @@ export async function doctorCommand(opts: { identity?: boolean } = {}): Promise<
         out.printlnErr(
             pc.dim(
                 "\nFix: expired/stale token → relaunch with `tools cc run <name>`. " +
-                    "Fable bucket dead → relaunch via `tools cc fable` (or `/model claude-opus-5` in the session — " +
+                    "Fable bucket dead → relaunch via `tools cc fable` (or `/model claude-opus-5-5` in the session — " +
                     "note doctor reads the LAUNCH model, so the flag clears only on relaunch)."
             )
         );

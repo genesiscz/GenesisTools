@@ -13,6 +13,15 @@ describe("estimateCostUsd", () => {
         );
     });
 
+    it("bills Opus 5.5 at its own rate, not the Opus 5 group's", () => {
+        expect(
+            estimateCostUsd("claude-opus-5-5", { prompt_tokens: 1_000_000, completion_tokens: 1_000_000 })
+        ).toBeCloseTo(24, 10);
+        expect(
+            estimateCostUsd("claude-opus-5", { prompt_tokens: 1_000_000, completion_tokens: 1_000_000 })
+        ).toBeCloseTo(30, 10);
+    });
+
     it("folds dated / -latest variant ids onto their base model", () => {
         const cost = estimateCostUsd("claude-haiku-4-5-20251001", {
             prompt_tokens: 2_000_000,

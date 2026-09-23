@@ -86,10 +86,10 @@ describe("recordUsage", () => {
     });
 
     test("resolves an alias to the catalog entry it names", async () => {
-        // "opus" is an alias of claude-opus-5 ($5/1M in).
+        // "opus" is an alias of claude-opus-5-5 ($4/1M in).
         const viaAlias = await recordUsage(input({ modelId: "opus", inputTokens: 1_000_000, outputTokens: 0 }));
 
-        expect(viaAlias.costUsd).toBe(5);
+        expect(viaAlias.costUsd).toBe(4);
     });
 
     test("leaves cost ABSENT — not zero — when no rate is known", async () => {
