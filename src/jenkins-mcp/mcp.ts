@@ -212,7 +212,7 @@ class JenkinsServer {
                     {
                         name: "get_build_log",
                         description:
-                            "Fetch a build's console log (or a single node's log when nodeId is set), strip HTML timestamp wrappers, and save to /tmp/jenkins-mcp/. Returns the file path + summary. If `grep` is set, also returns matching lines formatted as 'L<lineno>: <text>' (caps at 200 matches). Token-efficient: bytes never enter the response unless you grep.",
+                            "Fetch a build's console log (or a single node's log when nodeId is set), strip HTML timestamp wrappers, and save to $TMPDIR/jenkins-mcp/. Returns the file path + summary. If `grep` is set, also returns matching lines formatted as 'L<lineno>: <text>' (caps at 200 matches). Token-efficient: bytes never enter the response unless you grep.",
                         inputSchema: {
                             type: "object" as const,
                             properties: {

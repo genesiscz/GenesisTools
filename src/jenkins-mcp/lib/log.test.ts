@@ -1,8 +1,20 @@
 import { describe, expect, it } from "bun:test";
+import { existsSync } from "node:fs";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { basename, join } from "node:path";
-import { fetchLog, grepLog, isBuildFinal, parseConsoleFullHtml, readCachedLog, stripJenkinsHtml } from "./log";
+import { join } from "node:path";
+import { slugifyJobPath } from "./format";
+import {
+    fetchLog,
+    grepLog,
+    isBuildFinal,
+    parseConsoleFullHtml,
+    readCachedLog,
+    readCapped,
+    resolveBuildNumber,
+    stripJenkinsHtml,
+    utf8Head,
+} from "./log";
 import { getJenkinsMcpStorage } from "./storage";
 
 const LOG_DIR = join(tmpdir(), "jenkins-mcp");
@@ -140,6 +152,17 @@ describe("readCachedLog", () => {
 
         await rm(pathNoNode);
     });
+
+    it("refuses a copy over the cap from its size alone, without reading it", async () => {
+        // A directory stats with a size but throws EISDIR when read, so only a size-first check
+        // can return null here; reading first would reject.
+        const path = join(TMP, "cache-oversized-3.log");
+        await mkdir(path, { recursive: true });
+
+        expect(await readCachedLog("job/cache-oversized", "3", undefined, 1)).toBeNull();
+
+        await rm(path, { recursive: true, force: true });
+    });
 });
 
 describe("fetchLog (cache path)", () => {
@@ -157,11 +180,14 @@ describe("fetchLog (cache path)", () => {
         } as unknown as import("axios").AxiosInstance;
     }
 
-    it("returns cached log on a final build without paginating wfapi", async () => {
+    it("returns a complete cached node log on a final build without refetching", async () => {
         await mkdir(TMP, { recursive: true });
+        await mkdir(OFFSET_DIR, { recursive: true });
         const path = join(TMP, "cache-fetch-42-node9.log");
+        const marker = getJenkinsMcpStorage().getCompleteMarkerPath(path);
         const body = "cached line 1\ncached line 2\n";
         await writeFile(path, body, "utf8");
+        await writeFile(marker, "2026-01-01T00:00:00.000Z", "utf8");
 
         const tracker = { calls: [] as string[] };
         const client = clientWith(tracker, false, "FAILURE");
@@ -174,6 +200,41 @@ describe("fetchLog (cache path)", () => {
         expect(tracker.calls[0]).toContain("/api/json");
 
         await rm(path);
+        await rm(marker);
+    });
+
+    it("refetches a node log saved while the build ran, then marks the new copy complete", async () => {
+        await mkdir(TMP, { recursive: true });
+        const path = join(TMP, "cache-partial-44-node9.log");
+        const marker = getJenkinsMcpStorage().getCompleteMarkerPath(path);
+        await writeFile(path, "partial\n", "utf8");
+        await rm(marker, { force: true });
+
+        const calls: string[] = [];
+        const client = {
+            get: async (url: string) => {
+                calls.push(url);
+
+                if (url.endsWith("/api/json")) {
+                    return { status: 200, data: { building: false, result: "SUCCESS" } };
+                }
+
+                if (url.includes("consoleFull")) {
+                    return { status: 200, data: byteStream(`<pre class="console-output">partial%0Afinished</pre>`) };
+                }
+
+                return { status: 200, data: { status: "SUCCESS" } };
+            },
+        } as unknown as import("axios").AxiosInstance;
+
+        const result = await fetchLog(client, "job/cache-partial", "44", { nodeId: "9" });
+
+        expect(result.content).toBe("partial\nfinished");
+        expect(calls.some((url) => url.includes("consoleFull"))).toBe(true);
+        expect(await readFile(marker, "utf8")).not.toBe("");
+
+        await rm(path);
+        await rm(marker);
     });
 
     it("ignores cache when build is still in progress", async () => {
@@ -199,103 +260,259 @@ describe("fetchLog (cache path)", () => {
     });
 });
 
-describe("fetchLog (whole-build incremental)", () => {
-    const TMP = LOG_DIR;
+/** What axios hands back for `responseType: "stream"`: the body as byte chunks. */
+async function* byteStream(body: string, chunkSize = 3): AsyncGenerator<Uint8Array> {
+    const bytes = Buffer.from(body, "utf8");
 
-    function progressiveTextClient(scripted: Array<{ start: number; body: string; xTextSize: number }>) {
-        let cursor = 0;
+    for (let start = 0; start < bytes.length; start += chunkSize) {
+        yield bytes.subarray(start, start + chunkSize);
+    }
+}
+
+describe("readCapped", () => {
+    it("returns the whole body when it fits, and flags only a body longer than the cap", async () => {
+        expect(await readCapped(byteStream("abcdef"), 6)).toEqual({ raw: "abcdef", truncated: false });
+        expect(await readCapped(byteStream("abcdefg"), 6)).toEqual({ raw: "abcdef", truncated: true });
+        expect(await readCapped(byteStream("abcdefg"), 4)).toEqual({ raw: "abcd", truncated: true });
+    });
+
+    it("never ends inside a multi-byte character", async () => {
+        // "aé€": a = 1 byte, é = 2 bytes, € = 3 bytes.
+        expect(await readCapped(byteStream("aé€", 1), 2)).toEqual({ raw: "a", truncated: true });
+        expect(await readCapped(byteStream("aé€", 1), 4)).toEqual({ raw: "aé", truncated: true });
+        expect(utf8Head(Buffer.from("aé€", "utf8"), 6)).toBe("aé€");
+    });
+});
+
+describe("fetchLog (node log)", () => {
+    function consoleFullClient(html: string) {
         return {
-            get: async (url: string, opts?: { params?: { start?: number; tree?: string } }) => {
-                // isBuildFinal probe — return in-progress so the cache-hit shortcut is skipped
-                // and the incremental whole-build path is exercised.
+            get: async (url: string) => {
                 if (url.endsWith("/api/json")) {
-                    return { status: 200, data: { building: true, result: null } };
+                    return { status: 200, data: { building: false, result: "SUCCESS" } };
                 }
-                const start = opts?.params?.start ?? 0;
-                const step = scripted[cursor++];
-                if (!step) {
-                    throw new Error(`progressiveText called more times than scripted (start=${start})`);
+
+                if (url.includes("/log/?consoleFull")) {
+                    return { status: 200, data: byteStream(html, 7) };
                 }
-                if (step.start !== start) {
-                    throw new Error(`expected start=${step.start} got ${start}`);
+
+                if (url.endsWith("/wfapi/describe")) {
+                    return { status: 200, data: { status: "SUCCESS" } };
                 }
-                return {
-                    status: 200,
-                    data: step.body,
-                    headers: { "x-text-size": String(step.xTextSize) },
-                };
+
+                throw new Error(`unexpected fetch: ${url}`);
             },
         } as unknown as import("axios").AxiosInstance;
     }
 
-    it("first call writes full body and persists offset sidecar", async () => {
-        await mkdir(TMP, { recursive: true });
-        const file = join(TMP, "incr-test-1.log");
-        const offsetFile = join(OFFSET_DIR, `${basename(file)}.offset`);
+    async function cleanupNode(jobPath: string, build: string) {
+        const file = getJenkinsMcpStorage().getLogPath(slugifyJobPath(jobPath), build, "9");
         await rm(file, { force: true });
-        await rm(offsetFile, { force: true });
+        await rm(getJenkinsMcpStorage().getCompleteMarkerPath(file), { force: true });
+    }
 
-        const client = progressiveTextClient([{ start: 0, body: "line1\nline2\n", xTextSize: 12 }]);
-        const result = await fetchLog(client, "job/incr-test", "1");
-        expect(result.content).toBe("line1\nline2\n");
+    it("cuts the decoded text at maxBytes and flags it", async () => {
+        await cleanupNode("job/node-cap", "1");
+        // The whole page fits the HTML allowance (4 x 20 bytes); only the decoded text is over 20.
+        const html = `<html><pre class="console-output">${"0123456789".repeat(3)}</pre></html>`;
+        const result = await fetchLog(consoleFullClient(html), "job/node-cap", "1", { nodeId: "9", maxBytes: 20 });
+
+        expect({ content: result.content, truncated: result.truncated, status: result.nodeStatus }).toEqual({
+            content: "01234567890123456789",
+            truncated: true,
+            status: "SUCCESS",
+        });
+        await cleanupNode("job/node-cap", "1");
+    });
+
+    it("an HTML page over the inflated cap is cut, parsed without its </pre>, and not an error", async () => {
+        await cleanupNode("job/node-cut", "2");
+        // The page is cut at 4 x 20 = 80 bytes, well before its </pre>; the text is then cut at 20.
+        const html = `<html><pre class="console-output">${"x".repeat(200)}</pre></html>`;
+        const result = await fetchLog(consoleFullClient(html), "job/node-cut", "2", { nodeId: "9", maxBytes: 20 });
+
+        expect({ content: result.content, truncated: result.truncated }).toEqual({
+            content: "x".repeat(20),
+            truncated: true,
+        });
+        await cleanupNode("job/node-cut", "2");
+    });
+
+    it("a page within the cap keeps its whole text and is not flagged", async () => {
+        await cleanupNode("job/node-fit", "3");
+        const html = '<html><pre class="console-output">hello\n</pre></html>';
+        const result = await fetchLog(consoleFullClient(html), "job/node-fit", "3", { nodeId: "9", maxBytes: 100 });
+
+        expect({ content: result.content, truncated: result.truncated }).toEqual({
+            content: "hello\n",
+            truncated: false,
+        });
+        await cleanupNode("job/node-fit", "3");
+    });
+});
+
+describe("fetchLog (whole-build)", () => {
+    const TMP = LOG_DIR;
+
+    function consoleTextClient({ building, body }: { building: boolean; body: string }) {
+        const calls: string[] = [];
+        const client = {
+            get: async (url: string) => {
+                calls.push(url);
+
+                if (url.endsWith("/api/json")) {
+                    return { status: 200, data: { building, result: building ? null : "SUCCESS" } };
+                }
+
+                if (url.endsWith("/consoleText")) {
+                    return { status: 200, data: byteStream(body) };
+                }
+
+                throw new Error(`unexpected fetch: ${url}`);
+            },
+        } as unknown as import("axios").AxiosInstance;
+
+        return { client, calls };
+    }
+
+    async function cleanup(file: string) {
+        await rm(file, { force: true });
+        await rm(getJenkinsMcpStorage().getCompleteMarkerPath(file), { force: true });
+    }
+
+    it("fetches /consoleText, strips it, and marks the copy complete on a final build", async () => {
+        await mkdir(TMP, { recursive: true });
+        const file = join(TMP, "whole-test-1.log");
+        await cleanup(file);
+
+        const delta = `<span class="timestamp"><b>10:00:00</b> </span><span style="display: none">[2026-05-12T10:00:00.000Z]</span>hello\nline2\n`;
+        const { client, calls } = consoleTextClient({ building: false, body: delta });
+        const result = await fetchLog(client, "job/whole-test", "1");
+
+        expect(result.content).toBe("hello\nline2\n");
         expect(result.lineCount).toBe(2);
+        expect(calls.some((url) => url.endsWith("/consoleText"))).toBe(true);
+        expect(await readFile(getJenkinsMcpStorage().getCompleteMarkerPath(file), "utf8")).not.toBe("");
 
-        const offset = await readFile(offsetFile, "utf8");
-        expect(offset).toBe("12");
-
-        await rm(file);
-        await rm(offsetFile);
+        await cleanup(file);
     });
 
-    it("second call requests start=priorOffset, appends delta, advances offset", async () => {
+    it("reuses a complete copy on a final build without fetching the log again", async () => {
         await mkdir(TMP, { recursive: true });
-        const file = join(TMP, "incr-test-2.log");
-        const offsetFile = join(OFFSET_DIR, `${basename(file)}.offset`);
-        await writeFile(file, "line1\nline2\n", "utf8");
-        await writeFile(offsetFile, "12", "utf8");
+        await mkdir(OFFSET_DIR, { recursive: true });
+        const file = join(TMP, "whole-test-2.log");
+        await writeFile(file, "done\n", "utf8");
+        await writeFile(getJenkinsMcpStorage().getCompleteMarkerPath(file), "2026-01-01T00:00:00.000Z", "utf8");
 
-        const client = progressiveTextClient([{ start: 12, body: "line3\n", xTextSize: 18 }]);
-        const result = await fetchLog(client, "job/incr-test", "2");
-        expect(result.content).toBe("line1\nline2\nline3\n");
-        expect(result.lineCount).toBe(3);
+        const { client, calls } = consoleTextClient({ building: false, body: "unexpected\n" });
+        const result = await fetchLog(client, "job/whole-test", "2");
 
-        const offset = await readFile(offsetFile, "utf8");
-        expect(offset).toBe("18");
+        expect(result.content).toBe("done\n");
+        expect(calls).toHaveLength(1);
 
-        await rm(file);
-        await rm(offsetFile);
+        await cleanup(file);
     });
 
-    it("poll with no new bytes leaves content and offset unchanged", async () => {
+    it("does not hand a complete copy past a smaller cap; it fetches capped instead", async () => {
         await mkdir(TMP, { recursive: true });
-        const file = join(TMP, "incr-test-3.log");
-        const offsetFile = join(OFFSET_DIR, `${basename(file)}.offset`);
-        await writeFile(file, "settled\n", "utf8");
-        await writeFile(offsetFile, "8", "utf8");
+        await mkdir(OFFSET_DIR, { recursive: true });
+        const file = join(TMP, "whole-test-6.log");
+        await writeFile(file, "0123456789\n", "utf8");
+        await writeFile(getJenkinsMcpStorage().getCompleteMarkerPath(file), "2026-01-01T00:00:00.000Z", "utf8");
 
-        const client = progressiveTextClient([{ start: 8, body: "", xTextSize: 8 }]);
-        const result = await fetchLog(client, "job/incr-test", "3");
-        expect(result.content).toBe("settled\n");
-        expect(result.lineCount).toBe(1);
+        const { client, calls } = consoleTextClient({ building: false, body: "0123456789\n" });
+        const result = await fetchLog(client, "job/whole-test", "6", { maxBytes: 4 });
 
-        await rm(file);
-        await rm(offsetFile);
+        expect({ content: result.content, truncated: result.truncated }).toEqual({ content: "0123", truncated: true });
+        expect(calls.filter((url) => url.endsWith("/consoleText"))).toHaveLength(1);
+
+        await cleanup(file);
     });
 
-    it("strips Jenkins timestamp spans from each delta", async () => {
+    it("refetches a copy saved while the build ran, now that the build is final", async () => {
         await mkdir(TMP, { recursive: true });
-        const file = join(TMP, "incr-test-4.log");
-        const offsetFile = join(OFFSET_DIR, `${basename(file)}.offset`);
-        await rm(file, { force: true });
-        await rm(offsetFile, { force: true });
+        const file = join(TMP, "whole-test-3.log");
+        await cleanup(file);
+        await writeFile(file, "partial\n", "utf8");
 
-        const delta = `<span class="timestamp"><b>10:00:00</b> </span><span style="display: none">[2026-05-12T10:00:00.000Z]</span>hello\n`;
-        const client = progressiveTextClient([{ start: 0, body: delta, xTextSize: delta.length }]);
-        const result = await fetchLog(client, "job/incr-test", "4");
-        expect(result.content).toBe("hello\n");
+        const { client } = consoleTextClient({ building: false, body: "partial\nrest\n" });
+        const result = await fetchLog(client, "job/whole-test", "3");
 
-        await rm(file);
-        await rm(offsetFile);
+        expect(result.content).toBe("partial\nrest\n");
+        expect(await readFile(getJenkinsMcpStorage().getCompleteMarkerPath(file), "utf8")).not.toBe("");
+
+        await cleanup(file);
+    });
+
+    it("cuts a log longer than maxBytes and flags it, instead of failing the fetch", async () => {
+        await mkdir(TMP, { recursive: true });
+        const file = join(TMP, "whole-test-5.log");
+        await cleanup(file);
+
+        const { client, calls } = consoleTextClient({ building: false, body: "0123456789" });
+        const result = await fetchLog(client, "job/whole-test", "5", { maxBytes: 4 });
+
+        expect({ content: result.content, truncated: result.truncated }).toEqual({ content: "0123", truncated: true });
+
+        // A cut copy of a finished build is not complete: no marker, so a larger cap fetches it whole.
+        expect(existsSync(getJenkinsMcpStorage().getCompleteMarkerPath(file))).toBe(false);
+        const whole = await fetchLog(client, "job/whole-test", "5", { maxBytes: 100 });
+        expect({ content: whole.content, truncated: whole.truncated }).toEqual({
+            content: "0123456789",
+            truncated: false,
+        });
+        expect(calls.filter((url) => url.endsWith("/consoleText"))).toHaveLength(2);
+
+        await cleanup(file);
+    });
+
+    it("leaves no complete marker while the build still runs", async () => {
+        await mkdir(TMP, { recursive: true });
+        const file = join(TMP, "whole-test-4.log");
+        await cleanup(file);
+
+        const { client } = consoleTextClient({ building: true, body: "so far\n" });
+        await fetchLog(client, "job/whole-test", "4");
+
+        expect(await Bun.file(getJenkinsMcpStorage().getCompleteMarkerPath(file)).exists()).toBe(false);
+
+        await cleanup(file);
+    });
+});
+
+describe("resolveBuildNumber", () => {
+    function numberClient(status: number, data: unknown) {
+        const urls: string[] = [];
+        const client = {
+            get: async (url: string) => {
+                urls.push(url);
+                return { status, data };
+            },
+        } as unknown as import("axios").AxiosInstance;
+
+        return { client, urls };
+    }
+
+    it("keeps a numeric build without asking Jenkins", async () => {
+        const { client, urls } = numberClient(500, null);
+
+        expect(await resolveBuildNumber(client, "job/app", "42")).toBe("42");
+        expect(urls).toHaveLength(0);
+    });
+
+    it("resolves an alias such as lastBuild to its number", async () => {
+        const { client, urls } = numberClient(200, { number: 128 });
+
+        expect(await resolveBuildNumber(client, "job/app", "lastBuild")).toBe("128");
+        expect(urls).toEqual(["/job/app/lastBuild/api/json"]);
+    });
+
+    it("names the alias when Jenkins cannot resolve it", async () => {
+        const { client } = numberClient(404, {});
+
+        await expect(resolveBuildNumber(client, "job/app", "lastFailedBuild")).rejects.toThrow(
+            "Could not resolve build lastFailedBuild of job/app (HTTP 404)"
+        );
     });
 });
 

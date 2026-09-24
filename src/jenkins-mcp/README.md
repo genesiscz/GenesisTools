@@ -53,7 +53,7 @@ A token alone is not a login: Jenkins accepts `Authorization: Bearer <token>` wi
 | Subcommand | Flags | Behavior |
 |---|---|---|
 | `stages <input>` | `--build`, `--expand` | Stage tree (`wfapi/describe`). `--expand` drills into parallel branches. |
-| `log <input>` | `--build`, `--node`, `--tail`, `--head`, `--grep` | Save full log to `$TMPDIR/jenkins-mcp/<slug>-<build>[-node<id>].log` after stripping HTML timestamp wrappers. Print path + head/grep/tail per the flags (default: tail 20). |
+| `log <input>` | `--build`, `--node`, `--tail`, `--head`, `--grep` | Save full log to `$TMPDIR/jenkins-mcp/<slug>-<build>[-node<id>].log` after stripping HTML timestamp wrappers. Print path + head/grep/tail per the flags (default: tail 20; no tail with `--grep` or `--head` unless `--tail` is set). |
 | `info <input>` | `--build` | Build params, causes (who/what triggered), agent, executor, estimated duration. |
 | `changes <input>` | `--build` | SCM changeSet (commits/authors) + trigger causes. |
 | `jobs` | `--folder`, `--limit` | List jobs in a folder. |
@@ -174,10 +174,10 @@ src/jenkins-mcp/
     ├── url.ts        # parseJenkinsInput / buildUrl
     ├── client.ts     # axios with retry (3 attempts, exp backoff on 5xx/net)
     ├── pipeline.ts   # wfapi/describe + findFailingLeaf
-    ├── log.ts        # fetchLog (consoleFull for node, progressiveText+offset
-    │                 #   for whole-build) + HTML/entity strip + cache write
+    ├── log.ts        # fetchLog (consoleFull for node, consoleText for
+    │                 #   whole-build) + HTML/entity strip + cache write
     ├── storage.ts    # JenkinsMcpStorage: log blobs in $TMPDIR/jenkins-mcp/,
-    │                 #   offset sidecars in ~/.genesis-tools/jenkins-mcp/cache/
+    │                 #   complete markers in ~/.genesis-tools/jenkins-mcp/cache/
     ├── format.ts     # slug / status icons / stage line / notify body
     ├── errors.ts     # regex-windowed error extraction (±5 / ±3 lines)
     ├── notify.ts     # MonitorNotifier — sendNotification + click-to-default-browser
@@ -195,7 +195,7 @@ Two endpoints, two strategies — each chosen because the alternative is broken 
 | Scope | Endpoint | Why |
 |---|---|---|
 | **Per-node** (`--node N`, MCP `nodeId`) | `/execution/node/{id}/log/?consoleFull` — single GET | The wfapi `/wfapi/log` paginator returns 10KB chunks but **ignores the `start` query parameter** on the Jenkins versions we tested, so looping until `hasMore=false` appends duplicate content forever. `consoleFull` returns the full node log in one response. |
-| **Whole-build** (no `--node`) | `/logText/progressiveText?start=N` + `X-Text-Size` header | This endpoint *does* respect `start` correctly. We persist the cursor in a `<basename>.log.offset` sidecar so polling an in-progress build only ships the delta on each call. |
+| **Whole-build** (no `--node`) | `/consoleText` — single GET | `progressiveText` is not usable as a cursor: on a running build it returned 986 KB of text while `X-Text-Size` reported 3.41 MB (measured 2026-09-23 on a large pipeline build), so continuing from `X-Text-Size` silently skipped most of the log. `consoleText` returns the whole current log. |
 
 **Cache layout** — split by lifecycle:
 
@@ -204,18 +204,22 @@ $TMPDIR/jenkins-mcp/                      ← log blobs (large, regenerable)
   └── <slug>-<build>[-node<id>].log
 
 ~/.genesis-tools/jenkins-mcp/cache/       ← persistent metadata
-  └── <slug>-<build>.log.offset           (only whole-build fetches)
+  └── <slug>-<build>[-node<id>].log.complete   (log fetched after the build finished)
 ```
 
-A `/tmp` wipe is harmless: `fetchLog` notices the log file is missing and refetches from offset=0.
+A `/tmp` wipe is harmless: `fetchLog` notices the log file is missing and refetches it.
 
-**Cache hits on final builds** — `fetchLog` first probes `/api/json?tree=building,result`; if `building===false && result!=null`, the on-disk file is returned without re-fetching the log body. Cold call on a 600KB node log: ~300ms. Warm cache hit: ~50ms.
+**A cached log is reused only when complete.** `fetchLog` probes `/api/json?tree=building,result`
+first. It returns the cached file only when the build is final **and** the `.complete` marker exists,
+which a fetch writes only when the build had already finished before the fetch started. A log saved
+while the build ran is fetched again once the build ends. Cold call on a 600KB node log: ~300ms.
+Warm cache hit: ~50ms.
 
 ---
 
 ## Notes
 
-- Logs cap at 50MB raw before HTML strip (a 13MB stripped log is normal — timestamp spans are ~4× the content size).
+- Logs cap at 50MB raw before HTML strip: a longer whole-build log is cut there and reported as `truncated`, not failed (a 13MB stripped log is normal — timestamp spans are ~4× the content size).
 - If a build has been pruned by Jenkins retention, the MCP returns a clear "build may have been pruned" error.
 - Multibranch sub-build recursion is out of scope — `monitor` shows the parent stage status; drill into sub-jobs with their own `monitor` invocation if needed.
 - Notification clicks open in Brave by default. Configure via `Browser.setPreferred("safari")` (or chrome/firefox/edge/arc) in `~/.genesis-tools/genesis-tools/config.json`.

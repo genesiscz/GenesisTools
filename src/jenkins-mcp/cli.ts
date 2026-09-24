@@ -72,10 +72,12 @@ export async function runCli(argv: string[]): Promise<void> {
 
     program
         .command("log <input>")
-        .description("Fetch build (or single node) log to /tmp/jenkins-mcp/, print preview")
+        .description("Fetch build (or single node) log to $TMPDIR/jenkins-mcp/, print preview")
         .option("--build <n>", "Build number")
         .option("--node <id>", "Node id (selected-node)")
-        .option("--tail <n>", "Show last N lines", (v) => Number.parseInt(v, 10), 20)
+        .option("--tail <n>", "Show last N lines (default 20, none with --grep or --head)", (v) =>
+            Number.parseInt(v, 10)
+        )
         .option("--head <n>", "Show first N lines", (v) => Number.parseInt(v, 10))
         .option("--grep <pattern>", "Regex to filter lines")
         .action(
@@ -100,6 +102,10 @@ export async function runCli(argv: string[]): Promise<void> {
 
                 const lines = r.content.split("\n");
 
+                if (lines.at(-1) === "") {
+                    lines.pop();
+                }
+
                 if (opts.head !== undefined) {
                     const first = lines.slice(0, opts.head);
                     out.println(`--- head (${first.length}) ---`);
@@ -112,10 +118,13 @@ export async function runCli(argv: string[]): Promise<void> {
                     out.println(matches.join("\n"));
                 }
 
-                const tailN = opts.tail ?? 20;
-                const last = lines.slice(-tailN);
-                out.println(`--- tail (${last.length}) ---`);
-                out.println(last.join("\n"));
+                const tailN = opts.tail ?? (opts.grep || opts.head !== undefined ? 0 : 20);
+
+                if (tailN > 0) {
+                    const last = lines.slice(-tailN);
+                    out.println(`--- tail (${last.length}) ---`);
+                    out.println(last.join("\n"));
+                }
             }
         );
 

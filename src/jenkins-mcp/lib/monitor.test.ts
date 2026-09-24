@@ -280,7 +280,10 @@ describe("runMonitor", () => {
                 } else if (url.endsWith("/api/json")) {
                     data = { building: false, result: "FAILURE", duration: 12_000 };
                 } else if (url.includes("/log/?consoleFull") || url.includes("/log?consoleFull")) {
-                    data = `<pre class="console-output">make: *** Error 1%0Aexit code 2</pre>`;
+                    // fetchNodeLog asks for `responseType: "stream"`, so the real adapter hands back bytes.
+                    data = (async function* () {
+                        yield Buffer.from(`<pre class="console-output">make: *** Error 1%0Aexit code 2</pre>`);
+                    })();
                 } else if (url.includes("/wfapi/")) {
                     data = { status: "FAILED" };
                 }
