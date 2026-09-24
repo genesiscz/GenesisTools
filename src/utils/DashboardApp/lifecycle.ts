@@ -550,7 +550,13 @@ export async function down(ctx: LifecycleContext, opts: DownOptions = {}): Promi
 
 export async function restart(ctx: LifecycleContext, opts: UpOptions = {}): Promise<UpResult> {
     await down(ctx, {});
-    return up(ctx, opts);
+
+    // `skipInstallPrompt` because the service is already DOWN at this point: the
+    // first-run launchd question would hold the restart open at a prompt, and an
+    // unanswered prompt leaves the dashboard stopped. Observed 2026-09-18: a
+    // restart sat on that confirm for 8 h 34 m and mac.foltyn.dev served 502 the
+    // whole time. `install` is the command that asks.
+    return up(ctx, { ...opts, skipInstallPrompt: true });
 }
 
 export async function dev(ctx: LifecycleContext, opts: UpOptions = {}): Promise<never> {

@@ -976,6 +976,11 @@ async function main(nameArg: string | undefined, opts: StartOptions, passthrough
         launchEnv = { ...process.env, ...pinnedLaunchEnv(account, account.tokens.longLivedToken!) };
     }
 
+    // Claude Code's own Bash edit-diff renderer is otherwise gated by a per-account
+    // rollout, so accounts outside that cohort never see it. Default it on for every launch,
+    // but keep an explicit value: `CLAUDE_CODE_BASH_EDIT_DIFF=0` is how a user turns it off.
+    launchEnv.CLAUDE_CODE_BASH_EDIT_DIFF ??= "1";
+
     // Agent-team tmux teammates do NOT inherit CLAUDE_CODE_OAUTH_TOKEN (CC spawn
     // allowlist). Point CLAUDE_CODE_TEAMMATE_COMMAND at a per-PID wrapper that
     // re-exports this launch env. See Claude/Bugs/TeammateTmuxNotRespectingOauthTokens.
