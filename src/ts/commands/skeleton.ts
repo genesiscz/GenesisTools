@@ -9,7 +9,7 @@ import { logger, out } from "@genesiscz/utils/logger";
 import { stripAnsi } from "@genesiscz/utils/string";
 import type { Command } from "commander";
 import pc from "picocolors";
-import { extractSkeleton, parseSource, type SkeletonSymbol } from "../lib/skeleton";
+import { exportedOnly, extractSkeleton, parseSource, type SkeletonSymbol } from "../lib/skeleton";
 import { collectTypeNames, type ExpandedType, expandTypes } from "../lib/type-expand";
 
 interface SkeletonOptions {
@@ -98,34 +98,39 @@ function exact(value: number): string {
     return value.toLocaleString("en-US");
 }
 
+/** Openers that already tell a reader what the symbol is, so the kind tag would repeat them. */
+const DECLARATION_KEYWORDS = new Set([
+    "async",
+    "class",
+    "const",
+    "enum",
+    "function",
+    "interface",
+    "let",
+    "module",
+    "namespace",
+    "type",
+    "var",
+]);
+
 export function renderSymbol(symbol: SkeletonSymbol): string {
     const range = `L${symbol.startLine}-L${symbol.endLine}`;
     const indent = "    ".repeat(symbol.depth);
-    // Print the kind only when the signature does not already open with it. A class
-    // member carries no keyword and needs the tag; a namespace's `export const x`
-    // already says what it is, so tagging it produced "const export const x".
+    // Print the kind only when the signature does not already say it. A class member or an
+    // object field carries no keyword and needs the tag; a declaration keyword already says
+    // what it is, so tagging it produced "const export const x".
+    //
+    // 🛑 Matching the kind against the keyword alone was not enough: an arrow-function const
+    // is kinded `function` while its keyword is `const`, which rendered as
+    // "function export const fn = (x: number)". ANY declaration keyword is self-describing.
     // Every leading modifier goes, not only the first: `export abstract class Base` kept
     // `abstract` as its opener and printed "class export abstract class Base".
     const opener =
         symbol.signature.replace(/^(?:(?:export|declare|default|abstract|async)\s+)+/, "").split(/[\s(]/)[0] ?? "";
-    const kind = symbol.kind === opener ? "" : `${pc.cyan(symbol.kind)} `;
+    const evident = symbol.kind === opener || DECLARATION_KEYWORDS.has(opener);
+    const kind = evident ? "" : `${pc.cyan(symbol.kind)} `;
 
     return `${indent}- ${pc.dim(range.padEnd(12))} ${kind}${pc.white(symbol.signature)}`;
-}
-
-/**
- * The exported declarations, with the members of exported owners only. `depth > 0` alone kept
- * every method of a private class, printed without the class that owns it. Symbols arrive in
- * document order, parent before member, so each member follows its owner's verdict.
- */
-export function exportedOnly(symbols: SkeletonSymbol[]): SkeletonSymbol[] {
-    const kept: boolean[] = [];
-
-    return symbols.filter((symbol) => {
-        const keep = symbol.depth === 0 ? symbol.exported : (kept[symbol.depth - 1] ?? false);
-        kept[symbol.depth] = keep;
-        return keep;
-    });
 }
 
 async function runSkeleton(files: string[], options: SkeletonOptions): Promise<void> {
@@ -193,6 +198,16 @@ async function runSkeleton(files: string[], options: SkeletonOptions): Promise<v
         });
     }
 
+    // The coverage numbers the text header prints, for every format. 🛑 `--json` and `--toon`
+    // used to omit them entirely, and the percentage is the ONLY honest measure of what a
+    // skeleton left out, so a machine consumer had no way to tell a faithful index from one
+    // representing a tenth of the file.
+    const coverageOf = (result: { symbols: unknown[]; totalLines: number; coveredLines: number }) => ({
+        decls: result.symbols.length,
+        totalLines: result.totalLines,
+        coveredPct: result.totalLines > 0 ? Math.round((100 * result.coveredLines) / result.totalLines) : 100,
+    });
+
     const report = (rendered: string): void => {
         const skeletonTokens = tokensOf(rendered, encoder);
         const saved = originalTokens > 0 ? 1 - skeletonTokens / originalTokens : 0;
@@ -222,11 +237,13 @@ async function runSkeleton(files: string[], options: SkeletonOptions): Promise<v
         // TOON names its columns once per table, so uniform rows are what make it
         // small. Omitting default fields the way the JSON shape does would break the
         // tabular form and make it larger, so every row carries every column here.
-        // `kind` is dropped because the signature already carries `get`, `set`,
-        // `constructor` or the declaration keyword.
+        // `kind` is dropped. A declaration's signature carries its keyword, and a member has
+        // `depth > 0`. ⚠️ It is not FULLY recoverable: an object-literal `field` and `method`
+        // both read as `name: value`, so only the signature's shape tells those two apart.
         const payload = {
             files: results.map((result) => ({
                 file: result.file,
+                ...coverageOf(result),
                 symbols: result.symbols.map((symbol) => ({
                     startLine: symbol.startLine,
                     endLine: symbol.endLine,
@@ -248,13 +265,14 @@ async function runSkeleton(files: string[], options: SkeletonOptions): Promise<v
     if (options.json) {
         // Columnar, for the same reason TOON is small: naming the fields once and
         // emitting positional rows removes ~80 chars of repeated keys per symbol,
-        // which was 40% of the old payload. `kind` and `name` are dropped because
-        // the signature already carries them. Measured half the size of the object
-        // form, and about 10% under the TOON output.
+        // which was 40% of the old payload. `name` is dropped because the signature carries
+        // it, and `kind` for the reason given in the TOON branch above. Measured half the
+        // size of the object form, and about 10% under the TOON output.
         const payload = {
             cols: ["startLine", "endLine", "depth", "exported", "signature"],
             files: results.map((result) => ({
                 file: result.file,
+                ...coverageOf(result),
                 symbols: result.symbols.map((symbol) => [
                     symbol.startLine,
                     symbol.endLine,
@@ -277,8 +295,9 @@ async function runSkeleton(files: string[], options: SkeletonOptions): Promise<v
 
     for (const result of results) {
         lines.push("");
-        const share = result.totalLines > 0 ? Math.round((100 * result.coveredLines) / result.totalLines) : 100;
-        const cover = `${result.symbols.length} decls · ${share}% of ${result.totalLines} lines`;
+        const coverage = coverageOf(result);
+        const share = coverage.coveredPct;
+        const cover = `${coverage.decls} decls · ${share}% of ${coverage.totalLines} lines`;
 
         lines.push(
             `${pc.bold("skeleton")} ${pc.green(result.file)} ${share < 60 ? pc.yellow(`(${cover})`) : pc.dim(`(${cover})`)}`

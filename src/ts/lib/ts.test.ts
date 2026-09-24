@@ -6,7 +6,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { PROFILER_SCOPE_NAMES } from "@genesiscz/utils/profile";
 import { stripAnsi } from "@genesiscz/utils/string";
 import { parsePositive, resolveEntries } from "../commands/imports";
-import { collectFiles, exportedOnly, renderSymbol } from "../commands/skeleton";
+import { collectFiles, renderSymbol } from "../commands/skeleton";
 import { computeTotals } from "./analyze";
 import { attribute, isBarrel, nativeSignals } from "./attribute";
 import { findBarrelWaste } from "./barrels";
@@ -15,7 +15,7 @@ import { buildGraph, isLoadTimeEdge, isMeasuredEdge, labelFor, packageNameOf, po
 import { findLazyCandidates } from "./lazy";
 import type { WorkerSample } from "./measure";
 import { parseModule } from "./parse";
-import { extractSkeleton, parseSource } from "./skeleton";
+import { exportedOnly, extractSkeleton, parseSource, type SkeletonSymbol } from "./skeleton";
 import { collectTypeNames, expandTypes } from "./type-expand";
 
 let root: string;
@@ -812,5 +812,118 @@ export function use(value: Missing): void {}
         );
 
         expect(expandTypes(source, join(root, "demo.ts"), collectTypeNames(source), root)).toEqual([]);
+    });
+});
+
+describe("exportedOnly", () => {
+    const of = (source: string) => exportedOnly(extractSkeleton(parseSource("f.ts", source)));
+
+    // A literal carrying a method is expanded rather than inlined, which is what gives this
+    // describe the parent-and-member pairs it needs.
+    const shown = "export const shown = { one(): void {} };";
+    const hidden = "const hidden = { two(): void {} };";
+
+    it("keeps an exported declaration together with its own members", () => {
+        const kept = of(`${shown}\n`);
+
+        expect(kept.map((symbol) => symbol.name)).toEqual(["shown", "one"]);
+    });
+
+    it("drops a private declaration's members instead of re-parenting them", () => {
+        // The bug this pins: filtering on `depth > 0` kept `two`, and because the list is flat
+        // it then read as a second member of `shown`, whose span is line 1 alone.
+        const kept = of(`${shown}\n${hidden}\n`);
+
+        expect(kept.map((symbol) => symbol.name)).toEqual(["shown", "one"]);
+        expect(kept.every((symbol) => symbol.startLine === 1)).toBe(true);
+    });
+
+    it("keeps nothing when the file exports nothing", () => {
+        expect(of(`${hidden}\n`)).toEqual([]);
+    });
+
+    it("keeps a later export after a private one", () => {
+        const kept = of(`${hidden}\nexport function shownFn(): void {}\n`);
+
+        expect(kept.map((symbol) => symbol.name)).toEqual(["shownFn"]);
+    });
+});
+
+describe("an object literal is inlined when it fits, expanded when it does not", () => {
+    const of = (source: string) => extractSkeleton(parseSource("f.ts", source));
+
+    it("inlines a short literal instead of spending a row per key", () => {
+        const symbols = of('export const shown = { "k": 1, "v": 2 };\n');
+
+        expect(symbols).toHaveLength(1);
+        expect(symbols[0]?.signature).toBe('export const shown = { "k": 1, "v": 2 }');
+    });
+
+    it("drops a source trailing comma, which reads as damage on one line", () => {
+        expect(of('export const shown = {\n    "k": 1,\n};\n')[0]?.signature).toBe('export const shown = { "k": 1 }');
+    });
+
+    it("expands plain data that is too long to fit on one line", () => {
+        const wide = Array.from({ length: 12 }, (_, i) => `    keyNumber${i}: "value number ${i}",`).join("\n");
+        const symbols = of(`export const table = {\n${wide}\n};\n`);
+
+        expect(symbols).toHaveLength(13);
+        expect(symbols[0]?.signature).toBe("export const table");
+        expect(symbols[1]).toMatchObject({ kind: "field", depth: 1 });
+    });
+
+    it("expands a SHORT literal that carries a method, because that is an API", () => {
+        // Size alone was the first rule and it inlined this, which stopped reporting `raw`.
+        const symbols = of("export const api = ({ raw(): void {} });\n");
+
+        expect(symbols.find((symbol) => symbol.name === "raw")?.kind).toBe("method");
+    });
+
+    it("inlines a nested literal too", () => {
+        const symbols = of("export const outer = { a: 1, deep: { b: 2 } };\n");
+
+        expect(symbols).toHaveLength(1);
+        expect(symbols[0]?.signature).toContain("deep: { b: 2 }");
+    });
+
+    it("never inlines one declaration of a shared statement into another", () => {
+        // The slice anchor is the STATEMENT, so `const a = {…}, b = {…}` would put `a`'s text
+        // inside `b`'s signature. Such a statement is expanded instead.
+        const symbols = of("const a = { x: 1 }, b = { y: 2 };\n");
+
+        expect(symbols.filter((symbol) => symbol.depth === 0).map((symbol) => symbol.name)).toEqual(["a", "b"]);
+        expect(symbols.every((symbol) => !symbol.signature.includes("y: 2") || symbol.name === "y")).toBe(true);
+    });
+
+    it("signs each declaration of a shared statement with its own text", () => {
+        const heads = of("export const a = { x: 1 }, b = { y: 2 };\n").filter((symbol) => symbol.depth === 0);
+
+        expect(heads.map((symbol) => symbol.signature)).toEqual(["export const a", "export const b"]);
+    });
+
+    it("keeps a wrapped callable as a method, so its object is not inlined as data", () => {
+        const symbols = of("export const api = { run: (() => 1), stop: (() => 2) as () => number };\n");
+
+        expect(symbols.find((symbol) => symbol.name === "run")?.kind).toBe("method");
+        expect(symbols.find((symbol) => symbol.name === "stop")?.kind).toBe("method");
+        expect(of("export const wrapped = (() => 1);\n")[0]?.kind).toBe("function");
+    });
+});
+
+describe("renderSymbol", () => {
+    const line = (source: string, index = 0) =>
+        stripAnsi(renderSymbol(extractSkeleton(parseSource("f.ts", source))[index] as SkeletonSymbol));
+
+    it("does not repeat a declaration keyword as a kind tag", () => {
+        // An arrow-function const is kinded `function` while its keyword is `const`, which
+        // used to render as "function export const fn = (x: number)".
+        expect(line("export const fn = (x: number) => x + 1;\n")).toContain("export const fn = (x: number)");
+        expect(line("export const fn = (x: number) => x + 1;\n")).not.toContain("function export const");
+    });
+
+    it("still tags a member, which carries no keyword of its own", () => {
+        const wide = Array.from({ length: 12 }, (_, i) => `    keyNumber${i}: "value number ${i}",`).join("\n");
+
+        expect(line(`export const facade = {\n${wide}\n};\n`, 1)).toContain("field keyNumber0");
     });
 });
