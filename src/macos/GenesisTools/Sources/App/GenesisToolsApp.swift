@@ -40,7 +40,9 @@ final class GenesisAppDelegate: NSObject, NSApplicationDelegate {
     /// a response that caused this launch is dropped if the delegate is not in place by the time
     /// launching finishes. Without it, clicking a banner only opened the settings window.
     func applicationWillFinishLaunching(_ notification: Notification) {
+        NSApp.setActivationPolicy(.accessory)
         UNUserNotificationCenter.current().delegate = sharedNotificationDelegate
+        installBrowserURLHandler()
         logClick("launch argv=\(Array(CommandLine.arguments.dropFirst())) window=\(showWindowImmediately)")
     }
 
@@ -53,7 +55,7 @@ final class GenesisAppDelegate: NSObject, NSApplicationDelegate {
         DispatchQueue.main.asyncAfter(deadline: .now() + notificationClickGraceSeconds) { [weak self] in
             // A click-launched process performs its action and exits on its own, so there is
             // nothing to show.
-            if notificationClickReceived {
+            if notificationClickReceived || browserLinkReceived {
                 return
             }
 
@@ -62,8 +64,11 @@ final class GenesisAppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    /// A link click ends itself (BrowserURL calls terminate on every path). Between the approval
+    /// card closing and the command finishing there can be no window at all, and quitting there
+    /// dropped an approved command before it ran.
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
-        true
+        !browserLinkReceived
     }
 
     private func showWindow() {

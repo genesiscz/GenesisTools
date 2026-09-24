@@ -3,7 +3,8 @@ import PackageDescription
 
 let package = Package(
     name: "GenesisTools",
-    platforms: [.macOS(.v13)],
+    // macOS 14: the session views stolen from Genesis (Hub/Stolen/Sessions) use onChange(of:initial:).
+    platforms: [.macOS(.v14)],
     targets: [
         .executableTarget(name: "GenesisTools", path: "Sources"),
     ]

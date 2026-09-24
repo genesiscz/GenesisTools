@@ -21,6 +21,12 @@ if wantsWindow {
     runWindowApp(showWindowImmediately: arguments.first == "--window")
 }
 
+// Only the first argument: the link forwarder passes the URL alone, and a URL later in the argv is
+// a value of the program the launcher runs (`GenesisTools <program> https://...`) or of `--rpc`.
+if arguments[0].contains("://"), !arguments[0].hasPrefix("-") {
+    runBrowserLink(arguments[0])
+}
+
 if arguments[0] == "--help" || arguments[0] == "-h" {
     launcherUsage()
 }
@@ -28,6 +34,13 @@ if arguments[0] == "--help" || arguments[0] == "-h" {
 if arguments[0] == "--version" {
     print(bundleVersion())
     exit(0)
+}
+
+// GenesisTools --default-browser set|restore|status: make this bundle the http(s) handler (macOS asks
+// the user to confirm), give http(s) back to the browser recorded before, or print the handler.
+// It replaced the separate "Genesis Router.app" (see BrowserURL.swift).
+if arguments[0] == "--default-browser" {
+    runDefaultBrowser(Array(arguments.dropFirst()))
 }
 
 // GenesisTools --rpc '<json>' (or --rpc - to read stdin): run one request as this bundle, then
@@ -48,6 +61,18 @@ if arguments[0] == "--mic" {
 // the floating voice capsule, fed one JSON event per line on stdin (see Capsule.swift).
 if arguments[0] == "--capsule" {
     runCapsule(Array(arguments.dropFirst()))
+}
+
+// GenesisTools --hub [--session <id>] [--tab transcript|changes|decisions] [--snapshot <png>]: every
+// agent session with its transcript, changes and decisions (see Hub/HubWindow.swift).
+if arguments[0] == "--hub" {
+    runHub(Array(arguments.dropFirst()))
+}
+
+// GenesisTools --review [--repo <path>] [--style split|unified] [--snapshot <png>]: the diff review
+// window (see Review/ReviewWindow.swift).
+if arguments[0] == "--review" {
+    runReview(Array(arguments.dropFirst()))
 }
 
 runLauncher(arguments)

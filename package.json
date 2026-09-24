@@ -147,6 +147,7 @@
         "@orama/orama": "^3.1.18",
         "@orama/plugin-data-persistence": "^3.1.18",
         "@parcel/watcher": "^2.6.0",
+        "@pierre/diffs": "1.4.3",
         "@pppp606/ink-chart": "^0.2.8",
         "@qdrant/js-client-rest": "^1.19.0",
         "@radix-ui/react-toggle": "^1.1.18",

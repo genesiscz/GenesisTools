@@ -15,7 +15,9 @@ import { isProcessAlive } from "@genesiscz/utils/process-alive";
 import { withFileLock } from "@genesiscz/utils/storage";
 
 export const APP_SOURCE_DIR = resolve(import.meta.dirname, "../../GenesisTools");
-const SOURCE_ROOTS = ["Package.swift", "Info.plist", "Sources", "scripts/AppIcon.icns"];
+const SOURCE_ROOTS = ["Package.swift", "Info.plist", "Sources", "scripts/AppIcon.icns", "web"];
+/** Browser half of the diff renderer (PierreWebDiffRenderer.swift): bundled into Contents/Resources/diff-viewer. */
+const DIFF_VIEWER_SOURCE = "web/diff-viewer";
 const ICON_SOURCE = "scripts/AppIcon.icns";
 const ICON_GENERATOR = "scripts/build-icon.swift";
 /** Info.plist CFBundleIconFile value; the file lands at Contents/Resources/AppIcon.icns. */
@@ -289,6 +291,34 @@ async function buildAppLocked(options?: { onStep?: (message: string) => void }):
     }
 }
 
+/**
+ * Bundle the @pierre/diffs viewer page. Shiki grammars stay lazy chunks, so the page loads
+ * only the languages a diff needs; the app serves the folder through its own URL scheme
+ * because ES module chunks do not load from file://.
+ */
+async function buildDiffViewer(contents: string, step: (message: string) => void): Promise<void> {
+    const source = join(APP_SOURCE_DIR, DIFF_VIEWER_SOURCE);
+    const out = join(contents, "Resources", "diff-viewer");
+    step("bundle diff viewer");
+    mkdirSync(out, { recursive: true });
+    const result = await Bun.build({
+        entrypoints: [join(source, "main.ts")],
+        outdir: out,
+        target: "browser",
+        format: "esm",
+        splitting: true,
+        minify: true,
+        naming: { entry: "viewer.js", chunk: "chunks/[name]-[hash].js" },
+    });
+
+    if (!result.success) {
+        throw new Error(`diff viewer bundle failed: ${result.logs.map((log) => String(log)).join("\n")}`);
+    }
+
+    await Bun.write(join(out, "index.html"), Bun.file(join(source, "index.html")));
+    logger.debug({ out, outputs: result.outputs.length }, "diff viewer bundled");
+}
+
 interface StageAndInstallOptions {
     appDir: string;
     bundlePath: string;
@@ -312,6 +342,8 @@ async function stageAndInstall(options: StageAndInstallOptions): Promise<BuildRe
         mkdirSync(join(contents, "Resources"), { recursive: true });
         await Bun.write(join(contents, "Resources", `${ICON_NAME}.icns`), Bun.file(iconPath));
     }
+
+    await buildDiffViewer(contents, step);
 
     const stagedBundle = join(staging, `${GENESIS_APP_NAME}.app`);
     const identity = pickCodesignIdentity(

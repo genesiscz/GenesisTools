@@ -53,5 +53,29 @@
 	<string>You passed a path on a network volume to a tools command. GenesisTools reads only the file you named.</string>
 	<key>NSSystemAdministrationUsageDescription</key>
 	<string>Full Disk Access lets tools macos mail, messages and voice-memos read the Mail, Messages and Voice Memos databases. Nothing else in GenesisTools needs it.</string>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
+			<key>CFBundleURLName</key>
+			<string>com.genesiscz.genesistools.permissions</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>genesis-tools</string>
+			</array>
+		</dict>
+		<dict>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
+			<key>CFBundleURLName</key>
+			<string>com.genesiscz.genesistools.browser</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>http</string>
+				<string>https</string>
+			</array>
+		</dict>
+	</array>
 </dict>
 </plist>
