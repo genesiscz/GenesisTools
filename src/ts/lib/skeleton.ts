@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import ts from "typescript";
 
 export interface SkeletonSymbol {
@@ -5,33 +6,77 @@ export interface SkeletonSymbol {
     name: string;
     startLine: number;
     endLine: number;
+    /** The head as displayed: one line, cut at 160 characters with a `…`. */
     signature: string;
+    /**
+     * The whole head, set only when `signature` was cut. Parameter counts, types and the return
+     * type are read from this: a cut inside the parameter list dropped parameters and the `)`.
+     */
+    fullSignature?: string;
     exported: boolean;
     /** 0 for a top-level declaration, 1 or more for a member or a namespace body. */
     depth: number;
+    /** First line of the declaration's body, when it has one. Always computed, rarely printed. */
+    bodyStartLine?: number;
+    /** True for a declaration inside a function body. Only collected with `locals`. */
+    local?: boolean;
+    /** Set by `enrichSymbols`: a fingerprint of the declaration with its own name blanked out. */
+    hash?: string;
+    /** Set by `enrichSymbols`: the first lines of the body, for `--function-context`. */
+    body?: string[];
+    /** True when `body` stops short of the declaration's real end. */
+    bodyTruncated?: boolean;
 }
+
+/** Every `kind` `extractSkeleton` emits, so a `--kinds` filter can reject a misspelled one. */
+export const DECLARATION_KINDS = [
+    "function",
+    "method",
+    "constructor",
+    "getter",
+    "setter",
+    "field",
+    "class",
+    "interface",
+    "namespace",
+    "type",
+    "enum",
+    "const",
+    "re-export",
+    "default",
+    "call",
+] as const;
 
 const MAX_SIGNATURE = 160;
 
-function collapsed(text: string): { text: string; truncated: boolean } {
-    const single = text
-        .replace(/\s+/g, " ")
-        .trim()
-        .replace(/[{(,]$/, "")
-        .trim()
-        // A generic arrow keeps its `=>` when the body is cut away, which reads as unfinished.
-        .replace(/=>$/, "")
-        .trim()
-        // `export const ui =` when the object literal is cut away, same reason.
-        .replace(/=$/, "")
-        .trim()
-        // A source trailing comma reads as damage once the value is on one line: `{ "a": 1, }`.
-        // Anchored at the very end, so a comma inside a string literal is never touched.
-        .replace(/,\s*([}\]])$/, " $1");
+/** One line, without the dangling `{`, `=>` or `=` a cut-away body leaves. Never truncated. */
+function flatten(text: string): string {
+    return (
+        text
+            .replace(/\s+/g, " ")
+            .trim()
+            .replace(/[{(,]$/, "")
+            .trim()
+            // A generic arrow keeps its `=>` when the body is cut away, which reads as unfinished.
+            .replace(/=>$/, "")
+            .trim()
+            // `export const ui =` when the object literal is cut away, same reason.
+            .replace(/=$/, "")
+            .trim()
+            // A source trailing comma reads as damage once the value is on one line: `{ "a": 1, }`.
+            // Anchored at the very end, so a comma inside a string literal is never touched.
+            .replace(/,\s*([}\]])$/, " $1")
+    );
+}
 
+function clip(single: string): { text: string; truncated: boolean } {
     return single.length > MAX_SIGNATURE
         ? { text: `${single.slice(0, MAX_SIGNATURE - 1)}…`, truncated: true }
         : { text: single, truncated: false };
+}
+
+function collapsed(text: string): { text: string; truncated: boolean } {
+    return clip(flatten(text));
 }
 
 function collapse(text: string): string {
@@ -44,12 +89,15 @@ function isExported(node: ts.Node): boolean {
     return modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword) ?? false;
 }
 
-/** The declaration head only: everything before the body, so a 400-line function costs one line. */
+/**
+ * The declaration head only: everything before the body, so a 400-line function costs one line.
+ * Returned whole; `push` clips it for display and keeps the whole head as `fullSignature`.
+ */
 function signatureOf(node: ts.Node, source: ts.SourceFile, body?: ts.Node): string {
     const start = node.getStart(source);
     const end = body ? body.getStart(source) : node.getEnd();
 
-    return collapse(source.text.slice(start, end));
+    return flatten(source.text.slice(start, end));
 }
 
 /**
@@ -58,7 +106,7 @@ function signatureOf(node: ts.Node, source: ts.SourceFile, body?: ts.Node): stri
  * comment into the signature and then truncated it mid-sentence.
  */
 function headOf(node: ts.Node, source: ts.SourceFile, members: ts.NodeArray<ts.Node>): string {
-    return collapse(source.text.slice(node.getStart(source), members.pos));
+    return flatten(source.text.slice(node.getStart(source), members.pos));
 }
 
 /**
@@ -108,8 +156,18 @@ export function exportedOnly(symbols: SkeletonSymbol[]): SkeletonSymbol[] {
     });
 }
 
-export function extractSkeleton(source: ts.SourceFile): SkeletonSymbol[] {
+export interface ExtractOptions {
+    /**
+     * Also collect declarations INSIDE function bodies. Off by default, because a helper
+     * closure is not part of a file's API. It is the only way to see a `const git = …` that
+     * lives three lines into a function, which a duplicate hunt very much wants.
+     */
+    locals?: boolean;
+}
+
+export function extractSkeleton(source: ts.SourceFile, options: ExtractOptions = {}): SkeletonSymbol[] {
     const symbols: SkeletonSymbol[] = [];
+    let insideFunction = 0;
 
     const push = (
         node: ts.Node,
@@ -117,29 +175,77 @@ export function extractSkeleton(source: ts.SourceFile): SkeletonSymbol[] {
         name: string,
         signature: string,
         depth: number,
-        exported?: boolean
+        exported?: boolean,
+        body?: ts.Node
     ): void => {
+        const shown = clip(signature);
+
         symbols.push({
             kind,
             name,
             startLine: source.getLineAndCharacterOfPosition(node.getStart(source)).line + 1,
             endLine: source.getLineAndCharacterOfPosition(node.getEnd()).line + 1,
-            signature,
+            signature: shown.text,
+            ...(shown.truncated ? { fullSignature: signature } : {}),
             exported: exported ?? isExported(node),
             depth,
+            ...(body ? { bodyStartLine: source.getLineAndCharacterOfPosition(body.getStart(source)).line + 1 } : {}),
+            ...(insideFunction > 0 ? { local: true } : {}),
         });
+    };
+
+    /**
+     * Walk into a function body when `locals` is on. The nested statements go through the same
+     * `visitStatements`, so a closure inside a closure is collected the same way as a top-level
+     * declaration, one depth further in and flagged `local`.
+     */
+    const descend = (body: ts.Node | undefined, depth: number): void => {
+        if (!options.locals || !body || !ts.isBlock(body)) {
+            return;
+        }
+
+        insideFunction += 1;
+        visitStatements(body.statements, depth + 1);
+        insideFunction -= 1;
     };
 
     const visitMembers = (members: ts.NodeArray<ts.ClassElement | ts.TypeElement>, depth: number): void => {
         for (const member of members) {
             if (ts.isMethodDeclaration(member) || ts.isMethodSignature(member)) {
                 const body = ts.isMethodDeclaration(member) ? member.body : undefined;
-                push(member, "method", nameOf(member, source), signatureOf(member, source, body), depth);
+                push(
+                    member,
+                    "method",
+                    nameOf(member, source),
+                    signatureOf(member, source, body),
+                    depth,
+                    undefined,
+                    body
+                );
+                descend(body, depth);
             } else if (ts.isConstructorDeclaration(member)) {
-                push(member, "constructor", "constructor", signatureOf(member, source, member.body), depth);
+                push(
+                    member,
+                    "constructor",
+                    "constructor",
+                    signatureOf(member, source, member.body),
+                    depth,
+                    undefined,
+                    member.body
+                );
+                descend(member.body, depth);
             } else if (ts.isGetAccessorDeclaration(member) || ts.isSetAccessorDeclaration(member)) {
                 const kind = ts.isGetAccessorDeclaration(member) ? "getter" : "setter";
-                push(member, kind, nameOf(member, source), signatureOf(member, source, member.body), depth);
+                push(
+                    member,
+                    kind,
+                    nameOf(member, source),
+                    signatureOf(member, source, member.body),
+                    depth,
+                    undefined,
+                    member.body
+                );
+                descend(member.body, depth);
             } else if (ts.isPropertySignature(member) || ts.isPropertyDeclaration(member)) {
                 // Interface fields are the cheapest high-value thing here: without them a
                 // data-shape file printed as a list of empty names.
@@ -152,8 +258,11 @@ export function extractSkeleton(source: ts.SourceFile): SkeletonSymbol[] {
                     isFn ? "method" : "field",
                     nameOf(member, source),
                     signatureOf(member, source, body),
-                    depth
+                    depth,
+                    undefined,
+                    body
                 );
+                descend(body, depth);
             }
         }
     };
@@ -234,14 +343,32 @@ export function extractSkeleton(source: ts.SourceFile): SkeletonSymbol[] {
     const visitObjectMembers = (literal: ts.ObjectLiteralExpression, depth: number): void => {
         for (const property of literal.properties) {
             if (ts.isMethodDeclaration(property)) {
-                push(property, "method", nameOf(property, source), signatureOf(property, source, property.body), depth);
+                push(
+                    property,
+                    "method",
+                    nameOf(property, source),
+                    signatureOf(property, source, property.body),
+                    depth,
+                    undefined,
+                    property.body
+                );
+                descend(property.body, depth);
                 continue;
             }
 
             if (ts.isGetAccessorDeclaration(property) || ts.isSetAccessorDeclaration(property)) {
                 const kind = ts.isGetAccessorDeclaration(property) ? "getter" : "setter";
 
-                push(property, kind, nameOf(property, source), signatureOf(property, source, property.body), depth);
+                push(
+                    property,
+                    kind,
+                    nameOf(property, source),
+                    signatureOf(property, source, property.body),
+                    depth,
+                    undefined,
+                    property.body
+                );
+                descend(property.body, depth);
                 continue;
             }
 
@@ -258,8 +385,11 @@ export function extractSkeleton(source: ts.SourceFile): SkeletonSymbol[] {
                     isFn ? "method" : "field",
                     nameOf(property, source),
                     inline ?? signatureOf(property, source, body ?? (nested ? nested : undefined)),
-                    depth
+                    depth,
+                    undefined,
+                    body
                 );
+                descend(body, depth);
 
                 if (nested && inline === null) {
                     visitObjectMembers(nested, depth + 1);
@@ -282,8 +412,11 @@ export function extractSkeleton(source: ts.SourceFile): SkeletonSymbol[] {
                     "function",
                     nameOf(statement, source),
                     signatureOf(statement, source, statement.body),
-                    depth
+                    depth,
+                    undefined,
+                    statement.body
                 );
+                descend(statement.body, depth);
             } else if (ts.isClassDeclaration(statement)) {
                 push(
                     statement,
@@ -361,8 +494,11 @@ export function extractSkeleton(source: ts.SourceFile): SkeletonSymbol[] {
                         isFn ? "function" : "const",
                         nameOf(declaration, source),
                         inline ?? signature,
-                        depth
+                        depth,
+                        undefined,
+                        body
                     );
+                    descend(body, depth);
 
                     if (literal && inline === null) {
                         visitObjectMembers(literal, depth + 1);
@@ -385,4 +521,92 @@ export function extractSkeleton(source: ts.SourceFile): SkeletonSymbol[] {
 
 export function parseSource(filePath: string, text: string): ts.SourceFile {
     return ts.createSourceFile(filePath, text, ts.ScriptTarget.Latest, true);
+}
+
+const LINE_COMMENT = /\/\/[^\n]*/g;
+const BLOCK_COMMENT = /\/\*[\s\S]*?\*\//g;
+/**
+ * Stands in for the declaration's own name. It must be one character, must not be a control
+ * character, and must not be an identifier character, so that it tokenises on its own and
+ * never merges with the text beside it.
+ */
+const NAME_PLACEHOLDER = "·";
+
+/**
+ * The declaration reduced to what a reader would call "the same code": comments gone, the
+ * declaration's OWN name blanked, whitespace collapsed.
+ *
+ * 🛑 Blanking the name is what makes a renamed copy visible. `walkFiles` and `walk` in
+ * a sibling repo are the same six lines under two names, and a fingerprint that kept the name
+ * would have called them unrelated. Only the declared name is blanked, never every
+ * identifier, so two genuinely different functions do not collapse into one.
+ */
+export function normalizeDeclaration(text: string, name: string): string {
+    const withoutComments = text.replace(BLOCK_COMMENT, " ").replace(LINE_COMMENT, " ");
+    // A name of `<anonymous>` or `*` is not an identifier, so it would build a broken pattern.
+    // `$` is legal in a name and special in a pattern, and `\b` treats it as a non-word character:
+    // `$el` was never blanked, and `foo` was blanked inside `$foo`. The name is escaped and bounded
+    // by "not an identifier character" on both sides instead.
+    const blanked = /^[A-Za-z_$][\w$]*$/.test(name)
+        ? withoutComments.replace(
+              new RegExp(`(?<![\\w$])${name.replace(/\$/g, "\\$")}(?![\\w$])`, "g"),
+              NAME_PLACEHOLDER
+          )
+        : withoutComments;
+
+    return blanked.replace(/\s+/g, " ").trim();
+}
+
+export function hashDeclaration(text: string, name: string): string {
+    return createHash("sha1").update(normalizeDeclaration(text, name)).digest("hex").slice(0, 12);
+}
+
+/** The normalised declaration split into comparable pieces: identifiers, literals, operators. */
+export function tokenizeDeclaration(text: string, name: string): string[] {
+    return normalizeDeclaration(text, name).match(/[A-Za-z_$][\w$]*|\d+|[^\sA-Za-z0-9_$]/g) ?? [];
+}
+
+export interface EnrichOptions {
+    /** Attach `hash` to every symbol. */
+    hash?: boolean;
+    /** Attach the first N lines of the body as `body`. 0 means no body. */
+    functionContext?: number;
+}
+
+/**
+ * Second pass over an extracted skeleton, for the fields that need the file's text rather than
+ * its syntax tree. Kept apart from `extractSkeleton` so the common case pays nothing for them.
+ */
+export function enrichSymbols(symbols: SkeletonSymbol[], text: string, options: EnrichOptions): SkeletonSymbol[] {
+    const wantHash = options.hash === true;
+    const context = options.functionContext ?? 0;
+
+    if (!wantHash && context <= 0) {
+        return symbols;
+    }
+
+    const lines = text.split("\n");
+
+    return symbols.map((symbol) => {
+        const declaration = lines.slice(symbol.startLine - 1, symbol.endLine).join("\n");
+        const next: SkeletonSymbol = { ...symbol };
+
+        if (wantHash) {
+            next.hash = hashDeclaration(declaration, symbol.name);
+        }
+
+        if (context > 0) {
+            // Start after the signature so the context is the part the skeleton does not
+            // already print. A declaration with no body starts one line in.
+            const from = symbol.bodyStartLine ?? symbol.startLine;
+            const body = lines.slice(from, Math.min(from + context, symbol.endLine));
+
+            if (body.length > 0) {
+                next.body = body;
+                next.bodyTruncated = from + context < symbol.endLine;
+            }
+        }
+
+        return next;
+    });
 }

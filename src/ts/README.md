@@ -1,8 +1,21 @@
 # tools ts
 
-> **What is in this TypeScript file, and where does the startup time of an entry point go?**
+> **What is in this TypeScript file, what is written twice, and where does the startup time of an entry point go?**
 
-Two independent command groups: `skeleton` answers the first question, `imports` the second.
+Four command groups. `skeleton` prints a file's API. `duplicates` finds code written more than
+once. `refactors` ranks what to change. `imports` answers the startup-cost question.
+
+`skeleton`, `duplicates` and `refactors` take `--format text|md|json|json-compact|toon`, with
+`--md`, `--json`, `--json-compact` and `--toon` as shorthands. Asking for two different formats is
+a usage error. `imports` keeps its own `--json` and does not take `--format`.
+
+Measured 2026-09-22 with Anthropic's tokenizer on `skeleton src/utils`: `--json` 643k tokens,
+`--json-compact` 428k, `--toon` 433k. TOON is built from the object rows, so it is a table with
+the keys named once; pick it when a reader wants field names, `--json-compact` when a parser does.
+
+🛑 **`--json` changed meaning on 2026-09-22.** It used to be the columnar form; that is now
+`--json-compact`. `--json` is the readable object form. A script that reads `cols` and positional
+rows must move to `--json-compact`.
 
 ---
 
@@ -24,10 +37,99 @@ A path may be a file or a directory. Directories are walked recursively, skippin
 | `--exported` | Only exported top-level declarations |
 | `--top-level` | Skip class, interface and namespace members |
 | `--types` | Print the full declaration of every type the signatures name, following imports, tsconfig `paths` aliases, `extends` bases and `typeof` aliases, two levels deep |
-| `--json` | Columnar JSON: fields named once, rows positional |
-| `--toon` | TOON, the same data in a tabular text form |
+| `--include-names` | Add `name` and `kind` as their own fields, instead of leaving the name inside the signature |
+| `--include-hash` | Add a fingerprint of each declaration, with its own name blanked out, so a renamed copy fingerprints the same |
+| `--include-locals` | Also collect declarations inside function bodies, flagged `local` |
+| `--function-context <n>` | Print the first N lines of each body under its signature |
 | `--tests` | Include `*.test.ts` / `*.spec.ts` |
+| `--ignore <substring>` | Skip any path containing this below the path you named (never the folders above it); repeatable |
 | `--exact-tokens` | Count tokens with `@anthropic-ai/tokenizer` instead of the chars-per-token estimate |
+
+**The `--include-*` flags are off by default because they cost payload, not because they are rare.**
+Measured 2026-09-22 on a sibling repo's 20,102 symbols: `--include-names` adds 24.9% of the bytes and
+`--include-hash` adds 17.0%. Turn them on when a machine is the reader; leave them off when a
+person is.
+
+---
+
+## `tools ts duplicates <paths...>`   (alias `dupes`)
+
+The same code written more than once, whether or not the copies share a name. The copy to keep
+and the edit (the `←` and `→` lines below) appear only with `--recommend`:
+
+```
+$ tools ts duplicates src/gitlab --recommend
+▪ `requireToken` · 5 copies · 8 lines · identical · 32 lines would go
+    src/gitlab/commands/analyze-project.ts:35-42 ← keep this one
+    src/gitlab/commands/analyze-user.ts:37-44
+    …
+    → export `requireToken` from src/gitlab/commands/analyze-project.ts; import it in 4 files
+```
+
+Two declarations are compared on their bodies, with comments stripped and each declaration's own
+name blanked out. That blanking is what makes a renamed copy visible: a sibling repo's `walkFiles` and
+`walk` are the same six lines under two names. Exact matches group on a fingerprint; near matches
+group by MinHash banding, then a verified Jaccard against the group's representative.
+
+| Flag | Effect |
+|------|--------|
+| `--min-lines <n>` | Ignore declarations shorter than this (default 3) |
+| `--similarity <ratio>` | How alike two bodies must be, 0 to 1 (default 0.8) |
+| `--kinds <list>` | Restrict to some declaration kinds |
+| `--locals` | Also compare declarations inside function bodies |
+| `--recommend` | Pick the copy to keep and write the edit that removes the others |
+| `--include-patterns` | Show the groups suppressed as a deliberate repeated shape |
+| `--include-same-file` | Show groups whose copies all live in one file |
+| `--include-name-collisions` | Also list same-name declarations whose code differs |
+
+### What it suppresses, and why
+
+Three shapes are repetition somebody meant, and all three are hidden by default:
+
+- **A method the whole family implements.** Four or more `method` copies under one directory. The
+  fix is a base class, which is a design decision, not the import this report would recommend.
+- **A numbered family.** Sibling files whose names differ only by digits: `40302.e2e.ts` beside
+  `40303.e2e.ts`, one per test case or per migration.
+- **Parallel implementations with their own names.** Four across a subtree, or three inside one
+  directory, each copy separately named.
+
+🛑 Directory alone is never enough. `requireToken` is copied five times inside one directory and is
+a real defect; `waitForVisible` is implemented by 50 page objects under one directory and is not.
+What separates them is the declaration's shape and whether the copies were given their own names.
+
+---
+
+## `tools ts refactors <paths...>`
+
+Ranked recommendations, each with the sites and the edit. `--include <list>` selects the analysers,
+`--include all` runs every one, `--include help` lists them.
+
+| Analyser | Finds | Default |
+|----------|-------|---------|
+| `duplicates` | The same code written more than once | on |
+| `shadowed` | A local helper whose name is already exported from a shared module | on |
+| `long-functions` | A function long enough or nested deep enough to lose the thread | on |
+| `param-bloat` | A long positional parameter list, especially with same-typed neighbours | on |
+| `god-files` | A file holding far more declarations than the rest of the tree | off |
+| `unused-exports` | An exported name that nothing in the scanned paths imports | off |
+
+`shadowed` is the one that answers "why do we keep rewriting this?". It indexes every export of a
+**shared** module (`utils`, `lib`, `shared`, `common`, `core`, `helpers`), then reports a private
+declaration of that name in a file that does not import it.
+
+🛑 It gates on the declaration's SHAPE, not its body. Measured 2026-09-22 on a sibling repo: the
+canonical `git` and its private copies score 7% to 9% on bodies, and two unrelated `renderMarkdown`
+functions score 2%. One body threshold cannot separate those. On signatures — return type weighted
+0.6, parameter types 0.4 — the same pairs score 0.8 to 1.0 against 0.0 to 0.13.
+
+| Flag | Effect |
+|------|--------|
+| `--include <list>` | Analysers, comma-separated, or `all`, or `help` |
+| `--min-lines <n>` | Ignore declarations shorter than this (default 3) |
+| `--max-function-lines <n>` | Budget for `long-functions` (default 60) |
+| `--max-params <n>` | Budget for `param-bloat` (default 4) |
+| `--max-declarations <n>` | Budget for `god-files` (default 40) |
+| `--limit <n>` | Show at most this many recommendations (default 40) |
 
 **The header is the honesty check.** `(12 decls · 36% of 527 lines)` means 64% of that file is not
 represented. A skeleton lists declarations, so a file built from chained expression statements or
@@ -48,6 +150,9 @@ It exists because the question "why does `import("@genesiscz/utils/fs/watcher")`
 
 | Command | Description |
 |---------|-------------|
+| `skeleton <paths...>` | Every declaration with its signature and line span |
+| `duplicates <paths...>` | The same code written more than once, with the copy to keep |
+| `refactors <paths...>` | Ranked refactor recommendations across six analysers |
 | `imports analyze <entry>` | Import tree with self and total time per module, heaviest-modules table, and a "Why" paragraph per slow module |
 | `imports lazy <entry>` | Static imports whose bindings are only used inside functions, ranked by the startup time `await import()` would save |
 | `imports barrels <entry>` | `import { a } from "<barrel>"` sites where the barrel re-exports far more than `a` needs, priced in real ms |
@@ -149,8 +254,17 @@ Profiling of the tool itself: `PROFILE=ts tools ts imports analyze …` prints g
 ```
 src/ts/
 ├── index.ts                 commander entry (`tools ts`)
-├── commands/imports.ts      the four subcommands, thin: parse flags, call lib, render
+├── commands/
+│   ├── options.ts           the --format and scan flags every subcommand shares
+│   ├── imports.ts  skeleton.ts  duplicates.ts  refactors.ts
 └── lib/
+    ├── collect.ts           walk paths to source files, honouring --tests and --ignore
+    ├── load.ts              one read of every file, shared by skeleton/duplicates/refactors
+    ├── format.ts            resolve --format and emit text / md / json / json-compact / toon
+    ├── skeleton.ts          declarations, fingerprints, body context, local declarations
+    ├── signature.ts         parameter types, return type, signature-shape similarity
+    ├── duplicates.ts        shingles, MinHash banding, clustering, pattern suppression
+    ├── refactors/           one file per analyser, plus the registry
     ├── parse.ts             ast-grep: imports with names, re-exports, module-scope work, scope uses
     ├── graph.ts             resolve + walk, post-order, reachability
     ├── measure-worker.ts    the process that imports and times; no repo imports on purpose
@@ -168,3 +282,7 @@ src/ts/
 - `require()` inside a function body is treated as dynamic; `require()` at module scope as a static edge.
 - Module-scope side effect detection is syntactic. It sees `new Database("x")` at top level; it does not see a `Database` constructed inside a function that a top-level statement calls.
 - Barrel tracing follows `export * from` six levels deep and stops there.
+- `duplicates` and `refactors` are syntactic. They compare declarations as text and shape; they do
+  not resolve types, so two helpers with the same signature over different types read as alike.
+- `unused-exports` cannot see a consumer outside the scanned paths, a name reached through
+  `export *`, or a name reached by a string key. It is evidence, never a verdict.

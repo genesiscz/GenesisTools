@@ -6,10 +6,11 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { PROFILER_SCOPE_NAMES } from "@genesiscz/utils/profile";
 import { stripAnsi } from "@genesiscz/utils/string";
 import { parsePositive, resolveEntries } from "../commands/imports";
-import { collectFiles, renderSymbol } from "../commands/skeleton";
+import { renderSymbol } from "../commands/skeleton";
 import { computeTotals } from "./analyze";
 import { attribute, isBarrel, nativeSignals } from "./attribute";
 import { findBarrelWaste } from "./barrels";
+import { collectFiles } from "./collect";
 import { findCycles } from "./cycles";
 import { buildGraph, isLoadTimeEdge, isMeasuredEdge, labelFor, packageNameOf, postOrder, reachableFrom } from "./graph";
 import { findLazyCandidates } from "./lazy";
@@ -605,7 +606,7 @@ describe("the skeleton command's filters and rendering", () => {
         chmodSync(join(root, "walk/locked"), 0o000);
 
         try {
-            expect(collectFiles(join(root, "walk"), false)).toEqual([join(root, "walk/ok.ts")]);
+            expect(collectFiles(join(root, "walk"))).toEqual([join(root, "walk/ok.ts")]);
         } finally {
             chmodSync(join(root, "walk/locked"), 0o755);
         }
@@ -718,6 +719,63 @@ export function load(account: Account): Local {
         expect(byName("Account")?.file).toBe(join(root, "types/account.ts"));
         expect(byName("Account")?.text).toContain("label?: string;");
         expect(byName("Account")?.truncated).toBe(false);
+    });
+
+    it("keeps two same-named types from different files instead of collapsing them", () => {
+        // A bare-name dedupe key made the first `Options` suppress the second, so a signature
+        // naming both printed one declaration and silently dropped the other.
+        write(
+            "types/reader.ts",
+            `export interface Options {
+    readerOnly: string;
+}
+`
+        );
+        write(
+            "types/writer.ts",
+            `interface Options {
+    writerOnly: number;
+}
+export interface Result {
+    opts: Options;
+}
+`
+        );
+        const entry = write(
+            "types/both.ts",
+            `import type { Options } from "./reader";
+import type { Result } from "./writer";
+export function run(a: Options, b: Result): void {
+    void a;
+    void b;
+}
+`
+        );
+
+        const source = parseSource(entry, readFileSync(entry, "utf8"));
+        const expanded = expandTypes(source, entry, collectTypeNames(source), root);
+        const bodies = expanded.map((type) => type.text).join("\n");
+
+        expect(bodies).toContain("readerOnly");
+        expect(bodies).toContain("writerOnly");
+    });
+
+    it("prints a type reached through two importers once", () => {
+        write("twice/shared.ts", `export interface Shared {\n    once: boolean;\n}\n`);
+        write(
+            "twice/holder.ts",
+            `import type { Shared } from "./shared";\nexport interface Holder {\n    shared: Shared;\n}\n`
+        );
+        const entry = write(
+            "twice/entry.ts",
+            `import type { Shared } from "./shared";\nimport type { Holder } from "./holder";\nexport function use(a: Shared, b: Holder): void {}\n`
+        );
+
+        const source = parseSource(entry, readFileSync(entry, "utf8"));
+        const expanded = expandTypes(source, entry, collectTypeNames(source), root);
+
+        expect(expanded.filter((type) => type.name === "Shared")).toHaveLength(1);
+        expect(expanded.map((type) => type.name)).toContain("Holder");
     });
 
     it("follows an extends base and names a package it cannot open", () => {
@@ -919,6 +977,15 @@ describe("renderSymbol", () => {
         // used to render as "function export const fn = (x: number)".
         expect(line("export const fn = (x: number) => x + 1;\n")).toContain("export const fn = (x: number)");
         expect(line("export const fn = (x: number) => x + 1;\n")).not.toContain("function export const");
+    });
+
+    it("strips every leading modifier, not just the first", () => {
+        // `export abstract class Base` left `abstract` as the opener, which is not a
+        // declaration keyword, so the tag was printed and read "class export abstract class".
+        expect(line("export abstract class Base {\n    id = 1;\n}\n")).not.toContain("class export abstract");
+        expect(line("export async function load(): Promise<void> {\n    return;\n}\n")).not.toContain(
+            "function export async"
+        );
     });
 
     it("still tags a member, which carries no keyword of its own", () => {
