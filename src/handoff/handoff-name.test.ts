@@ -4,6 +4,7 @@ import { generateEditId, generateEventUid, generateHandoffId } from "./ids";
 import { appendHandoffEvents } from "./log-store";
 import { byFor, freshEnv } from "./test-utils";
 import type { HandoffEvent } from "./types";
+import { parseSince, watchHandoffs } from "./watch";
 
 const POSTER = byFor("sess-poster", "poster");
 const WORKER = byFor("sess-worker", "worker");
@@ -267,5 +268,82 @@ describe("names survive edits and reach handoff_action", () => {
         );
         expect(back.results[0].ok).toBe(true);
         expect(back.warnings).toBeUndefined();
+    });
+});
+
+describe("handoff watch", () => {
+    test("a rename moves the name index: the new name filters, the old one no longer resolves", () => {
+        const env = freshEnv();
+        const posted = postHandoff({ title: "Ship the fix", tasks: [{ text: "one" }] }, env.depsFor(POSTER)).handoff;
+        executeHandoffActions(
+            { id: posted.id, actions: [{ action: "modify_handoff", name: "Active Filter" }] },
+            env.depsFor(POSTER)
+        );
+
+        const seen: string[] = [];
+        const watch = watchHandoffs({
+            filters: ["active-filter"],
+            sinceMs: parseSince("1h"),
+            follow: false,
+            onEvent: (event) => {
+                seen.push(event.id);
+            },
+            base: env.base,
+        });
+
+        expect(seen.length).toBeGreaterThan(0);
+        expect(new Set(seen)).toEqual(new Set([posted.id]));
+        expect(watch.names.get(posted.id)).toBe("active-filter");
+
+        const stale: string[] = [];
+        watchHandoffs({
+            filters: ["ship-the-fix"],
+            sinceMs: parseSince("1h"),
+            follow: false,
+            onEvent: (event) => {
+                stale.push(event.id);
+            },
+            base: env.base,
+        });
+        expect(stale).toEqual([]);
+    });
+
+    test("a name posted after the watch started still filters the live events", async () => {
+        const env = freshEnv();
+        postHandoff({ title: "Unrelated work", tasks: [{ text: "one" }] }, env.depsFor(POSTER));
+        const delivered = Promise.withResolvers<void>();
+        const seen: string[] = [];
+        const watch = watchHandoffs({
+            filters: ["later-name"],
+            sinceMs: parseSince("1h"),
+            follow: true,
+            onEvent: (event) => {
+                seen.push(event.id);
+                delivered.resolve();
+            },
+            base: env.base,
+        });
+
+        try {
+            const posted = postHandoff(
+                { title: "Later work", name: "later-name", tasks: [{ text: "one" }] },
+                env.depsFor(POSTER)
+            ).handoff;
+            await Promise.race([delivered.promise, Bun.sleep(5000)]);
+
+            expect(new Set(seen)).toEqual(new Set([posted.id]));
+        } finally {
+            watch.close();
+        }
+    });
+
+    test("parseSince accepts durations and 0, and refuses anything else", () => {
+        expect(parseSince(undefined)).toBe(0);
+        expect(parseSince("0")).toBe(0);
+        expect(parseSince("30m")).toBe(30 * 60_000);
+        expect(parseSince(" 2d ")).toBe(2 * 86_400_000);
+        expect(() => parseSince("30M")).toThrow("is not a duration");
+        expect(() => parseSince("soon")).toThrow("is not a duration");
+        expect(() => parseSince("999999999999d")).toThrow("earliest date");
     });
 });
