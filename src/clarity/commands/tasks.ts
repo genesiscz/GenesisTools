@@ -1,6 +1,7 @@
 import { requireConfig } from "@app/clarity/config";
 import { parseMonthArg } from "@app/clarity/lib/assignment-view";
 import { renderReceipt, rowWriteReceipt } from "@app/clarity/lib/receipts";
+import { mergeSearchHits, searchPrefixes } from "@app/clarity/lib/task-search";
 import { listClarityTasks } from "@app/clarity/lib/tasks";
 import {
     type AddRowsResult,
@@ -32,6 +33,7 @@ interface TasksOptions {
     add?: string[];
     addFrom?: string;
     remove?: string[];
+    search?: string[];
     yes?: boolean;
     format: string;
 }
@@ -47,6 +49,10 @@ export function registerTasksCommand(parent: Command): void {
         .option("--add <ids...>", "Add these Clarity task ids as rows on the week(s) in scope")
         .option("--add-from <source>", "Copy the catalogue of another week (YYYY-MM-DD or a timesheet id)")
         .option("--remove <ids...>", "Remove these task ids, if their rows carry no hours")
+        .option(
+            "--search <terms...>",
+            "Find Clarity tasks by name prefix or ADO id, including tasks on no timesheet yet"
+        )
         .option("--yes", "Skip confirmation prompts")
         .option("--format <format>", "Output format: table|json", "table")
         .addHelpText(
@@ -59,6 +65,7 @@ export function registerTasksCommand(parent: Command): void {
                 "  tools clarity tasks --date 2026-09 --add-from 2026-08-25 --yes",
                 "  tools clarity tasks --date 2026-09-01 --add 8902005 8902008 --yes",
                 "  tools clarity tasks --date 2026-09-01 --remove 8902008 --yes",
+                "  tools clarity tasks --date 2026-09 --search 410001      task named D_410001_… or 410001_…",
                 "",
                 "Mappings between ADO work items and Clarity tasks live in: tools clarity mappings",
                 "",
@@ -80,8 +87,26 @@ export function registerTasksCommand(parent: Command): void {
                 process.exit(1);
             }
 
+            // A search returns before any write, so a write flag beside it would be dropped while
+            // the command still exits 0.
+            if (options.search && writing) {
+                out.error("--search cannot be combined with --add, --add-from or --remove; search first, then write");
+                process.exit(1);
+            }
+
             const api = await connect();
             const selected = await resolveWeeks({ api, date, timesheetId: timesheet.id });
+
+            if (options.search) {
+                await runSearch({
+                    api,
+                    selected,
+                    scope: timesheet.id !== undefined ? { timesheetId: timesheet.id } : { date },
+                    terms: options.search,
+                    format: options.format,
+                });
+                return;
+            }
 
             if (writing) {
                 await runWrite({ api, selected, date, options });
@@ -159,6 +184,88 @@ async function resolveWeeks({
     }
 
     return selected;
+}
+
+/**
+ * A task that exists in Clarity but was never added to a timesheet has no row, so neither the
+ * catalogue nor `mappings` can see it. The global task search finds it by name prefix.
+ */
+async function runSearch({
+    api,
+    selected,
+    scope,
+    terms,
+    format,
+}: {
+    api: ClarityApi;
+    selected: TimesheetWeek[];
+    /** What the user put in scope, so the add hint targets the same period the search read. */
+    scope: { date: string } | { timesheetId: number };
+    terms: string[];
+    format: string;
+}): Promise<void> {
+    // Per week, not one set for the whole scope: a task on one week of a month is still missing
+    // from the others, and a single "yes" hid the `--add` those weeks still need.
+    const opened = selected.filter(hasTimesheetId);
+    const byTask = new Map<number, string[]>();
+
+    for (const week of opened) {
+        for (const task of await listClarityTasks({ api, timesheetId: week.timesheetId })) {
+            const weeks = byTask.get(task.taskId) ?? [];
+
+            if (!weeks.includes(week.startDate)) {
+                byTask.set(task.taskId, [...weeks, week.startDate]);
+            }
+        }
+    }
+
+    const scopeArg = "timesheetId" in scope ? `--timesheet ${scope.timesheetId}` : `--date ${scope.date}`;
+    const scopeLabel = "timesheetId" in scope ? `timesheet ${scope.timesheetId}` : scope.date;
+
+    const groups: Array<{ term: string; results: Awaited<ReturnType<ClarityApi["searchTasks"]>> }> = [];
+
+    for (const term of terms) {
+        for (const prefix of searchPrefixes(term)) {
+            groups.push({ term: prefix, results: await api.searchTasks(prefix) });
+        }
+    }
+
+    const hits = mergeSearchHits(groups, { weeks: opened.length, byTask });
+
+    if (format === "json") {
+        out.result(hits);
+        return;
+    }
+
+    renderCliHeader("Clarity", `task search · ${terms.join(", ")}`);
+
+    if (hits.length === 0) {
+        out.println(`No Clarity task name starts with ${groups.map((group) => `'${group.term}'`).join(" or ")}.`);
+        return;
+    }
+
+    const table = createBoxTable(["TASK ID", "CODE", "NAME", `ON ${scopeLabel}`]);
+
+    for (const hit of hits) {
+        let on = pc.dim("no");
+
+        if (hit.onTimesheet) {
+            on = pc.green("yes");
+        } else if (hit.onWeeks.length > 0) {
+            on = pc.yellow(`${hit.onWeeks.length} of ${opened.length} weeks`);
+        }
+
+        table.push([pc.white(String(hit.taskId)), hit.code, truncateDisplay(hit.name, 70), on]);
+    }
+
+    out.println(table.toString());
+    out.println(pc.dim(`  ${hits.length} task(s)`));
+
+    const missing = hits.filter((hit) => !hit.onTimesheet);
+
+    if (missing.length > 0) {
+        out.println(pc.dim(`  Add one to the timesheet: tools clarity tasks ${scopeArg} --add <task id> --yes`));
+    }
 }
 
 async function runCatalogue({
@@ -385,7 +492,7 @@ async function runWrite({
         out.result(outcomes);
     } else {
         renderOutcomes(outcomes);
-        renderReceipt(rowWriteReceipt({ outcomes, date }));
+        renderReceipt(rowWriteReceipt({ outcomes, date: options.timesheet === undefined ? date : undefined }));
     }
 
     if (failures > 0) {

@@ -4,6 +4,7 @@ import type { ClarityMapping } from "@app/clarity/config";
 import {
     applyAssignments,
     buildAssignmentRows,
+    fillPairTitles,
     recommendedPairsFor,
     removeAssignments,
 } from "@app/clarity/lib/assignments";
@@ -152,6 +153,21 @@ describe("applyAssignments", () => {
         expect(next[0].clarityTaskId).toBe(700002);
     });
 
+    test("keeps the stored title and type when the pair arrives without one", () => {
+        const next = applyAssignments({
+            mappings: [mapping(100001, 700005, "Rozvoj_domény_Sample_EXT")],
+            pairs: [{ workItemId: 100001, task: TASKS[0] }],
+        });
+
+        expect(next[0]).toMatchObject({ adoWorkItemTitle: "Stored title", adoWorkItemType: "Task" });
+    });
+
+    test("still falls back to the id for a new mapping with no title", () => {
+        const next = applyAssignments({ mappings: [], pairs: [{ workItemId: 100001, task: TASKS[0] }] });
+
+        expect(next[0].adoWorkItemTitle).toBe("100001");
+    });
+
     test("leaves mappings for other work items untouched", () => {
         const next = applyAssignments({
             mappings: [mapping(999999, 700004, "Incidenty_Opex_Sample_EXT")],
@@ -251,5 +267,36 @@ describe("removeAssignments matches the work item, not the Clarity task", () => 
 
         expect(result.removed).toEqual([]);
         expect(result.mappings).toEqual(mappings);
+    });
+});
+
+// A work item with no hours in the month has no row, so `--assign` had no title and stored the bare
+// id as `adoWorkItemTitle`. The title must come from Azure DevOps instead.
+describe("fillPairTitles", () => {
+    const TASK = task(700002, "D_410001_Sample epic_Sample_EXT");
+
+    test("takes the title and type from the lookup when the pair has none", () => {
+        const filled = fillPairTitles(
+            [{ workItemId: 41, task: TASK }],
+            new Map([[41, { title: "Refactor the checkout saga", type: "Task" }]])
+        );
+
+        expect(filled).toEqual([{ workItemId: 41, task: TASK, title: "Refactor the checkout saga", type: "Task" }]);
+    });
+
+    test("keeps a title the month's rows already supplied", () => {
+        const filled = fillPairTitles(
+            [{ workItemId: 42, task: TASK, title: "From the month", type: "Bug" }],
+            new Map([[42, { title: "From the lookup", type: "Task" }]])
+        );
+
+        expect(filled[0].title).toBe("From the month");
+        expect(filled[0].type).toBe("Bug");
+    });
+
+    test("leaves the title empty when the lookup has nothing, so the caller can warn", () => {
+        const filled = fillPairTitles([{ workItemId: 43, task: TASK }], new Map());
+
+        expect(filled[0].title).toBeUndefined();
     });
 });

@@ -19,6 +19,9 @@ export interface ClarityApiConfig {
     cookies?: string;
 }
 
+const SEARCH_PAGE_SIZE = 100;
+const SEARCH_MAX_PAGES = 50;
+
 export class ClarityApi {
     private config: ClarityApiConfig;
 
@@ -83,6 +86,46 @@ export class ClarityApi {
         if (text.trimStart().startsWith("<")) {
             throw new Error(`Clarity API returned a login page (${response.status}): session expired`);
         }
+    }
+
+    /**
+     * Tasks whose name starts with `prefix`, across every investment. Unlike a timesheet's rows this
+     * also finds a task that exists in Clarity but was never added to any timesheet.
+     *
+     * Clarity pages every collection (`limit` defaults to 25), so one request lost every match past
+     * the first page. Pages are read by `offset` until `_totalCount` is reached; the `_next` link is
+     * not followed, because Broadcom documents it as malformed on this endpoint in some releases.
+     */
+    async searchTasks(prefix: string): Promise<Array<{ taskId: number; code: string; name: string }>> {
+        const filter = encodeURIComponent(`(name startsWith '${prefix.replace(/'/g, "''")}')`);
+        const found: Array<{ _internalId: number; code?: string; name?: string }> = [];
+
+        for (let page = 0; page < SEARCH_MAX_PAGES; page += 1) {
+            const response = await this.request<{
+                _totalCount?: number;
+                _results?: Array<{ _internalId: number; code?: string; name?: string }>;
+            }>(`/tasks?filter=${filter}&limit=${SEARCH_PAGE_SIZE}&offset=${found.length}`);
+            const results = response?._results ?? [];
+            const total = response?._totalCount;
+
+            found.push(...results);
+
+            // Without `_totalCount` only an EMPTY page ends the walk: a server that caps `limit`
+            // below what was asked returns short pages that are not the last one.
+            const done = total !== undefined && found.length >= total;
+
+            if (results.length === 0 || done) {
+                return found.map((task) => ({
+                    taskId: task._internalId,
+                    code: task.code ?? "",
+                    name: task.name ?? "",
+                }));
+            }
+        }
+
+        throw new Error(
+            `Clarity task search for '${prefix}' matched more than ${SEARCH_PAGE_SIZE * SEARCH_MAX_PAGES} tasks; use a longer prefix`
+        );
     }
 
     /** Fetch a full timesheet with all time entries */

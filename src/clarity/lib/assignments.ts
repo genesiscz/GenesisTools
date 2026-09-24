@@ -122,6 +122,25 @@ export function serialiseAssignmentRow(row: AssignmentRow): SerialisedAssignment
     };
 }
 
+/**
+ * Fill the title and type of pairs whose work item had no hours in the month, and so no row to
+ * take them from. A title the month already supplied wins.
+ */
+export function fillPairTitles(
+    pairs: AssignmentPair[],
+    lookup: Map<number, { title: string; type?: string }>
+): AssignmentPair[] {
+    return pairs.map((pair) => {
+        const found = lookup.get(pair.workItemId);
+
+        if (pair.title || !found) {
+            return pair;
+        }
+
+        return { ...pair, title: found.title, type: pair.type ?? found.type };
+    });
+}
+
 /** Add or replace mappings for the given pairs, leaving every other mapping untouched. */
 export function applyAssignments({
     mappings,
@@ -133,6 +152,10 @@ export function applyAssignments({
     const next = [...mappings];
 
     for (const pair of pairs) {
+        const existing = next.findIndex((m) => m.adoWorkItemId === pair.workItemId);
+        // A pair arrives untitled when Azure DevOps could not be read. The stored title is still
+        // right then, and replacing it with the bare id lost it for good.
+        const stored = existing >= 0 ? next[existing] : undefined;
         const mapping: ClarityMapping = {
             clarityTaskId: pair.task.taskId,
             clarityTaskName: pair.task.taskName,
@@ -140,10 +163,9 @@ export function applyAssignments({
             clarityInvestmentName: pair.task.investmentName,
             clarityInvestmentCode: pair.task.investmentCode,
             adoWorkItemId: pair.workItemId,
-            adoWorkItemTitle: pair.title ?? String(pair.workItemId),
-            adoWorkItemType: pair.type,
+            adoWorkItemTitle: pair.title ?? stored?.adoWorkItemTitle ?? String(pair.workItemId),
+            adoWorkItemType: pair.type ?? stored?.adoWorkItemType,
         };
-        const existing = next.findIndex((m) => m.adoWorkItemId === pair.workItemId);
 
         if (existing >= 0) {
             next[existing] = mapping;

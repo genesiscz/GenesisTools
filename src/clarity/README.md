@@ -35,6 +35,9 @@ tools clarity mappings
 # Put a week's task rows on every week of a month
 tools clarity tasks --date 2026-09 --add-from 2026-08-25 --yes
 
+# Find a task that is on no timesheet yet, by ADO id or name prefix
+tools clarity tasks --date 2026-09 --search 410001
+
 # Fill this week's timesheet
 tools clarity fill
 
@@ -52,7 +55,7 @@ tools clarity ui
 | `timesheet` | Show proposed line items for a week, with enrichment from Timely + ADO |
 | `fill` | Submit planned time entries into Clarity |
 | `mappings` | Manage the ADO work item -> Clarity task mapping, stored locally |
-| `tasks` | The Clarity task rows on a timesheet week: list, `--add`, `--add-from`, `--remove` |
+| `tasks` | The Clarity task rows on a timesheet week: list, `--add`, `--add-from`, `--remove`, `--search` |
 | `ui` / `dashboard` | Launch the Clarity dashboard web UI (Vite dev server) |
 
 ---
@@ -65,7 +68,15 @@ Two different things that both used to be called `tasks`:
   Clarity task an ADO work item bills. Nothing leaves the machine.
 - **`tasks`** edits Clarity itself: the task rows that make up a timesheet week. `--add-from` copies
   a complete week's catalogue onto every week of a month, skipping periods Clarity has not opened
-  yet and rows that are already there.
+  yet and rows that are already there. Its undo touches only the weeks and rows the run changed:
+  one `--date` command when every week got the same rows, otherwise one `--timesheet` command per
+  week, so a row that was already there is never removed.
+- **`tasks --search`** reads Clarity's global task list, not a timesheet. A task that exists but was
+  never added to any timesheet has no row, so the catalogue and `mappings` cannot see it; this finds
+  it. A numeric term searches both `D_<id>` and `<id>_`. The `ON <date>` column says whether `--add`
+  is still needed.
+- **`mappings --assign`** reads the work item title from Azure DevOps when the month has no hours on
+  it yet, instead of storing the bare id as the title.
 
 A recommendation may come only from an ADO id found in the Clarity task name, matched against the
 work item or one of its ancestors. Project rules such as "an Incident goes to Incidenty_Opex" are

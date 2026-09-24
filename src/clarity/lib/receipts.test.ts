@@ -48,6 +48,18 @@ describe("unlinkReceipt", () => {
 });
 
 describe("assignReceipt", () => {
+    // Re-assigning a work item to the task it already has only refreshes the stored title. Calling it
+    // "created" offered `--unlink` as the undo, which would delete a mapping that predates the run.
+    test("reports a same-task re-assign as refreshed, with nothing to undo", () => {
+        const receipt = assignReceipt({
+            created: [],
+            replaced: [],
+            refreshed: [{ workItemId: 311530, clarityTaskId: 8902059 }],
+        });
+
+        expect(receipt).toEqual({ summary: ["1 mapping refreshed"] });
+    });
+
     test("counts created and replaced mappings apart", () => {
         const receipt = assignReceipt({
             created: [{ workItemId: 302920, clarityTaskId: 8898018 }],
@@ -101,12 +113,42 @@ describe("rowWriteReceipt", () => {
         expect(receipt.summary).toEqual(["3 rows added", "1 row already there", "1 week not opened yet"]);
     });
 
-    // The undo names each task ONCE even though it was added to two weeks, because --remove takes
-    // task ids and the same --date puts both weeks back in scope.
-    test("undoes added rows with --remove over the same date, listing each task once", () => {
+    // 8902008 was already on 9115189 before the run. A month-wide `--date 2026-09 --remove 8902008`
+    // would delete that pre-existing row too, so the undo must name each week and only what it got.
+    test("undoes added rows week by week when a week already had one of the tasks", () => {
         const receipt = rowWriteReceipt({ outcomes: ADDED_TWO_WEEKS, date: "2026-09" });
 
-        expect(receipt.undo).toEqual(["tasks", "--date", "2026-09", "--remove", "8902005", "8902008"]);
+        expect(receipt.undo).toBeUndefined();
+        expect(receipt.undoEach).toEqual([
+            ["tasks", "--timesheet", "9115192", "--remove", "8902005", "8902008"],
+            ["tasks", "--timesheet", "9115189", "--remove", "8902005"],
+        ]);
+    });
+
+    test("keeps one --date undo when every opened week got exactly the same rows", () => {
+        const receipt = rowWriteReceipt({
+            outcomes: [
+                { timesheetId: 9115192, added: [{ taskId: 8902005 }], skipped: [], failed: [] },
+                { timesheetId: 9115189, added: [{ taskId: 8902005 }], skipped: [], failed: [] },
+                { unopened: true },
+            ],
+            date: "2026-09",
+        });
+
+        expect(receipt.undo).toEqual(["tasks", "--date", "2026-09", "--remove", "8902005"]);
+        expect(receipt.undoEach).toBeUndefined();
+    });
+
+    test("puts removed rows back only on the weeks they were removed from", () => {
+        const receipt = rowWriteReceipt({
+            outcomes: [
+                { timesheetId: 9115177, removed: [{ taskId: 8902032 }], blocked: [], failed: [], missing: [] },
+                { timesheetId: 9115192, removed: [], blocked: [], failed: [], missing: [8902032] },
+            ],
+            date: "2026-09",
+        });
+
+        expect(receipt.undoEach).toEqual([["tasks", "--timesheet", "9115177", "--add", "8902032"]]);
     });
 
     test("offers no undo when every wanted row was already there", () => {
@@ -143,5 +185,16 @@ describe("rowWriteReceipt", () => {
 
         expect(receipt.summary).toEqual(["1 row removed"]);
         expect(receipt.undo).toEqual(["tasks", "--date", "2026-09-28", "--add", "8902032"]);
+    });
+
+    // With --timesheet the date is only the default (today), so a --date undo would touch the
+    // weeks of today instead of the week that was written.
+    test("names the timesheet when --timesheet chose the week, even for one uniform change", () => {
+        const receipt = rowWriteReceipt({
+            outcomes: [{ timesheetId: 9115186, added: [{ taskId: 8902005 }], skipped: [], failed: [] }],
+        });
+
+        expect(receipt.undo).toBeUndefined();
+        expect(receipt.undoEach).toEqual([["tasks", "--timesheet", "9115186", "--remove", "8902005"]]);
     });
 });

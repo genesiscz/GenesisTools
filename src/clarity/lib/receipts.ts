@@ -9,6 +9,8 @@ export interface Receipt {
     summary: string[];
     /** argv words for `suggestCommand({ replaceCommand })` that reverses the change. */
     undo?: string[];
+    /** Several commands that together reverse the change; each one must run. */
+    undoEach?: string[][];
 }
 
 /** Render a receipt: the counted summary, then the exact command that reverses it. */
@@ -22,6 +24,14 @@ export function renderReceipt(receipt: Receipt, toolName = "tools clarity"): voi
 
     if (receipt.undo) {
         out.println(pc.dim(`  Undo: ${suggestCommand(toolName, { replaceCommand: receipt.undo })}`));
+    }
+
+    if (receipt.undoEach) {
+        out.println(pc.dim("  Undo, run every line:"));
+
+        for (const argv of receipt.undoEach) {
+            out.println(pc.dim(`    ${suggestCommand(toolName, { replaceCommand: argv })}`));
+        }
     }
 }
 
@@ -45,10 +55,57 @@ function uniqueTaskIds(outcomes: RowWriteOutcome[], pick: (outcome: RowWriteOutc
 }
 
 /**
- * What `tasks --add` / `--add-from` / `--remove` did across every week in scope. The undo works on
- * the same `--date`, so one command reverses every week the run touched.
+ * The reversing command(s) for one direction of a row write. One `--date` command is exact only
+ * when every opened week changed exactly the same task set; otherwise a week that already had a
+ * task (or never had it) would be touched by the undo, so each changed week gets its own
+ * `--timesheet` command.
+ *
+ * `date` is absent when `--timesheet` chose the week. A `--date` undo would then resolve the
+ * weeks of that date (today by default), not the week that was written, so every undo names
+ * its timesheet.
  */
-export function rowWriteReceipt({ outcomes, date }: { outcomes: RowWriteOutcome[]; date: string }): Receipt {
+function rowUndo(
+    outcomes: RowWriteOutcome[],
+    date: string | undefined,
+    pick: (outcome: RowWriteOutcome) => DesiredTask[],
+    flag: "--remove" | "--add"
+): Pick<Receipt, "undo" | "undoEach"> {
+    const ids = uniqueTaskIds(outcomes, pick);
+
+    if (ids.length === 0) {
+        return {};
+    }
+
+    const key = (outcome: RowWriteOutcome) => [...new Set(pick(outcome).map((t) => t.taskId))].sort().join(",");
+    const wanted = [...ids].sort().join(",");
+    const opened = outcomes.filter((o) => !o.unopened);
+
+    if (date !== undefined && opened.every((o) => key(o) === wanted)) {
+        return { undo: ["tasks", "--date", date, flag, ...ids.map(String)] };
+    }
+
+    const changed = opened.filter((o) => pick(o).length > 0);
+
+    if (date !== undefined && changed.some((o) => o.timesheetId === undefined)) {
+        return { undo: ["tasks", "--date", date, flag, ...ids.map(String)] };
+    }
+
+    return {
+        undoEach: changed.map((o) => [
+            "tasks",
+            "--timesheet",
+            String(o.timesheetId),
+            flag,
+            ...[...new Set(pick(o).map((t) => t.taskId))].map(String),
+        ]),
+    };
+}
+
+/**
+ * What `tasks --add` / `--add-from` / `--remove` did across every week in scope, and the exact
+ * reverse: it touches only the weeks and rows this run changed.
+ */
+export function rowWriteReceipt({ outcomes, date }: { outcomes: RowWriteOutcome[]; date?: string }): Receipt {
     const added = uniqueTaskIds(outcomes, (o) => o.added ?? []);
     const removed = uniqueTaskIds(outcomes, (o) => o.removed ?? []);
     const counts: Array<[number, string]> = [
@@ -66,11 +123,11 @@ export function rowWriteReceipt({ outcomes, date }: { outcomes: RowWriteOutcome[
         .map(([count, label]) => `${count} ${label.replace("%s", count === 1 ? "" : "s")}`);
 
     if (added.length > 0) {
-        return { summary, undo: ["tasks", "--date", date, "--remove", ...added.map(String)] };
+        return { summary, ...rowUndo(outcomes, date, (o) => o.added ?? [], "--remove") };
     }
 
     if (removed.length > 0) {
-        return { summary, undo: ["tasks", "--date", date, "--add", ...removed.map(String)] };
+        return { summary, ...rowUndo(outcomes, date, (o) => o.removed ?? [], "--add") };
     }
 
     return { summary };
@@ -93,9 +150,12 @@ export interface ReplacedMapping extends AssignedMapping {
 export function assignReceipt({
     created,
     replaced,
+    refreshed = [],
 }: {
     created: AssignedMapping[];
     replaced: ReplacedMapping[];
+    /** Re-assigned to the task they already had: only the stored title changed, nothing to undo. */
+    refreshed?: AssignedMapping[];
 }): Receipt {
     const summary: string[] = [];
 
@@ -107,8 +167,12 @@ export function assignReceipt({
         summary.push(`${plural(replaced.length, "mapping")} replaced`);
     }
 
-    if (summary.length === 0) {
-        return { summary: [] };
+    if (refreshed.length > 0) {
+        summary.push(`${plural(refreshed.length, "mapping")} refreshed`);
+    }
+
+    if (created.length === 0 && replaced.length === 0) {
+        return { summary };
     }
 
     const undo = ["mappings"];
