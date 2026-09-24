@@ -41,6 +41,7 @@ interface ModelRate extends RatePair {
 }
 
 const LONG_CONTEXT_THRESHOLD = 200_000;
+const OPENAI_LONG_CONTEXT = 272_000;
 
 const OPUS_45_PLUS: ModelRate = { inputUsdPerMTok: 5, outputUsdPerMTok: 25 };
 const OPUS_PRE_45: ModelRate = { inputUsdPerMTok: 15, outputUsdPerMTok: 75 };
@@ -63,7 +64,10 @@ const GROK_4_20: ModelRate = { inputUsdPerMTok: 2, outputUsdPerMTok: 6 };
  * would be the unrelated newer opus-4 line.
  */
 const RATE_GROUPS: Array<{ ids: string[]; rate: ModelRate }> = [
-    { ids: ["claude-fable-5-1", "claude-fable-5"], rate: { inputUsdPerMTok: 25, outputUsdPerMTok: 125 } },
+    // $10/$50 list for both. The $25/$125 this row carried until 2026-09-23 was Mythos Preview's
+    // price, copied in when the table was first written (cf69a6b0c) and never Fable's.
+    { ids: ["claude-fable-5-1", "claude-fable-5"], rate: { inputUsdPerMTok: 10, outputUsdPerMTok: 50 } },
+    { ids: ["claude-opus-5-5"], rate: { inputUsdPerMTok: 4, outputUsdPerMTok: 20 } },
     {
         ids: ["claude-opus-5", "claude-opus-4-8", "claude-opus-4-7", "claude-opus-4-6", "claude-opus-4-5"],
         rate: OPUS_45_PLUS,
@@ -81,13 +85,62 @@ const RATE_GROUPS: Array<{ ids: string[]; rate: ModelRate }> = [
     { ids: ["claude-sonnet-4-6"], rate: SONNET_4_FLAT },
     { ids: ["claude-sonnet-4-5"], rate: SONNET_4_LONG_CTX },
     { ids: ["claude-haiku-4-5"], rate: HAIKU_4_5 },
-    { ids: ["gpt-5.6-sol"], rate: { inputUsdPerMTok: 5, outputUsdPerMTok: 30 } },
-    { ids: ["gpt-5.6-terra"], rate: { inputUsdPerMTok: 2.5, outputUsdPerMTok: 15 } },
-    { ids: ["gpt-5.6-luna"], rate: { inputUsdPerMTok: 1, outputUsdPerMTok: 6 } },
+    // GPT-6 and GPT-5.6 bill the whole request at 2x input / 1.5x output above 272K input tokens.
+    {
+        ids: ["gpt-6-astra"],
+        rate: {
+            inputUsdPerMTok: 10,
+            outputUsdPerMTok: 50,
+            rules: [{ contextFrom: OPENAI_LONG_CONTEXT, inputUsdPerMTok: 20, outputUsdPerMTok: 75 }],
+        },
+    },
+    {
+        ids: ["gpt-6-sol"],
+        rate: {
+            inputUsdPerMTok: 2,
+            outputUsdPerMTok: 10,
+            rules: [{ contextFrom: OPENAI_LONG_CONTEXT, inputUsdPerMTok: 4, outputUsdPerMTok: 15 }],
+        },
+    },
+    {
+        ids: ["gpt-6-luna"],
+        rate: {
+            inputUsdPerMTok: 0.1,
+            outputUsdPerMTok: 0.5,
+            rules: [{ contextFrom: OPENAI_LONG_CONTEXT, inputUsdPerMTok: 0.2, outputUsdPerMTok: 0.75 }],
+        },
+    },
+    // Published GPT-5.6 rates, verified 2026-09-08 (Sol is OpenAI's promotional price, available at least
+    // through 2026-11-21). The $5/$30, $2.50/$15 and $1/$6 these rows carried before 2026-09-23 were never
+    // OpenAI's prices, and billed Luna at 5x.
+    {
+        ids: ["gpt-5.6-sol"],
+        rate: {
+            inputUsdPerMTok: 4,
+            outputUsdPerMTok: 20,
+            rules: [{ contextFrom: OPENAI_LONG_CONTEXT, inputUsdPerMTok: 8, outputUsdPerMTok: 30 }],
+        },
+    },
+    {
+        ids: ["gpt-5.6-terra"],
+        rate: {
+            inputUsdPerMTok: 2,
+            outputUsdPerMTok: 12,
+            rules: [{ contextFrom: OPENAI_LONG_CONTEXT, inputUsdPerMTok: 4, outputUsdPerMTok: 18 }],
+        },
+    },
+    {
+        ids: ["gpt-5.6-luna"],
+        rate: {
+            inputUsdPerMTok: 0.2,
+            outputUsdPerMTok: 1.2,
+            rules: [{ contextFrom: OPENAI_LONG_CONTEXT, inputUsdPerMTok: 0.4, outputUsdPerMTok: 1.8 }],
+        },
+    },
     { ids: ["gpt-5.5"], rate: { inputUsdPerMTok: 5, outputUsdPerMTok: 30 } },
     { ids: ["gpt-5-codex"], rate: { inputUsdPerMTok: 1.25, outputUsdPerMTok: 10 } },
     {
-        ids: ["grok-4.6", "grok-4.5"],
+        ids: ["grok-4.7", "grok-4.6", "grok-4.5"],
         rate: {
             inputUsdPerMTok: 2,
             outputUsdPerMTok: 6,

@@ -28,8 +28,8 @@ describe("native Codex model names", () => {
     it.each([
         ["astra", "gpt-6-astra"],
         ["terra", "gpt-5.6-terra"],
-        ["luna", "gpt-5.6-luna"],
-        ["sol", "gpt-5.6-sol"],
+        ["luna", "gpt-6-luna"],
+        ["sol", "gpt-6-sol"],
     ])("resolves %s consistently", (alias, expected) => {
         expect(resolveOpenAiSubModel(alias)).toBe(expected);
     });

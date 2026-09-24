@@ -845,7 +845,7 @@ async function main(nameArg: string | undefined, opts: StartOptions, passthrough
     // --model always wins.
     const modelId =
         explicitModelId ??
-        (alias === "opus" ? "claude-opus-5[1m]" : alias === "fable" ? FABLE_MODEL_OPTION : undefined);
+        (alias === "opus" ? "claude-opus-5-5[1m]" : alias === "fable" ? FABLE_MODEL_OPTION : undefined);
 
     let accountName: string;
 

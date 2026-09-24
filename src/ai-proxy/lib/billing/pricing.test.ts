@@ -13,6 +13,45 @@ describe("estimateCostUsd", () => {
         );
     });
 
+    it("bills GPT-6 at its own rates, doubling input above 272K", () => {
+        const million = { prompt_tokens: 1_000_000, completion_tokens: 1_000_000 };
+
+        expect(estimateCostUsd("gpt-6-sol", { prompt_tokens: 100_000, completion_tokens: 100_000 })).toBeCloseTo(
+            1.2,
+            10
+        );
+        expect(estimateCostUsd("gpt-6-luna", { prompt_tokens: 100_000, completion_tokens: 100_000 })).toBeCloseTo(
+            0.06,
+            10
+        );
+        // Above 272K the whole request bills at 2x input and 1.5x output.
+        expect(estimateCostUsd("gpt-6-astra", million)).toBeCloseTo(20 + 75, 10);
+        expect(estimateCostUsd("grok-4.7", { prompt_tokens: 100_000 })).toBeCloseTo(0.2, 10);
+    });
+
+    it("bills GPT-5.6 at its published rates", () => {
+        const small = { prompt_tokens: 100_000, completion_tokens: 100_000 };
+
+        expect(estimateCostUsd("gpt-5.6-sol", small)).toBeCloseTo(2.4, 10);
+        expect(estimateCostUsd("gpt-5.6-terra", small)).toBeCloseTo(1.4, 10);
+        expect(estimateCostUsd("gpt-5.6-luna", small)).toBeCloseTo(0.14, 10);
+    });
+
+    it("bills Fable 5 and 5.1 at their $10/$50 list price", () => {
+        for (const id of ["claude-fable-5-1", "claude-fable-5"]) {
+            expect(estimateCostUsd(id, { prompt_tokens: 1_000_000, completion_tokens: 1_000_000 })).toBeCloseTo(60, 10);
+        }
+    });
+
+    it("bills Opus 5.5 at its own rate, not the Opus 5 group's", () => {
+        expect(
+            estimateCostUsd("claude-opus-5-5", { prompt_tokens: 1_000_000, completion_tokens: 1_000_000 })
+        ).toBeCloseTo(24, 10);
+        expect(
+            estimateCostUsd("claude-opus-5", { prompt_tokens: 1_000_000, completion_tokens: 1_000_000 })
+        ).toBeCloseTo(30, 10);
+    });
+
     it("folds dated / -latest variant ids onto their base model", () => {
         const cost = estimateCostUsd("claude-haiku-4-5-20251001", {
             prompt_tokens: 2_000_000,
@@ -82,6 +121,16 @@ describe("billing table coverage", () => {
 
         return false;
     }
+
+    it("prices every current Claude model the catalog advertises", () => {
+        // A missing row bills $0: that happened to opus/sonnet/haiku/fable before (track-response.ts).
+        const retired = new Set(["claude-3-5-haiku"]);
+        const unpriced = STATIC_CATALOG.filter((model) => model.provider === "anthropic" && !retired.has(model.id))
+            .map((model) => model.id)
+            .filter((id) => estimateCostUsd(id, { prompt_tokens: 1000 }) === undefined);
+
+        expect(unpriced).toEqual([]);
+    });
 
     it("prices only exact ids that match a curated or legacy model id", () => {
         const unmatched = billedModelIds().filter(

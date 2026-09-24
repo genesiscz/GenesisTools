@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { effectivePricing } from "./pricing";
 import {
     aliasMapFor,
     byCapability,
@@ -58,13 +59,14 @@ describe("static catalog", () => {
 
     test("lookup resolves both concrete ids and aliases", () => {
         expect(byId("claude-opus-5")?.displayName).toBe("Claude Opus 5");
-        expect(byId("opus")?.id).toBe("claude-opus-5");
+        expect(byId("claude-opus-5-5")?.displayName).toBe("Claude Opus 5.5");
+        expect(byId("opus")?.id).toBe("claude-opus-5-5");
         expect(byId("sonnet")?.id).toBe("claude-sonnet-5");
         expect(byId("not-a-model")).toBeUndefined();
     });
 
     test("aliases map per provider and never leak across providers", () => {
-        expect(aliasMapFor("anthropic")).toMatchObject({ opus: "claude-opus-5", haiku: "claude-haiku-4-5-20251001" });
+        expect(aliasMapFor("anthropic")).toMatchObject({ opus: "claude-opus-5-5", haiku: "claude-haiku-4-5-20251001" });
         expect(aliasMapFor("xai")).toEqual({});
     });
 
@@ -84,6 +86,22 @@ describe("static catalog", () => {
             cachedCreatePer1M: 6.25,
             cachedReadPer1M: 0.5,
         });
+        expect(staticPricingFor("claude-opus-5-5")).toEqual({
+            inputPer1M: 4,
+            outputPer1M: 20,
+            cachedCreatePer1M: 5,
+            cachedReadPer1M: 0.2,
+            rules: [
+                { serviceTier: "fast", inputPer1M: 8, outputPer1M: 40, cachedCreatePer1M: 10, cachedReadPer1M: 0.4 },
+            ],
+        });
+        const opus55 = staticPricingFor("claude-opus-5-5");
+        expect(opus55 && effectivePricing(opus55, { serviceTier: "fast" })).toEqual({
+            inputPer1M: 8,
+            outputPer1M: 40,
+            cachedCreatePer1M: 10,
+            cachedReadPer1M: 0.4,
+        });
         expect(staticPricingFor("gpt-5.6-sol")).toBeUndefined();
     });
 
@@ -95,6 +113,8 @@ describe("static catalog", () => {
         expect(stripModelVariantSuffix("claude-opus-4-5-20251101")).toBe("claude-opus-4-5");
         expect(stripModelVariantSuffix("grok-3-fast-latest")).toBe("grok-3-fast");
         expect(stripModelVariantSuffix("grok-4.5")).toBeNull();
+        // A minor version is not a date: Opus 5.5 must never fold onto Opus 5.
+        expect(stripModelVariantSuffix("claude-opus-5-5")).toBeNull();
         expect(isDatedModelId("claude-sonnet-4-5-20250929")).toBe(true);
         expect(isDatedModelId("claude-sonnet-5")).toBe(false);
     });
@@ -117,7 +137,13 @@ describe("static catalog", () => {
      * in ask was two Anthropic generations behind and still shipped to users.
      */
     test("the current Anthropic generation is present", () => {
-        for (const id of ["claude-opus-5", "claude-sonnet-5", "claude-fable-5", "claude-fable-5-1"]) {
+        for (const id of [
+            "claude-opus-5-5",
+            "claude-opus-5",
+            "claude-sonnet-5",
+            "claude-fable-5",
+            "claude-fable-5-1",
+        ]) {
             expect(byId(id)?.provider).toBe("anthropic");
         }
     });

@@ -16,6 +16,11 @@ describe("clampXaiReasoningEffort", () => {
         expect(effortOf(clampXaiReasoningEffort('{"reasoning_effort":"minimal"}', "grok-4.6"))).toBe("low");
     });
 
+    it("keeps xhigh on grok-4.7", () => {
+        expect(effortOf(clampXaiReasoningEffort('{"reasoning_effort":"xhigh"}', "grok-4.7"))).toBe("xhigh");
+        expect(effortOf(clampXaiReasoningEffort('{"reasoning_effort":"max"}', "grok-4.7"))).toBe("xhigh");
+    });
+
     it("clamps down to what grok-4.5 accepts", () => {
         expect(effortOf(clampXaiReasoningEffort('{"reasoning_effort":"xhigh"}', "grok-4.5"))).toBe("high");
         expect(effortOf(clampXaiReasoningEffort('{"reasoning_effort":"max"}', "grok-4.5"))).toBe("high");

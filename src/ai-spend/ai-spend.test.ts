@@ -92,17 +92,26 @@ describe("pricing", () => {
         expect(priceFor("glm-4.6", DEFAULT_PRICING)).toBeNull();
     });
 
-    it("carries the catalog's dated rules through instead of flattening them away", () => {
-        // claude-sonnet-5 has a promotion through 2026-08-31 ($2/$10 vs the list rate).
-        const entry = priceFor("claude-sonnet-5", DEFAULT_PRICING);
+    it("carries the catalog's rules through instead of flattening them away", () => {
+        // claude-opus-5-5 bills Fast mode at twice the standard rate through a service-tier rule.
+        const entry = priceFor("claude-opus-5-5", DEFAULT_PRICING);
         expect(entry?.rules?.length).toBeGreaterThan(0);
 
-        const inWindow = resolvePrice(entry!, { at: new Date("2026-08-01T00:00:00.000Z") });
-        const afterWindow = resolvePrice(entry!, { at: new Date("2026-09-01T00:00:00.000Z") });
+        const standard = resolvePrice(entry!, {});
+        const fast = resolvePrice(entry!, { serviceTier: "fast" });
 
-        expect(inWindow.input).toBe(2);
-        expect(inWindow.output).toBe(10);
-        expect(afterWindow.input).not.toBe(2);
+        expect({ input: standard.input, output: standard.output }).toEqual({ input: 4, output: 20 });
+        expect({ input: fast.input, output: fast.output }).toEqual({ input: 8, output: 40 });
+    });
+
+    it("prices claude-sonnet-5 at the permanent $2/$10, with no rule that expires it", () => {
+        const entry = priceFor("claude-sonnet-5", DEFAULT_PRICING);
+
+        expect(entry?.rules ?? []).toEqual([]);
+        expect(resolvePrice(entry!, { at: new Date("2026-09-24T00:00:00.000Z") })).toMatchObject({
+            input: 2,
+            output: 10,
+        });
     });
 
     it("applies a long-context band to the request that is actually large", () => {

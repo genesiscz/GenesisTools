@@ -329,25 +329,25 @@ describe("effectivePricing", () => {
 });
 
 describe("catalog entries carrying rules", () => {
-    /** The user's chosen resolution: the discount expires on its own date. */
-    test("Sonnet 5 bills the intro rate inside the window and list price after", () => {
+    /**
+     * The introductory $2/$10 became permanent on 2026-08-10; the $3/$15 once scheduled for
+     * 2026-09-01 never took effect. The old dated rule kept billing $3/$15 from September on.
+     */
+    test("Sonnet 5 bills $2/$10 on both sides of the cancelled 2026-09-01 switch", () => {
         const pricing = byId("claude-sonnet-5", "anthropic")?.pricing;
 
         if (!pricing) {
             throw new Error("claude-sonnet-5 is missing from the catalog");
         }
 
-        const intro = effectivePricing(pricing, { at: new Date("2026-07-29T12:00:00Z") });
-        expect(intro.inputPer1M).toBe(2);
-        expect(intro.outputPer1M).toBe(10);
-
-        const listed = effectivePricing(pricing, { at: new Date("2026-09-01T00:00:00Z") });
-        expect(listed.inputPer1M).toBe(3);
-        expect(listed.outputPer1M).toBe(15);
-
-        // The intro price never touched the cache rates.
-        expect(intro.cachedReadPer1M).toBe(0.3);
-        expect(intro.cachedCreatePer1M).toBe(3.75);
+        for (const at of ["2026-07-29T12:00:00Z", "2026-09-01T00:00:00Z", "2026-09-24T00:00:00Z"]) {
+            expect(effectivePricing(pricing, { at: new Date(at) })).toEqual({
+                inputPer1M: 2,
+                outputPer1M: 10,
+                cachedCreatePer1M: 2.5,
+                cachedReadPer1M: 0.2,
+            });
+        }
     });
 
     /**
@@ -409,20 +409,16 @@ describe("pricingForCall", () => {
      * cost paths priced that answer directly, so a dated rule was declared in the
      * catalog and never charged. This is the resolved entry point they use.
      */
-    test("resolves dated rules that pricingFor leaves unapplied", async () => {
+    test("resolves the rules that pricingFor leaves unapplied", async () => {
         clearPricingCache();
-        const raw = await pricingFor("anthropic", "claude-sonnet-5");
-        const intro = await pricingForCall("anthropic", "claude-sonnet-5", {
-            at: new Date("2026-07-29T12:00:00Z"),
-        });
-        const later = await pricingForCall("anthropic", "claude-sonnet-5", {
-            at: new Date("2026-09-01T00:00:00Z"),
-        });
+        const raw = await pricingFor("anthropic", "claude-opus-5-5");
+        const fast = await pricingForCall("anthropic", "claude-opus-5-5", { serviceTier: "fast" });
+        const standard = await pricingForCall("anthropic", "claude-opus-5-5", {});
 
         expect(raw?.rules?.length).toBeGreaterThan(0);
-        expect(intro?.rules).toBeUndefined();
-        expect(intro?.inputPer1M).toBeLessThan(raw?.inputPer1M as number);
-        expect(later?.inputPer1M).toBe(raw?.inputPer1M as number);
+        expect(fast?.rules).toBeUndefined();
+        expect(fast?.inputPer1M).toBe(2 * (raw?.inputPer1M as number));
+        expect(standard?.inputPer1M).toBe(raw?.inputPer1M as number);
     });
 
     test("an unpriced model stays undefined rather than becoming an empty rate", async () => {

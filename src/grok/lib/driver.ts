@@ -108,7 +108,7 @@ export const grokDriver: WorkerDriver<GrokSessionMeta> = {
             // through argv as `-p <whole file>` puts it under ARG_MAX for no gain. `--prompt-file`
             // is the form this tool's README documents as primary.
             ...promptInput(input.prompt, extras.promptFile),
-            model: input.model ?? "grok-4.6",
+            model: input.model ?? "grok-4.7",
             readOnly: extras.readonly === true,
             ...(extras.workerHome === undefined ? {} : { workerHome: extras.workerHome }),
             ...(auth === undefined ? {} : { auth }),

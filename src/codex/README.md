@@ -64,7 +64,7 @@ Requires Codex CLI 0.153.4 or newer and macOS or Linux. The external-token and n
 remote-terminal interfaces are experimental upstream.
 
 Aliases resolve centrally: `astra` → `gpt-6-astra`, `terra` → `gpt-5.6-terra`,
-`luna` → `gpt-5.6-luna`, `sol` → `gpt-5.6-sol`. Full IDs and shared config model
+`luna` → `gpt-6-luna`, `sol` → `gpt-6-sol`. Full IDs and shared config model
 aliases are accepted. A model alias cannot switch the selected account or provider.
 Unsupported models surface the native error rather than silently selecting another.
 

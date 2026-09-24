@@ -116,13 +116,33 @@ function anthropic(entry: {
  */
 const ANTHROPIC_ENTRIES: CatalogEntry[] = [
     anthropic({
+        id: "claude-opus-5-5",
+        family: "opus",
+        displayName: "Claude Opus 5.5",
+        contextWindow: 1_000_000,
+        thinking: "reasoning",
+        // Fast mode (Claude API only) bills 2x standard, and the caching multipliers apply on top
+        // of the fast input rate: writes 1.25x, reads 0.05x (platform.claude.com pricing page).
+        pricing: {
+            inputPer1M: 4,
+            outputPer1M: 20,
+            cachedCreatePer1M: 5,
+            cachedReadPer1M: 0.2,
+            rules: [
+                { serviceTier: "fast", inputPer1M: 8, outputPer1M: 40, cachedCreatePer1M: 10, cachedReadPer1M: 0.4 },
+            ],
+        },
+        aliases: ["opus"],
+        releasedAt: "2026-09-22",
+        flags: { native1m: true, cli: { label: "Opus 5.5 (1M native)" } },
+    }),
+    anthropic({
         id: "claude-opus-5",
         family: "opus",
         displayName: "Claude Opus 5",
         contextWindow: 1_000_000,
         thinking: "reasoning",
         pricing: { inputPer1M: 5, outputPer1M: 25, cachedCreatePer1M: 6.25, cachedReadPer1M: 0.5 },
-        aliases: ["opus"],
         releasedAt: "2026-07-24",
         flags: { native1m: true, cli: { label: "Opus 5 (1M native)" } },
     }),
@@ -132,15 +152,14 @@ const ANTHROPIC_ENTRIES: CatalogEntry[] = [
         displayName: "Claude Sonnet 5",
         contextWindow: 1_000_000,
         thinking: "reasoning",
-        // Standard list, with the introductory $2/$10 as a dated rule so the
-        // discount expires by itself on 2026-08-31 instead of waiting for
-        // someone to notice and ship a revert (anthropic.com/pricing).
+        // The introductory $2/$10 became permanent on 2026-08-10, and the $3/$15 once set for
+        // 2026-09-01 no longer applies (anthropic.com/news/claude-sonnet-5, edit of 2026-08-10).
+        // Cache rates follow from $2: writes 1.25x, reads 0.1x (platform.claude.com pricing page).
         pricing: {
-            inputPer1M: 3,
-            outputPer1M: 15,
-            cachedCreatePer1M: 3.75,
-            cachedReadPer1M: 0.3,
-            rules: [{ to: "2026-08-31", inputPer1M: 2, outputPer1M: 10 }],
+            inputPer1M: 2,
+            outputPer1M: 10,
+            cachedCreatePer1M: 2.5,
+            cachedReadPer1M: 0.2,
         },
         aliases: ["sonnet"],
         // 1M is the base window, so there is no 200K mode to suffix back up.
@@ -152,7 +171,8 @@ const ANTHROPIC_ENTRIES: CatalogEntry[] = [
         displayName: "Claude Fable 5.1",
         contextWindow: 1_000_000,
         thinking: "reasoning",
-        pricing: { inputPer1M: 10, outputPer1M: 50, cachedCreatePer1M: 12.5, cachedReadPer1M: 1 },
+        // Fable 5.1 cut cache reads to a quarter of Fable 5's $1 (platform.claude.com, 2026-09-23).
+        pricing: { inputPer1M: 10, outputPer1M: 50, cachedCreatePer1M: 12.5, cachedReadPer1M: 0.25 },
         aliases: ["fable"],
         flags: { native1m: true, cli: { label: "Fable 5.1 (1M native)" } },
     }),
@@ -260,6 +280,7 @@ const ANTHROPIC_ENTRIES: CatalogEntry[] = [
  * against xAI docs / LiteLLM 2026-07.
  */
 const XAI_WINDOWS: Record<string, number> = {
+    "grok-4.7": 500_000,
     "grok-4.6": 500_000,
     "grok-4.5": 500_000,
     "grok-4.3": 1_000_000,
@@ -274,7 +295,7 @@ const XAI_WINDOWS: Record<string, number> = {
 
 const XAI_DEFAULT_WINDOW = 131_072;
 
-const XAI_VISION_MODELS = new Set(["grok-4.6", "grok-4.5", "grok-4.3"]);
+const XAI_VISION_MODELS = new Set(["grok-4.7", "grok-4.6", "grok-4.5", "grok-4.3"]);
 
 /** id → thinking mode; anything unlisted reasons optionally. */
 const XAI_THINKING: Record<string, CatalogEntry["thinking"]> = {
@@ -411,6 +432,84 @@ const OPENAI_ENTRIES: CatalogEntry[] = apiEntries(
                         outputPer1M: 150,
                         cachedReadPer1M: 4,
                         cachedCreatePer1M: 50,
+                    },
+                ],
+            },
+            vision: true,
+        },
+        {
+            id: "gpt-6-sol",
+            displayName: "GPT-6 Sol",
+            contextWindow: 1_050_000,
+            thinking: "reasoning",
+            // Verified 2026-09-23: https://developers.openai.com/api/docs/models/gpt-6-sol
+            // Whole-request rates above 272K input; priority (fast) is 2x the applicable rate.
+            pricing: {
+                inputPer1M: 2,
+                outputPer1M: 10,
+                cachedReadPer1M: 0.2,
+                cachedCreatePer1M: 2.5,
+                rules: [
+                    {
+                        ctxFrom: 272_001,
+                        inputPer1M: 4,
+                        outputPer1M: 15,
+                        cachedReadPer1M: 0.4,
+                        cachedCreatePer1M: 5,
+                    },
+                    {
+                        serviceTier: "priority",
+                        inputPer1M: 4,
+                        outputPer1M: 20,
+                        cachedReadPer1M: 0.4,
+                        cachedCreatePer1M: 5,
+                    },
+                    {
+                        serviceTier: "priority",
+                        ctxFrom: 272_001,
+                        inputPer1M: 8,
+                        outputPer1M: 30,
+                        cachedReadPer1M: 0.8,
+                        cachedCreatePer1M: 10,
+                    },
+                ],
+            },
+            vision: true,
+        },
+        {
+            id: "gpt-6-luna",
+            displayName: "GPT-6 Luna",
+            contextWindow: 1_050_000,
+            thinking: "reasoning",
+            // Verified 2026-09-23: https://developers.openai.com/api/docs/models/gpt-6-luna
+            // Whole-request rates above 272K input; priority (fast) is 2x the applicable rate.
+            pricing: {
+                inputPer1M: 0.1,
+                outputPer1M: 0.5,
+                cachedReadPer1M: 0.01,
+                cachedCreatePer1M: 0.125,
+                rules: [
+                    {
+                        ctxFrom: 272_001,
+                        inputPer1M: 0.2,
+                        outputPer1M: 0.75,
+                        cachedReadPer1M: 0.02,
+                        cachedCreatePer1M: 0.25,
+                    },
+                    {
+                        serviceTier: "priority",
+                        inputPer1M: 0.2,
+                        outputPer1M: 1,
+                        cachedReadPer1M: 0.02,
+                        cachedCreatePer1M: 0.25,
+                    },
+                    {
+                        serviceTier: "priority",
+                        ctxFrom: 272_001,
+                        inputPer1M: 0.4,
+                        outputPer1M: 1.5,
+                        cachedReadPer1M: 0.04,
+                        cachedCreatePer1M: 0.5,
                     },
                 ],
             },
