@@ -7,7 +7,7 @@
 
 import { Api } from "@app/azure-devops/api";
 import { formatJSON, isHistoryFresh, loadWorkItemCache, updateWorkItemCacheSection } from "@app/azure-devops/cache";
-import { buildWorkItemHistory, calculateTimeInState, userMatches } from "@app/azure-devops/history";
+import { buildWorkItemHistory, calculateTimeInState, periodEndTime, userMatches } from "@app/azure-devops/history";
 import type { AssignmentPeriod, StatePeriod, WorkItemHistorySection } from "@app/azure-devops/types";
 import { requireConfig } from "@app/azure-devops/utils";
 import * as p from "@clack/prompts";
@@ -50,6 +50,11 @@ export function formatDuration(minutes: number): string {
  * Format an ISO date string to a short display format (YYYY-MM-DD HH:MM).
  */
 function formatDate(isoDate: string): string {
+    // An update with no recoverable moment carries "", which printed as `NaN-NaN-NaN NaN:NaN`.
+    if (!isoDate) {
+        return "no date";
+    }
+
     const d = new Date(isoDate);
     const yyyy = d.getFullYear();
     const mm = String(d.getMonth() + 1).padStart(2, "0");
@@ -92,12 +97,8 @@ function filterHistory(history: WorkItemHistorySection, options: ShowOptions): F
     // Filter by date range (--from)
     if (options.from) {
         const fromDate = new Date(options.from).getTime();
-        assignmentPeriods = assignmentPeriods.filter(
-            (period) => !period.endDate || new Date(period.endDate).getTime() >= fromDate
-        );
-        statePeriods = statePeriods.filter(
-            (period) => !period.endDate || new Date(period.endDate).getTime() >= fromDate
-        );
+        assignmentPeriods = assignmentPeriods.filter((period) => periodEndTime(period) >= fromDate);
+        statePeriods = statePeriods.filter((period) => periodEndTime(period) >= fromDate);
     }
 
     // Filter by date range (--to)
@@ -126,9 +127,14 @@ function printSummary(workItemId: number, filtered: FilteredHistory, history: Wo
         out.println(pc.dim("-".repeat(header.length)));
 
         for (const period of filtered.assignmentPeriods) {
-            const endStr = period.endDate ? formatDate(period.endDate) : pc.yellow("(current)");
+            // `null` is open; `""` ended at a moment nobody recorded, which formatDate prints as "no date".
+            const endStr = period.endDate !== null ? formatDate(period.endDate) : pc.yellow("(current)");
             const durStr =
-                period.durationMinutes != null ? formatDuration(period.durationMinutes) : pc.yellow("ongoing");
+                period.durationMinutes != null
+                    ? formatDuration(period.durationMinutes)
+                    : period.endDate === null
+                      ? pc.yellow("ongoing")
+                      : pc.dim("unknown");
             out.println(
                 `${pad(period.assignee, 30)} ${pad(formatDate(period.startDate), 18)} ${pad(endStr, 18)} ${durStr}`
             );
@@ -146,9 +152,14 @@ function printSummary(workItemId: number, filtered: FilteredHistory, history: Wo
         out.println(pc.dim("-".repeat(header.length)));
 
         for (const period of filtered.statePeriods) {
-            const endStr = period.endDate ? formatDate(period.endDate) : pc.yellow("(current)");
+            // `null` is open; `""` ended at a moment nobody recorded, which formatDate prints as "no date".
+            const endStr = period.endDate !== null ? formatDate(period.endDate) : pc.yellow("(current)");
             const durStr =
-                period.durationMinutes != null ? formatDuration(period.durationMinutes) : pc.yellow("ongoing");
+                period.durationMinutes != null
+                    ? formatDuration(period.durationMinutes)
+                    : period.endDate === null
+                      ? pc.yellow("ongoing")
+                      : pc.dim("unknown");
             const assignee = period.assigneeDuring ?? pc.dim("(none)");
             out.println(
                 `${pad(period.state, 20)} ${pad(formatDate(period.startDate), 18)} ${pad(endStr, 18)} ${pad(durStr, 10)} ${assignee}`
@@ -357,7 +368,10 @@ export function registerHistoryCommand(program: Command): void {
     history
         .command("search")
         .description("Search history across work items (WIQL or local)")
-        .option("--assigned-to <name>", "Items ever assigned to user (fuzzy match)")
+        .option(
+            "--assigned-to <name>",
+            "Items assigned to user (fuzzy team match; a name outside the team is matched with CONTAINS under --current)"
+        )
         .option("--assigned-to-me", "Shortcut for --assigned-to @me")
         .option("--state <states>", "Items ever in state(s) (comma-separated)")
         .option("--from <date>", "From date (ISO format)")
@@ -367,6 +381,11 @@ export function registerHistoryCommand(program: Command): void {
         .option("--min-time <duration>", "Min time in state/assigned (e.g. 2h, 30m)")
         .option("--wiql", "Use WIQL EVER query (server-side, no local history needed)")
         .option("--current", "Search current assignment (= instead of EVER)")
+        .option("--exclude-state <states>", "Skip items in these current states (comma-separated, implies --wiql)")
+        .option(
+            "--all-projects",
+            "Search every project of the organization, not only the configured one (implies --wiql)"
+        )
         .option("-o, --output <format>", "Output format (table, json)", "table")
         .action((options: SearchOptions & { since?: string; until?: string }) => {
             if (options.since && !options.from) {

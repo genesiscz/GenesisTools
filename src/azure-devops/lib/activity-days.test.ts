@@ -26,8 +26,18 @@ function update(overrides: Partial<WorkItemUpdate>): WorkItemUpdate {
 }
 
 describe("resolveUpdateDate", () => {
-    test("uses revisedDate when it is a real date", () => {
+    test("uses revisedDate only when the update carries no changed date", () => {
         expect(resolveUpdateDate(update({}))).toBe("2026-03-04T09:10:11Z");
+    });
+
+    test("prefers the changed date over revisedDate, which is when the next revision replaced this one", () => {
+        const resolved = resolveUpdateDate(
+            update({
+                revisedDate: "2026-09-01T12:51:00Z",
+                fields: { "System.ChangedDate": { oldValue: "", newValue: "2026-08-05T13:23:48Z" } },
+            })
+        );
+        expect(resolved).toBe("2026-08-05T13:23:48Z");
     });
 
     test("falls back to the changed date when revisedDate is the far-future sentinel", () => {

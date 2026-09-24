@@ -184,10 +184,10 @@ export class Api {
      * Work item web UI URL (not API, no api-version).
      * `{org}/{project}/_workitems/edit/{id}`
      */
-    static workItemWebUrl(config: AzureConfig, id: number): string {
+    static workItemWebUrl(config: AzureConfig, id: number, project: string = config.project): string {
         return buildUrl({
             base: config.org,
-            segments: [encodeURIComponent(config.project), "_workitems", "edit", String(id)],
+            segments: [encodeURIComponent(project), "_workitems", "edit", String(id)],
         });
     }
 

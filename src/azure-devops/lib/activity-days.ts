@@ -14,23 +14,25 @@ export function isSentinelDate(date: string | undefined): boolean {
 const DATE_FALLBACK_FIELDS = ["System.ChangedDate", "System.AuthorizedDate"];
 
 /**
- * The moment an update happened. `revisedDate` is the END of that revision's validity window, and
- * the latest revision has no end, so Azure DevOps writes `9999-01-01` there. Bucketing that value
- * by day invents a `9999-01-01` row and inflates every "over N days" total that counts day rows.
+ * The moment an update happened. `revisedDate` is the END of that revision's validity window: the
+ * moment the NEXT revision replaced it, and `9999-01-01` on the latest one. Reading it as the
+ * change time dates every state change one revision late (a bug closed on 5.8. showed as closed on
+ * 1.9., the day an automation edited a custom field) and buckets the latest revision on `9999`.
  * The same update carries the real moment in `System.ChangedDate`, with `System.AuthorizedDate` as
- * a fallback. An update with neither is genuinely undated and says so rather than guessing.
+ * a fallback; a real `revisedDate` is the last resort, and an update with none of them is
+ * genuinely undated and says so rather than guessing.
  */
 export function resolveUpdateDate(update: WorkItemUpdate): string {
-    if (update.revisedDate && !isSentinelDate(update.revisedDate)) {
-        return update.revisedDate;
-    }
-
     for (const field of DATE_FALLBACK_FIELDS) {
         const value = update.fields?.[field]?.newValue;
 
         if (typeof value === "string" && value.length > 0 && !isSentinelDate(value)) {
             return value;
         }
+    }
+
+    if (update.revisedDate && !isSentinelDate(update.revisedDate)) {
+        return update.revisedDate;
     }
 
     return "";

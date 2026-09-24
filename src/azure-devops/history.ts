@@ -5,7 +5,7 @@
  * work item update data, plus fuzzy user matching with Czech diacritics support.
  */
 
-import { isSentinelDate } from "@app/azure-devops/lib/activity-days";
+import { isSentinelDate, resolveUpdateDate } from "@app/azure-devops/lib/activity-days";
 import type {
     AssignmentPeriod,
     IdentityRef,
@@ -88,7 +88,22 @@ function sanitizeDate(date: string): string {
     return isSentinelDate(date) ? new Date().toISOString() : date;
 }
 
-function computeDurationMinutes(start: string, end: string): number {
+/**
+ * When the update was made: `System.ChangedDate`, then `System.AuthorizedDate`, then a real
+ * `revisedDate` (see `resolveUpdateDate`), or "" when the update carries none of them. Never
+ * "now": the `9999` sentinel used to fall through to `sanitizeDate`, which dated an undated change
+ * at the moment of the query, and that reads as a real and recent event.
+ */
+function updateMoment(update: WorkItemUpdate): string {
+    return resolveUpdateDate(update);
+}
+
+/** `null` when either end is undated: `new Date("")` is NaN, and NaN printed as a duration. */
+function computeDurationMinutes(start: string, end: string): number | null {
+    if (!start || !end) {
+        return null;
+    }
+
     return Math.round((new Date(sanitizeDate(end)).getTime() - new Date(sanitizeDate(start)).getTime()) / 60000);
 }
 
@@ -111,10 +126,10 @@ export function computeAssignmentPeriods(updates: WorkItemUpdate[]): AssignmentP
         }
 
         const newAssignee = (assignedToChange.newValue as IdentityRef)?.displayName ?? null;
-        const changeDate = sanitizeDate(update.revisedDate);
+        const changeDate = updateMoment(update);
 
         // Close previous period
-        if (currentAssignee && periodStart) {
+        if (currentAssignee && periodStart !== null) {
             periods.push({
                 assignee: currentAssignee,
                 assigneeNormalized: normalizeUserName(currentAssignee),
@@ -129,7 +144,7 @@ export function computeAssignmentPeriods(updates: WorkItemUpdate[]): AssignmentP
     }
 
     // Final open period (still assigned)
-    if (currentAssignee && periodStart) {
+    if (currentAssignee && periodStart !== null) {
         periods.push({
             assignee: currentAssignee,
             assigneeNormalized: normalizeUserName(currentAssignee),
@@ -168,10 +183,10 @@ export function computeStatePeriods(updates: WorkItemUpdate[]): StatePeriod[] {
         }
 
         const newState = stateChange.newValue as string | undefined;
-        const changeDate = sanitizeDate(update.revisedDate);
+        const changeDate = updateMoment(update);
 
         // Close previous period
-        if (currentState && periodStart) {
+        if (currentState && periodStart !== null) {
             periods.push({
                 state: currentState,
                 startDate: periodStart,
@@ -186,7 +201,7 @@ export function computeStatePeriods(updates: WorkItemUpdate[]): StatePeriod[] {
     }
 
     // Final open period (still in current state)
-    if (currentState && periodStart) {
+    if (currentState && periodStart !== null) {
         periods.push({
             state: currentState,
             startDate: periodStart,
@@ -295,6 +310,20 @@ export function buildHistoryFromRevisions(revisions: ReportingRevision[]): WorkI
         assignmentPeriods,
         statePeriods,
     };
+}
+
+/**
+ * When a period ended, as epoch milliseconds: `now` while it is still open (`endDate === null`),
+ * and its start when the end was never recorded (`""`, an undated update). The consumers used to
+ * test `endDate` by truthiness, so an undated END read as an open period that matched every
+ * `--from` window and printed as `(current)`.
+ */
+export function periodEndTime(period: { startDate: string; endDate: string | null }, now = Date.now()): number {
+    if (period.endDate === null) {
+        return now;
+    }
+
+    return new Date(period.endDate || period.startDate).getTime();
 }
 
 /**
