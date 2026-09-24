@@ -72,14 +72,15 @@ const REGEX_KEYWORDS = /(?:^|[^\w$])(?:return|typeof|case|yield|await|throw|in|o
  * division. Decided by what precedes it, the way a tokenizer does without a full parse.
  */
 function regexLiteralEnd(line: string, at: number): number {
-    // `/>` closes a self-closing JSX element (`<Row onClick={f} />`), and the `}` before it is a
-    // preceder, so without this it opened a "regex" too.
-    if (line[at + 1] === ">") {
-        return -1;
-    }
-
     const before = line.slice(0, at).trimEnd();
     const last = before.at(-1);
+
+    // `/>` closes a self-closing JSX element (`<Row onClick={f} />`), and the `}` before it is a
+    // preceder, so without this it opened a "regex" too. Only after `}`: a real regex that starts
+    // with `>` follows `(` or `=` (`.replace(/>/g, …)`) and must still be skipped as one.
+    if (line[at + 1] === ">" && last === "}") {
+        return -1;
+    }
     if (last !== undefined && !REGEX_PRECEDERS.includes(last) && !REGEX_KEYWORDS.test(before)) {
         return -1;
     }

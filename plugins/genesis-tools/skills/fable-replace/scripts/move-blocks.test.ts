@@ -38,6 +38,61 @@ describe("locating a block to move", () => {
         expect(lines[end + 2]).toContain("export const after");
     });
 
+    test("a brace inside a regular-expression literal never ends the block early", () => {
+        // Without regex-literal tracking the `}` in `/}/` decrements the depth and the block
+        // closes on that line, so the move cuts a span that stops mid-declaration.
+        const source = [
+            "export function withRegex(input: string): string {",
+            "    const pattern = /}/;",
+            "    const klass = /[/}]/g;",
+            "    return input.replace(pattern, klass.source);",
+            "}",
+            "",
+            "export const after = 1;",
+        ];
+
+        expect(blockEndLine(source, 0)).toBe(4);
+    });
+
+    test("a JSX closing or self-closing slash is not read as a regular expression", () => {
+        const source = [
+            "export function Row(x: string, y: boolean) {",
+            "    return <b>{x}</b>{y ? <i/> : null};",
+            "}",
+            "",
+            "export function Cell(x: string) {",
+            "    return <Input value={x} />;",
+            "}",
+        ];
+
+        expect(blockEndLine(source, 0)).toBe(2);
+        expect(blockEndLine(source, 4)).toBe(6);
+    });
+
+    test("a regular expression that starts with > is still skipped", () => {
+        const source = ["export function escape(s: string): string {", '    return s.replace(/>}/g, "&gt;");', "}"];
+
+        expect(blockEndLine(source, 0)).toBe(2);
+    });
+
+    test("a slash that divides is not read as a regular expression", () => {
+        const source = ["export function ratio(a: number, b: number): number {", "    return a / b;", "}"];
+
+        expect(blockEndLine(source, 0)).toBe(2);
+    });
+
+    test("a regex right after a keyword is still a regex, so its brace does not end the block", () => {
+        const source = ["export function closer(): RegExp {", "    return /}/;", "}", "export const after = 1;"];
+
+        expect(blockEndLine(source, 0)).toBe(2);
+    });
+
+    test("a blank line directly above a declaration means no doc comment is attached", () => {
+        const source = ["/** not this one */", "", "export const x = 1;"];
+
+        expect(docCommentStart(source, 2)).toBe(2);
+    });
+
     test("a symbol move takes the doc comment above it and nothing after it", () => {
         const block = locateBlock(TRICKY, { from: "a.ts", to: "b.ts", symbol: "tricky" });
         expect(block.text.startsWith("/**")).toBe(true);
