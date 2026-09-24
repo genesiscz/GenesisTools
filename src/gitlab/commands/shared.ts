@@ -39,6 +39,18 @@ export function collect(value: string, previous: string[]): string[] {
     return previous.concat([value]);
 }
 
+/**
+ * A non-negative whole number of days, or an error naming the flag. `Number("abc")` is NaN, and
+ * every `age > NaN` comparison is false, so a typo silently produced a sweep with no reviews.
+ */
+export function wholeDays(value: string, flag: string): number {
+    if (!/^\d+$/.test(value.trim())) {
+        throw new Error(`${flag} must be a whole number of days (0 or more), got "${value}"`);
+    }
+
+    return Number(value.trim());
+}
+
 export function positiveInt(value: string | undefined, fallback: number): number {
     const n = Number(value);
 

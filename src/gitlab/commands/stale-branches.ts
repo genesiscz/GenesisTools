@@ -19,7 +19,7 @@
 
 import { existsSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { collect, progress, type TargetOptions, withProject } from "@app/gitlab/commands/shared";
+import { collect, progress, type TargetOptions, wholeDays, withProject } from "@app/gitlab/commands/shared";
 import { currentUser, getProject, type ProjectApi, resolveProjectApi } from "@app/gitlab/lib/client";
 import {
     CLOSED_BUG_KEY,
@@ -311,6 +311,8 @@ export function registerStaleBranches(parent: Command): Command {
             .option("--review-min-age <days>", "MRs older than this get needsReview=true", "90")
             .option("--inactive-after <days>", "Author counts as inactive without a GitLab event for this long", "30")
     ).action(async (opts: PreflightOptions) => {
+        const reviewMinAgeDays = wholeDays(opts.reviewMinAge, "--review-min-age");
+        const inactiveAfterDays = wholeDays(opts.inactiveAfter, "--inactive-after");
         const cwd = gitRepoRoot(opts.cwd ? resolve(opts.cwd) : process.cwd());
         const config = await loadConfig();
         const api = await resolveProjectApi({ host: opts.host, project: opts.project, cwd });
@@ -318,8 +320,8 @@ export function registerStaleBranches(parent: Command): Command {
             api,
             config,
             cwd,
-            reviewMinAgeDays: Number(opts.reviewMinAge),
-            inactiveAfterDays: Number(opts.inactiveAfter),
+            reviewMinAgeDays,
+            inactiveAfterDays,
             log: progress,
         });
         saveReport(opts.out, report);
@@ -1292,6 +1294,7 @@ export function registerStaleBranches(parent: Command): Command {
             []
         )
         .action(async (json: string, opts: { afterDays: string; iid?: string; ignoreAuthor: string[] }) => {
+            const afterDays = wholeDays(opts.afterDays, "--after-days");
             const report = await loadReport(json);
             const config = await loadConfig();
             const api = await reportApi(report);
@@ -1321,7 +1324,7 @@ export function registerStaleBranches(parent: Command): Command {
                 followupRow(
                     mr,
                     { mr: await fetchMr(api, mr.iid), ado: await liveAdoOf(mr, { cwd: report.repoRoot, config }) },
-                    { afterDays: Number(opts.afterDays), ignoreAuthors }
+                    { afterDays, ignoreAuthors }
                 )
             );
             rows.sort((a, b) => a.iid - b.iid);
@@ -1362,6 +1365,7 @@ export function registerStaleBranches(parent: Command): Command {
                     deleteBranch?: boolean;
                 }
             ) => {
+                const afterDays = wholeDays(opts.afterDays, "--after-days");
                 const report = await loadReport(json);
                 const config = await loadConfig();
                 const [mr] = notifiedMrs(report.mrs, requireIid(opts.iid));
@@ -1371,10 +1375,22 @@ export function registerStaleBranches(parent: Command): Command {
 
                 const api = await reportApi(report);
                 const ignoreAuthors = await ignoredAuthors(api, opts.ignoreAuthor);
+                const liveAdo = await liveAdoOf(mr, { cwd: report.repoRoot, config });
+
+                // `liveAdoOf` turns any lookup failure into null, and a null item contributes no
+                // activity, so an auth or network hiccup made the MR look silent and closable.
+                // Closing is destructive: an MR with a work item whose state cannot be read now
+                // is refused unless the user has checked it and passes --force.
+                if (mr.ado && liveAdo === null && !opts.force) {
+                    throw new Error(
+                        `Cannot read ADO work item ${mr.ado.id} now, so its activity since the notification is unknown. Fix the Azure DevOps access, or check the item by hand and pass --force.`
+                    );
+                }
+
                 const row = followupRow(
                     mr,
-                    { mr: await fetchMr(api, mr.iid), ado: await liveAdoOf(mr, { cwd: report.repoRoot, config }) },
-                    { afterDays: Number(opts.afterDays), ignoreAuthors }
+                    { mr: await fetchMr(api, mr.iid), ado: liveAdo },
+                    { afterDays, ignoreAuthors }
                 );
                 progress(
                     `!${mr.iid} ${mr.title}\n${mr.webUrl}\nNotified ${row.notifiedAt.slice(0, 10)} (${row.daysSince} d ago), live state ${row.liveState}\nActivity since: ${row.activity.length ? row.activity.join("; ") : "none"}`
