@@ -343,6 +343,18 @@ function registerInit(program: Command): void {
                 return;
             }
 
+            // `--data` ADOPTS an existing file. A typo in it used to create sample data at the
+            // mistyped path and carry on, turning a bad path into a valid but unrelated document.
+            // Sample data is only for the default `<name>.json`, which the scaffold owns.
+            if (flags.data && !(await Bun.file(dataPath).exists())) {
+                out.log.error(
+                    `--data ${short(dataPath)} does not exist. Pass an existing JSON file, or omit --data for sample data.`
+                );
+                process.exitCode = 1;
+
+                return;
+            }
+
             if (!(await Bun.file(dataPath).exists())) {
                 await Bun.write(dataPath, `${SafeJSON.stringify(JSON_SAMPLE, null, 4)}\n`);
                 out.log.success(`Created ${short(dataPath)} with sample data.`);
