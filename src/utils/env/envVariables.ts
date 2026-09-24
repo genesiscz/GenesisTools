@@ -308,6 +308,16 @@ export const env = {
          * `preload-test-sandbox` installs. Nothing in the suite should need it.
          */
         allowsRealHome: () => isFlag("GENESIS_TOOLS_TEST_ALLOW_REAL_HOME"),
+        /** `HARNESS_ORACLE=go`: the agent-harness twins run against the upstream Go coordinator. */
+        isHarnessOracle: () => getTrimmed("HARNESS_ORACLE") === "go",
+        /** `HARNESS_ORACLE_TRACE=1`: the oracle bridge prints every envelope to stderr. */
+        isHarnessOracleTrace: () => isFlag("HARNESS_ORACLE_TRACE"),
+        /**
+         * Local clone of unreallabsai/unreal-agent that `scripts/agent-harness-reconcile.ts` reads
+         * when no `--clone` is passed. Unset means there is no default: where a developer keeps
+         * clones is their own layout, never a path in a public source file.
+         */
+        getHarnessUpstreamClone: () => getTrimmed("GENESIS_TOOLS_UNREAL_AGENT_CLONE"),
     },
 
     // Client-safe domains are defined once in @app/utils/env.client and re-exposed here.

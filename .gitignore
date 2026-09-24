@@ -250,3 +250,6 @@ scripts/benchmarks/clones/baselines/
 
 # graft's local graph cache — regenerable, not committed (run `graft build`).
 /graft/
+
+# Go oracle bridge binary for the agent-harness twins (built on demand by go-coordinator.ts)
+src/utils/agent-harness/oracle/bridge/bin/

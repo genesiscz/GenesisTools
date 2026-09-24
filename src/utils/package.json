@@ -10,6 +10,11 @@
             "types": "./index.ts",
             "default": "./index.ts"
         },
+        "./agent-harness": {
+            "bun": "./agent-harness/index.ts",
+            "types": "./agent-harness/index.ts",
+            "default": "./agent-harness/index.ts"
+        },
         "./DashboardApp": {
             "bun": "./DashboardApp/index.ts",
             "types": "./DashboardApp/index.ts",
