@@ -348,6 +348,11 @@ async function send(
     return res;
 }
 
+/** Every GitLab response body goes through the same strict SafeJSON parse `restWrite` uses. */
+async function parseBody<T>(res: Response): Promise<T> {
+    return SafeJSON.parse(await res.text(), { strict: true }) as T;
+}
+
 function withRetry<T>(fn: () => Promise<T>, attempts: number): Promise<T> {
     return retry(fn, { maxAttempts: attempts, delay: 250, backoff: "exponential", shouldRetry: isRetryableError });
 }
@@ -357,7 +362,7 @@ export async function restGet<T>(api: GitLabApi, path: string, opts: RestOptions
     return withRetry(async () => {
         const res = await send(api, { method: "GET", path, timeout: opts.timeout ?? 30_000 });
 
-        return (await res.json()) as T;
+        return parseBody<T>(res);
     }, opts.retries ?? 3);
 }
 
@@ -403,7 +408,7 @@ export async function restGetPage<T>(api: GitLabApi, path: string, opts: RestOpt
     return withRetry(async () => {
         const res = await send(api, { method: "GET", path, timeout: opts.timeout ?? 30_000 });
 
-        return { items: (await res.json()) as T[], nextPage: parseNextPage(res.headers.get("x-next-page")) };
+        return { items: await parseBody<T[]>(res), nextPage: parseNextPage(res.headers.get("x-next-page")) };
     }, opts.retries ?? 3);
 }
 
@@ -441,7 +446,7 @@ export async function graphql<T>(api: GitLabApi, query: string, variables?: Reco
         throw new HttpError({ status: res.status, statusText: res.statusText, url, body: text });
     }
 
-    const body = (await res.json()) as { data?: T; errors?: Array<{ message: string }> };
+    const body = await parseBody<{ data?: T; errors?: Array<{ message: string }> }>(res);
     if (body.errors?.length) {
         throw new Error(`GraphQL errors: ${body.errors.map((e) => e.message).join("; ")}`);
     }
