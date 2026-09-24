@@ -16,6 +16,7 @@ CLI tool for fetching, tracking, and managing Azure DevOps work items, queries, 
 -   ✅ **Filtering**: Filter queries by state and severity
 -   ✅ **Multiple Output Formats**: AI-optimized, Markdown, or JSON output
 -   ✅ **Sprint Backlog**: List the project's iterations and the work items of one sprint, with the effort columns the ADO Backlog tab shows
+-   ✅ **Wiki**: List wikis and page trees, read a page with its details and attachments, search, and see what an edit changed
 
 ## Sprint / iteration commands
 
@@ -255,6 +256,46 @@ of the same id within the five-minute freshness window makes no HTTP call. Addin
 the answer and nothing else invalidates it, so the window is deliberately short rather than the
 seven-day section TTL. `--force` refetches, exactly as it does for `workitem`.
 
+## Wiki
+
+```bash
+# The project's wikis, and the page tree under a path (ids looked up for up to 50 pages)
+tools azure-devops wiki list
+tools azure-devops wiki pages "/Projects" --depth 2
+tools azure-devops wiki pages "/Projects" --depth all --ids
+
+# One page: details table (id, path, URL, git path, last change, views, subpages, attachments) + markdown
+tools azure-devops wiki get "https://dev.azure.com/MyOrg/MyProject/_wiki/wikis/MyProject.wiki/1234/Some-Page"
+tools azure-devops wiki get 1234 --no-content
+tools azure-devops wiki get "/Projects/Some Page" --images -o page.md
+tools azure-devops wiki get 1234 -f json
+
+# Full-text search over the wiki pages
+tools azure-devops wiki search "payment gateway" --top 10
+
+# Who changed the page, and what the last edit (or any two versions) changed
+tools azure-devops wiki history 1234
+tools azure-devops wiki diff 1234
+tools azure-devops wiki diff 1234 08bab813 fd625f6e
+```
+
+A page is named by a wiki URL (`/_wiki/wikis/<wiki>/<id>/<slug>` or `?pagePath=…&pageId=…`), a page
+id, or a page path. `--wiki <name|id>` picks the wiki; without it the command uses the wiki named in
+the URL, else the project wiki. The name also matches without `.wiki` and with spaces for dashes.
+
+- **Ids in `pages`:** the Pages API returns an id only for the page that was asked for, never for its
+  subpages. `pages` looks every id up (one call per page) when the listing has 50 pages or fewer,
+  and on `--ids` beyond that. A page path always works as input where an id is missing.
+- **`--images`** downloads every `/.attachments/…` file the page uses from the wiki's git repository
+  into `.claude/azure/wiki/<wiki>/<pageId>/` (or `--output-dir`), and points the links in the printed
+  markdown at the copies.
+- **`history` and `diff`** read the git history of the page file, so they see every edit, including
+  ones nobody announced. `diff` takes full or abbreviated commit ids; without them it shows the last
+  edit. Versions from before a page rename are not reachable, because the history follows the
+  current file path.
+- **`search`** runs on the separate `almsearch.dev.azure.com` host and returns page paths that
+  `wiki get` accepts directly.
+
 ## CLI Usage
 
 ### Basic Examples
@@ -334,6 +375,7 @@ tools azure-devops --create --type Bug --title "Error in checkout" --severity "A
 | `history search` | Work items by assignee and state; `--wiql --current` is server-side, `--all-projects` widens it to every project, `--exclude-state Closed` drops closed items |
 | `ancestors`    | Walk a work item's parent chain up to the root  |
 | `tree`         | Parents, children and related items of one work item |
+| `wiki`         | Wikis: `list`, `pages`, `get`, `search`, `history`, `diff` |
 
 ### Options
 

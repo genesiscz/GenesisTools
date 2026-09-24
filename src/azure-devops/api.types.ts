@@ -115,3 +115,79 @@ export interface IterationClassificationNode {
     };
     children?: IterationClassificationNode[];
 }
+
+/** A wiki of the project: the project wiki (`projectWiki`) or a published code wiki (`codeWiki`). */
+export interface WikiV2 {
+    id: string;
+    name: string;
+    type: "projectWiki" | "codeWiki";
+    projectId: string;
+    repositoryId: string;
+    /** Folder of the backing repository the wiki is published from; `/` for a project wiki. */
+    mappedPath: string;
+    remoteUrl?: string;
+    url: string;
+    versions?: Array<{ version: string }>;
+}
+
+export interface WikiListResponse {
+    count: number;
+    value: WikiV2[];
+}
+
+export type WikiRecursionLevel = "none" | "oneLevel" | "oneLevelPlusNestedEmptyFolders" | "full";
+
+export interface WikiPageApi {
+    id?: number;
+    /** Page path as the wiki UI shows it, e.g. `/Projects/302910 | Feature name`. */
+    path: string;
+    order?: number;
+    /** File of the page in the backing git repository, with the wiki's name encoding. */
+    gitItemPath?: string;
+    isParentPage?: boolean;
+    isNonConformant?: boolean;
+    content?: string;
+    remoteUrl?: string;
+    url?: string;
+    subPages?: WikiPageApi[];
+}
+
+export interface WikiPageViewStats {
+    day: string;
+    count: number;
+}
+
+export interface WikiPageDetailApi {
+    id: number;
+    path: string;
+    viewStats?: WikiPageViewStats[];
+}
+
+export interface WikiSearchResult {
+    fileName: string;
+    /** Git path of the page file, e.g. `/Projects/302910-%7C-Feature-name.md`. */
+    path: string;
+    contentId?: string;
+    project?: { id?: string; name?: string };
+    wiki?: { id: string; mappedPath?: string; name: string; version?: string };
+    hits?: Array<{ fieldReferenceName: string; highlights: string[] }>;
+}
+
+export interface WikiSearchResponse {
+    count: number;
+    results: WikiSearchResult[];
+    infoCode?: number;
+}
+
+export interface GitCommitRefApi {
+    commitId: string;
+    author?: { name?: string; email?: string; date?: string };
+    committer?: { name?: string; email?: string; date?: string };
+    comment?: string;
+    commentTruncated?: boolean;
+}
+
+export interface GitCommitsResponse {
+    count: number;
+    value: GitCommitRefApi[];
+}

@@ -584,7 +584,7 @@ describe("corpus fixtures that must NOT fire", () => {
         "SECONDS=0; until [ $SECONDS -ge 115 ]; do sleep 20; done; date -u '+%H:%M:%S UTC'",
         'git status --short | head -3\necho "on: $(git branch --show-current) @ $(git rev-parse --short HEAD)"\ngit log --oneline $(git merge-base HEAD origin/master)..HEAD | head -20\necho "  count: $(git rev-list --count $(git merge-base HEAD origin/master)..HEAD)"',
         'echo "count: $(pgrep -f \'Genesis.app/Contents/MacOS/Genesis\' | wc -l)"; pgrep -lf "Genesis" | head -5',
-        "awk 'NR>12533 && /303439/{print NR}' $A | head -25\necho \"=== count after 12533 ===\"; awk 'NR>12533 && /303439/' $A | wc -l",
+        "awk 'NR>12533 && /100002/{print NR}' $A | head -25\necho \"=== count after 12533 ===\"; awk 'NR>12533 && /100002/' $A | wc -l",
         'git ls-files packs | head -3; echo "--- tracked? ---"; git ls-files packs | wc -l',
         'ls -la ../../server/scripts/*.ts 2>&1 | head -20; echo "=== count ==="; ls ../../server/scripts/ | wc -l',
         "rg -l --fixed-strings \"Zayo\" ~/.grok/sessions --glob 'chat_history.jsonl' | sort | head -20\necho \"count: $(rg -l --fixed-strings 'Zayo' ~/.grok/sessions --glob 'chat_history.jsonl' | wc -l)\"",

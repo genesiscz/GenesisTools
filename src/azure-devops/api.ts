@@ -11,15 +11,24 @@ import type {
     DashboardDetailResponse,
     DashboardsListResponse,
     GetWorkItemsOptions,
+    GitCommitRefApi,
+    GitCommitsResponse,
     IterationClassificationNode,
     QueryNode,
     TeamIteration,
     TeamIterationsResponse,
     TeamMembersResponse,
     TeamsListResponse,
+    WikiListResponse,
+    WikiPageApi,
+    WikiPageDetailApi,
+    WikiRecursionLevel,
+    WikiSearchResponse,
+    WikiV2,
 } from "@app/azure-devops/api.types";
 import { loadTeamMembersCache, saveTeamMembersCache } from "@app/azure-devops/cache";
 import { AzAuthError, extractAzLoginSuggestion } from "@app/azure-devops/cli.utils";
+import { extractOrgName } from "@app/azure-devops/config";
 import { findTruncatedNodes, flattenIterationNodes } from "@app/azure-devops/lib/iterations";
 import type {
     AzureConfig,
@@ -679,6 +688,145 @@ export class Api {
         }
 
         return { name: widgetsData.name, queries };
+    }
+
+    // ============= Wiki =============
+
+    async getWikis(): Promise<WikiV2[]> {
+        const url = Api.projectApiUrl(this.config, ["wiki", "wikis"]);
+        const data = await this.get<WikiListResponse>(url, "list wikis");
+        logger.debug(`[api] ${data.value.length} wiki(s): ${data.value.map((wiki) => wiki.name).join(", ")}`);
+
+        return data.value;
+    }
+
+    /**
+     * One wiki page by id, or by path when no id is given (`/` is the wiki root). Subpages come back
+     * to `recursionLevel`; the markdown only with `includeContent`.
+     */
+    async getWikiPage({
+        wikiId,
+        pageId,
+        path,
+        recursionLevel = "oneLevel",
+        includeContent = false,
+    }: {
+        wikiId: string;
+        pageId?: number;
+        path?: string;
+        recursionLevel?: WikiRecursionLevel;
+        includeContent?: boolean;
+    }): Promise<WikiPageApi> {
+        const segments = ["wiki", "wikis", encodeURIComponent(wikiId), "pages"];
+
+        if (pageId !== undefined) {
+            segments.push(String(pageId));
+        }
+
+        const url = Api.projectApiUrl(this.config, segments, {
+            path: pageId === undefined ? (path ?? "/") : undefined,
+            recursionLevel,
+            includeContent: includeContent ? "true" : undefined,
+        });
+
+        return this.get<WikiPageApi>(url, pageId === undefined ? `wiki page ${path ?? "/"}` : `wiki page ${pageId}`);
+    }
+
+    async getWikiPageViews({
+        wikiId,
+        pageId,
+        days,
+    }: {
+        wikiId: string;
+        pageId: number;
+        days: number;
+    }): Promise<WikiPageDetailApi> {
+        const url = Api.projectApiUrl(
+            this.config,
+            ["wiki", "wikis", encodeURIComponent(wikiId), "pages", String(pageId), "stats"],
+            { pageViewsForDays: String(days) },
+            "7.1-preview.1"
+        );
+
+        return this.get<WikiPageDetailApi>(url, `wiki page ${pageId} views`);
+    }
+
+    /** Full-text search over the project's wiki pages. Runs on the separate `almsearch` host. */
+    async searchWiki({
+        searchText,
+        wikiNames,
+        top = 25,
+        skip = 0,
+    }: {
+        searchText: string;
+        wikiNames?: string[];
+        top?: number;
+        skip?: number;
+    }): Promise<WikiSearchResponse> {
+        const orgName = extractOrgName(this.config.org);
+
+        if (!orgName) {
+            throw new Error(`Cannot derive the organization name from ${this.config.org}`);
+        }
+
+        const url = buildUrl({
+            base: `https://almsearch.dev.azure.com/${encodeURIComponent(orgName)}`,
+            segments: [encodeURIComponent(this.config.project), "_apis", "search", "wikisearchresults"],
+            queryParams: { "api-version": "7.1" },
+        });
+        const filters: Record<string, string[]> = { Project: [this.config.project] };
+
+        if (wikiNames && wikiNames.length > 0) {
+            filters.Wiki = wikiNames;
+        }
+
+        return this.post<WikiSearchResponse>(
+            url,
+            { searchText, $top: top, $skip: skip, filters, includeFacets: false },
+            "application/json",
+            `wiki search "${searchText}"`
+        );
+    }
+
+    /** Commits of a git repository that touched one path, newest first. */
+    async getGitCommitsForPath({
+        repositoryId,
+        itemPath,
+        version,
+        top = 20,
+    }: {
+        repositoryId: string;
+        itemPath: string;
+        version?: string;
+        top?: number;
+    }): Promise<GitCommitRefApi[]> {
+        const url = Api.projectApiUrl(this.config, ["git", "repositories", repositoryId, "commits"], {
+            "searchCriteria.itemPath": itemPath,
+            "searchCriteria.itemVersion.version": version,
+            "searchCriteria.$top": String(top),
+        });
+        const data = await this.get<GitCommitsResponse>(url, `commits of ${itemPath}`);
+
+        return data.value;
+    }
+
+    /** Raw-bytes URL of one file in a git repository, for `fetchBinary`. `version` is a branch unless `versionType` says commit. */
+    static gitItemDownloadUrl(
+        config: AzureConfig,
+        {
+            repositoryId,
+            path,
+            version,
+            versionType,
+        }: { repositoryId: string; path: string; version?: string; versionType?: "branch" | "commit" }
+    ): string {
+        return Api.projectApiUrl(config, ["git", "repositories", repositoryId, "items"], {
+            path,
+            "versionDescriptor.version": version,
+            "versionDescriptor.versionType": versionType,
+            download: "true",
+            $format: "octetStream",
+        });
     }
 
     /**

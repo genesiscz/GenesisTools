@@ -19,6 +19,12 @@ tools azure-devops dashboard <id|url>            # Get dashboard queries
 tools azure-devops iterations                    # List the project's sprints (alias: sprints)
 tools azure-devops sprint [nameOrPath]           # Work items of one sprint (default: current)
 tools azure-devops list                          # List cached items
+tools azure-devops wiki list                     # The project's wikis
+tools azure-devops wiki pages [path] --depth 2   # Page tree under a path
+tools azure-devops wiki get <url|id|path>        # Page details + markdown (--images, -o, -f json)
+tools azure-devops wiki search "<text>"          # Full-text search over wiki pages
+tools azure-devops wiki history <page>           # Commits that changed a page
+tools azure-devops wiki diff <page> [from] [to]  # What an edit changed (default: the last one)
 tools azure-devops workitem-create               # Create work item
 tools azure-devops timelog configure             # Interactive: setup API key, user, allowed types
 tools azure-devops timelog types                 # List available time types
@@ -48,6 +54,21 @@ tools azure-devops timelog import <file>         # Bulk import time logs (with p
 | `--attachments-suffix <suffix>` | Only attachments ending with this (e.g. .har) |
 | `--output-dir <path>` | Custom directory for downloaded attachments |
 | `--images` | Download inline images from description/comments |
+
+### Wiki pages
+
+Read an ADO wiki page (an ITA analysis, a spec linked from a work item) with `wiki get`, never
+with a hand-built `az` token and `curl`. It takes the URL exactly as a work item links it.
+
+```bash
+tools azure-devops wiki get "<wiki page URL>"            # details table + markdown
+tools azure-devops wiki get <id> --images -o page.md     # also download the screenshots
+tools azure-devops wiki diff <id>                        # what the last edit changed
+tools azure-devops wiki search "<feature id or words>"   # find the page first
+```
+
+Before trusting an analysis you read earlier, check the details table's **Last change** row, or run
+`wiki history`: a page edited after you read it may have changed the requirement.
 
 ### Sprint backlog
 

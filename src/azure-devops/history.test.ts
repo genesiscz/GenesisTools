@@ -3,14 +3,14 @@ import { computeAssignmentPeriods, computeStatePeriods, periodEndTime } from "@a
 import type { WorkItemUpdate } from "@app/azure-devops/types";
 
 /**
- * Bug 261311 as the updates API returns it: each `revisedDate` is the moment the NEXT revision
+ * A bug as the updates API returns it: each `revisedDate` is the moment the NEXT revision
  * replaced the update, and the latest one carries the 9999 sentinel. The real moments sit in
  * `System.ChangedDate`.
  */
 function update(rev: number, changed: string, revised: string, fields: WorkItemUpdate["fields"]): WorkItemUpdate {
     return {
         id: rev,
-        workItemId: 261311,
+        workItemId: 100001,
         rev,
         revisedBy: { displayName: "Testerová Jana (QT1)" },
         revisedDate: revised,
@@ -71,6 +71,23 @@ describe("computeStatePeriods", () => {
         expect(periods.map((p) => [p.state, p.startDate, p.endDate, p.durationMinutes])).toEqual([
             ["Active", "2026-09-01T12:00:00Z", "", null],
             ["Closed", "", null, null],
+        ]);
+    });
+
+    test("an undated update in the middle keeps its transition, undated", () => {
+        // Closed (dated) -> Blocked (undated) -> Development (dated): the Blocked state must
+        // survive. Its start cannot be dated, so it stays empty rather than borrowing a moment.
+        const middle: WorkItemUpdate = {
+            ...update(32, "", "9999-01-01T00:00:00Z", {}),
+            fields: { "System.State": { newValue: "Blocked" } },
+        };
+        const periods = computeStatePeriods([...UPDATES, middle]);
+
+        expect(periods.map((p) => [p.state, p.startDate, p.endDate])).toEqual([
+            ["Testing", "2026-08-02T21:21:00Z", "2026-08-05T13:23:48Z"],
+            ["Closed", "2026-08-05T13:23:48Z", ""],
+            ["Blocked", "", "2026-09-17T16:33:14Z"],
+            ["Development", "2026-09-17T16:33:14Z", null],
         ]);
     });
 });
