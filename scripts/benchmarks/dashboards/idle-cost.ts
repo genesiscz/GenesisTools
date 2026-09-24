@@ -47,6 +47,8 @@ import {
     type ProcessSample,
     recordBaseline,
     sampleProcess,
+    signalVerified,
+    stillRuns,
 } from "@app/benchmark/lib";
 import { runTool, suggestEnumFlag } from "@genesiscz/utils/cli";
 import { buildDashboardUiServerCmd } from "@genesiscz/utils/DashboardApp";
@@ -55,6 +57,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
 import { findFreePort } from "@genesiscz/utils/net/free-port";
 import { PROJECT_ROOT } from "@genesiscz/utils/paths";
+import { readProcessCommand } from "@genesiscz/utils/process-identity";
 import { createBoxTable, renderCliHeader, renderCliSection } from "@genesiscz/utils/table";
 import { terminalLocaleEnvRecord } from "@genesiscz/utils/terminal/locale";
 import type { Subprocess } from "bun";
@@ -142,12 +145,46 @@ async function portHolders(port: number): Promise<CommandResult> {
     return runCommand(["lsof", "-nP", `-iTCP:${port}`]);
 }
 
-function signal(pid: number, name: NodeJS.Signals): void {
-    try {
-        // pid-verified: pid is an lsof holder of the dashboard port this run bound
-        process.kill(pid, name);
-    } catch (err) {
-        log.debug({ err, pid, signal: name }, "signal failed; the process is already gone");
+interface Descendant {
+    pid: number;
+    /** The command line read when the pid was listed; every later signal is checked against it. */
+    command: string;
+}
+
+/**
+ * The descendants with the command each ran when listed. One whose command cannot be read
+ * has no identity to check a later signal against, so it is left out and never signalled.
+ */
+async function describeDescendants(pid: number): Promise<Descendant[]> {
+    const described: Descendant[] = [];
+
+    for (const descendant of await listDescendants(pid)) {
+        const command = readProcessCommand(descendant);
+
+        if (command === null) {
+            log.warn({ pid: descendant }, "descendant command unreadable; it will not be signalled");
+            continue;
+        }
+
+        described.push({ pid: descendant, command });
+    }
+
+    return described;
+}
+
+/**
+ * Signal a descendant only while it still runs the command it ran when listed. The SIGKILL
+ * pass runs up to KILL_GRACE_MS after the list was taken, and a descendant that exited in
+ * the meantime can have had its number reissued; that one is skipped and logged, never hit.
+ */
+function signalDescendant(descendant: Descendant, name: NodeJS.Signals): void {
+    const outcome = signalVerified(descendant.pid, descendant.command, name);
+
+    if (!outcome.sent) {
+        log.debug(
+            { pid: descendant.pid, signal: name, status: outcome.identity.status, err: outcome.error },
+            "descendant not signalled; gone, or the pid no longer runs the listed command"
+        );
     }
 }
 
@@ -167,11 +204,11 @@ interface StopResult {
  */
 async function stopChild(child: Subprocess, port: number): Promise<StopResult> {
     const pid = child.pid;
-    const descendants = await listDescendants(pid);
-    signal(pid, "SIGTERM");
+    const descendants = await describeDescendants(pid);
+    child.kill("SIGTERM");
 
     for (const descendant of descendants) {
-        signal(descendant, "SIGTERM");
+        signalDescendant(descendant, "SIGTERM");
     }
 
     const timedOut = Symbol("timeout");
@@ -180,12 +217,12 @@ async function stopChild(child: Subprocess, port: number): Promise<StopResult> {
 
     if (forcedKill) {
         log.warn({ pid, graceMs: KILL_GRACE_MS }, "child outlived the SIGTERM grace; escalating to SIGKILL");
-        signal(pid, "SIGKILL");
+        child.kill("SIGKILL");
         await child.exited;
     }
 
     for (const descendant of descendants) {
-        signal(descendant, "SIGKILL");
+        signalDescendant(descendant, "SIGKILL");
     }
 
     // The port takes a moment to come back after the listener dies.
@@ -193,10 +230,8 @@ async function stopChild(child: Subprocess, port: number): Promise<StopResult> {
     const survivors: number[] = [];
 
     for (const descendant of descendants) {
-        const alive = await runCommand(["ps", "-o", "pid=", "-p", String(descendant)]);
-
-        if (alive.stdout.trim().length > 0) {
-            survivors.push(descendant);
+        if (stillRuns(descendant.pid, descendant.command)) {
+            survivors.push(descendant.pid);
         }
     }
 

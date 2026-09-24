@@ -30,9 +30,16 @@
  * ```
  */
 
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { parseArgs } from "node:util";
-import { compareToBaseline, formatComparison, recordBaseline, sampleProcess } from "@app/benchmark/lib";
+import {
+    compareToBaseline,
+    formatComparison,
+    recordBaseline,
+    sampleProcess,
+    signalVerified,
+    stillRuns,
+} from "@app/benchmark/lib";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
 import { formatTable } from "@genesiscz/utils/table";
@@ -192,17 +199,34 @@ function median(values: number[]): number {
     return (sorted[mid - 1] + sorted[mid]) / 2;
 }
 
-async function isAlive(pid: number): Promise<boolean> {
-    const table = await readPsTree();
+/**
+ * What makes a pid "the TUI of this run": the executable is `bun` and the entry is one of its
+ * ARGUMENTS. A substring match is not identity: the `script -q` pty wrapper, an editor, and
+ * the shell that launched this very script all carry the entry path somewhere in their
+ * command line, and the first smoke of this check refused to start on its own zsh wrapper.
+ * `survivorsOf` and the shutdown signals share this one predicate.
+ */
+function runsEntry(entry: string): (command: string) => boolean {
+    return (command) => {
+        const [executable = "", ...args] = command.trim().split(/\s+/);
 
-    return table.has(pid);
+        return basename(executable) === "bun" && args.includes(entry);
+    };
 }
 
-async function waitForExit(pid: number, graceMs: number): Promise<boolean> {
+/**
+ * Wait until the pid no longer runs the entry. Identity, not liveness: the TUI is the spawn
+ * storm this script measures, so its number can be reissued within the grace, and a `ps` row
+ * merely existing at that number would keep the wait going and then aim the next signal at
+ * a stranger. A reissued number reads as "exited", which is right: the process we wanted
+ * gone is gone.
+ */
+async function waitForExit(pid: number, entry: string, graceMs: number): Promise<boolean> {
     const deadline = Date.now() + graceMs;
+    const expected = runsEntry(entry);
 
     while (Date.now() < deadline) {
-        if (!(await isAlive(pid))) {
+        if (!stillRuns(pid, expected)) {
             return true;
         }
 
@@ -217,41 +241,47 @@ async function waitForExit(pid: number, graceMs: number): Promise<boolean> {
  *
  * SIGINT goes to the `script` wrapper, which does not forward it: killing the
  * wrapper alone leaves the TUI reparented to launchd, still spawning. So the
- * wrapper's death is followed by a signal to the TUI itself, and the pid is
- * re-checked after each escalation. An unverified kill here leaks a spawn storm
- * that then poisons the next run's numbers.
+ * wrapper's death is followed by a signal to the TUI itself, and before each
+ * signal the pid's live command line is read again and must still name the
+ * entry. Liveness was not enough here: this is the one benchmark whose subject
+ * reissues pids by the hundred per minute. An unverified kill leaks a spawn
+ * storm that then poisons the next run's numbers, or lands on whatever now
+ * holds the number.
  */
-async function stopChild(child: Bun.Subprocess, tuiPid: number): Promise<boolean> {
+async function stopChild(child: Bun.Subprocess, tuiPid: number, entry: string): Promise<boolean> {
+    const expected = runsEntry(entry);
     child.kill("SIGINT");
 
-    if (await waitForExit(tuiPid, SHUTDOWN_GRACE_MS)) {
+    if (await waitForExit(tuiPid, entry, SHUTDOWN_GRACE_MS)) {
         return true;
     }
 
     log.warn({ tuiPid }, "SIGINT on the pty wrapper left the TUI alive; signalling the TUI directly");
+    const term = signalVerified(tuiPid, expected, "SIGTERM");
 
-    try {
-        // pid-verified: tuiPid is the bun run we spawned this arm, re-checked after SIGINT
-        process.kill(tuiPid, "SIGTERM");
-    } catch (err) {
-        log.debug({ err, tuiPid }, "SIGTERM raced the process exiting");
+    if (!term.sent) {
+        log.debug(
+            { tuiPid, status: term.identity.status, err: term.error },
+            "SIGTERM not sent; the pid no longer runs the entry"
+        );
     }
 
-    if (await waitForExit(tuiPid, SHUTDOWN_GRACE_MS)) {
+    if (await waitForExit(tuiPid, entry, SHUTDOWN_GRACE_MS)) {
         return false;
     }
 
     log.warn({ tuiPid }, "SIGTERM did not stop the TUI either; escalating to SIGKILL");
     child.kill("SIGKILL");
+    const kill = signalVerified(tuiPid, expected, "SIGKILL");
 
-    try {
-        // pid-verified: same tuiPid as above, still the arm this run started
-        process.kill(tuiPid, "SIGKILL");
-    } catch (err) {
-        log.debug({ err, tuiPid }, "SIGKILL raced the process exiting");
+    if (!kill.sent) {
+        log.debug(
+            { tuiPid, status: kill.identity.status, err: kill.error },
+            "SIGKILL not sent; the pid no longer runs the entry"
+        );
     }
 
-    if (!(await waitForExit(tuiPid, SHUTDOWN_GRACE_MS))) {
+    if (!(await waitForExit(tuiPid, entry, SHUTDOWN_GRACE_MS))) {
         throw new Error(`pid ${tuiPid} survived SIGKILL; refusing to start another run on top of it`);
     }
 
@@ -267,13 +297,13 @@ async function stopChild(child: Bun.Subprocess, tuiPid: number): Promise<boolean
  */
 function survivorsOf(entry: string, except: readonly number[] = []): number[] {
     const table = Bun.spawnSync(["ps", "-Ao", "pid=,command="], { stdout: "pipe", stderr: "pipe" });
-    const needle = `bun run ${entry}`;
+    const expected = runsEntry(entry);
     const survivors: number[] = [];
 
     for (const line of table.stdout.toString().split("\n")) {
         const match = /^\s*(\d+)\s+(.*)$/.exec(line);
 
-        if (!match || !match[2]!.includes(needle) || match[2]!.includes("script -q")) {
+        if (!match || !expected(match[2]!)) {
             continue;
         }
 
@@ -303,11 +333,14 @@ async function sweepSurvivors(entry: string): Promise<void> {
     for (const pid of survivorsOf(entry)) {
         log.warn({ pid, entry }, "a second process of the entry outlived the run; killing it");
 
-        try {
-            // pid-verified: survivorsOf matched a live `bun run ${entry}` ps row this sweep
-            process.kill(pid, "SIGKILL");
-        } catch (err) {
-            log.debug({ err, pid }, "survivor exited before the kill landed");
+        // survivorsOf matched a live ps row; the row is read once more right before the signal.
+        const outcome = signalVerified(pid, runsEntry(entry), "SIGKILL");
+
+        if (!outcome.sent) {
+            log.debug(
+                { pid, status: outcome.identity.status, err: outcome.error },
+                "survivor gone before the kill landed"
+            );
         }
     }
 
@@ -370,7 +403,7 @@ async function runOnce(opts: { seconds: number; sampleMs: number; entry: string;
         const sample = await sampleProcess(sampledPid, { windowMs: opts.seconds * 1000 });
         sampling = false;
         await sampler;
-        const exitedOnSigint = await stopChild(child, sampledPid);
+        const exitedOnSigint = await stopChild(child, sampledPid, opts.entry);
         stopped = true;
         const byBinary: Record<string, number> = {};
 
@@ -400,7 +433,7 @@ async function runOnce(opts: { seconds: number; sampleMs: number; entry: string;
         if (!stopped) {
             if (tuiPid !== undefined) {
                 try {
-                    await stopChild(child, tuiPid);
+                    await stopChild(child, tuiPid, opts.entry);
                 } catch (err) {
                     log.warn({ err, tuiPid }, "cleanup could not stop the TUI");
                 }

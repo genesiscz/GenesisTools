@@ -33,4 +33,5 @@ export {
     sampleProcess,
     sampleSelf,
 } from "./process-sample";
+export { type SignalOutcome, signalVerified, stillRuns } from "./signal";
 export { type SpawnCounterResult, type SpawnRecord, withSpawnCounter } from "./spawn-counter";
