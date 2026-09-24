@@ -355,6 +355,11 @@ export const env = {
         getUsername: () => getTrimmed("TRADINGVIEW_USERNAME"),
     },
 
+    agents: {
+        /** AGENTS_HOOKS_DISABLE=1 is the emergency stop: every `tools agents` hook exits 0 at once. */
+        areHooksDisabled: () => getRaw("AGENTS_HOOKS_DISABLE") === "1",
+    },
+
     task: {
         getConfigPath: () => getTrimmed("TASK_CONFIG_PATH"),
         isDetachedWorker: () => isFlag("TASK_RUN_WORKER"),
