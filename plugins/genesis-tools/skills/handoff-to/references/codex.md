@@ -1,13 +1,14 @@
-# Codex mechanics (GPT-6 Astra and GPT-5.6 via `tools codex`)
+# Codex mechanics (GPT-6 Astra, Sol and Luna via `tools codex`)
 
 Read this after `gt:handoff-to` has picked Codex and the readiness gate has passed. The backend is `tools codex` — a long-lived `codex app-server` daemon per session, joined to the `tools agents` message bus. Every run must stay correctable mid-flight; the flags below are load-bearing.
 
 ## Explicit model selection
 
 Use the task routing in the parent skill. Pass `--model gpt-6-astra --effort high`
-for an Astra escalation, `--model gpt-5.6-sol --effort medium` for normal implementation,
-`--model gpt-5.6-terra --effort medium` for bounded exploration, or
-`--model gpt-5.6-luna --effort low` for mechanical work.
+for an Astra escalation, `--model gpt-6-sol --effort medium` for normal implementation,
+`--model gpt-6-luna --effort medium` for bounded exploration, or
+`--model gpt-6-luna --effort low` for mechanical work. `gpt-5.6-terra` still works but
+costs more than `gpt-6-sol`, so do not pick it.
 
 The `tools codex spawn` command accepts an explicit model string. Availability still
 depends on the selected account and backend. Verify the recorded model after dispatch;
@@ -35,7 +36,7 @@ Only a Claude Code orchestrator that relies on bus delivery should start the lea
 ```bash
 tools codex spawn \
   --name <task> \
-  --model gpt-5.6-sol \
+  --model gpt-6-sol \
   --effort medium \
   --write ask \
   --cwd <abs path> \
@@ -228,10 +229,10 @@ Resume: `command codex exec resume <thread_id> --json --ignore-user-config --ski
 
 ## Human-driven native sessions and history
 
-`tools codex run <account>` is for a human driving the native terminal, not a replacement for the worker/driver contract. Run-model aliases are `astra`, `sol`, `terra`, and `luna`; full native IDs remain supported. Resume recipes preserve the account wrapper rather than an expired temporary socket.
+`tools codex run <account>` is for a human driving the native terminal, not a replacement for the worker/driver contract. Run-model aliases are `astra` (`gpt-6-astra`), `sol` (`gpt-6-sol`), `luna` (`gpt-6-luna`) and `terra` (`gpt-5.6-terra`); full native IDs remain supported. Resume recipes preserve the account wrapper rather than an expired temporary socket.
 
 ```bash
-tools codex run work --model terra --resume
+tools codex run work --model sol --resume
 tools codex run work --model astra --resume "invoice parser"
 tools codex history "invoice parser" --all --format json | tools json
 ```
