@@ -21,11 +21,14 @@
  *               Prints { logged:true, file, stamp, lines, linesAdded, linesModified }
  *               so the caller can Read the rewritten header and the new section.
  *
- * The registry lives at ~/.claude/handoff-registry.json:
+ * The registry lives at ~/.genesis-tools/plugins/vault-registry.json, shared with the research
+ * skill, and is migrated once from ~/.claude/handoff-registry.json:
  *   { "entries": [ { projectDir, branch?, worktreeDir?, obsidianDir, docPath? }, ... ] }
- * A missing/empty `branch` means the entry matches any branch in that project.
+ * A missing/empty `branch` means the entry matches any branch in that project. An entry pins a
+ * FOLDER, never a filename: `--doc <name>` picks any file inside it, and the derived
+ * <project>-<branch>.wrapup.md is only the default when the caller names nothing.
  *
- * Shared plugin config (optional) lives at ~/.genesis-tools/plugins/config.json:
+ * Shared plugin config lives at ~/.genesis-tools/plugins/config.json, one key per plugin:
  *   { "wrap-up": { "registryPath"?, "vaultDir"?, "docDir"? } }
  *   - registryPath: overrides the registry location.
  *   - docDir: fallback doc directory when the registry has no match — absolute,
@@ -34,25 +37,52 @@
  *   Resolution order: registry match > docDir > vaultDir > found:false.
  */
 
-import { chmod, rename, rm, stat } from "node:fs/promises";
-import { homedir } from "node:os";
+import { stat } from "node:fs/promises";
 import { basename, isAbsolute, join, resolve } from "node:path";
-
+import {
+    ambientBranchWarnings,
+    type Ctx,
+    parsePorcelainMain,
+    parsePorcelainWorktrees,
+    gitContext as sharedGitContext,
+    sh as sharedSh,
+    type Worktree,
+} from "../../../lib/git-context.ts";
 // lint-rules-ignore: standalone script without access to @genesiscz/utils/env
-const PLUGIN_CONFIG = join(homedir(), ".genesis-tools", "plugins", "config.json");
+import { expandHome, pluginSection, writeAtomic } from "../../../lib/plugin-config.ts";
+import { loadProjectOverrides, resolveOverride } from "../../../lib/project-overrides.ts";
+import {
+    type Entry,
+    forConsumer,
+    loadRegistry as loadRegistryFile,
+    matches,
+    type Ranked,
+    type Registry,
+    rankEntries,
+    registryPath as resolveRegistryPath,
+    saveRegistry as saveRegistryFile,
+} from "../../../lib/vault-registry.ts";
+
+// Re-exported because they were this module's own helpers before the shared lib existed.
+export {
+    ambientBranchWarnings,
+    type Ctx,
+    type Entry,
+    expandHome,
+    matches,
+    parsePorcelainMain,
+    parsePorcelainWorktrees,
+    type Ranked,
+    rankEntries,
+    type Worktree,
+    writeAtomic,
+};
+
+export const sh = (cmd: string[]): Promise<string> => sharedSh(cmd, "wrap-up");
+
+const CONSUMER = "wrap-up";
 const HERE_START = "<!-- YOU-ARE-HERE:START -->";
 const HERE_END = "<!-- YOU-ARE-HERE:END -->";
-
-export interface Entry {
-    projectDir: string;
-    branch?: string;
-    worktreeDir?: string;
-    obsidianDir: string;
-    docPath?: string;
-}
-interface Registry {
-    entries: Entry[];
-}
 
 interface WrapUpConfig {
     registryPath?: string;
@@ -70,111 +100,24 @@ async function loadPluginConfig(): Promise<WrapUpConfig> {
         return pluginConfigCache;
     }
 
-    const cfg = await readPluginConfig();
+    const cfg = await pluginSection<WrapUpConfig>("wrap-up");
     pluginConfigCache = cfg;
     return cfg;
 }
 
-async function readPluginConfig(): Promise<WrapUpConfig> {
-    const f = Bun.file(PLUGIN_CONFIG);
-    if (!(await f.exists())) {
-        return {};
-    }
-
-    try {
-        // biome-ignore lint/style/noRestrictedGlobals: standalone script without access to SafeJSON
-        const parsed = JSON.parse(await f.text());
-        return typeof parsed?.["wrap-up"] === "object" && parsed["wrap-up"] !== null ? parsed["wrap-up"] : {};
-    } catch (err) {
-        // Falling back to {} silently would make a corrupt config look like an
-        // absent one and quietly demote the wrap-up to a different target tier.
-        console.error(`wrap-up: ignoring unreadable plugin config ${PLUGIN_CONFIG}: ${String(err)}`);
-        return {};
-    }
-}
-
-export function expandHome(p: string): string {
-    return p.startsWith("~/") ? join(homedir(), p.slice(2)) : p;
-}
-
+// The registry moved out of ~/.claude (Claude-only, while these skills are read by Codex and
+// Grok too) and out of wrap-up's sole ownership: research resolves the same project-to-vault
+// folders. One migration per install, before the first read or write of either path.
 async function registryPath(): Promise<string> {
-    const cfg = await loadPluginConfig();
-    return expandHome(cfg.registryPath ?? join(homedir(), ".claude", "handoff-registry.json"));
-}
-
-export async function sh(cmd: string[]): Promise<string> {
-    try {
-        const p = Bun.spawn(cmd, { stdout: "pipe", stderr: "pipe" });
-        const [out, err] = await Promise.all([new Response(p.stdout).text(), new Response(p.stderr).text()]);
-        const code = await p.exited;
-        if (code !== 0) {
-            // Callers deliberately fall back (cwd / empty branch) so this stays
-            // non-fatal, but a swallowed failure is indistinguishable from a
-            // legitimately empty result — say which one happened.
-            console.error(`wrap-up: \`${cmd.join(" ")}\` exited ${code}${err.trim() ? `: ${err.trim()}` : ""}`);
-            // Discard whatever landed on stdout: a failed `git rev-parse` can
-            // still print, and passing that through would be taken for a real
-            // toplevel or branch name.
-            return "";
-        }
-
-        return out.trim();
-    } catch (err) {
-        // Bun.spawn throws outright when the binary is missing from $PATH, which
-        // would crash the whole command instead of taking the documented
-        // no-git fallback. Degrade to "" like a non-zero exit does.
-        console.error(`wrap-up: \`${cmd.join(" ")}\` could not run: ${String(err)}`);
-        return "";
-    }
+    return resolveRegistryPath((await loadPluginConfig()).registryPath, "wrap-up");
 }
 
 async function loadRegistry(): Promise<Registry> {
-    const path = await registryPath();
-    const f = Bun.file(path);
-    if (!(await f.exists())) {
-        return { entries: [] };
-    }
-
-    try {
-        // biome-ignore lint/style/noRestrictedGlobals: standalone script without access to SafeJSON
-        const parsed = JSON.parse(await f.text());
-        return Array.isArray(parsed?.entries) ? parsed : { entries: [] };
-    } catch (err) {
-        // A malformed registry must not masquerade as an empty one — that would
-        // silently drop every registered target and resolve to found:false.
-        console.error(`wrap-up: ignoring unreadable registry ${path}: ${String(err)}`);
-        return { entries: [] };
-    }
-}
-
-// Write via temp file + rename so an interrupted write can never leave a
-// truncated file behind. Both targets are append-only records whose partial
-// loss is unrecoverable: the registry holds every project's wrap-up target,
-// and the wrap-up doc's log is the only permanent session history.
-export async function writeAtomic(path: string, body: string): Promise<void> {
-    const tmp = `${path}.tmp-${process.pid}-${Date.now()}`;
-    const existed = await Bun.file(path).exists();
-    try {
-        await Bun.write(tmp, body);
-        if (existed) {
-            // rename() swaps in a brand-new inode created under the current
-            // umask, so a private 0600 registry or wrap-up doc would silently
-            // widen to 0644. Carry the destination's mode over to the temp file.
-            const { mode } = await stat(path);
-            await chmod(tmp, mode & 0o777);
-        }
-
-        await rename(tmp, path);
-    } catch (err) {
-        // Never leave the half-written temp file next to the real one.
-        await rm(tmp, { force: true });
-        throw err;
-    }
+    return loadRegistryFile(await registryPath(), "wrap-up");
 }
 
 async function saveRegistry(reg: Registry): Promise<void> {
-    // biome-ignore lint/style/noRestrictedGlobals: standalone script without access to SafeJSON
-    await writeAtomic(await registryPath(), `${JSON.stringify(reg, null, 2)}\n`);
+    await saveRegistryFile(await registryPath(), reg);
 }
 
 export function slug(s: string): string {
@@ -195,101 +138,71 @@ export function derivedDocPath(entry: Entry, branch: string): string {
     return join(entry.obsidianDir, `${project}-${slug(branch)}.wrapup.md`);
 }
 
-export interface Ctx {
-    toplevel: string;
-    branch: string;
-    cwd: string;
-    /** The main checkout, when `toplevel` is a linked worktree. Empty otherwise. */
-    mainProject?: string;
+const gitContext = (args: Record<string, string> = {}): Promise<Ctx> => sharedGitContext(args, "wrap-up");
+
+/** One line naming the logs already in the folder, so a second one is a decision, not an accident. */
+export function siblingWarning(siblingDocs: string[], dir: string): string[] {
+    if (siblingDocs.length === 0) {
+        return [];
+    }
+
+    return [
+        `${dir} already holds ${siblingDocs.length} wrap-up file${siblingDocs.length === 1 ? "" : "s"} under other names (${siblingDocs.join(", ")}) — append to one of those with --doc <name> unless this branch genuinely needs its own log`,
+    ];
 }
 
 /**
- * First porcelain `worktree ` line is the main checkout. Empty / same-path
- * means we ARE the main checkout (or git said nothing).
+ * Wrap-up files already sitting in the resolved folder under another name.
+ *
+ * The derived `<project>-<branch>.wrapup.md` is only a default, and 14 of this vault's ticket
+ * folders hold a log named something else, usually because a human named it or it predates the
+ * convention. Creating the derived name there would quietly start a SECOND log for the same
+ * work, which is worse than either name on its own.
  */
-export function parsePorcelainMain(text: string, toplevel: string): string {
-    const first = text.split("\n")[0] ?? "";
-    const main = first.startsWith("worktree ") ? first.slice("worktree ".length).trim() : "";
-    return main && main !== toplevel ? main : "";
+export async function existingWrapUps(dir: string, docPath: string): Promise<string[]> {
+    try {
+        const found: string[] = [];
+
+        for await (const name of new Bun.Glob("*.wrapup.md").scan({ cwd: dir, onlyFiles: true })) {
+            if (join(dir, name) !== docPath) {
+                found.push(name);
+            }
+        }
+
+        return found.sort();
+    } catch {
+        // A missing or unreadable folder is the "first wrap-up here" case, not an error.
+        return [];
+    }
 }
+
+export type DocPathSource = "pinned" | "entry" | "derived";
 
 /**
- * `git worktree list` prints the main checkout first. A linked worktree can live
- * anywhere — a sibling directory as often as a nested one — so without this a
- * sibling worktree path-matches nothing and every project-level entry is missed.
+ * Resolve the file inside the matched folder, saying where the choice came from.
+ *
+ * A bare `--doc notes.md` lands in the matched folder; an absolute path is taken as given.
+ * Nothing about the registry forces one file per branch: the entry pins a directory, and the
+ * derived `<project>-<branch>.wrapup.md` is only the default when the caller names nothing.
  */
-async function mainCheckout(toplevel: string): Promise<string> {
-    return parsePorcelainMain(await sh(["git", "-C", toplevel, "worktree", "list", "--porcelain"]), toplevel);
-}
+export function resolveDocPath(
+    entry: Entry,
+    ctx: Ctx,
+    doc?: string
+): { docPath: string; docPathSource: DocPathSource } {
+    if (doc) {
+        const expanded = expandHome(doc);
 
-/**
- * Everything below keys off this context, so getting it from the ambient shell
- * alone is how a wrap-up lands in another project's vault folder: the agent's
- * shell cwd persists across calls and is not necessarily the repo the session
- * worked in. `--project` / `--branch` / `--cwd` let the caller pin it, and the
- * pinned values are echoed back in every `resolve` result so a wrong one is
- * visible instead of silent.
- */
-async function gitContext(args: Record<string, string> = {}): Promise<Ctx> {
-    const pinnedProject = args.project ? expandHome(args.project) : "";
-    // A pinned project implies its own cwd: keeping the ambient one would let a
-    // stale directory still path-match a foreign registry entry.
-    const cwd = args.cwd ? expandHome(args.cwd) : pinnedProject || process.cwd();
-    // Normalize whatever was pinned to the checkout root. --project is routinely
-    // given a subdirectory or a worktree path, and echoing that raw path back as
-    // "project" is how a wrong target survives review.
-    const toplevel = (await sh(["git", "-C", cwd, "rev-parse", "--show-toplevel"])) || pinnedProject || cwd;
-    const branch = args.branch || (await sh(["git", "-C", toplevel, "rev-parse", "--abbrev-ref", "HEAD"]));
-    return { toplevel, branch: branch || "", cwd, mainProject: await mainCheckout(toplevel) };
-}
-
-export function matches(entry: Entry, ctx: Ctx): number {
-    // Higher score = more specific match. 0 = no match.
-    // Do not prefix-match cwd against another repository: a nested git checkout
-    // at /parent/child would otherwise steal the parent's wrap-up. Same-repo
-    // subdirectories still match because gitContext sets toplevel to the root.
-    const paths = [entry.worktreeDir, entry.projectDir].filter(Boolean) as string[];
-    const direct = paths.some((p) => ctx.toplevel === p || ctx.cwd === p);
-    // From a linked worktree, an entry registered against the main checkout is
-    // still this project's entry — a sibling worktree shares no path prefix with
-    // it, so without this the correct target resolves to found:false.
-    const viaMain = !direct && Boolean(ctx.mainProject) && paths.some((p) => p === ctx.mainProject);
-    if (!direct && !viaMain) {
-        return 0;
+        return {
+            docPath: isAbsolute(expanded) ? expanded : join(entry.obsidianDir, expanded),
+            docPathSource: "pinned",
+        };
     }
 
-    if (entry.branch && entry.branch !== ctx.branch) {
-        return 0;
-    }
-
-    let score = 1;
-    if (entry.worktreeDir && (ctx.toplevel === entry.worktreeDir || ctx.cwd.startsWith(`${entry.worktreeDir}/`))) {
-        score += 2;
-    }
-
-    if (entry.branch) {
-        score += 1;
-    }
-
-    return score;
-}
-
-export interface Ranked {
-    entry: Entry;
-    score: number;
-}
-
-/**
- * Rank the matching entries, most specific first. Equal specificity is broken by
- * registration order, newest first: `register` appends, so the later entry is the
- * one the user set up most recently, and a months-old catch-all must not outrank it.
- */
-export function rankEntries(entries: Entry[], ctx: Ctx): Ranked[] {
-    return entries
-        .map((entry, index) => ({ entry, score: matches(entry, ctx), index }))
-        .filter((x) => x.score > 0)
-        .sort((a, b) => b.score - a.score || b.index - a.index)
-        .map(({ entry, score }) => ({ entry, score }));
+    return {
+        docPath: derivedDocPath(entry, ctx.branch),
+        docPathSource: entry.docPath ? "entry" : "derived",
+    };
 }
 
 /**
@@ -303,13 +216,20 @@ export function resolutionWarnings({
     ctx,
     alternatives,
     docExists,
+    docPathSource = "derived",
+    siblingDocs = [],
 }: {
     entry: Entry;
     ctx: Ctx;
     alternatives: Ranked[];
     docExists: boolean;
+    /** Where the doc path came from, so a defaulted filename is never read as a pinned one. */
+    docPathSource?: DocPathSource;
+    /** Other `*.wrapup.md` files already in the folder, so a second log is never started by accident. */
+    siblingDocs?: string[];
 }): string[] {
-    const warnings: string[] = [];
+    const warnings: string[] = [...ambientBranchWarnings(ctx), ...siblingWarning(siblingDocs, entry.obsidianDir)];
+
     if (!entry.branch) {
         warnings.push(
             `matched a project-wide entry (no branch pinned): it claims EVERY branch of ${basename(entry.projectDir)}, not just "${ctx.branch}" — confirm this is the right doc before writing`
@@ -329,7 +249,14 @@ export function resolutionWarnings({
     }
 
     if (!docExists) {
-        warnings.push("docPath does not exist yet — create it from the SKILL.md template before calling `log`");
+        warnings.push(
+            docPathSource === "derived"
+                ? // The entry pins the FOLDER; this filename is only the per-branch default, and
+                  // nothing says one branch means one file. Say so at the only moment it is
+                  // actionable: before the file exists and the name is still free.
+                  `docPath does not exist yet — create it from the SKILL.md template before calling \`log\`. The registry pins the folder, so "${basename(derivedDocPath(entry, ctx.branch))}" is only the default name for branch "${ctx.branch}": pass --doc <name> to use another file in ${entry.obsidianDir}`
+                : "docPath does not exist yet — create it from the SKILL.md template before calling `log`"
+        );
     }
 
     return warnings;
@@ -460,6 +387,97 @@ export function auditRegistry(entries: Entry[], exists: (path: string) => boolea
 
 async function cmdResolve(args: Record<string, string> = {}) {
     const ctx = await gitContext(args);
+    // A project may declare its own folder for wrap-up, static or derived per ticket. It is
+    // more specific than any registry entry, so it is asked first.
+    const override = await resolveOverride({
+        overrides: await loadProjectOverrides(CONSUMER),
+        ctx,
+        consumer: CONSUMER,
+        label: CONSUMER,
+    });
+
+    if (override.kind === "failed") {
+        console.log(
+            JSON.stringify(
+                {
+                    found: false,
+                    source: "resolver",
+                    project: ctx.toplevel,
+                    branch: ctx.branch,
+                    cwd: ctx.cwd,
+                    rule: override.rule ?? null,
+                    resolver: { project: override.key, command: override.command },
+                    warnings: [
+                        ...ambientBranchWarnings(ctx),
+                        `${override.error} — this project declares a resolverCommand for wrap-up, so do NOT fall back to the registry: fix the resolver or register a folder`,
+                    ],
+                },
+                null,
+                2
+            )
+        );
+        process.exitCode = 1;
+
+        return;
+    }
+
+    if (override.kind === "resolver" || override.kind === "dir") {
+        // The MAIN checkout names the derived file, so every worktree of one project agrees on
+        // it instead of each inventing a name from its own directory.
+        const entry: Entry = { projectDir: ctx.mainProject || ctx.toplevel, obsidianDir: override.dir };
+        const { docPath, docPathSource } = resolveDocPath(entry, ctx, args.doc);
+        const docExists = await Bun.file(docPath).exists();
+        const siblingDocs = docExists ? [] : await existingWrapUps(override.dir, docPath);
+        const hint = registerHint(ctx, override.dir);
+
+        console.log(
+            JSON.stringify(
+                {
+                    found: true,
+                    source: override.kind === "resolver" ? "resolver" : "override",
+                    exact: true,
+                    obsidianDir: override.dir,
+                    docPath,
+                    docPathSource,
+                    docExists,
+                    project: ctx.toplevel,
+                    branch: ctx.branch,
+                    cwd: ctx.cwd,
+                    worktreeOf: ctx.mainProject || null,
+                    worktree: null,
+                    rule: override.rule ?? null,
+                    ...(override.kind === "resolver"
+                        ? { resolver: { project: override.key, command: override.command, output: override.output } }
+                        : {}),
+                    alternatives: [],
+                    warnings: [
+                        ...ambientBranchWarnings(ctx),
+                        ...override.warnings,
+                        ...(docExists
+                            ? []
+                            : [
+                                  "docPath does not exist yet — create it from the SKILL.md template before calling `log`",
+                              ]),
+                        ...siblingWarning(siblingDocs, override.dir),
+                    ],
+                    registerHint: hint,
+                    nextSteps: nextSteps({
+                        found: true,
+                        exact: true,
+                        docExists,
+                        docPath,
+                        registerCmd: hint,
+                        entriesCmd: entriesHint(ctx),
+                    }),
+                },
+                null,
+                2
+            )
+        );
+
+        return;
+    }
+
     const reg = await loadRegistry();
     const ranked = rankEntries(reg.entries, ctx);
 
@@ -478,9 +496,8 @@ async function cmdResolve(args: Record<string, string> = {}) {
 
         if (docDir) {
             const entry: Entry = { projectDir: ctx.toplevel, obsidianDir: docDir };
-            const docPath = derivedDocPath(entry, ctx.branch);
+            const { docPath, docPathSource } = resolveDocPath(entry, ctx, args.doc);
             console.log(
-                // biome-ignore lint/style/noRestrictedGlobals: standalone script without access to SafeJSON
                 JSON.stringify(
                     {
                         found: true,
@@ -490,6 +507,7 @@ async function cmdResolve(args: Record<string, string> = {}) {
                         exact: true,
                         obsidianDir: docDir,
                         docPath,
+                        docPathSource,
                         docExists: await Bun.file(docPath).exists(),
                         project: ctx.toplevel,
                         branch: ctx.branch,
@@ -497,7 +515,7 @@ async function cmdResolve(args: Record<string, string> = {}) {
                         worktreeOf: ctx.mainProject || null,
                         worktree: null,
                         alternatives: [],
-                        warnings: [],
+                        warnings: ambientBranchWarnings(ctx),
                         registerHint: registerHint(ctx, docDir),
                         nextSteps: nextSteps({
                             found: true,
@@ -516,7 +534,6 @@ async function cmdResolve(args: Record<string, string> = {}) {
         }
 
         console.log(
-            // biome-ignore lint/style/noRestrictedGlobals: standalone script without access to SafeJSON
             JSON.stringify(
                 {
                     found: false,
@@ -541,9 +558,10 @@ async function cmdResolve(args: Record<string, string> = {}) {
         return;
     }
 
-    const { entry } = ranked[0];
-    const docPath = derivedDocPath(entry, ctx.branch);
+    const entry = forConsumer(ranked[0].entry, CONSUMER);
+    const { docPath, docPathSource } = resolveDocPath(entry, ctx, args.doc);
     const docExists = await Bun.file(docPath).exists();
+    const siblingDocs = docExists ? [] : await existingWrapUps(entry.obsidianDir, docPath);
     const alternatives = ranked.slice(1);
     const exact = Boolean(entry.branch) && entry.branch === ctx.branch;
     // Only pre-fill the resolved directory once it is trustworthy: pre-filling a
@@ -551,7 +569,6 @@ async function cmdResolve(args: Record<string, string> = {}) {
     // wrong target.
     const hint = registerHint(ctx, exact ? entry.obsidianDir : "<dir the user confirms>");
     console.log(
-        // biome-ignore lint/style/noRestrictedGlobals: standalone script without access to SafeJSON
         JSON.stringify(
             {
                 found: true,
@@ -559,6 +576,7 @@ async function cmdResolve(args: Record<string, string> = {}) {
                 exact,
                 obsidianDir: entry.obsidianDir,
                 docPath,
+                docPathSource,
                 docExists,
                 project: ctx.toplevel,
                 branch: ctx.branch,
@@ -566,14 +584,14 @@ async function cmdResolve(args: Record<string, string> = {}) {
                 worktreeOf: ctx.mainProject || null,
                 worktree: entry.worktreeDir ?? null,
                 matchedEntry: entry,
-                alternatives: alternatives.map(({ entry: alt, score }) => ({
-                    obsidianDir: alt.obsidianDir,
-                    docPath: derivedDocPath(alt, ctx.branch),
-                    branch: alt.branch ?? null,
-                    worktreeDir: alt.worktreeDir ?? null,
+                alternatives: alternatives.map(({ entry: raw, score }) => ({
+                    obsidianDir: forConsumer(raw, CONSUMER).obsidianDir,
+                    docPath: derivedDocPath(forConsumer(raw, CONSUMER), ctx.branch),
+                    branch: raw.branch ?? null,
+                    worktreeDir: raw.worktreeDir ?? null,
                     score,
                 })),
-                warnings: resolutionWarnings({ entry, ctx, alternatives, docExists }),
+                warnings: resolutionWarnings({ entry, ctx, alternatives, docExists, docPathSource, siblingDocs }),
                 registerHint: hint,
                 nextSteps: nextSteps({
                     found: true,
@@ -619,7 +637,6 @@ async function cmdDoctor() {
 
     const issues = auditRegistry(reg.entries, (p) => present.has(p));
     console.log(
-        // biome-ignore lint/style/noRestrictedGlobals: standalone script without access to SafeJSON
         JSON.stringify(
             {
                 registry: await registryPath(),
@@ -644,23 +661,24 @@ async function cmdEntries(args: Record<string, string> = {}) {
     );
 
     console.log(
-        // biome-ignore lint/style/noRestrictedGlobals: standalone script without access to SafeJSON
         JSON.stringify(
             {
                 project: ctx.toplevel,
                 branch: ctx.branch,
                 cwd: ctx.cwd,
                 registry: await registryPath(),
-                entries: forProject.map((e) => ({
-                    obsidianDir: e.obsidianDir,
-                    // Derive with the entry's OWN branch: showing a non-matching
-                    // entry under the current branch's filename invents a path
-                    // that entry would never produce.
-                    docPath: derivedDocPath(e, e.branch || ctx.branch),
-                    branch: e.branch ?? null,
-                    worktreeDir: e.worktreeDir ?? null,
-                    matchesCurrent: matches(e, ctx) > 0,
-                })),
+                entries: forProject
+                    .map((raw) => forConsumer(raw, CONSUMER))
+                    .map((e) => ({
+                        obsidianDir: e.obsidianDir,
+                        // Derive with the entry's OWN branch: showing a non-matching
+                        // entry under the current branch's filename invents a path
+                        // that entry would never produce.
+                        docPath: derivedDocPath(e, e.branch || ctx.branch),
+                        branch: e.branch ?? null,
+                        worktreeDir: e.worktreeDir ?? null,
+                        matchesCurrent: matches(e, ctx) > 0,
+                    })),
             },
             null,
             2
@@ -725,7 +743,6 @@ async function cmdRegister(args: Record<string, string>) {
     reg.entries.push(entry);
     await saveRegistry(reg);
     console.log(
-        // biome-ignore lint/style/noRestrictedGlobals: standalone script without access to SafeJSON
         JSON.stringify(
             { registered: entry, registry: await registryPath(), docPath: derivedDocPath(entry, ctx.branch) },
             null,
@@ -978,7 +995,6 @@ async function cmdLog(file: string) {
 
     await writeAtomic(absFile, built.body);
     console.log(
-        // biome-ignore lint/style/noRestrictedGlobals: standalone script without access to SafeJSON
         JSON.stringify(
             {
                 logged: true,

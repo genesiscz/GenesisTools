@@ -1,8 +1,10 @@
 import { afterEach, describe, expect, it } from "bun:test";
-import { chmod, mkdir, mkdtemp, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readdir, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { loadRegistry as loadRegistryFile, saveRegistry as saveRegistryFile } from "../../../lib/vault-registry.ts";
 import {
+    ambientBranchWarnings,
     auditRegistry,
     blockquote,
     buildLogBody,
@@ -15,9 +17,12 @@ import {
     nextSteps,
     parseFlags,
     parsePorcelainMain,
+    parsePorcelainWorktrees,
     rankEntries,
     resolutionWarnings,
+    resolveDocPath,
     sh,
+    siblingWarning,
     slug,
     splitSentinels,
     writeAtomic,
@@ -150,6 +155,57 @@ describe("matches — linked worktrees", () => {
 
     it("does not match another project just because we are in a worktree", () => {
         expect(matches({ projectDir: "/repos/Other", obsidianDir: "/v" }, sibling)).toBe(0);
+    });
+
+    it("never applies a worktree-pinned entry outside that worktree", () => {
+        const pinnedToY = { projectDir: "/repos/Proj", obsidianDir: "/v", worktreeDir: "/repos/Proj-wt-y" };
+        const main = { toplevel: "/repos/Proj", branch: "feat/x", cwd: "/repos/Proj" };
+
+        expect(matches(pinnedToY, main)).toBe(0);
+        expect(matches(pinnedToY, sibling)).toBe(0);
+        expect(matches(pinnedToY, { ...sibling, toplevel: "/repos/Proj-wt-y", cwd: "/repos/Proj-wt-y/src" })).toBe(3);
+    });
+});
+
+describe("an unreadable registry", () => {
+    const dirs: string[] = [];
+
+    afterEach(async () => {
+        for (const dir of dirs.splice(0)) {
+            await rm(dir, { recursive: true, force: true });
+        }
+    });
+
+    it("reads as no entries, and is never overwritten by a save", async () => {
+        const dir = await mkdtemp(join(tmpdir(), "gt-registry-"));
+        const path = join(dir, "vault-registry.json");
+
+        dirs.push(dir);
+        await writeFile(path, "{ not json");
+
+        const loaded = await loadRegistryFile(path, "test");
+
+        expect(loaded.entries).toEqual([]);
+
+        loaded.entries.push({ projectDir: "/repos/Proj", obsidianDir: "/v" });
+
+        await expect(saveRegistryFile(path, loaded)).rejects.toThrow("refusing to overwrite");
+        expect(await Bun.file(path).text()).toBe("{ not json");
+    });
+
+    it("still saves a registry that was read cleanly", async () => {
+        const dir = await mkdtemp(join(tmpdir(), "gt-registry-"));
+        const path = join(dir, "vault-registry.json");
+
+        dirs.push(dir);
+        await writeFile(path, JSON.stringify({ entries: [] }));
+
+        const loaded = await loadRegistryFile(path, "test");
+
+        loaded.entries.push({ projectDir: "/repos/Proj", obsidianDir: "/v" });
+        await saveRegistryFile(path, loaded);
+
+        expect((await loadRegistryFile(path, "test")).entries).toHaveLength(1);
     });
 });
 
@@ -644,7 +700,6 @@ describe("log command JSON", () => {
         expect(exit).toBe(0);
         expect(stderr).toBe("");
 
-        // biome-ignore lint/style/noRestrictedGlobals: standalone script without access to SafeJSON
         const json = JSON.parse(stdout);
         expect(json.logged).toBe(true);
         expect(json.file).toBe(file);
@@ -708,4 +763,190 @@ describe("expandHome", () => {
         expect(expandHome("~/vault")).not.toContain("~");
         expect(expandHome("~/vault").endsWith("/vault")).toBe(true);
     });
+});
+
+const PORCELAIN = `worktree /repos/Proj
+HEAD aaa
+branch refs/heads/feature/next
+
+worktree /repos/Proj-wt-login
+HEAD bbb
+branch refs/heads/fix/login
+
+worktree /repos/Proj-detached
+HEAD ccc
+detached
+`;
+
+describe("parsePorcelainWorktrees", () => {
+    it("reads every checkout with the branch it has out", () => {
+        expect(parsePorcelainWorktrees(PORCELAIN)).toEqual([
+            { dir: "/repos/Proj", branch: "feature/next" },
+            { dir: "/repos/Proj-wt-login", branch: "fix/login" },
+            { dir: "/repos/Proj-detached", branch: "detached" },
+        ]);
+    });
+
+    it("returns nothing when git said nothing", () => {
+        expect(parsePorcelainWorktrees("")).toEqual([]);
+    });
+});
+
+describe("ambientBranchWarnings", () => {
+    const worktrees = parsePorcelainWorktrees(PORCELAIN);
+
+    it("warns that an unpinned branch read in the main checkout may not be the session's", () => {
+        const warnings = ambientBranchWarnings({
+            toplevel: "/repos/Proj",
+            branch: "feature/next",
+            cwd: "/repos/Proj",
+            worktrees,
+            pinned: { project: false, branch: false },
+        });
+
+        expect(warnings).toHaveLength(1);
+        expect(warnings[0]).toContain("MAIN checkout");
+        expect(warnings[0]).toContain("fix/login");
+    });
+
+    it("stays silent once the branch is pinned", () => {
+        expect(
+            ambientBranchWarnings({
+                toplevel: "/repos/Proj",
+                branch: "fix/login",
+                cwd: "/repos/Proj",
+                worktrees,
+                pinned: { project: false, branch: true },
+            })
+        ).toEqual([]);
+    });
+
+    it("stays silent for a repo with a single checkout", () => {
+        expect(
+            ambientBranchWarnings({
+                toplevel: "/repos/Solo",
+                branch: "main",
+                cwd: "/repos/Solo",
+                worktrees: [{ dir: "/repos/Solo", branch: "main" }],
+                pinned: { project: false, branch: false },
+            })
+        ).toEqual([]);
+    });
+});
+
+describe("resolveDocPath", () => {
+    const entry: Entry = { projectDir: "/repos/Proj", obsidianDir: "/v/Proj", branch: "feat/x" };
+    const ctx = { toplevel: "/repos/Proj", branch: "feat/x", cwd: "/repos/Proj" };
+
+    it("derives the per-branch default when nothing is pinned", () => {
+        expect(resolveDocPath(entry, ctx)).toEqual({
+            docPath: "/v/Proj/Proj-feat-x.wrapup.md",
+            docPathSource: "derived",
+        });
+    });
+
+    it("puts a bare --doc name inside the matched folder", () => {
+        expect(resolveDocPath(entry, ctx, "research-notes.md")).toEqual({
+            docPath: "/v/Proj/research-notes.md",
+            docPathSource: "pinned",
+        });
+    });
+
+    it("takes an absolute --doc as given", () => {
+        expect(resolveDocPath(entry, ctx, "/elsewhere/other.md").docPath).toBe("/elsewhere/other.md");
+    });
+
+    it("reports an entry's own docPath as coming from the entry", () => {
+        expect(resolveDocPath({ ...entry, docPath: "/v/Proj/pinned.md" }, ctx)).toEqual({
+            docPath: "/v/Proj/pinned.md",
+            docPathSource: "entry",
+        });
+    });
+});
+
+describe("ambientBranchWarnings in a linked worktree", () => {
+    it("stays silent: the cwd pins the branch as surely as --branch would", () => {
+        expect(
+            ambientBranchWarnings({
+                toplevel: "/repos/Proj-wt-login",
+                branch: "fix/login",
+                cwd: "/repos/Proj-wt-login",
+                mainProject: "/repos/Proj",
+                worktrees: parsePorcelainWorktrees(PORCELAIN),
+                pinned: { project: false, branch: false },
+            })
+        ).toEqual([]);
+    });
+});
+
+describe("siblingWarning", () => {
+    it("names the logs already in the folder so a second one is a decision", () => {
+        const warnings = siblingWarning(["acme-ticket-4821.wrapup.md"], "/v/Acme/ticket-4821");
+
+        expect(warnings).toHaveLength(1);
+        expect(warnings[0]).toContain("acme-ticket-4821.wrapup.md");
+        expect(warnings[0]).toContain("--doc");
+    });
+
+    it("stays silent for an empty folder", () => {
+        expect(siblingWarning([], "/v/Acme/ticket-4821")).toEqual([]);
+    });
+
+    it("is included in the resolution warnings", () => {
+        const warnings = resolutionWarnings({
+            entry: { projectDir: "/repos/Proj", obsidianDir: "/v", branch: "feat/x" },
+            ctx: { toplevel: "/repos/Proj", branch: "feat/x", cwd: "/repos/Proj" },
+            alternatives: [],
+            docExists: true,
+            siblingDocs: ["other.wrapup.md"],
+        });
+
+        expect(warnings.some((w) => w.includes("other.wrapup.md"))).toBe(true);
+    });
+});
+
+describe("resolve with more than one matching entry", () => {
+    const made: string[] = [];
+
+    afterEach(async () => {
+        for (const dir of made.splice(0)) {
+            await rm(dir, { recursive: true, force: true });
+        }
+    });
+
+    it("lists the runner-up as an alternative instead of throwing", async () => {
+        const home = await mkdtemp(join(tmpdir(), "gt-wrapup-home-"));
+        const project = await realpath(await mkdtemp(join(tmpdir(), "gt-wrapup-proj-")));
+
+        made.push(home, project);
+        await mkdir(join(home, ".genesis-tools", "plugins"), { recursive: true });
+        await writeFile(
+            join(home, ".genesis-tools", "plugins", "vault-registry.json"),
+            JSON.stringify({
+                entries: [
+                    { projectDir: project, obsidianDir: "/v/older", worktreeDir: undefined },
+                    { projectDir: project, obsidianDir: "/v/newer" },
+                ],
+            })
+        );
+
+        const proc = Bun.spawn(["bun", join(import.meta.dir, "resolve.ts"), "resolve", "--cwd", project], {
+            env: { ...process.env, GENESIS_TOOLS_HOME: home },
+            stdout: "pipe",
+            stderr: "pipe",
+        });
+        const [stdout, stderr] = await Promise.all([
+            new Response(proc.stdout).text(),
+            new Response(proc.stderr).text(),
+        ]);
+
+        expect(await proc.exited, stderr).toBe(0);
+
+        const result = JSON.parse(stdout);
+
+        expect(result.obsidianDir).toBe("/v/newer");
+        expect(result.alternatives).toEqual([
+            expect.objectContaining({ obsidianDir: "/v/older", branch: null, worktreeDir: null }),
+        ]);
+    }, 30_000);
 });
