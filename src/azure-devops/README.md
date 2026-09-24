@@ -296,6 +296,21 @@ the URL, else the project wiki. The name also matches without `.wiki` and with s
 - **`search`** runs on the separate `almsearch.dev.azure.com` host and returns page paths that
   `wiki get` accepts directly.
 
+## Comments
+
+```bash
+tools azure-devops comment list 12345                       # newest first; --format json for the raw objects
+tools azure-devops comment add 12345 --file note.md         # markdown by default
+tools azure-devops comment add 12345 --text "Short note"    # or inline; --file - reads stdin
+tools azure-devops comment edit 12345 678 --file note.md    # replace the text of comment 678
+tools azure-devops comment delete 12345 678
+```
+
+Comments are sent as **markdown** (Comments API `7.1-preview.4`, `format=markdown`), so bold, lists,
+code spans and `[text](url)` links render in the web UI. Pass `--html` for HTML. The command adds
+no mention by itself; existing markdown comments carry mentions as `@<identity-guid>`.
+The work item accepts a URL as well as an id.
+
 ## CLI Usage
 
 ### Basic Examples

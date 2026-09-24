@@ -116,7 +116,16 @@ export function extractWorkItemIds(input: string): number[] {
         if (!match) {
             throw new Error(`Invalid work item URL/ID: ${part}`);
         }
-        ids.push(parseInt(match[1], 10));
+
+        // `0` names no work item, and past 2^53 the digits round to a DIFFERENT id, which a
+        // comment add/edit/delete would then change. Refuse both instead of guessing.
+        const id = Number(match[1]);
+
+        if (!Number.isSafeInteger(id) || id < 1) {
+            throw new Error(`Invalid work item ID: ${match[1]} (expected a positive whole number up to 2^53-1)`);
+        }
+
+        ids.push(id);
     }
 
     return ids;

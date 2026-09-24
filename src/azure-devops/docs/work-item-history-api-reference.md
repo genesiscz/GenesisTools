@@ -382,6 +382,9 @@ GET https://dev.azure.com/{organization}/{project}/_apis/wit/workItems/{workItem
 
 #### Response Structure
 
+The comment's id field is `id`. Microsoft's sample response spells it `commentId`, but the `Comment`
+definition on the same page and the live service both use `id`.
+
 ```json
 {
   "totalCount": 5,
@@ -389,7 +392,7 @@ GET https://dev.azure.com/{organization}/{project}/_apis/wit/workItems/{workItem
   "comments": [
     {
       "workItemId": 299,
-      "commentId": 42,
+      "id": 42,
       "version": 1,
       "text": "Moving to the right area path",
       "renderedText": "<p>Moving to the right area path</p>",

@@ -1,6 +1,7 @@
 // Commands barrel file - exports all command registration functions
 // Each command module exports a function that registers its commands on the program
 
+export { registerCommentCommand } from "./comment";
 export { registerConfigureCommand } from "./configure";
 export { registerDashboardCommand } from "./dashboard";
 export { registerQueryCommand } from "./query";

@@ -6,6 +6,7 @@
  */
 
 import type {
+    CommentFormat,
     CommentsResponse,
     Dashboard,
     DashboardDetailResponse,
@@ -25,6 +26,8 @@ import type {
     WikiRecursionLevel,
     WikiSearchResponse,
     WikiV2,
+    WorkItemCommentApi,
+    WorkItemCommentsApiResponse,
 } from "@app/azure-devops/api.types";
 import { loadTeamMembersCache, saveTeamMembersCache } from "@app/azure-devops/cache";
 import { AzAuthError, extractAzLoginSuggestion } from "@app/azure-devops/cli.utils";
@@ -57,6 +60,34 @@ export const AZURE_DEVOPS_RESOURCE_ID = "499b84ac-1321-427f-aa17-267ca6975798";
 
 // Re-export Dashboard for backwards compatibility
 export type { Dashboard };
+
+/**
+ * Every item of a continuation-token listing, page after page. Stops when a page carries no token,
+ * or a token that was already requested, so a server that cycles (`a → b → a`) cannot loop forever.
+ */
+export async function collectPages<T>(
+    fetchPage: (continuationToken: string | undefined) => Promise<{ items: T[]; next?: string }>
+): Promise<T[]> {
+    const items: T[] = [];
+    const seen = new Set<string>();
+    let token: string | undefined;
+
+    for (;;) {
+        const page = await fetchPage(token);
+        items.push(...page.items);
+
+        if (!page.next || seen.has(page.next)) {
+            if (page.next) {
+                logger.warn(`[api] continuation token repeated after ${seen.size} page(s); stopping pagination`);
+            }
+
+            return items;
+        }
+
+        seen.add(page.next);
+        token = page.next;
+    }
+}
 
 /**
  * Api class for Azure DevOps interactions
@@ -249,6 +280,16 @@ export class Api {
         url: string,
         options: { body?: unknown; contentType?: string; description?: string } = {}
     ): Promise<T> {
+        const response = await this.send(method, url, options);
+
+        return response.json();
+    }
+
+    private async send(
+        method: "GET" | "POST" | "PUT" | "DELETE" | "PATCH",
+        url: string,
+        options: { body?: unknown; contentType?: string; description?: string } = {}
+    ): Promise<Response> {
         const { body, contentType = "application/json", description } = options;
         const shortUrl = url.replace(this.config.org, "").slice(0, 80);
 
@@ -283,7 +324,7 @@ export class Api {
             throw new Error(`API Error ${response.status}: ${errorText}`);
         }
 
-        return response.json();
+        return response;
     }
 
     /**
@@ -524,6 +565,73 @@ export class Api {
         }
 
         return result;
+    }
+
+    private static commentsUrl(
+        config: AzureConfig,
+        workItemId: number,
+        { commentId, format }: { commentId?: number; format?: CommentFormat } = {}
+    ): string {
+        const segments = ["workItems", String(workItemId), "comments"];
+
+        if (commentId !== undefined) {
+            segments.push(String(commentId));
+        }
+
+        return Api.witUrlPreview(config, segments, { format }, "7.1-preview.4");
+    }
+
+    /**
+     * Every comment of one work item, newest first. A page holds at most 200, so the
+     * `continuationToken` is followed to the end. Errors propagate, unlike the bulk fetch.
+     */
+    async getComments(workItemId: number): Promise<WorkItemCommentApi[]> {
+        return collectPages(async (continuationToken) => {
+            const url = Api.witUrlPreview(
+                this.config,
+                ["workItems", String(workItemId), "comments"],
+                { $top: "200", order: "desc", continuationToken },
+                "7.1-preview.4"
+            );
+            const data = await this.get<WorkItemCommentsApiResponse>(url, `comments #${workItemId}`);
+
+            return { items: data.comments ?? [], next: data.continuationToken };
+        });
+    }
+
+    async addComment({
+        workItemId,
+        text,
+        format,
+    }: {
+        workItemId: number;
+        text: string;
+        format: CommentFormat;
+    }): Promise<WorkItemCommentApi> {
+        const url = Api.commentsUrl(this.config, workItemId, { format });
+
+        return this.post<WorkItemCommentApi>(url, { text }, "application/json", `add comment #${workItemId}`);
+    }
+
+    async updateComment({
+        workItemId,
+        commentId,
+        text,
+        format,
+    }: {
+        workItemId: number;
+        commentId: number;
+        text: string;
+        format: CommentFormat;
+    }): Promise<WorkItemCommentApi> {
+        const url = Api.commentsUrl(this.config, workItemId, { commentId, format });
+
+        return this.patch<WorkItemCommentApi>(url, { text }, "application/json", `edit comment ${commentId}`);
+    }
+
+    async deleteComment({ workItemId, commentId }: { workItemId: number; commentId: number }): Promise<void> {
+        const url = Api.commentsUrl(this.config, workItemId, { commentId });
+        await this.send("DELETE", url, { description: `delete comment ${commentId}` });
     }
 
     private async fetchComments(ids: number[]): Promise<Map<number, Comment[]>> {
