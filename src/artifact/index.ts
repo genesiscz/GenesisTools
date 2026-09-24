@@ -15,6 +15,7 @@ import pc from "picocolors";
 import { buildSingleFile, embedScopeFor, resolveEntry, watchAndRebuild } from "./lib/build";
 import { filterKitDts, kitApiDts, writeEditorTsconfig } from "./lib/kit-types";
 import { startLibrary } from "./lib/library";
+import { openArtifact } from "./lib/open";
 import { addEntry, loadRegistry, removeEntry, resolveTarget } from "./lib/registry";
 import { findRunning, holdServer, isSignalable, listRunning, removeRunning } from "./lib/running";
 import { serveArtifacts } from "./lib/serve";
@@ -208,6 +209,22 @@ program
         }
 
         out.println(table.toString());
+    });
+
+program
+    .command("open")
+    .description("Open an artifact in the browser, starting its server first when none is running")
+    .argument("<target>", "registered name, directory, or a single artifact file")
+    .argument("[page]", "page inside the artifact, e.g. report or data/view (default: the catalog)")
+    .option("--timeout <seconds>", "how long to wait for a starting server", "20")
+    .action(async (target: string, page: string | undefined, opts: { timeout: string }) => {
+        try {
+            const result = await openArtifact({ target, path: page, timeoutMs: Number(opts.timeout) * 1000 });
+            out.log.success(`${result.started ? "Started and opened" : "Opened"} ${result.url}`);
+        } catch (error) {
+            out.log.error(error instanceof Error ? error.message : String(error));
+            process.exitCode = 1;
+        }
     });
 
 program

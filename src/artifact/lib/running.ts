@@ -123,11 +123,10 @@ export async function removeRunning(pid: number): Promise<void> {
  * already computed, so a caller deciding whether to signal does not re-probe.
  */
 export function findRunning(target: string): RunningMatch | undefined {
-    const port = Number.parseInt(target, 10);
+    // Only an all-digit target is a port: `parseInt("3100-report")` is 3100 and would match another server.
+    const port = /^\d+$/.test(target) ? Number(target) : undefined;
 
-    return liveRecords().find(
-        ({ server: s }) => s.name === target || s.dir === target || (Number.isInteger(port) && s.port === port)
-    );
+    return liveRecords().find(({ server: s }) => s.name === target || s.dir === target || s.port === port);
 }
 
 export interface HoldServerOptions {

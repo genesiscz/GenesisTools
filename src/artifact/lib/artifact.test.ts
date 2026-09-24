@@ -36,6 +36,7 @@ import {
     scanArtifacts,
 } from "./catalog";
 import { renderMarkdown } from "./markdown";
+import { type OpenArtifactDeps, openArtifact, pageUrl, runningArtifactPort } from "./open";
 import { mdPageExtras } from "./page-extras";
 import { addEntry, loadRegistry, removeEntry, resolveTarget } from "./registry";
 import { findRunning, holdServer, isSignalable, listRunning, recordRunning, removeRunning } from "./running";
@@ -772,5 +773,131 @@ describe("build helpers", () => {
 
         const page = injectShim("<html><head><title>t</title></head></html>", "<script>s</script>");
         expect(page.indexOf("<script>s</script>")).toBeLessThan(page.indexOf("<title>"));
+    });
+});
+
+describe("openArtifact", () => {
+    function fakeDeps(overrides: Partial<OpenArtifactDeps>): OpenArtifactDeps & { opened: string[] } {
+        const opened: string[] = [];
+        let clock = 0;
+
+        return {
+            opened,
+            findPort: () => undefined,
+            startServer: () => {
+                throw new Error("startServer must not be reached");
+            },
+            answers: async () => true,
+            open: async (url) => {
+                opened.push(url);
+            },
+            sleep: async (ms) => {
+                clock += ms;
+            },
+            now: () => clock,
+            ...overrides,
+        };
+    }
+
+    test("a running server is opened at the page, and nothing is started", async () => {
+        const deps = fakeDeps({ findPort: () => 3099 });
+        const result = await openArtifact({ target: "demo", path: "/report", deps });
+
+        expect(result).toEqual({ url: "http://127.0.0.1:3099/report", started: false });
+        expect(deps.opened).toEqual(["http://127.0.0.1:3099/report"]);
+    });
+
+    test("a stopped artifact is started once, then opened when its port answers", async () => {
+        let starts = 0;
+        let lookups = 0;
+        const deps = fakeDeps({
+            startServer: () => {
+                starts += 1;
+            },
+            findPort: () => {
+                lookups += 1;
+                return lookups >= 3 ? 3100 : undefined;
+            },
+        });
+        const result = await openArtifact({ target: "demo", deps });
+
+        expect(starts).toBe(1);
+        expect(result).toEqual({ url: "http://127.0.0.1:3100/", started: true });
+        expect(deps.opened).toEqual(["http://127.0.0.1:3100/"]);
+    });
+
+    test("two opens at once start one server under the lock, and two without it", async () => {
+        function race(locked: boolean) {
+            let starts = 0;
+            let port: number | undefined;
+            let queue: Promise<unknown> = Promise.resolve();
+            const deps = fakeDeps({
+                startServer: () => {
+                    starts += 1;
+                },
+                findPort: () => port,
+                // The server registers a moment after it starts, as `serve` does once it listens.
+                sleep: async () => {
+                    await Promise.resolve();
+
+                    if (starts > 0) {
+                        port = 3200;
+                    }
+                },
+                ...(locked
+                    ? {
+                          singleFlight: <T>({ run }: { run: () => Promise<T> }): Promise<T> => {
+                              const result = queue.then(run);
+                              queue = result.catch(() => undefined);
+                              return result;
+                          },
+                      }
+                    : {}),
+            });
+
+            return Promise.all([openArtifact({ target: "demo", deps }), openArtifact({ target: "demo", deps })]).then(
+                (results) => ({ starts, started: results.map((result) => result.started) })
+            );
+        }
+
+        expect(await race(true)).toEqual({ starts: 1, started: [true, false] });
+        expect((await race(false)).starts).toBe(2);
+    });
+
+    test("a server that never answers fails at the deadline and opens nothing", async () => {
+        const deps = fakeDeps({ findPort: () => 3101, answers: async () => false });
+
+        await expect(openArtifact({ target: "demo", timeoutMs: 1000, deps })).rejects.toThrow("did not answer");
+        expect(deps.opened).toEqual([]);
+    });
+
+    test("a non-finite or negative timeout is refused before anything starts", async () => {
+        for (const timeoutMs of [Number.POSITIVE_INFINITY, Number.NaN, -1000]) {
+            const deps = fakeDeps({ findPort: () => 3102 });
+
+            await expect(openArtifact({ target: "demo", timeoutMs, deps })).rejects.toThrow("timeout must be");
+            expect(deps.opened).toEqual([]);
+        }
+    });
+
+    test("the running server is found by its resolved directory, never by a port-like name", async () => {
+        const other = realpathSync(mkdtempSync(join(tmpdir(), "artifact-open-")));
+        addEntry({ dir: other, name: "3100-report" });
+        await recordRunning({ pid: process.pid, port: 3100, dir, name: "alpha", startedAt: new Date().toISOString() });
+
+        try {
+            expect(runningArtifactPort(dir)).toBe(3100);
+            expect(runningArtifactPort(join(dir, "report.html"))).toBe(3100);
+            expect(runningArtifactPort("3100-report")).toBeUndefined();
+        } finally {
+            await removeRunning(process.pid);
+            removeEntry("3100-report");
+            rmSync(other, { recursive: true, force: true });
+        }
+    });
+
+    test("pageUrl drops leading slashes", () => {
+        expect(pageUrl(3076, "//a/b")).toBe("http://127.0.0.1:3076/a/b");
+        expect(pageUrl(3076)).toBe("http://127.0.0.1:3076/");
     });
 });
