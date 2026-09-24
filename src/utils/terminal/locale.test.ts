@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { env } from "@genesiscz/utils/env";
-import { buildTerminalSpawnEnv, resolveUtf8Locale } from "@genesiscz/utils/terminal/locale";
+import { buildTerminalSpawnEnv, resolveUtf8Locale, stripTestSandboxEnv } from "@genesiscz/utils/terminal/locale";
 
 describe("terminal locale", () => {
     test("resolveUtf8Locale keeps an existing UTF-8 LANG", () => {
@@ -62,5 +62,82 @@ describe("terminal locale", () => {
 
         expect(env.COLORTERM).toBe("24bit");
         expect(env.CLAUDE_CODE_TMUX_TRUECOLOR).toBe("0");
+    });
+
+    test("buildTerminalSpawnEnv drops a test sandbox home from the child env", () => {
+        const spawned = buildTerminalSpawnEnv({
+            PATH: "/bin",
+            GENESIS_TOOLS_HOME: "/tmp/gt-test-tmp-abc/gt-test-home-xyz",
+            GENESIS_TEST_TMP_ROOT: "/tmp/gt-test-tmp-abc",
+            TMPDIR: "/tmp/gt-test-tmp-abc",
+            NODE_ENV: "test",
+        });
+
+        expect(spawned.GENESIS_TOOLS_HOME).toBeUndefined();
+        expect(spawned.GENESIS_TEST_TMP_ROOT).toBeUndefined();
+        expect(spawned.TMPDIR).toBeUndefined();
+        expect(spawned.NODE_ENV).toBeUndefined();
+        expect(spawned.PATH).toBe("/bin");
+    });
+
+    test("buildTerminalSpawnEnv keeps a real TMPDIR and a non-test NODE_ENV", () => {
+        const spawned = buildTerminalSpawnEnv({
+            PATH: "/bin",
+            TMPDIR: "/var/folders/6w/T/",
+            NODE_ENV: "development",
+        });
+
+        expect(spawned.TMPDIR).toBe("/var/folders/6w/T/");
+        expect(spawned.NODE_ENV).toBe("development");
+    });
+
+    test("stripTestSandboxEnv keeps a GENESIS_TOOLS_HOME that no test set", () => {
+        expect(stripTestSandboxEnv({ GENESIS_TOOLS_HOME: "/work/sandbox" }).GENESIS_TOOLS_HOME).toBe("/work/sandbox");
+    });
+
+    test("stripTestSandboxEnv still drops a test home recognised by its name alone", () => {
+        // A tmux server founded by an older suite carries the home but no temp-root marker.
+        expect(
+            stripTestSandboxEnv({ GENESIS_TOOLS_HOME: "/tmp/gt-test-home-a1b2" }).GENESIS_TOOLS_HOME
+        ).toBeUndefined();
+    });
+
+    test("stripTestSandboxEnv leaves a TMPDIR outside the sandbox root alone", () => {
+        const stripped = stripTestSandboxEnv({
+            GENESIS_TEST_TMP_ROOT: "/tmp/gt-test-tmp-abc",
+            TMPDIR: "/var/folders/6w/T/",
+        });
+
+        expect(stripped.TMPDIR).toBe("/var/folders/6w/T/");
+        expect(stripped.GENESIS_TEST_TMP_ROOT).toBeUndefined();
+    });
+
+    test("stripTestSandboxEnv leaves a SIBLING of the sandbox root alone", () => {
+        // A bare `startsWith` also matches this path, and deleting its TMPDIR would break a
+        // sandbox that never belonged to this run.
+        const stripped = stripTestSandboxEnv({
+            GENESIS_TEST_TMP_ROOT: "/tmp/gt-test-tmp-abc",
+            TMPDIR: "/tmp/gt-test-tmp-abc-user",
+        });
+
+        expect(stripped.TMPDIR).toBe("/tmp/gt-test-tmp-abc-user");
+    });
+
+    test("stripTestSandboxEnv still removes a TMPDIR nested inside the sandbox root", () => {
+        const stripped = stripTestSandboxEnv({
+            GENESIS_TEST_TMP_ROOT: "/tmp/gt-test-tmp-abc",
+            TMPDIR: "/tmp/gt-test-tmp-abc/nested/deeper",
+        });
+
+        expect(stripped.TMPDIR).toBeUndefined();
+    });
+
+    test("stripTestSandboxEnv tolerates a trailing separator on either side", () => {
+        const stripped = stripTestSandboxEnv({
+            GENESIS_TEST_TMP_ROOT: "/tmp/gt-test-tmp-abc/",
+            TMPDIR: "/tmp/gt-test-tmp-abc",
+        });
+
+        expect(stripped.TMPDIR).toBeUndefined();
     });
 });

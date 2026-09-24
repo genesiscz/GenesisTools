@@ -1,4 +1,5 @@
 import { execSync } from "node:child_process";
+import { basename, sep } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
 import { shellQuote } from "@genesiscz/utils/shell/quote";
@@ -62,6 +63,63 @@ export function resolveUtf8Locale(): string {
     return "en_US.UTF-8";
 }
 
+/**
+ * Test-sandbox markers. A `bun test` run redirects the whole tool home with
+ * `GENESIS_TOOLS_HOME` (plus a private `TMPDIR` under `GENESIS_TEST_TMP_ROOT`),
+ * so any terminal that inherits them reads an EMPTY, throwaway `~/.genesis-tools`
+ * and reports every account, token and config as missing. Observed 2026-09-18:
+ * a suite run on 2026-09-14 started the shared tmux server, tmux captured that
+ * sandbox env globally, and four days of dashboard terminals inherited it —
+ * `tools cc run <account>` answered "No accounts with a long-lived token" while
+ * the real vault was intact, and `tools dev-dashboard ui restart` stopped the
+ * live agent using a state file inside the deleted sandbox.
+ */
+export const TEST_SANDBOX_ENV_KEYS = ["GENESIS_TOOLS_HOME", "GENESIS_TEST_TMP_ROOT"] as const;
+
+/** Remove the sandbox redirect IN PLACE so a spawned terminal sees the real home. */
+export function stripTestSandboxEnv(target: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+    const tmpRoot = target.GENESIS_TEST_TMP_ROOT;
+    const home = target.GENESIS_TOOLS_HOME;
+    // Only a TEST run's home goes. A `GENESIS_TOOLS_HOME` set on purpose (a sandboxed root a
+    // worktree build or a dev dashboard runs under) was stripped too, so every terminal it spawned
+    // read and wrote the real config and vault. A test run is recognised by its markers: the
+    // test temp root, `NODE_ENV=test`, or the `gt-test-home-*` name the sandbox preload gives it.
+    const isTestRun =
+        Boolean(tmpRoot) ||
+        target.NODE_ENV === "test" ||
+        (home !== undefined && basename(home).startsWith("gt-test-home-"));
+
+    if (isTestRun) {
+        for (const key of TEST_SANDBOX_ENV_KEYS) {
+            delete target[key];
+        }
+    }
+
+    // Declared here rather than at module scope so the rule sits beside its only caller.
+    const isInside = (candidate: string, root: string): boolean => {
+        const normalised = candidate.endsWith(sep) ? candidate.slice(0, -1) : candidate;
+        const base = root.endsWith(sep) ? root.slice(0, -1) : root;
+
+        return normalised === base || normalised.startsWith(`${base}${sep}`);
+    };
+
+    // NODE_ENV/TMPDIR are legitimate variables in general, so only the test
+    // values go: "test", and a TMPDIR that lives inside the sandbox root (which
+    // is deleted when the suite ends, breaking every later mkdtemp in the pane).
+    if (target.NODE_ENV === "test") {
+        delete target.NODE_ENV;
+    }
+
+    // A prefix test alone also matches a SIBLING: `/tmp/gt-test-abc-user` starts with
+    // `/tmp/gt-test-abc` without being inside it, and deleting its TMPDIR breaks a sandbox
+    // that was never ours. The path must be the root itself or sit under a separator.
+    if (tmpRoot && target.TMPDIR && isInside(target.TMPDIR, tmpRoot)) {
+        delete target.TMPDIR;
+    }
+
+    return target;
+}
+
 export function buildTerminalSpawnEnv(base: NodeJS.ProcessEnv = env.getProcessEnv()): NodeJS.ProcessEnv {
     const locale = resolveUtf8Locale();
 
@@ -76,7 +134,7 @@ export function buildTerminalSpawnEnv(base: NodeJS.ProcessEnv = env.getProcessEn
     // overlay positives below. Strips intentionally include FORCE_COLOR/CLICOLOR_FORCE
     // even though we re-set them — the parent's value may be "0", and a later spread
     // would otherwise resurrect it.
-    const childEnv: NodeJS.ProcessEnv = { ...base };
+    const childEnv: NodeJS.ProcessEnv = stripTestSandboxEnv({ ...base });
     delete childEnv.NO_COLOR;
     delete childEnv.FORCE_COLOR;
     delete childEnv.CLICOLOR_FORCE;
