@@ -1,5 +1,5 @@
 import { execSync } from "node:child_process";
-import { basename, sep } from "node:path";
+import { basename, isAbsolute, relative, resolve, sep } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
 import { shellQuote } from "@genesiscz/utils/shell/quote";
@@ -95,12 +95,14 @@ export function stripTestSandboxEnv(target: NodeJS.ProcessEnv): NodeJS.ProcessEn
         }
     }
 
-    // Declared here rather than at module scope so the rule sits beside its only caller.
+    // Declared here rather than at module scope so the rule sits beside its only caller. Both
+    // paths are resolved first: a raw string compare let `root/../root-user` pass as inside,
+    // and on Windows a `/`-separated TMPDIR never matched the `\` separator at all.
+    // Only a whole `..` segment leaves the root: a child named `..cache` is still inside it.
     const isInside = (candidate: string, root: string): boolean => {
-        const normalised = candidate.endsWith(sep) ? candidate.slice(0, -1) : candidate;
-        const base = root.endsWith(sep) ? root.slice(0, -1) : root;
+        const rel = relative(resolve(root), resolve(candidate));
 
-        return normalised === base || normalised.startsWith(`${base}${sep}`);
+        return rel === "" || (rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel));
     };
 
     // NODE_ENV/TMPDIR are legitimate variables in general, so only the test

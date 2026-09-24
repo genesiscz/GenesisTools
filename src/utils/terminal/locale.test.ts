@@ -123,6 +123,24 @@ describe("terminal locale", () => {
         expect(stripped.TMPDIR).toBe("/tmp/gt-test-tmp-abc-user");
     });
 
+    test("stripTestSandboxEnv leaves a dot-segment path that resolves to a sibling alone", () => {
+        const stripped = stripTestSandboxEnv({
+            GENESIS_TEST_TMP_ROOT: "/tmp/gt-test-tmp-abc",
+            TMPDIR: "/tmp/gt-test-tmp-abc/../gt-test-tmp-abc-user",
+        });
+
+        expect(stripped.TMPDIR).toBe("/tmp/gt-test-tmp-abc/../gt-test-tmp-abc-user");
+    });
+
+    test("stripTestSandboxEnv removes a TMPDIR in a child of the sandbox whose name starts with two dots", () => {
+        const stripped = stripTestSandboxEnv({
+            GENESIS_TEST_TMP_ROOT: "/tmp/gt-test-tmp-abc",
+            TMPDIR: "/tmp/gt-test-tmp-abc/..cache",
+        });
+
+        expect(stripped.TMPDIR).toBeUndefined();
+    });
+
     test("stripTestSandboxEnv still removes a TMPDIR nested inside the sandbox root", () => {
         const stripped = stripTestSandboxEnv({
             GENESIS_TEST_TMP_ROOT: "/tmp/gt-test-tmp-abc",
