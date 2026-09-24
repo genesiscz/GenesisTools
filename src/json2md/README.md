@@ -3,7 +3,7 @@
 > **Render JSON as Markdown: tables, lists, sections, callouts, details and mermaid.**
 
 `src/json2md/` is a thin CLI. Everything that renders lives in `@genesiscz/utils/json2md`
-(`src/utils/json2md/`), so a sibling repo and any other consumer wrap the same core without going
+(`src/utils/json2md/`), so a downstream repo and any other consumer wrap the same core without going
 through a CLI.
 
 ---
@@ -95,6 +95,31 @@ tools json2md check ./reports/ConversionRegistry.ts
 `build` is idempotent: it rebuilds at the file's own recorded timestamp first, so an unchanged
 document keeps its original generated-at and never appears as a spurious diff.
 
+### 🛑 Outside this repo, run `tools link install` once
+
+The generated module always carries `@genesiscz/utils/json2md/document-file`, wherever it
+lands. That resolves inside this repo already; anywhere else it needs one command per machine:
+
+```bash
+tools link install     # one tsconfig under your home directory
+tools link status      # check it
+```
+
+`init` detects a root where the package does not resolve and stops with that command rather
+than scaffolding a module whose first build would fail. It distinguishes the two causes and
+prints the matching fix, because a home-directory install cannot reach a shadowed folder.
+
+🛑 **If it still does not resolve, a nearer `tsconfig.json` is hiding the mapping.** Bun reads
+only the nearest one, so a folder that grew its own small project cuts off every document
+beneath it. `tools link status` names the offending file and prints the install scoped to that project.
+
+
+Bun resolves a bare specifier from the importing file's folder, so nothing this tool does at
+call time can fix it, and `bun doc.ts` fails the same way. The fix is one `tsconfig.json`
+carrying a `paths` mapping at an ancestor directory: Bun reads the **nearest** tsconfig above
+the importing file and applies it before any `node_modules` walk. A project with its own
+tsconfig is therefore unaffected. Full detail in `tools link --readme`.
+
 ### Hand-edit detection
 
 Every generated file ends with a stamp recording the hash of the body **as the generator wrote
@@ -160,8 +185,8 @@ renderGroupedTables(rows, { columns: columns.columns, group: { by: "owner", show
 
 `Json2mdError` carries a `code`: `UNKNOWN_BLOCK`, `MULTI_KEY_BLOCK`, `NO_COLUMNS`,
 `UNKNOWN_COLUMN`, `UNCOVERED_KEYS`, `MAX_DEPTH_EXCEEDED`, `CYCLIC_REFERENCE`, `INVALID_OPTION`,
-`SELECT_FAILED`, `NO_DOCUMENT_EXPORT`, `DATA_NOT_FOUND`. Branch on the code, never on the
-message text.
+`SELECT_FAILED`, `NO_DOCUMENT_EXPORT`, `DATA_NOT_FOUND`, `INVALID_DEFINITION` (a `defineDocument`
+field of the wrong shape). Branch on the code, never on the message text.
 
 ---
 

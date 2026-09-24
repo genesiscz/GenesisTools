@@ -1,4 +1,5 @@
-import { basename, dirname, isAbsolute, relative, resolve } from "node:path";
+import { homedir } from "node:os";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { suggestCommand } from "@genesiscz/utils/cli";
 import { SafeJSON } from "@genesiscz/utils/json";
 import {
@@ -9,6 +10,7 @@ import {
 } from "@genesiscz/utils/json2md/document-file";
 import { type CheckResult, stripStamp, type Verdict } from "@genesiscz/utils/json2md/integrity";
 import { logger, out } from "@genesiscz/utils/logger";
+import { nearestConfigFor, PACKAGE_NAME, packageResolvesFrom, shadowedByFor } from "@genesiscz/utils/package-link";
 import { createBoxTable, formatDotStatus, renderCliHeader } from "@genesiscz/utils/table";
 import type { Command } from "commander";
 import pc from "picocolors";
@@ -124,28 +126,15 @@ const JSON_SAMPLE = {
 const PACKAGE_SPECIFIER = "@genesiscz/utils/json2md/document-file";
 
 /**
- * The import the scaffolded module should use for `defineDocument`.
+ * The scaffolded module ALWAYS carries the package specifier, wherever it lands.
  *
- * Inside a repo that maps `@genesiscz/utils` (GenesisTools itself, or a sibling repo with the
- * vendored copy) the package specifier is right. Anywhere else it would not resolve, so the
- * template falls back to an absolute path and the generated document still runs.
+ * An earlier version wrote an absolute path when the package did not resolve. That produced a
+ * module that ran on exactly one machine and committed a home directory into whatever repo
+ * the document lived in. The portable import plus a one-time `tools link install` is the
+ * better trade: the file is the same everywhere, and the setup is visible and reversible.
  */
-function documentFileSpecifier(moduleDir: string): string {
-    try {
-        Bun.resolveSync(PACKAGE_SPECIFIER, moduleDir);
-
-        return PACKAGE_SPECIFIER;
-    } catch (error) {
-        logger.debug({ moduleDir, error }, "json2md: package specifier does not resolve, using a relative import");
-
-        // An absolute path, not a relative one. On macOS `/tmp` is a symlink to `/private/tmp`,
-        // so a path computed relative to `/tmp/x` resolves from `/private/tmp/x` and misses.
-        return resolve(import.meta.dir, "../../utils/json2md/document-file.ts");
-    }
-}
-
-function template(input: { data: string; title: string; moduleName: string; specifier: string }): string {
-    return `import { defineDocument } from ${SafeJSON.stringify(input.specifier)};
+function template(input: { data: string; title: string; moduleName: string }): string {
+    return `import { defineDocument } from ${SafeJSON.stringify(PACKAGE_SPECIFIER)};
 
 /**
  * Generated document. Three files work together:
@@ -355,6 +344,10 @@ function registerInit(program: Command): void {
                 return;
             }
 
+            // Whether the data is OURS decides which template can be written. The rich sample
+            // template names `summary.total` and `items`, which only exist in the sample we
+            // write: pointed at real data with `--data`, it scaffolded a module that threw
+            // `undefined is not an object` on its very first build.
             if (!(await Bun.file(dataPath).exists())) {
                 await Bun.write(dataPath, `${SafeJSON.stringify(JSON_SAMPLE, null, 4)}\n`);
                 out.log.success(`Created ${short(dataPath)} with sample data.`);
@@ -363,16 +356,63 @@ function registerInit(program: Command): void {
             const relativeData = relative(dirname(modulePath), dataPath).replace(/\\/g, "/");
             const dataSpecifier = relativeData.startsWith(".") ? relativeData : `./${relativeData}`;
 
-            await Bun.write(
-                modulePath,
-                template({
-                    data: dataSpecifier,
-                    title,
-                    moduleName: basename(modulePath),
-                    specifier: documentFileSpecifier(dirname(modulePath)),
-                })
-            );
+            await Bun.write(modulePath, template({ data: dataSpecifier, title, moduleName: basename(modulePath) }));
             out.log.success(`Created ${short(modulePath)}.`);
+
+            // 🛑 Stop before the first build rather than after it. The module is correct and
+            // portable, but nothing under this directory can resolve the package yet, so the
+            // build would fail with a resolution error that reads like a bug in the document.
+            if (!packageResolvesFrom(dirname(modulePath))) {
+                out.log.warn(`${PACKAGE_NAME} does not resolve from ${short(dirname(modulePath))} yet.`);
+
+                // 🛑 Two different causes, two different fixes. A home-directory install cannot
+                // reach a folder whose own tsconfig shadows it, so suggesting one there sends
+                // the user to a command that will report success and change nothing.
+                const moduleDir = dirname(modulePath);
+                const within = (root: string, path: string): boolean => {
+                    const rel = relative(root, path);
+
+                    return rel === "" || (rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel));
+                };
+                const underHome = within(homedir(), moduleDir);
+                // `shadowedByFor` only sees a mapping that ALREADY exists above a nearer config. On a
+                // first setup nothing carries one yet, but a project tsconfig between the module and
+                // home still hides the future `~/tsconfig.json`. A config above home does not.
+                const nearest = nearestConfigFor(moduleDir);
+                const projectConfig =
+                    nearest !== null &&
+                    nearest !== join(homedir(), "tsconfig.json") &&
+                    (!underHome || within(homedir(), dirname(nearest)))
+                        ? nearest
+                        : null;
+                const shadowedBy = shadowedByFor(moduleDir) ?? projectConfig;
+
+                if (shadowedBy === null && underHome) {
+                    out.log.info("One command fixes it for every file under your home directory:");
+                    out.log.info(suggestCommand("tools link", { replaceCommand: ["install"] }));
+                } else if (shadowedBy === null) {
+                    // The home install writes `~/tsconfig.json`, which Bun never reads for a file
+                    // outside home, so suggesting it here reported success and changed nothing.
+                    out.log.info(`${moduleDir} is outside your home directory. Map it directly:`);
+                    out.log.info(suggestCommand("tools link", { replaceCommand: ["install", "--root", moduleDir] }));
+                } else {
+                    // Absolute, not `short()`: this names a place the user has to go and act
+                    // on, and a cwd-relative form renders it as `../../..`, which tells them
+                    // nothing. The same reasoning governs every path `tools link` prints.
+                    out.log.info(`${shadowedBy} is nearer, and Bun reads only the nearest tsconfig.`);
+                    out.log.info("So it hides any mapping above it. Install into that project instead:");
+                    out.log.info(
+                        suggestCommand("tools link", {
+                            replaceCommand: ["install", "--root", dirname(shadowedBy)],
+                        })
+                    );
+                }
+
+                out.log.info(`Then: tools json2md build ${short(modulePath)}`);
+                process.exitCode = 1;
+
+                return;
+            }
 
             const definition = await loadDocumentModule(modulePath);
             const result = await writeDocument(modulePath, definition);

@@ -48,7 +48,39 @@ export type DefinedDocument<T = unknown> = DocumentDefinition<T> & { [MARKER]: t
  * ```
  */
 export function defineDocument<T = unknown>(definition: DocumentDefinition<T>): DefinedDocument<T> {
+    // 🛑 A document module is loaded by dynamic import, so TypeScript never sees it: nothing
+    // typechecks the object below at the moment it matters. Validating here rather than in
+    // `buildDocument` means `bun Doc.ts` reports the mistake too, not only the CLI.
+    if (typeof definition.data !== "string" || definition.data.trim() === "") {
+        throw new Json2mdError(
+            "INVALID_DEFINITION",
+            `\`data\` must be a path to the JSON file, for example "./Report.json". Got ${describe(definition.data)}.`,
+            { pointer: "/data" }
+        );
+    }
+
+    if (typeof definition.render !== "function") {
+        throw new Json2mdError(
+            "INVALID_DEFINITION",
+            `\`render\` must be a function taking the parsed data and returning blocks. Got ${describe(definition.render)}.`,
+            { pointer: "/render" }
+        );
+    }
+
     return { ...definition, [MARKER]: true };
+}
+
+/** Names what the caller actually passed, so the message points at their mistake. */
+function describe(value: unknown): string {
+    if (Array.isArray(value)) {
+        return "an array — pass the path to the file that holds it, not the data itself";
+    }
+
+    if (value === undefined) {
+        return "nothing";
+    }
+
+    return `a ${typeof value}`;
 }
 
 export function isDefinedDocument(value: unknown): value is DefinedDocument {
@@ -150,7 +182,14 @@ export async function buildDocument<T>(
         return { markdown: body, body, outPath, dataPath, sourceHash, data };
     }
 
-    const command = definition.command ?? `tools json2md build ${relative(process.cwd(), modulePath) || modulePath}`;
+    // 🛑 The recorded command must not depend on where the generator happened to be run from.
+    // A `relative(process.cwd(), …)` path is written into a DURABLE file that another person,
+    // in another directory, is meant to be able to run: building a vault note from the repo
+    // recorded `tools json2md build ../../../../../…`, which works from exactly one place.
+    // A path inside the current directory stays short; anything outside it goes in absolute.
+    const fromCwd = relative(process.cwd(), modulePath);
+    const portable = fromCwd !== "" && !fromCwd.startsWith("..") && !isAbsolute(fromCwd) ? fromCwd : modulePath;
+    const command = definition.command ?? `tools json2md build ${portable}`;
     const markdown = stampMarkdown(body, {
         source: sourceHash,
         generator: relative(dirname(outPath), modulePath) || modulePath,

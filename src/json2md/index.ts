@@ -4,7 +4,7 @@
  * `tools json2md` — JSON to Markdown.
  *
  * This file and everything under it is a thin door. All rendering logic lives in
- * `@genesiscz/utils/json2md`, so a sibling repo and any other consumer can wrap the same core
+ * `@genesiscz/utils/json2md`, so a downstream repo and any other consumer can wrap the same core
  * without going through a CLI.
  *
  *   tools json2md data.json                    render, shape chosen from the data

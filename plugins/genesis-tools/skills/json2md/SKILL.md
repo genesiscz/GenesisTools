@@ -55,6 +55,36 @@ tools json2md build ./reports/ConversionRegistry.ts
 tools json2md check ./reports/ConversionRegistry.ts
 ```
 
+### 🛑 Outside this repo, run `tools link install` once
+
+The import below is the same everywhere. It resolves inside GenesisTools already; anywhere else
+— an Obsidian vault, a notes folder, a scratch project — it needs one setup command, once per machine:
+
+```bash
+tools link install          # writes one tsconfig under your home directory
+tools link status           # check it, and whether the import actually resolves
+```
+
+That covers every folder under your home directory. A folder outside it (`/tmp`, `/Volumes/…`)
+never sees that file, so map it directly: `tools link install --root <folder>`.
+
+`tools json2md init` detects this and stops with the right command rather than scaffolding a
+module that cannot build. There are two causes and two different fixes, and it tells them apart.
+
+🛑 **If it still does not resolve, a nearer `tsconfig.json` is hiding the mapping.** Bun reads
+only the nearest one, so a folder that grew its own small project cuts off every document
+beneath it. `tools link status` names the offending file and prints the install scoped to that project.
+
+
+Why it is needed: Bun resolves a bare specifier from the **importing file's** folder, so nothing
+json2md does at call time can fix it, and `bun doc.ts` fails the same way. The fix is one
+`tsconfig.json` with a `paths` mapping at an ancestor directory, which Bun applies before any
+`node_modules` walk. Bun reads only the **nearest** tsconfig, so a project that has its own is
+never touched by it. See `tools link --readme`.
+
+⚠️ Do **not** hand-write an absolute path to `document-file.ts` instead. It works, and it
+commits a home directory into whatever repo the document lives in, so it runs on one machine.
+
 The `.ts` looks like this:
 
 ```ts
@@ -153,5 +183,5 @@ renderGroupedTables(rows, { columns: columns.columns, group: { by: "owner", show
 
 Every failure is a `Json2mdError` with a `code`: `UNKNOWN_BLOCK`, `MULTI_KEY_BLOCK`,
 `NO_COLUMNS`, `UNKNOWN_COLUMN`, `UNCOVERED_KEYS`, `MAX_DEPTH_EXCEEDED`, `CYCLIC_REFERENCE`,
-`INVALID_OPTION`, `SELECT_FAILED`, `NO_DOCUMENT_EXPORT`, `DATA_NOT_FOUND`. Branch on the code,
-never on the message text.
+`INVALID_OPTION`, `SELECT_FAILED`, `NO_DOCUMENT_EXPORT`, `DATA_NOT_FOUND`, `INVALID_DEFINITION`
+(a `defineDocument` field of the wrong shape). Branch on the code, never on the message text.

@@ -89,7 +89,7 @@ export function ratioLine(part: number, whole: number, unit?: string): string {
  * An ISO-shaped timestamp in local time, to the minute.
  *
  * ⚠️ `toISOString()` is UTC. Using it for a generated-at header puts every document two
- * hours behind local time here, which went unnoticed for a week in a sibling repo.
+ * hours behind local time here, which went unnoticed for a week downstream.
  */
 export function localTimestamp(date: Date = new Date()): string {
     return date.toLocaleString("sv-SE").slice(0, 16);

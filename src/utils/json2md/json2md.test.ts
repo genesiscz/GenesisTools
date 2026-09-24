@@ -6,7 +6,15 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { detectShape, jsonToBlocks } from "./auto";
 import { builtinConverters, MAX_BLOCK_DEPTH, renderBlocks } from "./blocks";
 import { joinSections, renderProvenance, renderToc, slugifyHeading } from "./document";
-import { checkDocument, defineDocument, lineDiff, loadDocumentModule, writeDocument } from "./document-file";
+import {
+    checkDocument,
+    type DocumentDefinition,
+    defineDocument,
+    isDefinedDocument,
+    lineDiff,
+    loadDocumentModule,
+    writeDocument,
+} from "./document-file";
 import { Json2mdError, pointerOf } from "./errors";
 import { displayWidth, escapeCell, escapeInline, escapeUrl, truncateToWidth } from "./escape";
 import { renderFrontmatter, splitFrontmatter, toYaml } from "./frontmatter";
@@ -727,6 +735,21 @@ describe("three-file pattern", () => {
         expect(await Bun.file(written.outPath).text()).not.toContain("HUMAN LINE");
     });
 
+    test("the recorded regenerate command does not depend on the current directory", async () => {
+        // It is written into a durable file that someone else, standing somewhere else, is
+        // meant to run. A cwd-relative path recorded "tools json2md build ../../../../../…".
+        const dir = await scratch();
+        const modulePath = join(dir, "doc.ts");
+        await Bun.write(join(dir, "doc.json"), SafeJSONStringify({ items: [{ id: 1, name: "one" }] }));
+
+        const built = await writeDocument(modulePath, definitionFor("./doc.json"));
+        const stamped = await Bun.file(built.outPath).text();
+        const recorded = decodeURIComponent(stamped.match(/command=([^\s]+)/)?.[1] ?? "");
+
+        expect(recorded).not.toContain("..");
+        expect(recorded).toBe(`tools json2md build ${modulePath}`);
+    });
+
     test("dry-run reports without touching the file", async () => {
         const dir = await scratch();
         const modulePath = join(dir, "doc.ts");
@@ -936,5 +959,46 @@ describe("edge cases the third review found", () => {
         );
 
         expect(check.exists).toBe(false);
+    });
+});
+
+describe("defineDocument validation", () => {
+    // 🛑 A document module is loaded by dynamic import, so TypeScript never checks it at the
+    // moment it runs. Both mistakes below used to surface as a node `fs` error reading
+    // `The "path" property must be of type string, got array`, which names neither the
+    // document, nor the field, nor the module.
+    test("rejects data given inline instead of as a path, and says which is which", () => {
+        expect(() => defineDocument({ data: [{ a: 1 }] as unknown as string, render: () => [] })).toThrow(
+            /`data` must be a path to the JSON file/
+        );
+    });
+
+    test("names an array specifically, because passing the rows is the natural mistake", () => {
+        try {
+            defineDocument({ data: [{ a: 1 }] as unknown as string, render: () => [] });
+            throw new Error("expected defineDocument to throw");
+        } catch (error) {
+            expect(error).toBeInstanceOf(Json2mdError);
+            expect((error as Json2mdError).code).toBe("INVALID_DEFINITION");
+            expect((error as Json2mdError).pointer).toBe("/data");
+            expect((error as Error).message).toContain("not the data itself");
+        }
+    });
+
+    test("rejects an empty data path rather than resolving it to the module's own folder", () => {
+        expect(() => defineDocument({ data: "   ", render: () => [] })).toThrow(/must be a path/);
+    });
+
+    test("rejects a missing render, which is what writing `build` produces", () => {
+        expect(() => defineDocument({ data: "./x.json", build: () => [] } as unknown as DocumentDefinition)).toThrow(
+            /`render` must be a function/
+        );
+    });
+
+    test("accepts a well-formed definition", () => {
+        const definition = defineDocument({ data: "./x.json", render: () => [{ h1: "ok" }] });
+
+        expect(definition.data).toBe("./x.json");
+        expect(isDefinedDocument(definition)).toBe(true);
     });
 });

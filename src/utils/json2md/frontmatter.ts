@@ -3,7 +3,7 @@
  *
  * The YAML emitter is written by hand on purpose. `yaml` and `js-yaml` are present in this
  * repo only as transitive packages, and adding either as a direct dependency would also add
- * it to a sibling repo's vendor set. Emitting the small subset front matter actually uses is
+ * it to the downstream vendor set. Emitting the small subset front matter actually uses is
  * about sixty lines, and `frontmatter.test.ts` pins the quoting rules.
  */
 
