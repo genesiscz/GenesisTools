@@ -1,4 +1,5 @@
 import { describe, expect, mock, test } from "bun:test";
+import { randomBytes } from "node:crypto";
 import { mkdtemp, rm, stat } from "node:fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { tmpdir } from "node:os";
@@ -12,6 +13,12 @@ import {
 import { createEvaluatorWithProviderFactory } from "@genesiscz/utils/ai/evaluation/service";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
+import {
+    _resetMasterKeyProviders,
+    _resetSecretsForTest,
+    _setMasterKeyProvidersForTest,
+    isSecureRef,
+} from "@genesiscz/utils/security";
 import type { Experimental_EvaluationModel } from "ai";
 import { CircuitCache, circuitBlobHash } from "./lib/arena/cache";
 import type { CircuitGraph, CircuitTier } from "./lib/arena/circuit";
@@ -184,10 +191,37 @@ describe("Jev evaluation", () => {
     });
 });
 
+/**
+ * A master key for the vault, without going anywhere near the real keychain.
+ *
+ * Five independent layers keep tests off the OS keychain, so any test that stores a
+ * credential has to bring its own key. Returns its own teardown.
+ */
+function useTestVault(): () => void {
+    const masterKey = randomBytes(32);
+
+    _setMasterKeyProvidersForTest([
+        {
+            id: "keychain" as const,
+            available: async () => true,
+            get: async () => masterKey,
+            getSync: () => masterKey,
+            set: async () => {},
+        },
+    ]);
+    _resetSecretsForTest();
+
+    return () => {
+        _resetMasterKeyProviders();
+        _resetSecretsForTest();
+    };
+}
+
 describe("Jev authentication", () => {
-    test("has read-only missing-credential handling and saves owner-only keys with explicit precedence", async () => {
+    test("keeps the key in the vault, never in the config file, with explicit precedence", async () => {
         const root = await mkdtemp(join(tmpdir(), "jev-auth-"));
         const snapshot = env.testing.snapshot();
+        const closeVault = useTestVault();
         try {
             env.testing.set("GENESIS_TOOLS_HOME", root);
             env.testing.unset("AI_GATEWAY_API_KEY");
@@ -200,12 +234,25 @@ describe("Jev authentication", () => {
             const file = await saveApiKey("fixture-saved");
             expect((await stat(file)).mode & 0o777).toBe(0o600);
             expect(await resolveApiKey()).toBe("fixture-saved");
+
+            // Assert on the BYTES, not on resolveApiKey: a plaintext copy would satisfy the
+            // round-trip above just as happily, which is exactly how this shipped unnoticed.
+            const onDisk = SafeJSON.parse(await Bun.file(file).text()) as Record<string, unknown>;
+            expect(isSecureRef(onDisk.apiKey)).toBe(true);
+            expect(await Bun.file(file).text()).not.toContain("fixture-saved");
+
+            // A key written before the vault still resolves, and is moved in on first use.
+            await Bun.write(file, SafeJSON.stringify({ apiKey: "legacy-plaintext" }));
+            expect(await resolveApiKey()).toBe("legacy-plaintext");
+            expect(await Bun.file(file).text()).not.toContain("legacy-plaintext");
+
             await Bun.write(file, SafeJSON.stringify({ apiKey: 42, typesafeApiKey: false }));
             expect(await resolveApiKey()).toBe("fixture-oidc");
             await expect(resolveApiKey("typesafe")).rejects.toThrow("No typesafe credential");
             env.testing.set("AI_GATEWAY_API_KEY", "fixture-env");
             expect(await resolveApiKey()).toBe("fixture-env");
         } finally {
+            closeVault();
             env.testing.restore(snapshot);
             await rm(root, { recursive: true, force: true });
         }
@@ -939,16 +986,22 @@ describe("TypeSafe SDK adapter", () => {
     });
 
     test("saving either provider preserves the other credential", async () => {
-        await env.testing.withOverrides(
-            { AI_GATEWAY_API_KEY: "", TYPESAFE_API_KEY: "", VERCEL_OIDC_TOKEN: "" },
-            async () => {
-                await saveApiKey("gateway-fixture");
-                await saveProviderKey({ provider: "typesafe", apiKey: "typesafe-fixture" });
-                expect(await resolveApiKey("vercel")).toBe("gateway-fixture");
-                expect(await resolveApiKey("typesafe")).toBe("typesafe-fixture");
-                await saveApiKey("gateway-updated");
-                expect(await resolveApiKey("typesafe")).toBe("typesafe-fixture");
-            }
-        );
+        const closeVault = useTestVault();
+
+        try {
+            await env.testing.withOverrides(
+                { AI_GATEWAY_API_KEY: "", TYPESAFE_API_KEY: "", VERCEL_OIDC_TOKEN: "" },
+                async () => {
+                    await saveApiKey("gateway-fixture");
+                    await saveProviderKey({ provider: "typesafe", apiKey: "typesafe-fixture" });
+                    expect(await resolveApiKey("vercel")).toBe("gateway-fixture");
+                    expect(await resolveApiKey("typesafe")).toBe("typesafe-fixture");
+                    await saveApiKey("gateway-updated");
+                    expect(await resolveApiKey("typesafe")).toBe("typesafe-fixture");
+                }
+            );
+        } finally {
+            closeVault();
+        }
     });
 });

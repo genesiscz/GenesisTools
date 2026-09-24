@@ -21,11 +21,12 @@ import { deleteServerTokens } from "../lib/auth/secrets.ts";
 import { deleteAuthStatus, readAuthStatus } from "../lib/auth/status.ts";
 import { accessTokenForRequest, peekAccessToken } from "../lib/auth/tokens.ts";
 import { ensureGatewayUp } from "../lib/gateway/ensure.ts";
-import { clearPendingLogin, writePendingLogin } from "../lib/gateway/login-state.ts";
+import { runLogin } from "../lib/gateway/login-runner.ts";
+import { clearPendingLogin, takeLivePendingLogin, writePendingLogin } from "../lib/gateway/login-state.ts";
 
 export async function authLogin(
     serverName: string | undefined,
-    opts: { device?: boolean; clientName?: string } = {}
+    opts: { device?: boolean; clientName?: string; worker?: boolean } = {}
 ): Promise<void> {
     const config = await readUnifiedConfig();
     let name = serverName;
@@ -71,9 +72,36 @@ export async function authLogin(
     }
 
     const server = config.mcpServers[name];
+    const held = takeLivePendingLogin(name);
+
+    if (held && held.identity.pid !== process.pid) {
+        ui.warn(`a login for ${name} is already in flight`);
+        if (held.url) {
+            ui.dim(held.url);
+        }
+        return;
+    }
+
     const clientName = await resolveClientName(name, server.url ?? server.httpUrl, opts.clientName);
 
     if (clientName === undefined) {
+        return;
+    }
+
+    // Loopback OAuth lives in a detached --worker child so a killed CLI parent
+    // (agent timeout, Ctrl-C of the waiter) cannot take the callback port with it.
+    // Device flow has no loopback listener; keep it in-process.
+    if (!opts.worker && !opts.device) {
+        await runLogin(
+            name,
+            async (url, userCode) => {
+                ui.dim(url);
+                if (userCode) {
+                    ui.kv("code", userCode);
+                }
+            },
+            clientName
+        );
         return;
     }
 

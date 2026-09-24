@@ -54,17 +54,24 @@ const DEFAULT_COOLDOWN_MS = 60_000;
 /**
  * Auto-login cannot finish unattended when DCR needs an interactive client_name
  * (Figma) and none is stored on the server. Callers must not claim a browser is opening.
+ *
+ * `offeredClientName` is the one a manual `auth login` resolved before calling. It counts the
+ * same as a stored one; refusing it made the first login of a preset server impossible.
  */
-export function autoLoginRefusal(name: string, server: UnifiedMCPServerConfig): string | undefined {
+export function autoLoginRefusal(
+    name: string,
+    server: UnifiedMCPServerConfig,
+    offeredClientName?: string
+): string | undefined {
     const preset = oauthClientPresetFor(server.url ?? server.httpUrl);
 
     if (!preset) {
         return undefined;
     }
 
-    const stored = serverAuth(server)?.clientName?.trim();
+    const available = offeredClientName?.trim() || serverAuth(server)?.clientName?.trim();
 
-    if (stored) {
+    if (available) {
         return undefined;
     }
 

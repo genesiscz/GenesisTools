@@ -371,6 +371,17 @@ describe("auto-login refuses a preset that needs an interactive client_name", ()
         ).toBeUndefined();
     });
 
+    test("Figma with a client_name the manual login resolved can be launched", () => {
+        const server = {
+            type: "http" as const,
+            url: "https://mcp.figma.com/mcp",
+            auth: { kind: "oauth" as const, gateway: true },
+        };
+
+        expect(autoLoginRefusal("design", server, "Claude Code (genesis-tools)")).toBeUndefined();
+        expect(autoLoginRefusal("design", server, "   ")).toContain("interactive client_name");
+    });
+
     test("a server without a preset is not refused", () => {
         expect(
             autoLoginRefusal("shop", {
@@ -387,7 +398,7 @@ describe("the gateway spawns mcp-manager directly", () => {
         const args = loginSpawnArgs("wisprflow");
 
         expect(args[0]?.endsWith("src/mcp-manager/index.ts")).toBe(true);
-        expect(args.slice(1)).toEqual(["auth", "login", "wisprflow"]);
+        expect(args.slice(1)).toEqual(["auth", "login", "wisprflow", "--worker"]);
         expect(args.includes("tools")).toBe(false);
     });
 

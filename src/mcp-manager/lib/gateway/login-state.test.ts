@@ -9,6 +9,7 @@ import {
     clearStalePendingLogin,
     pendingLoginPath,
     readPendingLogin,
+    takeLivePendingLogin,
     writePendingLogin,
 } from "./login-state.ts";
 
@@ -147,5 +148,30 @@ describe("pending-login records", () => {
 
         expect(clearStalePendingLogin(SERVER)).toBe(false);
         expect(readPendingLogin(SERVER)?.url).toBe("https://issuer.example/authorize");
+    });
+
+    // Regression: 2026-09-17 — a timed-out `auth login` left a dead-pid pending
+    // file whose callback port was already gone. The next login required
+    // unlinking that JSON by hand. takeLivePendingLogin must sweep it.
+    test("takeLivePendingLogin sweeps a dead-pid record so the next login does not need the file deleted by hand", async () => {
+        await writePendingLogin({
+            server: SERVER,
+            pid: 2_147_483_000,
+            url: "http://127.0.0.1:59912/callback",
+        });
+
+        expect(takeLivePendingLogin(SERVER)).toBeUndefined();
+        expect(existsSync(pendingLoginPath(SERVER))).toBe(false);
+    });
+
+    test("takeLivePendingLogin leaves a live record in place and returns it", async () => {
+        await writePendingLogin({
+            server: SERVER,
+            pid: process.pid,
+            url: "https://issuer.example/authorize",
+        });
+
+        expect(takeLivePendingLogin(SERVER)?.url).toBe("https://issuer.example/authorize");
+        expect(existsSync(pendingLoginPath(SERVER))).toBe(true);
     });
 });

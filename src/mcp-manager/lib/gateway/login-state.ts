@@ -152,6 +152,19 @@ export function clearStalePendingLogin(server: string): boolean {
     return true;
 }
 
+/**
+ * Live pending login, after sweeping a dead/foreign/unreadable record.
+ *
+ * Callers that are about to start a login use this instead of unlinking the
+ * JSON by hand: a timed-out `auth login` leaves a dead-pid file whose callback
+ * port is already gone, and the next login must proceed without that file.
+ */
+export function takeLivePendingLogin(server: string): PendingLogin | undefined {
+    clearStalePendingLogin(server);
+
+    return readPendingLogin(server);
+}
+
 /** The live record, or undefined. Does not delete; call {@link clearStalePendingLogin} to sweep. */
 export function readPendingLogin(server: string): PendingLogin | undefined {
     const path = pendingLoginPath(server);
