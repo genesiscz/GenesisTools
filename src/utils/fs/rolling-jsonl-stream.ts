@@ -3,7 +3,7 @@ import { FileTailer } from "@genesiscz/utils/fs/file-tailer";
 import { parseJsonlChunk } from "@genesiscz/utils/jsonl";
 import { logger } from "@genesiscz/utils/logger";
 
-const log = logger.child({ component: "dev-dashboard:rolling-jsonl" });
+const log = logger.child({ component: "fs:rolling-jsonl" });
 
 const ROLLOVER_CHECK_MS = 5_000;
 

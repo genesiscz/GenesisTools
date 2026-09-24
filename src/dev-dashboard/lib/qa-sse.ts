@@ -1,6 +1,6 @@
 import { logFilePathFor } from "@app/question/lib/log-store";
 import type { QaEntry } from "@app/question/lib/types";
-import { createRollingJsonlStream, type RollingJsonlStream } from "./rolling-jsonl-stream";
+import { createRollingJsonlStream, type RollingJsonlStream } from "@genesiscz/utils/fs/rolling-jsonl-stream";
 
 export function todayLogFile(): string {
     return logFilePathFor({ ts: Date.now() });

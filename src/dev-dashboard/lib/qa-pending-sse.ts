@@ -1,6 +1,6 @@
 import { todayPendingEventFile } from "@app/question/lib/pending/events";
 import type { PendingEvent } from "@app/question/lib/pending/types";
-import { createRollingJsonlStream, type RollingJsonlStream } from "./rolling-jsonl-stream";
+import { createRollingJsonlStream, type RollingJsonlStream } from "@genesiscz/utils/fs/rolling-jsonl-stream";
 
 export type PendingStream = RollingJsonlStream;
 

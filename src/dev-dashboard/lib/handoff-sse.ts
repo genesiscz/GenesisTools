@@ -1,6 +1,6 @@
 import { todayHandoffLogFile } from "@app/handoff/log-store";
 import type { HandoffEvent } from "@app/handoff/types";
-import { createRollingJsonlStream } from "./rolling-jsonl-stream";
+import { createRollingJsonlStream } from "@genesiscz/utils/fs/rolling-jsonl-stream";
 
 export interface HandoffStream {
     close(): void;

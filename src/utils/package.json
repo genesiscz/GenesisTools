@@ -165,6 +165,11 @@
             "types": "./fs/file-tailer.ts",
             "default": "./fs/file-tailer.ts"
         },
+        "./fs/rolling-jsonl-stream": {
+            "bun": "./fs/rolling-jsonl-stream.ts",
+            "types": "./fs/rolling-jsonl-stream.ts",
+            "default": "./fs/rolling-jsonl-stream.ts"
+        },
         "./fuzzy-match": {
             "bun": "./fuzzy-match.ts",
             "types": "./fuzzy-match.ts",
