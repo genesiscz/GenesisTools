@@ -12,8 +12,8 @@ export {
     suggestEnumFlag,
 } from "./executor";
 export { isQuietOutput } from "./output-mode";
-export { parseNonNegativeInt } from "./parse";
+export { commandWords, parseNonNegativeInt } from "./parse";
 export { printLn, writeStdout } from "./stdout";
 export type { RunToolOptions } from "./tools";
-export { execTool, execToolInteractive } from "./tools";
+export { execTool, execToolInteractive, spawnToolDetached } from "./tools";
 export { parseVariadic } from "./variadic";

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { parseNonNegativeInt } from "./parse";
+import { commandWords, parseNonNegativeInt } from "./parse";
 
 describe("parseNonNegativeInt", () => {
     test("parses a valid non-negative integer", () => {
@@ -28,5 +28,23 @@ describe("parseNonNegativeInt", () => {
         expect(() => parseNonNegativeInt("1.5", "--count")).toThrow(
             '--count must be a non-negative integer, got "1.5"'
         );
+    });
+});
+
+describe("commandWords", () => {
+    test("splits on whitespace and keeps a quoted part as one word, without expansion", () => {
+        expect(commandWords("tools artifact serve")).toEqual(["tools", "artifact", "serve"]);
+        expect(commandWords(`tools say "two words" 'it''s' $HOME`)).toEqual([
+            "tools",
+            "say",
+            "two words",
+            "its",
+            "$HOME",
+        ]);
+        expect(commandWords(`  a   ""  b  `)).toEqual(["a", "", "b"]);
+    });
+
+    test("an unclosed quote is an error, not shifted words", () => {
+        expect(() => commandWords(`tools say "open`)).toThrow("unclosed");
     });
 });

@@ -43,6 +43,21 @@ export async function execTool(args: string[], options?: RunToolOptions): Promis
 }
 
 /**
+ * Start a GenesisTools tool detached and return at once, e.g. a dashboard server that must outlive
+ * the caller. Resolved like `execTool`, so a worktree runs its own code, not the main checkout's.
+ */
+export function spawnToolDetached(args: string[], options?: Omit<RunToolOptions, "timeout">): number {
+    const proc = Bun.spawn([namedBunExecPath("tools"), "run", getToolsPath(), ...args], {
+        cwd: options?.cwd ?? process.cwd(),
+        stdio: ["ignore", "ignore", "ignore"],
+        env: { ...env.getProcessEnv(), ...options?.env },
+        detached: true,
+    });
+    proc.unref();
+    return proc.pid;
+}
+
+/**
  * Spawn a GenesisTools tool with inherited stdio (interactive).
  * Usage: `execToolInteractive(["telegram-bot", "configure"])`
  */
