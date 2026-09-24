@@ -1,9 +1,12 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { PROFILER_SCOPE_NAMES } from "@genesiscz/utils/profile";
+import { stripAnsi } from "@genesiscz/utils/string";
 import { parsePositive, resolveEntries } from "../commands/imports";
+import { collectFiles, exportedOnly, renderSymbol } from "../commands/skeleton";
 import { computeTotals } from "./analyze";
 import { attribute, isBarrel, nativeSignals } from "./attribute";
 import { findBarrelWaste } from "./barrels";
@@ -12,6 +15,8 @@ import { buildGraph, isLoadTimeEdge, isMeasuredEdge, labelFor, packageNameOf, po
 import { findLazyCandidates } from "./lazy";
 import type { WorkerSample } from "./measure";
 import { parseModule } from "./parse";
+import { extractSkeleton, parseSource } from "./skeleton";
+import { collectTypeNames, expandTypes } from "./type-expand";
 
 let root: string;
 
@@ -449,5 +454,363 @@ describe("parsePositive", () => {
 describe("profiler scope", () => {
     it("registers ts so PROFILE=ts and --scopes can name it", () => {
         expect(PROFILER_SCOPE_NAMES).toContain("ts");
+    });
+});
+
+describe("extractSkeleton", () => {
+    const source = `export const LIMIT = 5;
+export function add(a: number, b: number): number {
+    return a + b;
+}
+function hidden(): void {}
+export interface Shape {
+    area(): number;
+}
+export type Id = string;
+export class Box {
+    constructor(private size: number) {}
+    get volume(): number {
+        return this.size ** 3;
+    }
+    grow(by: number): void {
+        this.size += by;
+    }
+}
+export const scale = (value: number) => value * 2;
+`;
+
+    const symbols = extractSkeleton(parseSource("demo.ts", source));
+    const byName = (name: string) => symbols.find((symbol) => symbol.name === name);
+
+    it("captures the signature head without the body", () => {
+        expect(byName("add")?.signature).toBe("export function add(a: number, b: number): number");
+        expect(byName("add")?.kind).toBe("function");
+    });
+
+    it("records the line span of a declaration", () => {
+        expect(byName("add")?.startLine).toBe(2);
+        expect(byName("add")?.endLine).toBe(4);
+    });
+
+    it("marks exported declarations and leaves local ones unexported", () => {
+        expect(byName("add")?.exported).toBe(true);
+        expect(byName("hidden")?.exported).toBe(false);
+    });
+
+    it("treats an arrow constant as a function and a plain constant as a const", () => {
+        expect(byName("scale")?.kind).toBe("function");
+        expect(byName("LIMIT")?.kind).toBe("const");
+    });
+
+    it("descends into class and interface members at depth 1", () => {
+        expect(byName("grow")).toMatchObject({ kind: "method", depth: 1 });
+        expect(byName("volume")?.kind).toBe("getter");
+        expect(byName("constructor")?.kind).toBe("constructor");
+        expect(byName("area")).toMatchObject({ kind: "method", depth: 1 });
+        expect(byName("Box")?.depth).toBe(0);
+    });
+
+    it("reports a re-export barrel, which declares nothing but is not empty", () => {
+        const barrel = extractSkeleton(
+            parseSource("barrel.ts", `export { parseTurnEvents, toWorkerEvents } from "./worker-stream";\n`)
+        );
+
+        expect(barrel).toHaveLength(1);
+        expect(barrel[0]).toMatchObject({ kind: "re-export", name: "parseTurnEvents, toWorkerEvents", exported: true });
+        expect(barrel[0]?.depth).toBe(0);
+    });
+
+    it("lists interface fields, which used to be omitted entirely", () => {
+        const fields = extractSkeleton(
+            parseSource("shape.ts", `export interface Point {\n    x: number;\n    label?: string;\n}\n`)
+        );
+
+        expect(fields.map((symbol) => symbol.name)).toEqual(["Point", "x", "label"]);
+        expect(fields[1]).toMatchObject({ kind: "field", depth: 1, signature: "x: number;" });
+    });
+
+    it("does not drag a member's JSDoc into the declaration head", () => {
+        const [head] = extractSkeleton(
+            parseSource("doc.ts", `export interface Doc {\n    /** a long comment */\n    id: string;\n}\n`)
+        );
+
+        expect(head?.signature).toBe("export interface Doc");
+    });
+
+    it("reports a namespace and a declare module with their bodies", () => {
+        const nested = extractSkeleton(
+            parseSource(
+                "ns.ts",
+                `namespace NS {\n    export const x = 1;\n}\ndeclare module "pkg" {\n    export const y: number;\n}\n`
+            )
+        );
+
+        expect(nested.map((symbol) => symbol.kind)).toEqual(["namespace", "const", "namespace", "const"]);
+        expect(nested[1]?.depth).toBe(1);
+    });
+
+    it("treats a class arrow property as a method", () => {
+        const cls = extractSkeleton(
+            parseSource("cls.ts", `export class A {\n    handler = (e: string): void => {};\n}\n`)
+        );
+
+        expect(cls[1]).toMatchObject({ kind: "method", name: "handler", depth: 1 });
+    });
+
+    it("reports a top-level call, so a commander entrypoint is not blank", () => {
+        const calls = extractSkeleton(parseSource("entry.ts", `registerCommands(program);\n`));
+
+        expect(calls).toHaveLength(1);
+        expect(calls[0]).toMatchObject({ kind: "call", signature: "registerCommands(program);" });
+    });
+
+    it("drops the dangling arrow from a generic arrow signature", () => {
+        const [arrow] = extractSkeleton(parseSource("g.ts", `export const id = <T,>(v: T): T => v;\n`));
+
+        expect(arrow?.signature.endsWith("=>")).toBe(false);
+    });
+
+    it("keeps interfaces, types and classes as top-level entries", () => {
+        expect(byName("Shape")?.kind).toBe("interface");
+        expect(byName("Id")?.kind).toBe("type");
+        expect(byName("Box")?.kind).toBe("class");
+    });
+});
+
+describe("the skeleton command's filters and rendering", () => {
+    it("--exported keeps the members of an exported class and drops those of a private one", () => {
+        const source = parseSource(
+            "owners.ts",
+            `export class Shown {\n    visible(): void {}\n}\nclass Hidden {\n    secret(): void {}\n}\n`
+        );
+        const names = exportedOnly(extractSkeleton(source)).map((symbol) => symbol.name);
+
+        expect(names).toEqual(["Shown", "visible"]);
+    });
+
+    it("does not tag the kind again after several leading modifiers", () => {
+        const [symbol] = extractSkeleton(parseSource("base.ts", "export abstract class Base {}\n"));
+
+        if (!symbol) {
+            throw new Error("expected one declaration");
+        }
+
+        expect(stripAnsi(renderSymbol(symbol))).toContain("export abstract class Base");
+        expect(stripAnsi(renderSymbol(symbol))).not.toContain("class export");
+    });
+
+    it.skipIf(process.getuid?.() === 0)("skips a directory it cannot read instead of aborting the walk", () => {
+        write("walk/ok.ts", "export const a = 1;\n");
+        write("walk/locked/hidden.ts", "export const b = 2;\n");
+        chmodSync(join(root, "walk/locked"), 0o000);
+
+        try {
+            expect(collectFiles(join(root, "walk"), false)).toEqual([join(root, "walk/ok.ts")]);
+        } finally {
+            chmodSync(join(root, "walk/locked"), 0o755);
+        }
+    });
+});
+
+describe("an exported const that is really an API", () => {
+    // `ui`, `logger`, `out` and `SafeJSON` are all object literals bound to a const. The
+    // declaration head alone collapsed the whole surface into one truncated line, so
+    // `ui.raw` and `ui.err` were invisible and the file had to be opened to find them.
+    const source = `export const ui = {
+    ok(msg: string): void {
+        write(msg);
+    },
+    kv(key: string, value: string, keyWidth = 9): void {
+        write(key);
+    },
+    get level(): string {
+        return "info";
+    },
+    raw: (msg: string): void => write(msg),
+    prefix: "gt",
+    nested: {
+        deep(): void {},
+    },
+};
+
+export const KEYS = ["a", "b"] as const;
+`;
+
+    const symbols = extractSkeleton(parseSource("ui.ts", source));
+    const byName = (name: string) => symbols.find((symbol) => symbol.name === name);
+
+    it("lists every member of the object, with its signature", () => {
+        expect(byName("ok")?.kind).toBe("method");
+        expect(byName("ok")?.signature).toBe("ok(msg: string): void");
+        expect(byName("kv")?.signature).toBe("kv(key: string, value: string, keyWidth = 9): void");
+        expect(byName("level")?.kind).toBe("getter");
+        expect(byName("raw")?.kind).toBe("method");
+        expect(byName("prefix")?.kind).toBe("field");
+    });
+
+    it("nests a nested object one level deeper", () => {
+        expect(byName("nested")?.depth).toBe(1);
+        expect(byName("deep")?.depth).toBe(2);
+    });
+
+    it("does not leave the declaration head ending in a bare `=`", () => {
+        expect(byName("ui")?.signature).toBe("export const ui");
+    });
+
+    it("unwraps a parenthesized object literal", () => {
+        const wrapped = extractSkeleton(parseSource("paren.ts", "export const api = ({ raw(): void {} });"));
+
+        expect(wrapped.find((symbol) => symbol.name === "raw")?.kind).toBe("method");
+    });
+
+    it("leaves a non-object const as one line", () => {
+        expect(byName("KEYS")?.kind).toBe("const");
+        expect(symbols.filter((symbol) => symbol.name === "a")).toEqual([]);
+    });
+});
+
+describe("expandTypes", () => {
+    it("names the types a signature mentions and skips structural builtins", () => {
+        const source = parseSource(
+            "demo.ts",
+            `import type { Account } from "./account";
+export interface Local { id: string }
+export function load(account: Account, cache: Map<string, Local>): Promise<Local[]> {
+    const ignored: Local = cache.get("x") as Local;
+    return Promise.resolve([ignored]);
+}
+`
+        );
+
+        const names = collectTypeNames(source);
+        expect(names).toContain("Account");
+        expect(names).toContain("Local");
+        expect(names).not.toContain("Map");
+        expect(names).not.toContain("Promise");
+    });
+
+    it("resolves a same-file declaration and follows a relative import", () => {
+        write(
+            "types/account.ts",
+            `export interface Account {
+    id: string;
+    label?: string;
+}
+`
+        );
+        const entry = write(
+            "types/entry.ts",
+            `import type { Account } from "./account";
+export interface Local {
+    ok: boolean;
+}
+export function load(account: Account): Local {
+    return { ok: Boolean(account) };
+}
+`
+        );
+
+        const source = parseSource(entry, readFileSync(entry, "utf8"));
+        const expanded = expandTypes(source, entry, collectTypeNames(source), root);
+        const byName = (name: string) => expanded.find((type) => type.name === name);
+
+        expect(byName("Local")?.file).toBe(entry);
+        expect(byName("Account")?.file).toBe(join(root, "types/account.ts"));
+        expect(byName("Account")?.text).toContain("label?: string;");
+        expect(byName("Account")?.truncated).toBe(false);
+    });
+
+    it("follows an extends base and names a package it cannot open", () => {
+        write(
+            "deep/base.ts",
+            `export interface Inner {\n    deep: boolean;\n}\nexport interface Base {\n    id: string;\n    inner: Inner;\n}\n`
+        );
+        const entry = write(
+            "deep/entry.ts",
+            `import type { Base } from "./base";\nimport type { Far } from "some-package";\nexport interface Near extends Base {\n    far: Far;\n}\nexport function take(near: Near): void {}\n`
+        );
+
+        const source = parseSource(entry, readFileSync(entry, "utf8"));
+        const expanded = expandTypes(source, entry, collectTypeNames(source), root);
+        const byName = (name: string) => expanded.find((type) => type.name === name);
+
+        expect(byName("Base")?.text).toContain("id: string;");
+        expect(byName("Base")?.depth).toBe(1);
+        expect(byName("Inner")?.depth).toBe(2);
+        expect(byName("Inner")?.text).toContain("deep: boolean;");
+        expect(byName("Far")?.external).toBe("some-package");
+    });
+
+    it("follows a typeof alias to the value it names", () => {
+        const entry = write(
+            "alias/entry.ts",
+            `export const shape = { a: 1 };\nexport type Shape = typeof shape;\nexport function use(s: Shape): void {}\n`
+        );
+
+        const source = parseSource(entry, readFileSync(entry, "utf8"));
+        const expanded = expandTypes(source, entry, collectTypeNames(source), root);
+
+        expect(expanded.find((type) => type.name === "shape")?.text).toContain("a: 1");
+    });
+
+    it("resolves an alias from the nearest workspace tsconfig, not only the root one", () => {
+        write("ws/tsconfig.json", SafeJSON.stringify({ compilerOptions: { paths: { "@ws/*": ["src/*"] } } }));
+        write("ws/src/thing.ts", "export interface Thing {\n    size: number;\n}\n");
+        const entry = write(
+            "ws/app/entry.ts",
+            `import type { Thing } from "@ws/thing";\nexport function use(t: Thing): void {}\n`
+        );
+
+        const source = parseSource(entry, readFileSync(entry, "utf8"));
+        const thing = expandTypes(source, entry, collectTypeNames(source), root).find((type) => type.name === "Thing");
+
+        expect(thing?.file).toBe(join(root, "ws/src/thing.ts"));
+        expect(thing?.text).toContain("size: number;");
+    });
+
+    it("follows a renamed import to the name the target file declares", () => {
+        write("renamed/account.ts", "export interface Account {\n    handle: string;\n}\n");
+        const entry = write(
+            "renamed/entry.ts",
+            `import type { Account as User } from "./account";\nexport function greet(user: User): void {}\n`
+        );
+
+        const source = parseSource(entry, readFileSync(entry, "utf8"));
+        const expanded = expandTypes(source, entry, collectTypeNames(source), root);
+        const user = expanded.find((type) => type.name === "User");
+
+        expect(user?.file).toBe(join(root, "renamed/account.ts"));
+        expect(user?.text).toContain("handle: string;");
+    });
+
+    it("keeps two same-named types from two files apart", () => {
+        write(
+            "twin/other.ts",
+            `export interface Options {\n    remote: string;\n}\nexport interface Config {\n    options: Options;\n}\n`
+        );
+        const entry = write(
+            "twin/entry.ts",
+            `import type { Config } from "./other";\nexport interface Options {\n    local: boolean;\n}\nexport function run(options: Options, config: Config): void {}\n`
+        );
+
+        const source = parseSource(entry, readFileSync(entry, "utf8"));
+        const options = expandTypes(source, entry, collectTypeNames(source), root).filter(
+            (type) => type.name === "Options"
+        );
+
+        expect(options.map((type) => type.file).sort()).toEqual([entry, join(root, "twin/other.ts")].sort());
+        expect(options.map((type) => type.text).join("\n")).toContain("remote: string;");
+        expect(options.map((type) => type.text).join("\n")).toContain("local: boolean;");
+    });
+
+    it("returns nothing for a type it cannot resolve", () => {
+        const source = parseSource(
+            "demo.ts",
+            `import type { Missing } from "./nowhere";
+export function use(value: Missing): void {}
+`
+        );
+
+        expect(expandTypes(source, join(root, "demo.ts"), collectTypeNames(source), root)).toEqual([]);
     });
 });

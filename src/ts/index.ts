@@ -3,6 +3,7 @@
 import { runTool } from "@genesiscz/utils/cli";
 import { Command } from "commander";
 import { registerImportsCommands } from "./commands/imports";
+import { registerSkeletonCommands } from "./commands/skeleton";
 
 const program = new Command();
 
@@ -13,6 +14,7 @@ program
     );
 
 registerImportsCommands(program);
+registerSkeletonCommands(program);
 
 if (import.meta.main) {
     await runTool(program, { tool: "ts" });
