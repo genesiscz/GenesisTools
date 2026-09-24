@@ -48,7 +48,7 @@ export function registerAnalyzeUser(parent: Command): Command {
             .command("analyze-user")
             .description("Analyze a GitLab user's commit activity across all projects they contribute to")
             .requiredOption("--user <username>", "GitLab username")
-            .requiredOption("--since <YYYY-MM-DD>", "Inclusive start date")
+            .requiredOption("--since <YYYY-MM-DD>", "Inclusive start date: commits authored on or after it")
             .option("--output <path>", "Destination markdown/JSON file (default: stdout)")
             .option("--out <path>", "Alias of --output")
             .option("--json", "Emit raw JSON instead of a Markdown report")
@@ -196,9 +196,14 @@ async function runAnalyzeUser(opts: Options): Promise<void> {
         progress(`  Identified author emails: ${[...userEmails].join(", ")}`);
     }
 
-    const enriched = userEmails.size
-        ? allFetched.filter((c) => userEmails.has((c.author_email ?? "").toLowerCase()))
-        : allFetched;
+    // `--since` filters PUSH events, and a push in range can carry commits authored long before it
+    // (a rebase, a long-lived branch). Those were grouped under their old authored day, so the
+    // report showed days before the boundary. Only commits AUTHORED on or after --since are kept,
+    // by the author's own calendar day, the same day the report groups them under.
+    const since = parseDay(opts.since, "--since");
+    const enriched = (
+        userEmails.size ? allFetched.filter((c) => userEmails.has((c.author_email ?? "").toLowerCase())) : allFetched
+    ).filter((c) => c.authored_date.slice(0, 10) >= since);
 
     progress(`\n${enriched.length} authored commit(s) after filter`);
 
