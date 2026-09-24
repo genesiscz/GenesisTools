@@ -11,7 +11,7 @@ interface GlabMr {
 }
 
 /** GitLab says `opened`/`merged`/`closed`/`locked`; a locked MR is still open for our purposes. */
-function toState(raw: string): PrState {
+export function toState(raw: string): PrState {
     const lower = raw.toLowerCase();
 
     if (lower === "opened" || lower === "locked") {

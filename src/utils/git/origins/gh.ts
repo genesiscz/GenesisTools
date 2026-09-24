@@ -10,7 +10,7 @@ interface GhPr {
     url: string;
 }
 
-function toState(raw: string): PrState {
+export function toState(raw: string): PrState {
     const upper = raw.toUpperCase();
     return upper === "OPEN" || upper === "MERGED" ? upper : "CLOSED";
 }
