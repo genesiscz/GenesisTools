@@ -205,6 +205,57 @@ describe("weakened-assertion guard", () => {
     });
 });
 
+// jest and vitest print a per-file line ("Test Suites:" / "Test Files") above the per-test "Tests" line.
+describe("test counts from jest and vitest summaries", () => {
+    function cycle(redOutput: string, greenOutput: string) {
+        writeTestFile("t.test.ts", ASSERTION_TEST_FILE);
+        const cmd = `if [ -f fixed ]; then printf '${greenOutput}'; exit 0; else printf '${redOutput}'; exit 1; fi`;
+        gate(["red", "--cmd", cmd, "--test-file", "t.test.ts", "--session", "s"]);
+        writeFileSync(join(projectDir, "fixed"), "");
+        return gate(["green", "--cmd", cmd, "--session", "s"]);
+    }
+
+    test("a vitest GREEN that runs every RED test passes the count guard", () => {
+        const result = cycle(
+            " ❯ x.test.ts (28 tests | 1 failed) 17ms\\n Test Files  1 failed (1)\\n      Tests  1 failed | 27 passed (28)\\n",
+            " ✓ x.test.ts (28 tests) 12ms\\n Test Files  1 passed (1)\\n      Tests  28 passed (28)\\n"
+        );
+        expect(result.exitCode).toBe(0);
+    });
+
+    test("a jest GREEN that runs every RED test passes the count guard", () => {
+        const result = cycle(
+            "Test Suites: 1 failed, 1 total\\nTests:       1 failed, 27 passed, 28 total\\n",
+            "Test Suites: 1 passed, 1 total\\nTests:       28 passed, 28 total\\n"
+        );
+        expect(result.exitCode).toBe(0);
+    });
+
+    test("a jest summary reads the Tests line, not the Snapshots line printed below it", () => {
+        const result = cycle(
+            "Test Suites: 1 failed, 1 total\\nTests:       1 failed, 27 passed, 28 total\\nSnapshots:   2 passed, 2 total\\n",
+            "Test Suites: 1 passed, 1 total\\nTests:       27 passed, 1 skipped, 28 total\\nSnapshots:   2 passed, 2 total\\n"
+        );
+        expect(result.all).toContain("RED executed 28 test(s), 0 skipped; GREEN executed 27, 1 skipped");
+    });
+
+    test("a vitest GREEN that skips a RED test still trips the count guard", () => {
+        const result = cycle(
+            " Test Files  1 failed (1)\\n      Tests  1 failed | 27 passed (28)\\n",
+            " Test Files  1 passed (1)\\n      Tests  27 passed | 1 skipped (28)\\n"
+        );
+        expect(result.all).toContain("RED executed 28 test(s), 0 skipped; GREEN executed 27, 1 skipped");
+    });
+
+    test("a bun RED whose failure output echoes a count reads the summary, not the code frame", () => {
+        const result = cycle(
+            '12 |     label: "27 passed",\\n(fail) sums\\n 1 pass\\n 1 fail\\nRan 2 tests across 1 file.\\n',
+            " 2 pass\\n 0 fail\\nRan 2 tests across 1 file.\\n"
+        );
+        expect(result.exitCode).toBe(0);
+    });
+});
+
 describe("snapshot-file guard", () => {
     test("a .snap file created between RED and GREEN trips the guard", () => {
         writeTestFile("t.test.ts", ASSERTION_TEST_FILE);

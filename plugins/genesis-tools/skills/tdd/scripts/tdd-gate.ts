@@ -118,16 +118,29 @@ interface TestCounts {
     skipped: number;
 }
 
+// The per-test count is the last one printed. jest and vitest print a per-file line above it
+// ("Test Suites: 1 passed", "Test Files  1 passed"), and failure code frames above that can hold any "N passed".
+function lastCount(text: string, pattern: RegExp): number | null {
+    const match = [...text.matchAll(pattern)].at(-1);
+
+    return match ? Number(match[1]) : null;
+}
+
+// jest ("Tests:       1 failed, 27 passed, 28 total") and vitest ("      Tests  27 passed (28)") give
+// the per-test counts one line of their own. jest prints "Snapshots:   2 passed" BELOW it, so the
+// last count in the whole output would be the snapshot count. Bun has no such line.
+const TESTS_SUMMARY_RE = /^[ \t]*Tests:?[ \t]+(.*)$/gm;
+
 function extractTestCounts(output: string): TestCounts | null {
-    const clean = output.replace(ANSI_RE, "");
-    const pass = clean.match(/(\d+)\s+pass(?:ed)?\b/i);
-    const fail = clean.match(/(\d+)\s+fail(?:ed)?\b/i);
+    const stripped = output.replace(ANSI_RE, "");
+    const clean = [...stripped.matchAll(TESTS_SUMMARY_RE)].at(-1)?.[1] ?? stripped;
+    const pass = lastCount(clean, /(\d+)\s+pass(?:ed)?\b/gi);
+    const fail = lastCount(clean, /(\d+)\s+fail(?:ed)?\b/gi);
     if (pass === null && fail === null) {
         return null;
     }
 
-    const skip = clean.match(/(\d+)\s+skip(?:ped)?\b/i);
-    return { executed: Number(pass?.[1] ?? 0) + Number(fail?.[1] ?? 0), skipped: Number(skip?.[1] ?? 0) };
+    return { executed: (pass ?? 0) + (fail ?? 0), skipped: lastCount(clean, /(\d+)\s+skip(?:ped)?\b/gi) ?? 0 };
 }
 
 function literalFingerprint(lines: string[]): string {

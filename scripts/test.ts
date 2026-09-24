@@ -250,6 +250,15 @@ const LOAD_SENSITIVE_FILES = [
     // Two full runs stalled on them, on an unmodified tree, before this entry.
     "src/utils/ink/hooks/use-terminal-size.test.ts",
     "src/utils/security/keyring/keychain-guard.test.ts",
+    // The two classes that headroom cannot fix, because neither is waiting on a
+    // clock. process-sample busy-loops and then asserts the sampler attributed
+    // that CPU to it, which is cpu-spin's problem one layer down: under 16x the
+    // loop never owns a core, so the attribution it asserts is not there to find.
+    // diff spawns a real `bun` per case via spawnSync and asserts on the child's
+    // status and stdout, so a spawn that degrades under pressure reads as a wrong
+    // answer rather than as a slow one. Measured 2026-09-22 alone: 11/11, 116/116.
+    "src/benchmark/lib/process-sample.test.ts",
+    "src/agents/lib/hooks/diff/diff.test.ts",
 ];
 
 /**
@@ -631,8 +640,27 @@ if (hasExplicitPaths) {
     finish(await runBunTest([...args, ...ALWAYS_EXCLUDES.map((glob) => `--path-ignore-patterns=${glob}`)]));
 }
 
+/**
+ * bun's per-test default is 5 s, which is a budget for the TEST, not for the machine it shares.
+ *
+ * Under the 16x parallel run a test that spawns a child waits on the scheduler as well as on
+ * its own work, and the ones that cross the line are whichever happened to land together:
+ * measured across three full runs on 2026-09-22 the failures were cpu-spin + capture-install +
+ * probe-purity, then daemon + series-flags, then control/workflow + jev/route — never the same
+ * pair twice, every one of them green alone. Quarantining each victim into the serial phase
+ * cannot converge on a rotating set, so the phase gets headroom instead: those files need
+ * 1.5 s to 3.3 s for their WHOLE suite alone, so 20 s is roughly 6x their real cost.
+ *
+ * 🛑 This is not a way to let a hung test pass. Nothing here waits 20 s and succeeds; a genuine
+ * hang still fails, just later, and the wall-clock tripwire above still kills a stalled phase.
+ * An explicit --timeout on the command line wins, so a targeted run can still tighten it.
+ */
+const PARALLEL_TIMEOUT_MS = 20_000;
+const hasExplicitTimeout = args.some((arg) => arg === "--timeout" || arg.startsWith("--timeout="));
+
 const parallelExit = await runBunTest([
     ...args,
+    ...(hasExplicitTimeout ? [] : [`--timeout=${PARALLEL_TIMEOUT_MS}`]),
     ...EXCLUDES.map((glob) => `--path-ignore-patterns=${glob}`),
     ...LOAD_SENSITIVE_FILES.map((file) => `--path-ignore-patterns=${file}`),
 ]);

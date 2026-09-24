@@ -19,14 +19,38 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 import { out } from "@genesiscz/utils/logger";
+import ts from "typescript";
 
 const ROOT = join(import.meta.dir, "..", "..");
 const PLUGINS = join(ROOT, "plugins");
-const ALIAS = /^\s*(?:import|export)\s[^\n]*?["'](@genesiscz\/[^"']+|@app\/[^"']+)["']/gm;
-const DYNAMIC = /\bimport\(\s*["'](@genesiscz\/[^"']+|@app\/[^"']+)["']\s*\)/g;
+const REPO_ALIAS = /^(@genesiscz|@app)\//;
+
+export interface AliasImport {
+    line: number;
+    specifier: string;
+}
+
+/**
+ * Every import of a repo alias in `text`, with its 1-based line: static and type imports,
+ * re-exports, side-effect imports, `import(...)` and `require(...)`. TypeScript's own import
+ * scanner reads them, so a specifier in a string or a comment is not an import, while a biome-
+ * wrapped named import (the `from "..."` on its own line) and `import(/* c *\/ "@x")` are.
+ */
+export function findAliasImports(text: string): AliasImport[] {
+    const { importedFiles } = ts.preProcessFile(text, true, true);
+    const found: AliasImport[] = [];
+
+    for (const { fileName, pos } of importedFiles) {
+        if (REPO_ALIAS.test(fileName)) {
+            found.push({ line: text.slice(0, pos).split("\n").length, specifier: fileName });
+        }
+    }
+
+    return found.sort((a, b) => a.line - b.line);
+}
 
 /** Only what executes from a copied plugin. A test never does. */
-function shipsAndRuns(path: string): boolean {
+export function shipsAndRuns(path: string): boolean {
     if (/\.(test|spec)\.tsx?$/.test(path)) {
         return false;
     }
@@ -55,44 +79,39 @@ function walk(dir: string, found: string[]): string[] {
     return found;
 }
 
-const offenders: string[] = [];
-let scanned = 0;
+if (import.meta.main) {
+    const offenders: string[] = [];
+    let scanned = 0;
 
-for (const path of walk(PLUGINS, [])) {
-    const rel = relative(ROOT, path);
+    for (const path of walk(PLUGINS, [])) {
+        const rel = relative(ROOT, path);
 
-    if (!shipsAndRuns(rel)) {
-        continue;
-    }
+        if (!shipsAndRuns(rel)) {
+            continue;
+        }
 
-    scanned += 1;
+        scanned += 1;
 
-    const text = readFileSync(path, "utf8");
-
-    for (const pattern of [ALIAS, DYNAMIC]) {
-        pattern.lastIndex = 0;
-
-        let match = pattern.exec(text);
-
-        while (match) {
-            const line = text.slice(0, match.index).split("\n").length;
-
-            offenders.push(`${rel}:${line}  imports ${match[1]}`);
-            match = pattern.exec(text);
+        for (const { line, specifier } of findAliasImports(readFileSync(path, "utf8"))) {
+            offenders.push(`${rel}:${line}  imports ${specifier}`);
         }
     }
-}
 
-if (offenders.length > 0) {
-    out.log.error(`check-plugin-standalone: ${offenders.length} import(s) a copied plugin cannot resolve`);
+    if (offenders.length > 0) {
+        out.log.error(`check-plugin-standalone: ${offenders.length} import(s) a copied plugin cannot resolve`);
 
-    for (const offender of offenders) {
-        out.log.error(`  ${offender}`);
+        for (const offender of offenders) {
+            out.log.error(`  ${offender}`);
+        }
+
+        out.log.info(
+            "A plugin script runs outside this checkout. Inline what it needs, or move the code into a sibling"
+        );
+        out.log.info(
+            "file under the same plugin. Bare JSON is allowed there: biome.json turns noRestrictedGlobals off."
+        );
+        process.exit(1);
     }
 
-    out.log.info("A plugin script runs outside this checkout. Inline what it needs, or move the code into a sibling");
-    out.log.info("file under the same plugin. Bare JSON is allowed there: biome.json turns noRestrictedGlobals off.");
-    process.exit(1);
+    out.log.success(`check-plugin-standalone: OK (${scanned} runnable plugin file(s), no repo-alias imports)`);
 }
-
-out.log.success(`check-plugin-standalone: OK (${scanned} runnable plugin file(s), no repo-alias imports)`);
