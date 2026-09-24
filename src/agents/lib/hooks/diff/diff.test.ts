@@ -26,7 +26,7 @@ import { classifyChange, type DiffCategory } from "./classify";
 import { changedFiles } from "./collect";
 import { commandDirs, namedArguments } from "./command-paths";
 import { assembleMessage, type DiffBlock, hasContext, highlightRange, hunkRange, renderPatch } from "./render";
-import { runDiffPost } from "./run";
+import { runDiffPost, silentReason } from "./run";
 
 let repo: string;
 let calls = 0;
@@ -416,6 +416,54 @@ describe("the emergency stop", () => {
         expect(run.stdout).toContain("git-checkout-overwrites-file");
 
         rmSync(home, { recursive: true, force: true });
+    });
+});
+
+describe("review fixes", () => {
+    function runPre(home: string, session: string): void {
+        const entry = join(import.meta.dir, "..", "..", "..", "bin", "hook-pre.ts");
+
+        spawnSync("bun", [entry], {
+            input: SafeJSON.stringify({
+                hook_event_name: "PreToolUse",
+                tool_name: "Bash",
+                cwd: repo,
+                session_id: session,
+                tool_use_id: "call-1",
+                tool_input: { command: "cat kept.ts" },
+            }),
+            encoding: "utf8",
+            env: { ...process.env, GENESIS_TOOLS_HOME: home, AGENTS_HOOKS_DISABLE: "" },
+        });
+    }
+
+    it("the installed pre hook honours a per-harness diff override", () => {
+        // It sized and gated the capture with the shared `config.diff`, so a harness whose diff
+        // is off still had its dirty files copied, and the post phase then skipped the cleanup.
+        const off = mkdtempSync(join(tmpdir(), "gt-harness-off-"));
+        const on = mkdtempSync(join(tmpdir(), "gt-harness-on-"));
+
+        for (const [home, diff] of [
+            [off, { enabled: true, harnesses: { claude: { enabled: false } } }],
+            [on, { enabled: true }],
+        ] as const) {
+            mkdirSync(join(home, ".genesis-tools", "agents"), { recursive: true });
+            writeFileSync(
+                join(home, ".genesis-tools", "agents", "hooks.json"),
+                SafeJSON.stringify({ shadow: false, diff })
+            );
+        }
+
+        writeFileSync(join(repo, "kept.ts"), "alpha\nHARNESS-PROBE\n");
+        runPre(off, "harness-off");
+        runPre(on, "harness-on");
+
+        expect(existsSync(callDir("claude", "harness-off", "call-1"))).toBe(false);
+        expect(existsSync(callDir("claude", "harness-on", "call-1"))).toBe(true);
+
+        git(["checkout", "--", "kept.ts"]);
+        rmSync(off, { recursive: true, force: true });
+        rmSync(on, { recursive: true, force: true });
     });
 });
 
@@ -1220,6 +1268,39 @@ describe("what KIND of change it is", () => {
     });
 });
 
+describe("silentReason", () => {
+    const hidden = new Map([["log", 2] as const]);
+
+    it("names one cause on its own terms when only one holds", () => {
+        expect(silentReason(0, 0, 0, 0, hidden)).toBe("every changed file was a kind this config hides: 2 log");
+        expect(silentReason(3, 0, 0, 0, new Map())).toBe("every changed file was already rendered natively");
+        expect(silentReason(0, 0, 2, 0, new Map())).toBe("2 changed file(s) had already been rendered");
+        expect(silentReason(0, 1, 0, 0, new Map())).toBe(
+            "1 changed file(s) had no captured before-state, over the capture cap"
+        );
+        expect(silentReason(0, 0, 0, 4, new Map())).toBe(
+            "4 deletion(s) had already happened before this command began"
+        );
+        expect(silentReason(0, 0, 0, 0, new Map())).toBe("no change since this command began");
+    });
+
+    it("reports a mix as a mix, instead of claiming the first cause was everything", () => {
+        // The suppressed branch used to come first and say "every changed file was a kind
+        // this config hides" while files had also been rendered natively — so the reader
+        // went and changed the wrong setting.
+        const reason = silentReason(1, 0, 0, 0, hidden);
+
+        expect(reason).toBe("nothing left to print: a kind this config hides (2 log); 1 already rendered natively");
+        expect(reason).not.toContain("every changed file");
+    });
+
+    it("lists every cause that holds, in a fixed order", () => {
+        expect(silentReason(1, 2, 3, 4, hidden)).toBe(
+            "nothing left to print: a kind this config hides (2 log); 1 already rendered natively; 3 already rendered; 2 with no captured before-state, over the capture cap; 4 deletion(s) already gone before this command began"
+        );
+    });
+});
+
 describe("hiding a kind of change", () => {
     const base = { ...DEFAULT_HOOKS_CONFIG, diff: { ...DEFAULT_HOOKS_CONFIG.diff, highlight: "none" as const } };
     let scratch: string;
@@ -1259,6 +1340,21 @@ describe("hiding a kind of change", () => {
 
         expect(loud.decision).toBe("emitted");
         expect(loud.message).toContain("z2.log");
+    });
+
+    it("hides a generated file by default too, and prints it when asked", () => {
+        // Only the `log` category was exercised end to end. `generated` ships off as well,
+        // and nothing proved the default or the override actually reached the renderer.
+        const quiet = runOver(join(scratch, "bun.lock"), {});
+
+        expect(quiet.files).toEqual([]);
+        expect(quiet.reason).toContain("a kind this config hides");
+        expect(quiet.reason).toContain("generated");
+
+        const loud = runOver(join(scratch, "bun.lock"), { generated: true });
+
+        expect(loud.decision).toBe("emitted");
+        expect(loud.message).toContain("bun.lock");
     });
 
     it("names the kind in the header, so a block that is on sufferance says why", () => {

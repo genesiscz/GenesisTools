@@ -10,7 +10,7 @@
  */
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { keepsCommand, loadHooksConfig, megabytes } from "../lib/hooks/config";
+import { diffFor, keepsCommand, loadHooksConfig, megabytes } from "../lib/hooks/config";
 import { capturePre } from "../lib/hooks/diff/capture";
 import { evaluateGuard } from "../lib/hooks/guard";
 import { logDecision, setDiagLogPath, setMaxLogBytes } from "../lib/hooks/log";
@@ -56,8 +56,13 @@ logDecision(
 
 const denied = verdict?.outcome === "block" && !config.shadow;
 
-if (!denied && config.diff.enabled) {
-    const capture = capturePre(payload, config.diff);
+// Per harness, exactly as the post phase reads it. The shared `config.diff` captured for a
+// harness whose diff is off (leaving dirty-file copies behind until GC) and skipped one whose
+// override turns it on, so the post phase then found no capture.
+const diff = diffFor(config, payload.harness);
+
+if (!denied && diff.enabled) {
+    const capture = capturePre(payload, diff);
 
     logDecision(
         {

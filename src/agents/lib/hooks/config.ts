@@ -187,6 +187,13 @@ export function lastConfigLoadError(): unknown {
     return lastLoadError;
 }
 
+let lastProblems: string[] = [];
+
+/** Fields of the stored config that were ignored because their value had the wrong type. */
+export function lastConfigProblems(): string[] {
+    return lastProblems;
+}
+
 export function defaultLogPath(): string {
     return join(env.tools.getHome(), ".genesis-tools", "logs", "agents-hooks.jsonl");
 }
@@ -242,6 +249,13 @@ export const DEFAULT_HOOKS_CONFIG: HooksConfig = {
         },
     },
     logPath: defaultLogPath(),
+    // 🛑 `shadow: true` AND `logCommands: "shadow"` together mean `keepsCommand()` is true out
+    // of the box, so EVERY Bash command this machine runs through a hook is written verbatim
+    // to `logPath`. That is the point of shadow mode — the old and new guards cannot be
+    // compared on real traffic without the command text — but it is a local file holding
+    // whatever was typed, secrets included. It is capped at `maxLogMB` with one generation
+    // kept, and it stops accumulating commands as soon as either of these two is changed.
+    // Setting `logCommands: "never"` keeps shadow mode and drops the command text.
     shadow: true,
     logCommands: "shadow",
     maxLogMB: 16,
@@ -257,9 +271,35 @@ export function isCount(value: unknown, min: number): value is number {
     return typeof value === "number" && Number.isInteger(value) && value >= min;
 }
 
+interface CheckedNumber {
+    /** Where the value sits in `hooks.json`, for the problem `hooks doctor` prints. */
+    field: string;
+    value: unknown;
+    fallback: number;
+}
+
+/**
+ * A stored value that was present but rejected. `hooks doctor` prints these, so a hand-edited
+ * `"maxFiles": "15"` is named instead of silently turning into the default. An absent field is
+ * not a problem.
+ */
+function reportRejected({ field, value, fallback }: CheckedNumber, expected: string): void {
+    if (value !== undefined) {
+        lastProblems.push(`${field} is ${SafeJSON.stringify(value)}, not ${expected}; using ${fallback}`);
+    }
+}
+
 /** A hand-edited value outside its count domain (or not a number at all) falls back to the default. */
-function countOr(value: unknown, fallback: number, min = 1): number {
-    return isCount(value, min) ? value : fallback;
+function countOr(checked: CheckedNumber & { min?: number }): number {
+    const min = checked.min ?? 1;
+
+    if (isCount(checked.value, min)) {
+        return checked.value;
+    }
+
+    reportRejected(checked, `a whole number of at least ${min}`);
+
+    return checked.fallback;
 }
 
 /**
@@ -271,8 +311,14 @@ export function isMegabytes(value: unknown): value is number {
     return typeof value === "number" && Number.isFinite(value) && value > 0;
 }
 
-function megabytesOr(value: unknown, fallback: number): number {
-    return isMegabytes(value) ? value : fallback;
+function megabytesOr(checked: CheckedNumber): number {
+    if (isMegabytes(checked.value)) {
+        return checked.value;
+    }
+
+    reportRejected(checked, "a positive number");
+
+    return checked.fallback;
 }
 
 /**
@@ -324,22 +370,59 @@ function mergeDiff(stored: StoredHooksConfig["diff"]): DiffConfig {
 
     return {
         enabled: boolOr(stored?.enabled, base.enabled),
-        maxFiles: countOr(stored?.maxFiles, base.maxFiles),
-        maxLinesPerFile: countOr(stored?.maxLinesPerFile, base.maxLinesPerFile),
-        contextLines: countOr(stored?.contextLines, base.contextLines, 0),
-        maxRoots: countOr(stored?.maxRoots, base.maxRoots),
-        untrackedExpansionCap: countOr(stored?.untrackedExpansionCap, base.untrackedExpansionCap),
-        maxCaptureFiles: countOr(stored?.maxCaptureFiles, base.maxCaptureFiles),
-        maxCaptureMB: megabytesOr(stored?.maxCaptureMB, legacyMB(stored?.maxCaptureBytes) ?? base.maxCaptureMB),
-        maxCaptureFileMB: megabytesOr(stored?.maxCaptureFileMB, base.maxCaptureFileMB),
+        maxFiles: countOr({ field: "diff.maxFiles", value: stored?.maxFiles, fallback: base.maxFiles }),
+        maxLinesPerFile: countOr({
+            field: "diff.maxLinesPerFile",
+            value: stored?.maxLinesPerFile,
+            fallback: base.maxLinesPerFile,
+        }),
+        contextLines: countOr({
+            field: "diff.contextLines",
+            value: stored?.contextLines,
+            fallback: base.contextLines,
+            min: 0,
+        }),
+        maxRoots: countOr({ field: "diff.maxRoots", value: stored?.maxRoots, fallback: base.maxRoots }),
+        untrackedExpansionCap: countOr({
+            field: "diff.untrackedExpansionCap",
+            value: stored?.untrackedExpansionCap,
+            fallback: base.untrackedExpansionCap,
+        }),
+        maxCaptureFiles: countOr({
+            field: "diff.maxCaptureFiles",
+            value: stored?.maxCaptureFiles,
+            fallback: base.maxCaptureFiles,
+        }),
+        maxCaptureMB: megabytesOr({
+            field: "diff.maxCaptureMB",
+            value: stored?.maxCaptureMB,
+            fallback: legacyMB(stored?.maxCaptureBytes) ?? base.maxCaptureMB,
+        }),
+        maxCaptureFileMB: megabytesOr({
+            field: "diff.maxCaptureFileMB",
+            value: stored?.maxCaptureFileMB,
+            fallback: base.maxCaptureFileMB,
+        }),
         highlight: stored?.highlight === "bat" || stored?.highlight === "none" ? stored.highlight : base.highlight,
         standDownWhenNative: boolOr(stored?.standDownWhenNative, base.standDownWhenNative),
         watchNamedPaths: boolOr(stored?.watchNamedPaths, base.watchNamedPaths),
-        maxNamedPaths: countOr(stored?.maxNamedPaths, base.maxNamedPaths),
-        maxNamedPathMB: megabytesOr(stored?.maxNamedPathMB, base.maxNamedPathMB),
+        maxNamedPaths: countOr({
+            field: "diff.maxNamedPaths",
+            value: stored?.maxNamedPaths,
+            fallback: base.maxNamedPaths,
+        }),
+        maxNamedPathMB: megabytesOr({
+            field: "diff.maxNamedPathMB",
+            value: stored?.maxNamedPathMB,
+            fallback: base.maxNamedPathMB,
+        }),
         namedPathsShowCreated: boolOr(stored?.namedPathsShowCreated, base.namedPathsShowCreated),
         dedupeAcrossSessions: boolOr(stored?.dedupeAcrossSessions, base.dedupeAcrossSessions),
-        maxMessageBytes: countOr(stored?.maxMessageBytes, base.maxMessageBytes),
+        maxMessageBytes: countOr({
+            field: "diff.maxMessageBytes",
+            value: stored?.maxMessageBytes,
+            fallback: base.maxMessageBytes,
+        }),
         // Merged FIELD BY FIELD for the same reason `longCommand` is: a hand-edited `hooks.json`
         // that turns one category on would otherwise blank every other one, and `undefined`
         // reads as "hidden".
@@ -391,7 +474,7 @@ function mergedHarnesses(
         const override = stored?.[harness];
 
         if (typeof override === "object" && override !== null) {
-            merged[harness] = { ...merged[harness], ...checkedOverride(override) };
+            merged[harness] = { ...merged[harness], ...checkedOverride(override, `diff.harnesses.${harness}`) };
         }
     }
 
@@ -422,9 +505,9 @@ const OVERRIDE_BOOLEANS = [
  * The fields of one stored harness override that have the right type. A spread let a hand-edited
  * `"enabled": "true"` through, and the non-empty string read as on, which is the defect
  * `mergeDiff` closes for the shared block. A field of the wrong type is dropped, so it falls
- * through to the shared value.
+ * through to the shared value. A dropped number is reported, so `hooks doctor` names it.
  */
-function checkedOverride(stored: DiffOverrides): DiffOverrides {
+function checkedOverride(stored: DiffOverrides, path: string): DiffOverrides {
     const checked: DiffOverrides = {};
 
     // The same range checks `mergeDiff` applies to the shared block: a count is a whole number
@@ -434,6 +517,10 @@ function checkedOverride(stored: DiffOverrides): DiffOverrides {
 
         if (isCount(value, 1)) {
             checked[key] = value;
+        } else if (value !== undefined) {
+            lastProblems.push(
+                `${path}.${key} is ${SafeJSON.stringify(value)}, not a whole number of at least 1; ignoring it`
+            );
         }
     }
 
@@ -441,6 +528,10 @@ function checkedOverride(stored: DiffOverrides): DiffOverrides {
 
     if (isCount(contextLines, 0)) {
         checked.contextLines = contextLines;
+    } else if (contextLines !== undefined) {
+        lastProblems.push(
+            `${path}.contextLines is ${SafeJSON.stringify(contextLines)}, not a whole number of at least 0; ignoring it`
+        );
     }
 
     for (const key of OVERRIDE_MEGABYTES) {
@@ -448,6 +539,8 @@ function checkedOverride(stored: DiffOverrides): DiffOverrides {
 
         if (isMegabytes(value)) {
             checked[key] = value;
+        } else if (value !== undefined) {
+            lastProblems.push(`${path}.${key} is ${SafeJSON.stringify(value)}, not a positive number; ignoring it`);
         }
     }
 
@@ -489,6 +582,7 @@ export function loadHooksConfig(path = hooksConfigPath()): HooksConfig {
     let stored: StoredHooksConfig | null = null;
 
     lastLoadError = undefined;
+    lastProblems = [];
 
     try {
         stored = SafeJSON.parse(readFileSync(path, "utf8")) as StoredHooksConfig;
@@ -527,15 +621,32 @@ export function mergeStoredConfig(stored: StoredHooksConfig): HooksConfig {
             // `chars >= undefined` is always false, so the character threshold silently
             // stopped working. A value that is not a finite number is dropped the same way.
             longCommand: {
-                lines: countOr(guard?.longCommand?.lines, base.longCommand.lines),
-                chars: countOr(guard?.longCommand?.chars, base.longCommand.chars),
+                lines: countOr({
+                    field: "guard.longCommand.lines",
+                    value: guard?.longCommand?.lines,
+                    fallback: base.longCommand.lines,
+                }),
+                chars: countOr({
+                    field: "guard.longCommand.chars",
+                    value: guard?.longCommand?.chars,
+                    fallback: base.longCommand.chars,
+                }),
             },
-            contextCapPerSession: countOr(guard?.contextCapPerSession, base.contextCapPerSession, 0),
+            contextCapPerSession: countOr({
+                field: "guard.contextCapPerSession",
+                value: guard?.contextCapPerSession,
+                fallback: base.contextCapPerSession,
+                min: 0,
+            }),
         },
         diff: mergeDiff(stored.diff),
         shadow: boolOr(stored.shadow, DEFAULT_HOOKS_CONFIG.shadow),
         logCommands: logCommandsOr(stored.logCommands, DEFAULT_HOOKS_CONFIG.logCommands),
-        maxLogMB: megabytesOr(stored.maxLogMB, legacyMB(stored.maxLogBytes) ?? DEFAULT_HOOKS_CONFIG.maxLogMB),
+        maxLogMB: megabytesOr({
+            field: "maxLogMB",
+            value: stored.maxLogMB,
+            fallback: legacyMB(stored.maxLogBytes) ?? DEFAULT_HOOKS_CONFIG.maxLogMB,
+        }),
         logPath: typeof stored.logPath === "string" && stored.logPath.length > 0 ? stored.logPath : defaultLogPath(),
     };
 }

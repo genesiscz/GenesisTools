@@ -14,6 +14,7 @@ import {
     type HooksConfig,
     hooksConfigPath,
     lastConfigLoadError,
+    lastConfigProblems,
     loadHooksConfig,
 } from "../lib/hooks/config";
 import { collectStaleCaptures, parseHorizon } from "../lib/hooks/gc";
@@ -181,6 +182,10 @@ export function registerHooksCommands(program: Command): void {
             wiring.push(["dist symlink", dist]);
             wiring.push(["dist points at", distTarget]);
             out.println(wiring.toString());
+
+            for (const problem of lastConfigProblems()) {
+                ui.warn(problem);
+            }
 
             const loadError = lastConfigLoadError() as NodeJS.ErrnoException | undefined;
             const isDefault = SafeJSON.stringify(config) === SafeJSON.stringify(DEFAULT_HOOKS_CONFIG);

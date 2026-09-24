@@ -17,7 +17,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { DEFAULT_HOOKS_CONFIG, diffFor, keepsCommand, lastConfigLoadError, loadHooksConfig } from "./config";
+import {
+    DEFAULT_HOOKS_CONFIG,
+    diffFor,
+    keepsCommand,
+    lastConfigLoadError,
+    lastConfigProblems,
+    loadHooksConfig,
+} from "./config";
 import { collectStaleCaptures, parseHorizon } from "./gc";
 import { evaluateCommand, evaluateGuard } from "./guard";
 import { guardFromLegacy, importedHooksConfig, importGuardConfig } from "./import-config";
@@ -654,6 +661,49 @@ describe("config read robustness", () => {
         rmSync(home, { recursive: true, force: true });
     });
 
+    it("merges guard.harnesses per harness, keeping the shipped entries a stored one omits", async () => {
+        const home = mkdtempSync(join(tmpdir(), "gt-cfg-harness-"));
+
+        mkdirSync(join(home, ".genesis-tools", "agents"), { recursive: true });
+        writeFileSync(
+            join(home, ".genesis-tools", "agents", "hooks.json"),
+            SafeJSON.stringify({ guard: { harnesses: { codex: { "find-from-root": "allow" } } } })
+        );
+
+        await env.testing.withOverrides({ GENESIS_TOOLS_HOME: home }, () => {
+            const guard = loadHooksConfig().guard;
+
+            // A shallow spread replaced the whole harnesses map, so an override for one
+            // harness deleted the shipped Grok entry and silently re-enabled a guard that
+            // was deliberately turned off there.
+            expect(guard.harnesses.grok?.["zsh-glob-qualifier"]).toBe("allow");
+            expect(guard.harnesses.codex?.["zsh-glob-qualifier"]).toBe("allow");
+            expect(guard.harnesses.codex?.["find-from-root"]).toBe("allow");
+        });
+
+        rmSync(home, { recursive: true, force: true });
+    });
+
+    it("merges guard.default and guard.models rather than replacing them", async () => {
+        const home = mkdtempSync(join(tmpdir(), "gt-cfg-default-"));
+
+        mkdirSync(join(home, ".genesis-tools", "agents"), { recursive: true });
+        writeFileSync(
+            join(home, ".genesis-tools", "agents", "hooks.json"),
+            SafeJSON.stringify({ guard: { default: { "find-from-root": "allow" } } })
+        );
+
+        await env.testing.withOverrides({ GENESIS_TOOLS_HOME: home }, () => {
+            const guard = loadHooksConfig().guard;
+
+            expect(guard.default["find-from-root"]).toBe("allow");
+            expect(guard.contextCapPerSession).toBe(3);
+            expect(guard.models).toEqual(DEFAULT_HOOKS_CONFIG.guard.models);
+        });
+
+        rmSync(home, { recursive: true, force: true });
+    });
+
     it("reports a config file that exists but cannot be read", async () => {
         const home = mkdtempSync(join(tmpdir(), "gt-cfg-bad-"));
 
@@ -665,6 +715,49 @@ describe("config read robustness", () => {
             // "no config file" for a file that is plainly there.
             expect(loadHooksConfig().guard.longCommand).toEqual({ lines: 30, chars: 2500 });
             expect(lastConfigLoadError()).toBeDefined();
+        });
+
+        rmSync(home, { recursive: true, force: true });
+    });
+
+    it("puts a non-numeric cap back to its default and says so", async () => {
+        // A hand-edited `"maxFiles": "15"` reached the hot path as a string, where
+        // `blocks.length >= "15"` compares as text. Now it falls back and doctor names it.
+        const home = mkdtempSync(join(tmpdir(), "gt-cfg-types-"));
+
+        mkdirSync(join(home, ".genesis-tools", "agents"), { recursive: true });
+        writeFileSync(
+            join(home, ".genesis-tools", "agents", "hooks.json"),
+            SafeJSON.stringify({ diff: { maxFiles: "15" }, guard: { longCommand: { lines: null } } })
+        );
+
+        await env.testing.withOverrides({ GENESIS_TOOLS_HOME: home }, () => {
+            const config = loadHooksConfig();
+
+            expect(config.diff.maxFiles).toBe(DEFAULT_HOOKS_CONFIG.diff.maxFiles);
+            expect(config.guard.longCommand.lines).toBe(DEFAULT_HOOKS_CONFIG.guard.longCommand.lines);
+            expect(lastConfigProblems().join("\n")).toContain('diff.maxFiles is "15"');
+            expect(lastConfigProblems().join("\n")).toContain("guard.longCommand.lines is null");
+        });
+
+        rmSync(home, { recursive: true, force: true });
+    });
+
+    it("drops a non-numeric cap in a per-harness override so the shared value applies", async () => {
+        const home = mkdtempSync(join(tmpdir(), "gt-cfg-harness-types-"));
+
+        mkdirSync(join(home, ".genesis-tools", "agents"), { recursive: true });
+        writeFileSync(
+            join(home, ".genesis-tools", "agents", "hooks.json"),
+            SafeJSON.stringify({ diff: { maxFiles: 7, harnesses: { claude: { maxFiles: "15", enabled: true } } } })
+        );
+
+        await env.testing.withOverrides({ GENESIS_TOOLS_HOME: home }, () => {
+            const config = loadHooksConfig();
+
+            expect(diffFor(config, "claude").maxFiles).toBe(7);
+            expect(diffFor(config, "claude").enabled).toBe(true);
+            expect(lastConfigProblems().join("\n")).toContain('diff.harnesses.claude.maxFiles is "15"');
         });
 
         rmSync(home, { recursive: true, force: true });
