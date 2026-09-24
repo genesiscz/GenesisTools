@@ -134,3 +134,80 @@ describe("unscannable roots", () => {
         expect(output).not.toContain("ai-credentials-guard: OK");
     });
 });
+
+/**
+ * Rule 3 used to match the literal inside PROSE. On 2026-09-20 one JSDoc line in
+ * `src/utils/ai/evaluation/auth.ts` failed this guard on every branch in the repo,
+ * including master, and CLAUDE.md already recorded the gap. The pair below is what makes
+ * the fix honest: the comment passes AND the real call still fails.
+ */
+describe("the one ai-config writer", () => {
+    test("a comment that merely names the literal does not trip it", async () => {
+        const { code, output } = await runGuard({
+            "prose.ts": [
+                "/**",
+                ' * This guard exists because of the literal `new Storage("ai")` call.',
+                " */",
+                '// new Storage("ai") would be wrong here, which is the point',
+                "export const note = 1;",
+            ].join("\n"),
+        });
+
+        expect(output).not.toContain("outside src/utils/ai/config/");
+        expect(code).toBe(0);
+    });
+
+    test("the real call is still caught", async () => {
+        const { code, output } = await runGuard({
+            "writer.ts": [
+                'import { Storage } from "@genesiscz/utils/storage/storage";',
+                'const s = new Storage("ai");',
+            ].join("\n"),
+        });
+
+        expect(output).toContain("outside src/utils/ai/config/");
+        expect(code).toBe(1);
+    });
+
+    test("a trailing comment on a real call is still caught", async () => {
+        const { code } = await runGuard({ "writer.ts": 'const s = new Storage("ai"); // deliberate' });
+
+        expect(code).toBe(1);
+    });
+
+    /**
+     * The inverse control. A `^(?!\s*(?://|\*|/\*))` prefix was tried first and rejected the
+     * whole LINE, so a real call after a closed block comment passed the guard. The filter
+     * now looks only at the line's leading marker, which is why these still fail.
+     */
+    test("a real call after a closed block comment on the same line is still caught", async () => {
+        const { code, output } = await runGuard({ "writer.ts": '/* keep */ const s = new Storage("ai");' });
+
+        expect(output).toContain("outside src/utils/ai/config/");
+        expect(code).toBe(1);
+    });
+
+    test("a real call indented after a closed block comment is still caught", async () => {
+        const { code } = await runGuard({ "writer.ts": '    /* keep */ new Storage("ai");' });
+
+        expect(code).toBe(1);
+    });
+
+    test("a real call followed by a colon and a comment later in the line is still caught", async () => {
+        const { code } = await runGuard({ "writer.ts": 'const s = flag ? new Storage("ai") : // none\n    null;' });
+
+        expect(code).toBe(1);
+    });
+
+    test("a private-field writer is still caught, although its line starts with #", async () => {
+        const { code } = await runGuard({ "writer.ts": 'class Keeper {\n    #store = new Storage("ai");\n}\n' });
+
+        expect(code).toBe(1);
+    });
+
+    test("a JSDoc continuation line naming it still passes", async () => {
+        const { code } = await runGuard({ "prose.ts": ' * see `new Storage("ai")` for why\nexport const x = 1;' });
+
+        expect(code).toBe(0);
+    });
+});

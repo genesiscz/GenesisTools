@@ -124,7 +124,7 @@ scan() {
 #    comment lines and backticked mentions are dropped from the results.
 argless=$(scan '(await\s+)?create(OpenAI|Groq|Anthropic|GoogleGenerativeAI|OpenAICompatible)\(\s*\)' \
         ':(exclude)**/*.md' ':(exclude)scripts/ci/ai-credentials-guard.sh' ':(exclude)scripts/ci/ai-credentials-guard.test.ts' \
-        | grep -Ev ':[[:space:]]*(//|\*|#)' | grep -Fv '`create' || true)
+        | grep -Ev '^[^:]*:[0-9]+:[[:space:]]*(//|\*|#([[:space:]]|$))' | grep -Fv '`create' || true)
 if [ -n "$argless" ]; then
     echo "$argless"
     echo "::error:: argless provider factory — the SDK would read the API key from its own env var, unauditably. Pass an explicit apiKey from resolveCredential()/resolveProviderApiKey()."
@@ -149,10 +149,25 @@ fi
 #        shape before the v4 one can convert it.
 #      - `AIConfig.ts`, the deprecated v3 facade, deleted once its last consumer
 #        moves to AiConfigStore (Phase 8).
-if scan 'new Storage\(\s*["'"'"']ai["'"'"']\s*\)' \
+#
+#    Prose that NAMES the literal is documentation, not a second writer, and on 2026-09-20
+#    one JSDoc line in `src/utils/ai/evaluation/auth.ts` was failing this guard on every
+#    branch in the repo, including master. It is skipped the same way rules 1 and 2 skip
+#    it — by post-filtering the matched OUTPUT lines — rather than by a second mechanism
+#    inside the pattern. A `^(?!...)` prefix was tried first and was worse: it rejected the
+#    whole LINE, so `/* keep */ const s = new Storage("ai");` passed the guard. The line
+#    filter below only drops a line whose CONTENT begins with a comment marker, so that
+#    call is still caught. It is anchored after the `path:line:` prefix git grep prints: an
+#    unanchored `:\s*//` matched any colon, so `flag ? new Storage("ai") : // none` passed.
+#    A `#` counts only before whitespace or the end of the line: a TypeScript private field
+#    (`#store = new Storage("ai")`) starts with `#` too, and is a real writer.
+aiwriter=$(scan 'new Storage\(\s*["'"'"']ai["'"'"']\s*\)' \
         ':(exclude)**/*.md' ':(exclude)src/utils/ai/config/**' \
         ':(exclude)scripts/ci/ai-credentials-guard.sh' ':(exclude)scripts/ci/ai-credentials-guard.test.ts' \
-        ':(exclude)src/utils/config/migrations/2026-04-07-migrateAI.ts' ':(exclude)src/utils/ai/AIConfig.ts' ; then
+        ':(exclude)src/utils/config/migrations/2026-04-07-migrateAI.ts' ':(exclude)src/utils/ai/AIConfig.ts' \
+        | grep -Ev '^[^:]*:[0-9]+:[[:space:]]*(//|\*|#([[:space:]]|$))' || true)
+if [ -n "$aiwriter" ]; then
+    echo "$aiwriter"
     echo "::error:: new Storage(\"ai\") outside src/utils/ai/config/ — go through AiConfigStore, which owns the lock order (config first, vault second) and the migration chain."
     fail=1
 fi
