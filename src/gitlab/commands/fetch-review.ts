@@ -63,7 +63,11 @@ export function registerFetchReview(parent: Command): Command {
                 "Checkout to read code excerpts, git anchors and the origin remote from (default: current directory)"
             )
             .option("--out <file>", "Save JSON here (default: $TMPDIR/gitlab-review-<iid>.json)")
-            .option("--format <fmt>", "Output format: md | json | both", "md")
+            .option(
+                "--format <fmt>",
+                "stdout: md = the Markdown report, json = the discussions JSON, both = Markdown on stdout plus the JSON file",
+                "md"
+            )
             .option("--context-lines <n>", "Lines of code excerpt around each anchor", "3")
             .option(
                 "--no-anchors",
@@ -179,6 +183,8 @@ async function runFetchReview(mrIid: string, opts: Options): Promise<void> {
         status.info(
             `Discussions: ${discussions.length} · Unresolved: ${stats.threads} · Files: ${stats.files} · Head_shas: ${stats.headShas}`
         );
+        // `--format json` wrote only the file, so the format it names never reached stdout.
+        out.result(discussions);
     }
 
     if (schemaFormat !== "none") {
