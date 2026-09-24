@@ -3,6 +3,7 @@ import { mkdtempSync, readdirSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
+import { TEST_RUNTIME_FLAG } from "@genesiscz/utils/test-process";
 
 /**
  * Give every test process its own temp root, and remove it when the run is green.
@@ -40,6 +41,16 @@ import { env } from "@genesiscz/utils/env";
  * explicit `env`, so such a child still writes to the real temp folder. A test that spawns
  * passes `env: { ...process.env }` when that matters.
  */
+/**
+ * 🛑 Declare that this is a test runtime, for everything that must not touch real user data.
+ *
+ * bunfig's `[test] preload` applies to `bun test` and nothing else, so setting it here cannot
+ * leak into production, and it is an environment variable so a subprocess a test spawns
+ * inherits it. That is the hole `NODE_ENV` and `Bun.main` both have: see
+ * `utils/test-process.ts` for the measurement that made a third signal necessary.
+ */
+env.testing.set(TEST_RUNTIME_FLAG, "1");
+
 const PREFIX = "gt-test-tmp-";
 const STALE_AFTER_MS = 6 * 60 * 60 * 1000;
 const MAX_SWEEP = 200;

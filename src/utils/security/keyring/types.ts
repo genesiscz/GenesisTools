@@ -1,4 +1,4 @@
-import { env } from "@genesiscz/utils/env";
+import { isTestProcess } from "@genesiscz/utils/test-process";
 
 export type MasterKeySource = "keychain" | "env" | "file";
 
@@ -22,23 +22,11 @@ export const KEYCHAIN_SERVICE = "genesis-tools";
 export const KEYCHAIN_ACCOUNT = "master-key";
 
 /**
- * True inside any test process, by two independent signals so a single hole
- * (an unset variable, a bypassed wrapper) never exposes the real keychain:
- *
- * - NODE_ENV=test — `bun test` sets it when unset and `scripts/test.ts`
- *   forces it (inherited by subprocesses tests spawn);
- * - `Bun.main` naming a test file — the runner's entrypoint IS the test file,
- *   and bun itself refuses to collect files without the .test/.spec infix, so
- *   the pattern holds even when a caller exported NODE_ENV=production. A false
- *   positive (`bun run foo.test.ts`) fails SAFE: it blocks the keychain.
+ * True inside any test process. The detection moved to `utils/test-process.ts` so the keychain
+ * gate and the real-home write guard cannot drift apart; it kept this file's two signals and
+ * gained a third that survives into a spawned subprocess.
  */
-export function isTestProcess(): boolean {
-    if (env.get("NODE_ENV") === "test") {
-        return true;
-    }
-
-    return /\.(test|spec)\.[cm]?[jt]sx?$/.test(globalThis.Bun?.main ?? "");
-}
+export { isTestProcess };
 
 /**
  * Effective keychain service name. In a test process this diverges to a

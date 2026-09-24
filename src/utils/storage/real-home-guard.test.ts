@@ -21,6 +21,11 @@ describe("isInside", () => {
         expect(isInside("/tmp/sbX", "/tmp/sbX")).toBe(true);
     });
 
+    test("a child whose name starts with two dots is inside", () => {
+        expect(isInside("/tmp/sbX", "/tmp/sbX/..cache/config.json")).toBe(true);
+        expect(isInside("/tmp/sbX", "/tmp/sbX/..")).toBe(false);
+    });
+
     test("an escape upwards is outside", () => {
         expect(isInside("/tmp/sbX", "/tmp/other")).toBe(false);
     });
