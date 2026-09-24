@@ -19,12 +19,96 @@ public func snapshotTargetKey(_ row: [String:Any], ancestors: [[String:Any]] = [
     return try snapshotDigest([["target":target,"ancestors":context,"document":document]])
 }
 
-public func preparedTargetIndex(key: String, rows: [[String:Any]]) throws -> Int {
-    let matches = rows.indices.filter { rows[$0]["targetKey"] as? String == key }
+/// The identity to use when the app gave this element an AXIdentifier.
+///
+/// 🛑 `snapshotTargetKey` folds in AXValue, AXTitle and AXDescription, for the element AND for its
+/// ancestors. On a live window every one of those moves: measured 2026-09-21 on a countdown HUD,
+/// the container's AXDescription read "Flow, 11 minutes 52 seconds remain" and the primary button's
+/// own label alternated Pause/Resume as a RESULT of pressing it. So the key that was supposed to
+/// survive churn was itself rewritten by the churn, and re-resolution failed half the time.
+///
+/// An AXIdentifier is the one attribute an app author sets precisely so a machine can find the
+/// thing again, and it does not change when the label does. Ancestors contribute only their
+/// identifiers here, never their text, for the same reason.
+///
+/// Returns nil when there is no identifier, and the caller keeps the richer key: without one,
+/// role and text are all that distinguish two sibling buttons.
+public func snapshotStableKey(_ row: [String:Any], ancestors: [[String:Any]] = []) throws -> String? {
+    guard let id = row["AXIdentifier"] as? String, !id.isEmpty else { return nil }
+    let identity: [String: Any] = [
+        "role": row["role"] as? String ?? "",
+        "subrole": row["AXSubrole"] as? String ?? "",
+        "identifier": id,
+    ]
+    let ancestorIdentifiers = ancestors.suffix(4).compactMap { $0["AXIdentifier"] as? String }
+
+    // 🛑 NOT "identity": snapshotDigest strips a key by that name, because an AX wrapper hash
+    // belongs to a client connection rather than to the observed UI. Naming the payload "identity"
+    // silently deleted it, and every element with the same role then hashed to one value: measured
+    // here as 14 rows with distinct identifiers sharing a single key.
+    return try snapshotDigest([["target": identity, "ancestorIdentifiers": ancestorIdentifiers]])
+}
+
+/// Undo the identifier-based stable key wherever that identifier is not unique.
+///
+/// An AXIdentifier is only an identity if ONE element carries it. Apps reuse them for repeated
+/// rows — measured here, four `focus-hud-mix` rows in one HUD — and SwiftUI propagates a
+/// container's identifier to every descendant, which can make dozens share one. Keeping the
+/// identifier-based key there would turn a previously actionable row into a permanent
+/// "ambiguous" refusal, so those rows go back to the richer key that still tells them apart.
+public func demoteSharedStableKeys(_ rows: inout [[String: Any]]) {
+    var counts: [String: Int] = [:]
+    for row in rows {
+        guard let id = row["AXIdentifier"] as? String, !id.isEmpty else { continue }
+        counts[id, default: 0] += 1
+    }
+
+    for index in rows.indices {
+        guard let id = rows[index]["AXIdentifier"] as? String, (counts[id] ?? 0) > 1 else { continue }
+        rows[index]["stableKey"] = rows[index]["targetKey"]
+    }
+}
+
+/// After the binders have finalized every `targetKey`: a `stableKey` that more than one row still
+/// carries is no identity, so each such row falls back to its final `targetKey`.
+///
+/// `demoteSharedStableKeys` repairs only rows whose AXIdentifier repeats. A row with NO
+/// identifier took its pre-binding targetKey as its stable key, so two unlabeled "Delete" buttons
+/// in two list rows shared one. The binders exist to separate exactly those rows, and element-scope
+/// revalidation then found two rows for one key and refused every press on either.
+public func promoteSharedStableKeys(_ rows: inout [[String: Any]]) {
+    var counts: [String: Int] = [:]
+    for row in rows {
+        guard let key = row["stableKey"] as? String else { continue }
+        counts[key, default: 0] += 1
+    }
+
+    for index in rows.indices {
+        guard let key = rows[index]["stableKey"] as? String, (counts[key] ?? 0) > 1 else { continue }
+        rows[index]["stableKey"] = rows[index]["targetKey"]
+    }
+}
+
+public func preparedTargetIndex(key: String, rows: [[String:Any]], field: String = "targetKey") throws -> Int {
+
+    let matches = rows.indices.filter { rows[$0][field] as? String == key }
     guard matches.count == 1, let index = matches.first else {
         throw SnapshotError.refusal(.missingTarget,"observed target changed, disappeared or became ambiguous")
     }
     return index
+}
+
+/// Resolve by the volatile identity first, then the stable one.
+///
+/// A caller copies one hash out of a `see` row and should not have to know which of the two it
+/// is. Trying targetKey first keeps the prepared path byte-identical; falling back to stableKey is
+/// what lets a window with a running clock be acted on at all.
+public func resolvedTargetIndex(key: String, rows: [[String:Any]]) throws -> Int {
+    if let index = try? preparedTargetIndex(key: key, rows: rows) {
+        return index
+    }
+
+    return try preparedTargetIndex(key: key, rows: rows, field: "stableKey")
 }
 
 public func bindTargetsToBrowserDocument(_ rows: inout [[String: Any]]) throws {
@@ -34,6 +118,10 @@ public func bindTargetsToBrowserDocument(_ rows: inout [[String: Any]]) throws {
     for index in rows.indices {
         guard let key = rows[index]["targetKey"] as? String else { continue }
         rows[index]["targetKey"] = try snapshotDigest([["target": key, "browserDocuments": urls]])
+
+        if let stable = rows[index]["stableKey"] as? String {
+            rows[index]["stableKey"] = try snapshotDigest([["target": stable, "browserDocuments": urls]])
+        }
     }
 }
 

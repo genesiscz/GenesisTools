@@ -40,10 +40,21 @@ public struct MenuSnapshotToken: Codable {
     }
 }
 
+/// AXPress on a menu bar item OPENS a menu, and macOS only tracks an open menu for the active
+/// app, so that one genuinely needs the key window. AXPick selects an item outright and AXCancel
+/// dismisses; neither needs the app in front. Gating all three on frontmost meant every menu
+/// action stole the user's focus to do its job.
+public func menuActionRequiresFrontmost(_ action: String) -> Bool {
+    return !["AXPick", "AXCancel"].contains(action)
+}
+
 public func dispatchMenuAction<T>(token: MenuSnapshotToken, pid: Int32, launch: Double, digest: String,
-    element: Int, count: Int, now: Double, frontmost: Bool, enabled: Bool, action: () throws -> T) throws -> T {
+    element: Int, count: Int, now: Double, frontmost: Bool, enabled: Bool, action: () throws -> T,
+    axAction: String = "AXPress") throws -> T {
     try token.validate(pid: pid, launch: launch, digest: digest, element: element, count: count, now: now)
-    guard frontmost else { throw SnapshotError.refusal(.focusMismatch, "menu actions require the app to be frontmost; focus explicitly") }
+    guard frontmost || !menuActionRequiresFrontmost(axAction) else {
+        throw SnapshotError.refusal(.focusMismatch, "\(axAction) on a menu needs the app frontmost; AXPick selects an item without focus")
+    }
     guard enabled else { throw SnapshotError.refusal(.missingTarget, "menu item is disabled") }
     return try action()
 }

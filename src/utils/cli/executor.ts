@@ -1,7 +1,7 @@
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
-import type { Command } from "commander";
+import { type Command, Help, type Option } from "commander";
 import pc from "picocolors";
 
 export { isInteractive } from "./is-interactive";
@@ -35,14 +35,21 @@ function helpWidth(): number {
  * could not tell whether `--from` was required, and had to make an extra help call to find
  * out — for the one flag that decides which music gets sampled.
  */
-function describeOption(option: { description: string; defaultValue?: unknown; defaultValueDescription?: string }) {
+function describeOption(option: {
+    description: string;
+    defaultValue?: unknown;
+    defaultValueDescription?: string;
+    mandatory?: boolean;
+}) {
+    const required = option.mandatory === true ? " (required)" : "";
+
     if (option.defaultValue === undefined) {
-        return option.description;
+        return `${option.description}${required}`;
     }
 
     const shown = option.defaultValueDescription ?? SafeJSON.stringify(option.defaultValue);
 
-    return `${option.description} (default: ${shown})`;
+    return `${option.description}${required} (default: ${shown})`;
 }
 
 /**
@@ -84,6 +91,28 @@ function wrapDescription(description: string, available: number): string[] {
  * this the user gets a bare `error: missing required argument 'entry'` and no usage at all — which
  * is exactly the moment help is worth most.
  */
+/**
+ * Print `(required)` next to a required option, for a command AND every subcommand under it.
+ *
+ * Commander renders a required option exactly like an optional one, and reports only the FIRST
+ * missing one per run. So a caller pays one failed invocation PER required flag just to learn the
+ * call shape: `control sequence` raised `--role`, then `--within`, then ran. Marking them makes the
+ * help printed beside that first error enough to fix the whole command line at once.
+ */
+export function markRequiredOptionsDeep(cmd: Command): void {
+    cmd.configureHelp({
+        optionDescription(this: Help, option: Option): string {
+            const base = Help.prototype.optionDescription.call(this, option);
+
+            return option.mandatory ? `${base} (required)` : base;
+        },
+    });
+
+    for (const sub of cmd.commands as Command[]) {
+        markRequiredOptionsDeep(sub);
+    }
+}
+
 export function showHelpAfterErrorDeep(cmd: Command): void {
     cmd.showHelpAfterError(true);
 

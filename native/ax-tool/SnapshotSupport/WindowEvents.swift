@@ -106,8 +106,18 @@ public final class WindowEventFactory {
     }
 
     public func mouse(type: NSEvent.EventType, point: CGPoint, clickCount: Int) throws -> CGEvent {
-        guard point.x.isFinite, point.y.isFinite, bounds.contains(point) else {
-            throw WindowEventError.unavailable("mouse point is outside the snapshot window")
+        // Split from the bounds check on purpose: Int(Double.nan) traps, so a non-finite point must
+        // never reach the formatter that describes the rectangle.
+        guard point.x.isFinite, point.y.isFinite else {
+            throw WindowEventError.unavailable("mouse point \(point.x),\(point.y) is not a finite coordinate")
+        }
+
+        guard bounds.contains(point) else {
+            let received = "\(Int(point.x.rounded())),\(Int(point.y.rounded()))"
+            let rectangle = "\(Int(bounds.origin.x.rounded())),\(Int(bounds.origin.y.rounded())) "
+                + "\(Int(bounds.width.rounded()))x\(Int(bounds.height.rounded()))"
+            throw WindowEventError.unavailable(
+                "mouse point \(received) is outside snapshot window \(windowID), whose bounds are \(rectangle)")
         }
         let local = NSPoint(x: point.x - bounds.minX, y: bounds.maxY - point.y)
         guard let event = NSEvent.mouseEvent(with: type, location: local, modifierFlags: [],

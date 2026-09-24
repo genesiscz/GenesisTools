@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { AxResult } from "../runner";
 import { deeperSeeDepth, MAX_SEE_DEPTH, NativeControlDriver, overflowsObservation } from "./native";
+import { candidatesFor } from "./observation";
 
 function observation(): AxResult {
     return {
@@ -102,5 +103,77 @@ describe("see depth escalation", () => {
             run: async () => ({ ok: false, error: "AX tree exceeds 4000 elements; snapshot refused" }) as AxResult,
         });
         await expect(stubborn.observe({})).rejects.toThrow(/exceeds 4000 elements/);
+    });
+});
+
+describe("act options follow the action actually dispatched", () => {
+    const key = "a".repeat(64);
+
+    function menuWindow(): AxResult {
+        return {
+            ...observation(),
+            elements: [
+                { index: 0, depth: 0, role: "AXWindow", AXTitle: "Electron App", AXFocused: true, stableKey: key },
+                {
+                    index: 1,
+                    depth: 1,
+                    role: "AXMenuButton",
+                    AXTitle: "More",
+                    actions: ["AXShowMenu"],
+                    x: 10,
+                    y: 10,
+                    width: 20,
+                    height: 20,
+                    stableKey: key,
+                    targetKey: key,
+                },
+            ],
+        } as unknown as AxResult;
+    }
+
+    async function actArguments(action: "focus" | "press", prepare: boolean): Promise<string[]> {
+        let acted: string[] = [];
+        const driver = new NativeControlDriver({
+            app: "Electron App",
+            prepare,
+            run: async ({ args }) => {
+                if (args[0] === "act") {
+                    acted = args;
+                    return { ok: true } as AxResult;
+                }
+
+                return menuWindow();
+            },
+        });
+        const observed = await driver.observe({});
+        const candidate = candidatesFor({ observation: observed, action }).at(-1);
+
+        if (!candidate) {
+            throw new Error(`no ${action} candidate in the fixture`);
+        }
+
+        await driver.act({ observation: observed, candidate });
+
+        return acted;
+    }
+
+    test("focus never carries --target-key, which native refuses for focus", async () => {
+        const args = await actArguments("focus", false);
+
+        expect(args).toContain("focus");
+        expect(args).not.toContain("--target-key");
+    });
+
+    test("a press rewritten to perform is not prepared, which native refuses for perform", async () => {
+        const args = await actArguments("press", true);
+
+        expect(args.slice(args.indexOf("--action"), args.indexOf("--action") + 4)).toEqual([
+            "--action",
+            "perform",
+            "--ax-action",
+            "AXShowMenu",
+        ]);
+        expect(args).not.toContain("--prepare");
+        expect(args).toContain("--target-key");
     });
 });

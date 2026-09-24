@@ -179,3 +179,99 @@ extension SnapshotSupportTests {
         XCTAssertThrowsError(try foreign.validate(pid:42,launch:123,digest:"menu-tree",element:1,count:3,now:1001))
     }
 }
+
+final class CursorFeedbackGateTests: XCTestCase {
+    func testNoActivateSwitchesTheOverlayOff() {
+        // 🛑 This is the regression test for the no-focus-steal requirement. Showing the overlay
+        // activates this process, so feedback during a --no-activate act took the focus the caller
+        // explicitly asked to keep. Measured: cmux -> ax-tool with feedback, cmux -> cmux without.
+        XCTAssertFalse(cursorFeedbackEnabled(arguments: ["ax-tool", "act", "--no-activate"], environment: [:]))
+    }
+
+    func testNoCursorAndTheEnvironmentSwitchStillWork() {
+        XCTAssertFalse(cursorFeedbackEnabled(arguments: ["ax-tool", "act", "--no-cursor"], environment: [:]))
+        XCTAssertFalse(cursorFeedbackEnabled(arguments: ["ax-tool", "act"],
+                                             environment: ["GENESIS_CONTROL_CURSOR": "off"]))
+    }
+
+    // The other half: an ordinary act must still show feedback, or a guard that disabled
+    // everything would pass the cases above while silently removing the visible proof of input.
+    func testAnOrdinaryActStillShowsFeedback() {
+        XCTAssertTrue(cursorFeedbackEnabled(arguments: ["ax-tool", "act", "--action", "press"], environment: [:]))
+        XCTAssertTrue(cursorFeedbackEnabled(arguments: ["ax-tool", "act"],
+                                            environment: ["GENESIS_CONTROL_CURSOR": "on"]))
+    }
+}
+
+final class StableKeyTests: XCTestCase {
+    private func row(_ identifier: String?, role: String = "AXStaticText", value: String = "") -> [String: Any] {
+        var row: [String: Any] = ["role": role, "AXValue": value]
+        if let identifier { row["AXIdentifier"] = identifier }
+        return row
+    }
+
+    func testTwoIdentifiersNeverShareAKey() throws {
+        // The bug this caught: 14 rows with distinct identifiers hashed to ONE value.
+        let phase = try snapshotStableKey(row("focus-hud-phase"))
+        let timer = try snapshotStableKey(row("focus-hud-timer"))
+
+        XCTAssertNotNil(phase)
+        XCTAssertNotEqual(phase, timer)
+    }
+
+    func testAPayloadNamedIdentityWouldBeStripped() throws {
+        // 🛑 The cause, pinned so it cannot come back: snapshotDigest DELETES a key called
+        // "identity", because an AX wrapper hash belongs to a client connection rather than to the
+        // observed UI. Anything hashed under that name silently vanishes.
+        let kept = try snapshotDigest([["target": ["a": "1"]]])
+        let kept2 = try snapshotDigest([["target": ["a": "2"]]])
+        let stripped = try snapshotDigest([["identity": ["a": "1"]]])
+        let stripped2 = try snapshotDigest([["identity": ["a": "2"]]])
+
+        XCTAssertNotEqual(kept, kept2, "a payload under any other name must affect the digest")
+        XCTAssertEqual(stripped, stripped2, "a payload named identity is dropped — do not hash under it")
+    }
+
+    func testTheValueIsIgnoredSoAClockCannotMoveTheKey() throws {
+        // The whole point: the element's own changing text must not rewrite its identity.
+        let before = try snapshotStableKey(row("focus-hud-timer", value: "13:29"))
+        let after = try snapshotStableKey(row("focus-hud-timer", value: "13:28"))
+
+        XCTAssertEqual(before, after)
+    }
+
+    func testAnElementWithoutAnIdentifierGetsNoStableKey() throws {
+        XCTAssertNil(try snapshotStableKey(row(nil)))
+        XCTAssertNil(try snapshotStableKey(row("")))
+    }
+
+    func testASharedIdentifierIsDemotedBackToTheRicherKey() {
+        // An identifier four rows share cannot identify any of them, and keeping it would turn a
+        // previously actionable row into a permanent "ambiguous" refusal.
+        var rows: [[String: Any]] = [
+            ["AXIdentifier": "mix", "stableKey": "shared", "targetKey": "rich-a"],
+            ["AXIdentifier": "mix", "stableKey": "shared", "targetKey": "rich-b"],
+            ["AXIdentifier": "primary", "stableKey": "unique", "targetKey": "rich-c"],
+        ]
+        demoteSharedStableKeys(&rows)
+
+        XCTAssertEqual(rows[0]["stableKey"] as? String, "rich-a")
+        XCTAssertEqual(rows[1]["stableKey"] as? String, "rich-b")
+        XCTAssertEqual(rows[2]["stableKey"] as? String, "unique", "a unique identifier keeps its key")
+    }
+
+    func testAStableKeyStillSharedAfterBindingFallsBackToTheFinalTargetKey() {
+        // Two unlabeled "Delete" buttons with no identifier: the same pre-binding key, and
+        // targetKeys the sibling-text binder has already told apart.
+        var rows: [[String: Any]] = [
+            ["role": "AXButton", "stableKey": "delete", "targetKey": "delete-in-row-1"],
+            ["role": "AXButton", "stableKey": "delete", "targetKey": "delete-in-row-2"],
+            ["role": "AXButton", "stableKey": "save", "targetKey": "save-bound"],
+        ]
+        promoteSharedStableKeys(&rows)
+
+        XCTAssertEqual(rows[0]["stableKey"] as? String, "delete-in-row-1")
+        XCTAssertEqual(rows[1]["stableKey"] as? String, "delete-in-row-2")
+        XCTAssertEqual(rows[2]["stableKey"] as? String, "save", "a unique stable key is kept")
+    }
+}

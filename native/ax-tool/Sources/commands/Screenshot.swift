@@ -18,6 +18,16 @@ func captureWindowCGImage(_ appName: String) -> (CGImage, String, pid_t, CGRect)
 func captureWindowCGImageFull(_ appName: String) -> (CGImage, String, pid_t, CGRect, [String]) {
     let pid = resolveApp(appName)
     let windowScope = argValue("--window")
+    let windowIDScope: CGWindowID? = argValue("--window-id").map {
+        guard let parsed = CGWindowID($0), parsed > 0 else {
+            errorExit("--window-id must be a positive integer")
+        }
+
+        return parsed
+    }
+    if windowScope != nil && windowIDScope != nil {
+        errorExit("choose --window or --window-id, not both")
+    }
 
     let windowList = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[CFString: Any]] ?? []
     let appWindows = windowList.filter { ($0[kCGWindowOwnerPID] as? Int32) == pid }
@@ -49,7 +59,19 @@ func captureWindowCGImageFull(_ appName: String) -> (CGImage, String, pid_t, CGR
     }
 
     var targetWindow: [CFString: Any]? = nil
-    if let ws = windowScope {
+    if let idScope = windowIDScope {
+        // `see` reports kCGWindowNumber as its windowId, so the same number addresses a window
+        // here. Two windows sharing a title are unreachable by --window and reachable by this.
+        let matches = appWindows.filter { ($0[kCGWindowNumber] as? CGWindowID) == idScope }
+        guard matches.count == 1 else {
+            jsonOutput(["ok": false,
+                "error": "no window with id \(idScope) in \(appName)",
+                "candidates": appWindows.map { axTitleFor($0) ?? windowName($0) },
+                "windowIds": appWindows.compactMap { $0[kCGWindowNumber] as? CGWindowID }])
+            exit(1)
+        }
+        targetWindow = matches[0]
+    } else if let ws = windowScope {
         // Fail loud on 0 or >1 matches — a substring miss must never silently
         // capture a different window (the "Find in page popup as Brave-Main" bug).
         let matches = appWindows.filter { w in
@@ -64,8 +86,9 @@ func captureWindowCGImageFull(_ appName: String) -> (CGImage, String, pid_t, CGR
         }
         if matches.count > 1 {
             jsonOutput(["ok": false,
-                "error": "ambiguous: '\(ws)' matches \(matches.count) windows in \(appName) — use a longer substring",
-                "candidates": matches.map { windowName($0) }])
+                "error": "ambiguous: '\(ws)' matches \(matches.count) windows in \(appName) — use a longer substring, or --window-id <id> when the titles are identical",
+                "candidates": matches.map { windowName($0) },
+                "windowIds": matches.compactMap { $0[kCGWindowNumber] as? CGWindowID }])
             exit(1)
         }
         targetWindow = matches[0]
@@ -99,9 +122,11 @@ func cmdScreenshot(appName: String, path: String) {
     var (cgImage, title, pid, boundsPts, others) = captureWindowCGImageFull(appName)
 
     var result: [String: Any] = ["ok": true, "action": "screenshot", "path": path, "window": title]
-    if !others.isEmpty && argValue("--window") == nil {
+    // Only an UNSCOPED capture is picked by area. Saying "largest-area" after the caller named
+    // a title or an id reports a guess where there was an exact choice.
+    if !others.isEmpty && argValue("--window") == nil && argValue("--window-id") == nil {
         result["otherWindows"] = others
-        result["pickedBy"] = "largest-area (pass --window <title> to target another)"
+        result["pickedBy"] = "largest-area (pass --window <title> or --window-id <id> to target another)"
     }
 
     // --annotate: draw numbered boxes around interactable AX elements

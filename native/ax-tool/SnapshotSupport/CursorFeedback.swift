@@ -2,6 +2,21 @@ import AppKit
 import QuartzCore
 import CoreText
 
+/// Whether the animated cursor overlay may be shown for this invocation.
+///
+/// 🛑 `--no-activate` turns it OFF, and that is load-bearing rather than cosmetic. Showing the
+/// overlay window activates this process: measured 2026-09-21 with an identical
+/// `act --action key --no-activate` run twice against the same window, the frontmost app went
+/// cmux -> ax-tool and stayed there with feedback on, and stayed cmux with it off. So feedback
+/// silently undid the one thing the caller asked for, and `frontmostChanged` reported false
+/// because the activation lands after the payload is written. This function is the assertion that
+/// keeps the no-focus-steal requirement true.
+public func cursorFeedbackEnabled(arguments: [String], environment: [String: String]) -> Bool {
+    return !arguments.contains("--no-cursor")
+        && !arguments.contains("--no-activate")
+        && environment["GENESIS_CONTROL_CURSOR"] != "off"
+}
+
 public struct CursorFeedbackEvent: Codable {
     public var action: String
     public var x: Double?

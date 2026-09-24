@@ -25,7 +25,9 @@ export function registerComputerUseCommands(program: Command) {
         });
     program
         .command("computer-run [code]")
-        .description("Run JS/TS with the independent computer API preloaded (one process, no Codex or Sky)")
+        .description(
+            "Run JS/TS with the independent computer API preloaded (one process, no Codex or Sky). The turn is an async module body: the LAST EXPRESSION is the result, top-level `await` works, and a top-level `return` is a syntax error. Emit extra output with `nodeRepl.write(value)`; console.log is captured into the same text."
+        )
         .option("--file <path>", "Read script from a file")
         .option("--timeout <ms>", "Whole REPL turn deadline", "30000")
         .option("--json", "Return structured REPL result")

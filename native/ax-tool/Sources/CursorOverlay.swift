@@ -46,9 +46,23 @@ private enum CursorChannel {
 }
 
 enum ActionCursor {
+    /// 🛑 --no-activate implies no feedback, and that is not a preference — it is the difference
+    /// between the flag working and not. Measured on 2026-09-21 with an identical `act --action key
+    /// --no-activate` against the same window, twice: with feedback the frontmost app went
+    /// cmux -> ax-tool and STAYED there; with --no-cursor it stayed cmux. Showing the overlay
+    /// window activates this process, so a caller who asked not to take the focus took it anyway,
+    /// and `frontmostChanged` reported false because the activation lands after the payload is
+    /// written. A bare `cursor preview` does NOT do this, which is why the overlay alone was not
+    /// the suspect until the two act runs were compared side by side.
+    /// Set when the target is a non-activating panel. Showing the overlay activates THIS process,
+    /// which is the same disturbance the panel exists to avoid, so feedback is dropped for it on
+    /// the same reasoning as --no-activate. Measured: one of three coordinate clicks on such a
+    /// panel left ax-tool frontmost with feedback on; none did with it off.
+    static var suppressedForNonActivatingPanel = false
     static var enabled: Bool {
-        !CommandLine.arguments.contains("--no-cursor") &&
-        ProcessInfo.processInfo.environment["GENESIS_CONTROL_CURSOR"] != "off"
+        !suppressedForNonActivatingPanel
+            && cursorFeedbackEnabled(arguments: CommandLine.arguments,
+                                     environment: ProcessInfo.processInfo.environment)
     }
     static func emit(_ verb: String, point: CGPoint?, background: Bool = false, target: String = "ax", waitForPresentation: Bool = true) {
         guard let action = CursorFeedbackEvent.semantic(verb) else { return }

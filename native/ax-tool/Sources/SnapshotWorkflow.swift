@@ -60,6 +60,21 @@ private func workflowFailure(_ error: Error) -> Never {
     workflowFailure(error.localizedDescription, category: category)
 }
 
+/// A refusal that omits the rectangle it was compared against sends the caller hunting: a window
+/// that repositioned itself between `see` and `act` is indistinguishable from a coordinate that was
+/// always wrong. Name the received point, the window and its bounds, so one read settles which.
+private func describeOutsideWindow(point: CGPoint, window: ObservedWindow) -> String {
+    func whole(_ value: Double) -> Int {
+        return Int(value.rounded())
+    }
+
+    let bounds = window.bounds
+    let received = "\(whole(point.x)),\(whole(point.y))"
+    let rectangle = "\(whole(bounds.origin.x)),\(whole(bounds.origin.y)) \(whole(bounds.width))x\(whole(bounds.height))"
+    return "coordinate \(received) is outside snapshot window \(window.id), whose bounds are \(rectangle); "
+        + "both are global logical points, and a window that moved since see needs a fresh see"
+}
+
 private var workflowInput: WorkflowArguments?
 
 private func workflowArgument(_ flag: String) -> String? {
@@ -300,13 +315,87 @@ private func workflowSnapshotOnce(appName: String, pid: pid_t, launch: Double, w
 /// Wait until two consecutive reads agree, so a post-action snapshot describes a UI that has
 /// finished moving. Sky settles on AXObserver notifications; polling the digest needs no run
 /// loop subscription. Capped at one second.
-private func workflowSettle(_ window: AXUIElement, depth: Int, scope: String) throws -> ObservedTreeData {
+/// Wait for the menu a press was supposed to open, and press once more if it never arrived.
+///
+/// 🛑 The second press is safe ONLY because it is state-verified. A menu button TOGGLES, so a
+/// blind retry closes exactly what the first press opened. This one runs only when a fresh read
+/// proves that NO menu is open in the window, and a press with nothing open cannot close anything.
+/// An unreadable tree counts as "something is open", because guessing the other way is the one
+/// mistake that undoes the caller's work.
+///
+/// Measured 2026-09-22 driving a live SwiftUI menu button: a press issued while the previous menu
+/// was still dismissing was swallowed, once in five attempts, and the refresh then returned a tree
+/// with no menu while reporting success.
+private func workflowAwaitOpenedMenu(window: ObservedWindow, pid: pid_t, owner: Int, element: AXUIElement,
+                                     depth: Int, scope: String) -> [String: Any] {
+    // A contextual menu is not guaranteed to live under the window: Accessibility may expose it
+    // as a direct child of the APPLICATION. Reading the window alone then saw "nothing open", and
+    // the retry pressed again and closed the menu the first press had opened. So the application's
+    // own children are read too, and an application that cannot be read counts as "a menu may be
+    // open", for the same reason an unreadable window tree does.
+    func appLevelMenuOpen() -> Bool {
+        var raw: CFTypeRef?
+        let read = AXUIElementCopyAttributeValue(AXUIElementCreateApplication(pid), kAXChildrenAttribute as CFString, &raw)
+        guard read == .success, let children = raw as? [AXUIElement] else { return true }
+
+        return children.contains { axStringAttribute($0, "AXRole") == "AXMenu" }
+    }
+
+    func state() -> (ours: Bool, any: Bool) {
+        guard let tree = try? observedTree(window.ax, depth: depth, scope: scope) else { return (false, true) }
+
+        return (openMenuIndex(owner: owner, rows: tree.rows) != nil, treeCarriesOpenMenu(tree.rows) || appLevelMenuOpen())
+    }
+
+    func waitForOurs(_ seconds: TimeInterval) -> (ours: Bool, any: Bool) {
+        let deadline = Date().addingTimeInterval(seconds)
+        var seen = state()
+        while !seen.ours, Date() < deadline {
+            Thread.sleep(forTimeInterval: 0.05)
+            seen = state()
+        }
+
+        return seen
+    }
+
+    let first = waitForOurs(1.5)
+    if first.ours {
+        return ["menuOpened": true]
+    }
+
+    guard !first.any else {
+        return ["menuOpened": false,
+                "menuNote": "a menu is open, but not under this control in the window (it may be this control's own, shown at app level); not pressing again"]
+    }
+
+    workflowAXAction(element, action: "AXPress")
+    let second = waitForOurs(1.5)
+
+    return ["menuOpened": second.ours, "menuPressRetried": true]
+}
+
+/// What `--refresh` is waiting for, when the action it follows is known to start something.
+private struct SettleExpectation {
+    let name: String
+    let timeout: TimeInterval
+    let holds: ([[String: Any]]) -> Bool
+}
+
+/// 🛑 Two equal reads mean the tree is not moving. That is NOT the same as the tree having
+/// finished what the action started, because a tree that has not BEGUN to change reads identical
+/// twice in 50 ms as well. Measured 2026-09-22 against a live SwiftUI menu button: the press
+/// returned `.success` at once, the menu was built a moment later, and 2 of 5 refreshes returned a
+/// tree with no menu in it while all 5 reported `ok: true`.
+///
+/// So a caller that knows what it started says so, and stability alone stops being the proof.
+private func workflowSettle(_ window: AXUIElement, depth: Int, scope: String,
+                            awaiting: SettleExpectation? = nil) throws -> ObservedTreeData {
     var previous = try observedTree(window, depth: depth, scope: scope)
-    let deadline = Date().addingTimeInterval(1)
+    let deadline = Date().addingTimeInterval(awaiting?.timeout ?? 1)
     while Date() < deadline {
         Thread.sleep(forTimeInterval: 0.05)
         let next = try observedTree(window, depth: depth, scope: scope)
-        if next.digest == previous.digest {
+        if next.digest == previous.digest, awaiting?.holds(next.rows) ?? true {
             return next
         }
         previous = next
@@ -318,16 +407,28 @@ private func workflowSettle(_ window: AXUIElement, depth: Int, scope: String) th
 /// the action failing: the action was dispatched, and the caller must not retry it just because
 /// the UI was still moving.
 private func workflowAfterState(appName: String, pid: pid_t, launch: Double, window: ObservedWindow,
-                                token: SnapshotToken) -> [String: Any] {
+                                token: SnapshotToken, awaiting: SettleExpectation? = nil) -> [String: Any] {
     do {
         let current = try observedWindow(window.ax, pid: pid)
-        let settled = try workflowSettle(current.ax, depth: token.depth, scope: token.effectiveScope)
+        let settled = try workflowSettle(current.ax, depth: token.depth, scope: token.effectiveScope, awaiting: awaiting)
         guard let index = axWindows(AXUIElementCreateApplication(pid)).firstIndex(where: { CFEqual($0, current.ax) }) else {
             return ["ok": false, "error": "window list changed after the action; run see again"]
         }
-        return try workflowSnapshot(appName: appName, pid: pid, launch: launch, window: current, index: index,
+        var snapshot = try workflowSnapshot(appName: appName, pid: pid, launch: launch, window: current, index: index,
                                     depth: token.depth, scope: token.effectiveScope,
                                     path: workflowArgument("--path"), settled: settled, captureImage: !workflowFlag("--no-image"))
+        if let awaiting {
+            // Judged on the rows actually RETURNED, not on the settle's last read. That is the
+            // claim the caller needs: is the thing in the snapshot I am holding.
+            let arrived = awaiting.holds((snapshot["elements"] as? [[String: Any]]) ?? [])
+            snapshot["awaited"] = ["what": awaiting.name, "arrived": arrived,
+                                   "timeoutSeconds": awaiting.timeout]
+            if !arrived {
+                snapshot["note"] = "\(awaiting.name) did not appear within \(awaiting.timeout)s; the action was dispatched, so inspect before repeating it"
+            }
+        }
+
+        return snapshot
     } catch let unstable as SnapshotUnstable {
         return ["ok": false, "error": unstable.message, "changedElements": unstable.changes]
     } catch {
@@ -474,11 +575,19 @@ func cmdSee(appName _: String) {
 }
 
 private func workflowFrontWindow(_ window: ObservedWindow, pid: pid_t, element: AXUIElement? = nil) {
-    let currentFrontmost = frontmostPid()
-    guard currentFrontmost == pid,
-          let focused = axAttribute(AXUIElementCreateApplication(pid), "AXFocusedWindow"),
-          CFGetTypeID(focused) == AXUIElementGetTypeID(), CFEqual(focused, window.ax) else {
-        workflowFailure("wrong frontmost app/window (expected PID \(pid), frontmost PID \(currentFrontmost ?? -1)); use an explicit focus action, then run see again", category: .focusMismatch)
+    // Root gate rather than one guard per call site: this function is reached from nine places on
+    // the input paths, and patching the two I happened to test would have left the rest stealing
+    // focus. --no-activate is only accepted for key/type/paste/select/set, so skipping the window
+    // gate cannot loosen a pointer action. 🛑 Only the frontmost/key-window gate is waived; the
+    // focused-element check below still runs, exactly as dispatchSnapshotAction keeps it, because
+    // it is what stops a later character from landing in a field that took focus mid-type.
+    if !workflowFlag("--no-activate") {
+        let currentFrontmost = frontmostPid()
+        guard currentFrontmost == pid,
+              let focused = axAttribute(AXUIElementCreateApplication(pid), "AXFocusedWindow"),
+              CFGetTypeID(focused) == AXUIElementGetTypeID(), CFEqual(focused, window.ax) else {
+            workflowFailure("wrong frontmost app/window (expected PID \(pid), frontmost PID \(currentFrontmost ?? -1)); use an explicit focus action, then run see again", category: .focusMismatch)
+        }
     }
     if let element {
         guard let focused = axAttribute(AXUIElementCreateApplication(pid), "AXFocusedUIElement"),
@@ -557,13 +666,106 @@ private func workflowFocus(_ window: ObservedWindow, pid: pid_t, element: AXUIEl
         workflowFrontWindow(window, pid: pid, element: CFEqual(element, window.ax) ? nil : element)
 }
 
+/// `act --by-identifier`: find the one element in this app carrying that AXIdentifier.
+///
+/// This is the whole one-process door. It walks the app's windows itself, refuses unless exactly
+/// one row carries the identifier, and mints the token from the SAME tree it is about to dispatch
+/// against. There is therefore no gap for the world to move in, which is what every guard on the
+/// `--snapshot` path exists to detect.
+///
+/// A window that cannot be observed is SKIPPED, not fatal. `observedWindow` refuses a minimized or
+/// geometry-less window, and an app the user left one window collapsed in would otherwise be
+/// undrivable through this door even when the target is plainly visible in another.
+private func workflowIdentifierTarget(appName: String, pid: pid_t, launch: Double, identifier: String)
+    -> (window: ObservedWindow, tree: ObservedTreeData, element: Int, token: SnapshotToken) {
+    let depth = workflowInteger("--depth", defaultValue: 20)
+    let windows = axWindows(AXUIElementCreateApplication(pid))
+    guard !windows.isEmpty else {
+        workflowFailure("no AX windows for \(appName); verify permissions and app state")
+    }
+    var considered = Array(windows.indices)
+    if workflowArgument("--window-index") != nil {
+        let requested = workflowInteger("--window-index")
+        guard windows.indices.contains(requested) else {
+            workflowFailure("--window-index outside current window list")
+        }
+        considered = [requested]
+    }
+    var observed: [(index: Int, window: ObservedWindow, tree: ObservedTreeData)] = []
+    var skipped: [String] = []
+    for index in considered {
+        do {
+            let window = try observedWindow(windows[index], pid: pid)
+            observed.append((index, window, try observedTree(window.ax, depth: depth, scope: "window")))
+        } catch {
+            skipped.append("\(index): \(error.localizedDescription)")
+        }
+    }
+    guard !observed.isEmpty else {
+        workflowFailure("no window of \(appName) could be observed"
+            + (skipped.isEmpty ? "" : "; " + skipped.joined(separator: "; ")), category: .missingTarget)
+    }
+    let searched = observed.map {
+        IdentifierWindow(index: $0.index, title: axStringAttribute($0.window.ax, "AXTitle") ?? "", rows: $0.tree.rows)
+    }
+    do {
+        let target = try resolveIdentifierTarget(identifier, app: appName, depth: depth, windows: searched,
+                                                 skipped: skipped)
+        guard let hit = observed.first(where: { $0.index == target.window }) else {
+            workflowFailure("window list changed while resolving the identifier; act again", category: .scopeChanged)
+        }
+
+        return (hit.window, hit.tree, target.element,
+                SnapshotToken(pid: pid, launch: launch, window: Int(hit.window.id), depth: depth,
+                              digest: hit.tree.digest, created: Date().timeIntervalSince1970, scope: "window"))
+    } catch {
+        workflowFailure(error)
+    }
+}
+
 func cmdAct(appName _: String) {
     workflowDispatchState = "not_started"
     let appName = workflowParse("act")
-    guard let raw = workflowArgument("--snapshot"), raw.count < 65536,
-          let data = Data(base64Encoded: raw),
-          let token = try? JSONDecoder().decode(SnapshotToken.self, from: data) else {
-        workflowFailure("invalid --snapshot token; run see again")
+    // Martin's requirement, made testable: a caller must be able to tell whether driving the app
+    // disturbed the user. Reported on EVERY act result, not only the ones that tried not to.
+    let startingFrontmost = frontmostPid()
+    // Two ways in, differing only in WHERE the observation happened. A --snapshot token was minted
+    // by an earlier `see` in another process, so everything below it is there to prove the world
+    // did not move in between. --by-identifier observes here and mints its own token from that
+    // read, so a caller who knows what an element is called never runs `see` at all.
+    let byIdentifier = workflowArgument("--by-identifier")
+    let action = workflowArgument("--action")!
+    workflowPermissions()
+    let pid = resolveApp(appName)
+    let launch = workflowLaunch(pid)
+    let token: SnapshotToken
+    var elementIndex: Int
+    var window: ObservedWindow
+    var tree: ObservedTreeData
+    if let identifier = byIdentifier {
+        let resolved = workflowIdentifierTarget(appName: appName, pid: pid, launch: launch, identifier: identifier)
+        token = resolved.token
+        elementIndex = resolved.element
+        window = resolved.window
+        tree = resolved.tree
+    } else {
+        guard let raw = workflowArgument("--snapshot"), raw.count < 65536,
+              let data = Data(base64Encoded: raw),
+              let decoded = try? JSONDecoder().decode(SnapshotToken.self, from: data) else {
+            workflowFailure("invalid --snapshot token; run see again")
+        }
+        token = decoded
+        elementIndex = workflowArgument("--coords") == nil && workflowArgument("--region") == nil
+            ? workflowInteger("--element") : 0
+        do {
+            // Validate the token before walking a tree or converting an untrusted window ID.
+            _ = try token.validate(pid: pid, launch: launch, window: token.window, digest: token.digest,
+                                   element: elementIndex, count: 4000, now: Date().timeIntervalSince1970)
+        } catch {
+            workflowFailure(error)
+        }
+        window = workflowWindowByID(token.window, pid: pid)
+        tree = workflowTree(window.ax, depth: token.depth, scope: token.effectiveScope)
     }
     var rawCoords = workflowArgument("--coords")
     if let region = workflowArgument("--region") {
@@ -573,25 +775,18 @@ func cmdAct(appName _: String) {
             rawCoords = "\(point.x),\(point.y)"
         } catch { workflowFailure(error) }
     }
-
-    var elementIndex = rawCoords == nil ? workflowInteger("--element") : 0
-    let action = workflowArgument("--action")!
-    workflowPermissions()
-    let pid = resolveApp(appName)
-    let launch = workflowLaunch(pid)
-    do {
-        // Validate the token before walking a tree or converting an untrusted window ID.
-        _ = try token.validate(pid: pid, launch: launch, window: token.window, digest: token.digest,
-                               element: elementIndex, count: 4000, now: Date().timeIntervalSince1970)
-    } catch {
-        workflowFailure(error)
-    }
-    var window = workflowWindowByID(token.window, pid: pid)
-    var tree = workflowTree(window.ax, depth: token.depth, scope: token.effectiveScope)
     var dispatchToken = token
-    if workflowFlag("--prepare"), let key = workflowArgument("--target-key") {
+    // The prepared path already re-resolved the target by identity and reissued the token against
+    // the FRESH tree, which is exactly what a ticking window needs. It was reachable only through
+    // --prepare, which forces a foreground element action, so a background caller had no way to
+    // survive a clock: Flow's HUD refused every see→act pair with "UI changed; run see again".
+    // --revalidate-scope element opens the same door without the focus requirement.
+    let revalidateScope = workflowArgument("--revalidate-scope") ?? "window"
+    if let key = workflowArgument("--target-key"), workflowFlag("--prepare") || revalidateScope == "element" {
         do {
-            elementIndex = try preparedTargetIndex(key:key,rows:tree.rows)
+            elementIndex = revalidateScope == "element"
+                ? try resolvedTargetIndex(key:key,rows:tree.rows)
+                : try preparedTargetIndex(key:key,rows:tree.rows)
             dispatchToken = SnapshotToken(pid:pid,launch:launch,window:Int(window.id),depth:token.depth,
                 digest:tree.digest,created:token.created,scope:token.effectiveScope)
         } catch { workflowFailure(error) }
@@ -658,6 +853,17 @@ func cmdAct(appName _: String) {
     case "type", "key", "paste": operation = .input
     default: operation = .mutation
     }
+    // 🛑 Pressing a menu button TOGGLES it. A second press closes the menu the first one opened,
+    // and reports exactly the same success, so a caller retrying after a refresh that came back
+    // empty gets the opposite of what it asked for and cannot tell. Refuse, and name the way out.
+    let axActionRequested = action == "perform" ? (workflowArgument("--ax-action") ?? "") : "AXPress"
+    let opensMenu = ["press", "perform"].contains(action)
+        && pressOpensMenu(role: axStringAttribute(element, "AXRole"), axAction: axActionRequested)
+    if opensMenu, openMenuIndex(owner: elementIndex, rows: tree.rows) != nil {
+        workflowFailure("the menu this control opens is already open; pick an item with"
+            + " --action perform --ax-action AXPick on the item, or close it with"
+            + " --action perform --ax-action AXCancel on this same control", category: .refused)
+    }
     let app = AXUIElementCreateApplication(pid)
     let focusedWindow = axAttribute(app, "AXFocusedWindow")
     let focusedInput = axAttribute(app, "AXFocusedUIElement")
@@ -665,18 +871,46 @@ func cmdAct(appName _: String) {
         && focusedWindow.map { CFGetTypeID($0) == AXUIElementGetTypeID() && CFEqual($0, window.ax) } == true
     let inputFocused = (action == "key" && CFEqual(element, window.ax))
         || focusedInput.map { CFGetTypeID($0) == AXUIElementGetTypeID() && CFEqual($0, element) } == true
+    // A panel that can never be key cannot satisfy a frontmost precondition, so asking it to is a
+    // wall rather than a guard. The CG layer is read from the live window list; AppKit also gives
+    // such windows a floating/dialog subrole, and either signal is enough.
+    let windowLayer = (CGWindowListCopyWindowInfo(.optionIncludingWindow, window.id) as? [[CFString: Any]])?
+        .first(where: { ($0[kCGWindowNumber] as? CGWindowID) == window.id })?[kCGWindowLayer] as? Int
+    let nonActivatingPanel = windowCannotBecomeKey(layer: windowLayer,
+                                                   subrole: axStringAttribute(window.ax, "AXSubrole"))
+    if nonActivatingPanel {
+        ActionCursor.suppressedForNonActivatingPanel = true
+    }
     let context = SnapshotDispatchContext(token: dispatchToken, observedPID: pid, observedProcessLaunch: launch,
         observedWindowID: Int(window.id), observedTreeDigest: tree.digest, observedElementIndex: elementIndex,
         observedElementCount: tree.elements.count, observedAt: Date().timeIntervalSince1970,
         targetEnabled: (axAttribute(element, "AXEnabled") as? Bool) != false,
-        windowFocused: windowFocused, inputFocused: inputFocused, operation: operation)
+        windowFocused: windowFocused, inputFocused: inputFocused,
+        allowUnfocusedInput: workflowFlag("--no-activate") || nonActivatingPanel,
+        windowCanBecomeKey: !nonActivatingPanel, operation: operation)
     func validateAfterFeedback() throws {
         let freshWindow = workflowWindowByID(token.window, pid: pid)
         let fresh = workflowTree(freshWindow.ax, depth: token.depth, scope: token.effectiveScope)
-        if prepared, let key = tree.rows[elementIndex]["targetKey"] as? String {
-            let currentIndex = try preparedTargetIndex(key: key, rows: fresh.rows)
-            try validatePreparedTarget(before: tree.rows[elementIndex], after: fresh.rows[currentIndex],
-                sameElement: CFEqual(element, fresh.elements[currentIndex]))
+        // 🛑 The else branch below compares the WHOLE fresh tree digest, so a window with a running
+        // clock fails here even after the target was pinned by identity: the second read is a
+        // second later. Any caller that pinned an identity gets re-resolved against the fresh tree
+        // instead. Element scope pins the stable identity, because targetKey folds in sibling text
+        // and a clock beside a button is a sibling.
+        let identityField = prepared ? "targetKey" : "stableKey"
+        // --by-identifier pinned the row by the one attribute an app author sets for a machine, so
+        // re-resolve by that same stable identity. Falling back to the whole-tree digest would
+        // refuse every act on a window with a clock in it, which is exactly the bug this door is
+        // meant to remove rather than reintroduce.
+        let identityPinned = prepared || byIdentifier != nil
+            || (revalidateScope == "element" && workflowArgument("--target-key") != nil)
+        if identityPinned, let key = tree.rows[elementIndex][identityField] as? String {
+            let currentIndex = try preparedTargetIndex(key: key, rows: fresh.rows, field: identityField)
+
+            if prepared {
+                try validatePreparedTarget(before: tree.rows[elementIndex], after: fresh.rows[currentIndex],
+                    sameElement: CFEqual(element, fresh.elements[currentIndex]))
+            }
+
             try validateModalTarget(rows: fresh.rows, target: currentIndex)
             _ = try dispatchToken.validate(pid: pid, launch: observedLaunch(pid), window: Int(freshWindow.id),
                 digest: dispatchToken.digest, element: currentIndex, count: fresh.elements.count,
@@ -687,7 +921,9 @@ func cmdAct(appName _: String) {
                 now: Date().timeIntervalSince1970)
         }
         if operation == .input {
-            if action == "key" && CFEqual(element, window.ax) { workflowFrontWindow(freshWindow, pid: pid) }
+            if action == "key", CFEqual(element, window.ax) {
+                workflowFrontWindow(freshWindow, pid: pid)
+            }
             else { workflowFrontWindow(freshWindow, pid: pid, element: element) }
         }
     }
@@ -714,9 +950,31 @@ func cmdAct(appName _: String) {
         return
     case "press":
         workflowAXAction(element, action: "AXPress")
+        if opensMenu {
+            actionExtras.merge(workflowAwaitOpenedMenu(window: window, pid: pid, owner: elementIndex, element: element,
+                                                       depth: token.depth, scope: token.effectiveScope)) { _, new in new }
+        }
     case "perform":
         guard let name = workflowArgument("--ax-action") else {
             workflowFailure("perform requires --ax-action from the observed actions list")
+        }
+        // Only the open AXMenu exposes AXCancel, and an in-window menu has no AXIdentifier of its
+        // own, so a caller that opened it by identifier could not close it the same way. Delegate
+        // from the control the caller already named: opening and closing stay symmetrical.
+        if name == "AXCancel", !axActionNames(element).contains("AXCancel"),
+           pressOpensMenu(role: axStringAttribute(element, "AXRole"), axAction: "AXPress") {
+            // A close is a request for a state, not for an event. An in-window menu dismisses
+            // itself on a click elsewhere or after a while, so a caller tidying up after a read
+            // would otherwise fail for having been beaten to it, and could not tell that apart
+            // from having named the wrong control.
+            guard let menu = openMenuIndex(owner: elementIndex, rows: tree.rows) else {
+                actionExtras["menuAlreadyClosed"] = true
+                break
+            }
+
+            workflowAXAction(tree.elements[menu], action: "AXCancel")
+            actionExtras["cancelledMenuElement"] = menu
+            break
         }
         workflowAXAction(element, action: name)
     case "set":
@@ -768,19 +1026,32 @@ func cmdAct(appName _: String) {
         }
     case "focus":
         workflowFocus(window, pid:pid, element:element)
-    case "scroll", "click", "move", "drag":
+    case "scroll", "click", "move", "drag", "hover":
         let background = workflowFlag("--background")
         let frame = tree.frames[elementIndex]
+        // 🛑 The default stays `screen`, NOT `window` as the spec asked. Flipping it would silently
+        // reinterpret every coordinate an existing caller already passes: a global point read as
+        // window-relative usually still lands INSIDE the window, so there is no refusal and no
+        // error — just a click in the wrong place. A caller who wants a point that survives the
+        // window moving opts in with --frame window, and that is the one this documents.
+        let coordinateFrame = workflowArgument("--frame") ?? "screen"
         func parsePoint(_ raw: String) throws -> CGPoint {
             let parts = raw.split(separator: ",", omittingEmptySubsequences: false)
             let numbers = parts.compactMap { Double($0.trimmingCharacters(in: .whitespaces)) }
             guard parts.count == 2, numbers.count == 2, numbers.allSatisfy({ $0.isFinite }) else {
-                throw WindowEventError.unavailable("coordinates require finite global screen points x,y")
+                throw WindowEventError.unavailable("coordinates require two finite numbers x,y")
             }
-            let point = CGPoint(x: numbers[0], y: numbers[1])
+            let given = CGPoint(x: numbers[0], y: numbers[1])
+            // A window-relative point is resolved against the window's CURRENT origin, which is
+            // the whole point: the HUD that moved from -459,-1057 to -64,-922 between two calls
+            // keeps the same window-relative coordinates.
+            let point = coordinateFrame == "window"
+                ? CGPoint(x: window.bounds.origin.x + given.x, y: window.bounds.origin.y + given.y)
+                : given
             guard window.bounds.contains(point) else {
-                throw WindowEventError.unavailable("coordinate is outside the snapshot window")
+                throw WindowEventError.unavailable(describeOutsideWindow(point: point, window: window))
             }
+
             return point
         }
         var visualAdmitted = false
@@ -798,6 +1069,7 @@ func cmdAct(appName _: String) {
             try admitVisualCapture(capture: visual, pid: pid, launch: try observedLaunch(pid), windowID: Int(liveWindow.id),
                 bounds: VisualRect(liveWindow.bounds), pixelHash: try visualPixelHash(currentImage),
                 width: currentImage.width, height: currentImage.height, now: Date().timeIntervalSince1970,
+                requirePixelMatch: revalidateScope != "element",
                 consume: { try consumeVisualCapture(visual) })
             visualAdmitted = true
             workflowDispatchState = "uncertain"
@@ -832,7 +1104,12 @@ func cmdAct(appName _: String) {
                 }), axFrame(window.ax) == window.bounds, axFrame(target) == expectedTargetFrame else {
                     throw WindowEventError.unavailable("window or element geometry changed; inspect before retrying")
                 }
-                if !background {
+                // The frontmost guard exists so a CLICK or a KEY lands in the window the caller
+                // named. A hover sends neither: it moves the pointer, and the pointer's position
+                // alone decides which window receives the mouse-moved. Requiring the key window
+                // here would make hover steal focus to do its job, which is the opposite of what
+                // it is for.
+                if !background && action != "hover" && !nonActivatingPanel {
                     guard frontmostPid() == pid,
                           let focused = axAttribute(AXUIElementCreateApplication(pid), "AXFocusedWindow"),
                           CFGetTypeID(focused) == AXUIElementGetTypeID(), CFEqual(focused, window.ax) else {
@@ -915,9 +1192,57 @@ func cmdAct(appName _: String) {
                 throw WindowEventError.unavailable("element center is outside its window/scroll clip")
             }
             let point = try rawCoords.map(parsePoint) ?? CGPoint(x: frame.midX, y: frame.midY)
+            // A caller that passed a window-relative point cannot otherwise tell WHERE it landed,
+            // and that is the number to compare against a screenshot or a later observation.
+            if let raw = rawCoords {
+                actionExtras["coordinateFrame"] = coordinateFrame
+                actionExtras["requestedPoint"] = raw
+                actionExtras["resolvedPoint"] = ["x": snapshotPx(point.x), "y": snapshotPx(point.y)]
+            }
+
             _ = try verifyPoint(point, pin: .element)
             let factory = try WindowEventFactory(windowID: Int(window.id), bounds: window.bounds)
-            if action == "move" {
+            if action == "hover" {
+                // 🛑 `move` posts a window-addressed mouseMoved to the pid. That never moves the
+                // hardware pointer, so a SwiftUI .onHover tracking area never fires and a toolbar
+                // revealed by hover stays invisible: measured on Flow 2026-09-21, the tree was
+                // byte-identical before and after a dispatched move. Hover therefore warps the real
+                // cursor, holds it, READS THE TREE WHILE IT IS STILL THERE, and puts the pointer
+                // back. Observing after the restore would always miss the thing hover revealed.
+                let dwellMs = workflowArgument("--dwell") == nil ? 400 : workflowInteger("--dwell")
+                guard (1...10000).contains(dwellMs) else {
+                    throw WindowEventError.unavailable("--dwell must be 1–10000 milliseconds")
+                }
+                let origin = CGEvent(source: nil)?.location
+                let before = Set(tree.rows.compactMap { $0["AXTitle"] as? String }).union(
+                    tree.rows.compactMap { $0["AXDescription"] as? String })
+                ActionCursor.emit("move", point: point, background: false, target: rawCoords == nil ? "ax" : "pixel")
+                CGWarpMouseCursorPosition(point)
+                if let moved = CGEvent(mouseEventSource: nil, mouseType: .mouseMoved,
+                                       mouseCursorPosition: point, mouseButton: .left) {
+                    moved.post(tap: .cghidEventTap)
+                }
+                Thread.sleep(forTimeInterval: Double(dwellMs) / 1000.0)
+                let during = workflowAfterState(appName: appName, pid: pid, launch: launch, window: window, token: token)
+                // --hold leaves the pointer on the target. A control revealed by hover exists only
+                // while the pointer is over it, so restoring here would delete the thing the next
+                // act wants to press. The caller owns putting it back, with `control restore`.
+                let hold = workflowFlag("--hold")
+                if let origin, !hold {
+                    CGWarpMouseCursorPosition(origin)
+                }
+                let rows = (during["elements"] as? [[String: Any]]) ?? []
+                let after = Set(rows.compactMap { $0["AXTitle"] as? String }).union(
+                    rows.compactMap { $0["AXDescription"] as? String })
+                actionExtras["dwellMs"] = dwellMs
+                actionExtras["during"] = during
+                // What the hover REVEALED. Without this a caller has to diff two trees itself to
+                // learn whether the hover did anything at all.
+                actionExtras["revealed"] = after.subtracting(before).sorted()
+                actionExtras["pointerRestored"] = origin != nil && !hold
+                actionExtras["pointerHeld"] = hold
+                workflowDispatchState = "dispatched"
+            } else if action == "move" {
                 let event = try factory.mouse(type: .mouseMoved, point: point, clickCount: 0)
                 try dispatchAfterPresentation(present: {
                     ActionCursor.emit("move", point: point, background: background, target: rawCoords == nil ? "ax" : "pixel")
@@ -1036,7 +1361,9 @@ func cmdAct(appName _: String) {
             do {
                 defer { restoration = transaction.restore() }
                 try transaction.write(text: text, format: workflowArgument("--format") ?? "text")
-                guard frontmostPid() == pid,
+                // --no-activate waives the frontmost requirement here too, as in workflowFrontWindow;
+                // the focused-input check is what decides where the paste lands, so it always runs.
+                guard workflowFlag("--no-activate") || frontmostPid() == pid,
                       let focused = axAttribute(AXUIElementCreateApplication(pid), "AXFocusedUIElement"),
                       CFGetTypeID(focused) == AXUIElementGetTypeID(), CFEqual(focused, element) else {
                     throw WindowEventError.unavailable("focus changed before paste; clipboard restored without dispatch")
@@ -1119,7 +1446,13 @@ func cmdAct(appName _: String) {
     default:
         workflowFailure("unsupported action")
     }
-    var payload: [String: Any] = ["ok": actionOK, "action": action, "element": elementIndex, "pid": pid, "windowId": window.id, "dispatchState": "dispatched"]
+    var payload: [String: Any] = ["ok": actionOK, "action": action, "element": elementIndex, "pid": pid, "windowId": window.id, "dispatchState": "dispatched", "frontmostChanged": frontmostPid() != startingFrontmost]
+    if nonActivatingPanel {
+        // Report it, so a caller reading the result knows the frontmost guard did not apply and
+        // why, rather than wondering whether it was silently skipped.
+        payload["nonActivatingPanel"] = true
+    }
+
     payload.merge(actionExtras) { _, new in new }
     if workflowFlag("--refresh") {
         // Derive it from the result. workflowAfterState has three failure returns — the
@@ -1127,7 +1460,13 @@ func cmdAct(appName _: String) {
         // yields `{ok: false}` with no new token. Hard-coding `false` told the agent its
         // token was still good, and SKILL.md teaches agents to key on exactly this field,
         // so the agent went on to reuse a token that no longer matched the tree.
-        let after = workflowAfterState(appName: appName, pid: pid, launch: launch, window: window, token: token)
+        // 3 seconds, not the ordinary 1: a menu that has to be built costs more than a label that
+        // has to change, and waiting is cheap next to returning a tree the menu is missing from.
+        let awaiting = opensMenu
+            ? SettleExpectation(name: "the opened menu", timeout: 3, holds: { treeCarriesOpenMenu($0) })
+            : nil
+        let after = workflowAfterState(appName: appName, pid: pid, launch: launch, window: window, token: token,
+                                       awaiting: awaiting)
         let refreshed = (after["ok"] as? Bool) ?? false
         payload["refreshRequired"] = !refreshed
         payload["after"] = after

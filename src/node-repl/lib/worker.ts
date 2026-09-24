@@ -1,6 +1,8 @@
+import { Console } from "node:console";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { basename, join } from "node:path";
+import { Writable } from "node:stream";
 import vm from "node:vm";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { rewriteTurn } from "./rewrite";
@@ -77,6 +79,42 @@ const replApi = {
 };
 
 globalThis.nodeRepl = replApi;
+
+/**
+ * stdout carries the line protocol, so a bare console.log corrupts it: the parent cannot parse the
+ * line, warns, drops it, and the turn still reports ok — the output is simply lost. Console output
+ * belongs in the turn's text beside nodeRepl.write, and is mirrored to stderr so a live session
+ * still sees it without a byte reaching the protocol channel.
+ *
+ * The WHOLE console is routed, not a list of methods. Replacing seven by name left `table`,
+ * `count`, `timeEnd`, `timeLog` and the `group` label writing to stdout, which is the same silent
+ * loss. A Console built on the turn's own stream keeps every method's native formatting, and its
+ * write runs synchronously, so a line is in `output` before the next statement runs.
+ */
+const turnStream = new Writable({
+    write(chunk: Buffer | string, _encoding, done): void {
+        const text = String(chunk).replace(/\n$/, "");
+
+        output.push(text);
+        process.stderr.write(`${text}\n`);
+        done();
+    },
+});
+const turnConsole = new Console({ stdout: turnStream, stderr: turnStream });
+const turnMethods = new Set([
+    ...Object.keys(turnConsole),
+    ...Object.getOwnPropertyNames(Object.getPrototypeOf(turnConsole)),
+]);
+const globalConsole = console as unknown as Record<string, unknown>;
+const capturedConsole = turnConsole as unknown as Record<string, unknown>;
+
+for (const name of turnMethods) {
+    const method = capturedConsole[name];
+
+    if (name !== "constructor" && typeof method === "function") {
+        globalConsole[name] = method.bind(turnConsole);
+    }
+}
 
 async function runTurn(code: string): Promise<Response["text"]> {
     const script = new vm.Script(rewriteTurn(code), {

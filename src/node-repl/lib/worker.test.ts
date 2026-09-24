@@ -124,3 +124,70 @@ describe("node-repl import gate, end to end", () => {
         expect(String(replies[0].text)).toContain("function");
     }, 30_000);
 });
+
+/**
+ * 🛑 stdout carries the line protocol. A console.log that reaches it is not a cosmetic leak: the
+ * parent cannot parse the line, drops it with a warning, and the turn still reports ok, so the
+ * output vanishes while the call looks successful. `ask` parses EVERY stdout line strictly, so a
+ * leak fails these cases loudly rather than quietly.
+ */
+describe("node-repl console capture", () => {
+    it("puts console output in the turn text and never on the protocol channel", async () => {
+        const { replies, exitCode } = await ask([
+            SafeJSON.stringify({ id: 1, op: "run", code: "console.log('from console'); 'the result'" }),
+        ]);
+
+        expect(replies).toHaveLength(1);
+        expect(replies[0]).toMatchObject({ id: 1, ok: true });
+        expect(String(replies[0].text)).toBe("from console\nthe result");
+        expect(exitCode).toBe(0);
+    }, 30_000);
+
+    it("joins several arguments and inspects the ones that are not strings", async () => {
+        const { replies } = await ask([
+            SafeJSON.stringify({ id: 1, op: "run", code: "console.warn('n =', { a: 1 }); undefined" }),
+        ]);
+
+        expect(replies[0]).toMatchObject({ id: 1, ok: true });
+        expect(String(replies[0].text)).toContain("n =");
+        expect(String(replies[0].text)).toContain("a: 1");
+    }, 30_000);
+
+    it("captures table, count and group too, which never went through console.log", async () => {
+        const { replies } = await ask([
+            SafeJSON.stringify({
+                id: 1,
+                op: "run",
+                code: "console.table([{ a: 1 }]); console.count('hits'); console.group('grp'); console.groupEnd(); 1",
+            }),
+        ]);
+
+        expect(replies[0]).toMatchObject({ id: 1, ok: true });
+
+        const text = String(replies[0].text);
+
+        expect(text).toContain("│ a │");
+        expect(text).toContain("hits: 1");
+        expect(text).toContain("grp");
+    }, 30_000);
+
+    // The other half: capturing console must not disturb the two channels that already worked.
+    it("leaves nodeRepl.write and the last expression exactly as they were", async () => {
+        const { replies } = await ask([
+            SafeJSON.stringify({ id: 1, op: "run", code: "nodeRepl.write('written'); 2 + 3" }),
+        ]);
+
+        expect(String(replies[0].text)).toBe("written\n5");
+    }, 30_000);
+
+    // The buffer is per turn. A leak here would attribute one turn's output to the next.
+    it("clears the captured output between turns", async () => {
+        const { replies } = await ask([
+            SafeJSON.stringify({ id: 1, op: "run", code: "console.log('first turn'); 1" }),
+            SafeJSON.stringify({ id: 2, op: "run", code: "2" }),
+        ]);
+
+        expect(String(replies[0].text)).toBe("first turn\n1");
+        expect(String(replies[1].text)).toBe("2");
+    }, 30_000);
+});

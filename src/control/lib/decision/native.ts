@@ -72,7 +72,23 @@ export interface ControlDriver {
         }
     ): Promise<AxResult>;
 }
+/** Mirrors the `--prepare` allowlist in WorkflowArguments.validateAction. */
 const PREPARABLE_ACTIONS = new Set(["press", "click", "key", "type", "paste", "select", "set"]);
+/** Mirrors the `--target-key` allowlist in WorkflowArguments.validateAction. */
+const TARGET_KEY_ACTIONS = new Set([
+    "press",
+    "click",
+    "key",
+    "type",
+    "paste",
+    "select",
+    "set",
+    "perform",
+    "hover",
+    "move",
+    "scroll",
+    "get",
+]);
 /** ax-tool refuses a tree deeper than this; see HierarchySource.buildObservedTree. */
 export const MAX_SEE_DEPTH = 50;
 
@@ -297,6 +313,13 @@ export class NativeControlDriver implements ControlDriver {
             value: call.value,
             parameters: call.parameters,
         });
+        // Root fix, not a call-site patch: every press candidate whose row lacks AXPress arrives
+        // here carrying the action it does expose, so the dispatcher performs that one instead of
+        // sending an AXPress the element would refuse.
+        if (call.candidate.action === "press" && call.candidate.axAction) {
+            actionArgs = ["--action", "perform", "--ax-action", call.candidate.axAction];
+        }
+
         if (prepare && target && webTarget) {
             if (call.candidate.action === "set" && ["AXTextField", "AXTextArea", "AXComboBox"].includes(target.role)) {
                 actionArgs = ["--action", "paste", "--text", call.value ?? "", "--format", "text", "--replace"];
@@ -309,8 +332,19 @@ export class NativeControlDriver implements ControlDriver {
                 actionArgs = ["--action", "key", "--keys", "space"];
             }
         }
-        if (prepare && PREPARABLE_ACTIONS.has(call.candidate.action)) {
+        // Both option gates read the action ACTUALLY dispatched, never the candidate's: a press
+        // rewritten to `perform` cannot take `--prepare`, and `focus` cannot take `--target-key`,
+        // and native refuses either with "option is not valid" before anything is dispatched.
+        const dispatched = actionArgs[1] ?? call.candidate.action;
+
+        if (prepare && PREPARABLE_ACTIONS.has(dispatched)) {
             actionArgs.push("--prepare", ...(target?.targetKey ? ["--target-key", target.targetKey] : []));
+        } else if (target?.stableKey && TARGET_KEY_ACTIONS.has(dispatched)) {
+            // Without this every act against a window with a clock in it refuses as
+            // stale_observation: the whole-tree digest moves once a second, so the snapshot is
+            // already out of date by the time the dispatch runs. Pinning the target's stable
+            // identity checks the thing we are acting on instead of the whole screen.
+            actionArgs.push("--target-key", target.stableKey, "--revalidate-scope", "element");
         }
         log.info(
             {

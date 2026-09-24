@@ -136,6 +136,11 @@ public func buildObservedTree(root: AXUIElement, source: HierarchySource, depth:
         }
         while let last = ancestry.last, last.depth >= level { ancestry.removeLast() }
         row["targetKey"] = try snapshotTargetKey(row,ancestors:ancestry.map { $0.row })
+        // The identity that survives a live window. An AXIdentifier is preferred outright, because
+        // it is the only attribute that neither a clock beside the element nor the element's own
+        // changing label can move. Without one, fall back to the identity before sibling text is
+        // folded in, which is still better than the whole-tree digest.
+        row["stableKey"] = try snapshotStableKey(row, ancestors: ancestry.map { $0.row }) ?? row["targetKey"]
         ancestry.append((level,row))
         tree.elements.append(element)
         tree.frames.append(frame)
@@ -146,9 +151,13 @@ public func buildObservedTree(root: AXUIElement, source: HierarchySource, depth:
         }
     }
     try walk(root, level: 0, clip: snapshotFrame(root, source: source))
+    // Before the binders rewrite targetKey: the fallback must be the identity as it was when the
+    // stable key was chosen, not one that has had sibling text folded into it.
+    demoteSharedStableKeys(&tree.rows)
     do {
         try bindTargetsToSiblingText(&tree.rows)
         try bindTargetsToBrowserDocument(&tree.rows)
+        promoteSharedStableKeys(&tree.rows)
         tree.digest = try snapshotDigest(tree.rows)
     } catch {
         throw ObservedTreeError("cannot encode observed AX tree: \(error.localizedDescription)")

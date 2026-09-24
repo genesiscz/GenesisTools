@@ -26,9 +26,10 @@ public struct WorkflowArguments {
             valueOptions = [
                 "--app", "--snapshot", "--element", "--action", "--value", "--ax-action", "--direction", "--text",
                 "--keys", "--coords", "--button", "--to", "--duration", "--pages", "--pixels", "--range", "--prefix",
-                "--suffix", "--selection", "--format", "--path", "--region", "--target-key",
+                "--suffix", "--selection", "--format", "--path", "--region", "--target-key", "--dwell",
+                "--revalidate-scope", "--frame", "--by-identifier", "--window-index", "--depth",
             ]
-            flagOptions = ["--background", "--double", "--refresh", "--no-cursor", "--no-image", "--prepare", "--replace"]
+            flagOptions = ["--background", "--double", "--refresh", "--no-cursor", "--no-image", "--prepare", "--replace", "--hold", "--no-activate"]
         default:
             throw WorkflowArgumentError.invalid("unknown workflow command \(command)")
         }
@@ -77,17 +78,30 @@ public struct WorkflowArguments {
             }
         }
         if command == "act" {
-            guard let action = parsedValues["--action"], ["get", "press", "click", "move", "drag", "set", "perform", "focus", "scroll", "type", "key", "select", "paste"].contains(action) else {
+            guard let action = parsedValues["--action"], ["get", "press", "click", "move", "drag", "set", "perform", "focus", "scroll", "type", "key", "select", "paste", "hover"].contains(action) else {
                 throw WorkflowArgumentError.invalid("--action required and must name a supported action")
             }
-            guard parsedValues["--snapshot"] != nil else {
-                throw WorkflowArgumentError.invalid("--snapshot required")
+            // --by-identifier observes and dispatches inside ONE process, so there is no token to
+            // carry and nothing for a second process to invalidate between the two steps. A token
+            // AND an identifier would be two answers to "which element", so only one is accepted.
+            let hasIdentifier = parsedValues["--by-identifier"] != nil
+            if hasIdentifier {
+                guard parsedValues["--snapshot"] == nil else {
+                    throw WorkflowArgumentError.invalid("--by-identifier observes the app itself and cannot also take a --snapshot token")
+                }
+            } else {
+                guard parsedValues["--snapshot"] != nil else {
+                    throw WorkflowArgumentError.invalid("--snapshot required, or --by-identifier to observe and act in one step")
+                }
             }
             let hasElement = parsedValues["--element"] != nil
             let hasCoordinates = parsedValues["--coords"] != nil
             let hasRegion = parsedValues["--region"] != nil
-            guard [hasElement, hasCoordinates, hasRegion].filter({ $0 }).count == 1 else {
-                throw WorkflowArgumentError.invalid("act requires exactly one of --element, --coords or --region")
+            guard [hasElement, hasIdentifier, hasCoordinates, hasRegion].filter({ $0 }).count == 1 else {
+                throw WorkflowArgumentError.invalid("act requires exactly one of --element, --by-identifier, --coords or --region")
+            }
+            if !hasIdentifier, parsedValues["--window-index"] != nil || parsedValues["--depth"] != nil {
+                throw WorkflowArgumentError.invalid("--window-index and --depth describe the observation --by-identifier makes; a snapshot already carries both")
             }
             try Self.validateAction(action, values: parsedValues, flags: parsedFlags)
         }
@@ -104,16 +118,57 @@ public struct WorkflowArguments {
         }
 
         try reject(["--button", "--double"], unless: ["click"])
-        try reject(["--prepare", "--target-key"], unless: ["press","click","key","type","paste","select","set"])
+        try reject(["--prepare"], unless: ["press","click","key","type","paste","select","set"])
+        // A target key is the row's identity, so it is useful to every action that names a row,
+        // not only to the prepared ones. It is what lets a live-updating window stay actionable.
+        try reject(["--target-key"], unless: ["press","click","key","type","paste","select","set","perform","hover","move","scroll","get"])
+        let revalidateScope = values["--revalidate-scope"] ?? "window"
+        guard ["element", "window", "app"].contains(revalidateScope) else {
+            throw WorkflowArgumentError.invalid("--revalidate-scope must be element, window or app")
+        }
         if let key = values["--target-key"] {
-            guard flags.contains("--prepare"), key.count == 64, key.allSatisfy({ $0.isHexDigit }) else {
-                throw WorkflowArgumentError.invalid("--target-key requires --prepare and a native target fingerprint")
+            guard flags.contains("--prepare") || revalidateScope == "element", key.count == 64,
+                  key.allSatisfy({ $0.isHexDigit }) else {
+                throw WorkflowArgumentError.invalid("--target-key needs --prepare or --revalidate-scope element, plus a native target fingerprint")
             }
+        }
+        // 🛑 Element scope skips the whole-tree digest, so without an identity to check there would
+        // be nothing left guarding the index. Refuse rather than silently act on whatever moved
+        // into that position.
+        if revalidateScope == "element", values["--target-key"] == nil {
+            throw WorkflowArgumentError.invalid("--revalidate-scope element requires --target-key from the row you observed")
         }
         if flags.contains("--prepare"), flags.contains("--background") || values["--coords"] != nil || values["--region"] != nil {
             throw WorkflowArgumentError.invalid("--prepare requires a foreground element action, not coordinates or regions")
         }
-        try reject(["--background", "--coords", "--region"], unless: ["click", "move", "drag", "scroll"])
+        // hover deliberately excluded from --background: the whole point is to move the REAL
+        // pointer, and a window-addressed event does not.
+        try reject(["--background"], unless: ["click", "move", "drag", "scroll"])
+        try reject(["--coords", "--region"], unless: ["click", "move", "drag", "scroll", "hover"])
+        try reject(["--frame"], unless: ["click", "move", "drag", "scroll", "hover"])
+        if let frame = values["--frame"] {
+            guard ["window", "screen"].contains(frame) else {
+                throw WorkflowArgumentError.invalid("--frame must be window or screen")
+            }
+
+            guard values["--coords"] != nil || values["--to"] != nil else {
+                throw WorkflowArgumentError.invalid("--frame describes how --coords is read; supply coordinates")
+            }
+        }
+        if values["--by-identifier"] != nil {
+            guard values["--target-key"] == nil else {
+                throw WorkflowArgumentError.invalid("--by-identifier already names the identity; --target-key comes from a snapshot row")
+            }
+
+            guard values["--revalidate-scope"] == nil else {
+                throw WorkflowArgumentError.invalid("--by-identifier revalidates by identifier already; --revalidate-scope applies to a snapshot")
+            }
+        }
+        try reject(["--dwell", "--hold"], unless: ["hover"])
+        try reject(["--no-activate"], unless: ["key", "type", "paste", "select", "set"])
+        if flags.contains("--no-activate"), flags.contains("--prepare") {
+            throw WorkflowArgumentError.invalid("--no-activate contradicts --prepare, which focuses and raises the target before acting")
+        }
         try reject(["--prefix", "--suffix", "--selection", "--range"], unless: ["select"])
         try reject(["--format"], unless: ["paste"])
         try reject(["--replace"], unless: ["paste"])

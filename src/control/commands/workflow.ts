@@ -3,12 +3,16 @@ import { suggestEnumFlag } from "@genesiscz/utils/cli";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
+import { z } from "zod";
+import { parseWorkflowPlan, replayWorkflow, type WorkflowPlan } from "../lib/decision/workflow";
 import { runAx } from "../lib/runner";
 import { diffSnapshots, type SnapshotRow } from "../lib/snapshot-diff";
+import { type ControlOptions, controlDriver, lazyEvaluator, observationOptions, withSigintAbort } from "./decision";
 
 const ACTIONS = [
     "get",
     "press",
+    "hover",
     "click",
     "move",
     "drag",
@@ -36,23 +40,31 @@ interface WorkflowOptions {
     windowIndex?: string;
     windowId?: string;
     windowTitle?: string;
+    menu?: string;
     depth?: string;
     scope?: string | boolean;
     path?: string;
     snapshot?: string;
+    byIdentifier?: string;
     element?: string;
     action?: string | boolean;
     value?: string;
     axAction?: string;
+    expectTitle?: string;
     direction?: string | boolean;
     text?: string;
     keys?: string;
     double?: boolean;
+    hold?: boolean;
+    activate?: boolean;
+    dwell?: string;
     coords?: string;
+    frame?: string;
     background?: boolean;
     prepare?: boolean;
     replace?: boolean;
     targetKey?: string;
+    revalidateScope?: string;
     button?: string | boolean;
     to?: string;
     duration?: string;
@@ -218,6 +230,29 @@ function resolveWindowTitle(app: string, substring: string): { index: number } |
     return { error: `${verb} "${substring}" in ${app}. Windows:\n${candidates || "  (none)"}` };
 }
 
+/**
+ * The surface a see/menu-see snapshot token was taken from.
+ *
+ * The token is base64 JSON carrying its own `surface`, so `act` can route a menu snapshot to the
+ * native menu dispatcher without the caller naming the surface twice. That is the whole reason
+ * this folds into see/act rather than living as a `control menu` pair: a second command would be
+ * a second addressing scheme for the same indexes, and a caller reading `control --help` would
+ * still have to know the menu door exists before finding it.
+ */
+function snapshotSurface(token: string): "menu" | "window" {
+    try {
+        const decoded = SafeJSON.parse(Buffer.from(token, "base64").toString("utf8"), { strict: true });
+
+        return (decoded as { surface?: unknown }).surface === "menu" ? "menu" : "window";
+    } catch (error) {
+        // An unreadable token is not this function's refusal to make: the native side validates
+        // it and says why. Treat it as the ordinary surface and let that refusal through.
+        logger.debug({ error }, "snapshot token is not readable base64 JSON; treating it as a window snapshot");
+
+        return "window";
+    }
+}
+
 export function registerWorkflowCommands(program: Command): void {
     program
         .command("see")
@@ -232,7 +267,14 @@ export function registerWorkflowCommands(program: Command): void {
             "select the window whose title contains this (case-insensitive); 0 or 2+ matches exit 1 with the candidates"
         )
         .option("--depth <n>", "tree depth, 1–50; refuses truncated trees", "20")
-        .option("--scope [name]", "window (default) or chrome (omit web-area descendants for browser controls)")
+        .option(
+            "--scope [name]",
+            "window (default), chrome (omit web-area descendants for browser controls), or menu (the app's MENU BAR; pair with --menu to descend into one top-level menu)"
+        )
+        .option(
+            "--menu <title>",
+            "with --scope menu: descend into exactly this top-level menu instead of listing the bar"
+        )
         .option("--path <png>", "save screenshot here (default: unique temporary PNG)")
         .option("--no-image", "Read AX state without creating a screenshot")
         .option("--perception [mode]", "Native local OCR regions bound to this screenshot: ocr")
@@ -243,9 +285,31 @@ export function registerWorkflowCommands(program: Command): void {
             "a previous see result for the same window; output carries changes and only the rows that moved"
         )
         .action((opts: WorkflowOptions) => {
-            if (opts.scope !== undefined && !["window", "chrome"].includes(String(opts.scope))) {
-                logger.error(suggestEnumFlag("tools control see", "--scope", ["window", "chrome"]));
+            if (opts.scope !== undefined && !["window", "chrome", "menu"].includes(String(opts.scope))) {
+                logger.error(suggestEnumFlag("tools control see", "--scope", ["window", "chrome", "menu"]));
                 process.exitCode = 1;
+                return;
+            }
+
+            if (opts.menu !== undefined && opts.scope !== "menu") {
+                logger.error("--menu names a top-level menu and only applies to --scope menu");
+                process.exitCode = 1;
+                return;
+            }
+
+            // 🛑 The menu surface is a different native command with a different root, so none of
+            // the window flags below apply to it. Routing here keeps one verb for the caller while
+            // refusing the combinations that would silently be ignored.
+            if (opts.scope === "menu") {
+                const menuArgs = ["menu-see", "--app", opts.app];
+
+                if (opts.menu !== undefined) {
+                    menuArgs.push("--menu", opts.menu);
+                }
+
+                const menuResult = runAx(menuArgs, 30_000);
+                out.result(menuResult);
+                process.exitCode = menuResult.ok ? 0 : 1;
                 return;
             }
             if (opts.perception !== undefined && opts.perception !== "ocr") {
@@ -322,14 +386,27 @@ export function registerWorkflowCommands(program: Command): void {
     program
         .command("act")
         .description(
-            "Act on an element from see after validating app instance, window, age and tree. Refuses stale refs; never retries or falls back. Output is JSON. Run see again after every action. Default click/type/key require the target window already focused; focus is explicit. click --background uses window-addressed delivery without moving the pointer."
+            "Act on an element from see after validating app instance, window, age and tree. Refuses stale refs; never retries or falls back. Output is JSON. Run see again after every action. Default click/type/key require the target window already focused; focus is explicit. click --background uses window-addressed delivery without moving the pointer. A `see --scope menu` snapshot is routed to the menu dispatcher automatically and takes --action perform (with --ax-action, default AXPress) or --action press."
         )
         .requiredOption("--app <name>", "same app instance as the snapshot")
-        .requiredOption("--snapshot <token>", "opaque token returned by see")
+        .option("--snapshot <token>", "opaque token returned by see; omit it only with --by-identifier")
         .option("--element <n>", "element index copied from that snapshot; alternative to click --coords")
+        .option(
+            "--by-identifier <id>",
+            "act on the one element carrying this exact AXIdentifier, with no prior see and no snapshot token: this process observes the app and dispatches against the same read. Refuses when the identifier matches zero or more than one element, naming every candidate. Pair with --window-index and --depth to scope the observation."
+        )
+        .option("--window-index <n>", "with --by-identifier: search only this zero-based AX window")
+        .option("--depth <n>", "with --by-identifier: observation depth, 1–50", "20")
         .option("--action [name]", `one of: ${ACTIONS.join(", ")}`)
         .option("--value <text>", "set: AXValue text, read back to verify; no keystrokes")
-        .option("--ax-action <name>", "perform: exact action from the element's actions list")
+        .option(
+            "--ax-action <name>",
+            "perform: exact action from the element's actions list. With a `see --scope menu` snapshot this is the menu item's action and defaults to AXPress."
+        )
+        .option(
+            "--expect-title <text>",
+            "menu snapshots: refuse unless the row at --element carries exactly this title. Menu indexes shift between observations, so pass the title you read beside the index."
+        )
         .option("--direction [name]", "scroll: direction up, down, left or right; page or pixel wheel mode")
         .option("--text <text>", "type/select/paste: text; type is single-line and limited to 256 UTF-16 units")
         .option(
@@ -337,17 +414,43 @@ export function registerWorkflowCommands(program: Command): void {
             "key: comma-separated modifiers cmd,ctrl,alt,shift plus a letter, digit, return, tab, escape, backspace or arrow"
         )
         .option("--double", "click: double-click the observed element")
-        .option("--coords <x,y>", "click/move/drag/scroll: global screen point from this screenshot")
+        .option(
+            "--hold",
+            "hover: leave the real pointer on the target instead of putting it back. A control revealed by hover exists only while the pointer is over it, so hold it when the next act must press one. Restore with `control restore`."
+        )
+        .option(
+            "--dwell <ms>",
+            "hover: hold the real pointer on the target for this long, 1–10000, default 400. The tree is read DURING the hold and returned as `during`, with a `revealed` list of what appeared; the pointer is then put back where it was."
+        )
+        .option(
+            "--coords <x,y>",
+            "click/move/drag/scroll/hover: a point, read in the frame --frame names. Default `screen` means a GLOBAL LOGICAL screen point, the frame a see row reports as its `screen` rect (negative display origins included). NOT screenshot pixels: that is the same row's `source` rect."
+        )
+        .option(
+            "--frame <name>",
+            "window | screen (default screen). `window` reads --coords relative to the window's CURRENT origin, so the point survives the window moving between see and act. The result echoes coordinateFrame, requestedPoint and the resolvedPoint it acted on. Against a window whose text updates it also needs --target-key <the window row's stableKey> --revalidate-scope element, because --coords and --element are mutually exclusive and the whole-tree digest otherwise refuses as stale."
+        )
         .option(
             "--region <id>",
             "click/move/drag/scroll: observed OCR region ID; revalidates pixels and consumes capture"
         )
         .option("--background", "click/move/drag/scroll: deliver without explicit activation or pointer movement")
         .option(
+            "--no-activate",
+            "key/type/paste/select/set: deliver to the target process without bringing it frontmost. Keys already route through CGEvent.postToPid, so this waives only the key-window requirement; the focused-element check still decides where the text lands. Every result reports frontmostChanged."
+        )
+        .option(
             "--prepare",
             "Element click/key/text: focus, reveal and revalidate the same observed target before input"
         )
-        .option("--target-key <hash>", "With --prepare: native targetKey from the observed row")
+        .option(
+            "--target-key <hash>",
+            "Native targetKey from the observed row; identity for --prepare or --revalidate-scope element"
+        )
+        .option(
+            "--revalidate-scope <scope>",
+            "element | window | app (default window). `element` checks only that the row at --element still carries --target-key, so a window whose clock or status text ticks stays actionable instead of refusing every act with stale_observation."
+        )
         .option("--replace", "paste with --prepare: select all, paste once and verify exact field readback")
         .option("--button [name]", "click: left, right or middle")
         .option("--to <x,y>", "drag: global destination point")
@@ -385,16 +488,61 @@ export function registerWorkflowCommands(program: Command): void {
                 }
             }
 
-            const args = [
-                "act",
-                "--app",
-                opts.app,
-                "--snapshot",
-                opts.snapshot!,
+            if ((opts.snapshot === undefined) === (opts.byIdentifier === undefined)) {
+                logger.error(
+                    opts.snapshot === undefined
+                        ? "act needs --snapshot <token> from see, or --by-identifier <id> to observe and act in one step"
+                        : "--by-identifier observes the app itself and cannot also take a --snapshot token"
+                );
+                process.exitCode = 1;
+                return;
+            }
 
-                "--action",
-                opts.action,
-            ];
+            // A menu snapshot indexes a menu tree, not a window tree, and the native side keeps
+            // them apart. Reading the surface off the token means the caller says it once, in
+            // `see --scope menu`, instead of again here.
+            if (opts.snapshot !== undefined && snapshotSurface(opts.snapshot) === "menu") {
+                if (opts.action !== "perform" && opts.action !== "press") {
+                    logger.error(
+                        `a menu snapshot takes --action perform (with --ax-action) or --action press; got "${String(opts.action)}"`
+                    );
+                    process.exitCode = 1;
+                    return;
+                }
+
+                if (opts.element === undefined) {
+                    logger.error("a menu snapshot needs --element <n> from that same see --scope menu");
+                    process.exitCode = 1;
+                    return;
+                }
+
+                const menuArgs = [
+                    "menu-act",
+                    "--app",
+                    opts.app,
+                    "--snapshot",
+                    opts.snapshot!,
+                    "--element",
+                    String(opts.element),
+                    "--action",
+                    opts.axAction ?? "AXPress",
+                ];
+
+                if (opts.expectTitle !== undefined) {
+                    menuArgs.push("--expect-title", opts.expectTitle);
+                }
+
+                const menuResult = runAx(menuArgs);
+                out.result(menuResult);
+                process.exitCode = menuResult.ok ? 0 : 1;
+                return;
+            }
+
+            const args = ["act", "--app", opts.app, "--action", opts.action];
+
+            if (opts.snapshot !== undefined) {
+                args.push("--snapshot", opts.snapshot);
+            }
 
             if (opts.action === "type" && opts.text !== undefined && opts.text.length > 256) {
                 logger.error("type text exceeds 256 UTF-16 units; use paste for longer text");
@@ -405,8 +553,15 @@ export function registerWorkflowCommands(program: Command): void {
             for (const [flag, value] of [
                 ["value", opts.value],
                 ["element", opts.element],
+                ["by-identifier", opts.byIdentifier],
+                // Commander defaults --depth, so a snapshot caller would otherwise always send it
+                // and be refused. Both only ever accompany the identifier.
+                ["window-index", opts.byIdentifier === undefined ? undefined : opts.windowIndex],
+                ["depth", opts.byIdentifier === undefined ? undefined : opts.depth],
                 ["target-key", opts.targetKey],
+                ["revalidate-scope", opts.revalidateScope],
                 ["coords", opts.coords],
+                ["frame", opts.frame],
                 ["region", opts.region],
                 ["ax-action", opts.axAction],
                 ["direction", opts.direction],
@@ -415,6 +570,7 @@ export function registerWorkflowCommands(program: Command): void {
                 ["button", opts.button],
                 ["to", opts.to],
                 ["duration", opts.duration],
+                ["dwell", opts.dwell],
                 ["pages", opts.pages],
                 ["pixels", opts.pixels],
                 ["range", opts.range],
@@ -440,6 +596,15 @@ export function registerWorkflowCommands(program: Command): void {
                 args.push("--replace");
             }
 
+            if (opts.hold) {
+                args.push("--hold");
+            }
+
+            // Commander maps `--no-activate` to `activate: false`.
+            if (opts.activate === false) {
+                args.push("--no-activate");
+            }
+
             if (opts.background) {
                 args.push("--background");
             }
@@ -459,4 +624,118 @@ export function registerWorkflowCommands(program: Command): void {
             out.result(result);
             process.exitCode = result.ok ? 0 : 1;
         });
+}
+
+/**
+ * The CLI door for `replayWorkflow`, the same core the MCP `run_workflow` tool calls.
+ *
+ * It was reachable from the MCP server and from a Bun import, and from nowhere on the command
+ * line: `rg run_workflow src/control/commands` returned nothing. So a multi-step sequence — press
+ * this, then that, then check — could not be expressed by a CLI caller at all, and a live session
+ * driving a real app had to hand-roll one see/act pair per step and lose every guard the workflow
+ * runner provides between them. That is the failure the repo's one-core-three-doors rule exists to
+ * prevent, and it is the second instance of it found in this area in one day.
+ *
+ * The plan format is `workflowPlanSchema`: {version:1, app, scope?, windowTitle?, steps:[…]}. Each
+ * step names an action, a selector, an intent and a postcondition. Supplied values stay local and
+ * are passed by reference, never inlined into the plan.
+ */
+export function registerWorkflowRunCommand(program: Command): void {
+    const workflow = program
+        .command("workflow")
+        .description(
+            "Run a versioned multi-step plan inside one pinned app window, with a fresh postcondition per step and one shared deadline. This is the CLI door to the same runner the MCP `run_workflow` tool uses."
+        );
+
+    observationOptions(
+        workflow
+            .command("run")
+            .description(
+                "Replay a workflow plan file. Exact postconditions make no model call; a semantic postcondition or selector repair requires --jev."
+            )
+    )
+        .requiredOption("--plan <file>", "JSON workflow plan: {version:1, app, steps:[…]}")
+        .option("--values <file>", "JSON object of named values the plan refers to by valueRef; they stay local")
+        .option("--jev", "Allow semantic postconditions and semantic selector choice")
+        .option("--rebind", "Allow Jev to repair a selector that no longer matches; implies --jev")
+        .option("--max-steps <n>", "Maximum steps to dispatch", "20")
+        .option("--max-requests <n>", "Maximum paid evaluations", "30")
+        .action(
+            async (
+                options: ControlOptions & {
+                    plan: string;
+                    values?: string;
+                    jev?: boolean;
+                    rebind?: boolean;
+                    maxSteps: string;
+                    maxRequests: string;
+                }
+            ) => {
+                const values = options.values
+                    ? (SafeJSON.parse(await Bun.file(options.values).text()) as Record<string, string>)
+                    : undefined;
+                // Parsed ONCE, by the same function replay uses. Reading `.app` off the raw JSON
+                // rejected a `{ semantic: plan }` envelope that replay accepts, threw a TypeError
+                // on a `null` file, and missed the schema's default scope.
+                let plan: WorkflowPlan;
+
+                try {
+                    plan = parseWorkflowPlan(SafeJSON.parse(await Bun.file(options.plan).text()));
+                } catch (err) {
+                    logger.debug({ err, plan: options.plan }, "control: workflow plan did not parse");
+                    const issue = err instanceof z.ZodError ? err.issues[0] : undefined;
+                    const why = issue
+                        ? `${issue.path.join(".") || "(root)"}: ${issue.message}`
+                        : err instanceof Error
+                          ? err.message
+                          : String(err);
+
+                    out.log.error(
+                        `${options.plan} is not a workflow plan like {"version":1,"app":"…","steps":[…]} — ${why}`
+                    );
+                    process.exitCode = 1;
+                    return;
+                }
+
+                // The plan names the app, so the driver must be built from it rather than from
+                // --app. Passing both and disagreeing would pin the window of one app and dispatch
+                // the steps of another.
+                const app = plan.app;
+
+                if (options.app !== undefined && options.app !== app) {
+                    out.log.error(
+                        `--app ${options.app} disagrees with the plan's app ${app}; drop --app or fix the plan`
+                    );
+                    process.exitCode = 1;
+                    return;
+                }
+
+                // The scope comes from the plan for the same reason, schema default included:
+                // replay refuses an observation whose scope differs from the plan's, so the driver
+                // must observe exactly that scope, never `--scope`'s own default.
+                const scope = plan.scope;
+
+                await withSigintAbort(async (signal) => {
+                    const result = await replayWorkflow({
+                        plan,
+                        values,
+                        rebind: options.rebind === true,
+                        jev: options.jev === true || options.rebind === true,
+                        driver: controlDriver({ ...options, app, scope }),
+                        evaluate: lazyEvaluator(program),
+                        signal,
+                        limits: {
+                            timeoutMs: Number(options.timeout),
+                            maxActions: Number(options.maxSteps),
+                            maxRequests: Number(options.maxRequests),
+                        },
+                    });
+                    out.result(result);
+
+                    if (result.status !== "verified") {
+                        process.exitCode = 1;
+                    }
+                });
+            }
+        );
 }

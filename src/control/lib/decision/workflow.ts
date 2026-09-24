@@ -302,6 +302,12 @@ export async function replayWorkflow(options: {
                 reason = trace.reason;
                 break;
             }
+            // The judge's own contract says a label offering an action is not proof it happened,
+            // and that the appeared/disappeared diff is the stronger evidence. It was never given
+            // one here, so every semantic postcondition in a workflow was judged on labels alone
+            // and landed short of the 0.95 gate: measured on Flow, witness e5 "Stop" at
+            // probability 1.0 and sufficient 0.98, yet complete 0.57 and the run stopped.
+            const beforeAct = observation;
             observation = result.after;
             if (step.action === "set") {
                 const bound = matchingCandidates(
@@ -323,6 +329,7 @@ export async function replayWorkflow(options: {
             const exactPost = step.postcondition.exact;
             const judgment = await judgeOutcome({
                 observation,
+                before: beforeAct,
                 expect: step.postcondition.expect,
                 exact: exactPost
                     ? {

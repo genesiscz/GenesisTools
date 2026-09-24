@@ -2,6 +2,69 @@ import XCTest
 @testable import SnapshotSupport
 
 final class WorkflowArgumentsTests: XCTestCase {
+    func testByIdentifierNeedsNoSnapshotToken() throws {
+        let arguments = try WorkflowArguments([
+            "--app", "Genesis", "--by-identifier", "focus-hud-primary", "--action", "press",
+        ], command: "act")
+
+        XCTAssertEqual(arguments.values["--by-identifier"], "focus-hud-primary")
+        XCTAssertNil(arguments.values["--snapshot"])
+    }
+
+    func testActStillRequiresASnapshotWithoutAnIdentifier() {
+        XCTAssertThrowsError(try WorkflowArguments([
+            "--app", "Genesis", "--element", "3", "--action", "press",
+        ], command: "act")) { error in
+            XCTAssertEqual(error.localizedDescription,
+                           "--snapshot required, or --by-identifier to observe and act in one step")
+        }
+    }
+
+    // A token and an identifier are two answers to "which element", and the token's answer would
+    // silently win. Refuse instead of picking.
+    func testASnapshotAndAnIdentifierCannotBeGivenTogether() {
+        XCTAssertThrowsError(try WorkflowArguments([
+            "--app", "Genesis", "--snapshot", "token", "--by-identifier", "focus-hud-primary", "--action", "press",
+        ], command: "act")) { error in
+            XCTAssertEqual(error.localizedDescription,
+                           "--by-identifier observes the app itself and cannot also take a --snapshot token")
+        }
+    }
+
+    func testAnIdentifierIsOneSelectorAmongTheOthers() {
+        for other in [["--element", "2"], ["--coords", "1,2"], ["--region", "r1"]] {
+            XCTAssertThrowsError(try WorkflowArguments(
+                ["--app", "Genesis", "--by-identifier", "focus-hud-primary", "--action", "click"] + other,
+                command: "act"), "\(other) must not combine with --by-identifier")
+        }
+    }
+
+    func testTheObservationFlagsBelongToTheIdentifierDoorOnly() throws {
+        XCTAssertNoThrow(try WorkflowArguments([
+            "--app", "Genesis", "--by-identifier", "focus-hud-primary", "--action", "press",
+            "--window-index", "1", "--depth", "30",
+        ], command: "act"))
+
+        XCTAssertThrowsError(try WorkflowArguments([
+            "--app", "Genesis", "--snapshot", "token", "--element", "0", "--action", "press", "--window-index", "1",
+        ], command: "act")) { error in
+            XCTAssertEqual(error.localizedDescription,
+                           "--window-index and --depth describe the observation --by-identifier makes; a snapshot already carries both")
+        }
+    }
+
+    func testAnIdentifierRefusesASecondIdentity() {
+        XCTAssertThrowsError(try WorkflowArguments([
+            "--app", "Genesis", "--by-identifier", "focus-hud-primary", "--action", "press",
+            "--target-key", String(repeating: "a", count: 64),
+        ], command: "act"))
+
+        XCTAssertThrowsError(try WorkflowArguments([
+            "--app", "Genesis", "--by-identifier", "focus-hud-primary", "--action", "press",
+            "--revalidate-scope", "element",
+        ], command: "act"))
+    }
+
     func testActConsumesAnOptionLookingTokenAsThePrecedingValue() throws {
         let arguments = try WorkflowArguments([
             "--app", "Fixture", "--snapshot", "token", "--element", "0", "--action", "set", "--value", "--background",

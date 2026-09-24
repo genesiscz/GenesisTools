@@ -12,6 +12,11 @@ const rowSchema = z
             .string()
             .regex(/^[a-f0-9]{64}$/)
             .optional(),
+        /** The same identity before volatile sibling text is folded in; see stableKey in ax-tool. */
+        stableKey: z
+            .string()
+            .regex(/^[a-f0-9]{64}$/)
+            .optional(),
         AXTitle: z.string().optional(),
         AXDescription: z.string().optional(),
         AXValue: z.union([z.string(), z.number(), z.boolean()]).optional(),
@@ -117,6 +122,18 @@ export interface Candidate {
      * check should compare rather than a label that a live region may rewrite.
      */
     targetKey?: string;
+    /**
+     * The identity a live-updating window cannot move. `targetKey` folds in neighbouring static
+     * text, so a clock beside a button rewrites that button's targetKey every second; this one is
+     * computed before that binding and is what `--revalidate-scope element` compares.
+     */
+    stableKey?: string;
+    /**
+     * The AX action to perform for a `press` candidate whose row does NOT expose AXPress: a menu
+     * button exposes AXShowMenu, a menu item AXPick. The chooser's vocabulary stays "press the
+     * thing"; only dispatch needs to know which native action that is.
+     */
+    axAction?: string;
 }
 
 function siblingText(rows: ObservedElement[]): Map<number, string[]> {
@@ -215,9 +232,22 @@ export function candidatesFor({
             [row.x, row.y, row.width, row.height].every((value) => typeof value === "number") &&
             Number(row.width) > 0 &&
             Number(row.height) > 0;
+        // A menu button is "pressed" by showing its menu, and a menu item by picking it. Neither
+        // exposes AXPress. Filtering on AXPress alone made Flow's entire overflow menu invisible to
+        // the chooser, so assist abstained with no_certain_act after paying for the request, and
+        // sequence reported backend "native-AXPress" with nothing to choose. Measured 2026-09-21.
+        const pressAction = !row.actions?.length
+            ? undefined
+            : row.actions.includes("AXPress")
+              ? "AXPress"
+              : row.actions.includes("AXShowMenu")
+                ? "AXShowMenu"
+                : row.actions.includes("AXPick")
+                  ? "AXPick"
+                  : undefined;
         const permitted =
             action === "press"
-                ? row.actions?.includes("AXPress")
+                ? pressAction !== undefined
                 : action === "set"
                   ? (editable && row.valueSettable === true) ||
                     (row.role === "AXPopUpButton" && row.actions?.includes("AXPress"))
@@ -244,12 +274,16 @@ export function candidatesFor({
                 id: `c${candidates.length}`,
                 element: row.index,
                 action,
+                ...(action === "press" && pressAction !== undefined && pressAction !== "AXPress"
+                    ? { axAction: pressAction }
+                    : {}),
                 label: elementLabel(row).slice(0, 300),
                 role: row.role,
                 kind: elementKind(row),
                 identifier: row.AXIdentifier,
                 checked: checkedState(row),
                 ...(row.targetKey === undefined ? {} : { targetKey: row.targetKey }),
+                ...(row.stableKey === undefined ? {} : { stableKey: row.stableKey }),
                 ...(context.has(row.index) ? { nearbyText: context.get(row.index) } : {}),
                 ancestors: ancestors
                     .map(elementLabel)

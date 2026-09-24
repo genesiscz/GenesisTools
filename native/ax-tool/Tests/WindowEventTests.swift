@@ -122,4 +122,45 @@ final class WindowEventTests: XCTestCase {
         XCTAssertEqual(verified, [start, points[0], points[1]])
         XCTAssertEqual(posted.last, .leftMouseUp)
     }
+
+    func testOutOfBoundsMouseRefusalNamesThePointAndTheWindow() throws {
+        // Reproduced 2026-09-21 driving Flow: the window repositioned itself between `see` and
+        // `act`, and every later call refused with a bare "outside the snapshot window". That
+        // message reads identically to a coordinate that was always wrong, so six probes went
+        // by before the bounds were re-read. The rectangle IS the diagnosis.
+        let factory = try WindowEventFactory(windowID: 456,
+                                             bounds: CGRect(x: -459, y: -1057, width: 617, height: 1290))
+
+        XCTAssertThrowsError(try factory.mouse(type: .leftMouseDown, point: CGPoint(x: 1747, y: 684),
+                                               clickCount: 1)) { error in
+            let message = error.localizedDescription
+            XCTAssertTrue(message.contains("1747,684"), message)
+            XCTAssertTrue(message.contains("456"), message)
+            XCTAssertTrue(message.contains("-459,-1057"), message)
+            XCTAssertTrue(message.contains("617x1290"), message)
+        }
+    }
+
+    func testNonFiniteMousePointIsRefusedBeforeAnythingFormatsIt() throws {
+        // Int(Double.nan) traps. The finite check therefore has to run BEFORE the formatter,
+        // or a NaN coordinate crashes the tool instead of refusing it.
+        let factory = try WindowEventFactory(windowID: 456, bounds: CGRect(x: 0, y: 0, width: 500, height: 500))
+
+        XCTAssertThrowsError(try factory.mouse(type: .leftMouseDown, point: CGPoint(x: CGFloat.nan, y: 10),
+                                               clickCount: 1)) { error in
+            XCTAssertTrue(error.localizedDescription.contains("not a finite coordinate"),
+                          error.localizedDescription)
+        }
+    }
+
+    func testInBoundsMouseOnANegativeOriginWindowStillPosts() throws {
+        // The other half. A guard that refused everything would pass both cases above while
+        // breaking every real click on a display with a negative origin.
+        let factory = try WindowEventFactory(windowID: 456,
+                                             bounds: CGRect(x: -459, y: -1057, width: 617, height: 1290))
+        let event = try factory.mouse(type: .leftMouseDown, point: CGPoint(x: -100, y: -500), clickCount: 1)
+
+        XCTAssertEqual(event.type, .leftMouseDown)
+        XCTAssertEqual(event.location, CGPoint(x: -100, y: -500))
+    }
 }

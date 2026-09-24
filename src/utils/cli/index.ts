@@ -7,6 +7,7 @@ export {
     enhanceHelp,
     formatMissingEnumHelp,
     isInteractive,
+    markRequiredOptionsDeep,
     suggestCommand,
     suggestEnumFlag,
 } from "./executor";

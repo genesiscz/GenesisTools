@@ -139,6 +139,27 @@ test("type rejects text over 256 UTF-16 units before native resolution", () => {
     expect(result.stderr).toContain("paste");
     expect(result.stderr).not.toContain("app not found");
 });
+// The one-process door has exactly two ways to be addressed wrongly, and both are cheaper to
+// catch here than in the native tool: neither selector, or both of them.
+test("act takes a snapshot or an identifier, never both and never neither", () => {
+    const run = (args: string[]) =>
+        spawnSync("bun", [entry, "act", "--app", "nonexistent-control-fixture", "--action", "press", ...args], {
+            env: process.env,
+            encoding: "utf8",
+            timeout: 30_000,
+        });
+
+    const neither = run([]);
+    expect(neither.status).toBe(1);
+    expect(neither.stderr).toContain("--by-identifier <id> to observe and act in one step");
+    expect(neither.stderr).not.toContain("app not found");
+
+    const both = run(["--snapshot", "invalid", "--by-identifier", "focus-hud-primary"]);
+    expect(both.status).toBe(1);
+    expect(both.stderr).toContain("cannot also take a --snapshot token");
+    expect(both.stderr).not.toContain("app not found");
+});
+
 test("see and act help name the diff and refresh options", () => {
     const see = spawnSync("bun", [entry, "see", "--help"], { env: process.env, encoding: "utf8", timeout: 30_000 });
     expect(see.status).toBe(0);
@@ -147,6 +168,7 @@ test("see and act help name the diff and refresh options", () => {
     const act = spawnSync("bun", [entry, "act", "--help"], { env: process.env, encoding: "utf8", timeout: 30_000 });
     expect(act.status).toBe(0);
     expect(act.stdout).toContain("--refresh");
+    expect(act.stdout).toContain("--by-identifier <id>");
     expect(act.stdout).toContain("--path <png>");
 });
 

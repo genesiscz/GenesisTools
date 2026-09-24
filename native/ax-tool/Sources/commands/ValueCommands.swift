@@ -141,7 +141,20 @@ func cmdSet(appName: String, value: String) {
 func cmdPress(appName: String) {
     let pid = resolveApp(appName)
     let app = AXUIElementCreateApplication(pid)
-    let element = resolveElement(app, appName)
+    let element = resolveElement(app, appName, requiredAction: kAXPressAction as String)
+
+    // 🛑 Reported 2026-09-21: a query matched the window's root group, which exposes no AXPress,
+    // and the run reported success while nothing happened. Ranking now prefers an element that can
+    // press, but when NOTHING in the match set can, say so instead of dispatching into the void.
+    guard axActionNames(element).contains(kAXPressAction as String) else {
+        let role = axStringAttribute(element, "AXRole") ?? "?"
+        let label = axStringAttribute(element, "AXTitle") ?? axStringAttribute(element, "AXDescription")
+            ?? axStringAttribute(element, "AXIdentifier") ?? "(unlabelled)"
+        jsonOutput(["ok": false, "action": "press", "role": role, "label": label,
+                    "actions": axActionNames(element),
+                    "error": "the element this query selected is a \(role) (\"\(label)\") that exposes no AXPress; it is a container, not a control. Narrow with --role AXButton, or use --id."])
+        exit(1)
+    }
 
     ActionCursor.element("press", element, background: frontmostPid() != pid)
     let err = performActionWithTimeout(element, action: kAXPressAction as String)
