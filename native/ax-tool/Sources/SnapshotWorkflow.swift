@@ -327,7 +327,7 @@ private func workflowSnapshotOnce(appName: String, pid: pid_t, launch: Double, w
 /// was still dismissing was swallowed, once in five attempts, and the refresh then returned a tree
 /// with no menu while reporting success.
 private func workflowAwaitOpenedMenu(window: ObservedWindow, pid: pid_t, owner: Int, element: AXUIElement,
-                                     depth: Int, scope: String) -> [String: Any] {
+                                     axAction: String, depth: Int, scope: String) -> [String: Any] {
     // A contextual menu is not guaranteed to live under the window: Accessibility may expose it
     // as a direct child of the APPLICATION. Reading the window alone then saw "nothing open", and
     // the retry pressed again and closed the menu the first press had opened. So the application's
@@ -368,7 +368,9 @@ private func workflowAwaitOpenedMenu(window: ObservedWindow, pid: pid_t, owner: 
                 "menuNote": "a menu is open, but not under this control in the window (it may be this control's own, shown at app level); not pressing again"]
     }
 
-    workflowAXAction(element, action: "AXPress")
+    // The retry repeats the action the caller asked for: an `AXShowMenu` retried as `AXPress`
+    // would do something else on a control whose press is not its menu.
+    workflowAXAction(element, action: axAction)
     let second = waitForOurs(1.5)
 
     return ["menuOpened": second.ours, "menuPressRetried": true]
@@ -944,6 +946,20 @@ func cmdAct(appName _: String) {
     var actionExtras: [String: Any] = prepared ? ["prepared":true] : [:]
     var actionOK = true
     workflowDispatchState = "uncertain"
+    // A menu-opening action must PROVE it opened a menu. Merging `menuOpened: false` into the
+    // extras of an otherwise successful payload reported the failure as metadata, so a caller that
+    // checks `ok` went on to pick an item from a menu that was never there. The action was still
+    // dispatched, so the state stays "dispatched" and the error says to inspect, not to repeat.
+    func requireOpenedMenu(_ axAction: String) {
+        let menu = workflowAwaitOpenedMenu(window: window, pid: pid, owner: elementIndex, element: element,
+                                           axAction: axAction, depth: token.depth, scope: token.effectiveScope)
+        actionExtras.merge(menu) { _, new in new }
+
+        if menu["menuOpened"] as? Bool != true {
+            actionOK = false
+            actionExtras["error"] = "\(axAction) was dispatched but no menu was seen opening; the outcome is uncertain, inspect before retrying"
+        }
+    }
     switch action {
     case "get":
         jsonOutput(["ok": true, "element": tree.rows[elementIndex].filter { $0.key != "identity" }, "windowId": window.id])
@@ -951,8 +967,7 @@ func cmdAct(appName _: String) {
     case "press":
         workflowAXAction(element, action: "AXPress")
         if opensMenu {
-            actionExtras.merge(workflowAwaitOpenedMenu(window: window, pid: pid, owner: elementIndex, element: element,
-                                                       depth: token.depth, scope: token.effectiveScope)) { _, new in new }
+            requireOpenedMenu("AXPress")
         }
     case "perform":
         guard let name = workflowArgument("--ax-action") else {
@@ -977,6 +992,9 @@ func cmdAct(appName _: String) {
             break
         }
         workflowAXAction(element, action: name)
+        if opensMenu {
+            requireOpenedMenu(name)
+        }
     case "set":
         guard let value = workflowArgument("--value") else {
             workflowFailure("set requires --value")

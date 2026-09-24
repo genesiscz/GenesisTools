@@ -74,7 +74,9 @@ not make coordinate evidence survive a layout change.
 Pressing an `AXMenuButton` or `AXPopUpButton` opens an in-window menu, and that is not an ordinary
 press. `AXUIElementPerformAction` returns before the menu exists, so the press waits for the menu
 to arrive and reports `menuOpened`; if the press was swallowed it presses once more, only after a
-fresh read proves no menu is open, and reports `menuPressRetried`. `--refresh` waits up to three
+fresh read proves no menu is open, and reports `menuPressRetried`. A `perform` of `AXShowMenu`
+behaves the same way. If no menu is seen even then, the result is `ok: false` with an `error`: the
+action WAS dispatched, so inspect the window rather than repeating it. `--refresh` waits up to three
 seconds for the menu rows and reports `after.awaited {what, arrived, timeoutSeconds}`. A press
 TOGGLES, so pressing a control whose menu is already open is refused rather than silently closing
 it. Close it with `--action perform --ax-action AXCancel` on that same control: the open `AXMenu`
