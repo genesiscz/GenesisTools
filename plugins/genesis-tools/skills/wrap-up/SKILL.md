@@ -31,8 +31,24 @@ Work through these tiers in order. Stop at the first that yields a directory.
 ### Tier 1 — the Obsidian dir already involved this session
 If this session already read from or wrote to a specific Obsidian vault directory (a plan, a handoff, notes for this project), that is the target. You know this from your own session history — no lookup needed. Prefer it over the registry: it reflects where the work actually lived today.
 
-### Tier 2 — the registry
-Otherwise consult `~/.claude/handoff-registry.json`, which maps projects/branches/worktrees to their Obsidian home. **Always pass `--project`** — the absolute path of the repo this session actually worked in:
+### Tier 2a — a project override
+A project can declare its own wrap-up folder in `~/.genesis-tools/plugins/config.json`, either a
+static `dir` or a `resolverCommand` that derives one per ticket. It is more specific than any
+registry entry, so `resolve` asks it first and reports `source: "override"` or
+`source: "resolver"`. 🛑 When a declared resolver fails, `resolve` exits 1 and does NOT fall
+through to the registry: fix the resolver rather than letting the log land somewhere else.
+
+```json
+{ "projectOverrides": { "/repos/acme": { "consumers": {
+    "wrap-up":  { "resolverCommand": "bun ~/.genesis-tools/plugins/resolvers/acme.ts --cwd <cwd>" },
+    "research": { "dir": "~/Vault/Acme/Research" } } } } }
+```
+
+The `consumers` block is per plugin on purpose: wrap-up and research share the config and the
+registry, never a single directory.
+
+### Tier 2b — the registry
+Otherwise consult `~/.genesis-tools/plugins/vault-registry.json`, which maps projects/branches/worktrees to their Obsidian home. The research skill reads the same file, so a folder registered here serves both. **Always pass `--project`** — the absolute path of the repo this session actually worked in. An entry can split per consumer too, with a `dirs` map (`"wrap-up"` / `"research"`) beside its `obsidianDir`:
 
 ```bash
 bun "${CLAUDE_PLUGIN_ROOT}/skills/wrap-up/scripts/resolve.ts" resolve --project "<repo you worked in>"
@@ -107,12 +123,12 @@ It is read-only. It lists catch-all entries, entries where several branches shar
   "wrap-up": {
     "vaultDir": "~/Vault",
     "docDir": ".claude/wrapups",
-    "registryPath": "~/.claude/handoff-registry.json"
+    "registryPath": "~/.genesis-tools/plugins/vault-registry.json"
   }
 }
 ```
 
-All keys optional. `docDir` (absolute, `~/`, or relative to the project toplevel) wins over `vaultDir`, which resolves to `<vaultDir>/<projectName>/`. `registryPath` relocates the registry itself. When proposing a target in Tier 3, also suggest adding a `vaultDir` here once — it makes every future project resolve automatically.
+All keys optional, and the file is shared with the other plugin skills: `research` and `obsidian` have their own keys beside `wrap-up` in it. `docDir` (absolute, `~/`, or relative to the project toplevel) wins over `vaultDir`, which resolves to `<vaultDir>/<projectName>/`. `registryPath` relocates the registry itself. Both the registry and this config are migrated once, automatically, from `~/.claude/handoff-registry.json` and the old per-skill files; the originals are renamed to `*.migrated-<date>` rather than deleted. When proposing a target in Tier 3, also suggest adding a `vaultDir` here once — it makes every future project resolve automatically.
 
 ### Tier 3 — infer, propose, register
 If neither registry nor config yields a target (`found:false`), don't guess silently and don't dump the doc in a random place. Instead:
