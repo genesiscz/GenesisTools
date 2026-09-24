@@ -158,6 +158,19 @@ async function runDraftReply(iid: string, opts: DraftReplyOptions): Promise<void
         throw new Error("Give --discussion <id>, or --file/--line, or --top-level.");
     }
 
+    // These three act on a thread reply only. The anchored and top-level paths returned before
+    // reaching them, so `--top-level --now` exited 0 and left a PRIVATE draft instead of the
+    // public note that was asked for. Refused before any request is made.
+    const threadOnly = [opts.now && "--now", opts.append && "--append", opts.resolve && "--resolve"].filter(
+        (flag): flag is string => typeof flag === "string"
+    );
+
+    if (threadOnly.length > 0 && (anchored || opts.topLevel || !opts.discussion)) {
+        throw new Error(
+            `${threadOnly.join(", ")} can only be used with --discussion. For a top-level or anchored note, write the draft and publish it with \`drafts <iid> --publish\`.`
+        );
+    }
+
     const body = readBody(opts);
     const api = await resolveProjectApi({ host: opts.host, project: opts.project });
 
