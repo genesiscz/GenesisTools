@@ -286,8 +286,8 @@ describe("parseOpenDirs / serializeOpenDirs", () => {
 
 describe("expandedDirsForNote", () => {
     it("adds every ancestor folder of the note path", () => {
-        const next = expandedDirsForNote("ČEZ/bun/Analysis.md", parseOpenDirs("other"));
-        expect([...next].sort()).toEqual(["other", "ČEZ", "ČEZ/bun"].sort());
+        const next = expandedDirsForNote("Acme/bun/Analysis.md", parseOpenDirs("other"));
+        expect([...next].sort()).toEqual(["other", "Acme", "Acme/bun"].sort());
     });
 
     it("a top-level note adds no folders", () => {
@@ -297,10 +297,10 @@ describe("expandedDirsForNote", () => {
 
 describe("expandedDirsForFolderToggle", () => {
     it("adds on expand and removes on collapse", () => {
-        const opened = expandedDirsForFolderToggle("ČEZ", true, new Set());
-        expect(opened.has("ČEZ")).toBe(true);
-        const closed = expandedDirsForFolderToggle("ČEZ", false, opened);
-        expect(closed.has("ČEZ")).toBe(false);
+        const opened = expandedDirsForFolderToggle("Acme", true, new Set());
+        expect(opened.has("Acme")).toBe(true);
+        const closed = expandedDirsForFolderToggle("Acme", false, opened);
+        expect(closed.has("Acme")).toBe(false);
     });
 });
 ```
@@ -404,12 +404,12 @@ import { filterVaultEntries } from "./vault-filter";
 
 const tree: VaultEntry[] = [
     {
-        name: "ČEZ",
-        relativePath: "ČEZ",
+        name: "Acme",
+        relativePath: "Acme",
         isDirectory: true,
         children: [
-            { name: "Analysis.md", relativePath: "ČEZ/Analysis.md", isDirectory: false },
-            { name: "Notes.md", relativePath: "ČEZ/Notes.md", isDirectory: false },
+            { name: "Analysis.md", relativePath: "Acme/Analysis.md", isDirectory: false },
+            { name: "Notes.md", relativePath: "Acme/Notes.md", isDirectory: false },
         ],
     },
     { name: "README.md", relativePath: "README.md", isDirectory: false },
@@ -423,24 +423,24 @@ describe("filterVaultEntries", () => {
     it("keeps a folder whose descendant matches, pruning non-matches", () => {
         const out = filterVaultEntries(tree, "analysis");
         expect(out).toHaveLength(1);
-        expect(out[0].name).toBe("ČEZ");
+        expect(out[0].name).toBe("Acme");
         expect(out[0].children).toHaveLength(1);
         expect(out[0].children?.[0].name).toBe("Analysis.md");
     });
 
     it("keeps a folder when the folder name itself matches (children FILTERED — web parity)", () => {
         // EXACT parity with the web `filterEntries`: a folder-name match returns the folder with its
-        // *filtered* children. Since neither child matches "čez", children is empty. (The tree UI
+        // *filtered* children. Since neither child matches "acme", children is empty. (The tree UI
         // then renders the matched folder with no visible leaves under it.)
-        const out = filterVaultEntries(tree, "čez");
+        const out = filterVaultEntries(tree, "acme");
         expect(out).toHaveLength(1);
-        expect(out[0].name).toBe("ČEZ");
+        expect(out[0].name).toBe("Acme");
         expect(out[0].children).toHaveLength(0);
     });
 
     it("folder-name match WITH a matching descendant keeps only the matching child", () => {
         const out = filterVaultEntries(tree, "analysis");
-        // "ČEZ" name does not match "analysis", but the descendant does, so the folder is kept with
+        // "Acme" name does not match "analysis", but the descendant does, so the folder is kept with
         // the filtered child. (Covered above too; this asserts the children array explicitly.)
         expect(out[0].children?.map((c) => c.name)).toEqual(["Analysis.md"]);
     });
@@ -531,7 +531,7 @@ import { buildNoteDocument, parseNoteMessage, shareUrl } from "./note-html";
 
 describe("buildNoteDocument", () => {
     it("embeds the server html fragment inside a full document with theme + bridge", () => {
-        const doc = buildNoteDocument('<h1>Hi</h1><a data-obsidian-note="ČEZ/x.md">x</a>');
+        const doc = buildNoteDocument('<h1>Hi</h1><a data-obsidian-note="Acme/x.md">x</a>');
         expect(doc).toContain("<!doctype html>");
         expect(doc).toContain('<meta name="viewport"');
         expect(doc).toContain("<h1>Hi</h1>");
@@ -577,8 +577,8 @@ describe("buildNoteDocument", () => {
 
 describe("parseNoteMessage", () => {
     it("parses a wikilink-tap message", () => {
-        const msg = parseNoteMessage(JSON.stringify({ type: "note", path: "ČEZ/x.md" }));
-        expect(msg).toEqual({ type: "note", path: "ČEZ/x.md" });
+        const msg = parseNoteMessage(JSON.stringify({ type: "note", path: "Acme/x.md" }));
+        expect(msg).toEqual({ type: "note", path: "Acme/x.md" });
     });
 
     it("parses an external-link message", () => {

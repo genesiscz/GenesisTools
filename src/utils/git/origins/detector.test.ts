@@ -40,11 +40,11 @@ describe("classifyOriginUrl", () => {
 
     it("recognises any GitLab host, including self-hosted ones with a port", () => {
         expect(classifyOriginUrl("git@gitlab.com:g/p.git")).toMatchObject({ kind: "gitlab", host: "gitlab.com" });
-        expect(classifyOriginUrl("ssh://git@gitlab.apps.corp:2222/g/sub/p.git")).toMatchObject({
+        expect(classifyOriginUrl("ssh://git@gitlab.internal.example:2222/g/sub/p.git")).toMatchObject({
             kind: "gitlab",
-            host: "gitlab.apps.corp",
+            host: "gitlab.internal.example",
         });
-        expect(classifyOriginUrl("https://gitlab.apps.corp/g/p")).toMatchObject({ kind: "gitlab" });
+        expect(classifyOriginUrl("https://gitlab.internal.example/g/p")).toMatchObject({ kind: "gitlab" });
     });
 
     it("has no driver for other hosts or unparsable strings", () => {
@@ -69,7 +69,7 @@ describe("detectOrigin / originDriver", () => {
         const gh = await repoWithOrigin("git@github.com:o/r.git");
         expect((await originDriver(gh.dir))?.kind).toBe("github");
 
-        const gl = await repoWithOrigin("https://gitlab.apps.corp/g/p.git");
+        const gl = await repoWithOrigin("https://gitlab.internal.example/g/p.git");
         expect((await originDriver(gl.dir))?.kind).toBe("gitlab");
     });
 
@@ -142,13 +142,13 @@ describe("glab driver", () => {
             iid: 7,
             state: "closed",
             target_branch: "develop",
-            web_url: "https://gitlab.apps.corp/g/p/-/merge_requests/7",
+            web_url: "https://gitlab.internal.example/g/p/-/merge_requests/7",
         },
         {
             iid: 9,
             state: "opened",
             target_branch: "feature/next",
-            web_url: "https://gitlab.apps.corp/g/p/-/merge_requests/9",
+            web_url: "https://gitlab.internal.example/g/p/-/merge_requests/9",
         },
     ]);
 
@@ -158,7 +158,7 @@ describe("glab driver", () => {
                 number: 9,
                 state: "OPEN",
                 target: "feature/next",
-                url: "https://gitlab.apps.corp/g/p/-/merge_requests/9",
+                url: "https://gitlab.internal.example/g/p/-/merge_requests/9",
             },
             error: null,
         });

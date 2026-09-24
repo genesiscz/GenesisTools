@@ -3,7 +3,7 @@ import { buildNoteDocument, parseNoteMessage, shareUrl } from "@/features/obsidi
 
 describe("buildNoteDocument", () => {
     it("embeds the server html fragment inside a full document with theme + bridge", () => {
-        const doc = buildNoteDocument('<h1>Hi</h1><a data-obsidian-note="ČEZ/x.md">x</a>');
+        const doc = buildNoteDocument('<h1>Hi</h1><a data-obsidian-note="Acme/x.md">x</a>');
         expect(doc).toContain("<!doctype html>");
         expect(doc).toContain('<meta name="viewport"');
         expect(doc).toContain("<h1>Hi</h1>");
@@ -49,8 +49,8 @@ describe("buildNoteDocument", () => {
 
 describe("parseNoteMessage", () => {
     it("parses a wikilink-tap message", () => {
-        const msg = parseNoteMessage(JSON.stringify({ type: "note", path: "ČEZ/x.md" }));
-        expect(msg).toEqual({ type: "note", path: "ČEZ/x.md" });
+        const msg = parseNoteMessage(JSON.stringify({ type: "note", path: "Acme/x.md" }));
+        expect(msg).toEqual({ type: "note", path: "Acme/x.md" });
     });
 
     it("parses an external-link message", () => {
