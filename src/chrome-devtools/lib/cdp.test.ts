@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import { SafeJSON } from "@genesiscz/utils/json";
 import {
+    AmbiguousTabError,
     Browser,
     type CdpCookie,
     classifyEvalError,
@@ -251,5 +252,56 @@ describe("deleting a cookie", () => {
         await expect(stubborn.deleteCookie("__Host-session", "app.example.com", "/")).rejects.toThrow(
             "still present after the delete"
         );
+    });
+});
+
+describe("pickPageTarget ranks url above title", () => {
+    /** An open inspector for a page carries `DevTools - <host><path>` as its TITLE. */
+    const inspectorFor = (url: string) => ({
+        type: "page",
+        url: "devtools://devtools/bundled/devtools_app.html",
+        title: `DevTools - ${url.replace(/^https?:\/\//, "")}`,
+    });
+
+    test("the page wins over the inspector whose title ends the same way", () => {
+        const app = { type: "page", url: "https://app.example.com/auth-callback?cs=true", title: "App" };
+        const picked = pickPageTarget([inspectorFor(app.url), app], { url: "/auth-callback\\?cs=true$/" });
+
+        // Matching on title alone would return the DevTools frontend, and `eval` would then
+        // run against the Network panel's own DOM instead of the app.
+        expect(picked.url).toBe(app.url);
+    });
+
+    test("a title match is still used when no url matches at all", () => {
+        const only = { type: "page", url: "https://example.com/x", title: "Checkout page" };
+
+        expect(pickPageTarget([only], { url: "Checkout" }).url).toBe(only.url);
+    });
+
+    test("two url matches are ambiguous rather than silently first-wins", () => {
+        const pages = [
+            { type: "page", url: "https://app.example.com/col?cs=true", title: "a" },
+            { type: "page", url: "https://app.example.com/col?cs=true&simulatedPartner=1", title: "b" },
+        ];
+
+        expect(() => pickPageTarget(pages, { url: "col?cs=true" })).toThrow(AmbiguousTabError);
+    });
+
+    test("an anchored regex tells those two apart", () => {
+        const pages = [
+            { type: "page", url: "https://app.example.com/col?cs=true", title: "a" },
+            { type: "page", url: "https://app.example.com/col?cs=true&simulatedPartner=1", title: "b" },
+        ];
+
+        expect(pickPageTarget(pages, { url: "/col\\?cs=true$/" }).title).toBe("a");
+    });
+
+    test("a non-page target is never considered", () => {
+        const list = [
+            { type: "service_worker", url: "https://app.example.com/sw.js", title: "sw" },
+            { type: "page", url: "https://app.example.com/", title: "app" },
+        ];
+
+        expect(pickPageTarget(list, { url: "app.example.com" }).type).toBe("page");
     });
 });
