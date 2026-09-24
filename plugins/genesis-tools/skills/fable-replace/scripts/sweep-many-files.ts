@@ -23,6 +23,7 @@ import { backupDirInUse, recordPostWriteHashes, rollback, writeBackup } from "./
 import { scanComments } from "./comments";
 import { applyOps } from "./edit-one-file";
 import { COLORS, changedOnDisk, FableReplaceError, paint, preview } from "./internal";
+import { expandMoves } from "./move-blocks";
 import { leftovers } from "./recon";
 import type { FileEdit, FileResult, RunParams, RunReport, SimpleDiffParams, VerifyResult } from "./types";
 import { checkVerifyCommand, runVerifyCommand, verifyUnknownReason } from "./verify-command";
@@ -302,7 +303,24 @@ const closestRunKey = (typo: string): string | undefined => {
     );
 };
 
-export const run = async ({ edits, ...opts }: RunParams): Promise<RunReport> => {
+export const run = async ({ edits, moves, ...opts }: RunParams): Promise<RunReport> => {
+    // A move is two ordinary edits (cut here, paste there) that must land together, so it is
+    // expanded up front and then carried by the same transaction as everything else.
+    // A move's paste and an ordinary edit on the SAME target is the normal case: move a function
+    // in, then export it. The caller cannot merge across the two arrays, so the merge happens
+    // here. Order is preserved, so the paste lands before the edits that depend on it.
+    // A move that cannot be expanded (missing file, unknown or duplicate symbol) is a pre-flight
+    // failure like any other: exit code 2 and the reason, never a bare Error past the report.
+    const moveErrors: string[] = [];
+    let allEdits: FileEdit[] = edits ?? [];
+    if (moves?.length) {
+        try {
+            allEdits = mergeFileEdits([...expandMoves(moves, { cwd: opts.cwd }), ...allEdits]);
+        } catch (err) {
+            moveErrors.push(err instanceof Error ? err.message : String(err));
+        }
+    }
+
     const dryRun = opts.dryRun || process.argv.includes("--dry");
     const verbose = opts.verbose ?? true;
     const throwOnFailure = opts.throwOnFailure ?? true;
@@ -324,7 +342,7 @@ export const run = async ({ edits, ...opts }: RunParams): Promise<RunReport> => 
     const resolve = (p: string): string => path.resolve(cwd, p);
 
     // ── pre-flight validation ──────────────────────────────────────────────
-    const preflightErrors: string[] = [];
+    const preflightErrors: string[] = [...moveErrors];
     // An unknown option is a typo that would otherwise do nothing: `dry: true` instead of
     // `dryRun: true` once nearly turned a preview into a real write.
     for (const key of Object.keys(opts)) {
@@ -337,7 +355,7 @@ export const run = async ({ edits, ...opts }: RunParams): Promise<RunReport> => 
     }
     const seen = new Set<string>();
     const renameTargets = new Map<string, string>();
-    for (const edit of edits) {
+    for (const edit of allEdits) {
         const abs = resolve(edit.file);
         if (seen.has(abs)) {
             preflightErrors.push(
@@ -440,7 +458,7 @@ export const run = async ({ edits, ...opts }: RunParams): Promise<RunReport> => 
     }
     const planned: Planned[] = [];
 
-    for (const edit of edits) {
+    for (const edit of allEdits) {
         const abs = resolve(edit.file);
         const fileResult: FileResult = {
             file: edit.file,

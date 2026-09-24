@@ -35,12 +35,16 @@
  */
 
 import { parseJson } from "./json";
+import { expandMoves } from "./move-blocks";
+import { mergeFileEdits } from "./sweep-many-files";
 import type { FileEdit, Op } from "./types";
 
 export interface ParseSpecParams {
     text: string;
     /** Receives non-fatal warnings (an unbalanced code fence that hints at a bare >>> closing a block early). */
     onWarning?: (message: string) => void;
+    /** Where a `move` marker resolves its relative paths. Defaults to the process directory. */
+    cwd?: string;
 }
 
 interface Section {
@@ -55,7 +59,7 @@ function fail(line: number, message: string): never {
     throw new Error(`spec line ${line}: ${message}`);
 }
 
-const KINDS = new Set(["regex", "fuzzy", "before", "after", "append", "delete", "block", "create"]);
+const KINDS = new Set(["regex", "fuzzy", "before", "after", "append", "delete", "block", "create", "move"]);
 /** The kinds whose `count=` is a checked contract; the others anchor on a unique line or have nothing to count. */
 const COUNTED_KINDS = new Set(["replace", "regex", "fuzzy", "delete"]);
 /** Every `kind` a JSON op object may carry (a literal op has none, or "replace"). */
@@ -80,6 +84,14 @@ interface Modifiers {
     optional: boolean;
     label?: string;
     flags?: string;
+    /** `move` only: the file the block is pasted into. */
+    to?: string;
+    /** `move` only: the declaration to take, doc comment included. */
+    symbol?: string;
+    /** `move` only: `12-40`, when the block is not one declaration. */
+    lines?: string;
+    /** `move` only: `after` or `before`; the body is then the anchor. Default: append. */
+    at?: string;
 }
 
 const parseModifiers = (raw: string, line: number): Modifiers => {
@@ -129,6 +141,20 @@ const parseModifiers = (raw: string, line: number): Modifiers => {
             }
         } else if (key === "flags" && value !== undefined) {
             mods.flags = value;
+        } else if (key === "to" && value !== undefined) {
+            mods.to = value;
+        } else if (key === "symbol" && value !== undefined) {
+            mods.symbol = value;
+        } else if (key === "lines" && value !== undefined) {
+            mods.lines = value;
+        } else if (key === "at" && value !== undefined) {
+            // Anything else used to fall through to `after`, so `at=start` or a typo pasted after
+            // the anchor instead of failing.
+            if (value !== "before" && value !== "after") {
+                fail(line, `at= must be before or after, got "${value}"`);
+            }
+
+            mods.at = value;
         } else {
             fail(
                 line,
@@ -147,6 +173,25 @@ const parseModifiers = (raw: string, line: number): Modifiers => {
     if (mods.flags !== undefined && mods.kind !== "regex") {
         fail(line, `flags= only applies to regex, not ${mods.kind}`);
     }
+    for (const [key, value] of [
+        ["to", mods.to],
+        ["symbol", mods.symbol],
+        ["lines", mods.lines],
+        ["at", mods.at],
+    ] as const) {
+        if (value !== undefined && mods.kind !== "move") {
+            fail(line, `${key}= only applies to move, not ${mods.kind}`);
+        }
+    }
+    if (mods.kind === "move") {
+        if (mods.to === undefined) {
+            fail(line, "move needs to=<path>: the file the block is pasted into");
+        }
+
+        if ((mods.symbol === undefined) === (mods.lines === undefined)) {
+            fail(line, "move needs exactly one of symbol=<name> or lines=<first>-<last>");
+        }
+    }
     if (mods.optional && (mods.kind === "append" || mods.kind === "create")) {
         fail(line, `optional has no meaning for ${mods.kind}: it cannot miss`);
     }
@@ -158,6 +203,7 @@ const partsNeeded = (kind: string): number => {
         case "append":
         case "delete":
         case "create":
+        case "move":
             return 1;
         case "block":
             return 3;
@@ -177,7 +223,14 @@ const compileRegex = ({ source, flags, line }: { source: string; flags: string; 
 // biome-ignore lint/suspicious/noControlCharactersInRegex: the parser refuses control characters in a spec on purpose
 const CONTROL_CHAR = /[\x00-\x08\x0B\x0C\x0E-\x1F]/;
 
-const buildOp = (mods: Modifiers, parts: string[], line: number, section: Section): void => {
+const buildOp = (
+    mods: Modifiers,
+    parts: string[],
+    line: number,
+    section: Section,
+    moved: FileEdit[],
+    cwd: string
+): void => {
     const need = partsNeeded(mods.kind);
     if (parts.length !== need) {
         fail(line, `${mods.kind} needs ${need} bod${need === 1 ? "y" : "ies"} (separated by ===), got ${parts.length}`);
@@ -194,13 +247,61 @@ const buildOp = (mods: Modifiers, parts: string[], line: number, section: Sectio
     }
     const [a, b, c] = parts;
     const emptyFirst = mods.kind === "fuzzy" ? a.trim() === "" : a === "";
-    if (emptyFirst && mods.kind !== "create" && mods.kind !== "append") {
+    if (emptyFirst && mods.kind !== "create" && mods.kind !== "append" && mods.kind !== "move") {
         // An empty needle or anchor matches everywhere or nowhere; the runner refuses it
         // too, but a spec error names the line before anything is planned.
         fail(line, `${mods.kind}: the first body is empty, so there is nothing to find, delete or anchor on`);
     }
 
     const common = { optional: mods.optional, label: mods.label };
+    if (mods.kind === "move") {
+        // A move spans two files, so it cannot be an op on this section. It resolves here, against
+        // the file on disk, and contributes the cut and the paste as ordinary edits that the
+        // runner merges with everything else.
+        // The body is the anchor for at=, and nothing else. Without this pairing an at= with no
+        // body appended silently, and a body with no at= was dropped silently.
+        if (mods.at !== undefined && a.trim() === "") {
+            fail(line, `at=${mods.at} needs the anchor text as the body`);
+        }
+
+        if (mods.at === undefined && a.trim() !== "") {
+            fail(line, "a move body is only read as the anchor for at=before|after; add at= or leave the body empty");
+        }
+
+        const at =
+            mods.at === undefined
+                ? undefined
+                : mods.at === "before"
+                  ? ({ before: a } as const)
+                  : ({ after: a } as const);
+        const span = mods.lines?.split("-").map((part) => Number(part.trim()));
+        if (span && (span.length !== 2 || span.some((n) => !Number.isInteger(n) || n < 1))) {
+            fail(line, `lines= must be <first>-<last>, both positive integers, got "${mods.lines}"`);
+        }
+
+        try {
+            moved.push(
+                ...expandMoves(
+                    [
+                        {
+                            from: section.file,
+                            to: mods.to as string,
+                            ...(mods.symbol === undefined ? {} : { symbol: mods.symbol }),
+                            ...(span ? { lines: [span[0], span[1]] as [number, number] } : {}),
+                            ...(at === undefined ? {} : { at }),
+                            ...(mods.label === undefined ? {} : { label: mods.label }),
+                        },
+                    ],
+                    { cwd }
+                )
+            );
+        } catch (error) {
+            fail(line, error instanceof Error ? error.message : String(error));
+        }
+
+        return;
+    }
+
     switch (mods.kind) {
         case "replace":
             section.ops.push({ find: a, replace: b, count: mods.count, ...common });
@@ -329,7 +430,8 @@ const fromJson = (text: string): FileEdit[] => {
 };
 
 /** Parse the marker format (or a JSON array) into FileEdits for `run()`. Throws with a line number on any malformed input. */
-export const parseSpec = ({ text, onWarning }: ParseSpecParams): FileEdit[] => {
+export const parseSpec = ({ text, onWarning, cwd }: ParseSpecParams): FileEdit[] => {
+    const moved: FileEdit[] = [];
     const trimmed = text.trimStart();
     if (trimmed.startsWith("[")) {
         try {
@@ -429,7 +531,7 @@ export const parseSpec = ({ text, onWarning }: ParseSpecParams): FileEdit[] => {
                     `spec line ${lineNo}: the last body of this block ends inside a code fence opened at its line ${openedAt + 1}. If a body line was exactly >>> it closed the block early and the rest was dropped; write such a line as \\>>>`
                 );
             }
-            buildOp(mods, parts, lineNo, current);
+            buildOp(mods, parts, lineNo, current, moved, cwd ?? process.cwd());
             continue;
         }
         const cond = line.match(/^(expect|absent):\s?(.*)$/);
@@ -453,5 +555,8 @@ export const parseSpec = ({ text, onWarning }: ParseSpecParams): FileEdit[] => {
     if (sections.length === 0) {
         throw new Error("spec has no @@ file sections");
     }
-    return sections.map(toFileEdit);
+    // A move contributes edits to a file the spec may never name with @@, and to one it does, so
+    // the two lists are merged rather than concatenated.
+    const edits = sections.map(toFileEdit);
+    return moved.length === 0 ? edits : mergeFileEdits([...moved, ...edits]);
 };
