@@ -34,12 +34,20 @@ describe("cleanPromptText", () => {
         expect(cleanPromptText(null)).toBeNull();
     });
 
-    test("a slash-command title becomes /name instead of XML", () => {
+    test("a slash-command title becomes /name plus its arguments instead of XML", () => {
         const raw =
             "<command-message>\n<command-name>speckit.implement</command-name>\n" +
-            "<command-args></command-args>\n</command-message>";
+            "<command-args>the login screen</command-args>\n</command-message>";
 
-        expect(cleanPromptText(raw)).toBe("/speckit.implement");
+        expect(cleanPromptText(raw)).toBe("/speckit.implement the login screen");
+    });
+
+    test("a slash command with no arguments yields null, so the caller falls back", () => {
+        const raw =
+            "<command-name>/clear</command-name>\n<command-message>clear</command-message>\n" +
+            "<command-args></command-args>";
+
+        expect(cleanPromptText(raw)).toBeNull();
     });
 
     test("strips [Image #N] placeholders from titles", () => {

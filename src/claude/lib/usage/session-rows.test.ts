@@ -37,9 +37,11 @@ mock.module("@app/claude/lib/cmux/session-refs", () => ({
 
 import {
     CACHE_TTL_MS,
+    CODEX_CACHE_TTL_MS,
     COOLING_THRESHOLD_MS,
     CRITICAL_THRESHOLD_MS,
     computeCacheStatus,
+    GROK_CACHE_TTL_MS,
     listSessionRows,
     listSessionRowsWithTimings,
 } from "./session-rows";
@@ -95,6 +97,21 @@ describe("computeCacheStatus", () => {
         expect(computeCacheStatus(NOW - CRITICAL_THRESHOLD_MS, NOW).status).toBe("CRITICAL");
         expect(computeCacheStatus(NOW - (CACHE_TTL_MS - 1), NOW).status).toBe("CRITICAL");
         expect(computeCacheStatus(NOW - CACHE_TTL_MS, NOW).status).toBe("COLD");
+    });
+
+    test("codex 30m ttl cools at 20m idle and dies at 30m", () => {
+        const ttl = CODEX_CACHE_TTL_MS;
+        expect(computeCacheStatus(NOW - (20 * MIN - 1), NOW, ttl).status).toBe("HOT");
+        expect(computeCacheStatus(NOW - 20 * MIN, NOW, ttl).status).toBe("COOLING");
+        expect(computeCacheStatus(NOW - 25 * MIN, NOW, ttl).status).toBe("CRITICAL");
+        expect(computeCacheStatus(NOW - 30 * MIN, NOW, ttl).status).toBe("COLD");
+        expect(computeCacheStatus(NOW - 20 * MIN, NOW, ttl).ttlSec).toBe(600);
+    });
+
+    test("grok uses the same 30m warning clock as codex", () => {
+        expect(GROK_CACHE_TTL_MS).toBe(CODEX_CACHE_TTL_MS);
+        expect(computeCacheStatus(NOW - 20 * MIN, NOW, GROK_CACHE_TTL_MS).status).toBe("COOLING");
+        expect(computeCacheStatus(NOW - 30 * MIN, NOW, GROK_CACHE_TTL_MS).status).toBe("COLD");
     });
 });
 
@@ -167,6 +184,7 @@ describe("listSessionRows", () => {
                 "account",
                 "cacheCreateTokens",
                 "cacheReadTokens",
+                "cacheLifetimeSec",
                 "cacheStatus",
                 "cacheTtlSec",
                 "cmux",
@@ -200,14 +218,32 @@ describe("listSessionRows", () => {
             record({
                 filePath: path,
                 sessionId: "cmd-id",
-                customTitle: "<command-message><command-name>speckit.implement</command-name></command-message>",
+                customTitle:
+                    "<command-message><command-name>speckit.implement</command-name>" +
+                    "<command-args>the login screen</command-args></command-message>",
                 mtime: NOW - 5 * MIN,
             }),
         ];
         tails.set(path, [OPUS_LINE]);
 
         const rows = await listSessionRows({ hours: 6, now: NOW });
-        expect(rows[0]?.title).toBe("/speckit.implement");
+        expect(rows[0]?.title).toBe("/speckit.implement the login screen");
+    });
+
+    test("an argument-less command title falls through to the first real prompt", async () => {
+        const path = "/tmp/clear.jsonl";
+        listing.sessions = [
+            record({
+                filePath: path,
+                sessionId: "clear-id",
+                customTitle: "<command-name>/clear</command-name><command-args></command-args>",
+                mtime: NOW - 5 * MIN,
+            }),
+        ];
+        tails.set(path, [OPUS_LINE]);
+
+        const rows = await listSessionRows({ hours: 6, now: NOW });
+        expect(rows[0]?.title).toBe("prompt");
     });
 
     test("minRows appends older sessions after the hours window", async () => {

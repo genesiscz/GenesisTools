@@ -22,20 +22,61 @@ export const CLAUDE_STATUS_NOISE_LINES = [
 const TITLE_MAX = 120;
 
 export interface CleanTranscriptOptions {
-    /** Keep `/speckit.implement` when the rest of the string is empty. Default true. */
+    /** Keep `/rename board-polish` when the rest of the string is empty. Default true. */
     slashFallback?: boolean;
     /** Drop pasted status-line rows. Default false (envelope turns keep them). */
     dropStatusLines?: boolean;
 }
 
-function stripHarness(raw: string, opts: CleanTranscriptOptions): { text: string; commands: string[] } {
-    const commands: string[] = [];
-    for (const match of raw.matchAll(/<command-name>\s*([^<]+?)\s*<\/command-name>/gi)) {
+/** One slash-command invocation as the harness records it. `args` is "" when the user typed none. */
+export interface SlashInvocation {
+    name: string;
+    args: string;
+}
+
+/**
+ * Every `<command-name>` in the text, paired with the `<command-args>` that follows it.
+ *
+ * The args are read from the span between this command name and the next one, so a turn that
+ * carries several invocations keeps each one's arguments with the right command.
+ */
+export function extractSlashInvocations(raw: string): SlashInvocation[] {
+    const matches = [...raw.matchAll(/<command-name>\s*([^<]+?)\s*<\/command-name>/gi)];
+    const invocations: SlashInvocation[] = [];
+
+    for (const [index, match] of matches.entries()) {
         const name = match[1]?.trim();
-        if (name) {
-            commands.push(name.startsWith("/") ? name : `/${name}`);
+        if (!name) {
+            continue;
         }
+        const from = (match.index ?? 0) + match[0].length;
+        const to = index + 1 < matches.length ? (matches[index + 1].index ?? raw.length) : raw.length;
+        const args = /<command-args>([\s\S]*?)<\/command-args>/i
+            .exec(raw.slice(from, to))?.[1]
+            ?.replace(/\s+/g, " ")
+            .trim();
+
+        invocations.push({ name: name.startsWith("/") ? name : `/${name}`, args: args ?? "" });
     }
+
+    return invocations;
+}
+
+/**
+ * True when the text is nothing but slash commands the user typed no arguments for.
+ *
+ * `/clear`, `/compact`, `/model` and friends are harness plumbing: the turn carries none of the
+ * user's own words, so showing it as a session's name says nothing about what the session is.
+ * A command WITH arguments (`/rename board-polish`) does carry them and is kept.
+ */
+export function isBareSlashCommandText(raw: string): boolean {
+    const { text, commands } = stripHarness(raw, { dropStatusLines: true });
+
+    return !text && commands.length > 0 && commands.every((command) => !command.args);
+}
+
+function stripHarness(raw: string, opts: CleanTranscriptOptions): { text: string; commands: SlashInvocation[] } {
+    const commands = extractSlashInvocations(raw);
 
     let text = raw
         .replace(/\[Image #\d+\]/g, " ")
@@ -59,7 +100,11 @@ export function cleanTranscriptText(raw: string, opts: CleanTranscriptOptions = 
     if (opts.slashFallback === false) {
         return "";
     }
-    return commands.join(" ");
+    // A command the user typed no arguments for is dropped, not named: see isBareSlashCommandText.
+    return commands
+        .filter((command) => command.args)
+        .map((command) => `${command.name} ${command.args}`)
+        .join(" ");
 }
 
 /** Session titles and cmux tab names. Null when only noise. Caps at 120. */

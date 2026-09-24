@@ -23,6 +23,7 @@ export const AI_REGISTRARS: LazyRegistrar[] = [
     { names: ["config"], load: async () => (await import("./commands/config")).registerConfigCommands },
     { names: ["sessions"], load: async () => (await import("./commands/sessions")).registerSessionsCommands },
     { names: ["statusline"], load: async () => (await import("./commands/statusline")).registerStatuslineCommands },
+    { names: ["tokens"], load: async () => (await import("./commands/tokens")).registerTokensCommands },
     {
         // `tools ai usage` opens the dashboard across every provider that reports quota; its
         // `daemon` subcommands own the one `ai-usage-poll` task (spec sections 6.5 and 7.5).

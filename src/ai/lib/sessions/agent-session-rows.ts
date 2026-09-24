@@ -1,7 +1,14 @@
 import { loadPins } from "@app/claude/lib/cmux/pins";
 import { cleanPromptText } from "@app/claude/lib/cmux/sessions";
 import type { SessionPin } from "@app/claude/lib/cmux/types";
-import { type CacheStatus, listSessionRows, type SessionCmuxLocation } from "@app/claude/lib/usage/session-rows";
+import {
+    type CacheStatus,
+    CODEX_CACHE_TTL_MS,
+    computeCacheStatus,
+    GROK_CACHE_TTL_MS,
+    listSessionRows,
+    type SessionCmuxLocation,
+} from "@app/claude/lib/usage/session-rows";
 import { openHistoryService } from "@genesiscz/utils/agent-sessions/open-service";
 import type { AccountProviderAlias } from "@genesiscz/utils/ai/providers/aliases";
 import { PROVIDER_ALIASES } from "@genesiscz/utils/ai/providers/aliases";
@@ -13,10 +20,9 @@ import { collapsePath } from "@genesiscz/utils/paths";
  * One session row for ANY coding agent, so a reader does not need a client per provider.
  *
  * `tools claude usage sessions --json` is the rich Claude-only surface and stays that way.
- * This adds Codex and Grok beside it, with the fields those providers genuinely have. The
- * Claude-only fields below are OPTIONAL rather than zero-filled: a cold-cache clock of `0`
- * reads as "expired right now", which is worse than showing nothing, and a consumer can test
- * for the field instead of having to know which providers compute it.
+ * This adds Codex and Grok beside it, with the fields those providers genuinely have. Cache
+ * fields are present for Claude (1 h), Codex (30 min) and Grok (30 min warning clock;
+ * xAI publishes no TTL). Never zero-fill a provider that still has no clock.
  */
 export interface AgentSessionRow {
     /** `claude` | `codex` | `grok`. Which fields are present follows from this. */
@@ -44,10 +50,15 @@ export interface AgentSessionRow {
     sourceHome?: string;
     archived?: boolean;
 
-    /** Claude only, from here down. Absent for Codex and Grok — never zero. */
+    /**
+     * Prompt-cache clock. Present for Claude (1 h), Codex (30 min) and Grok (30 min
+     * warning clock). Never zero-fill a missing clock. `cacheLifetimeSec` is the full
+     * lifetime used to compute status, so a consumer does not have to hardcode 3600.
+     */
     lastCacheAt?: number;
     cacheStatus?: CacheStatus;
     cacheTtlSec?: number;
+    cacheLifetimeSec?: number;
     totalTokens?: number;
     cacheReadTokens?: number;
     cacheCreateTokens?: number;
@@ -106,6 +117,18 @@ function grokAccount(lookup: (home: string) => string | undefined, home: string)
  * has no cache the way `load()`'s process singleton does, and a listing calls this once per grok
  * row — thousands on this machine, all resolving the same handful of homes.
  */
+function lastCacheAtMs(record: { lastTimestamp?: string | null; mtime: number }): number {
+    if (record.lastTimestamp) {
+        const parsed = Date.parse(record.lastTimestamp);
+
+        if (Number.isFinite(parsed)) {
+            return parsed;
+        }
+    }
+
+    return record.mtime;
+}
+
 function accountOf(
     alias: Exclude<AccountProviderAlias, "claude">,
     record: { sessionId: string | null; sourceHome?: string | null },
@@ -134,7 +157,8 @@ async function nativeRows(
     // provider-filtered load must never compact it (see `loadPins`).
     const pins = await loadPins({ readOnly: true, provider: alias });
     const service = openHistoryService({ provider: PROVIDER_ALIASES[alias] });
-    const cutoff = options.hours === undefined ? undefined : (options.now ?? Date.now()) - options.hours * 3_600_000;
+    const now = options.now ?? Date.now();
+    const cutoff = options.hours === undefined ? undefined : now - options.hours * 3_600_000;
     const { metadata } = await service.catalog({
         excludeAgents: true,
         ...(options.limit === undefined ? {} : { limit: options.limit }),
@@ -154,6 +178,17 @@ async function nativeRows(
         }
 
         const cwd = record.cwd ?? "";
+        const lastCacheAt = lastCacheAtMs(record);
+        const cache: Partial<AgentSessionRow> = {};
+        const ttlMs = alias === "codex" ? CODEX_CACHE_TTL_MS : alias === "grok" ? GROK_CACHE_TTL_MS : undefined;
+
+        if (ttlMs !== undefined) {
+            const { status, ttlSec } = computeCacheStatus(lastCacheAt, now, ttlMs);
+            cache.lastCacheAt = lastCacheAt;
+            cache.cacheStatus = status;
+            cache.cacheTtlSec = ttlSec;
+            cache.cacheLifetimeSec = Math.ceil(ttlMs / 1000);
+        }
 
         rows.push({
             provider: alias,
@@ -168,6 +203,7 @@ async function nativeRows(
             filePath: record.filePath,
             ...(record.sourceHome ? { sourceHome: record.sourceHome } : {}),
             archived: record.archived,
+            ...cache,
         });
     }
 

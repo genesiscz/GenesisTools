@@ -1,3 +1,5 @@
+import { isBareSlashCommandText } from "@genesiscz/utils/ai/transcripts/clean-text";
+
 /**
  * Codex and Grok wrap machine-generated context in a leading tag and send it as a user-role
  * message. Treating one as the session's own first prompt made 48 of 111 Codex sessions on this
@@ -20,11 +22,17 @@ const WRAPPER_PREFIXES = [
     "## Context Usage",
 ] as const;
 
-// Deliberately NOT filtered: `<command-message>`. The user really did invoke that slash command,
-// and the command's name is more use in a listing than whatever text happens to follow it.
+// A slash command WITH arguments is kept: `/rename board-polish` is the user's own text, and the
+// command name reads better in a listing than the turn that happens to follow it. A command with
+// no arguments (`/clear`, `/compact`, `/model`) is dropped instead, because it names the harness
+// rather than the work: sessions were listing `/clear` where the first real prompt belongs.
 
 export function isWrapperUserText(text: string): boolean {
     const trimmed = text.trimStart();
 
-    return WRAPPER_PREFIXES.some((prefix) => trimmed.startsWith(prefix));
+    if (WRAPPER_PREFIXES.some((prefix) => trimmed.startsWith(prefix))) {
+        return true;
+    }
+
+    return isBareSlashCommandText(trimmed);
 }

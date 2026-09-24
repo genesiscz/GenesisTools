@@ -34,6 +34,13 @@ interface GrokSummary {
     summary: string | null;
     createdAt: string | null;
     updatedAt: string | null;
+    /**
+     * `last_active_at` is the last real turn. `updated_at` is not: a Grok CLI that still
+     * holds the session open rewrites the summary (recap, title, counters) with no user
+     * turn at all, which made the monitor restart the prompt-cache clock and post a
+     * "went cold" card for a session nobody had touched since the day before.
+     */
+    lastActiveAt: string | null;
 }
 
 function asText(value: JsonValue | undefined): string {
@@ -476,6 +483,7 @@ async function readSummary(
             summary: null,
             createdAt: null,
             updatedAt: null,
+            lastActiveAt: null,
         };
     }
     let row: JsonRecord;
@@ -490,6 +498,7 @@ async function readSummary(
             summary: null,
             createdAt: null,
             updatedAt: null,
+            lastActiveAt: null,
         };
     }
     const info = asRecord(row.info);
@@ -500,6 +509,7 @@ async function readSummary(
         summary: asText(row.session_summary) || null,
         createdAt: validTimestamp(asText(row.created_at)),
         updatedAt: validTimestamp(asText(row.updated_at)),
+        lastActiveAt: validTimestamp(asText(row.last_active_at)),
     };
 }
 
@@ -533,7 +543,7 @@ export async function readGrokMetadata(
     let validRecords = 0;
     let firstPrompt: string | null = null;
     let firstTimestamp = summary.createdAt;
-    let lastTimestamp = summary.updatedAt ?? summary.createdAt;
+    let lastTimestamp = summary.lastActiveAt ?? summary.updatedAt ?? summary.createdAt;
     const userParts: string[] = [];
     let userCharacters = 0;
     let userBounded = false;
