@@ -7,7 +7,6 @@
 
 import { harnessOf, type SessionStartPayload } from "./harness";
 
-// biome-ignore lint/style/noRestrictedGlobals: standalone hook script — cannot import @genesiscz/utils/json
 const SafeJSON = JSON;
 
 export { harnessOf };

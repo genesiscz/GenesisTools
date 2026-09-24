@@ -5,11 +5,9 @@
  */
 
 export const parseJson = (text: string): unknown => {
-    // biome-ignore lint/style/noRestrictedGlobals: standalone script without access to SafeJSON
     return JSON.parse(text);
 };
 
 export const stringifyJson = (value: unknown, indent?: number): string => {
-    // biome-ignore lint/style/noRestrictedGlobals: standalone script without access to SafeJSON
     return JSON.stringify(value, null, indent);
 };

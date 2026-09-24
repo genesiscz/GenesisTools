@@ -2,7 +2,6 @@ import { afterEach, beforeEach, expect, test } from "bun:test";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { SafeJSON } from "@genesiscz/utils/json";
 
 /**
  * All three harnesses run this hook, and they name their edit tools differently. The matcher
@@ -16,7 +15,7 @@ let home: string;
 
 async function runHook(payload: unknown): Promise<number> {
     const proc = Bun.spawn(["bun", HOOK], {
-        stdin: new TextEncoder().encode(SafeJSON.stringify(payload)),
+        stdin: new TextEncoder().encode(JSON.stringify(payload)),
         stdout: "pipe",
         stderr: "pipe",
         env: { ...process.env, GENESIS_TOOLS_HOME: home },
@@ -26,7 +25,7 @@ async function runHook(payload: unknown): Promise<number> {
 }
 
 async function readJson<T>(...segments: string[]): Promise<T> {
-    return SafeJSON.parse(await readFile(join(home, ".genesis-tools", "claude-code", ...segments), "utf8")) as T;
+    return JSON.parse(await readFile(join(home, ".genesis-tools", "claude-code", ...segments), "utf8")) as T;
 }
 
 const CLAUDE_TRANSCRIPT = "/Users/u/.claude/projects/p/s1.jsonl";
@@ -151,7 +150,7 @@ test("an unrecognised tool is tallied by harness, so the vocabulary can be confi
 });
 
 test("a tally file holding valid JSON of the wrong shape recovers instead of dying forever", async () => {
-    // `SafeJSON.parse` does not throw on `null`, a string, or an array — it is still valid
+    // `JSON.parse` does not throw on `null`, a string, or an array — it is still valid
     // JSON, just not the `Record<string, number>` this file assumes. `Object.keys(null)`
     // throws further down, and that used to land in the outer bare `catch {}` with nothing
     // logged, on every later run.

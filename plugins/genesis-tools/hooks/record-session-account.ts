@@ -5,7 +5,6 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { accountEnvVarFor, type Harness, harnessOf } from "./harness";
 
-// biome-ignore lint/style/noRestrictedGlobals: standalone hook script — cannot import @genesiscz/utils/json
 const SafeJSON = JSON;
 
 /**

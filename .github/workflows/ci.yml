@@ -489,6 +489,12 @@ jobs:
         timeout-minutes: 1
         run: bun scripts/ci/check-package-boundaries.ts
 
+      # A plugin is copied out of the checkout and run elsewhere, where @genesiscz/* and
+      # @app/* do not resolve. Tests and eval fixtures are exempt: they only run from here.
+      - name: Plugin standalone guard
+        timeout-minutes: 1
+        run: bun scripts/ci/check-plugin-standalone.ts
+
       # Every Jev / live-STT function that reaches Jev, the chrome-devtools MCP, the ax-tool or a
       # live socket carries a profiler measurement, so PROFILE=jev-* can show where time went.
       - name: Jev instrumentation guard
