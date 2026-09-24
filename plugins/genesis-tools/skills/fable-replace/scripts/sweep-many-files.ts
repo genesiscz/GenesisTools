@@ -262,6 +262,14 @@ const validateEdit = (edit: FileEdit): string | null => {
     if (!edit.delete && !edit.ops?.length && !edit.renameTo && !creates) {
         return "edit has no ops, no delete, no renameTo, no createWith — nothing to do";
     }
+    // A RegExp `find` on an op without a kind runs as a literal op and used to crash deep in the
+    // report code with "s.replace is not a function", naming neither the op nor the fix.
+    for (const [index, op] of (edit.ops ?? []).entries()) {
+        const find: unknown = "find" in op ? op.find : undefined;
+        if (op.kind === undefined && find instanceof RegExp) {
+            return `op ${index + 1} has a RegExp \`find\` ${String(find)} but no \`kind: "regex"\` (a literal op takes a string)`;
+        }
+    }
     return null;
 };
 

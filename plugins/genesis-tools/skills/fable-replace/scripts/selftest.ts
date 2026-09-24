@@ -2162,6 +2162,19 @@ console.log("round 3: error payload and recon guards");
         String(dirErr)
     );
 
+    fs.writeFileSync(f("regex-as-literal.txt"), "alpha beta\n");
+    const regexOpErr = await run({
+        edits: [{ file: f("regex-as-literal.txt"), ops: [{ find: /alpha/g as unknown as string, replace: "x" }] }],
+    }).catch((e: FableReplaceError) => e);
+    check(
+        "a RegExp find without kind: regex is a pre-flight error (code 2) that names the fix, and writes nothing",
+        regexOpErr instanceof FableReplaceError &&
+            regexOpErr.code === 2 &&
+            regexOpErr.message.includes('kind: "regex"') &&
+            fs.readFileSync(f("regex-as-literal.txt"), "utf8") === "alpha beta\n",
+        String(regexOpErr)
+    );
+
     // readFileSync(…,"utf8") decodes lossily, so one stray cp1252 byte used to come back as
     // U+FFFD and get written into the file, far from the edit, reported as OK.
     fs.writeFileSync(f("latin1.txt"), Buffer.from([0x6e, 0x65, 0x65, 0x64, 0x6c, 0x65, 0x0a, 0x34, 0x92, 0x0a]));
