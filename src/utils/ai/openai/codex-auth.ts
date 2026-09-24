@@ -189,6 +189,20 @@ export function extractEmail(token: string): string | undefined {
 }
 
 /**
+ * Expiry of an OpenAI JWT access token as epoch milliseconds, from its `exp` claim, or
+ * undefined when the token has none or is not a JWT. No signature check: the value only
+ * tells a holder when to ask for a new token, it never grants anything.
+ */
+export function extractExpiry(token: string): number | undefined {
+    try {
+        const payload = SafeJSON.parse(Buffer.from(token.split(".")[1], "base64url").toString());
+        return typeof payload.exp === "number" && Number.isFinite(payload.exp) ? payload.exp * 1000 : undefined;
+    } catch {
+        return undefined;
+    }
+}
+
+/**
  * Extract plan type (e.g. "plus", "pro") from an OpenAI JWT token.
  */
 export function extractPlanType(token: string): string | undefined {
