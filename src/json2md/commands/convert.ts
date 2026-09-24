@@ -34,6 +34,9 @@ const HEADER_CASES: readonly HeaderCase[] = [
 const FRONTMATTER_FORMATS: readonly FrontmatterFormat[] = ["yaml", "json", "toml"] as const;
 const DIALECTS: readonly SelectDialect[] = ["jmespath", "jsonpath"] as const;
 const OVERFLOWS: readonly OverflowStrategy[] = ["wrap", "truncateStart", "truncateEnd"] as const;
+const BULLETS = ["-", "*", "+"] as const;
+
+type Bullet = (typeof BULLETS)[number];
 const MODES = ["auto", "blocks"] as const;
 const ENGINES = ["string", "mdast"] as const;
 
@@ -113,7 +116,7 @@ export function registerConvertCommand(program: Command): void {
         .option("--overflow [strategy]", `what to do with an over-wide cell: ${OVERFLOWS.join(" | ")}`)
         .option("--array-separator <text>", 'join array cells with this (default ", ")')
         .option("--empty-text <text>", 'what an empty table renders as (default "_No rows._")')
-        .option("--bullet <char>", "unordered list marker: - | * | +")
+        .option("--bullet [char]", `unordered list marker: ${BULLETS.join(" | ")}`)
         .option("--no-align", "do not pad table cells to the column width")
         .option("-o, --output <file>", "write the markdown to a file")
         .option("-c, --clipboard", "copy the markdown to the clipboard")
@@ -199,6 +202,22 @@ export function registerConvertCommand(program: Command): void {
                 return;
             }
 
+            // A closed set like every other enum flag. It used to map any unknown value to `-`
+            // silently, so `--bullet x` succeeded with output the caller did not ask for.
+            const bullet = await resolveEnumFlag({
+                given: flags.bullet,
+                flag: "--bullet",
+                values: BULLETS,
+                fallback: "-" as Bullet,
+                label: "List bullet",
+            });
+
+            if (bullet === undefined) {
+                process.exitCode = 1;
+
+                return;
+            }
+
             const frontmatterFormat =
                 flags.frontmatter === undefined
                     ? undefined
@@ -266,7 +285,7 @@ export function registerConvertCommand(program: Command): void {
                 keyCase,
                 titleKey: flags.titleKey,
                 mermaidForTrees: flags.mermaid,
-                bullet: flags.bullet === "*" || flags.bullet === "+" ? flags.bullet : "-",
+                bullet,
                 table: {
                     columns: parseColumns(flags.columns),
                     maxWidth: intOrUndefined(flags.maxWidth, "--max-width"),
