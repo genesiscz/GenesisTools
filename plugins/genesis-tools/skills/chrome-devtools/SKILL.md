@@ -166,6 +166,31 @@ is looking at.
 `%TEMP%` — trust the paths the tool itself prints (guidance, doctor, `--help`) over
 the literal examples.
 
+## 🛑 `--match` falls back to TITLES, so a DevTools window can win
+
+Every page verb matches the pattern against tab URLs FIRST (`pickPageTarget` in
+`src/chrome-devtools/lib/cdp.ts`). Only when no url matches does it try titles, and an open
+inspector's title is `DevTools - <host><path>`. So when the page you meant is gone or your pattern
+misses its url (a typo, a url the app rewrote), a pattern like `/auth-callback\?cs=true$/` can
+still match the INSPECTOR by its title, and `eval` runs against the DevTools frontend instead of
+the app. The giveaway is an answer full of `No throttling Fast 4G Slow 4G ...`: that is the
+Network panel's own DOM.
+
+Anchor on the scheme, which no DevTools title starts with, so a miss fails loudly instead of
+falling through to a title:
+
+```bash
+# matches the page by url; if the page is gone, it can fall back to the inspector's title
+tools chrome-devtools eval --match '/auth-callback\?cs=true$/' '() => location.href'
+
+# can only ever match a page url
+tools chrome-devtools eval --match '/^https:\/\/app\.example\.com\/auth-callback\?cs=true$/' '() => location.href'
+```
+
+Two open tabs on the same host where one url is a PREFIX of the other (`/col?cs=true` and
+`/col?cs=true&simulatedPartner=…`) cannot be told apart by substring at all — only an anchored
+regex picks the shorter one.
+
 ## 🛑 Do not pipe, do not tail raw
 
 | Never | Why | Instead |

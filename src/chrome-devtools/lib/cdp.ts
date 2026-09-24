@@ -312,12 +312,17 @@ export interface CdpCookie {
     httpOnly: boolean;
     secure: boolean;
     sameSite?: string;
+    /** A CHIPS-partitioned cookie's key; passed back verbatim, so its shape is not ours to type. */
+    partitionKey?: unknown;
 }
+
+const sameCookie = (a: CdpCookie, b: CdpCookie): boolean =>
+    a.name === b.name && a.domain === b.domain && a.path === b.path;
 
 /** Browser-level session: cookies across ALL domains incl. httpOnly, target list. */
 export class Browser {
     constructor(
-        private conn: Conn,
+        private conn: Pick<Conn, "send" | "close">,
         public port: number
     ) {}
 
@@ -336,16 +341,62 @@ export class Browser {
         return this.conn.send("Storage.setCookies", { cookies: cookies as unknown as Record<string, unknown>[] });
     }
 
-    deleteCookie(name: string, domain: string, path = "/") {
-        return this.conn.send("Network.deleteCookies", { name, domain, path });
+    /**
+     * Expires the cookie through `Storage.setCookies` rather than calling `Network.deleteCookies`.
+     *
+     * This class holds a BROWSER-level connection (that is how `Storage.getCookies` can see every
+     * domain at once), and the `Network` domain does not exist there: the call came back
+     * `{"code":-32601,"message":"'Network.deleteCookies' wasn't found"}`. Setting the same
+     * name/domain/path with an expiry in the past is the browser-level equivalent and stays
+     * surgical, unlike `Storage.clearCookies`, which would take every cookie in the browser.
+     *
+     * Returns `false` when no such cookie exists, and throws when one survives the write.
+     */
+    async deleteCookie(name: string, domain: string, path = "/"): Promise<boolean> {
+        const deleted = await this.deleteCookiesMatching(
+            (c) => c.name === name && c.domain === domain && c.path === path
+        );
+
+        return deleted.length > 0;
     }
 
-    /** Delete every cookie matching the predicate; returns what was deleted. */
+    /**
+     * Delete every cookie matching the predicate; returns what was deleted, and throws naming any
+     * cookie still present afterwards rather than reporting it deleted.
+     *
+     * Two details decide whether the write deletes anything. `expires: 0` is NOT the past to
+     * Chromium: it converts exactly 0 to a null time, which marks a SESSION cookie, so the old
+     * write blanked the value and kept the cookie until the browser quit. `1` is 1970-01-01T00:00:01Z.
+     * And the original attributes go back with it: a write without `secure` cannot replace a
+     * Secure cookie, and a `__Host-` or `__Secure-` name refuses one outright.
+     */
     async deleteCookiesMatching(pred: (c: CdpCookie) => boolean): Promise<string[]> {
         const victims = (await this.cookies()).filter(pred);
 
-        for (const c of victims) {
-            await this.deleteCookie(c.name, c.domain, c.path);
+        if (victims.length === 0) {
+            return [];
+        }
+
+        await this.setCookies(
+            victims.map((c) => ({
+                name: c.name,
+                value: "",
+                domain: c.domain,
+                path: c.path,
+                expires: 1,
+                httpOnly: c.httpOnly,
+                secure: c.secure,
+                ...(c.sameSite === undefined ? {} : { sameSite: c.sameSite }),
+                ...(c.partitionKey === undefined ? {} : { partitionKey: c.partitionKey }),
+            }))
+        );
+
+        const survivors = (await this.cookies()).filter((c) => victims.some((v) => sameCookie(v, c)));
+
+        if (survivors.length > 0) {
+            throw new Error(
+                `still present after the delete: ${survivors.map((c) => `${c.name} ${c.domain} ${c.path}`).join(", ")}`
+            );
         }
 
         return victims.map((c) => `${c.name} ${c.domain} ${c.path}`);
@@ -491,7 +542,26 @@ export class NoMatchingTabError extends Error {
     }
 }
 
-/** Pick a page target. A given `url` must hit; never fall back to the first tab. */
+/** Thrown when --match names SEVERAL open tabs; carries them so the caller can list them. */
+export class AmbiguousTabError extends Error {
+    constructor(
+        readonly wanted: string,
+        readonly matches: { title?: string; url: string }[]
+    ) {
+        super(`"${wanted}" matches ${matches.length} tabs`);
+        this.name = "AmbiguousTabError";
+    }
+}
+
+/**
+ * Pick a page target. A given `url` must hit; never fall back to the first tab, and never pick one
+ * of several silently.
+ *
+ * URL matches beat title matches. An open inspector's title is `DevTools - <host><path>`, so a
+ * pattern anchored on the end of a page url also matches the INSPECTOR for that page, and a plain
+ * `find` handed back the DevTools frontend: `eval` then returned the Network panel's own DOM
+ * instead of the app's. Ranking url above title makes the page win whenever one matches at all.
+ */
 export function pickPageTarget<T extends { type?: string; title?: string; url: string }>(
     list: T[],
     opts: { url?: string; index?: number; port?: number } = {}
@@ -501,12 +571,18 @@ export function pickPageTarget<T extends { type?: string; title?: string; url: s
 
     if (wanted) {
         const matches = makeMatcher(wanted);
-        const t = pages.find((x) => matches(x.url) || matches(x.title ?? ""));
-        if (!t) {
+        const byUrl = pages.filter((x) => matches(x.url));
+        const hits = byUrl.length > 0 ? byUrl : pages.filter((x) => matches(x.title ?? ""));
+
+        if (hits.length === 0) {
             throw new NoMatchingTabError(wanted, closeTabCandidates(pages, wanted));
         }
 
-        return t;
+        if (hits.length > 1) {
+            throw new AmbiguousTabError(wanted, hits);
+        }
+
+        return hits[0] as T;
     }
 
     const t = pages[opts.index ?? 0];
@@ -534,7 +610,11 @@ export async function attach(opts: { port?: number; url?: string; index?: number
  * attaching does not have to re-scan and guess which tab is the new one.
  */
 export async function newTab(port: number, url: string): Promise<Target> {
-    const r = await fetch(`http://127.0.0.1:${port}/json/new?${url}`, {
+    // The url is ENCODED, not interpolated raw. /json/new takes its target as this endpoint's own
+    // query string, so an unencoded `&` in the target is parsed as a second parameter OF /json/new
+    // and everything after it is silently dropped: ?a=1&b=2 opened a tab on ?a=1. That looked like
+    // the app stripping the query, which is a long way to chase a one-line bug.
+    const r = await fetch(`http://127.0.0.1:${port}/json/new?${encodeURIComponent(url)}`, {
         method: "PUT",
         signal: AbortSignal.timeout(TARGETS_TIMEOUT_MS),
     });

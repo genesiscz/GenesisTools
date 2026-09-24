@@ -58,10 +58,26 @@ export function registerInspect(program: Command): void {
         .option("--path <path>", "cookie path", "/")
         .action(async (opts: { port?: string; name: string; domain: string; path: string }) => {
             const b = await browser(await resolvePort(opts));
-            await b.deleteCookie(opts.name, opts.domain, opts.path);
-            out.log.info(`deleted ${opts.name} ${opts.domain} ${opts.path}`);
+            let deleted = false;
+
+            // The delete throws when a cookie survives the write. Without this the open CDP
+            // socket kept the process alive after commander printed the error.
+            try {
+                deleted = await b.deleteCookie(opts.name, opts.domain, opts.path);
+            } catch (err) {
+                out.log.error(err instanceof Error ? err.message : String(err));
+                b.close();
+                process.exit(1);
+            }
+
+            if (deleted) {
+                out.log.info(`deleted ${opts.name} ${opts.domain} ${opts.path}`);
+            } else {
+                out.log.warn(`no cookie ${opts.name} ${opts.domain} ${opts.path}; list them with 'cookies'`);
+            }
+
             b.close();
-            process.exit(0);
+            process.exit(deleted ? 0 : 1);
         });
 
     withPage(program.command("console"))
