@@ -52,6 +52,10 @@ describe("fault_fuzz_test.go", () => {
 
     test.only('helper works', () => {});
 });
+
+describe.skipIf(oracle)("slurp_test.go", () => {
+    test.skipIf(oracle)("TestSlurpChannelPreservesOrder", async () => {});
+});
 `;
 
 describe("parseGoTestNames", () => {
@@ -74,7 +78,12 @@ describe("parseTwins", () => {
             ["TestCoordinatorLater", "todo", "stop_test.go", 12],
             ["FuzzCoordinatorFaults (cancel site)", "test", "fault_fuzz_test.go", 16],
             ["helper works", "only", "fault_fuzz_test.go", 18],
+            ["TestSlurpChannelPreservesOrder", "test", "slurp_test.go", 22],
         ]);
+    });
+
+    test("a describe.skipIf(...) / test.skipIf(...) twin keeps its Go file and is not a skip", () => {
+        expect(twins[5]).toMatchObject({ describe: "slurp_test.go", mode: "test", skipped: false });
     });
 
     test("the twin name is the leading Go identifier of a qualified title", () => {
@@ -105,6 +114,7 @@ describe("reconcile", () => {
                 "harness/coordinator/stop_test.go": ["TestCoordinatorStops", "TestCoordinatorShell"],
                 "harness/coordinator/fault_fuzz_test.go": ["FuzzCoordinatorFaults"],
                 "harness/coordinator/loop_test.go": ["TestCoordinatorLater", "TestCoordinatorUnported"],
+                "harness/coordinator/slurp_test.go": ["TestSlurpChannelPreservesOrder"],
             },
             twins,
         });
@@ -115,7 +125,7 @@ describe("reconcile", () => {
         expect(result.misplaced.map(({ twin, goFiles }) => [twin.title, goFiles])).toEqual([
             ["TestCoordinatorLater", ["harness/coordinator/loop_test.go"]],
         ]);
-        expect(result.counts).toEqual({ goTests: 5, twins: 5, skipped: 2, missing: 1, orphans: 1 });
+        expect(result.counts).toEqual({ goTests: 6, twins: 6, skipped: 2, missing: 1, orphans: 1 });
     });
 
     test("a twin file of one package does not cover the same test name in the other package", () => {

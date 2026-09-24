@@ -8,9 +8,8 @@
 // `context.Canceled` is `contextCanceled`; a blocking `<-run.done` is `awaitDone(run)`.
 
 import { describe, expect, test } from "bun:test";
-import { drainTasks } from "./clock";
 import { TOOL_CALL_RUNNING_PAYLOAD } from "./contextbuilder";
-import { SLURP_IDLE_MS } from "./coordinator";
+import { SLURP_IDLE_MS, TOOL_CALL_RUN_GRACE_MS } from "./coordinator";
 import type { Input } from "./inbox";
 import type { Item, Request, Response } from "./llm";
 import type { Status } from "./operation";
@@ -18,6 +17,7 @@ import {
     assertCompletedResults,
     assertStopResult,
     BASH_NAME,
+    drainTasks,
     externalEvent,
     newRegistry,
     newStopTestRun,
@@ -27,6 +27,7 @@ import {
     SubmissionTranslator,
     stopInput,
     textResponse,
+    twinTime,
     usage,
     VIEW_IMAGE_NAME,
 } from "./testing/driver";
@@ -39,8 +40,7 @@ import {
     SubmissionFailureStore,
 } from "./testing/hss-helpers";
 
-const NS = 1e-6;
-const SECOND = 1000;
+const { NS } = twinTime;
 
 function toolResult(callID: string, value: string): Item {
     return { Type: "tool_result", Data: { CallID: callID, Output: [{ Kind: "text", Value: value }] } };
@@ -272,10 +272,11 @@ describe("submission_test.go", () => {
         await run.respond(0, response);
         // previous completion started a turn instead of waiting for the new tool
         expect(run.requestCount()).toBe(1);
-        await run.clock.advance(SECOND - NS);
+        // Go: `synctest.Sleep(time.Second - time.Nanosecond)`, the real tool grace period.
+        await run.sleep(TOOL_CALL_RUN_GRACE_MS - NS);
         // previous completion started a turn before the tool grace period elapsed
         expect(run.requestCount()).toBe(1);
-        await run.clock.advance(NS);
+        await run.sleep(NS);
         const want: Request = {
             ...first,
             Input: [

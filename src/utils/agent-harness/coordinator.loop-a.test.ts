@@ -24,6 +24,7 @@ import {
     newTestCoordinatorWithAdapter,
     newValueSpec,
     OperationStatusTranslator,
+    oracle,
     SubmittingTranslator,
     storedItem,
     TestTranslator,
@@ -77,7 +78,9 @@ function turnItem(sequence: number, turn: Turn): Item {
     return storedItem(sequence, { Kind: "turn", Data: turn });
 }
 
-describe("loop_test.go (1/2)", () => {
+// White-box twins: they drive the coordinator's internals (`coordinatorInternals`), which the Go
+// oracle cannot expose, so they run against the port only.
+describe.skipIf(oracle)("loop_test.go (1/2)", () => {
     test("TestCoordinatorRestoresSession", async () => {
         const registry = newRegistry({ ViewImage: new TestTranslator() }, VIEW_IMAGE_NAME);
         const input = externalEvent("input-1", "hello");

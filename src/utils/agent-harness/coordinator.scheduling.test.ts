@@ -7,12 +7,12 @@
 // is `run.done.settled`. `independentToolCalls` and `assertCompletedResults` live in driver.ts.
 
 import { describe, expect, test } from "bun:test";
-import { drainTasks } from "./clock";
 import { coordinatorInternals, newCoordinator, SLURP_IDLE_MS } from "./coordinator";
 import type { Operation } from "./operation";
 import {
     assertCompletedResults,
     BASH_NAME,
+    drainTasks,
     externalEvent,
     FakeAdapter,
     heartbeatInput,
@@ -20,6 +20,7 @@ import {
     newStopTestRun,
     newToolGraceTestRun,
     newValueSpec,
+    oracle,
     stopInput,
     textResponse,
     toolGraceResponse,
@@ -97,7 +98,8 @@ describe("scheduling_test.go", () => {
         expect(adapter.requests).toHaveLength(1);
     });
 
-    test("TestCoordinatorReconciliationRejectsUntranslatedCall", async () => {
+    // Go calls `current.reconcileToolCalls()` on a coordinator it built by hand: white-box, port only.
+    test.skipIf(oracle)("TestCoordinatorReconciliationRejectsUntranslatedCall", async () => {
         const run = newStopTestRun(1);
         run.store.items = run.store.items.slice(0, 2);
         const current = coordinatorInternals(newCoordinator(run.deps));

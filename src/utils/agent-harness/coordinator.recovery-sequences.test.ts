@@ -1,12 +1,13 @@
 // Twins of harness/coordinator/recovery_sequences_test.go.
 
 import { describe, expect, test } from "bun:test";
-import { AbortedError, drainTasks } from "./clock";
+import { AbortedError } from "./clock";
 import { SLURP_IDLE_MS } from "./coordinator";
 import type { Response } from "./llm";
 import {
     assertCompletedResults,
     assertStopResult,
+    drainTasks,
     externalEvent,
     FakeAdapter,
     newRegistry,

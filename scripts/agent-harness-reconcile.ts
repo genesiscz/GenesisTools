@@ -98,8 +98,10 @@ export interface ReconcileReport extends ReconcileResult {
 
 const GO_TEST_FUNC = /^func ((?:Test|Fuzz|Benchmark)(?![a-z])\w*)\(/gm;
 const TWIN_NAME = /^((?:Test|Fuzz|Benchmark)(?![a-z])\w*)/;
-const DESCRIBE_CALL = /\bdescribe(?:\.\w+)?\(\s*(["'`])(.*?)\1/;
-const TEST_CALL = /\btest(?:\.(skip|only|todo))?\(\s*(["'`])(.*?)\2/;
+// `describe.skipIf(oracle)("file_test.go", ...)` is the conditional form; its title is the Go file.
+const DESCRIBE_CALL = /\bdescribe(?:\.\w+(?:\([^)]*\))?)?\(\s*(["'`])(.*?)\1/;
+// `test.skipIf(oracle)("Name", ...)` is a conditional twin: it runs on the port, so it is not a skip.
+const TEST_CALL = /\btest(?:\.(skip|only|todo)|\.skipIf\([^)]*\))?\(\s*(["'`])(.*?)\2/;
 const PORT_TAG = /\bPORT-[A-Z]+\b/;
 
 /**

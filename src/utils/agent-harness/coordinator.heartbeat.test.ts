@@ -19,13 +19,11 @@ import {
     stopInput,
     storedItem,
     textResponse,
+    twinTime,
 } from "./testing/driver";
 import { awaitDone, errorIs } from "./testing/hss-helpers";
 
-const NS = 1e-6;
-const SECOND = 1000;
-const MINUTE = 60 * SECOND;
-const HOUR = 60 * MINUTE;
+const { NS, SECOND, MINUTE, HOUR } = twinTime;
 
 function latestHeartbeatReason(run: StopTestRun): string {
     const latest = run.heartbeats().at(-1);
@@ -49,7 +47,7 @@ describe("heartbeat_test.go", () => {
         await run.sleep(NS + 2 * SLURP_IDLE_MS);
         run.assertHeartbeatCount(1);
         const wantReason =
-            "Heartbeat: waited 60 seconds for tool calls.\nRunning: " +
+            `Heartbeat: waited ${MINUTE / 1000} seconds for tool calls.\nRunning: ` +
             `[{"CallID":"call-0","Name":"ViewImage","Arguments":"{}"},{"CallID":"call-1","Name":"ViewImage","Arguments":"{}"}]`;
         expect(latestHeartbeatReason(run)).toBe(wantReason);
         expect(run.requestCount()).toBe(1);
@@ -121,7 +119,7 @@ describe("heartbeat_test.go", () => {
         await run.sleep(NS + 2 * SLURP_IDLE_MS);
         run.assertHeartbeatCount(1);
         const wantReason =
-            "Heartbeat: waited 60 seconds for tool calls.\nRunning: " +
+            `Heartbeat: waited ${MINUTE / 1000} seconds for tool calls.\nRunning: ` +
             `[{"CallID":"call-1","Name":"ViewImage","Arguments":"{}"}]`;
         // want only the remaining call
         expect(latestHeartbeatReason(run)).toBe(wantReason);
@@ -256,7 +254,10 @@ describe("heartbeat_test.go", () => {
     // iteration, while Go captures the select channels once before the loop. Fixed in coordinator.ts.
     test("TestCoordinatorHeartbeatPropagatesSubmissionFailure", async () => {
         const run = newHeartbeatTestRun(1);
-        run.deps.toolHeartbeatIntervalMs = SECOND;
+        // Go: time.Second. A minute here, because against the oracle the interval must outlast the
+        // real start and update round trips (a scaled second is 50 ms), and the twin only needs
+        // the interval to elapse once.
+        run.deps.toolHeartbeatIntervalMs = MINUTE;
 
         const controller = new AbortController();
         const stoppedInbox = new Inbox(controller.signal);
@@ -269,7 +270,7 @@ describe("heartbeat_test.go", () => {
         await run.start();
         await run.update(0, "awaiting");
 
-        await run.sleep(SECOND);
+        await run.sleep(MINUTE);
         // Run did not return the heartbeat submission error
         expect(run.done.settled).toBe(true);
         expect(errorIs(run.done.error, want)).toBe(true);

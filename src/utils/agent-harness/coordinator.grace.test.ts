@@ -12,11 +12,14 @@ import {
     stopInput,
     textResponse,
     toolGraceResponse,
+    twinTime,
     updateToolGraceCall,
     VIEW_IMAGE_NAME,
 } from "./testing/driver";
 
 const TERMINALS: Status[] = ["completed", "failed", "canceled"];
+// Go: `time.Nanosecond` either side of the grace deadline.
+const { NS } = twinTime;
 
 describe("grace_test.go", () => {
     test("TestCoordinatorToolGraceBatchesCompletionsUntilAllCallsFinish", async () => {
@@ -89,9 +92,9 @@ describe("grace_test.go", () => {
         await updateToolGraceCall(run, "A", "completed");
         await run.sleep(400);
         await updateToolGraceCall(run, "B", "completed");
-        await run.sleep(deadline - run.clock.now() - 1);
+        await run.sleep(deadline - run.clock.now() - NS);
         expect(run.requestCount()).toBe(1);
-        await run.sleep(1);
+        await run.sleep(NS);
         expect(run.requestCount()).toBe(2);
         assertStopResult(run.calls[1].request, "A", "completed");
         assertStopResult(run.calls[1].request, "B", "completed");
@@ -148,7 +151,9 @@ describe("grace_test.go", () => {
         await run.respond(1, toolGraceResponse("C"));
         const newDeadline = run.clock.now() + 1000;
         await updateToolGraceCall(run, "A", "completed");
-        await run.sleep(oldDeadline - run.clock.now() + 1);
+        // Past the discarded deadline, but well short of the new one 250 ms later (the oracle's NS
+        // margin alone would reach it).
+        await run.sleep(oldDeadline - run.clock.now() + Math.min(NS, 100));
         expect(run.requestCount()).toBe(2);
         await run.sleep(newDeadline - run.clock.now());
         expect(run.requestCount()).toBe(3);

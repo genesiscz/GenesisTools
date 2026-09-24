@@ -15,11 +15,11 @@ import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { isProcessAlive } from "@genesiscz/utils/process-alive";
 import { newBuilder } from "./contextbuilder";
-import { newCoordinator } from "./coordinator";
 import { Inbox } from "./inbox";
 import type { Operation } from "./operation";
 import { BEFORE_FIRST } from "./sessionstore";
 import {
+    createCoordinator,
     externalEvent,
     FakeAdapter,
     independentToolCalls,
@@ -74,7 +74,7 @@ describe("stop_integration_test.go", () => {
         const runController = new AbortController();
         const timeout = setTimeout(() => runController.abort(new Error("test timeout")), 10_000);
         const adapter = new FakeAdapter(async () => textResponse("Stopped."));
-        const current = newCoordinator({
+        const current = createCoordinator({
             toolHeartbeatIntervalMs: 0,
             sessionID: "session-1",
             inbox: inputs,

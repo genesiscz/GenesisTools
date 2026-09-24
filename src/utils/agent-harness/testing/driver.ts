@@ -10,7 +10,7 @@
 import { expect } from "bun:test";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { AsyncQueue } from "../async-queue";
-import { drainTasks, VirtualClock } from "../clock";
+import { type Clock, drainTasks as drainPortTasks, realClock, VirtualClock } from "../clock";
 import { type Builder, newBuilder } from "../contextbuilder";
 import {
     type Coordinator,
@@ -22,6 +22,7 @@ import {
 import { type ControlMode, decodeControlMessage, Inbox, type Input } from "../inbox";
 import type { Adapter, Item as Item2, Request, RequestOptions, Response, ToolCall, ToolResult } from "../llm";
 import { isTerminal, type Manager, type Operation, type OperationID, type Spec, type Status } from "../operation";
+import { isOracleMode, newGoCoordinator, settleLiveGoCoordinators } from "../oracle/go-coordinator";
 import type { Item, ModelResponse, Page, ResumeState, Sequence, ToolCallStatus, Turn } from "../sessionstore";
 import { type CallStatus, MapRegistry, type Registry, type ToolContext, type Translator } from "../tool";
 
@@ -378,7 +379,7 @@ export interface RunOutcome {
 }
 
 export class StopTestRun {
-    readonly clock = new VirtualClock(1_000_000);
+    readonly clock: TestClock = newTestClock();
     readonly store: FakeStore;
     readonly operations = new FakeOperationManager();
     readonly inboxController = new AbortController();
@@ -448,14 +449,31 @@ export class StopTestRun {
         return coordinatorInternals(this.current);
     }
 
-    /** `synctest.Wait(); synctest.Sleep(2 * slurpIdleTimeout); synctest.Wait()`. */
+    /**
+     * `synctest.Wait(); synctest.Sleep(2 * slurpIdleTimeout); synctest.Wait()`. Against the Go
+     * oracle time is real: wait until the bridge has been quiet with no callback in flight.
+     */
     async settle(): Promise<void> {
+        if (oracle) {
+            await drainTasks();
+            await new Promise((resolve) => setTimeout(resolve, 2 * SLURP_IDLE_MS));
+            await drainTasks();
+            return;
+        }
+
         await drainTasks();
         await this.clock.advance(2 * SLURP_IDLE_MS);
         await drainTasks();
     }
 
     async sleep(ms: number): Promise<void> {
+        if (oracle) {
+            await drainTasks();
+            await this.clock.advance(ms);
+            await this.settle();
+            return;
+        }
+
         await drainTasks();
         await this.clock.advance(ms);
         await drainTasks();
@@ -468,7 +486,7 @@ export class StopTestRun {
             this.deps.restored = this.store.resume;
         }
 
-        this.current = newCoordinator(this.deps);
+        this.current = createCoordinator(this.deps);
         const runSignal = signal ?? this.runController.signal;
         this.current.run(runSignal).then(
             () => {
@@ -480,6 +498,12 @@ export class StopTestRun {
             }
         );
         await drainTasks();
+
+        // Go's Run restores the session before its first select; synctest.Wait() in the Go tests
+        // sees that done. Against the oracle that restore is real callbacks, so wait for them.
+        if (oracle) {
+            await this.settle();
+        }
     }
 
     cancel(reason?: Error): void {
@@ -504,7 +528,8 @@ export class StopTestRun {
         const call = this.calls[index];
 
         if (!call) {
-            throw new Error(`request ${index} has not started`);
+            const failed = this.done.error !== undefined ? `; the run already failed: ${String(this.done.error)}` : "";
+            throw new Error(`request ${index} has not started${failed}`);
         }
 
         call.respond(response);
@@ -621,6 +646,79 @@ export function emptyFakeStore(): FakeStore {
     return new FakeStore();
 }
 
+/** `HARNESS_ORACLE=go`: the twins drive the upstream Go coordinator through the bridge instead of the port. */
+export const oracle = isOracleMode();
+
+/**
+ * `synctest.Wait()`: every task the coordinator can run without new input has run. Against the Go
+ * oracle that means every running Go coordinator is at rest (quiet bridge, no callback in flight),
+ * the same wait `run.settle()` does, so twins that drive `run.clock.advance` and `drainTasks` by
+ * hand behave the same on both sides.
+ */
+export async function drainTasks(): Promise<void> {
+    await drainPortTasks();
+
+    if (oracle) {
+        await settleLiveGoCoordinators();
+        await drainPortTasks();
+    }
+}
+
+/**
+ * The twins' clock against the Go oracle, whose timers are real: `now()` is the wall clock, so a
+ * deadline a twin computes right after a settle is measured from (almost) the moment the Go timer
+ * was armed, and `advance(ms)` sleeps at least `ms`, so a Go timer armed just before the call has
+ * fired when it returns (synctest fires equal deadlines together; real time needs the strict wait).
+ * The twins' epsilons come from `twinTime.NS`, wide enough to absorb the settle round trips.
+ */
+export class RealAdvanceClock implements Clock {
+    private readonly origin = Date.now();
+
+    constructor(private readonly start = 1_000_000) {}
+
+    now(): number {
+        return this.start + (Date.now() - this.origin);
+    }
+
+    sleep(ms: number, signal?: AbortSignal): Promise<void> {
+        return realClock.sleep(ms, signal);
+    }
+
+    pending(): number {
+        return 0;
+    }
+
+    async advance(ms: number): Promise<void> {
+        const target = Date.now() + Math.max(0, ms);
+
+        while (Date.now() < target) {
+            await new Promise((resolve) => setTimeout(resolve, target - Date.now()));
+        }
+    }
+}
+
+export type TestClock = VirtualClock | RealAdvanceClock;
+
+/**
+ * The long durations the heartbeat, grace and submission twins reason in. Against the Go oracle
+ * they are real waits, so a minute becomes three seconds (still longer than the 1 s grace period,
+ * which is a fixed real constant on the Go side) and the nanosecond epsilon becomes a 300 ms
+ * margin: real timers cannot be ordered at sub-millisecond distance, and a deadline a twin computes
+ * lags the Go timer by the settle round trips (about 20 ms each) that ran in between.
+ */
+export const twinTime = oracle
+    ? { NS: 300, SECOND: 50, MINUTE: 3000, HOUR: 12_000 }
+    : { NS: 1e-6, SECOND: 1000, MINUTE: 60_000, HOUR: 3_600_000 };
+
+export function newTestClock(start = 1_000_000): TestClock {
+    return oracle ? new RealAdvanceClock() : new VirtualClock(start);
+}
+
+/** The coordinator under test: the port, or the Go oracle when `HARNESS_ORACLE=go`. */
+export function createCoordinator(deps: Dependencies): Coordinator {
+    return oracle ? newGoCoordinator(deps) : newCoordinator(deps);
+}
+
 /** `withPreamble(t, items...)`: the items after the preamble every context builder starts with. */
 export function withPreamble(...items: Item2[]): Item2[] {
     return [...newBuilder().build().Request.Input, ...items];
@@ -682,9 +780,7 @@ export async function updateToolGraceCall(run: StopTestRun, callID: string, term
         if (status.CallID === callID) {
             const value = { ...(status.Operations ?? [])[0], Status: terminal };
             run.operations.updateQueue.push(value);
-            await drainTasks();
-            await run.clock.advance(2 * SLURP_IDLE_MS);
-            await drainTasks();
+            await run.settle();
             return;
         }
     }

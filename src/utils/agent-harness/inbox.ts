@@ -193,6 +193,11 @@ export class Inbox implements Writer {
         this.output.push({ ...input });
     }
 
+    /** The abort reason once the inbox is closed; undefined while it accepts inputs. */
+    get closeReason(): unknown {
+        return this.signal.aborted ? (this.signal.reason ?? new Error("inbox closed")) : undefined;
+    }
+
     outputQueue(): AsyncQueue<Input> {
         return this.output;
     }

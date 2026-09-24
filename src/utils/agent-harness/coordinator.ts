@@ -1216,8 +1216,13 @@ export function coordinatorInternals(coordinator: Coordinator): CoordinatorInter
     return accessor();
 }
 
+/** Attaches a white-box view to another Coordinator implementation (the Go oracle wrapper). */
+export function provideCoordinatorInternals(coordinator: Coordinator, accessor: () => CoordinatorInternals): void {
+    Object.defineProperty(coordinator, INTERNALS, { value: accessor, enumerable: false });
+}
+
 export function newCoordinator(deps: Dependencies): Coordinator {
     const impl = new CoordinatorImpl(deps);
-    Object.defineProperty(impl, INTERNALS, { value: () => impl.internals(), enumerable: false });
+    provideCoordinatorInternals(impl, () => impl.internals());
     return impl;
 }

@@ -19,7 +19,7 @@ import { describe, expect, test } from "bun:test";
 import { drainTasks } from "./clock";
 import { SLURP_IDLE_MS } from "./coordinator";
 import type { Input } from "./inbox";
-import { externalEvent, newStopTestRun, type StopTestRun } from "./testing/driver";
+import { externalEvent, newStopTestRun, oracle, type StopTestRun } from "./testing/driver";
 import { errorIs } from "./testing/hss-helpers";
 
 const NS = 1e-6;
@@ -37,7 +37,9 @@ function appendedIDs(run: StopTestRun): string[] {
     return run.store.appendedInputs.map((input) => input.ID);
 }
 
-describe("slurp_test.go", () => {
+// Against the Go oracle time is real, and these twins order events at sub-millisecond distance
+// around the 1 ms slurp idle window, which real timers cannot do: they stay port-only.
+describe.skipIf(oracle)("slurp_test.go", () => {
     test("TestSlurpChannelPreservesOrder", async () => {
         for (const count of [0, 3]) {
             const run = newStopTestRun(0);

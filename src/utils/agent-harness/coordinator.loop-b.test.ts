@@ -21,6 +21,7 @@ import {
     newTestCoordinator,
     newTestCoordinatorWithAdapter,
     newValueSpec,
+    oracle,
     SubmittingTranslator,
     storedItem,
     TerminalResultTranslator,
@@ -58,7 +59,8 @@ function hasToolCall(states: Array<{ turnID: string; callID: string }>, turnID: 
     return states.some((state) => state.turnID === turnID && state.callID === callID);
 }
 
-describe("loop_test.go (2/2)", () => {
+// White-box twins (see loop-a): port-only.
+describe.skipIf(oracle)("loop_test.go (2/2)", () => {
     test("TestCoordinatorRunDropsSuccessfulResponseFromSupersededTurn", async () => {
         const spec = newValueSpec('{"value":1}');
         const translator = new SubmittingTranslator();

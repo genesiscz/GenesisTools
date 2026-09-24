@@ -308,6 +308,10 @@ export const env = {
          * `preload-test-sandbox` installs. Nothing in the suite should need it.
          */
         allowsRealHome: () => isFlag("GENESIS_TOOLS_TEST_ALLOW_REAL_HOME"),
+        /** `HARNESS_ORACLE=go`: the agent-harness twins run against the upstream Go coordinator. */
+        isHarnessOracle: () => getTrimmed("HARNESS_ORACLE") === "go",
+        /** `HARNESS_ORACLE_TRACE=1`: the oracle bridge prints every envelope to stderr. */
+        isHarnessOracleTrace: () => isFlag("HARNESS_ORACLE_TRACE"),
     },
 
     // Client-safe domains are defined once in @app/utils/env.client and re-exposed here.
