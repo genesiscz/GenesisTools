@@ -111,11 +111,13 @@ export async function fetchMr(api: ProjectApi, iid: number): Promise<MrWithNotes
     return withNotes(toSummary(raw), notes);
 }
 
-export async function fetchMrNotes(api: ProjectApi, iid: number, limit = 100): Promise<MrNote[]> {
-    const raw = await restGet<RawNote[]>(
-        api,
-        `${mrBase(api)}/${iid}/notes?sort=desc&order_by=updated_at&per_page=${limit}`
-    );
+/**
+ * Every note on the MR, newest first. One `per_page=100` request lost everything past the first
+ * page, including the first human note `noteWindow` promises to keep, and activity checks then
+ * judged a thread they had only partly read.
+ */
+export async function fetchMrNotes(api: ProjectApi, iid: number): Promise<MrNote[]> {
+    const raw = await restGetPaginated<RawNote>(api, `${mrBase(api)}/${iid}/notes?sort=desc&order_by=updated_at`);
 
     return raw.map(toNote);
 }

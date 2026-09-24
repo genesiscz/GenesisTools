@@ -306,6 +306,12 @@ describe("stale-branches: review bookkeeping", () => {
         expect(() => mergeReviews(target, [{ "1": { ...slice["1"], evidence: "not a list" } } as never])).toThrow(
             "review.evidence must be an array of strings"
         );
+
+        for (const confidence of ["oops", -1, 150]) {
+            expect(() => mergeReviews(target, [{ "1": { ...slice["1"], confidence } } as never])).toThrow(
+                "review.confidence must be a number from 0 to 100"
+            );
+        }
     });
 
     test("a re-merged judgment keeps what post, apply-labels and close recorded", () => {

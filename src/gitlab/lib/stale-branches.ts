@@ -428,7 +428,7 @@ export async function collectStaleReport(options: CollectOptions): Promise<Stale
         const git = gitFacts(cwd, mr);
         let notes: MrNote[] = [];
         try {
-            notes = noteWindow(await fetchMrNotes(api, mr.iid, 100));
+            notes = noteWindow(await fetchMrNotes(api, mr.iid));
         } catch (e: unknown) {
             failures.push(`notes of !${mr.iid}: ${errorMessage(e)}`);
         }
@@ -744,12 +744,22 @@ export function mergeReviews(report: StaleReport, sources: ReviewSource[]): { fi
             continue;
         }
 
+        const confidence =
+            review.confidence === null || review.confidence === undefined ? null : Number(review.confidence);
+
+        // `Number("oops")` is NaN and -1 or 150 are numbers too; all of them passed as "filled"
+        // and could be rendered or posted. The contract is a whole 0-100 score.
+        if (confidence !== null && !isValidConfidence(confidence)) {
+            throw new Error(
+                `!${mr.iid}: review.confidence must be a number from 0 to 100, got ${SafeJSON.stringify(review.confidence)}`
+            );
+        }
+
         mr.review = {
             ...operationalState(mr.review),
             ...operationalState(review),
             recommendation: review.recommendation ?? null,
-            confidence:
-                review.confidence === null || review.confidence === undefined ? null : Number(review.confidence),
+            confidence,
             reason: review.reason ?? null,
             adoCommentsSummary: review.adoCommentsSummary ?? null,
             draftComment: review.draftComment ?? null,
@@ -835,6 +845,11 @@ export function markLabelsApplied(mr: StaleMr, labels: { before: string[]; after
 
 // ─── validation ────────────────────────────────────────────────────────────────
 
+/** A review confidence is a finite score from 0 to 100. */
+function isValidConfidence(value: number): boolean {
+    return Number.isFinite(value) && value >= 0 && value <= 100;
+}
+
 export function unfilledReviews(report: StaleReport): number[] {
     return report.mrs
         .filter((mr) => mr.needsReview)
@@ -845,6 +860,7 @@ export function unfilledReviews(report: StaleReport): number[] {
                 r.recommendation === null ||
                 !RECOMMENDATIONS.includes(r.recommendation) ||
                 r.confidence === null ||
+                !isValidConfidence(r.confidence) ||
                 !r.reason ||
                 !r.draftComment
             );
