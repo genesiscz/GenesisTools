@@ -253,6 +253,23 @@ before it runs:
 | `<worktree>` | the checkout actually in use, which differs from `<project>` inside a linked worktree |
 | `<branch>` | the resolved branch |
 
+🛑 **No value is ever pasted into the command.** Each placeholder becomes a quoted reference to an
+environment variable (`"${GT_RESOLVER_BRANCH}"`), and the values reach `sh -c` in its environment.
+A branch name is not a safe token (git permits `;`, `$`, backticks and quotes), and this is what
+keeps a checkout name from running commands. A resolver that has not answered after 30 s is
+stopped. So write the placeholder bare:
+
+```bash
+# right — the quoting is already there
+bun ~/.genesis-tools/plugins/resolvers/acme.ts --cwd <cwd> --branch <branch>
+
+# also handled, but not needed — the reference adapts to the quotes around it
+bun ~/.genesis-tools/plugins/resolvers/acme.ts --cwd '<cwd>'
+```
+
+A placeholder after a heredoc (`<<`) or inside a `$(…)`, `${…}` or backticks within double quotes
+is refused with an error, because the reference form there cannot be chosen reliably.
+
 Pass only what the resolver needs. Anything else it wants (a remote, an API, a directory
 listing) it fetches itself.
 

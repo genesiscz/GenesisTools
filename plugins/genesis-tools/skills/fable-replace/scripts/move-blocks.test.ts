@@ -307,7 +307,8 @@ describe("the spec language's move marker", () => {
         expect(bad("@@ from.ts\n<<< move to=to.ts symbol=moved\nexport const existing\n>>>\n")).toThrow(
             /only read as the anchor/
         );
-        expect(bad("@@ from.ts\n<<< move to=to.ts symbol=moved before=x\n>>>\n")).toThrow(/unknown modifier/);
+        expect(bad("@@ from.ts\n<<< move to=to.ts symbol=moved before=x\n>>>\n")).toThrow(/before= is not a modifier/);
+        expect(bad("@@ from.ts\n<<< move to=to.ts symbol=moved at=typo\nanchor\n>>>\n")).toThrow(/got "typo"/);
     });
 
     test("at=after with the anchor as the body pastes against that anchor", () => {
@@ -318,6 +319,22 @@ describe("the spec language's move marker", () => {
         });
         const paste = edits.find((edit) => edit.file === "to.ts");
         expect(paste?.ops?.[0]).toMatchObject({ kind: "insertAfter", anchor: "export const existing = 0;" });
+    });
+
+    test("at= belongs to move alone, and before=/after= point at at=", () => {
+        const dir = fixture();
+        const bad =
+            (spec: string): (() => unknown) =>
+            () =>
+                parseSpec({ text: spec, cwd: dir });
+
+        // `at=` on another kind was accepted and its placement silently dropped.
+        expect(bad("@@ from.ts\n<<< append at=before\nx\n>>>\n")).toThrow(/at= only applies to move/);
+        expect(bad("@@ from.ts\n<<< regex at=after\na\n===\nb\n>>>\n")).toThrow(/at= only applies to move/);
+        // `before=anchor` used to die as a bare unknown modifier, which never named at=.
+        expect(bad("@@ from.ts\n<<< move to=to.ts symbol=moved before=anchor\n>>>\n")).toThrow(
+            /write at=before and put the anchor text in the body/
+        );
     });
 
     test("lines= addresses a block that is not one declaration", () => {

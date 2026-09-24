@@ -155,6 +155,10 @@ const parseModifiers = (raw: string, line: number): Modifiers => {
             }
 
             mods.at = value;
+        } else if ((key === "before" || key === "after") && value !== undefined) {
+            // Not an alias, and not a bare unknown modifier either: name the form that works.
+            // The anchor text is the body.
+            fail(line, `write at=${key} and put the anchor text in the body; ${key}= is not a modifier`);
         } else {
             fail(
                 line,

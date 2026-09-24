@@ -1,4 +1,7 @@
 import { describe, expect, it } from "bun:test";
+import { existsSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { Ctx } from "./git-context.ts";
 import {
     fillPlaceholders,
@@ -94,6 +97,61 @@ describe("fillPlaceholders", () => {
         expect(fillPlaceholders("r '<branch>'")).toBe(`r ''"\${GT_RESOLVER_BRANCH}"''`);
         expect(fillPlaceholders('r "<branch>"')).toBe('r "${GT_RESOLVER_BRANCH}"');
         expect(fillPlaceholders("r < in.txt <other>")).toBe("r < in.txt <other>");
+    });
+
+    it("a branch carrying its own quotes stays one inert value", async () => {
+        // git permits `;`, `$`, backticks and quotes in a branch name, and the command goes to
+        // `sh -c`. The value travels in the environment, so no quote inside it can end anything.
+        const marker = join(tmpdir(), `gt-inject-quotes-${process.pid}-${Date.now()}.txt`);
+        const hostile = { ...main, branch: `x'; touch ${marker}; echo '` };
+        const { output } = await runResolver(`printf '{"dir":"%s"}' <branch>`, hostile, "test");
+
+        expect(existsSync(marker)).toBe(false);
+        expect(output?.dir).toBe(hostile.branch);
+
+        if (existsSync(marker)) {
+            rmSync(marker, { force: true });
+        }
+    });
+
+    it("a hostile branch stays inert inside a ${…} and a nested $(…) with quotes in it", async () => {
+        // `$(echo ')' …)` fools the quote scan into thinking the substitution had closed, so the
+        // refusal does not fire there; the reference is inert anyway.
+        const marker = join(tmpdir(), `gt-inject-nested-${process.pid}-${Date.now()}.txt`);
+        const hostile = { ...main, branch: `$(touch ${marker})` };
+
+        await runResolver(`echo "$(echo ')' <branch>)" >/dev/null; echo '{"dir":"/ok"}'`, hostile, "test");
+        await runResolver(`echo \${GT_UNSET_X:-<branch>} >/dev/null; echo '{"dir":"/ok"}'`, hostile, "test");
+
+        expect(existsSync(marker)).toBe(false);
+
+        if (existsSync(marker)) {
+            rmSync(marker, { force: true });
+        }
+    });
+
+    it("a hostile branch really does run through sh -c without executing", async () => {
+        // Asserting on the filled string alone proves the quoting looks right. This runs it,
+        // so the claim is that nothing executed, not that nothing appeared to.
+        const marker = join(tmpdir(), `gt-inject-${process.pid}-${Date.now()}.txt`);
+        // The payload must be one that injects when UNQUOTED and is inert when quoted. A
+        // payload carrying its own quotes (`x'; touch …; echo '`) is shaped to escape THIS
+        // implementation's quoting and, left unquoted, merely echoes as a literal — so it
+        // would pass either way and prove nothing.
+        const hostile = { ...main, branch: `x; touch ${marker}` };
+        const { output, error } = await runResolver(
+            `echo '{"dir":"/ok"}' && echo <branch> >/dev/null`,
+            hostile,
+            "test"
+        );
+
+        expect(existsSync(marker)).toBe(false);
+        expect(error).toBeUndefined();
+        expect(output?.dir).toBe("/ok");
+
+        if (existsSync(marker)) {
+            rmSync(marker, { force: true });
+        }
     });
 });
 
@@ -210,5 +268,83 @@ describe("a resolver that never answers", () => {
 
     it("reports a failing exit with its stderr instead of 'printed nothing'", async () => {
         expect((await runResolver("echo broken >&2; exit 3", main, "t")).error).toContain("exited 3: broken");
+    });
+});
+
+describe("review fixes", () => {
+    it("a worktree block without the requested consumer does not hide the main checkout's entry", async () => {
+        const partial: ProjectOverrides = {
+            ...SPLIT,
+            "/repos/acme-wt-login": { consumers: { research: { dir: "/vault/Acme/Login-Research" } } },
+        };
+        const research = await resolveOverride({ overrides: partial, ctx: worktree, consumer: "research", label: "t" });
+        const wrapUp = await resolveOverride({ overrides: partial, ctx: worktree, consumer: "wrap-up", label: "t" });
+
+        expect(research.kind === "dir" && research.dir).toBe("/vault/Acme/Login-Research");
+        expect(wrapUp.kind === "resolver" && wrapUp.dir).toBe("/vault/Acme/ticket-fix/login");
+    });
+
+    it("a placeholder inside quotes is quoted for that context, so a hostile branch stays inert", async () => {
+        const marker = join(tmpdir(), `gt-inject-quoted-${process.pid}-${Date.now()}.txt`);
+        const hostile = { ...main, branch: `$(touch ${marker})` };
+
+        for (const command of [`printf '{"dir":"/v/<branch>"}'`, `printf "%s" "{\\"dir\\":\\"/v/<branch>\\"}"`]) {
+            const { output, error } = await runResolver(command, hostile, "test");
+
+            expect(error).toBeUndefined();
+            expect(output?.dir).toBe(`/v/$(touch ${marker})`);
+        }
+
+        expect(existsSync(marker)).toBe(false);
+
+        if (existsSync(marker)) {
+            rmSync(marker, { force: true });
+        }
+    });
+
+    it("refuses a placeholder inside a command substitution nested in double quotes", async () => {
+        const { output, error } = await runResolver(`echo "$(printf '%s' '<branch>')"`, main, "test");
+
+        expect(output).toBeUndefined();
+        expect(error).toContain("cannot be quoted safely");
+    });
+
+    it("refuses a placeholder in a heredoc body, where quotes are literal, and nothing executes", async () => {
+        const marker = join(tmpdir(), `gt-inject-heredoc-${process.pid}-${Date.now()}.txt`);
+        const hostile = { ...main, branch: `$(touch ${marker})` };
+        const { output, error } = await runResolver(`cat <<EOF\n{"dir":"/v/<branch>"}\nEOF`, hostile, "test");
+
+        expect(output).toBeUndefined();
+        expect(error).toContain("heredoc");
+        expect(existsSync(marker)).toBe(false);
+
+        if (existsSync(marker)) {
+            rmSync(marker, { force: true });
+        }
+    });
+
+    it("still fills a placeholder after a <<< here-string, which is an ordinary word", () => {
+        // Checked on the filled text only: `<<<` is a bash feature, and `sh` on ubuntu (dash)
+        // rejects it with "redirection unexpected", so running it proved nothing about the scan.
+        expect(fillPlaceholders(`cat <<< '{"dir":"/v/'<branch>'"}'`)).toBe(
+            `cat <<< '{"dir":"/v/'"\${GT_RESOLVER_BRANCH}"'"}'`
+        );
+    });
+
+    it("refuses a placeholder inside a ${…} expansion nested in double quotes", async () => {
+        const { output, error } = await runResolver(`echo "\${GT_UNSET_X:-<branch>}"`, main, "test");
+
+        expect(output).toBeUndefined();
+        expect(error).toContain("cannot be quoted safely");
+    });
+
+    it("refuses resolver warnings that are not a list of strings", async () => {
+        const bad = await runResolver(`printf '{"dir":"/v","warnings":"not-a-list"}'`, main, "test");
+        const mixed = await runResolver(`printf '{"dir":"/v","warnings":["ok",3]}'`, main, "test");
+        const good = await runResolver(`printf '{"dir":"/v","warnings":["ok"]}'`, main, "test");
+
+        expect(bad.error).toContain("not a list of strings");
+        expect(mixed.error).toContain("not a list of strings");
+        expect(good.output?.warnings).toEqual(["ok"]);
     });
 });

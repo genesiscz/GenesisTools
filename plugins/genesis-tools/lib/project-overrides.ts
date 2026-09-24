@@ -55,15 +55,24 @@ export async function loadProjectOverrides(label: string): Promise<ProjectOverri
  * Keyed by the main checkout, because a project's worktrees come and go while its vault folders
  * do not. `appliesToWorktrees: false` opts out for a project whose worktrees want different
  * homes; a block keyed directly on the worktree still wins for that worktree.
+ *
+ * With a `consumer`, the worktree block wins only when it defines that consumer. A worktree
+ * block that sets only `research` used to hide the main checkout's `wrap-up` entry, and the
+ * wrap-up then fell through to a different target.
  */
-export function overrideFor(overrides: ProjectOverrides, ctx: Ctx): { key: string; override: ProjectOverride } | null {
+export function overrideFor(
+    overrides: ProjectOverrides,
+    ctx: Ctx,
+    consumer?: string
+): { key: string; override: ProjectOverride } | null {
     const keys = Object.keys(overrides ?? {}).map((key) => ({ key, expanded: expandHome(key) }));
     // Two passes, so the answer never depends on key order in config.json: a block keyed on
     // this exact checkout always beats the main checkout's block, wherever either one sits.
     const exact = keys.find(({ expanded }) => expanded === ctx.toplevel);
+    const exactOverride = exact ? (overrides[exact.key] as ProjectOverride) : undefined;
 
-    if (exact) {
-        return { key: exact.expanded, override: overrides[exact.key] as ProjectOverride };
+    if (exact && exactOverride && (consumer === undefined || exactOverride.consumers?.[consumer])) {
+        return { key: exact.expanded, override: exactOverride };
     }
 
     const viaMain = ctx.mainProject
@@ -73,7 +82,12 @@ export function overrideFor(overrides: ProjectOverrides, ctx: Ctx): { key: strin
           )
         : undefined;
 
-    return viaMain ? { key: viaMain.expanded, override: overrides[viaMain.key] as ProjectOverride } : null;
+    if (viaMain) {
+        return { key: viaMain.expanded, override: overrides[viaMain.key] as ProjectOverride };
+    }
+
+    // No main block for this consumer either: the worktree block still answers, as before.
+    return exact && exactOverride ? { key: exact.expanded, override: exactOverride } : null;
 }
 
 type QuoteContext = "none" | "single" | "double";
@@ -115,10 +129,18 @@ function reference(variable: string, context: QuoteContext): string {
  * `x;touch${IFS}y` is a valid branch: spliced in as text it ran as a second command. The shell
  * never parses the result of an expansion as syntax, so a value can no longer change the
  * command, whichever quotes the placeholder sits in.
+ *
+ * ⚠️ A placeholder inside a `$(…)`, `${…}` or backticks nested in double quotes, or after a
+ * heredoc operator (`<<`, not the `<<<` here-string), is refused. Those contexts are not modelled, so the reference could come out in the wrong form and pass a
+ * wrong value. It is a correctness guard; the security does not depend on this scan.
  */
 export function fillPlaceholders(command: string): string {
     let filled = "";
     let context: QuoteContext = "none";
+    let substitutions = 0;
+    let braces = 0;
+    let inBackticks = false;
+    let afterHeredoc = false;
 
     for (let i = 0; i < command.length; i++) {
         const char = command[i] as string;
@@ -128,6 +150,17 @@ export function fillPlaceholders(command: string): string {
             const name = end === -1 ? "" : command.slice(i + 1, end);
 
             if (Object.hasOwn(PLACEHOLDER_ENV, name)) {
+                // A heredoc body's quotes are literal text, so no reference form is right there.
+                if (afterHeredoc) {
+                    throw new Error(`<${name}> after a heredoc operator (<<) cannot be quoted safely`);
+                }
+
+                if (substitutions > 0 || braces > 0 || inBackticks) {
+                    throw new Error(
+                        `<${name}> inside a $(…), \${…} or backticks within double quotes cannot be quoted safely`
+                    );
+                }
+
                 filled += reference(PLACEHOLDER_ENV[name] as string, context);
                 i = end;
                 continue;
@@ -140,9 +173,41 @@ export function fillPlaceholders(command: string): string {
             continue;
         }
 
-        if (char === "'" && context !== "double") {
+        if (context === "none" && command.startsWith("<<<", i)) {
+            filled += "<<<";
+            i += 2;
+            continue;
+        }
+
+        if (context === "none" && command.startsWith("<<", i)) {
+            afterHeredoc = true;
+        }
+
+        if (context === "double" && (command.startsWith("$(", i) || command.startsWith("${", i))) {
+            if (command[i + 1] === "(") {
+                substitutions++;
+            } else {
+                braces++;
+            }
+
+            filled += command.slice(i, i + 2);
+            i++;
+            continue;
+        }
+
+        const nested = substitutions > 0 || braces > 0 || inBackticks;
+
+        if (context === "double" && char === "`") {
+            inBackticks = !inBackticks;
+        } else if (context === "double" && substitutions > 0 && char === "(") {
+            substitutions++;
+        } else if (context === "double" && substitutions > 0 && char === ")") {
+            substitutions--;
+        } else if (context === "double" && braces > 0 && char === "}") {
+            braces--;
+        } else if (char === "'" && context !== "double") {
             context = context === "single" ? "none" : "single";
-        } else if (char === '"' && context !== "single") {
+        } else if (char === '"' && context !== "single" && !nested) {
             context = context === "double" ? "none" : "double";
         }
 
@@ -238,7 +303,19 @@ export async function runResolver(
     label: string,
     { timeoutMs = RESOLVER_TIMEOUT_MS }: { timeoutMs?: number } = {}
 ): Promise<{ output?: ResolverOutput; error?: string }> {
-    const run = await runBounded({ script: fillPlaceholders(command), env: placeholderEnv(ctx), timeoutMs });
+    let script: string;
+
+    try {
+        script = fillPlaceholders(command);
+    } catch (err) {
+        const error = `resolverCommand ${err instanceof Error ? err.message : String(err)}: ${command}`;
+
+        console.error(`${label}: ${error}`);
+
+        return { error };
+    }
+
+    const run = await runBounded({ script, env: placeholderEnv(ctx), timeoutMs });
 
     if (run.error) {
         const error = `resolverCommand ${run.error}: ${command}`;
@@ -259,6 +336,17 @@ export async function runResolver(
 
         if (typeof parsed?.dir !== "string" || !parsed.dir) {
             return { error: `resolverCommand returned no "dir": ${raw.slice(0, 200)}` };
+        }
+
+        // The resolver is an arbitrary shell line, so its `warnings` is untrusted too: a
+        // string or an object there used to flow into a field typed `string[]` and break the
+        // spreads and joins that render it.
+        if (parsed.warnings !== undefined) {
+            if (!Array.isArray(parsed.warnings) || parsed.warnings.some((item: unknown) => typeof item !== "string")) {
+                return {
+                    error: `resolverCommand returned "warnings" that is not a list of strings: ${raw.slice(0, 200)}`,
+                };
+            }
         }
 
         return { output: parsed as ResolverOutput };
@@ -299,7 +387,7 @@ export async function resolveOverride({
     consumer: string;
     label: string;
 }): Promise<OverrideResolution> {
-    const matched = overrideFor(overrides, ctx);
+    const matched = overrideFor(overrides, ctx, consumer);
     const forConsumer = matched?.override.consumers?.[consumer];
 
     if (!matched || !forConsumer) {

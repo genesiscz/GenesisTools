@@ -44,6 +44,14 @@ through to the registry: fix the resolver rather than letting the log land somew
     "research": { "dir": "~/Vault/Acme/Research" } } } } }
 ```
 
+🛑 **The `<cwd>`, `<project>`, `<worktree>` and `<branch>` values never enter the command text.**
+Each placeholder becomes a quoted reference to an environment variable (`GT_RESOLVER_CWD`,
+`GT_RESOLVER_PROJECT`, `GT_RESOLVER_WORKTREE`, `GT_RESOLVER_BRANCH`), and the values reach
+`sh -c` in its environment, so a branch name with `;`, `$`, backticks or quotes cannot run
+commands. Write the placeholder bare; wrapping it yourself (`'<cwd>'`) is also handled, but not
+needed. A placeholder after a heredoc (`<<`) or inside `$(…)`, `${…}` or backticks within double
+quotes is refused.
+
 The `consumers` block is per plugin on purpose: wrap-up and research share the config and the
 registry, never a single directory.
 

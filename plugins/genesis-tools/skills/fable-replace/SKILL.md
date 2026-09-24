@@ -304,6 +304,8 @@ From the CLI, a move is one marker:
 From a script, `moves` names a block by `symbol`, `lines` or `between`. The CLI marker takes only
 `symbol=` and `lines=`: a `between` anchor is free text with spaces, so it cannot be a marker
 modifier, and `between=` fails as an unknown modifier.
+`at=` takes `before` or `after`, and the body is then the anchor. There is no `start`, because
+the engine has no prepend op.
 
 ```ts
 await run({
