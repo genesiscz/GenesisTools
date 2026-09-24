@@ -1,4 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { expectedLabels, parseIids, parseLabels, renderChangeTable, sameLabels } from "@app/gitlab/lib/label-batch";
 import {
     type DiscussionSummary,
@@ -11,6 +14,7 @@ import {
 import {
     collectUnresolvedAnchorPairs,
     type Discussion,
+    fetchAnchorViews,
     renderMarkdown,
     unresolvedThreads,
 } from "@app/gitlab/lib/review-render";
@@ -82,6 +86,36 @@ describe("writeAnchoredDraft", () => {
             expect(result.error).toContain("deleting it failed");
             // One DELETE, not three: a retried delete that had landed would answer 404.
             expect(calls).toEqual(["GET", "POST", "DELETE"]);
+        } finally {
+            server.stop(true);
+        }
+    });
+});
+
+describe("fetchAnchorViews", () => {
+    test("keeps a path with a space whole, for the request and for the view key", async () => {
+        // cwd is not a git checkout, so every view goes through the API fallback.
+        const requested: string[] = [];
+        const server = Bun.serve({
+            port: 0,
+            fetch(request) {
+                requested.push(new URL(request.url).pathname);
+
+                return new Response("line one\nline two\n");
+            },
+        });
+
+        try {
+            const { views } = await fetchAnchorViews({
+                pairs: new Set(["a1b2c3d4 docs/release notes.md"]),
+                api: { host: `http://localhost:${server.port}`, token: "t", project: "group/app" },
+                fetchRemote: true,
+                onWarn: () => {},
+                cwd: mkdtempSync(join(tmpdir(), "gt-anchor-")),
+            });
+
+            expect(requested[0]).toContain(encodeURIComponent("docs/release notes.md"));
+            expect(views.get("a1b2c3d4:docs/release notes.md")).toEqual(["line one", "line two"]);
         } finally {
             server.stop(true);
         }

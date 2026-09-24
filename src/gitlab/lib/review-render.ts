@@ -273,7 +273,11 @@ export async function fetchAnchorViews(options: {
     const remaining: Array<{ sha: string; path: string }> = [];
 
     for (const key of options.pairs) {
-        const [sha = "", path = ""] = key.split(" ");
+        // Split at the FIRST space only: a sha has none, but a path may (`docs/release notes.md`),
+        // and a full split cut it to `docs/release`, fetching the wrong file.
+        const space = key.indexOf(" ");
+        const sha = key.slice(0, space);
+        const path = key.slice(space + 1);
         const shown = gitResult(options.cwd, ["show", `${sha}:${path}`]);
 
         if (shown.exitCode === 0) {
