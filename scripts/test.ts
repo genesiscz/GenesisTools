@@ -223,6 +223,33 @@ const LOAD_SENSITIVE_FILES = [
     // sixteen; benchmark.test.ts saw a subprocess peak RSS above its 1 GB ceiling.
     "src/utils/shell/quote.test.ts",
     "scripts/history/benchmark.test.ts",
+    // Plants a child that busy-loops and asserts the analyzer sees it above a
+    // 50% threshold over a 1 s window. Under the 16x parallel run the planted
+    // child cannot get a whole core, so the measured percentage falls under the
+    // threshold and the finding is never produced. Measured 2026-09-22: 0/6
+    // failing alone, 1 failing in the full run.
+    "src/doctor/__tests__/cpu-spin.test.ts",
+    // Both spawn a real child per case and assert on what it reports back, so
+    // both are bounded by the 5 s per-test timeout rather than by their own
+    // work. Measured 2026-09-22, alone: capture-install 7/7, probe-purity 10/10.
+    // In the full run capture-install hit the 5 s wall and probe-purity blew its
+    // own 30 s budget, which is spawn latency under load, not a hang.
+    "src/cmux/commands/capture-install.test.ts",
+    "src/ai/lib/accounts/probe-purity.test.ts",
+    // Same shape again, found on a second full run: the victim set ROTATES with
+    // worker scheduling, so each full run surfaces a different few. Both spawn a
+    // real child per case and both passed alone immediately after failing in the
+    // full run (measured 2026-09-22: daemon 7/7, series-flags 4/4).
+    "src/daemon/daemon.test.ts",
+    "src/ai-spend/lib/series-flags.test.ts",
+    // 🛑 These two are why a FULL local run never reached its completion marker
+    // and died on the 15-minute tripwire with EXIT=137. They do not merely slow
+    // down under the parallel run, they HANG: measured 2026-09-22, each finishes
+    // alone in under a second (8/8 and 4/4), while the full run was still inside
+    // both of them after 268 s and 273 s with their workers pegged at 100% CPU.
+    // Two full runs stalled on them, on an unmodified tree, before this entry.
+    "src/utils/ink/hooks/use-terminal-size.test.ts",
+    "src/utils/security/keyring/keychain-guard.test.ts",
 ];
 
 /**

@@ -449,7 +449,7 @@ export function registerWorkflowCommands(program: Command): void {
         )
         .option(
             "--revalidate-scope <scope>",
-            "element | window | app (default window). `element` checks only that the row at --element still carries --target-key, so a window whose clock or status text ticks stays actionable instead of refusing every act with stale_observation."
+            "element | window (default window). `element` checks only that the row at --element still carries --target-key, so a window whose clock or status text ticks stays actionable instead of refusing every act with stale_observation."
         )
         .option("--replace", "paste with --prepare: select all, paste once and verify exact field readback")
         .option("--button [name]", "click: left, right or middle")

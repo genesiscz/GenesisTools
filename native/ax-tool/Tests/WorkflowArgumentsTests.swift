@@ -65,6 +65,16 @@ final class WorkflowArgumentsTests: XCTestCase {
         ], command: "act"))
     }
 
+    func testRevalidateScopeOffersOnlyTheScopesThatAreImplemented() {
+        // `app` was accepted and behaved exactly like `window`: no app-wide check existed.
+        let base = ["--app", "Fixture", "--snapshot", "token", "--element", "0", "--action", "press"]
+
+        XCTAssertNoThrow(try WorkflowArguments(base + ["--revalidate-scope", "window"], command: "act"))
+        XCTAssertThrowsError(try WorkflowArguments(base + ["--revalidate-scope", "app"], command: "act")) { error in
+            XCTAssertEqual(error.localizedDescription, "--revalidate-scope must be element or window")
+        }
+    }
+
     func testActConsumesAnOptionLookingTokenAsThePrecedingValue() throws {
         let arguments = try WorkflowArguments([
             "--app", "Fixture", "--snapshot", "token", "--element", "0", "--action", "set", "--value", "--background",
