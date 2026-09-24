@@ -1,5 +1,10 @@
 import { spawnSync } from "node:child_process";
-import { parseStatusPorcelainV2Z, STATUS_PORCELAIN_ARGS, type StatusEntry } from "@genesiscz/utils/git/porcelain";
+import {
+    parseStatusPorcelainV2Z,
+    STATUS_PORCELAIN_ARGS,
+    type StatusEntry,
+    type StatusSummary,
+} from "@genesiscz/utils/git/porcelain";
 import { hookDiag } from "./log";
 
 /** Big enough for a `git diff HEAD` of a large file; a breach is reported, never swallowed. */
@@ -42,8 +47,27 @@ export function gitOut(root: string, args: string[], options: { quiet?: boolean 
  * `--no-renames` is deliberate. Rename detection would make the before-state lookup
  * ambiguous, because the capture is keyed by the path as it was when the command began.
  */
+export function statusOf(root: string): StatusSummary {
+    return parseStatusPorcelainV2Z(gitOut(root, [...STATUS_PORCELAIN_ARGS, "--no-renames"]));
+}
+
 export function statusEntries(root: string): StatusEntry[] {
-    return parseStatusPorcelainV2Z(gitOut(root, [...STATUS_PORCELAIN_ARGS, "--no-renames"])).entries;
+    return statusOf(root).entries;
+}
+
+/** A 40-hex object id, or `null`. `git rev-parse` echoes the literal `HEAD` on an empty repo. */
+export function objectId(value: string | undefined): string | null {
+    return value !== undefined && /^[0-9a-f]{40}$/.test(value) ? value : null;
+}
+
+/**
+ * Paths a commit range touched. Only called when HEAD actually moved during the command, so
+ * the ordinary call pays nothing for it.
+ */
+export function committedPaths(root: string, from: string, to: string): string[] {
+    return gitOut(root, ["diff", "--name-only", "-z", `${from}..${to}`])
+        .split("\0")
+        .filter((name) => name.length > 0);
 }
 
 /** `true` for a path git reports as deleted on either side. */
@@ -56,14 +80,48 @@ export function isUntrackedDirectory(entry: StatusEntry): boolean {
     return entry.kind === "untracked" && entry.path.endsWith("/");
 }
 
+/** Room for one listed name: a path component chain well past macOS's 1024-byte PATH_MAX. */
+const BYTES_PER_LISTED_NAME = 4096;
+
 /**
- * The files inside a wholly-untracked directory, relative to `root`, at most `limit` of them.
+ * The files inside a wholly-untracked directory, relative to `root`, at most `limit` of them,
+ * or `null` when git could not list them.
+ *
  * `--exclude-standard` keeps ignored files out, which a bare directory entry handed to `tar`
  * or `stat` does not: it archives a build output or dataset whole.
+ *
+ * 🛑 The limit bounds the WORK, not only the result. The buffer is sized to `limit` names, and
+ * a listing that outgrows it stops git there (ENOBUFS, measured on bun: the child is signalled
+ * and the names read so far are kept). Reading the whole listing and slicing afterwards made a
+ * huge untracked tree cost a full enumeration per hook, and overflowing the shared 8 MB buffer
+ * returned "" — an empty directory — so the capture recorded it as neither taken nor left out.
  */
-export function untrackedFilesIn(root: string, dir: string, limit: number): string[] {
-    return gitOut(root, ["ls-files", "--others", "--exclude-standard", "-z", "--", dir])
-        .split("\0")
-        .filter((name) => name.length > 0)
-        .slice(0, Math.max(0, limit));
+export function untrackedFilesIn(root: string, dir: string, limit: number): string[] | null {
+    const cap = Math.max(0, limit);
+    const run = spawnSync("git", ["-C", root, "ls-files", "--others", "--exclude-standard", "-z", "--", dir], {
+        encoding: "utf8",
+        maxBuffer: Math.min(MAX_BUFFER, Math.max(65_536, (cap + 1) * BYTES_PER_LISTED_NAME)),
+    });
+    const overflowed = (run.error as NodeJS.ErrnoException | undefined)?.code === "ENOBUFS";
+
+    if (!overflowed && run.status !== 0) {
+        hookDiag("git could not list an untracked directory", {
+            root,
+            dir,
+            status: run.status,
+            signal: run.signal,
+            stderr: typeof run.stderr === "string" ? run.stderr.slice(0, 400) : undefined,
+        });
+
+        return null;
+    }
+
+    const names = (typeof run.stdout === "string" ? run.stdout : "").split("\0");
+
+    if (overflowed) {
+        // The last name was cut mid-write; only NUL-terminated ones are whole.
+        names.pop();
+    }
+
+    return names.filter((name) => name.length > 0).slice(0, cap);
 }

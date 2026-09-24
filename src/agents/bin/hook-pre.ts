@@ -10,7 +10,7 @@
  */
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { keepsCommand, loadHooksConfig } from "../lib/hooks/config";
+import { keepsCommand, loadHooksConfig, megabytes } from "../lib/hooks/config";
 import { capturePre } from "../lib/hooks/diff/capture";
 import { evaluateGuard } from "../lib/hooks/guard";
 import { logDecision, setDiagLogPath, setMaxLogBytes } from "../lib/hooks/log";
@@ -24,7 +24,7 @@ if (env.agents.areHooksDisabled()) {
 const config = loadHooksConfig();
 
 setDiagLogPath(config.logPath);
-setMaxLogBytes(config.maxLogBytes);
+setMaxLogBytes(megabytes(config.maxLogMB));
 
 const payload = parseHookPayload(await Bun.stdin.text());
 
@@ -66,11 +66,14 @@ if (!denied && config.diff.enabled) {
             harness: payload.harness,
             session: payload.sessionId,
             toolUseId: payload.toolUseId,
-            decision: capture.roots.length > 0 ? "stamped" : "skip",
+            decision: capture.roots.length > 0 || capture.named > 0 ? "stamped" : "skip",
             reason:
-                capture.roots.length > 0 ? "captured the before state of dirty files" : "no git repository to capture",
+                capture.roots.length > 0 || capture.named > 0
+                    ? "captured the before state of dirty files"
+                    : "no git repository and no named path to capture",
             roots: capture.roots,
             captured: capture.captured,
+            named: capture.named,
             skipped: capture.skipped,
         },
         config.logPath

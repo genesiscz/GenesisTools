@@ -17,7 +17,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { DEFAULT_HOOKS_CONFIG, keepsCommand, lastConfigLoadError, loadHooksConfig } from "./config";
+import { DEFAULT_HOOKS_CONFIG, diffFor, keepsCommand, lastConfigLoadError, loadHooksConfig } from "./config";
 import { collectStaleCaptures, parseHorizon } from "./gc";
 import { evaluateCommand, evaluateGuard } from "./guard";
 import { guardFromLegacy, importedHooksConfig, importGuardConfig } from "./import-config";
@@ -28,7 +28,7 @@ import { callDir, hookDataRoot, safeSegment, sessionDir } from "./paths";
 import type { HookPayload } from "./payload";
 import { parseHookPayload } from "./payload";
 import { withPrivateTempDir } from "./private-temp";
-import { applySetting, setHooksConfig } from "./set-config";
+import { applySetting, changedOnly, setHooksConfig } from "./set-config";
 import { writeJsonFile } from "./write-json";
 
 describe("DEFAULT_HOOKS_CONFIG", () => {
@@ -42,7 +42,7 @@ describe("DEFAULT_HOOKS_CONFIG", () => {
     });
 
     it("caps the diff so one command cannot flood the transcript", () => {
-        expect(DEFAULT_HOOKS_CONFIG.diff.maxFiles).toBe(3);
+        expect(DEFAULT_HOOKS_CONFIG.diff.maxFiles).toBe(15);
         expect(DEFAULT_HOOKS_CONFIG.diff.maxLinesPerFile).toBe(30);
         expect(DEFAULT_HOOKS_CONFIG.diff.maxRoots).toBe(4);
     });
@@ -449,25 +449,33 @@ describe("applySetting", () => {
         for (const [key, value] of [
             ["diff.maxFiles", "-1"],
             ["diff.maxFiles", "2.5"],
-            ["maxLogBytes", "0"],
+            ["diff.maxMessageBytes", "0"],
             ["guard.longCommand.lines", ""],
             ["guard.contextCapPerSession", "-1"],
         ]) {
             expect(() => applySetting(DEFAULT_HOOKS_CONFIG, key, value)).toThrow("whole number");
         }
 
+        // An MB cap is a size, not a count: a fraction is valid, zero or less is not.
+        expect(() => applySetting(DEFAULT_HOOKS_CONFIG, "maxLogMB", "0")).toThrow("greater than 0");
+        expect(() => applySetting(DEFAULT_HOOKS_CONFIG, "diff.maxCaptureFileMB", "-1")).toThrow("greater than 0");
+        expect(applySetting(DEFAULT_HOOKS_CONFIG, "diff.maxCaptureFileMB", "0.5").diff.maxCaptureFileMB).toBe(0.5);
         expect(applySetting(DEFAULT_HOOKS_CONFIG, "guard.contextCapPerSession", "0").guard.contextCapPerSession).toBe(
             0
         );
 
         const path = join(mkdtempSync(join(tmpdir(), "gt-cfg-domain-")), "hooks.json");
 
-        writeFileSync(path, SafeJSON.stringify({ maxLogBytes: -1, diff: { maxFiles: 2.5, contextLines: 0 } }));
+        writeFileSync(
+            path,
+            SafeJSON.stringify({ maxLogMB: -1, diff: { maxFiles: 2.5, contextLines: 0, maxCaptureFileMB: 0.5 } })
+        );
 
         const loaded = loadHooksConfig(path);
-        expect(loaded.maxLogBytes).toBe(DEFAULT_HOOKS_CONFIG.maxLogBytes);
+        expect(loaded.maxLogMB).toBe(DEFAULT_HOOKS_CONFIG.maxLogMB);
         expect(loaded.diff.maxFiles).toBe(DEFAULT_HOOKS_CONFIG.diff.maxFiles);
         expect(loaded.diff.contextLines).toBe(0);
+        expect(loaded.diff.maxCaptureFileMB).toBe(0.5);
     });
 });
 
@@ -723,6 +731,21 @@ describe("the stored config is merged over the shipped one, key by key", () => {
         expect(config.guard.harnesses.grok).toEqual({ "zsh-glob-qualifier": "allow" });
     });
 
+    it("honours the byte caps an older hooks.json stored before they were renamed to MB", () => {
+        const config = loadHooksConfig(stored({ maxLogBytes: 2_000_000, diff: { maxCaptureBytes: 3_000_000 } }));
+
+        expect(config.maxLogMB).toBe(2);
+        expect(config.diff.maxCaptureMB).toBe(3);
+
+        const both = loadHooksConfig(
+            stored({ maxLogMB: 5, maxLogBytes: 2_000_000, diff: { maxCaptureMB: 6, maxCaptureBytes: 3_000_000 } })
+        );
+
+        expect(both.maxLogMB).toBe(5);
+        expect(both.diff.maxCaptureMB).toBe(6);
+        expect(loadHooksConfig(stored({ shadow: false })).maxLogMB).toBe(DEFAULT_HOOKS_CONFIG.maxLogMB);
+    });
+
     it("drops a guard number that is not a finite number", () => {
         const config = loadHooksConfig(
             stored({ guard: { contextCapPerSession: "5", longCommand: { lines: null, chars: 99 } } })
@@ -796,16 +819,25 @@ describe("the config writers build on the file they write", () => {
             stored({
                 shadow: "false",
                 logCommands: "sometimes",
-                maxLogBytes: "big",
-                diff: { maxFiles: "3", enabled: "no" },
+                maxLogMB: "big",
+                diff: {
+                    maxFiles: "3",
+                    enabled: "no",
+                    harnesses: { grok: { enabled: "true" }, codex: { maxFiles: "9", maxMessageBytes: 4000 } },
+                },
             })
         );
 
         expect(config.shadow).toBe(DEFAULT_HOOKS_CONFIG.shadow);
         expect(config.logCommands).toBe(DEFAULT_HOOKS_CONFIG.logCommands);
-        expect(config.maxLogBytes).toBe(DEFAULT_HOOKS_CONFIG.maxLogBytes);
+        expect(config.maxLogMB).toBe(DEFAULT_HOOKS_CONFIG.maxLogMB);
         expect(config.diff.maxFiles).toBe(DEFAULT_HOOKS_CONFIG.diff.maxFiles);
         expect(config.diff.enabled).toBe(DEFAULT_HOOKS_CONFIG.diff.enabled);
+        // A per-harness override is checked the same way: the string "true" must not switch the
+        // diff back on for Grok, and a string number must not reach Codex, while a valid one does.
+        expect(diffFor(config, "grok").enabled).toBe(false);
+        expect(diffFor(config, "codex").maxFiles).toBe(DEFAULT_HOOKS_CONFIG.diff.maxFiles);
+        expect(diffFor(config, "codex").maxMessageBytes).toBe(4000);
     });
 });
 
@@ -1126,12 +1158,12 @@ describe("the decision log is bounded", () => {
     });
 
     it("is settable and rejects a non-number", () => {
-        expect(applySetting(DEFAULT_HOOKS_CONFIG, "maxLogBytes", "500").maxLogBytes).toBe(500);
-        expect(() => applySetting(DEFAULT_HOOKS_CONFIG, "maxLogBytes", "lots")).toThrow("takes a whole number");
+        expect(applySetting(DEFAULT_HOOKS_CONFIG, "maxLogMB", "500").maxLogMB).toBe(500);
+        expect(() => applySetting(DEFAULT_HOOKS_CONFIG, "maxLogMB", "lots")).toThrow("takes a number");
     });
 
     it("ships a cap rather than growing without bound", () => {
-        expect(DEFAULT_HOOKS_CONFIG.maxLogBytes).toBeGreaterThan(0);
+        expect(DEFAULT_HOOKS_CONFIG.maxLogMB).toBeGreaterThan(0);
     });
 });
 
@@ -1157,5 +1189,99 @@ describe("log rotation holds for a long-lived writer", () => {
         expect(existsSync(`${path}.1`)).toBe(true);
 
         rmSync(dir, { recursive: true, force: true });
+    });
+});
+
+describe("the stored config holds overrides only", () => {
+    // 🛑 `applySetting` works on the fully RESOLVED config, so writing it verbatim froze every
+    // current default into the file. Observed 2026-09-22: one `diff.maxFiles` change pinned
+    // ten unrelated settings, and a later default would never have reached that machine.
+    it("keeps only what differs, at any depth", () => {
+        const base = { a: 1, deep: { kept: "same", moved: "before" }, list: [1, 2] };
+        const next = { a: 1, deep: { kept: "same", moved: "after" }, list: [1, 2] };
+
+        expect(changedOnly(next, base)).toEqual({ deep: { moved: "after" } });
+    });
+
+    it("returns undefined when nothing differs, so the file becomes {}", () => {
+        expect(changedOnly(DEFAULT_HOOKS_CONFIG, DEFAULT_HOOKS_CONFIG)).toBeUndefined();
+    });
+
+    it("compares a list whole, so clearing one is not mistaken for leaving it", () => {
+        expect(changedOnly({ list: [] }, { list: [1] })).toEqual({ list: [] });
+        expect(changedOnly({ list: [1] }, { list: [1] })).toBeUndefined();
+    });
+
+    it("writes ONE key when one key was set", () => {
+        const path = join(mkdtempSync(join(tmpdir(), "gt-setcfg-")), "hooks.json");
+
+        setHooksConfig("diff.maxFiles", "7", { write: true, path });
+
+        const stored = SafeJSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;
+
+        expect(stored).toEqual({ diff: { maxFiles: 7 } });
+    });
+});
+
+describe("the diff is resolved per harness", () => {
+    // 🛑 Observed 2026-09-22 in Grok: the message arrives as literal escape text
+    // (`[1mUpdated`) and is cut after about 200 characters with `-impo… [+7768 chars]`, so a
+    // single file header already overflows it.
+    it("ships OFF for grok and ON for the harnesses that can show it", () => {
+        expect(diffFor(DEFAULT_HOOKS_CONFIG, "grok").enabled).toBe(false);
+        expect(diffFor(DEFAULT_HOOKS_CONFIG, "claude").enabled).toBe(true);
+        expect(diffFor(DEFAULT_HOOKS_CONFIG, "codex").enabled).toBe(true);
+    });
+
+    it("keeps every shared setting the override does not name", () => {
+        const resolved = diffFor(DEFAULT_HOOKS_CONFIG, "grok");
+
+        expect(resolved.maxFiles).toBe(DEFAULT_HOOKS_CONFIG.diff.maxFiles);
+        expect(resolved.categories).toEqual(DEFAULT_HOOKS_CONFIG.diff.categories);
+    });
+
+    it("leaves an unlisted harness on the shared settings", () => {
+        expect(diffFor(DEFAULT_HOOKS_CONFIG, undefined)).toBe(DEFAULT_HOOKS_CONFIG.diff);
+    });
+
+    it("lets a stored override for one harness keep the shipped one for another", async () => {
+        const home = mkdtempSync(join(tmpdir(), "gt-cfg-harness-"));
+
+        mkdirSync(join(home, ".genesis-tools", "agents"), { recursive: true });
+        writeFileSync(
+            join(home, ".genesis-tools", "agents", "hooks.json"),
+            SafeJSON.stringify({ diff: { harnesses: { codex: { maxFiles: 3 } } } })
+        );
+
+        await env.testing.withOverrides({ GENESIS_TOOLS_HOME: home }, () => {
+            const config = loadHooksConfig();
+
+            expect(diffFor(config, "codex").maxFiles).toBe(3);
+            expect(diffFor(config, "grok").enabled).toBe(false);
+        });
+
+        rmSync(home, { recursive: true, force: true });
+    });
+
+    it("can be turned back on from the CLI, and writes only that key", () => {
+        const path = join(mkdtempSync(join(tmpdir(), "gt-setcfg-grok-")), "hooks.json");
+
+        setHooksConfig("diff.harnesses.grok.enabled", "true", { write: true, path });
+
+        expect(SafeJSON.parse(readFileSync(path, "utf8"))).toEqual({
+            diff: { harnesses: { grok: { enabled: true } } },
+        });
+    });
+
+    it("refuses a field that is not settable per harness", () => {
+        expect(() => applySetting(DEFAULT_HOOKS_CONFIG, "diff.harnesses.grok.contextLines", "1")).toThrow(
+            /cannot set contextLines/
+        );
+    });
+
+    it("does not write into the config it was handed", () => {
+        applySetting(DEFAULT_HOOKS_CONFIG, "diff.harnesses.claude.enabled", "false");
+
+        expect(DEFAULT_HOOKS_CONFIG.diff.harnesses.claude).toBeUndefined();
     });
 });

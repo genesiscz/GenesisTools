@@ -1,5 +1,6 @@
-import { statSync } from "node:fs";
+import { existsSync, statSync } from "node:fs";
 import { resolve } from "node:path";
+import type { StatusEntry } from "@genesiscz/utils/git/porcelain";
 import type { DiffConfig } from "../config";
 import { isDeleted, isUntrackedDirectory, statusEntries, untrackedFilesIn } from "../git";
 
@@ -27,15 +28,30 @@ function touchedSince(path: string, since: number): boolean {
  * entry is expanded. `-uall` globally is banned in this repo for memory reasons, so only the
  * directories that actually appear get expanded.
  */
-export function changedFiles(root: string, since: number, config: DiffConfig): ChangedFile[] {
+export interface ChangedSource {
+    /** The status this call already read, so the post phase does not spawn `git status` twice. */
+    entries: StatusEntry[];
+    /** Repo-relative paths a commit made DURING the command, which status no longer reports. */
+    committed: string[];
+}
+
+export function changedFiles(root: string, since: number, config: DiffConfig, source?: ChangedSource): ChangedFile[] {
     const entries: ChangedFile[] = [];
 
-    for (const entry of statusEntries(root)) {
+    // A file the command edited AND COMMITTED is clean by the time the post phase looks, so
+    // `git status` does not mention it at all. Measured 2026-09-21: an edit alone rendered,
+    // the same edit followed by `git commit` in the same call rendered nothing.
+    for (const name of source?.committed ?? []) {
+        entries.push({ path: resolve(root, name), untracked: false, deleted: !existsSync(resolve(root, name)), root });
+    }
+
+    for (const entry of source?.entries ?? statusEntries(root)) {
         const untracked = entry.kind === "untracked";
         const deleted = isDeleted(entry);
 
         if (isUntrackedDirectory(entry)) {
-            for (const name of untrackedFilesIn(root, entry.path, config.untrackedExpansionCap)) {
+            // A failed listing is already logged by `untrackedFilesIn`; nothing inside is shown.
+            for (const name of untrackedFilesIn(root, entry.path, config.untrackedExpansionCap) ?? []) {
                 entries.push({ path: resolve(root, name), untracked: true, deleted: false, root });
             }
 
@@ -45,5 +61,18 @@ export function changedFiles(root: string, since: number, config: DiffConfig): C
         entries.push({ path: resolve(root, entry.path), untracked, deleted, root });
     }
 
-    return entries.filter((entry) => entry.deleted || touchedSince(entry.path, since));
+    const seen = new Set<string>();
+
+    // A file the command committed AND then edited again appears in BOTH lists above, and
+    // rendered twice in one call. The committed entry is kept: it is the one that knows the
+    // path is tracked.
+    return entries.filter((entry) => {
+        if (seen.has(entry.path)) {
+            return false;
+        }
+
+        seen.add(entry.path);
+
+        return entry.deleted || touchedSince(entry.path, since);
+    });
 }

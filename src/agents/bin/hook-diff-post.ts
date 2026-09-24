@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { loadHooksConfig } from "../lib/hooks/config";
+import { loadHooksConfig, megabytes } from "../lib/hooks/config";
 import { runDiffPost } from "../lib/hooks/diff/run";
 import { logDecision, setDiagLogPath, setMaxLogBytes } from "../lib/hooks/log";
 import { isTerminalTool, normalizeEvent, parseHookPayload } from "../lib/hooks/payload";
@@ -13,7 +13,7 @@ if (env.agents.areHooksDisabled()) {
 const config = loadHooksConfig();
 
 setDiagLogPath(config.logPath);
-setMaxLogBytes(config.maxLogBytes);
+setMaxLogBytes(megabytes(config.maxLogMB));
 
 const payload = parseHookPayload(await Bun.stdin.text());
 

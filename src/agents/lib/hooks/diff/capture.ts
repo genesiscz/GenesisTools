@@ -1,26 +1,21 @@
 import { spawnSync } from "node:child_process";
-import { chmodSync, existsSync, lstatSync, mkdirSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, type Dirent, lstatSync, mkdirSync, readdirSync, type Stats, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import { isAbsolute, join, relative, sep } from "node:path";
 import type { StatusEntry } from "@genesiscz/utils/git/porcelain";
-import {
-    commandTokenIndex,
-    commandWord,
-    nextRawArgument,
-    type ShellScan,
-    scanShell,
-    splitPipeline,
-    tokenize,
-} from "@genesiscz/utils/shell/scan";
-import type { DiffConfig } from "../config";
-import { gitOut, isDeleted, isUntrackedDirectory, statusEntries, untrackedFilesIn } from "../git";
+import { type DiffConfig, megabytes } from "../config";
+import { gitOut, isDeleted, isUntrackedDirectory, objectId, statusEntries, untrackedFilesIn } from "../git";
 import { hookDiag } from "../log";
 import { callDir, safeSegment } from "../paths";
 import type { HookPayload } from "../payload";
+import { commandDirs, namedArguments } from "./command-paths";
+import { captureNamed } from "./named";
 
 export interface CaptureResult {
     roots: string[];
     captured: number;
+    /** Files watched by path because the command named them. */
+    named: number;
     skipped: string[];
 }
 
@@ -83,168 +78,230 @@ function tighten(path: string): void {
 }
 
 /**
- * Every directory this command could have edited: the session cwd, plus the target of EVERY
- * `cd` it names, relative ones included.
+ * The git repositories this command could have changed: one per directory it works in.
  *
- * The scanner does the work rather than a regex over the raw command. `scanShell` blanks
- * quoted spans to equal-length runs, so `echo "cd /etc"` cannot add a root, and because the
- * cleaned text is the same length as the original, `nextRawArgument` can read the real target
- * back out of `command` — quotes, spaces and all. A regex over the raw text got all three
- * wrong: it took only the FIRST `cd`, refused a relative path, and truncated
- * `cd /Users/x/My Repo` at the space.
+ * `commandDirs` does the reading, through the scanner rather than a regex over the raw
+ * command. A regex got all three of these wrong: it took only the FIRST `cd`, refused a
+ * relative path, and truncated `cd /Users/x/My Repo` at the space.
+ *
+ * ⚠️ A directory the command merely NAMES is not a root, even when it is a repository. That
+ * is deliberate (one `git rev-parse` per candidate costs about 8 ms on the hot path, and the
+ * `git status` that follows in the post phase costs 30 to 60 ms more); files named that way
+ * are watched individually instead, by `captureNamed`.
  */
 export function captureRoots(payload: HookPayload, config: DiffConfig): string[] {
-    const dirs = [payload.cwd];
+    return rootsOf(commandDirs(payload.command, payload.cwd), config).map((entry) => entry.root);
+}
 
-    for (const target of cdTargets(payload.command)) {
-        const dir = isAbsolute(target) ? target : resolve(payload.cwd, target);
-
-        // A directory that does not exist cannot be what the command changed, and asking git
-        // about it would only cost a spawn. This is also the backstop for a target the raw
-        // read got wrong in a way `plainArgument` did not catch.
-        if (existsSync(dir)) {
-            dirs.push(dir);
-        }
-    }
-
-    const roots: string[] = [];
+/**
+ * The toplevel AND the HEAD it is on, in ONE `git rev-parse`.
+ *
+ * The HEAD is what lets the post phase notice a commit the command made: a file that was
+ * edited and committed in the same call is clean again, so `git status` never mentions it.
+ * Asking for it separately would be a second 8 ms spawn per directory on the hot path;
+ * asking for both at once is free. An empty repository has no HEAD, and rev-parse then
+ * echoes the literal `HEAD` and exits 128, which `objectId` rejects.
+ */
+function rootsOf(dirs: string[], config: DiffConfig): CapturedRoot[] {
+    const roots: CapturedRoot[] = [];
 
     for (const dir of dirs) {
         if (roots.length >= config.maxRoots) {
             break;
         }
 
-        const top = gitOut(dir, ["rev-parse", "--show-toplevel"], { quiet: true }).trim();
+        const lines = gitOut(dir, ["rev-parse", "--show-toplevel", "HEAD"], { quiet: true }).split("\n");
+        const top = (lines[0] ?? "").trim();
 
-        if (top.length > 0 && !roots.includes(top)) {
-            roots.push(top);
+        if (top.length > 0 && !roots.some((entry) => entry.root === top)) {
+            roots.push({ root: top, head: objectId((lines[1] ?? "").trim()) });
         }
     }
 
     return roots;
 }
 
+interface CapturedRoot {
+    root: string;
+    head: string | null;
+}
+
+interface CapturePlan {
+    take: string[];
+    left: string[];
+    reason: string | null;
+}
+
 /**
- * The argument as a PLAIN path, or `null` when the shell would not read it that way.
+ * The files to size and archive for one root.
  *
- * `nextRawArgument` is a naive quote matcher over raw text: it knows nothing about backslash
- * escapes, command substitution, or adjacent quoted runs such as `'a'b'c'`. Guessing there
- * would hand a path the shell never meant to `git -C`. So anything with an escape, an inner
- * quote, a substitution or a variable is REFUSED, and the caller simply does not capture that
- * root. A missing root costs one diff; a wrong root is a wrong answer.
+ * 🛑 git collapses a wholly-untracked directory into one `scratch/` entry, and `tar` handed that
+ * entry archives EVERYTHING below it, gitignored credentials, databases and build output
+ * included, into the hook's capture area. So such a directory is expanded through
+ * `git ls-files --others --exclude-standard`, which lists only what git would report. One that
+ * holds more files than the whole capture may take is left out as a unit rather than expanded
+ * without bound, and deletions are skipped because `tar` cannot stat them.
  */
-function plainArgument(raw: string | null): string | null {
-    if (!raw) {
-        return null;
-    }
-
-    const quoted = /^(['"])(.*)\1$/.exec(raw);
-    const value = quoted?.[2] ?? raw;
-
-    if (value.length === 0 || value === "-" || /["'\\$`]/.test(value)) {
-        return null;
-    }
-
-    return value;
-}
-
-/** Each `cd` argument the command names, in order, read from the ORIGINAL text. */
-function cdTargets(command: string): string[] {
-    const targets: string[] = [];
-    let scan: ShellScan;
-
-    try {
-        scan = scanShell(command);
-    } catch (err) {
-        // A scanner that throws must not cost the capture its cwd root.
-        hookDiag("Could not scan the command for a cd target", { err });
-        return targets;
-    }
-
-    for (const unit of scan.units) {
-        for (const statement of unit) {
-            for (const element of splitPipeline(statement)) {
-                const tokens = tokenize(element);
-                const index = commandTokenIndex(tokens);
-                const token = index === -1 ? undefined : tokens[index];
-
-                if (!token || commandWord(token.text) !== "cd") {
-                    continue;
-                }
-
-                const target = plainArgument(nextRawArgument(command, token.start + token.text.length));
-
-                if (target) {
-                    targets.push(target);
-                }
-            }
-        }
-    }
-
-    return targets;
-}
-
-/**
- * The dirty paths to archive, with every wholly-untracked directory expanded into its files.
- * The directory entry itself reached `tar` whole, ignored files included, and `stat` sized its
- * inode rather than its contents, so a build output or dataset slipped past both caps. The list
- * stops one past the file cap, which is all `tooLarge` needs to refuse it.
- */
-function captureList(root: string, entries: StatusEntry[], config: DiffConfig): string[] {
-    const limit = config.maxCaptureFiles + 1;
+function captureList(root: string, entries: StatusEntry[], config: DiffConfig): { files: string[]; tooWide: string[] } {
     const files: string[] = [];
+    const tooWide: string[] = [];
 
     for (const entry of entries) {
-        if (files.length >= limit) {
-            break;
-        }
-
         if (isDeleted(entry)) {
             continue;
         }
 
         // A dirty submodule is reported as its DIRECTORY. Handed to `tar` it archived the whole
-        // checkout (its own ignored files included) and `stat` sized only the directory inode,
-        // so it slipped past both caps. Its before-state is the recorded commit, which the post
-        // phase already diffs against HEAD as a `Subproject commit` change.
+        // checkout (its own ignored files included). Its before-state is the recorded commit,
+        // which the post phase already diffs against HEAD as a `Subproject commit` change.
         if (entry.submodule?.startsWith("S")) {
             continue;
         }
 
-        if (isUntrackedDirectory(entry)) {
-            files.push(...untrackedFilesIn(root, entry.path, limit - files.length));
+        if (!isUntrackedDirectory(entry)) {
+            files.push(entry.path);
             continue;
         }
 
-        files.push(entry.path);
+        const inside = untrackedFilesIn(root, entry.path, config.maxCaptureFiles + 1);
+
+        // A listing that failed is left out as a unit too: treating it as empty would record
+        // the directory as neither captured nor left out, and its files would read as created.
+        if (inside === null || inside.length > config.maxCaptureFiles) {
+            tooWide.push(entry.path);
+            continue;
+        }
+
+        files.push(...inside);
     }
 
-    return files;
+    return { files, tooWide };
 }
 
-/** Names the cap a capture would breach, or `null` when it fits. */
-function tooLarge(root: string, files: string[], config: DiffConfig): string | null {
-    if (files.length > config.maxCaptureFiles) {
-        return `skipped: more than ${config.maxCaptureFiles} dirty files, over the cap`;
-    }
+/**
+ * Which dirty files fit the budget, SMALLEST FIRST.
+ *
+ * 🛑 It used to be all-or-nothing: one breach of either cap abandoned the whole root. Measured
+ * 2026-09-21 on the Obsidian vault, 64 dirty entries totalling 43 MB against an 8 MB cap, of
+ * which three data files were 34 MB. So a 30 KB note being edited lost its before-state to
+ * blobs it has nothing to do with, and the post phase then rendered it against `/dev/null` —
+ * the whole file, labelled "Added", on every single call.
+ *
+ * Smallest first is what makes the common file survive a rare huge one. The paths that did
+ * not fit are written out, because a file that EXISTED but has no copy must never be reported
+ * as one the command created.
+ */
+function planCapture(root: string, files: string[], config: DiffConfig): CapturePlan {
+    const fileCap = megabytes(config.maxCaptureFileMB);
+    const totalCap = megabytes(config.maxCaptureMB);
+    const sized = files.map((file) => ({
+        file,
+        size: entryBytes(join(root, file), fileCap),
+    }));
 
+    sized.sort((left, right) => left.size - right.size);
+
+    const take: string[] = [];
+    const left: string[] = [];
     let bytes = 0;
 
-    for (const file of files) {
-        try {
-            bytes += statSync(join(root, file)).size;
-        } catch {
-            // A deleted path, or one that vanished between `status` and `stat`. Neither
-            // contributes a size, neither is a reason to abandon the capture, and neither is
-            // worth a log line: this fires on every staged deletion.
+    for (const entry of sized) {
+        const overFile = entry.size > fileCap;
+        const overTotal = bytes + entry.size > totalCap;
+
+        if (overFile || overTotal || take.length >= config.maxCaptureFiles) {
+            left.push(entry.file);
+            continue;
         }
 
-        if (bytes > config.maxCaptureBytes) {
-            return `skipped: over the ${config.maxCaptureBytes} byte cap`;
+        bytes += entry.size;
+        take.push(entry.file);
+    }
+
+    const reason =
+        left.length > 0
+            ? `${left.length} of ${files.length} dirty entries left out, over the ${config.maxCaptureFileMB} MB per-entry / ${config.maxCaptureMB} MB total / ${config.maxCaptureFiles} entry cap`
+            : null;
+
+    return { take, left, reason };
+}
+
+/**
+ * The bytes one status entry really costs.
+ *
+ * 🛑 A wholly-untracked DIRECTORY is ONE status entry and a whole tree on disk, and
+ * `statSync` reports the directory inode, not its contents. Measured 2026-09-21 on the
+ * Obsidian vault: an 11.2 MB untracked directory weighed in at 704 bytes and sailed straight
+ * through a cap of eight million, which is how a budgeted capture still wrote tens of
+ * megabytes per command.
+ *
+ * The walk stops as soon as it is over `limit`, so a huge tree costs a few `readdir` calls
+ * rather than a full traversal, and a symlink is never followed: `tar` stores the link, and
+ * following one could count a target outside the repository or loop.
+ */
+function entryBytes(path: string, limit: number): number {
+    let stat: Stats;
+
+    try {
+        stat = lstatSync(path);
+    } catch {
+        // A path that vanished between `status` and here. It contributes no size and is not
+        // worth a log line: this fires on every staged deletion.
+        return 0;
+    }
+
+    if (stat.isSymbolicLink()) {
+        return 0;
+    }
+
+    if (!stat.isDirectory()) {
+        return stat.size;
+    }
+
+    let total = 0;
+    const pending = [path];
+
+    while (pending.length > 0) {
+        const dir = pending.pop();
+
+        if (dir === undefined) {
+            break;
+        }
+
+        let listing: Dirent[];
+
+        try {
+            listing = readdirSync(dir, { withFileTypes: true });
+        } catch (err) {
+            hookDiag("Could not size an untracked directory", { err, dir });
+            continue;
+        }
+
+        for (const item of listing) {
+            if (item.isSymbolicLink()) {
+                continue;
+            }
+
+            const child = join(dir, item.name);
+
+            if (item.isDirectory()) {
+                pending.push(child);
+                continue;
+            }
+
+            try {
+                total += lstatSync(child).size;
+            } catch {
+                // Same vanishing-path case as above, one level down.
+            }
+
+            if (total > limit) {
+                return total;
+            }
         }
     }
 
-    return null;
+    return total;
 }
 
 /**
@@ -253,15 +310,18 @@ function tooLarge(root: string, files: string[], config: DiffConfig): string | n
  * files, 54 ms, one `git status` and one `tar`.
  */
 export function capturePre(payload: HookPayload, config: DiffConfig): CaptureResult {
-    const roots = captureRoots(payload, config);
+    const dirs = commandDirs(payload.command, payload.cwd);
+    const captured_roots = rootsOf(dirs, config);
+    const roots = captured_roots.map((entry) => entry.root);
+    const wanted = config.watchNamedPaths ? namedArguments(payload.command, dirs) : [];
     const skipped: string[] = [];
     let captured = 0;
 
     const session = safeSegment(payload.sessionId);
     const call = safeSegment(payload.toolUseId);
 
-    if (session === null || call === null || roots.length === 0) {
-        if (payload.sessionId && payload.toolUseId && (session === null || call === null)) {
+    if (session === null || call === null) {
+        if (payload.sessionId && payload.toolUseId) {
             // Not a normal absence: the payload named an id that cannot be a path segment.
             hookDiag("Refusing to capture under an unsafe identifier", {
                 sessionId: payload.sessionId,
@@ -269,7 +329,13 @@ export function capturePre(payload: HookPayload, config: DiffConfig): CaptureRes
             });
         }
 
-        return { roots, captured, skipped };
+        return { roots, captured, named: 0, skipped };
+    }
+
+    if (roots.length === 0 && wanted.length === 0) {
+        // Nothing to compare later, so no directory is created and the collector has nothing
+        // to sweep. This is the normal case for a command that touches no file at all.
+        return { roots, captured, named: 0, skipped };
     }
 
     const dir = callDir(payload.harness, session, call);
@@ -279,40 +345,54 @@ export function capturePre(payload: HookPayload, config: DiffConfig): CaptureRes
     if (refused) {
         hookDiag("Refusing to capture into a directory this user does not control", { dir, refused });
         skipped.push(`capture refused: ${refused}`);
-        return { roots, captured, skipped };
+        return { roots, captured, named: 0, skipped };
     }
 
+    // The named-path pass runs FIRST so a capture with no git root still produces a call
+    // directory. The post phase gates on `roots.txt`, and returning early when `roots` was
+    // empty is exactly what made an edit outside every repository unreportable.
+    const named = captureNamed(dir, wanted, config);
+
+    skipped.push(...named.skipped);
     writePrivateFile(join(dir, "stamp"), String(Math.floor(Date.now() / 1000)));
-    writePrivateFile(join(dir, "roots.txt"), `${roots.join("\n")}\n`);
+    writePrivateFile(join(dir, "roots.txt"), roots.length > 0 ? `${roots.join("\n")}\n` : "");
+    // One line per root, aligned by index with roots.txt. An empty line means "no HEAD".
+    writePrivateFile(join(dir, "heads.txt"), captured_roots.map((entry) => entry.head ?? "").join("\n"));
 
     roots.forEach((root, index) => {
+        const entries = statusEntries(root);
         // A DELETED path is excluded: it is gone from disk, so `tar` cannot stat it and
         // exits 1, and one such entry discards the whole archive — the root then loses its
         // before-state for every file. Observed on 2026-09-20 during a `git rm`. The post
         // phase renders a deletion from `git diff HEAD` and needs no captured copy.
-        const entries = statusEntries(root);
-        // A deletion already in the worktree is recorded, so the post phase does not report it
-        // again after every later command until it is committed.
-        const deleted = entries.filter(isDeleted).map((entry) => resolve(root, entry.path));
+        const { files, tooWide } = captureList(root, entries, config);
+        // Excluding them from the archive also leaves the post phase unable to tell a
+        // deletion this command MADE from one that was already sitting in `git status`.
+        // Writing the names down is what closes that. See `alreadyGone` for the measurement.
+        const gone = entries.filter(isDeleted).map((entry) => entry.path);
 
-        if (deleted.length > 0) {
-            writePrivateFile(join(dir, `${index + 1}.deleted`), deleted.join("\0"));
+        if (gone.length > 0) {
+            writePrivateFile(join(dir, `${index + 1}.gone`), `${gone.join("\n")}\n`);
         }
 
-        const files = captureList(root, entries, config);
-
-        if (files.length === 0) {
+        if (files.length === 0 && tooWide.length === 0) {
             return;
         }
 
-        // A tree this dirty is not a normal edit; capturing it is not worth the disk. The
-        // refusal is RECORDED rather than silent, so the post phase's fallback to `HEAD`
-        // shows up in the log instead of looking like a wrong diff.
-        const reason = tooLarge(root, files, config);
+        const plan = planCapture(root, files, config);
+        const left = [...plan.left, ...tooWide];
 
-        if (reason) {
-            skipped.push(`${root}: ${reason}`);
-            writePrivateFile(join(dir, `${index + 1}.skipped`), reason);
+        // The refusal is RECORDED rather than silent, so the post phase can tell a file it
+        // has no copy of from a file the command genuinely created. A directory too wide to
+        // expand is recorded whole; `leftOutOfCapture` matches every file under a `dir/` entry.
+        if (left.length > 0) {
+            skipped.push(
+                `${root}: ${plan.reason ?? `${tooWide.length} untracked director(ies) over the ${config.maxCaptureFiles} file cap left out`}`
+            );
+            writePrivateFile(join(dir, `${index + 1}.left`), `${left.join("\n")}\n`);
+        }
+
+        if (plan.take.length === 0) {
             return;
         }
 
@@ -320,11 +400,11 @@ export function capturePre(payload: HookPayload, config: DiffConfig): CaptureRes
         // `--` before the file list: a repository file literally named `-C` or `--exclude=…`
         // would otherwise be read by tar as an option, and `-C /` re-roots the archive. Any
         // writer of the repository can create such a name.
-        const run = spawnSync("tar", ["-C", root, "-cf", tar, "--", ...files], { encoding: "utf8" });
+        const run = spawnSync("tar", ["-C", root, "-cf", tar, "--", ...plan.take], { encoding: "utf8" });
 
         if (run.status === 0) {
             tighten(tar);
-            captured += files.length;
+            captured += plan.take.length;
             return;
         }
 
@@ -335,5 +415,5 @@ export function capturePre(payload: HookPayload, config: DiffConfig): CaptureRes
         });
     });
 
-    return { roots, captured, skipped };
+    return { roots, captured, named: named.entries.length, skipped };
 }

@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 import { env } from "@genesiscz/utils/env";
-import { loadHooksConfig } from "../lib/hooks/config";
+import { loadHooksConfig, megabytes } from "../lib/hooks/config";
 import { collectStaleCaptures } from "../lib/hooks/gc";
 import { logDecision, setDiagLogPath, setMaxLogBytes } from "../lib/hooks/log";
 import { parseHookPayload } from "../lib/hooks/payload";
@@ -12,7 +12,7 @@ if (env.agents.areHooksDisabled()) {
 const config = loadHooksConfig();
 
 setDiagLogPath(config.logPath);
-setMaxLogBytes(config.maxLogBytes);
+setMaxLogBytes(megabytes(config.maxLogMB));
 
 const payload = parseHookPayload(await Bun.stdin.text());
 
