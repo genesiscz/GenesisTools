@@ -20,6 +20,14 @@ export interface CmuxLiveWindow {
     workspaceCount: number;
 }
 
+/** A pane's rectangle inside its workspace, in points, as cmux's `list-panes` reports it. */
+export interface CmuxPaneFrame {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+}
+
 export interface CmuxLivePane {
     id: string;
     workspaceId: string;
@@ -31,6 +39,10 @@ export interface CmuxLivePane {
     selectedSurfaceRef?: string;
     surfaceCount: number;
     surfaces: CmuxLiveSurface[];
+    /** Where the pane sits in its workspace; lets a UI draw the real split layout. */
+    frame?: CmuxPaneFrame;
+    /** The workspace's drawable size, the space `frame` is measured in. */
+    container?: { width: number; height: number };
     preview?: string;
     /**
      * The ttyd session id this pane's terminal surface is backed by, when the pane hosts a tmux
@@ -90,6 +102,7 @@ interface PaneListRpc {
     panes?: PaneRpc[];
     window_ref?: string;
     workspace_ref?: string;
+    container_frame?: { width: number; height: number };
 }
 
 interface PaneRpc {
@@ -104,6 +117,7 @@ interface PaneRpc {
     selected_surface_ref?: string;
     surface_count?: number;
     surface_refs?: string[];
+    pixel_frame?: CmuxPaneFrame;
 }
 
 interface SurfaceListRpc {
@@ -226,6 +240,7 @@ async function fetchOnePane({
     pane,
     workspaceId: id,
     windowRef,
+    container,
     rawWorkspace,
     runJson,
     run,
@@ -234,6 +249,7 @@ async function fetchOnePane({
     pane: PaneRpc;
     workspaceId: string;
     windowRef?: string;
+    container?: { width: number; height: number };
     rawWorkspace: WorkspaceRpc;
     runJson: CmuxJsonRunner;
     run: CmuxRunner;
@@ -284,6 +300,8 @@ async function fetchOnePane({
         selectedSurfaceRef: selectedSurfaceRef ?? selectedSurface?.id,
         surfaceCount: pane.surface_count ?? surfaces.length,
         surfaces,
+        frame: pane.pixel_frame,
+        container,
         preview: selectedSurface?.preview,
     };
 }
@@ -300,7 +318,18 @@ async function fetchWorkspacePanes(
     const rawPanes = paneResponse.panes ?? [];
 
     return Promise.all(
-        rawPanes.map((pane) => fetchOnePane({ pane, workspaceId: id, windowRef, rawWorkspace, runJson, run, previews }))
+        rawPanes.map((pane) =>
+            fetchOnePane({
+                pane,
+                workspaceId: id,
+                windowRef,
+                container: paneResponse.container_frame,
+                rawWorkspace,
+                runJson,
+                run,
+                previews,
+            })
+        )
     );
 }
 

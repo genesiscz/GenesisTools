@@ -33,7 +33,7 @@ mock.module("@genesiscz/utils/cmux/lib/cli", () => ({
     },
 }));
 
-const { livePlacementIO } = await import("./open-session");
+const { livePlacementIO } = await import("./open-command");
 
 /** The argv of the one `send` invocation. */
 function sendArgs(): string[] {

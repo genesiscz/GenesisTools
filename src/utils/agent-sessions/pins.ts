@@ -1,6 +1,6 @@
 import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import type { SessionPin } from "@app/claude/lib/cmux/types";
+
 import type { AccountProviderAlias } from "@genesiscz/utils/ai/providers/alias-list";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
@@ -119,4 +119,51 @@ async function compact(path: string, pins: Map<string, SessionPin>): Promise<voi
         .join("\n");
     await writeFile(path, `${body}\n`, "utf8");
     logger.debug({ path, records: pins.size }, "[cmux-pins] compacted the pin journal");
+}
+
+/** How a session's account pin was learned. */
+export type PinSource = "hook" | "manual";
+
+/**
+ * How the session authenticated.
+ *
+ * `token` is `tools claude start <account>`, which exports CLAUDE_CODE_OAUTH_TOKEN.
+ * `keychain` is `--keychain`, where the account's secondary login is injected into the
+ * macOS keychain and no token is exported. Both set TOOLS_CLAUDE_ACCOUNT to the same
+ * name, so the account alone cannot tell them apart, and resuming a keychain session
+ * on a token bills a different credential than the one it ran on.
+ * Absent on pins written before this was recorded.
+ */
+export type PinAuth = "token" | "keychain";
+
+/**
+ * Where `auth` came from. The SessionStart hook used to infer `keychain` whenever
+ * `CLAUDE_CODE_OAUTH_TOKEN` was missing, but Claude Code strips that secret from
+ * hook children — so every `tools claude start <account>` pin was recorded as
+ * keychain. Resume only trusts `keychain` when the source is the launch env or
+ * the `--keychain` argv. Pre-fix pins have no source and resume on the token path.
+ */
+export type PinAuthSource = "launch-env" | "argv" | "oauth-env" | "default-named" | "default-bare";
+
+export interface SessionPin {
+    sessionId: string;
+    /**
+     * Which agent wrote this record. ABSENT means Claude.
+     *
+     * Codex and Grok run the same SessionStart hook, so one journal now holds all three. A
+     * missing field is never treated as "any provider": the rows written before the field
+     * existed include Codex sessions that wrongly captured a Claude account, and reading those
+     * as Codex would re-publish the mistake.
+     */
+    provider?: AccountProviderAlias;
+    account: string | null;
+    auth?: PinAuth;
+    authSource?: PinAuthSource;
+    model: string | null;
+    cwd: string;
+    /** cmux's stable workspace UUID (CMUX_WORKSPACE_ID), when the session ran inside cmux. */
+    workspaceId: string | null;
+    source: PinSource;
+    /** Epoch ms of the hook event that produced this record. */
+    at: number;
 }

@@ -1,8 +1,8 @@
 import { basename } from "node:path";
-import { loadPins } from "@app/claude/lib/cmux/pins";
 import type { RestoreCandidate } from "@app/claude/lib/cmux/types";
 import { readTranscriptTail } from "@app/claude/lib/history/limit-kill";
 import { getSessionListing } from "@app/claude/lib/history/search";
+import { loadPins } from "@genesiscz/utils/agent-sessions/pins";
 import { cleanPromptText } from "@genesiscz/utils/ai/transcripts/clean-text";
 import { resolveProjectFilter } from "@genesiscz/utils/claude";
 import type { SessionMetadataRecord } from "@genesiscz/utils/claude/history-cache";

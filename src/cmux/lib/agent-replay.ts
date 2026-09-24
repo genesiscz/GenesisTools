@@ -1,5 +1,4 @@
 import { homedir } from "node:os";
-import { loadPins } from "@app/claude/lib/cmux/pins";
 import { getSessionListing } from "@app/claude/lib/history/search";
 import {
     agentKindFromLauncher,
@@ -12,6 +11,7 @@ import {
 import type { Profile, Surface, TerminalSurface } from "@app/cmux/lib/types";
 import { grokSessionsRoot } from "@genesiscz/utils/agent-sessions/grok-sessions";
 import { createNativeHistoryAdapter } from "@genesiscz/utils/agent-sessions/native-adapter";
+import { loadPins } from "@genesiscz/utils/agent-sessions/pins";
 import { resumeCommandLine } from "@genesiscz/utils/agent-sessions/resume-argv";
 import type { AgentKind } from "@genesiscz/utils/agent-sessions/types";
 import { nativeSessionRoots } from "@genesiscz/utils/providers/session-paths";

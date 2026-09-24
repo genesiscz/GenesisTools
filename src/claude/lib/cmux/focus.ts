@@ -1,4 +1,5 @@
 import { basename } from "node:path";
+import { TITLE_SHORT_ID_RE } from "@genesiscz/utils/cmux/agent-tree";
 import type { CmuxLivePane, CmuxLiveSnapshot } from "@genesiscz/utils/cmux/lib/live-snapshot";
 
 /** A UUID as it appears in a resume command, with or without the surrounding quotes. */
@@ -10,14 +11,6 @@ const SESSION_ID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{
  * Quotes are optional because a hand-typed resume usually has none.
  */
 const RESUME_ID_RE = /--resume[=\s]+['"]?([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})['"]?/gi;
-
-/**
- * The ` · 8b6e69bf` marker `paneTitle()` puts at the end of every restored tab title.
- *
- * Anchored at the end because that function truncates a long name and never the id, so the
- * marker is always the last thing in the title.
- */
-export const TITLE_SHORT_ID_RE = /·\s*([0-9a-f]{8})\s*$/i;
 
 /**
  * Shortest prefix accepted as "this is a session id, not a word".

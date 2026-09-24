@@ -1,5 +1,4 @@
 import { existsSync, readFileSync } from "node:fs";
-import { CMUX_REFS_PATH, type SessionCmuxRefs } from "@app/claude/lib/cmux/session-refs";
 import { getSessionListing } from "@app/claude/lib/history/search";
 import { getActiveSessionIds } from "@app/claude/lib/tail-list";
 import { accountFromEnv, type LiveAccount } from "@genesiscz/utils/ai/account-env";
@@ -14,6 +13,7 @@ import {
 import { cleanTranscriptText } from "@genesiscz/utils/ai/transcripts/clean-text";
 import { humanTextOf, readTailBytes } from "@genesiscz/utils/claude/session.utils";
 import type { ContentBlock } from "@genesiscz/utils/claude/types";
+import { CMUX_REFS_PATH, type SessionCmuxRefs } from "@genesiscz/utils/cmux/session-refs";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 

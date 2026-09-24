@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { PLACEMENT_SETTLE_MS, raiseThenSend } from "@app/claude/lib/cmux/open-session";
+import { launchTarget, PLACEMENT_SETTLE_MS, raiseThenSend } from "./open-command";
 
 describe("raiseThenSend", () => {
     /** A new workspace has never been rendered; send before select is a silent no-op. */
@@ -71,5 +71,24 @@ describe("raiseThenSend", () => {
         );
 
         expect(calls).toEqual(["select", "sleep", "send", "identify workspace:12", "focus window:7"]);
+    });
+});
+
+describe("launchTarget", () => {
+    const focused = { window_ref: "window:1", workspace_ref: "workspace:2", pane_ref: "pane:3" };
+
+    test("new is a tab in the focused pane, split a pane in the focused workspace, workspace a new one in the window", () => {
+        expect(launchTarget(undefined, focused)).toEqual({
+            kind: "pane",
+            workspaceRef: "workspace:2",
+            paneRef: "pane:3",
+        });
+        expect(launchTarget("new", focused)).toEqual({ kind: "pane", workspaceRef: "workspace:2", paneRef: "pane:3" });
+        expect(launchTarget("split", focused)).toEqual({ kind: "workspace", workspaceRef: "workspace:2" });
+        expect(launchTarget("workspace", focused)).toEqual({ kind: "window", windowRef: "window:1" });
+    });
+
+    test("no focused workspace is an error, not a launch into the wrong place", () => {
+        expect(() => launchTarget("new", {})).toThrow("no focused workspace");
     });
 });

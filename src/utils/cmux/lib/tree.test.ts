@@ -1,4 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import type { SessionPin } from "../../agent-sessions/pins";
+import { fetchAgentCmuxTree } from "../agent-tree";
+import type { SessionCmuxRefs } from "../session-refs";
 import type { CmuxLivePane, CmuxLiveSnapshot, CmuxLiveWindow, CmuxLiveWorkspace } from "./live-snapshot";
 import { buildCmuxHierarchy } from "./tree";
 
@@ -92,5 +95,83 @@ describe("buildCmuxHierarchy", () => {
 
         expect(windows[1].workspaces.map((ws) => ws.id)).toEqual(["workspace:unmatched"]);
         expect(windows[1].workspaces[0].panes.map((p) => p.id)).toEqual(["pane:9"]);
+    });
+});
+
+describe("fetchAgentCmuxTree", () => {
+    const at = 1_758_700_000_000;
+    const livePane: CmuxLivePane = {
+        id: "pane:1",
+        workspaceId: "workspace:1",
+        title: "zsh",
+        active: true,
+        surfaceCount: 3,
+        frame: { x: 0, y: 0, width: 800, height: 600 },
+        container: { width: 1600, height: 600 },
+        surfaces: [
+            { id: "surface:1", title: "claude", type: "terminal", index: 0, selected: true, active: true },
+            { id: "surface:2", title: "codex", type: "terminal", index: 1, selected: false, active: false },
+            { id: "surface:3", title: "old · 1a2b3c4d", type: "terminal", index: 2, selected: false, active: false },
+        ],
+    };
+    const snapshot = snapshotOf([workspace("workspace:1")], [livePane]);
+
+    function ref(sessionId: string, surfaceRef: string, provider?: "claude" | "codex"): SessionCmuxRefs {
+        return {
+            sessionId,
+            provider,
+            workspaceId: null,
+            surfaceId: null,
+            workspaceRef: "workspace:1",
+            paneRef: "pane:1",
+            surfaceRef,
+            windowRef: null,
+            tmuxPane: null,
+            cwd: null,
+            at,
+        };
+    }
+
+    const claudeId = "aaaaaaaa-1111-4111-8111-111111111111";
+    const codexId = "bbbbbbbb-2222-7222-8222-222222222222";
+    // The Claude line is tagged; the Codex line predates the tag and only its pin names the agent.
+    const refs = new Map([
+        [claudeId, ref(claudeId, "surface:1", "claude")],
+        [codexId, ref(codexId, "surface:2")],
+    ]);
+    const codexPin: SessionPin = {
+        sessionId: codexId,
+        provider: "codex",
+        account: null,
+        model: null,
+        cwd: "/tmp/project",
+        workspaceId: null,
+        source: "hook",
+        at,
+    };
+    const deps = {
+        fetchSnapshot: async () => snapshot,
+        loadRefs: () => refs,
+        loadPins: async () => new Map([[codexId, codexPin]]),
+    };
+
+    test("labels every agent, resolving an untagged line through its pin, and keeps frames", async () => {
+        const tree = await fetchAgentCmuxTree(deps);
+        const pane = tree.windows[0].workspaces[0].panes[0];
+
+        expect(pane.surfaces.map((s) => [s.sessionId?.slice(0, 8) ?? null, s.provider])).toEqual([
+            ["aaaaaaaa", "claude"],
+            ["bbbbbbbb", "codex"],
+            [null, null],
+        ]);
+        expect(pane.surfaces[2].sessionHint).toBe("1a2b3c4d");
+        expect(pane.frame).toEqual({ x: 0, y: 0, width: 800, height: 600 });
+    });
+
+    test("a provider filter drops the other agents' sessions", async () => {
+        const tree = await fetchAgentCmuxTree({ ...deps, providers: ["claude"] });
+        const surfaces = tree.windows[0].workspaces[0].panes[0].surfaces;
+
+        expect(surfaces.map((s) => s.sessionId?.slice(0, 8) ?? null)).toEqual(["aaaaaaaa", null, null]);
     });
 });

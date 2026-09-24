@@ -1,4 +1,5 @@
-import { type OpenSessionTarget, openSessionAt } from "@app/claude/lib/cmux/open-session";
+import { openSessionAt } from "@app/claude/lib/cmux/open-session";
+import type { OpenSessionTarget } from "@genesiscz/utils/cmux/open-command";
 import { out } from "@genesiscz/utils/logger";
 import pc from "picocolors";
 

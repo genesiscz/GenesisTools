@@ -1,6 +1,4 @@
-import { loadPins } from "@app/claude/lib/cmux/pins";
 import { cleanPromptText } from "@app/claude/lib/cmux/sessions";
-import type { SessionPin } from "@app/claude/lib/cmux/types";
 import {
     type CacheStatus,
     CODEX_CACHE_TTL_MS,
@@ -10,6 +8,8 @@ import {
     type SessionCmuxLocation,
 } from "@app/claude/lib/usage/session-rows";
 import { openHistoryService } from "@genesiscz/utils/agent-sessions/open-service";
+import type { SessionPin } from "@genesiscz/utils/agent-sessions/pins";
+import { loadPins } from "@genesiscz/utils/agent-sessions/pins";
 import type { AccountProviderAlias } from "@genesiscz/utils/ai/providers/aliases";
 import { PROVIDER_ALIASES } from "@genesiscz/utils/ai/providers/aliases";
 import { grokAccountNameLookup } from "@genesiscz/utils/ai/providers/plugins/grok-sub/discover";
@@ -32,6 +32,8 @@ export interface AgentSessionRow {
     cwd: string;
     cwdShort: string;
     project: string | null;
+    /** The branch the transcript recorded (history index); null when the provider never wrote one. */
+    gitBranch?: string | null;
     mtime: number;
     model: string | null;
     /**
@@ -197,6 +199,7 @@ async function nativeRows(
             cwd,
             cwdShort: cwd ? collapsePath(cwd) : "",
             project: record.project,
+            gitBranch: record.gitBranch,
             mtime: record.mtime,
             model: null,
             account: accountOf(alias, record, pins, grokLookup),

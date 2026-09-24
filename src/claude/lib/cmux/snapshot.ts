@@ -1,7 +1,7 @@
 import { mkdir, readdir, readFile, stat, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { loadPins } from "@app/claude/lib/cmux/pins";
 import type { RestoreCandidate, SessionSnapshot, SnapshotEntry } from "@app/claude/lib/cmux/types";
+import { loadPins } from "@genesiscz/utils/agent-sessions/pins";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { Storage } from "@genesiscz/utils/storage/storage";

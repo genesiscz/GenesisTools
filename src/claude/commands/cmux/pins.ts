@@ -1,5 +1,5 @@
 import { positiveIntFlag } from "@app/claude/lib/cmux/flags";
-import { loadPins, pinsPath } from "@app/claude/lib/cmux/pins";
+import { loadPins, pinsPath } from "@genesiscz/utils/agent-sessions/pins";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import { createBoxTable, renderCliHeader, truncateDisplay } from "@genesiscz/utils/table";

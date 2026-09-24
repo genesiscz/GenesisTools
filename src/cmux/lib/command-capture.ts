@@ -1,10 +1,10 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { loadPins } from "@app/claude/lib/cmux/pins";
-import { loadAllSessionCmuxRefs } from "@app/claude/lib/cmux/session-refs";
 import { parseEtime } from "@app/macos/lib/swap/scanner";
+import { loadPins } from "@genesiscz/utils/agent-sessions/pins";
 import type { AccountProviderAlias } from "@genesiscz/utils/ai/providers/alias-list";
+import { loadAllSessionCmuxRefs, resolveRefsProvider } from "@genesiscz/utils/cmux/session-refs";
 import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
 
@@ -164,7 +164,8 @@ export interface SurfaceSessionInfo {
     /**
      * Which agent this id belongs to. The cmux hook is shared, so the journal holds Codex and
      * Grok records too. A record with no `provider` predates the tag; it counts as Claude's
-     * only when the id has Claude's own UUIDv4 shape (see `untaggedProvider`).
+     * only when the id has Claude's own UUIDv4 shape (see `resolveRefsProvider` in
+     * `@genesiscz/utils/cmux/session-refs`).
      *
      * 🛑 Load-bearing, not decoration: the replay path turns this id into a launch command, and
      * assuming "claude" replayed a Codex thread id as `claude -r <codex uuid>` — a session
@@ -172,29 +173,6 @@ export interface SurfaceSessionInfo {
      * described for Grok, arriving through the journal instead of a tab title.
      */
     provider: AccountProviderAlias;
-}
-
-const CLAUDE_SESSION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-
-/**
- * Which agent PROBABLY wrote a journal record that predates the provider tag.
- *
- * ⚠️ A heuristic, not a proof, and the last resort: the pin journal is consulted first
- * because it names the provider outright. Claude Code writes a UUIDv4 and the other two
- * normally write a UUIDv7, which is what lets the v7 records be dropped instead of typed
- * into `claude --resume`. The converse does NOT hold. A read-only count of the shared
- * history index on 2026-09-14 found 4 Codex and 6 Grok sessions with v4-shaped ids
- * (pre-switchover Codex rollouts from 2025/09, and Grok worktree/subagent sessions), and
- * this rule claims every one of them for Claude. None is in the cmux journal today, and
- * `MAX_AGE_MS` keeps ordinary reads inside the tagged era, but `loadSurfaceSessions({
- * beforeMs })` walks the journal historically and can still reach one.
- *
- * Which of the two v7 agents wrote a record cannot be proven from the id either, so a v7
- * id with no pin is dropped rather than guessed: the pane then falls back to its captured
- * command instead of resuming a session that belongs to another agent.
- */
-function untaggedProvider(sessionId: string): AccountProviderAlias | undefined {
-    return CLAUDE_SESSION_ID.test(sessionId) ? "claude" : undefined;
 }
 
 /** surface uuid (CMUX_SURFACE_ID) → newest known agent session + account. */
@@ -220,7 +198,7 @@ export async function loadSurfaceSessions(
             // v4/v7 habit gets wrong — the Codex rollouts from before its id switchover, and
             // Grok's worktree sessions, all of which are v4-shaped.
             const pin = pins.get(entry.sessionId);
-            const provider = entry.provider ?? pin?.provider ?? untaggedProvider(entry.sessionId);
+            const provider = resolveRefsProvider(entry, pin);
             if (!provider) {
                 logger.debug(
                     { sessionId: entry.sessionId, surfaceId: entry.surfaceId },

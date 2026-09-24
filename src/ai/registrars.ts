@@ -20,6 +20,7 @@ export const AI_REGISTRARS: LazyRegistrar[] = [
         names: ["codex"],
         load: async () => (await import("./commands/accounts/login")).registerAiProviderLoginCommands,
     },
+    { names: ["cmux"], load: async () => (await import("./commands/cmux")).registerCmuxCommands },
     { names: ["config"], load: async () => (await import("./commands/config")).registerConfigCommands },
     { names: ["gate"], load: async () => (await import("./commands/gate")).registerGateCommands },
     { names: ["sessions"], load: async () => (await import("./commands/sessions")).registerSessionsCommands },

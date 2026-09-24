@@ -1,6 +1,5 @@
 import { candidateHint, candidateLabel, labelWidths } from "@app/claude/lib/cmux/display";
 import { positiveIntFlag } from "@app/claude/lib/cmux/flags";
-import { loadPins } from "@app/claude/lib/cmux/pins";
 import { listCandidates } from "@app/claude/lib/cmux/sessions";
 import {
     defaultSnapshotName,
@@ -12,6 +11,7 @@ import {
 } from "@app/claude/lib/cmux/snapshot";
 import type { RestoreCandidate } from "@app/claude/lib/cmux/types";
 import * as p from "@clack/prompts";
+import { loadPins } from "@genesiscz/utils/agent-sessions/pins";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";

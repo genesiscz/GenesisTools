@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import type { SessionCmuxRefs } from "@app/claude/lib/cmux/session-refs";
 import type { ContentBlock } from "@genesiscz/utils/claude/types";
+import type { SessionCmuxRefs } from "@genesiscz/utils/cmux/session-refs";
 import { SafeJSON } from "@genesiscz/utils/json";
 import {
     assignSessionIds,

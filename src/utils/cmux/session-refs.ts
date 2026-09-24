@@ -5,7 +5,7 @@ import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 
-const log = logger.child({ component: "claude:cmux-refs" });
+const log = logger.child({ component: "cmux:session-refs" });
 
 /**
  * One line of the append-only journal `record-session-cmux.ts` writes on
@@ -22,7 +22,7 @@ export interface SessionCmuxRefs {
      * ⚠️ ABSENT does NOT mean Claude. The tag was added after the hook shipped, so every line
      * older than it is untagged whichever agent wrote it, and 29 of those on this machine are
      * Codex rollouts. A consumer that turns an id into a launch command must decide for
-     * itself — see `untaggedProvider` in `src/cmux/lib/command-capture.ts`, which consults the
+     * itself — see `resolveRefsProvider` below, which consults the
      * pin journal first and falls back to the id shape.
      */
     provider?: AccountProviderAlias;
@@ -181,4 +181,38 @@ export function lookupSessionCmuxRefs(query: string, refsPath: string = CMUX_REF
     }
 
     return latest;
+}
+
+const CLAUDE_SESSION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+/**
+ * Which agent PROBABLY wrote a journal record that predates the provider tag.
+ *
+ * ⚠️ A heuristic, not a proof, and the last resort: the pin journal is consulted first
+ * because it names the provider outright. Claude Code writes a UUIDv4 and the other two
+ * normally write a UUIDv7, which is what lets the v7 records be dropped instead of typed
+ * into `claude --resume`. The converse does NOT hold. A read-only count of the shared
+ * history index on 2026-09-14 found 4 Codex and 6 Grok sessions with v4-shaped ids
+ * (pre-switchover Codex rollouts from 2025/09, and Grok worktree/subagent sessions), and
+ * this rule claims every one of them for Claude. None is in the cmux journal today, and
+ * `MAX_AGE_MS` keeps ordinary reads inside the tagged era, but `loadSurfaceSessions({
+ * beforeMs })` walks the journal historically and can still reach one.
+ *
+ * Which of the two v7 agents wrote a record cannot be proven from the id either, so a v7
+ * id with no pin is dropped rather than guessed: the pane then falls back to its captured
+ * command instead of resuming a session that belongs to another agent.
+ */
+function untaggedProvider(sessionId: string): AccountProviderAlias | undefined {
+    return CLAUDE_SESSION_ID.test(sessionId) ? "claude" : undefined;
+}
+
+/**
+ * Which agent a journal record belongs to: its own tag, then the session's pin (which names the
+ * provider outright), then the id shape. Undefined when none of the three can tell.
+ */
+export function resolveRefsProvider(
+    entry: Pick<SessionCmuxRefs, "sessionId" | "provider">,
+    pin: { provider?: AccountProviderAlias } | undefined
+): AccountProviderAlias | undefined {
+    return entry.provider ?? pin?.provider ?? untaggedProvider(entry.sessionId);
 }

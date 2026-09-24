@@ -27,11 +27,11 @@ mock.module("@genesiscz/utils/claude/session.utils", () => ({
 const pins = new Map<string, { account: string | null }>();
 const cmuxRefs = new Map<string, { surfaceId: string | null; at: number }>();
 
-mock.module("@app/claude/lib/cmux/pins", () => ({
+mock.module("@genesiscz/utils/agent-sessions/pins", () => ({
     loadPins: async () => pins,
 }));
 
-mock.module("@app/claude/lib/cmux/session-refs", () => ({
+mock.module("@genesiscz/utils/cmux/session-refs", () => ({
     loadAllSessionCmuxRefs: () => cmuxRefs,
 }));
 
@@ -193,6 +193,7 @@ describe("listSessionRows", () => {
                 "cwd",
                 "cwdShort",
                 "filePath",
+                "gitBranch",
                 "lastCacheAt",
                 "lastUserAt",
                 "model",

@@ -14,13 +14,9 @@
  *   tools cmux send-self <text> [--no-enter]
  */
 
-import { registerCaptureCommand } from "@app/cmux/commands/capture";
-import { registerDoctorCommand } from "@app/cmux/commands/doctor";
-import { registerProfilesCommand } from "@app/cmux/commands/profiles";
-import { registerRescueCommand } from "@app/cmux/commands/rescue";
-import { registerRestoreAfterRestartCommand } from "@app/cmux/commands/restore-after-restart";
-import { registerSendSelfCommand } from "@app/cmux/commands/send-self";
+import { CMUX_REGISTRARS } from "@app/cmux/registrars";
 import { enhanceHelp, runTool } from "@genesiscz/utils/cli";
+import { registerRequestedTrees, requestedCommandFromArgv } from "@genesiscz/utils/cli/lazy-registrars";
 import { out } from "@genesiscz/utils/logger";
 import { handleReadmeFlag } from "@genesiscz/utils/readme";
 import { Command } from "commander";
@@ -36,12 +32,11 @@ program
     .showHelpAfterError(true)
     .option("-v, --verbose", "Enable debug logging");
 
-registerCaptureCommand(program);
-registerProfilesCommand(program);
-registerRestoreAfterRestartCommand(program);
-registerSendSelfCommand(program);
-registerDoctorCommand(program);
-registerRescueCommand(program);
+await registerRequestedTrees({
+    program,
+    registrars: CMUX_REGISTRARS,
+    requested: requestedCommandFromArgv(process.argv),
+});
 
 enhanceHelp(program);
 

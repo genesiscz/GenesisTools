@@ -1,11 +1,11 @@
 import { aliasesForSession, type FocusTarget, findFocusTargets, matchingSession } from "@app/claude/lib/cmux/focus";
-import { lookupSessionCmuxRefs, type SessionCmuxRefs } from "@app/claude/lib/cmux/session-refs";
 import { runCmuxJSON } from "@genesiscz/utils/cmux/lib/cli";
 import {
     type CmuxLiveSnapshot,
     fetchCmuxLiveSnapshot,
     type SnapshotPreviewMode,
 } from "@genesiscz/utils/cmux/lib/live-snapshot";
+import { lookupSessionCmuxRefs, type SessionCmuxRefs } from "@genesiscz/utils/cmux/session-refs";
 import { logger } from "@genesiscz/utils/logger";
 
 const { log } = logger.scoped("claude-cmux-resolve");

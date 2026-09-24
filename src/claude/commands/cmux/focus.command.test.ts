@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
-import type { SessionCmuxRefs } from "@app/claude/lib/cmux/session-refs";
 import type { CmuxLivePane, CmuxLiveSnapshot, CmuxLiveSurface } from "@genesiscz/utils/cmux/lib/live-snapshot";
+import type { SessionCmuxRefs } from "@genesiscz/utils/cmux/session-refs";
 import { out } from "@genesiscz/utils/logger";
 
 const SESSION_A = "8b6e69bf-0efc-4990-ba3e-b77262498421";

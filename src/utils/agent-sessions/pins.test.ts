@@ -2,8 +2,8 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { loadPins, pinsPath, recordPin } from "@app/claude/lib/cmux/pins";
-import type { SessionPin } from "@app/claude/lib/cmux/types";
+import type { SessionPin } from "@genesiscz/utils/agent-sessions/pins";
+import { loadPins, pinsPath, recordPin } from "@genesiscz/utils/agent-sessions/pins";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 

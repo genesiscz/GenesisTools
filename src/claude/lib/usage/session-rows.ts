@@ -1,8 +1,8 @@
-import { loadPins } from "@app/claude/lib/cmux/pins";
-import { loadAllSessionCmuxRefs } from "@app/claude/lib/cmux/session-refs";
 import { cleanPromptText } from "@app/claude/lib/cmux/sessions";
 import { getSessionListing, type SessionMetadataRecord } from "@app/claude/lib/history/search";
+import { loadPins } from "@genesiscz/utils/agent-sessions/pins";
 import { readTailBytes } from "@genesiscz/utils/claude/session.utils";
+import { loadAllSessionCmuxRefs } from "@genesiscz/utils/cmux/session-refs";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { collapsePath } from "@genesiscz/utils/paths";
@@ -29,6 +29,8 @@ export interface SessionRow {
     cwd: string;
     cwdShort: string;
     project: string | null;
+    /** The branch the transcript recorded (history index); lets the hub map a session to a branch, not only a folder. */
+    gitBranch?: string | null;
     mtime: number;
     /** Last main-thread user/assistant timestamp (statusline @HH:MM:SS). Falls back to mtime. */
     lastCacheAt: number;
@@ -330,6 +332,7 @@ function buildRow(record: SessionMetadataRecord, usage: TailUsage, now: number, 
         cwd,
         cwdShort: collapsePath(cwd),
         project: record.project,
+        gitBranch: record.gitBranch,
         mtime: record.mtime,
         lastCacheAt,
         model: usage.model,

@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { SessionPin } from "@app/claude/lib/cmux/types";
+import type { SessionPin } from "@genesiscz/utils/agent-sessions/pins";
 import { findProjectRoot } from "@genesiscz/utils/fs/project-root";
 import { SafeJSON } from "@genesiscz/utils/json";
 
