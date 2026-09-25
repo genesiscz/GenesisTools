@@ -51,7 +51,9 @@ export async function parseJsonlTranscript<T = Record<string, unknown>>(
     for await (const line of rl) {
         if (line.trim()) {
             try {
-                const parsed = SafeJSON.parse(line) as T;
+                // Native parsing: a transcript line is strict JSON. The comment-json default spent
+                // 2.6 s and 2.5 GB on a 172 MB session where native JSON.parse needs 160 ms.
+                const parsed = SafeJSON.parse(line, { jsonl: true }) as T;
 
                 if (seenUuids) {
                     const uuid = (parsed as { uuid?: unknown }).uuid;

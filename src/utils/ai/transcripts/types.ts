@@ -44,6 +44,8 @@ export interface TranscriptTurn {
     event?: TranscriptEvent;
     /** 1-based model-call index inside one worker turn file. */
     step?: number;
+    /** 0-based position in the whole transcript; set only on the turns of a sparse (`turns`) envelope. */
+    index?: number;
 }
 
 export interface TranscriptTotals extends TranscriptUsage {
@@ -111,15 +113,37 @@ export function terminatedOf(turns: readonly TranscriptTurn[]): "end" | "error" 
 export interface SliceOptions {
     offset?: number;
     limit?: number;
+    /** Exactly these 0-based turns (a search hit list); `offset` and `limit` are ignored. */
+    turns?: number[];
 }
 
 export const DEFAULT_TURN_LIMIT = 80;
 export const DEFAULT_RESULT_CHARS = 2000;
 
+/** The requested turn positions that exist in a transcript of `total` turns, ascending and unique. */
+export function pickTurnIndices(requested: readonly number[], total: number): number[] {
+    const valid = requested.filter((index) => Number.isInteger(index) && index >= 0 && index < total);
+    return [...new Set(valid)].sort((a, b) => a - b);
+}
+
+/** A sparse slice: `nextOffset` is one past the last returned turn, `truncated` whether any turn was left out. */
+export function sparseSliceOf(picked: readonly number[], total: number): { truncated: boolean; nextOffset: number } {
+    return { truncated: picked.length < total, nextOffset: (picked.at(-1) ?? -1) + 1 };
+}
+
 export function sliceTurns(
     turns: TranscriptTurn[],
     opts: SliceOptions = {}
 ): { turns: TranscriptTurn[]; truncated: boolean; nextOffset: number; offset: number } {
+    if (opts.turns) {
+        const picked = pickTurnIndices(opts.turns, turns.length);
+        return {
+            turns: picked.map((index) => ({ ...turns[index], index })),
+            ...sparseSliceOf(picked, turns.length),
+            offset: picked[0] ?? 0,
+        };
+    }
+
     const limit = opts.limit ?? DEFAULT_TURN_LIMIT;
     const offset = opts.offset ?? Math.max(0, turns.length - limit);
     const sliced = turns.slice(offset, offset + limit);

@@ -275,7 +275,7 @@ async function getSessionBranch(filePath: string): Promise<string | null> {
 
     for (const line of lines) {
         try {
-            const obj = SafeJSON.parse(line) as Record<string, unknown>;
+            const obj = SafeJSON.parse(line, { jsonl: true }) as Record<string, unknown>;
 
             if (typeof obj.gitBranch === "string") {
                 return obj.gitBranch;

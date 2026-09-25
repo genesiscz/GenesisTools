@@ -5,9 +5,11 @@ export {
 export { cleanPromptText, cleanTranscriptText } from "./clean-text";
 export { codexGtEventsToTurns, codexNativeLinesToTurns } from "./codex";
 export { grokNativeLinesToTurns, grokWorkerTextToTurns } from "./grok";
-export { transcriptEnvelope } from "./load";
+export { allTranscriptTurns, transcriptEnvelope } from "./load";
 export type { ResolvedTranscript, TranscriptRoots, TranscriptSource } from "./resolve";
 export { defaultTranscriptRoots, resolveTranscript } from "./resolve";
+export type { TranscriptSearchOptions, TranscriptSearchResult } from "./search";
+export { DEFAULT_SEARCH_LIMIT, searchTranscript, turnMatches } from "./search";
 export type { FollowTranscriptOptions } from "./tail";
 export { followTranscript } from "./tail";
 export type {
@@ -21,4 +23,12 @@ export type {
     TranscriptTurn,
     TranscriptUsage,
 } from "./types";
-export { clipResult, DEFAULT_RESULT_CHARS, DEFAULT_TURN_LIMIT, sliceTurns, terminatedOf, totalsOf } from "./types";
+export {
+    clipResult,
+    DEFAULT_RESULT_CHARS,
+    DEFAULT_TURN_LIMIT,
+    pickTurnIndices,
+    sliceTurns,
+    terminatedOf,
+    totalsOf,
+} from "./types";

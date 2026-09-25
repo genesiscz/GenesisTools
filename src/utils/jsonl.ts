@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 
@@ -43,6 +44,43 @@ export function parseJsonlChunk<T = unknown>(data: Buffer, existingRemainder?: B
 
     warnFallback();
     return parseJsonlChunkFallback<T>(combined);
+}
+
+/**
+ * Every well-formed row of an append-only JSONL log. A missing file has no rows. A torn or
+ * corrupt line (a writer killed mid-append, a hand edit) is skipped and counted, so one bad
+ * line cannot hide every other row. Any other read error throws.
+ */
+export function readJsonlRows<T>(path: string): { rows: T[]; skipped: number } {
+    let text: string;
+
+    try {
+        text = readFileSync(path, "utf8");
+    } catch (error) {
+        if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+            return { rows: [], skipped: 0 };
+        }
+
+        throw error;
+    }
+
+    const rows: T[] = [];
+    let skipped = 0;
+
+    for (const line of text.split("\n")) {
+        if (line.trim().length === 0) {
+            continue;
+        }
+
+        try {
+            rows.push(SafeJSON.parse(line, { strict: true }) as T);
+        } catch {
+            // Counted and reported by the caller, which knows what the log is.
+            skipped += 1;
+        }
+    }
+
+    return { rows, skipped };
 }
 
 /**

@@ -249,7 +249,7 @@ export class ClaudeSession {
 
                 for (const line of lines) {
                     try {
-                        const obj = SafeJSON.parse(line) as Record<string, unknown>;
+                        const obj = SafeJSON.parse(line, { jsonl: true }) as Record<string, unknown>;
                         messageCount++;
 
                         if (obj.type === "custom-title" && typeof obj.customTitle === "string") {

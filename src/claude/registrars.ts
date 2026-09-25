@@ -42,6 +42,7 @@ export const CLAUDE_REGISTRARS: LazyRegistrar[] = [
         load: async () => (await import("./commands/login-secondary")).registerLoginSecondaryCommand,
     },
     { names: ["logout"], load: async () => (await import("./commands/logout")).registerLogoutCommand },
+    { names: ["anchor"], load: async () => (await import("./commands/anchor")).registerAnchorCommand },
     { names: ["spending"], load: async () => (await import("./commands/spending")).registerSpendingCommand },
     { names: ["start", "run"], load: async () => (await import("./commands/start")).registerStartCommand },
     { names: ["proxy"], load: async () => (await import("./commands/run")).registerRunCommand },

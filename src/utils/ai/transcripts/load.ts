@@ -8,6 +8,7 @@ import { codexNativeLinesToTurns } from "./codex";
 import { grokNativeLinesToTurns, grokWorkerTextToTurns } from "./grok";
 import { parseTranscriptLine } from "./parse-line";
 import type { ResolvedTranscript } from "./resolve";
+import { indexedClaudeEnvelope } from "./turn-index";
 import {
     type SliceOptions,
     sliceTurns,
@@ -75,15 +76,27 @@ async function turnsFromFile(resolved: ResolvedTranscript, path: string, index =
     return codexNativeLinesToTurns(records);
 }
 
-export async function transcriptEnvelope(
-    resolved: ResolvedTranscript,
-    opts: SliceOptions = {}
-): Promise<TranscriptEnvelope> {
+/** Every turn of the transcript by a full parse, earlier chain files first; the array index is the global turn index. */
+export async function allTranscriptTurns(resolved: ResolvedTranscript): Promise<TranscriptTurn[]> {
     const files = [...(resolved.extraFiles ?? []), resolved.filePath];
     const turns: TranscriptTurn[] = [];
     for (const [index, file] of files.entries()) {
         turns.push(...(await turnsFromFile(resolved, file, index + 1)));
     }
+    return turns;
+}
+
+export async function transcriptEnvelope(
+    resolved: ResolvedTranscript,
+    opts: SliceOptions = {}
+): Promise<TranscriptEnvelope> {
+    // A large Claude session reads only the lines of the requested turns (turn-index.ts); null
+    // means small file, other provider, or an index that disagreed: fall through to the full parse.
+    const indexed = indexedClaudeEnvelope(resolved, opts);
+    if (indexed) {
+        return indexed;
+    }
+    const turns = await allTranscriptTurns(resolved);
     const sliced = sliceTurns(turns, opts);
     let byteSize = 0;
     try {

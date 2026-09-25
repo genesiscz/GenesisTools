@@ -72,6 +72,20 @@ describe("CompactRenderer", () => {
         ]);
     });
 
+    test("a sparse envelope tags each turn with its own position", () => {
+        const { ctx, lines, status } = capture();
+        const renderer = rendererFor("compact");
+        const picked = [
+            { ...turns[1], index: 1 },
+            { ...turns[3], index: 40 },
+        ];
+        renderer.envelope(envelopeOf(picked, { nextOffset: 41, truncated: true }), ctx);
+        renderer.close(ctx);
+
+        expect(lines.map((line) => line.split(" ")[0])).toEqual(["#2", "#2", "#2", "#41"]);
+        expect(status.at(-1)).toBe("── 2 selected turns");
+    });
+
     test("thoughts none hides reasoning; full keeps it whole", () => {
         const none = capture({ thoughts: "none" });
         rendererFor("compact").envelope(envelopeOf(turns), none.ctx);

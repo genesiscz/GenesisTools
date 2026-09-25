@@ -767,7 +767,7 @@ async function readSessionNames(path: string): Promise<Map<string, string>> {
         }
 
         try {
-            const record = SafeJSON.parse(line) as { id?: string; session_id?: string };
+            const record = SafeJSON.parse(line, { jsonl: true }) as { id?: string; session_id?: string };
             const id = (record.id ?? record.session_id)?.toLowerCase();
 
             if (id) {

@@ -73,7 +73,8 @@ export class CompactRenderer extends TranscriptRenderer {
         const start = windowStart(envelope);
 
         for (const [index, turn] of settledTurns(envelope, ctx).entries()) {
-            const tag = `#${start + index}`;
+            // A sparse (`--turns`) envelope names each turn's own position; a window counts from its start.
+            const tag = `#${turn.index === undefined ? start + index : turn.index + 1}`;
 
             if (!this.printedTurns.has(turn.id)) {
                 this.printedTurns.add(turn.id);
@@ -132,6 +133,11 @@ export class CompactRenderer extends TranscriptRenderer {
         const totals = formatTotals(envelope);
         if (totals) {
             ctx.status(`── ${totals}`);
+        }
+
+        if (envelope.turns.some((turn) => turn.index !== undefined)) {
+            ctx.status(`── ${envelope.turns.length} selected turns`);
+            return;
         }
 
         ctx.status(

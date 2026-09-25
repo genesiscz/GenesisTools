@@ -35,7 +35,7 @@ export function parseTranscript(text: string): LiveTranscriptEvent[] {
     return text
         .split(/\r?\n/)
         .filter((line) => line.trim())
-        .map((line) => transcriptEventSchema.parse(SafeJSON.parse(line)))
+        .map((line) => transcriptEventSchema.parse(SafeJSON.parse(line, { jsonl: true })))
         .map((event) => ({
             kind: event.kind,
             text: event.text,

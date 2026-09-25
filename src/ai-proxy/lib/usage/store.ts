@@ -244,7 +244,7 @@ export function billingSnapshotIsStale(snapshot?: AccountBillingSnapshot, maxAge
 
 function parseRequestRecord(line: string): UsageRequestRecord | null {
     try {
-        return SafeJSON.parse(line) as UsageRequestRecord;
+        return SafeJSON.parse(line, { jsonl: true }) as UsageRequestRecord;
     } catch (err) {
         logger.debug({ err, line }, "ai-proxy usage: skipped corrupt requests.jsonl line");
         return null;
