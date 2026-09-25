@@ -308,42 +308,7 @@ extension NSWindow {
 
 // MARK: - Paths
 
-enum PathOpener {
-    static func finder(_ path: String) {
-        NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
-    }
-
-    /// `cursor -g path:line` when a line is known, else the folder or file.
-    static func cursor(_ path: String, line: Int? = nil) {
-        let cli = ["~/.local/bin/cursor", "/usr/local/bin/cursor", "/opt/homebrew/bin/cursor"]
-            .map { ($0 as NSString).expandingTildeInPath }
-            .first { FileManager.default.isExecutableFile(atPath: $0) }
-        let process = Process()
-        if let cli {
-            process.executableURL = URL(fileURLWithPath: cli)
-            process.arguments = line.map { ["-g", "\(path):\($0)"] } ?? [path]
-        } else {
-            process.executableURL = URL(fileURLWithPath: "/usr/bin/open")
-            process.arguments = ["-a", "Cursor", path]
-        }
-        try? process.run()
-    }
-
-    /// Off the main thread: the terminal host's CLI runs synchronously, up to its 60 s timeout.
-    static func cmux(_ path: String) {
-        Task.detached(priority: .userInitiated) {
-            let error = AgentLauncher.openInTerminal(name: (path as NSString).lastPathComponent, cwd: path, command: ["zsh"])
-            if let error {
-                await MainActor.run { HubPerf.log("cmux open \(path) failed: \(error)") }
-            }
-        }
-    }
-
-    static func copy(_ text: String) {
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(text, forType: .string)
-    }
-}
+// `PathOpener` (Finder, reveal, open, Cursor, cmux, copy) lives in Hub/HubPathActions.swift.
 
 /// A path you can act on: click for Finder / Cursor / cmux / copy, plus quick copy and reveal icons.
 /// A popover, not a SwiftUI `Menu`: a Menu whose label truncates inside a header HStack sent
@@ -379,16 +344,16 @@ struct PathLabel: View {
                     action("chevron.left.forwardslash.chevron.right", "Open in Cursor") { PathOpener.cursor(path) }
                     action("terminal", "Open in a new cmux workspace") { PathOpener.cmux(path) }
                     Divider().padding(.vertical, 2)
-                    action("doc.on.doc", "Copy path") { PathOpener.copy(path) }
-                    action("doc.on.doc", "Copy ~ path") { PathOpener.copy(display) }
+                    action("doc.on.doc", "Copy path") { PathOpener.copy(path, what: "path") }
+                    action("doc.on.doc", "Copy ~ path") { PathOpener.copy(display, what: "path") }
                 }
                 .padding(8)
                 .frame(width: 240)
                 .onAppear { HubPerf.log("pathLabel.actions shown for \(display)") }
             }
             if showIcons {
-                IconButton(systemName: "doc.on.doc", tooltip: "Copy path", size: 10) { PathOpener.copy(path) }
-                IconButton(systemName: "folder", tooltip: "Reveal in Finder", size: 10) { PathOpener.finder(path) }
+                IconButton(systemName: "doc.on.doc", tooltip: "Copy path", size: 10) { PathOpener.copy(path, what: "path") }
+                IconButton(systemName: "folder", tooltip: "Reveal in Finder", size: 10) { PathOpener.reveal(path) }
                 IconButton(systemName: "chevron.left.forwardslash.chevron.right", tooltip: "Open in Cursor", size: 10) { PathOpener.cursor(path) }
             }
         }
@@ -477,7 +442,8 @@ struct NoticePill: View {
 // MARK: - Copy chip
 
 /// A short monospaced value (a session id's first 8 characters) that copies the full value on
-/// click, and says "Copied" in its own place for a moment.
+/// click. The copy toast confirms it; the chip only turns its icon into a check, in a fixed slot,
+/// so the text beside it never moves (the label used to become "Copied" and push its neighbours).
 struct CopyChip: View {
     let label: String
     let value: String
@@ -493,7 +459,8 @@ struct CopyChip: View {
                 Image(systemName: copied ? "checkmark" : "number")
                     .font(.system(size: 9.5, weight: .semibold))
                     .foregroundColor(copied ? ReviewPalette.added : ReviewPalette.dim)
-                Text(verbatim: copied ? "Copied" : label)
+                    .frame(width: 11)
+                Text(verbatim: label)
                     .font(.system(size: 11, design: .monospaced))
                     .foregroundColor(copied ? ReviewPalette.added : Color.white.opacity(0.8))
             }
@@ -696,7 +663,7 @@ struct GroupHeader: View {
             .accessibilityValue(Text(isCollapsed ? "collapsed, \(count) items" : "expanded, \(count) items"))
             .accessibilityHint(Text(isCollapsed ? "Expands the group" : "Collapses the group"))
             if let path {
-                IconButton(systemName: "doc.on.doc", tooltip: "Copy absolute path: \(path)", size: 9.5) { PathOpener.copy(path) }
+                IconButton(systemName: "doc.on.doc", tooltip: "Copy absolute path: \(path)", size: 9.5) { PathOpener.copy(path, what: "path") }
             }
             Text(verbatim: "\(count)").font(.system(size: 10.5, design: .monospaced))
         }
@@ -730,7 +697,7 @@ struct GroupHeader: View {
             Button(isCollapsed ? "Expand" : "Collapse") { prefs.toggleCollapsed(key) }
             if let path {
                 Divider()
-                Button("Copy absolute path to project") { PathOpener.copy(path) }
+                Button("Copy absolute path to project") { PathOpener.copy(path, what: "path") }
                 Button("Open in Finder") { PathOpener.finder(path) }
                 Button("Open in Cursor") { PathOpener.cursor(path) }
             }
@@ -747,7 +714,7 @@ struct GroupHeader: View {
         // `.ignore` hides the copy button above, so a project header offers its job as a named action.
         .accessibilityActions {
             if let path {
-                Button("Copy absolute path") { PathOpener.copy(path) }
+                Button("Copy absolute path") { PathOpener.copy(path, what: "path") }
             }
         }
     }

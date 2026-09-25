@@ -30,6 +30,7 @@ func runReview(_ args: [String]) -> Never {
         case "--step-threads": demo.steps = Int(value ?? "") ?? 1; index += 1
         case "--reply": demo.reply = true
         case "--toggle": demo.toggle = true
+        case "--loading": demo.loading = true
         case "--fix-form": demo.fixForm = true
         case "--blame": demo.blame = ReviewSnapshotDemo.blameTarget(value); index += 1
         case "--session": session = value; index += 1
@@ -48,6 +49,7 @@ func runReview(_ args: [String]) -> Never {
     let delegate = ReviewAppDelegate()
     app.delegate = delegate
     installBrowserURLForwarder()
+    MainActor.assumeIsolated { AppMainMenu.install() }
 
     var proposal: ProposalDocument?
     if let proposalPath {
@@ -744,8 +746,7 @@ final class ReviewModel: ObservableObject {
             return
         }
 
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(message, forType: .string)
+        PathOpener.copy(message, what: "\(ids.count) comments")
 
         guard let session, session.range(of: "^[A-Za-z0-9-]+$", options: .regularExpression) != nil else {
             markSent()
@@ -860,7 +861,49 @@ final class ReviewModel: ObservableObject {
             if let source = blame.source(at: index) {
                 AgentBlame.open(source)
             }
+        case .headerMenu(let fileID, let selection):
+            // After the page's message returns: the menu runs its own tracking loop.
+            DispatchQueue.main.async { [weak self] in
+                self?.showHeaderMenu(fileID: fileID, selection: selection)
+            }
         }
+    }
+
+    /// A file's path actions: the file list's context menu and the diff header's right-click menu.
+    func pathActions(of file: DiffFile) -> [ReviewPathAction] {
+        var actions: [ReviewPathAction] = []
+        if let url = hostURL(of: file.id), let head = remoteHead {
+            actions.append(ReviewPathAction("Open on the host at \(head.sha.prefix(8))") { ExternalOpener.open(url) })
+            actions.append(ReviewPathAction("Copy the host URL") { PathOpener.copy(url.absoluteString, what: "URL") })
+        }
+        if let path = absolutePath(of: file) {
+            actions.append(ReviewPathAction("Open in Cursor") { PathOpener.cursor(path) })
+            actions.append(ReviewPathAction("Reveal in Finder") { PathOpener.reveal(path) })
+            actions.append(ReviewPathAction("Copy path") { PathOpener.copy(path, what: "path") })
+        }
+        if let relative = repoPath(of: file.id) {
+            actions.append(ReviewPathAction("Copy repo-relative path") { PathOpener.copy(relative, what: "path") })
+        }
+        return actions
+    }
+
+    /// The page sends the file and any text selected there; the menu opens at the pointer.
+    private func showHeaderMenu(fileID: String, selection: String) {
+        guard let file = files.first(where: { $0.id == fileID }) else {
+            HubPerf.log("review.headerMenu unknown file \(fileID)")
+            return
+        }
+
+        let menu = NSMenu()
+        if !selection.isEmpty {
+            menu.addItem(ClosureMenuItem("Copy") { PathOpener.copy(selection) })
+            menu.addItem(.separator())
+        }
+        for action in pathActions(of: file) {
+            menu.addItem(ClosureMenuItem(action.title, action.run))
+        }
+        HubPerf.log("review.headerMenu \(file.path) (\(menu.items.count) items)")
+        menu.popUp(positioning: nil, at: NSEvent.mouseLocation, in: nil)
     }
 
     /// A new local comment, kept in the store of the repository its file is in.
@@ -1392,6 +1435,7 @@ struct ReviewRootView: View {
                     Text(error)
                         .font(.system(size: 12, design: .monospaced))
                         .foregroundColor(ReviewPalette.removed)
+                        .textSelection(.enabled)
                         .padding(8)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
@@ -1492,6 +1536,14 @@ private struct ReviewHeader: View {
             if case .lastTurns(let count) = model.scope {
                 TurnCountStepper(count: count) { model.setScope(.lastTurns($0)) }
             }
+            // Left of the totals, in a slot that is there while idle too: a spinner that came and went
+            // among the controls changed the row's width and moved the totals with every load.
+            ZStack {
+                if model.loading {
+                    ProgressView().controlSize(.small)
+                }
+            }
+            .frame(width: 16, height: 16)
             if level <= .totals {
                 Text(verbatim: "+\(totals.additions)")
                     .font(.system(size: 12, weight: .semibold, design: .monospaced))
@@ -1512,9 +1564,6 @@ private struct ReviewHeader: View {
 
     @ViewBuilder
     private func controls(styleWidth: CGFloat) -> some View {
-            if model.loading {
-                ProgressView().controlSize(.small)
-            }
             if model.commentCount > 0 {
                 Label {
                     Text(verbatim: "\(model.commentCount)")
@@ -1572,9 +1621,6 @@ private struct ReviewHeader: View {
     /// Icons instead of labels, and the text size behind a menu.
     @ViewBuilder
     private var compactControls: some View {
-        if model.loading {
-            ProgressView().controlSize(.small)
-        }
         sendButton
         IconButton(systemName: model.options.diffStyle == .split ? "rectangle.split.2x1" : "rectangle",
                    tooltip: model.options.diffStyle == .split ? "Side by side (click for one column)" : "One column (click for side by side)") {
@@ -1683,6 +1729,19 @@ private struct ScopeMenu: View {
     @ObservedObject var model: ReviewModel
 
     var body: some View {
+        // Its own width when that fits, so the totals sit beside it (the flexible frame alone grew to
+        // 380 pt for "Uncommitted" and left a wide gap before them). It shrinks in a narrow pane instead
+        // of pushing the header past both edges: a PR range label
+        // ("feature/next…chore/col-302921-repo-cleanup") is wider than the whole diff pane at 1000 pt.
+        ViewThatFits(in: .horizontal) {
+            menu.fixedSize()
+            menu.frame(minWidth: 80, maxWidth: 380, alignment: .leading)
+        }
+        .fixedSize(horizontal: false, vertical: true)
+        .instantTooltip("What this diff compares: \(label)")
+    }
+
+    private var menu: some View {
         Menu {
             // Always offered with a session: a turn without changes is an empty panel that the next
             // turn fills, not a greyed-out item.
@@ -1713,11 +1772,6 @@ private struct ScopeMenu: View {
                 .truncationMode(.middle)
         }
         .menuStyle(.borderlessButton)
-        // Shrinks in a narrow pane instead of pushing the header past both edges: a PR range label
-        // ("feature/next…chore/col-302921-repo-cleanup") is wider than the whole diff pane at 1000 pt.
-        .frame(minWidth: 80, maxWidth: 380, alignment: .leading)
-        .fixedSize(horizontal: false, vertical: true)
-        .instantTooltip("What this diff compares: \(label)")
     }
 
     private var label: String {
@@ -2066,23 +2120,25 @@ struct FileSidebar: View {
     }
 
     /// Open, copy or reveal the file in its own repository (with several roots, not `model.repo`).
+    /// The same list as the diff header's right-click menu (`ReviewModel.pathActions`).
     @ViewBuilder
     private func fileMenu(_ file: DiffFile) -> some View {
-        if let url = model.hostURL(of: file.id), let head = model.remoteHead {
-            Button("Open on the host at \(head.sha.prefix(8))") { ExternalOpener.open(url) }
-            Button("Copy the host URL") { PathOpener.copy(url.absoluteString) }
-            if let relative = model.repoPath(of: file.id) {
-                Button("Copy repo-relative path") { PathOpener.copy(relative) }
-            }
+        ForEach(model.pathActions(of: file)) { action in
+            Button(action.title, action: action.run)
         }
-        if let path = model.absolutePath(of: file) {
-            Button("Open in Cursor") { PathOpener.cursor(path) }
-            Button("Reveal in Finder") { PathOpener.finder(path) }
-            Button("Copy path") { PathOpener.copy(path) }
-            if let relative = model.repoPath(of: file.id), relative != path {
-                Button("Copy repo-relative path") { PathOpener.copy(relative) }
-            }
-        }
+    }
+}
+
+/// One entry of a file's path menu (`ReviewModel.pathActions`).
+struct ReviewPathAction: Identifiable {
+    let title: String
+    let run: () -> Void
+
+    var id: String { title }
+
+    init(_ title: String, _ run: @escaping () -> Void) {
+        self.title = title
+        self.run = run
     }
 }
 
@@ -2175,9 +2231,9 @@ private struct RootFolderRow: View {
                 Divider()
             }
             Button("Open in Cursor") { PathOpener.cursor(root.folder) }
-            Button("Reveal in Finder") { PathOpener.finder(root.folder) }
+            Button("Open in Finder") { PathOpener.finder(root.folder) }
             Button("Open in cmux") { PathOpener.cmux(root.folder) }
-            Button("Copy path") { PathOpener.copy(root.folder) }
+            Button("Copy path") { PathOpener.copy(root.folder, what: "path") }
         }
     }
 }
@@ -2204,6 +2260,7 @@ private struct DirectoryRow: View {
                 .foregroundColor(ReviewPalette.dim)
                 .lineLimit(1)
                 .truncationMode(.head)
+                .instantTooltip(name)
             Spacer(minLength: 4)
             if tree && collapsed {
                 if additions > 0 {

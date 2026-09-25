@@ -383,9 +383,13 @@ struct WorktreeCleanupView: View {
             }
             .buttonStyle(.genHoverPlain())
             HStack(spacing: 6) {
-                if store.loading {
-                    ProgressView().controlSize(.small)
+                // A fixed slot: the summary beside it stays put on every reload.
+                ZStack {
+                    if store.loading {
+                        ProgressView().controlSize(.small)
+                    }
                 }
+                .frame(width: 16, height: 16)
                 Text(verbatim: summary(removable: removable.count, sized: known.count, total: total, frees: frees))
                     .font(.system(size: 11.5))
                     .foregroundColor(ReviewPalette.dim)
@@ -474,6 +478,7 @@ struct WorktreeCleanupView: View {
                         .font(.system(size: 12.5, weight: .medium))
                         .lineLimit(1)
                         .truncationMode(.middle)
+                        .instantTooltip(row.title)
                     FindText(row.mergedHow, field: "merged")
                         .font(.system(size: 10.5, weight: .medium))
                         .foregroundColor(row.removable ? ReviewPalette.added : ReviewPalette.dim)

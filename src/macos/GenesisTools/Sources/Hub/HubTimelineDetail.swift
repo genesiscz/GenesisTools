@@ -570,9 +570,13 @@ struct TimelineCommitDetailView: View {
                     Text(verbatim: "+\(file.added)").font(.system(size: 10.5, design: .monospaced)).foregroundColor(ReviewPalette.added)
                     Text(verbatim: "−\(file.removed)").font(.system(size: 10.5, design: .monospaced)).foregroundColor(ReviewPalette.removed)
                 }
-                if timeline.loadingDiffs.contains(key) {
-                    ProgressView().controlSize(.mini)
+                // A fixed slot: the Cursor button after it stays put while the file's diff loads.
+                ZStack {
+                    if timeline.loadingDiffs.contains(key) {
+                        ProgressView().controlSize(.mini)
+                    }
                 }
+                .frame(width: 12, height: 12)
                 if let repo = event.repo {
                     IconButton(systemName: "chevron.left.forwardslash.chevron.right", tooltip: "Open in Cursor", size: 9) {
                         PathOpener.cursor((repo as NSString).appendingPathComponent(file.path))
@@ -632,7 +636,12 @@ struct TimelinePushDetailView: View {
                                 }
                             }
                             .buttonStyle(.genHoverPlain())
-                            .instantTooltip("Show \(commit.shortSha) in the in-app diff")
+                            // The subject truncates in the row; the tooltip carries it whole.
+                            .instantTooltip("\(commit.subject)\nShow \(commit.shortSha) in the in-app diff")
+                            .contextMenu {
+                                Button("Copy sha") { PathOpener.copy(commit.sha, what: "sha") }
+                                Button("Copy subject") { PathOpener.copy(commit.subject, what: "subject") }
+                            }
                             Text(commit.author).font(.system(size: 10.5)).foregroundColor(ReviewPalette.dim)
                         }
                     }

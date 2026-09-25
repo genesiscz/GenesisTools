@@ -226,6 +226,7 @@ struct PRReviewBar: View {
                 .foregroundColor(ReviewPalette.removed)
                 .lineLimit(1)
                 .truncationMode(.tail)
+                .textSelection(.enabled)
                 .instantTooltip(error)
         } else {
             Text("Loading threads…").foregroundColor(ReviewPalette.dim)

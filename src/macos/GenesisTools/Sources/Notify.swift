@@ -433,7 +433,12 @@ func performClickAction(userInfo: [AnyHashable: Any], actionIdentifier: String) 
     }
 
     if let open, !open.isEmpty, let url = URL(string: open) {
-        NSWorkspace.shared.open(url)
+        if url.isFileURL {
+            // A folder opens in Finder by name, never its default app (Hub/HubPathActions.swift).
+            PathOpener.open(url.path)
+        } else {
+            NSWorkspace.shared.open(url)
+        }
         logClick("opened \(open)")
     }
 }

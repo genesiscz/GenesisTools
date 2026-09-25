@@ -145,8 +145,7 @@ enum HubMarkdownExport {
                 try markdown.write(to: output, options: .atomic)
                 return markdown
             }.value
-            NSPasteboard.general.clearContents()
-            NSPasteboard.general.setString(String(decoding: markdown, as: UTF8.self), forType: .string)
+            PathOpener.copy(String(decoding: markdown, as: UTF8.self), what: "markdown")
             let encoded = output.path.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? output.path
             if let url = URL(string: "genesis-md://open?path=\(encoded)") {
                 NSWorkspace.shared.open(url)
@@ -269,6 +268,15 @@ struct WorktreeListView: View {
         .padding(.horizontal, 6)
         .contentShape(Rectangle())
         .rowButton { model.selectWorktree(worktree) }
+        // The branch and the folder truncate in the row; the tooltip and the menu carry them whole.
+        .instantTooltip("\(worktree.branch)\n\(PathLabel.display(worktree.path))")
+        .contextMenu {
+            Button("Copy branch") { PathOpener.copy(worktree.branch, what: "branch") }
+            Button("Copy path") { PathOpener.copy(worktree.path, what: "path") }
+            Divider()
+            Button("Open in Finder") { PathOpener.finder(worktree.path) }
+            Button("Open in Cursor") { PathOpener.cursor(worktree.path) }
+        }
     }
 }
 

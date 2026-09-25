@@ -70,7 +70,8 @@ struct HubSessionDetailHost: View {
             preset: TranscriptPreset(query: transcriptQuery ?? ""),
             leadingInset: 16,
             services: services,
-            showsSidebar: showsSidebar,
+            // `--set hub.session.sidebarFolded=true`: a snapshot of the folded sidebar in a single pane.
+            showsSidebar: showsSidebar && !HubDefaults.store.bool(forKey: "hub.session.sidebarFolded"),
             actions: actions
         ) {
             SessionTerminalSection(session: session)
@@ -199,6 +200,11 @@ struct HubSessionDetailHost: View {
         SessionGitBranch.read(cwd: cwd)
     }
 
+    /// One shell word: single quotes, and a `'` inside written as `'\''`.
+    nonisolated static func shellQuoted(_ text: String) -> String {
+        "'" + text.replacingOccurrences(of: "'", with: "'\\''") + "'"
+    }
+
     /// The branch the session ran on: the folder's branch while it runs there now, else the branch its
     /// transcript recorded (`gitBranch` from `tools ai usage sessions`). An old session no longer
     /// shows whatever the folder has checked out today, nor that branch's PR.
@@ -230,19 +236,18 @@ struct HubSessionDetailHost: View {
         actions.refresh = {
             Task { await load(offset: windowStart > 0 ? windowStart : nil, limit: max(Self.pageSize, turns.count + Self.pageSize)) }
         }
-        actions.copy = { text in
-            NSPasteboard.general.clearContents()
-            NSPasteboard.general.setString(text, forType: .string)
+        actions.copy = { text in PathOpener.copy(text) }
+        // The header's "Copy the resume command" copied an empty string (it cleared the clipboard):
+        // nothing set the command. It runs in the session's folder, where the agent finds the session.
+        if let command = AgentLauncher.resumeCommand(for: session) {
+            let line = command.joined(separator: " ")
+            actions.resumeCommand = session.cwd.isEmpty ? line : "cd \(Self.shellQuoted(session.cwd)) && \(line)"
         }
         if !session.cwd.isEmpty {
             let cwd = session.cwd
-            actions.openInFinder = { NSWorkspace.shared.open(URL(fileURLWithPath: cwd)) }
-            actions.openInCursor = {
-                let process = Process()
-                process.executableURL = URL(fileURLWithPath: "/usr/bin/open")
-                process.arguments = ["-a", "Cursor", cwd]
-                try? process.run()
-            }
+            // Finder by name: `NSWorkspace.open` on the folder handed it to QuickTime (Hub/HubPathActions.swift).
+            actions.openInFinder = { PathOpener.finder(cwd) }
+            actions.openInCursor = { PathOpener.cursor(cwd) }
         }
         if session.cmux != nil, session.provider == "claude" {
             let id = session.sessionId
@@ -590,5 +595,40 @@ enum HubSessionSearch {
         let list = indices.map(String.init).joined(separator: ",")
         let data = try ToolsCLIRunner.run(["ai", "sessions", "tail", sessionId, "--json", "--turns", list])
         return try SessionTranscriptClient.decode(data).turns
+    }
+}
+
+/// The session screen's transcript and its details sidebar (Hub/Stolen/Sessions/SessionDetailScreen.swift).
+/// Wide enough for both, they sit side by side; narrower, the sidebar covers the transcript's trailing
+/// edge. The screen never grows past its frame: as an HStack of the transcript (`minWidth: 460`) and the
+/// 301 pt sidebar it grew to 761 pt in a narrower pane, the parent clipped both edges, and the sidebar
+/// and the header's sidebar toggle went off screen (2026-09-25).
+struct SessionSidebarSplit: Layout {
+    var mainMinWidth: CGFloat = 460
+
+    /// True when the sidebar has to cover the transcript at this width.
+    static func overlays(width: CGFloat, sidebar: CGFloat, mainMinWidth: CGFloat) -> Bool {
+        width - sidebar < mainMinWidth
+    }
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        proposal.replacingUnspecifiedDimensions()
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        guard let main = subviews.first else {
+            return
+        }
+
+        guard subviews.count > 1, let sidebar = subviews.last else {
+            main.place(at: bounds.origin, proposal: ProposedViewSize(bounds.size))
+            return
+        }
+
+        let sidebarWidth = min(sidebar.sizeThatFits(ProposedViewSize(width: nil, height: bounds.height)).width, bounds.width)
+        let covers = Self.overlays(width: bounds.width, sidebar: sidebarWidth, mainMinWidth: mainMinWidth)
+        let mainWidth = covers ? bounds.width : bounds.width - sidebarWidth
+        main.place(at: bounds.origin, proposal: ProposedViewSize(width: mainWidth, height: bounds.height))
+        sidebar.place(at: CGPoint(x: bounds.maxX - sidebarWidth, y: bounds.minY), proposal: ProposedViewSize(width: sidebarWidth, height: bounds.height))
     }
 }

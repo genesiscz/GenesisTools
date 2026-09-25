@@ -833,6 +833,8 @@ struct PRDetailView: View {
                 Text(pr.title)
                     .font(.system(size: 15, weight: .semibold))
                     .lineLimit(1)
+                    .textSelection(.enabled)
+                    .instantTooltip(pr.title)
                 ExternalLink(text: pr.label, url: URL(string: pr.url), font: .system(size: 13, weight: .semibold), color: Color(red: 0.62, green: 0.78, blue: 1))
                 statePill
                 CIBadge(ci: pr.ci, url: detail?.webUrls?.checks.flatMap(URL.init(string:)))
@@ -1375,9 +1377,13 @@ struct PRSessionsSection: View {
         let loading = store.loading.contains(pr.id)
         PRSection(title: "Sessions", count: rows.count, folded: $folded, trailing: AnyView(
             HStack(spacing: 6) {
-                if loading {
-                    ProgressView().controlSize(.mini)
+                // A fixed slot, so the reload button beside it stays put.
+                ZStack {
+                    if loading {
+                        ProgressView().controlSize(.mini)
+                    }
                 }
+                .frame(width: 12, height: 12)
                 if pr.repoRoot != nil {
                     IconButton(systemName: "arrow.clockwise", tooltip: "Look for sessions again (tools hub pr sessions --no-cache)", size: 10) {
                         store.load(pr, detail: prs.details[pr.id], fresh: true)
@@ -1401,6 +1407,8 @@ struct PRSessionsSection: View {
                     .font(.system(size: 11))
                     .foregroundColor(ReviewPalette.removed)
                     .lineLimit(2)
+                    .textSelection(.enabled)
+                    .instantTooltip(error)
             }
         }
     }

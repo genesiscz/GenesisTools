@@ -1051,7 +1051,8 @@ private struct TranscriptThumbnail: View {
     var body: some View {
         if let path = image.path {
             Button {
-                NSWorkspace.shared.open(URL(fileURLWithPath: path))
+                // GenesisTools adaptation: one opener for every path; a missing image says so (Hub/HubPathActions.swift).
+                PathOpener.open(path)
             } label: {
                 ZStack {
                     RoundedRectangle(cornerRadius: 8, style: .continuous).fill(SessionPalette.fill)

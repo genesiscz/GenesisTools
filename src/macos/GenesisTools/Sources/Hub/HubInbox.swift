@@ -722,9 +722,13 @@ struct InboxListView: View {
                 .fixedSize()
                 .instantTooltip("Order the waiting sessions")
                 Spacer()
-                if inbox.loading {
-                    ProgressView().controlSize(.small)
+                // A fixed slot, so the controls before it stay put while the list loads.
+                ZStack {
+                    if inbox.loading {
+                        ProgressView().controlSize(.small)
+                    }
                 }
+                .frame(width: 16, height: 16)
                 IconButton(systemName: "arrow.clockwise", tooltip: "Look for waiting sessions again") { inbox.load() }
             }
             .padding(.horizontal, 14)
@@ -938,6 +942,8 @@ private struct InboxSessionSection: View {
             FindText(session.displayTitle, field: "title")
                 .font(.system(size: 13.5, weight: .semibold))
                 .lineLimit(1)
+                .textSelection(.enabled)
+                .instantTooltip(session.displayTitle)
             FindText(session.projectName, field: "project")
                 .font(.system(size: 11.5))
                 .foregroundColor(ReviewPalette.dim)
@@ -947,6 +953,8 @@ private struct InboxSessionSection: View {
                     .foregroundColor(ReviewPalette.dim)
                     .lineLimit(1)
                     .truncationMode(.middle)
+                    .textSelection(.enabled)
+                    .instantTooltip(branch)
             }
             Spacer(minLength: 8)
             if let sessionId = session.sessionId {
