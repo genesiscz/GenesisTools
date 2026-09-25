@@ -601,6 +601,8 @@ final class HubModel: ObservableObject {
     }
 
     func setMode(_ next: HubMode) {
+        // A switch costs the renders after it: the old mode's views go and the new mode's arrive.
+        MainActor.assumeIsolated { HubMainBusy.measure("mode.\(next.rawValue)") }
         mode = next
         if next == .inbox {
             MainActor.assumeIsolated { inbox.loadIfStale() }

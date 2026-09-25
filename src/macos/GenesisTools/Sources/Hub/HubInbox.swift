@@ -403,7 +403,11 @@ final class HubInboxModel: ObservableObject {
                     }
                     switch result {
                     case .success(let envelope):
-                        self.sessions = envelope.sessions
+                        // An unchanged Inbox (the usual reload on a mode switch) redraws nothing.
+                        if self.sessions != envelope.sessions {
+                            HubMainBusy.measure("inbox.render")
+                            self.sessions = envelope.sessions
+                        }
                         self.error = nil
                         self.loadedAt = Date()
                         self.applyReveal()
