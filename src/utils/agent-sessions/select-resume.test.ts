@@ -1,9 +1,10 @@
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, expect, spyOn, test } from "bun:test";
 import { mkdtempSync, realpathSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
+import * as paths from "@genesiscz/utils/paths";
 import { selectResumeSession } from "./select-resume";
 import type { AgentSession, AgentSessionAdapter } from "./types";
 
@@ -351,4 +352,41 @@ test("two homes' copies of one session survive the dedup; the launch home is wha
             interactive: false,
         })
     ).toBe(local);
+});
+
+test("a home is canonicalized once per DISTINCT home, not twice per indexed session", async () => {
+    // `canonicalPath` hits the filesystem, and `preferHomeCopies` asks about every row twice.
+    // The title rung filters a listing with no row limit, so resolving per row paid 2N
+    // `realpath` walks for what is, in practice, one or two distinct homes.
+    capturePrinted();
+    const canonical = spyOn(paths, "canonicalPath");
+    const sessions = [
+        ...Array.from({ length: 20 }, (_, index) => ({
+            ...session(`launch-${index}`, `invoice ${index}`),
+            sourceHome: "/launch-home",
+        })),
+        ...Array.from({ length: 20 }, (_, index) => ({
+            ...session(`retained-${index}`, `invoice ${index}`),
+            sourceHome: "/retained-home",
+        })),
+    ];
+
+    try {
+        await expect(
+            selectResumeSession({
+                adapter: adapter(sessions),
+                query: "invoice",
+                preferredHome: "/launch-home",
+                interactive: false,
+            })
+        ).rejects.toThrow("Ambiguous");
+
+        // One for the preferred home, one for each distinct `sourceHome` a row carries.
+        expect(new Set(canonical.mock.calls.map(([home]) => home))).toEqual(
+            new Set(["/launch-home", "/retained-home"])
+        );
+        expect(canonical.mock.calls.length).toBeLessThanOrEqual(3);
+    } finally {
+        canonical.mockRestore();
+    }
 });
