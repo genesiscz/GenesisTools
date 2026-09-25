@@ -11,7 +11,9 @@ import {
     listPrs,
     parseGhPrRows,
     parseGhPrView,
+    parseGhUpdatedPrs,
     parseGlabMrRows,
+    parseGlabMrView,
     parsePrUrl,
     projectRefFromRemote,
     rollupCi,
@@ -342,8 +344,29 @@ describe("gh PR list and view", () => {
             ci: "running",
             comments: null,
             headSha: "abc",
+            crossRepository: false,
+            headRepo: null,
         });
         expect(() => parseGhPrRows("not json")).toThrow("unparsable");
+    });
+
+    it("names the fork that holds the head branch of a cross-repository PR", () => {
+        const row = SafeJSON.parse(GH_ROWS, { strict: true })[0];
+        const fork = {
+            ...row,
+            isCrossRepository: true,
+            headRepositoryOwner: { login: "dave" },
+            headRepository: { name: "r-fork" },
+        };
+        expect(parseGhPrRows(SafeJSON.stringify([fork]))[0]).toMatchObject({
+            crossRepository: true,
+            headRepo: "dave/r-fork",
+        });
+        const unnamed = { ...row, isCrossRepository: true };
+        expect(parseGhPrRows(SafeJSON.stringify([unnamed]))[0]).toMatchObject({
+            crossRepository: true,
+            headRepo: null,
+        });
     });
 
     it("lists read-only through gh with --repo, state, limit and --author @me", async () => {
@@ -382,6 +405,126 @@ describe("gh PR list and view", () => {
         });
     });
 
+    const node = (number: number, updatedAt: string, login = "alice") => ({
+        number,
+        title: `PR ${number}`,
+        state: "MERGED",
+        isDraft: false,
+        url: `https://github.com/o/r/pull/${number}`,
+        createdAt: "2026-02-01T00:00:00Z",
+        updatedAt,
+        reviewDecision: "APPROVED",
+        author: { login },
+        headRefName: "feat/x",
+        baseRefName: "main",
+        headRefOid: "abc",
+        isCrossRepository: false,
+        labels: { nodes: [{ name: "bug" }] },
+        reviewRequests: { nodes: [{ requestedReviewer: { login: "bob" } }] },
+        latestReviews: { nodes: [{ state: "APPROVED", author: { login: "carol" } }] },
+        commits: { nodes: [{ commit: { statusCheckRollup: { state: "FAILURE" } } }] },
+    });
+    const page = (nodes: unknown[], endCursor: string | null) =>
+        SafeJSON.stringify({
+            data: {
+                repository: {
+                    pullRequests: { pageInfo: { hasNextPage: endCursor !== null, endCursor }, nodes },
+                },
+            },
+        });
+
+    it("lists a date range through GraphQL in update order, cut at the bound, with the gh row fields", async () => {
+        const answer = SafeJSON.stringify({
+            data: {
+                repository: {
+                    pullRequests: { nodes: [node(9, "2026-03-02T08:00:00Z"), node(4, "2026-02-20T08:00:00Z")] },
+                },
+            },
+        });
+        const calls: string[][] = [];
+        const runner: CommandRunner = async (cmd) => {
+            calls.push(cmd);
+            return { code: 0, stdout: answer, stderr: "" };
+        };
+        const project = projectRefFromRemote("git@github.com:o/r.git");
+
+        if (!project) {
+            throw new Error("fixture remote did not parse");
+        }
+
+        const result = await listPrs({
+            project,
+            state: "all",
+            limit: 100,
+            updatedSince: new Date("2026-03-01T00:00:00Z"),
+            runner,
+        });
+        expect(result.error).toBeNull();
+        expect(result.prs.map((pr) => pr.number)).toEqual([9]);
+        expect(result.prs[0]).toMatchObject({
+            labels: ["bug"],
+            reviewers: ["bob"],
+            approvals: 1,
+            ci: "failed",
+            state: "MERGED",
+        });
+        expect(calls[0].slice(0, 5)).toEqual(["gh", "api", "graphql", "--hostname", "github.com"]);
+        expect(calls[0]).toContain("owner=o");
+        expect(calls[0]).toContain("repo=r");
+        expect(calls[0].join(" ")).toContain(
+            "pullRequests(first: 100, orderBy: {field: UPDATED_AT, direction: DESC}, after: $after)"
+        );
+
+        expect(() => parseGhUpdatedPrs(SafeJSON.stringify({ errors: [{ message: "Could not resolve" }] }))).toThrow(
+            "Could not resolve"
+        );
+    });
+
+    it("walks the date range page by page, so mine finds the viewer's PRs behind other authors'", async () => {
+        const project = projectRefFromRemote("git@github.com:o/r.git");
+
+        if (!project) {
+            throw new Error("fixture remote did not parse");
+        }
+
+        const pages = [
+            page([node(30, "2026-03-05T08:00:00Z", "bob"), node(29, "2026-03-04T08:00:00Z", "bob")], "cursor-1"),
+            page([node(28, "2026-03-03T08:00:00Z", "alice"), node(27, "2026-02-20T08:00:00Z", "alice")], "cursor-2"),
+        ];
+        const calls: string[][] = [];
+        const runner: CommandRunner = async (cmd) => {
+            calls.push(cmd);
+
+            if (cmd.at(-1) === "user") {
+                return { code: 0, stdout: SafeJSON.stringify({ login: "alice" }), stderr: "" };
+            }
+
+            return {
+                code: 0,
+                stdout: pages[calls.filter((call) => call[2] === "graphql").length - 1] ?? "",
+                stderr: "",
+            };
+        };
+        const since = new Date("2026-03-01T00:00:00Z");
+
+        const mine = await listPrs({ project, state: "all", mine: true, limit: 1, updatedSince: since, runner });
+        expect(mine).toMatchObject({ error: null, warnings: [] });
+        expect(mine.prs.map((pr) => pr.number)).toEqual([28]);
+        const graphql = calls.filter((call) => call[2] === "graphql");
+        // Full pages for mine, the second one after the first page's cursor, and none past a PR older than the range.
+        expect(graphql).toHaveLength(2);
+        expect(graphql[0].join(" ")).toContain("pullRequests(first: 100,");
+        expect(graphql[0]).not.toContain("after=cursor-1");
+        expect(graphql[1]).toContain("after=cursor-1");
+
+        // Negative control: without mine a limit-sized first page that fills the limit is the only read.
+        calls.length = 0;
+        const all = await listPrs({ project, state: "all", limit: 2, updatedSince: since, runner });
+        expect(all.prs.map((pr) => pr.number)).toEqual([30, 29]);
+        expect(calls).toHaveLength(1);
+        expect(calls[0].join(" ")).toContain("pullRequests(first: 2,");
+    });
+
     it("maps a view with body, commits, checks and merge state", () => {
         const row = SafeJSON.parse(GH_ROWS, { strict: true })[0];
         const detail = parseGhPrView(
@@ -393,8 +536,15 @@ describe("gh PR list and view", () => {
                     {
                         oid: "c1",
                         messageHeadline: "first",
+                        messageBody: "Why it changed.\n",
                         authors: [{ login: "alice" }],
                         committedDate: "2026-01-01T01:00:00Z",
+                    },
+                    {
+                        oid: "c2",
+                        messageHeadline: "second",
+                        authors: [{ name: "Unlinked Person" }],
+                        committedDate: "2026-01-01T02:00:00Z",
                     },
                 ],
                 changedFiles: 3,
@@ -408,7 +558,24 @@ describe("gh PR list and view", () => {
         expect(detail).toMatchObject({
             body: "## Why",
             comments: 2,
-            commits: [{ sha: "c1", title: "first", author: "alice", date: "2026-01-01T01:00:00Z" }],
+            commits: [
+                {
+                    sha: "c1",
+                    title: "first",
+                    author: "alice",
+                    authorLogin: "alice",
+                    date: "2026-01-01T01:00:00Z",
+                    body: "Why it changed.",
+                },
+                {
+                    sha: "c2",
+                    title: "second",
+                    author: "Unlinked Person",
+                    authorLogin: null,
+                    date: "2026-01-01T02:00:00Z",
+                    body: null,
+                },
+            ],
             changedFiles: 3,
             additions: 10,
             deletions: 2,
@@ -466,8 +633,12 @@ describe("GitLab MR list and view", () => {
             comments: 4,
             ci: "failed",
             approvals: null,
+            crossRepository: false,
+            headRepo: null,
         });
         expect(parseGlabMrRows(GL_MRS)[0].ci).toBeNull();
+        const fromFork = { ...SafeJSON.parse(GL_MRS, { strict: true })[0], source_project_id: 7, target_project_id: 3 };
+        expect(parseGlabMrRows(SafeJSON.stringify([fromFork]))[0].crossRepository).toBe(true);
     });
 
     it("lists through glab api GETs and keeps the MRs when the pipeline call fails", async () => {
@@ -492,6 +663,12 @@ describe("GitLab MR list and view", () => {
         expect(mrCall?.[4]).toStartWith("projects/g%2Fp/merge_requests?");
         expect(mrCall?.[4]).toContain("state=opened");
         expect(mrCall?.[4]).toContain("scope=created_by_me");
+        expect(mrCall?.[4]).not.toContain("updated_after");
+
+        calls.length = 0;
+        await listPrs({ project, state: "all", limit: 100, updatedSince: new Date("2026-03-01T10:00:00Z"), runner });
+        const ranged = calls.find((cmd) => cmd[4].includes("/merge_requests"));
+        expect(new URLSearchParams(ranged?.[4].split("?")[1]).get("updated_after")).toBe("2026-03-01T10:00:00.000Z");
     });
 
     it("views an MR, a failed secondary call leaves its fields empty", async () => {
@@ -549,5 +726,22 @@ describe("GitLab MR list and view", () => {
             checks: [{ name: "pipeline 5 (feature/y)", status: "running", url: null }],
             webUrls: { files: "https://gitlab.internal.example/g/p/-/merge_requests/9/diffs" },
         });
+    });
+
+    it("keeps a commit's message body without the title line GitLab repeats", () => {
+        const detail = parseGlabMrView({
+            mr: SafeJSON.stringify(SafeJSON.parse(GL_MRS, { strict: true })[0]),
+            commits: SafeJSON.stringify([
+                {
+                    id: "c1",
+                    title: "Fix y",
+                    message: "Fix y\n\nThe reason.\n",
+                    author_name: "Bob",
+                    committed_date: "d",
+                },
+                { id: "c2", title: "Tidy", message: "Tidy\n", author_name: "Bob", committed_date: "d" },
+            ]),
+        });
+        expect(detail.commits.map((commit) => commit.body)).toEqual(["The reason.", null]);
     });
 });

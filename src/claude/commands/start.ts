@@ -1091,6 +1091,27 @@ async function main(nameArg: string | undefined, opts: StartOptions, passthrough
     process.exit(exitCode);
 }
 
+/**
+ * Splits `start [name] [-- args…]` operands. Commander binds the first operand to `[name]` even when
+ * it came after `--`, so `tools claude run -- "fix the bug"` used the prompt as an account name.
+ * Only an operand before the `--` in `argv` is a name; everything after it is passed to claude.
+ */
+export function splitStartOperands(input: { name: string | undefined; operands: string[]; argv: string[] }): {
+    nameArg: string | undefined;
+    passthrough: string[];
+} {
+    const dash = input.argv.indexOf("--");
+    const afterDash = dash >= 0 ? input.argv.length - dash - 1 : 0;
+    const nameBeforeDash = input.operands.length > afterDash;
+
+    // `start -- --foo` binds "--foo" to [name]; treat leading-dash names as passthrough
+    if (input.name === undefined || input.name.startsWith("-") || !nameBeforeDash) {
+        return { nameArg: undefined, passthrough: input.operands };
+    }
+
+    return { nameArg: input.name, passthrough: input.operands.slice(1) };
+}
+
 export function registerStartCommand(program: Command): void {
     const startCmd = program
         .command("start [name]")
@@ -1123,15 +1144,7 @@ export function registerStartCommand(program: Command): void {
                 "that session (and the bound ttyd tab) from the resumed session title, then launch here."
         )
         .action(async (name: string | undefined, opts: StartOptions, command: Command) => {
-            const operands = command.args;
-            let nameArg = name;
-            let passthrough = operands.slice(1);
-
-            // `start -- --foo` binds "--foo" to [name]; treat leading-dash names as passthrough
-            if (nameArg?.startsWith("-")) {
-                nameArg = undefined;
-                passthrough = operands;
-            }
+            const { nameArg, passthrough } = splitStartOperands({ name, operands: command.args, argv: process.argv });
 
             // No Anthropic account name contains a slash, but every ai-proxy target
             // does (`martin/grok`, `work/xai/grok-4.6`). That makes the split

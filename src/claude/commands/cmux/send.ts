@@ -122,7 +122,7 @@ export async function sendCommand(
     text: string,
     opts: SendOptions,
     deps: SendCommandDeps = {}
-): Promise<void> {
+): Promise<boolean> {
     const queryTrim = query.trim();
     const enter = opts.enter !== false;
     const enterDelayMs = Number(opts.enterDelay ?? "500");
@@ -143,7 +143,7 @@ export async function sendCommand(
 
         if (opts.json) {
             out.result(SafeJSON.stringify({ query: queryTrim, sent: false, matches: [] }, null, 2));
-            return;
+            return false;
         }
 
         out.error(pc.red(`No cmux pane matches "${queryTrim}".`));
@@ -152,11 +152,11 @@ export async function sendCommand(
                 `  If the session is not open anywhere, reopen it: ${suggestCommand("tools claude", { replaceCommand: ["cmux", "restore"] })}`
             )
         );
-        return;
+        return false;
     }
 
     if (refuseAmbiguous(result, queryTrim, opts)) {
-        return;
+        return false;
     }
 
     let target = result.targets[0];
@@ -167,21 +167,21 @@ export async function sendCommand(
 
         if (opts.json) {
             out.result(SafeJSON.stringify(plan, null, 2));
-            return;
+            return false;
         }
 
         out.printlnErr(
             `${pc.yellow("dry run")} would send to ${pc.bold(target.workspaceName)} ${pc.dim(target.paneId)} ` +
                 pc.dim(`${surfaceId ?? "?"} (matched on ${describeMatch(target)})`)
         );
-        return;
+        return false;
     }
 
     if (surfaceId) {
         try {
             await deliver({ target, surfaceId, text, enter, enterDelayMs });
             report({ opts, query: queryTrim, target, surfaceId, enter, source: result.source });
-            return;
+            return true;
         } catch (err) {
             if (result.source !== "recorded") {
                 throw err;
@@ -201,7 +201,7 @@ export async function sendCommand(
     result = retry.result;
 
     if (retry.status === "stopped") {
-        return;
+        return false;
     }
 
     const fallback = retry.status === "ok" ? retry.target : undefined;
@@ -212,17 +212,18 @@ export async function sendCommand(
 
         if (opts.json) {
             out.result(SafeJSON.stringify({ query: queryTrim, sent: false, matches: result.targets }, null, 2));
-            return;
+            return false;
         }
 
         out.error(pc.red(`Matched "${queryTrim}" but found no live surface to type into.`));
-        return;
+        return false;
     }
 
     target = fallback;
     surfaceId = fallbackSurface;
     await deliver({ target, surfaceId, text, enter, enterDelayMs });
     report({ opts, query: queryTrim, target, surfaceId, enter, source: result.source });
+    return true;
 }
 
 interface SendReport {

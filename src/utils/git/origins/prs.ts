@@ -53,13 +53,22 @@ export interface PrSummary {
     /** Discussion comments; null when the host does not return a count in this call. */
     comments: number | null;
     headSha: string | null;
+    /** The head branch lives in another project (a fork). */
+    crossRepository: boolean;
+    /** That project's path (`owner/repo`) on the same host; null for a same-project PR or when the host did not say. */
+    headRepo: string | null;
 }
 
 export interface PrCommit {
     sha: string;
     title: string;
+    /** The host login when the commit is linked to an account, else the git author name. */
     author: string | null;
+    /** The host login alone (a profile page exists); null for an unlinked author and for GitLab, whose commits carry names only. */
+    authorLogin: string | null;
     date: string | null;
+    /** The message below the title line, trimmed; null when the commit has none. */
+    body: string | null;
 }
 
 export interface PrCheck {
@@ -98,6 +107,10 @@ export interface PrViewResult {
 
 const PR_QUERY_TIMEOUT_MS = 30_000;
 const GLAB_MAX_PER_PAGE = 100;
+/** GraphQL's page ceiling for one connection. */
+const GH_MAX_PAGE = 100;
+/** How many GraphQL pages one date range may walk before it stops with a warning. */
+const GH_MAX_UPDATED_PAGES = 10;
 
 const log = logger.child({ component: "origins/prs" });
 
@@ -289,6 +302,9 @@ export const GH_LIST_FIELDS = [
     "headRefName",
     "baseRefName",
     "headRefOid",
+    "isCrossRepository",
+    "headRepository",
+    "headRepositoryOwner",
     "url",
     "createdAt",
     "updatedAt",
@@ -349,7 +365,15 @@ function ghSummary(row: Record<string, unknown>): PrSummary | null {
         ci: rollupCi(records(row.statusCheckRollup).map(ghCheckStatus)),
         comments: Array.isArray(row.comments) ? row.comments.length : null,
         headSha: str(row.headRefOid),
+        crossRepository: row.isCrossRepository === true,
+        headRepo: row.isCrossRepository === true ? ghHeadRepo(row) : null,
     };
+}
+
+function ghHeadRepo(row: Record<string, unknown>): string | null {
+    const owner = login(row.headRepositoryOwner);
+    const name = isRecord(row.headRepository) ? str(row.headRepository.name) : null;
+    return owner && name ? `${owner}/${name}` : null;
 }
 
 /** Pure mapping of `gh pr list --json <GH_LIST_FIELDS>`; throws on output it cannot read. */
@@ -363,6 +387,160 @@ export function parseGhPrRows(json: string): PrSummary[] {
     return records(rows)
         .map(ghSummary)
         .filter((pr): pr is PrSummary => pr !== null);
+}
+
+/**
+ * One page of a repository's PRs, most recently updated first. `gh pr list` orders by creation, and
+ * its `--search` form needs GitHub's search index, which holds no PRs of some repositories (a fork
+ * answered `[]` even to `is:pr`), so a date range asks GraphQL for the update order directly. The
+ * fields are the ones `gh pr list --json <GH_LIST_FIELDS>` returns, so one parser reads both. CI is
+ * the rollup's own state, not each check: with every check of 100 PRs one page took about 7 s.
+ */
+export function ghUpdatedQuery(state: PrListState, first: number): string {
+    const states = state === "open" ? ", states: [OPEN]" : state === "merged" ? ", states: [MERGED]" : "";
+    return `query($owner: String!, $repo: String!, $after: String) {
+  repository(owner: $owner, name: $repo) {
+    pullRequests(first: ${first}${states}, orderBy: {field: UPDATED_AT, direction: DESC}, after: $after) {
+      pageInfo { hasNextPage endCursor }
+      nodes {
+        number title state isDraft url createdAt updatedAt reviewDecision
+        author { login }
+        headRefName baseRefName headRefOid isCrossRepository
+        headRepository { name }
+        headRepositoryOwner { login }
+        labels(first: 20) { nodes { name } }
+        reviewRequests(first: 20) { nodes { requestedReviewer { ... on User { login } ... on Team { slug name } } } }
+        latestReviews(first: 20) { nodes { state author { login } } }
+        commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }
+      }
+    }
+  }
+}`;
+}
+
+function graphNodes(value: unknown): Record<string, unknown>[] {
+    return isRecord(value) ? records(value.nodes) : [];
+}
+
+/** Pure mapping of `ghUpdatedQuery`'s answer onto the `gh pr list --json` rows; throws on output it cannot read. */
+export function parseGhUpdatedPrs(json: string): PrSummary[] {
+    return parseGhUpdatedPage(json).prs;
+}
+
+/** One page of `ghUpdatedQuery`'s answer: its PRs, and the cursor of the next page when the host has one. */
+function parseGhUpdatedPage(json: string): { prs: PrSummary[]; next: string | null } {
+    const root = parseJson(json, "gh graphql");
+    const errors = isRecord(root) ? records(root.errors).map((error) => str(error.message) ?? "error") : [];
+    const data = isRecord(root) && isRecord(root.data) ? root.data : null;
+    const repository = data && isRecord(data.repository) ? data.repository : null;
+
+    if (!repository) {
+        throw new PrParseError(errors.join("; ") || "gh graphql returned no repository");
+    }
+
+    const connection = isRecord(repository.pullRequests) ? repository.pullRequests : null;
+    const pageInfo = connection && isRecord(connection.pageInfo) ? connection.pageInfo : null;
+    const next = pageInfo?.hasNextPage === true ? str(pageInfo.endCursor) : null;
+    const prs = graphNodes(connection)
+        .map((node) => {
+            const commit = graphNodes(node.commits)[0]?.commit;
+            const rollup = isRecord(commit) && isRecord(commit.statusCheckRollup) ? commit.statusCheckRollup : null;
+            return ghSummary({
+                ...node,
+                labels: graphNodes(node.labels),
+                reviewRequests: graphNodes(node.reviewRequests).map((request) =>
+                    isRecord(request.requestedReviewer) ? request.requestedReviewer : {}
+                ),
+                latestReviews: graphNodes(node.latestReviews),
+                // One entry with the rollup's state: SUCCESS, FAILURE / ERROR, PENDING / EXPECTED.
+                statusCheckRollup: rollup ? [{ state: rollup.state }] : [],
+            });
+        })
+        .filter((pr): pr is PrSummary => pr !== null);
+    return { prs, next };
+}
+
+/**
+ * `listPrs` with `updatedSince` on GitHub: GraphQL pages in update order, walked until a page reaches
+ * a PR older than `updatedSince`, the host has no more, or `limit` PRs matched. `mine` filters on
+ * the client, after the page cut, so it reads full pages: a limit-sized page of other authors' PRs
+ * would hide the viewer's.
+ */
+async function listGhUpdatedSince({
+    project,
+    state,
+    mine,
+    limit,
+    updatedSince,
+    cwd,
+    runner,
+}: {
+    project: ProjectRef;
+    state: PrListState;
+    mine: boolean;
+    limit: number;
+    updatedSince: Date;
+    cwd: string;
+    runner: CommandRunner;
+}): Promise<PrListResult> {
+    const warnings: string[] = [];
+    const [owner, ...rest] = project.path.split("/");
+    const wanted = Math.max(limit, 1);
+    const first = mine ? GH_MAX_PAGE : Math.min(wanted, GH_MAX_PAGE);
+    const viewer = mine ? await viewerLogin({ project, cwd, runner }) : null;
+
+    if (mine && !viewer) {
+        warnings.push("mine: the logged-in user is unknown, so every author is listed");
+    }
+
+    const prs: PrSummary[] = [];
+    let after: string | null = null;
+    let pages = 0;
+
+    for (;;) {
+        const cmd = [
+            "gh",
+            "api",
+            "graphql",
+            "--hostname",
+            project.host,
+            "-f",
+            `query=${ghUpdatedQuery(state, first)}`,
+            // -f, not -F: -F would turn a numeric repository name into a number.
+            "-f",
+            `owner=${owner}`,
+            "-f",
+            `repo=${rest.join("/")}`,
+            ...(after ? ["-f", `after=${after}`] : []),
+        ];
+        const res = await run({ cmd, cwd, runner });
+
+        if (res.error) {
+            return { prs: [], error: res.error, warnings };
+        }
+
+        const page = parseGhUpdatedPage(res.stdout);
+        const inRange = page.prs.filter((pr) => Date.parse(pr.updatedAt) >= updatedSince.getTime());
+        prs.push(...inRange.filter((pr) => !viewer || pr.author === viewer));
+        pages += 1;
+
+        if (inRange.length < page.prs.length || !page.next || prs.length >= wanted) {
+            break;
+        }
+
+        if (pages >= GH_MAX_UPDATED_PAGES) {
+            warnings.push(`stopped after ${pages * first} PRs; older PRs in the range may be missing`);
+            break;
+        }
+
+        after = page.next;
+    }
+
+    log.debug(
+        { project: project.path, state, mine, updatedSince, pages, count: prs.length },
+        "gh graphql prs updated since"
+    );
+    return { prs: prs.slice(0, limit), error: null, warnings };
 }
 
 function ghMergeable(raw: string | null): Mergeable | null {
@@ -396,7 +574,9 @@ export function parseGhPrView(json: string): PrDetail {
                 sha: str(commit.oid) ?? "",
                 title: str(commit.messageHeadline) ?? "",
                 author: firstAuthor ? (str(firstAuthor.login) ?? str(firstAuthor.name)) : null,
+                authorLogin: firstAuthor ? str(firstAuthor.login) : null,
                 date: str(commit.committedDate) ?? str(commit.authoredDate),
+                body: str(commit.messageBody)?.trim() || null,
             };
         }),
         changedFiles: num(row.changedFiles),
@@ -445,6 +625,8 @@ function glabSummary(row: Record<string, unknown>, ciBySha: Map<string, CheckSta
     }
 
     const headSha = str(row.sha);
+    const sourceProject = num(row.source_project_id);
+    const targetProject = num(row.target_project_id);
     const headPipeline = isRecord(row.head_pipeline) ? row.head_pipeline : null;
     const ci = headPipeline ? glabPipelineStatus(headPipeline.status) : headSha ? (ciBySha.get(headSha) ?? null) : null;
 
@@ -468,6 +650,9 @@ function glabSummary(row: Record<string, unknown>, ciBySha: Map<string, CheckSta
         ci: toCi(ci),
         comments: num(row.user_notes_count),
         headSha,
+        crossRepository: sourceProject !== null && targetProject !== null && sourceProject !== targetProject,
+        // The MR row names the source project by id only; its path would cost another call.
+        headRepo: null,
     };
 }
 
@@ -512,6 +697,12 @@ function glabMergeable(row: Record<string, unknown>): Mergeable | null {
     }
 
     return status === "checking" || status === "unchecked" || status === "preparing" ? "unknown" : "mergeable";
+}
+
+/** GitLab's `message` repeats the title as its first line; the body is what follows it. */
+function glabCommitBody(message: string | null): string | null {
+    const newline = message?.indexOf("\n") ?? -1;
+    return message && newline >= 0 ? message.slice(newline + 1).trim() || null : null;
 }
 
 /**
@@ -562,7 +753,9 @@ export function parseGlabMrView({
                   sha: str(commit.id) ?? "",
                   title: str(commit.title) ?? "",
                   author: str(commit.author_name),
+                  authorLogin: null,
                   date: str(commit.committed_date) ?? str(commit.authored_date),
+                  body: glabCommitBody(str(commit.message)),
               }))
             : [],
         changedFiles,
@@ -645,12 +838,17 @@ export async function viewerLogin({
     }
 }
 
-/** Open (default), merged or all PRs/MRs of a project, most recently updated first. Read-only. */
+/**
+ * Open (default), merged or all PRs/MRs of a project. Read-only. `updatedSince` asks the host for
+ * only the PRs updated at or after that time, most recently updated first, so a date range is not
+ * limited to the newest `limit` PRs of all time.
+ */
 export async function listPrs({
     project,
     state = "open",
     mine = false,
     limit = 30,
+    updatedSince,
     cwd = process.cwd(),
     runner = spawnRunner,
 }: {
@@ -658,12 +856,17 @@ export async function listPrs({
     state?: PrListState;
     mine?: boolean;
     limit?: number;
+    updatedSince?: Date;
     cwd?: string;
     runner?: CommandRunner;
 }): Promise<PrListResult> {
     const warnings: string[] = [];
 
     try {
+        if (project.kind === "github" && updatedSince) {
+            return await listGhUpdatedSince({ project, state, mine, limit, updatedSince, cwd, runner });
+        }
+
         if (project.kind === "github") {
             const cmd = ["gh", "pr", "list", "--repo", ghRepoArg(project), "--state", state, "--limit", String(limit)];
 
@@ -679,7 +882,7 @@ export async function listPrs({
             }
 
             const prs = parseGhPrRows(res.stdout);
-            log.debug({ project: project.path, state, mine, count: prs.length }, "gh pr list");
+            log.debug({ project: project.path, state, mine, updatedSince, count: prs.length }, "gh pr list");
             return { prs, error: null, warnings };
         }
 
@@ -692,6 +895,10 @@ export async function listPrs({
 
         if (mine) {
             query.set("scope", "created_by_me");
+        }
+
+        if (updatedSince) {
+            query.set("updated_after", updatedSince.toISOString());
         }
 
         const [mrs, pipelines] = await Promise.all([
@@ -720,7 +927,7 @@ export async function listPrs({
         }
 
         const prs = parseGlabMrRows(mrs.stdout, ciBySha).slice(0, limit);
-        log.debug({ project: project.path, state, mine, count: prs.length, warnings }, "glab mr list");
+        log.debug({ project: project.path, state, mine, updatedSince, count: prs.length, warnings }, "glab mr list");
         return { prs, error: null, warnings };
     } catch (err) {
         log.debug({ err, project: project.path }, "pr list failed");

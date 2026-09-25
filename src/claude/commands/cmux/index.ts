@@ -3,7 +3,7 @@ import { focusCommand } from "./focus";
 import { openSessionCommand } from "./open-session";
 import { pinsCommand } from "./pins";
 import { restoreCommand } from "./restore";
-import { sendCommand } from "./send";
+import { type SendOptions, sendCommand } from "./send";
 import { forgetCommand, listCommand, snapshotCommand } from "./snapshot";
 import { treeCommand } from "./tree";
 
@@ -52,7 +52,9 @@ export function registerCmuxCommand(program: Command): void {
         .option("--enter-delay <ms>", "Wait this long between the text and Enter", "500")
         .option("--dry-run", "Print what would receive the text and stop")
         .option("--json", "Emit the outcome as JSON instead of a status line")
-        .action(sendCommand);
+        .action(async (query: string, text: string, opts: SendOptions) => {
+            await sendCommand(query, text, opts);
+        });
 
     cmux.command("snapshot [name]")
         .description("Save the currently-active sessions as a named set you can restore after a crash")

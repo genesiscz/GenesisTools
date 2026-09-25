@@ -1,5 +1,41 @@
 import { describe, expect, test } from "bun:test";
-import { buildLaunchArgs, cmuxPermissionArgs, passthroughHandlesSession } from "./start";
+import { buildLaunchArgs, cmuxPermissionArgs, passthroughHandlesSession, splitStartOperands } from "./start";
+
+describe("splitStartOperands", () => {
+    const argv = (...rest: string[]) => ["bun", "claude", "run", ...rest];
+
+    test("a name before -- is the account, the rest goes to claude", () => {
+        expect(
+            splitStartOperands({ name: "work", operands: ["work", "-p", "hi"], argv: argv("work", "--", "-p", "hi") })
+        ).toEqual({
+            nameArg: "work",
+            passthrough: ["-p", "hi"],
+        });
+    });
+
+    test("a prompt after -- with no name is passed through, never used as the account", () => {
+        expect(
+            splitStartOperands({ name: "fix the bug", operands: ["fix the bug"], argv: argv("--", "fix the bug") })
+        ).toEqual({
+            nameArg: undefined,
+            passthrough: ["fix the bug"],
+        });
+    });
+
+    test("a leading-dash operand is passthrough", () => {
+        expect(splitStartOperands({ name: "--foo", operands: ["--foo"], argv: argv("--", "--foo") })).toEqual({
+            nameArg: undefined,
+            passthrough: ["--foo"],
+        });
+    });
+
+    test("a name without -- keeps the old behaviour", () => {
+        expect(splitStartOperands({ name: "work", operands: ["work"], argv: argv("work", "-m", "opus") })).toEqual({
+            nameArg: "work",
+            passthrough: [],
+        });
+    });
+});
 
 describe("cmuxPermissionArgs", () => {
     test("injects the bypass because cmux claude-teams execs past the ccc wrapper", () => {

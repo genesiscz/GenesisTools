@@ -103,6 +103,7 @@
                 "src/dev-dashboard/ui/**",
                 "src/shops/ui/**",
                 "src/youtube/extension/**",
+                "src/browser-extension/extension/**",
                 "src/youtube/ui/**",
                 "src/Internal/commands/reas/ui/**",
                 "src/utils/logger/client.ts"

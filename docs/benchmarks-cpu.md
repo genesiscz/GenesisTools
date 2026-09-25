@@ -147,6 +147,103 @@ Positional dates name individual day files; `--from`/`--to` expand an inclusive 
 arm of the split form merges 2026-09-15 with the 16th before the fix, so read the per-day form
 for the clean before-arm.
 
+## 2026-09-24 18:32 — change-log sink cost in the PostToolUse hook
+
+Measured what `recordFileToolChange` (Edit/Write) and `recordBashEdits` (Bash) add to
+`src/agents/bin/hook-diff-post.ts`: sink off (no session id) against sink on (session id
+present), plus a second Bash pair that isolates the sink alone from the capture/render pipeline
+around it. Extends `scripts/benchmarks/hooks/hook-latency.ts`; the four original stages and
+their budgets are untouched.
+
+Command: `bun scripts/benchmarks/hooks/hook-latency.ts --runs 20 --json /tmp/hook-latency-changelog.json`
+
+`uptime` right before the run: `18:32  up 12 days, 1:55, 24 users, load averages: 11.90 12.10
+14.51`. This machine was carrying a load average around 11 to 14 during the whole run, well
+above a quiet baseline, so the absolute ms figures below are noisy. The deltas are the
+trustworthy signal, because every pair was measured interleaved (A, B, A, B, ...).
+
+Stages, median over 20 interleaved pairs with 3 warmup pairs discarded, wall time in ms
+(`/usr/bin/time -l` user/sys CPU alongside; its resolution is 10 ms, so treat those as
+approximate, not precise):
+
+- Edit, sink off (no session id): min 20.5, median 21.5, max 23.6; cpu user 10.0 / sys 0.0
+- Edit, sink on (session id present): min 32.1, median 33.0, max 35.1; cpu user 10.0 / sys 10.0
+- Bash `sed -i`, session absent (this also disables the whole capture/diff pipeline, not only
+  the sink): min 21.6, median 22.6, max 25.4; cpu user 10.0 / sys 0.0
+- Bash `sed -i`, session present (pipeline and sink both on): min 35.7, median 37.7, max 46.1;
+  cpu user 10.0 / sys 10.0
+- Bash, render only (`cat` on the watched file, `commandEditsFiles` false so the sink is
+  skipped, session present): min 28.2, median 30.6, max 61.5; cpu user 10.0 / sys 10.0
+- Bash, render plus sink (`sed -i` on the watched file, `commandEditsFiles` true, session
+  present): min 36.9, median 38.5, max 75.7; cpu user 20.0 / sys 10.0
+- Cold, fresh `GENESIS_TOOLS_HOME`, single sample, Edit sink on: 46.8 (first-ever call, pays
+  `git init --bare`)
+- Cold, fresh `GENESIS_TOOLS_HOME`, single sample, Bash render plus sink: 48.7 (same)
+
+Deltas:
+
+- Edit, sink on minus sink off: **11.5 ms**. Clean isolation: nothing else on the Edit/Write
+  path reads the session id, so this delta IS the sink's added cost.
+- Bash, session present minus absent: **15.1 ms**, but NOT a clean isolation. `runDiffPost`
+  itself needs a session id to build its capture directory (the `safeSegment(payload.sessionId)`
+  guard before `callDir` in `src/agents/lib/hooks/diff/run.ts`), so an absent session id skips the whole
+  capture/diff pipeline, not only the sink. This number answers "what does having no session id
+  save for Bash", not "what does the sink alone cost."
+- Bash, render plus sink minus render only: **7.9 ms**. This is the clean isolation for Bash:
+  both sides keep the session id and run the identical capture/render pipeline over the same
+  watched file (`cat` vs `sed -i` only changes whether `commandEditsFiles` reads true); the only
+  code that branches on that is `recordBashEdits` itself, so this delta IS the sink.
+
+Honest read: 8 to 12 ms per call is "a few ms," not a spike, and it fits inside the existing
+30 ms "post phase, no change" budget's headroom. It is not free either, and it does not come
+from a fixed constant: it scales with how many `git hash-object` spawns the call needs.
+
+Cost driver, steady state (this is NOT the one-time `git init --bare`, see below):
+- Edit/Write (`recordFileToolChange` -> `recordChange`, `src/agents/lib/changes/log.ts`) hashes
+  `before` and `after` as two SEPARATE `sink.hash()` calls: two unbatched `git hash-object -w
+  --stdin` process spawns per call. That lines up with its delta (11.5 ms) running roughly 1.4x
+  the Bash arm's single-spawn delta.
+- Bash (`recordBashEdits` -> `recordScriptedEdits` -> `prehashed`) batches every blob of one
+  call through ONE `git hash-object -w --stdin-paths` (`hashAll`), so a call touching 1 file
+  pays for exactly one spawn, not two.
+
+Cold start: the very first call against a fresh `GENESIS_TOOLS_HOME` additionally pays
+`ensureRepo`'s `git init --bare` (`src/agents/lib/changes/objects.ts:16-28`) on top of the
+steady-state cost above. Single-sample observations, not a confidence claim: Edit sink-on cold
+was 46.8 ms against a 33.0 ms warm median (about +14 ms for the one-time init); Bash render plus
+sink cold was 48.7 ms against a 38.5 ms warm median (about +10 ms). The interleaved measurements
+above are already warm by construction: each arm reuses one `GENESIS_TOOLS_HOME` across all 23
+calls per pair (3 discarded warmups plus 20 measured), so `git init --bare` runs once during a
+discarded warmup and never lands in the reported min/median/max.
+
+Controls, all 6 held:
+- Positive (session present): Edit sink on, Bash session-present, and Bash render-plus-sink each
+  left 23 rows (one per call, warmups included) in their session's `changes.jsonl`.
+- Negative (session absent, or `commandEditsFiles` false): Edit sink off, Bash session-absent,
+  and Bash render-only each left no session directory at all under their `GENESIS_TOOLS_HOME`.
+
+One existing, unrelated stage ran over its own budget during this run: "pre phase: guard plus
+capture" at 114.7 ms against its 110 ms budget. That stage and its budget are untouched by this
+work; the machine's load average (11 to 14) is the more likely explanation than a regression.
+
+## 2026-09-24 18:57 — Edit/Write hashing batched: sink cost 11.5 ms to 7.1 ms
+
+`recordFileToolEdit` now hands `before` and `after` to `prehashed()`, so an Edit or Write stores
+both blobs through ONE `git hash-object -w --stdin-paths` instead of two `--stdin` spawns (the
+driver named in the section above). The same run also carries the new `toolUseId` field on every
+row. Same command, same harness, 20 interleaved pairs, 3 warmups discarded.
+
+`uptime`: `18:57 up 12 days, 2:19, 25 users, load averages: 11.33 15.22 14.78` (still loaded).
+
+- Edit, sink off: min 23.3, median 24.8, max 30.5
+- Edit, sink on: min 29.7, median 31.8, max 87.4
+- Edit delta, sink on minus off: **7.1 ms** (was 11.5 ms). It now matches the Bash arm.
+- Bash, render plus sink minus render only: **7.7 ms** (was 7.9 ms; unchanged code, within noise).
+- Cold first call, fresh home: Edit 44.1, Bash 51.9 (single samples, `git init --bare` once).
+- All six positive and negative controls held again (23 rows on, no session directory off).
+
+Read: one `git` spawn per call is now the whole steady-state cost on both paths, about 7 ms.
+
 ## Rerunning
 
 ```bash
@@ -154,6 +251,7 @@ bun scripts/benchmarks/macos-resources/spawn-storm.ts --compare
 bun scripts/benchmarks/fs/tools-watch.ts --compare
 bun scripts/benchmarks/polls/agents-request-wait.ts --compare --runs 3
 bun scripts/benchmarks/statusline/current-statusline.ts --compare --command "tools ai statusline run --claude"
+bun scripts/benchmarks/hooks/hook-latency.ts --runs 20 --json /tmp/hook-latency.json
 
 # Startup and import cost (no baseline file: print, change, print again, note `uptime`)
 bun scripts/benchmarks/startup/cli-startup.ts "claude who" 7 bun src/claude/index.ts who --help
