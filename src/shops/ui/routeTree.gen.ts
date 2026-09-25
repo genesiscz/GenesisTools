@@ -9,113 +9,63 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
-import { Route as WorkspaceRouteImport } from './routes/workspace'
-import { Route as WatchlistRouteImport } from './routes/watchlist'
-import { Route as SettingsRouteImport } from './routes/settings'
-import { Route as RegisterRouteImport } from './routes/register'
-import { Route as ProvidersRouteImport } from './routes/providers'
-import { Route as OrdersRouteImport } from './routes/orders'
-import { Route as NotificationsRouteImport } from './routes/notifications'
-import { Route as LoginRouteImport } from './routes/login'
-import { Route as LiveRouteImport } from './routes/live'
-import { Route as CoverageRouteImport } from './routes/coverage'
-import { Route as CompareRouteImport } from './routes/compare'
-import { Route as BrowseRouteImport } from './routes/browse'
 import { Route as IndexRouteImport } from './routes/index'
-import { Route as MatchReviewRouteImport } from './routes/match.review'
-import { Route as MasterIdRouteImport } from './routes/master.$id'
-import { Route as ApiWatchlistRouteImport } from './routes/api/watchlist'
-import { Route as ApiSettingsRouteImport } from './routes/api/settings'
-import { Route as ApiSearchRouteImport } from './routes/api/search'
-import { Route as ApiNotificationsRouteImport } from './routes/api/notifications'
-import { Route as ApiMasterRouteImport } from './routes/api/master'
-import { Route as ApiEventsRouteImport } from './routes/api/events'
-import { Route as ApiDaemonRouteImport } from './routes/api/daemon'
-import { Route as ApiCoverageRouteImport } from './routes/api/coverage'
+import { Route as BrowseRouteImport } from './routes/browse'
+import { Route as CompareRouteImport } from './routes/compare'
+import { Route as CoverageRouteImport } from './routes/coverage'
+import { Route as LiveRouteImport } from './routes/live'
+import { Route as LoginRouteImport } from './routes/login'
+import { Route as NotificationsRouteImport } from './routes/notifications'
+import { Route as OrdersRouteImport } from './routes/orders'
+import { Route as ProvidersRouteImport } from './routes/providers'
+import { Route as RegisterRouteImport } from './routes/register'
+import { Route as SettingsRouteImport } from './routes/settings'
+import { Route as WatchlistRouteImport } from './routes/watchlist'
+import { Route as WorkspaceRouteImport } from './routes/workspace'
 import { Route as ApiCompareRouteImport } from './routes/api/compare'
-import { Route as ProductShopSlugRouteImport } from './routes/product.$shop.$slug'
-import { Route as ApiWatchlistBulkAddRouteImport } from './routes/api/watchlist.bulk-add'
-import { Route as ApiWatchlistAddRouteImport } from './routes/api/watchlist.add'
-import { Route as ApiProvidersUpdateRouteImport } from './routes/api/providers.update'
-import { Route as ApiProvidersSyncRouteImport } from './routes/api/providers.sync'
-import { Route as ApiProvidersListRouteImport } from './routes/api/providers.list'
-import { Route as ApiProvidersDisconnectRouteImport } from './routes/api/providers.disconnect'
-import { Route as ApiProvidersConnectRouteImport } from './routes/api/providers.connect'
-import { Route as ApiProvidersBackfillRouteImport } from './routes/api/providers.backfill'
-import { Route as ApiOrdersListRouteImport } from './routes/api/orders.list'
-import { Route as ApiMatchMyUnmatchedRouteImport } from './routes/api/match.my-unmatched'
-import { Route as ApiMatchCandidatesRouteImport } from './routes/api/match.candidates'
-import { Route as ApiMasterIdRouteImport } from './routes/api/master.$id'
-import { Route as ApiLiveEventsRouteImport } from './routes/api/live.events'
-import { Route as ApiInsightsSpendRouteImport } from './routes/api/insights.spend'
-import { Route as ApiInsightsSparklinesRouteImport } from './routes/api/insights.sparklines'
-import { Route as ApiInsightsRecurringRouteImport } from './routes/api/insights.recurring'
-import { Route as ApiAuthRegisterRouteImport } from './routes/api/auth.register'
-import { Route as ApiAuthMeRouteImport } from './routes/api/auth.me'
-import { Route as ApiAuthLogoutRouteImport } from './routes/api/auth.logout'
+import { Route as ApiCoverageRouteImport } from './routes/api/coverage'
+import { Route as ApiDaemonRouteImport } from './routes/api/daemon'
+import { Route as ApiEventsRouteImport } from './routes/api/events'
+import { Route as ApiMasterRouteImport } from './routes/api/master'
+import { Route as ApiNotificationsRouteImport } from './routes/api/notifications'
+import { Route as ApiSearchRouteImport } from './routes/api/search'
+import { Route as ApiSettingsRouteImport } from './routes/api/settings'
+import { Route as ApiWatchlistRouteImport } from './routes/api/watchlist'
+import { Route as MasterIdRouteImport } from './routes/master.$id'
+import { Route as MatchReviewRouteImport } from './routes/match.review'
 import { Route as ApiAuthLoginRouteImport } from './routes/api/auth.login'
-import { Route as ApiWatchlistIdEditRouteImport } from './routes/api/watchlist.$id.edit'
-import { Route as ApiWatchlistIdDeleteRouteImport } from './routes/api/watchlist.$id.delete'
-import { Route as ApiProductShopSlugRouteImport } from './routes/api/product.$shop.$slug'
-import { Route as ApiNotificationsIdAckRouteImport } from './routes/api/notifications.$id.ack'
-import { Route as ApiMatchMyUnmatchedAttachRouteImport } from './routes/api/match.my-unmatched.attach'
-import { Route as ApiMatchCandidateRejectRouteImport } from './routes/api/match.$candidate.reject'
-import { Route as ApiMatchCandidateAcceptRouteImport } from './routes/api/match.$candidate.accept'
+import { Route as ApiAuthLogoutRouteImport } from './routes/api/auth.logout'
+import { Route as ApiAuthMeRouteImport } from './routes/api/auth.me'
+import { Route as ApiAuthRegisterRouteImport } from './routes/api/auth.register'
+import { Route as ApiInsightsRecurringRouteImport } from './routes/api/insights.recurring'
+import { Route as ApiInsightsSparklinesRouteImport } from './routes/api/insights.sparklines'
+import { Route as ApiInsightsSpendRouteImport } from './routes/api/insights.spend'
+import { Route as ApiLiveEventsRouteImport } from './routes/api/live.events'
+import { Route as ApiMasterIdRouteImport } from './routes/api/master.$id'
+import { Route as ApiMatchCandidatesRouteImport } from './routes/api/match.candidates'
+import { Route as ApiMatchMyUnmatchedRouteImport } from './routes/api/match.my-unmatched'
+import { Route as ApiOrdersListRouteImport } from './routes/api/orders.list'
+import { Route as ApiProvidersBackfillRouteImport } from './routes/api/providers.backfill'
+import { Route as ApiProvidersConnectRouteImport } from './routes/api/providers.connect'
+import { Route as ApiProvidersDisconnectRouteImport } from './routes/api/providers.disconnect'
+import { Route as ApiProvidersListRouteImport } from './routes/api/providers.list'
+import { Route as ApiProvidersSyncRouteImport } from './routes/api/providers.sync'
+import { Route as ApiProvidersUpdateRouteImport } from './routes/api/providers.update'
+import { Route as ApiWatchlistAddRouteImport } from './routes/api/watchlist.add'
+import { Route as ApiWatchlistBulkAddRouteImport } from './routes/api/watchlist.bulk-add'
+import { Route as ProductShopSlugRouteImport } from './routes/product.$shop.$slug'
 import { Route as ApiMasterIdHistoryRouteImport } from './routes/api/master.$id.history'
+import { Route as ApiMatchCandidateAcceptRouteImport } from './routes/api/match.$candidate.accept'
+import { Route as ApiMatchCandidateRejectRouteImport } from './routes/api/match.$candidate.reject'
+import { Route as ApiMatchMyUnmatchedAttachRouteImport } from './routes/api/match.my-unmatched.attach'
+import { Route as ApiNotificationsIdAckRouteImport } from './routes/api/notifications.$id.ack'
+import { Route as ApiProductShopSlugRouteImport } from './routes/api/product.$shop.$slug'
+import { Route as ApiWatchlistIdDeleteRouteImport } from './routes/api/watchlist.$id.delete'
+import { Route as ApiWatchlistIdEditRouteImport } from './routes/api/watchlist.$id.edit'
 
-const WorkspaceRoute = WorkspaceRouteImport.update({
-  id: '/workspace',
-  path: '/workspace',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const WatchlistRoute = WatchlistRouteImport.update({
-  id: '/watchlist',
-  path: '/watchlist',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const SettingsRoute = SettingsRouteImport.update({
-  id: '/settings',
-  path: '/settings',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const RegisterRoute = RegisterRouteImport.update({
-  id: '/register',
-  path: '/register',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ProvidersRoute = ProvidersRouteImport.update({
-  id: '/providers',
-  path: '/providers',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const OrdersRoute = OrdersRouteImport.update({
-  id: '/orders',
-  path: '/orders',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const NotificationsRoute = NotificationsRouteImport.update({
-  id: '/notifications',
-  path: '/notifications',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const LoginRoute = LoginRouteImport.update({
-  id: '/login',
-  path: '/login',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const LiveRoute = LiveRouteImport.update({
-  id: '/live',
-  path: '/live',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const CoverageRoute = CoverageRouteImport.update({
-  id: '/coverage',
-  path: '/coverage',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const CompareRoute = CompareRouteImport.update({
-  id: '/compare',
-  path: '/compare',
+const IndexRoute = IndexRouteImport.update({
+  id: '/',
+  path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
 const BrowseRoute = BrowseRouteImport.update({
@@ -123,59 +73,59 @@ const BrowseRoute = BrowseRouteImport.update({
   path: '/browse',
   getParentRoute: () => rootRouteImport,
 } as any)
-const IndexRoute = IndexRouteImport.update({
-  id: '/',
-  path: '/',
+const CompareRoute = CompareRouteImport.update({
+  id: '/compare',
+  path: '/compare',
   getParentRoute: () => rootRouteImport,
 } as any)
-const MatchReviewRoute = MatchReviewRouteImport.update({
-  id: '/match/review',
-  path: '/match/review',
+const CoverageRoute = CoverageRouteImport.update({
+  id: '/coverage',
+  path: '/coverage',
   getParentRoute: () => rootRouteImport,
 } as any)
-const MasterIdRoute = MasterIdRouteImport.update({
-  id: '/master/$id',
-  path: '/master/$id',
+const LiveRoute = LiveRouteImport.update({
+  id: '/live',
+  path: '/live',
   getParentRoute: () => rootRouteImport,
 } as any)
-const ApiWatchlistRoute = ApiWatchlistRouteImport.update({
-  id: '/api/watchlist',
-  path: '/api/watchlist',
+const LoginRoute = LoginRouteImport.update({
+  id: '/login',
+  path: '/login',
   getParentRoute: () => rootRouteImport,
 } as any)
-const ApiSettingsRoute = ApiSettingsRouteImport.update({
-  id: '/api/settings',
-  path: '/api/settings',
+const NotificationsRoute = NotificationsRouteImport.update({
+  id: '/notifications',
+  path: '/notifications',
   getParentRoute: () => rootRouteImport,
 } as any)
-const ApiSearchRoute = ApiSearchRouteImport.update({
-  id: '/api/search',
-  path: '/api/search',
+const OrdersRoute = OrdersRouteImport.update({
+  id: '/orders',
+  path: '/orders',
   getParentRoute: () => rootRouteImport,
 } as any)
-const ApiNotificationsRoute = ApiNotificationsRouteImport.update({
-  id: '/api/notifications',
-  path: '/api/notifications',
+const ProvidersRoute = ProvidersRouteImport.update({
+  id: '/providers',
+  path: '/providers',
   getParentRoute: () => rootRouteImport,
 } as any)
-const ApiMasterRoute = ApiMasterRouteImport.update({
-  id: '/api/master',
-  path: '/api/master',
+const RegisterRoute = RegisterRouteImport.update({
+  id: '/register',
+  path: '/register',
   getParentRoute: () => rootRouteImport,
 } as any)
-const ApiEventsRoute = ApiEventsRouteImport.update({
-  id: '/api/events',
-  path: '/api/events',
+const SettingsRoute = SettingsRouteImport.update({
+  id: '/settings',
+  path: '/settings',
   getParentRoute: () => rootRouteImport,
 } as any)
-const ApiDaemonRoute = ApiDaemonRouteImport.update({
-  id: '/api/daemon',
-  path: '/api/daemon',
+const WatchlistRoute = WatchlistRouteImport.update({
+  id: '/watchlist',
+  path: '/watchlist',
   getParentRoute: () => rootRouteImport,
 } as any)
-const ApiCoverageRoute = ApiCoverageRouteImport.update({
-  id: '/api/coverage',
-  path: '/api/coverage',
+const WorkspaceRoute = WorkspaceRouteImport.update({
+  id: '/workspace',
+  path: '/workspace',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApiCompareRoute = ApiCompareRouteImport.update({
@@ -183,104 +133,54 @@ const ApiCompareRoute = ApiCompareRouteImport.update({
   path: '/api/compare',
   getParentRoute: () => rootRouteImport,
 } as any)
-const ProductShopSlugRoute = ProductShopSlugRouteImport.update({
-  id: '/product/$shop/$slug',
-  path: '/product/$shop/$slug',
+const ApiCoverageRoute = ApiCoverageRouteImport.update({
+  id: '/api/coverage',
+  path: '/api/coverage',
   getParentRoute: () => rootRouteImport,
 } as any)
-const ApiWatchlistBulkAddRoute = ApiWatchlistBulkAddRouteImport.update({
-  id: '/bulk-add',
-  path: '/bulk-add',
-  getParentRoute: () => ApiWatchlistRoute,
-} as any)
-const ApiWatchlistAddRoute = ApiWatchlistAddRouteImport.update({
-  id: '/add',
-  path: '/add',
-  getParentRoute: () => ApiWatchlistRoute,
-} as any)
-const ApiProvidersUpdateRoute = ApiProvidersUpdateRouteImport.update({
-  id: '/api/providers/update',
-  path: '/api/providers/update',
+const ApiDaemonRoute = ApiDaemonRouteImport.update({
+  id: '/api/daemon',
+  path: '/api/daemon',
   getParentRoute: () => rootRouteImport,
 } as any)
-const ApiProvidersSyncRoute = ApiProvidersSyncRouteImport.update({
-  id: '/api/providers/sync',
-  path: '/api/providers/sync',
+const ApiEventsRoute = ApiEventsRouteImport.update({
+  id: '/api/events',
+  path: '/api/events',
   getParentRoute: () => rootRouteImport,
 } as any)
-const ApiProvidersListRoute = ApiProvidersListRouteImport.update({
-  id: '/api/providers/list',
-  path: '/api/providers/list',
+const ApiMasterRoute = ApiMasterRouteImport.update({
+  id: '/api/master',
+  path: '/api/master',
   getParentRoute: () => rootRouteImport,
 } as any)
-const ApiProvidersDisconnectRoute = ApiProvidersDisconnectRouteImport.update({
-  id: '/api/providers/disconnect',
-  path: '/api/providers/disconnect',
+const ApiNotificationsRoute = ApiNotificationsRouteImport.update({
+  id: '/api/notifications',
+  path: '/api/notifications',
   getParentRoute: () => rootRouteImport,
 } as any)
-const ApiProvidersConnectRoute = ApiProvidersConnectRouteImport.update({
-  id: '/api/providers/connect',
-  path: '/api/providers/connect',
+const ApiSearchRoute = ApiSearchRouteImport.update({
+  id: '/api/search',
+  path: '/api/search',
   getParentRoute: () => rootRouteImport,
 } as any)
-const ApiProvidersBackfillRoute = ApiProvidersBackfillRouteImport.update({
-  id: '/api/providers/backfill',
-  path: '/api/providers/backfill',
+const ApiSettingsRoute = ApiSettingsRouteImport.update({
+  id: '/api/settings',
+  path: '/api/settings',
   getParentRoute: () => rootRouteImport,
 } as any)
-const ApiOrdersListRoute = ApiOrdersListRouteImport.update({
-  id: '/api/orders/list',
-  path: '/api/orders/list',
+const ApiWatchlistRoute = ApiWatchlistRouteImport.update({
+  id: '/api/watchlist',
+  path: '/api/watchlist',
   getParentRoute: () => rootRouteImport,
 } as any)
-const ApiMatchMyUnmatchedRoute = ApiMatchMyUnmatchedRouteImport.update({
-  id: '/api/match/my-unmatched',
-  path: '/api/match/my-unmatched',
+const MasterIdRoute = MasterIdRouteImport.update({
+  id: '/master/$id',
+  path: '/master/$id',
   getParentRoute: () => rootRouteImport,
 } as any)
-const ApiMatchCandidatesRoute = ApiMatchCandidatesRouteImport.update({
-  id: '/api/match/candidates',
-  path: '/api/match/candidates',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ApiMasterIdRoute = ApiMasterIdRouteImport.update({
-  id: '/$id',
-  path: '/$id',
-  getParentRoute: () => ApiMasterRoute,
-} as any)
-const ApiLiveEventsRoute = ApiLiveEventsRouteImport.update({
-  id: '/api/live/events',
-  path: '/api/live/events',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ApiInsightsSpendRoute = ApiInsightsSpendRouteImport.update({
-  id: '/api/insights/spend',
-  path: '/api/insights/spend',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ApiInsightsSparklinesRoute = ApiInsightsSparklinesRouteImport.update({
-  id: '/api/insights/sparklines',
-  path: '/api/insights/sparklines',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ApiInsightsRecurringRoute = ApiInsightsRecurringRouteImport.update({
-  id: '/api/insights/recurring',
-  path: '/api/insights/recurring',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ApiAuthRegisterRoute = ApiAuthRegisterRouteImport.update({
-  id: '/api/auth/register',
-  path: '/api/auth/register',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ApiAuthMeRoute = ApiAuthMeRouteImport.update({
-  id: '/api/auth/me',
-  path: '/api/auth/me',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ApiAuthLogoutRoute = ApiAuthLogoutRouteImport.update({
-  id: '/api/auth/logout',
-  path: '/api/auth/logout',
+const MatchReviewRoute = MatchReviewRouteImport.update({
+  id: '/match/review',
+  path: '/match/review',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApiAuthLoginRoute = ApiAuthLoginRouteImport.update({
@@ -288,25 +188,120 @@ const ApiAuthLoginRoute = ApiAuthLoginRouteImport.update({
   path: '/api/auth/login',
   getParentRoute: () => rootRouteImport,
 } as any)
-const ApiWatchlistIdEditRoute = ApiWatchlistIdEditRouteImport.update({
-  id: '/$id/edit',
-  path: '/$id/edit',
-  getParentRoute: () => ApiWatchlistRoute,
-} as any)
-const ApiWatchlistIdDeleteRoute = ApiWatchlistIdDeleteRouteImport.update({
-  id: '/$id/delete',
-  path: '/$id/delete',
-  getParentRoute: () => ApiWatchlistRoute,
-} as any)
-const ApiProductShopSlugRoute = ApiProductShopSlugRouteImport.update({
-  id: '/api/product/$shop/$slug',
-  path: '/api/product/$shop/$slug',
+const ApiAuthLogoutRoute = ApiAuthLogoutRouteImport.update({
+  id: '/api/auth/logout',
+  path: '/api/auth/logout',
   getParentRoute: () => rootRouteImport,
 } as any)
-const ApiNotificationsIdAckRoute = ApiNotificationsIdAckRouteImport.update({
-  id: '/$id/ack',
-  path: '/$id/ack',
-  getParentRoute: () => ApiNotificationsRoute,
+const ApiAuthMeRoute = ApiAuthMeRouteImport.update({
+  id: '/api/auth/me',
+  path: '/api/auth/me',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiAuthRegisterRoute = ApiAuthRegisterRouteImport.update({
+  id: '/api/auth/register',
+  path: '/api/auth/register',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiInsightsRecurringRoute = ApiInsightsRecurringRouteImport.update({
+  id: '/api/insights/recurring',
+  path: '/api/insights/recurring',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiInsightsSparklinesRoute = ApiInsightsSparklinesRouteImport.update({
+  id: '/api/insights/sparklines',
+  path: '/api/insights/sparklines',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiInsightsSpendRoute = ApiInsightsSpendRouteImport.update({
+  id: '/api/insights/spend',
+  path: '/api/insights/spend',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiLiveEventsRoute = ApiLiveEventsRouteImport.update({
+  id: '/api/live/events',
+  path: '/api/live/events',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiMasterIdRoute = ApiMasterIdRouteImport.update({
+  id: '/$id',
+  path: '/$id',
+  getParentRoute: () => ApiMasterRoute,
+} as any)
+const ApiMatchCandidatesRoute = ApiMatchCandidatesRouteImport.update({
+  id: '/api/match/candidates',
+  path: '/api/match/candidates',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiMatchMyUnmatchedRoute = ApiMatchMyUnmatchedRouteImport.update({
+  id: '/api/match/my-unmatched',
+  path: '/api/match/my-unmatched',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiOrdersListRoute = ApiOrdersListRouteImport.update({
+  id: '/api/orders/list',
+  path: '/api/orders/list',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiProvidersBackfillRoute = ApiProvidersBackfillRouteImport.update({
+  id: '/api/providers/backfill',
+  path: '/api/providers/backfill',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiProvidersConnectRoute = ApiProvidersConnectRouteImport.update({
+  id: '/api/providers/connect',
+  path: '/api/providers/connect',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiProvidersDisconnectRoute = ApiProvidersDisconnectRouteImport.update({
+  id: '/api/providers/disconnect',
+  path: '/api/providers/disconnect',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiProvidersListRoute = ApiProvidersListRouteImport.update({
+  id: '/api/providers/list',
+  path: '/api/providers/list',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiProvidersSyncRoute = ApiProvidersSyncRouteImport.update({
+  id: '/api/providers/sync',
+  path: '/api/providers/sync',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiProvidersUpdateRoute = ApiProvidersUpdateRouteImport.update({
+  id: '/api/providers/update',
+  path: '/api/providers/update',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiWatchlistAddRoute = ApiWatchlistAddRouteImport.update({
+  id: '/add',
+  path: '/add',
+  getParentRoute: () => ApiWatchlistRoute,
+} as any)
+const ApiWatchlistBulkAddRoute = ApiWatchlistBulkAddRouteImport.update({
+  id: '/bulk-add',
+  path: '/bulk-add',
+  getParentRoute: () => ApiWatchlistRoute,
+} as any)
+const ProductShopSlugRoute = ProductShopSlugRouteImport.update({
+  id: '/product/$shop/$slug',
+  path: '/product/$shop/$slug',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiMasterIdHistoryRoute = ApiMasterIdHistoryRouteImport.update({
+  id: '/history',
+  path: '/history',
+  getParentRoute: () => ApiMasterIdRoute,
+} as any)
+const ApiMatchCandidateAcceptRoute = ApiMatchCandidateAcceptRouteImport.update({
+  id: '/api/match/$candidate/accept',
+  path: '/api/match/$candidate/accept',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiMatchCandidateRejectRoute = ApiMatchCandidateRejectRouteImport.update({
+  id: '/api/match/$candidate/reject',
+  path: '/api/match/$candidate/reject',
+  getParentRoute: () => rootRouteImport,
 } as any)
 const ApiMatchMyUnmatchedAttachRoute =
   ApiMatchMyUnmatchedAttachRouteImport.update({
@@ -314,20 +309,25 @@ const ApiMatchMyUnmatchedAttachRoute =
     path: '/attach',
     getParentRoute: () => ApiMatchMyUnmatchedRoute,
   } as any)
-const ApiMatchCandidateRejectRoute = ApiMatchCandidateRejectRouteImport.update({
-  id: '/api/match/$candidate/reject',
-  path: '/api/match/$candidate/reject',
+const ApiNotificationsIdAckRoute = ApiNotificationsIdAckRouteImport.update({
+  id: '/$id/ack',
+  path: '/$id/ack',
+  getParentRoute: () => ApiNotificationsRoute,
+} as any)
+const ApiProductShopSlugRoute = ApiProductShopSlugRouteImport.update({
+  id: '/api/product/$shop/$slug',
+  path: '/api/product/$shop/$slug',
   getParentRoute: () => rootRouteImport,
 } as any)
-const ApiMatchCandidateAcceptRoute = ApiMatchCandidateAcceptRouteImport.update({
-  id: '/api/match/$candidate/accept',
-  path: '/api/match/$candidate/accept',
-  getParentRoute: () => rootRouteImport,
+const ApiWatchlistIdDeleteRoute = ApiWatchlistIdDeleteRouteImport.update({
+  id: '/$id/delete',
+  path: '/$id/delete',
+  getParentRoute: () => ApiWatchlistRoute,
 } as any)
-const ApiMasterIdHistoryRoute = ApiMasterIdHistoryRouteImport.update({
-  id: '/history',
-  path: '/history',
-  getParentRoute: () => ApiMasterIdRoute,
+const ApiWatchlistIdEditRoute = ApiWatchlistIdEditRouteImport.update({
+  id: '/$id/edit',
+  path: '/$id/edit',
+  getParentRoute: () => ApiWatchlistRoute,
 } as any)
 
 export interface FileRoutesByFullPath {
@@ -714,81 +714,11 @@ export interface RootRouteChildren {
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
-    '/workspace': {
-      id: '/workspace'
-      path: '/workspace'
-      fullPath: '/workspace'
-      preLoaderRoute: typeof WorkspaceRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/watchlist': {
-      id: '/watchlist'
-      path: '/watchlist'
-      fullPath: '/watchlist'
-      preLoaderRoute: typeof WatchlistRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/settings': {
-      id: '/settings'
-      path: '/settings'
-      fullPath: '/settings'
-      preLoaderRoute: typeof SettingsRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/register': {
-      id: '/register'
-      path: '/register'
-      fullPath: '/register'
-      preLoaderRoute: typeof RegisterRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/providers': {
-      id: '/providers'
-      path: '/providers'
-      fullPath: '/providers'
-      preLoaderRoute: typeof ProvidersRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/orders': {
-      id: '/orders'
-      path: '/orders'
-      fullPath: '/orders'
-      preLoaderRoute: typeof OrdersRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/notifications': {
-      id: '/notifications'
-      path: '/notifications'
-      fullPath: '/notifications'
-      preLoaderRoute: typeof NotificationsRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/login': {
-      id: '/login'
-      path: '/login'
-      fullPath: '/login'
-      preLoaderRoute: typeof LoginRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/live': {
-      id: '/live'
-      path: '/live'
-      fullPath: '/live'
-      preLoaderRoute: typeof LiveRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/coverage': {
-      id: '/coverage'
-      path: '/coverage'
-      fullPath: '/coverage'
-      preLoaderRoute: typeof CoverageRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/compare': {
-      id: '/compare'
-      path: '/compare'
-      fullPath: '/compare'
-      preLoaderRoute: typeof CompareRouteImport
+    '/': {
+      id: '/'
+      path: '/'
+      fullPath: '/'
+      preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/browse': {
@@ -798,81 +728,81 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof BrowseRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/': {
-      id: '/'
-      path: '/'
-      fullPath: '/'
-      preLoaderRoute: typeof IndexRouteImport
+    '/compare': {
+      id: '/compare'
+      path: '/compare'
+      fullPath: '/compare'
+      preLoaderRoute: typeof CompareRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/match/review': {
-      id: '/match/review'
-      path: '/match/review'
-      fullPath: '/match/review'
-      preLoaderRoute: typeof MatchReviewRouteImport
+    '/coverage': {
+      id: '/coverage'
+      path: '/coverage'
+      fullPath: '/coverage'
+      preLoaderRoute: typeof CoverageRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/master/$id': {
-      id: '/master/$id'
-      path: '/master/$id'
-      fullPath: '/master/$id'
-      preLoaderRoute: typeof MasterIdRouteImport
+    '/live': {
+      id: '/live'
+      path: '/live'
+      fullPath: '/live'
+      preLoaderRoute: typeof LiveRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/api/watchlist': {
-      id: '/api/watchlist'
-      path: '/api/watchlist'
-      fullPath: '/api/watchlist'
-      preLoaderRoute: typeof ApiWatchlistRouteImport
+    '/login': {
+      id: '/login'
+      path: '/login'
+      fullPath: '/login'
+      preLoaderRoute: typeof LoginRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/api/settings': {
-      id: '/api/settings'
-      path: '/api/settings'
-      fullPath: '/api/settings'
-      preLoaderRoute: typeof ApiSettingsRouteImport
+    '/notifications': {
+      id: '/notifications'
+      path: '/notifications'
+      fullPath: '/notifications'
+      preLoaderRoute: typeof NotificationsRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/api/search': {
-      id: '/api/search'
-      path: '/api/search'
-      fullPath: '/api/search'
-      preLoaderRoute: typeof ApiSearchRouteImport
+    '/orders': {
+      id: '/orders'
+      path: '/orders'
+      fullPath: '/orders'
+      preLoaderRoute: typeof OrdersRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/api/notifications': {
-      id: '/api/notifications'
-      path: '/api/notifications'
-      fullPath: '/api/notifications'
-      preLoaderRoute: typeof ApiNotificationsRouteImport
+    '/providers': {
+      id: '/providers'
+      path: '/providers'
+      fullPath: '/providers'
+      preLoaderRoute: typeof ProvidersRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/api/master': {
-      id: '/api/master'
-      path: '/api/master'
-      fullPath: '/api/master'
-      preLoaderRoute: typeof ApiMasterRouteImport
+    '/register': {
+      id: '/register'
+      path: '/register'
+      fullPath: '/register'
+      preLoaderRoute: typeof RegisterRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/api/events': {
-      id: '/api/events'
-      path: '/api/events'
-      fullPath: '/api/events'
-      preLoaderRoute: typeof ApiEventsRouteImport
+    '/settings': {
+      id: '/settings'
+      path: '/settings'
+      fullPath: '/settings'
+      preLoaderRoute: typeof SettingsRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/api/daemon': {
-      id: '/api/daemon'
-      path: '/api/daemon'
-      fullPath: '/api/daemon'
-      preLoaderRoute: typeof ApiDaemonRouteImport
+    '/watchlist': {
+      id: '/watchlist'
+      path: '/watchlist'
+      fullPath: '/watchlist'
+      preLoaderRoute: typeof WatchlistRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/api/coverage': {
-      id: '/api/coverage'
-      path: '/api/coverage'
-      fullPath: '/api/coverage'
-      preLoaderRoute: typeof ApiCoverageRouteImport
+    '/workspace': {
+      id: '/workspace'
+      path: '/workspace'
+      fullPath: '/workspace'
+      preLoaderRoute: typeof WorkspaceRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/compare': {
@@ -882,144 +812,74 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiCompareRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/product/$shop/$slug': {
-      id: '/product/$shop/$slug'
-      path: '/product/$shop/$slug'
-      fullPath: '/product/$shop/$slug'
-      preLoaderRoute: typeof ProductShopSlugRouteImport
+    '/api/coverage': {
+      id: '/api/coverage'
+      path: '/api/coverage'
+      fullPath: '/api/coverage'
+      preLoaderRoute: typeof ApiCoverageRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/api/watchlist/bulk-add': {
-      id: '/api/watchlist/bulk-add'
-      path: '/bulk-add'
-      fullPath: '/api/watchlist/bulk-add'
-      preLoaderRoute: typeof ApiWatchlistBulkAddRouteImport
-      parentRoute: typeof ApiWatchlistRoute
-    }
-    '/api/watchlist/add': {
-      id: '/api/watchlist/add'
-      path: '/add'
-      fullPath: '/api/watchlist/add'
-      preLoaderRoute: typeof ApiWatchlistAddRouteImport
-      parentRoute: typeof ApiWatchlistRoute
-    }
-    '/api/providers/update': {
-      id: '/api/providers/update'
-      path: '/api/providers/update'
-      fullPath: '/api/providers/update'
-      preLoaderRoute: typeof ApiProvidersUpdateRouteImport
+    '/api/daemon': {
+      id: '/api/daemon'
+      path: '/api/daemon'
+      fullPath: '/api/daemon'
+      preLoaderRoute: typeof ApiDaemonRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/api/providers/sync': {
-      id: '/api/providers/sync'
-      path: '/api/providers/sync'
-      fullPath: '/api/providers/sync'
-      preLoaderRoute: typeof ApiProvidersSyncRouteImport
+    '/api/events': {
+      id: '/api/events'
+      path: '/api/events'
+      fullPath: '/api/events'
+      preLoaderRoute: typeof ApiEventsRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/api/providers/list': {
-      id: '/api/providers/list'
-      path: '/api/providers/list'
-      fullPath: '/api/providers/list'
-      preLoaderRoute: typeof ApiProvidersListRouteImport
+    '/api/master': {
+      id: '/api/master'
+      path: '/api/master'
+      fullPath: '/api/master'
+      preLoaderRoute: typeof ApiMasterRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/api/providers/disconnect': {
-      id: '/api/providers/disconnect'
-      path: '/api/providers/disconnect'
-      fullPath: '/api/providers/disconnect'
-      preLoaderRoute: typeof ApiProvidersDisconnectRouteImport
+    '/api/notifications': {
+      id: '/api/notifications'
+      path: '/api/notifications'
+      fullPath: '/api/notifications'
+      preLoaderRoute: typeof ApiNotificationsRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/api/providers/connect': {
-      id: '/api/providers/connect'
-      path: '/api/providers/connect'
-      fullPath: '/api/providers/connect'
-      preLoaderRoute: typeof ApiProvidersConnectRouteImport
+    '/api/search': {
+      id: '/api/search'
+      path: '/api/search'
+      fullPath: '/api/search'
+      preLoaderRoute: typeof ApiSearchRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/api/providers/backfill': {
-      id: '/api/providers/backfill'
-      path: '/api/providers/backfill'
-      fullPath: '/api/providers/backfill'
-      preLoaderRoute: typeof ApiProvidersBackfillRouteImport
+    '/api/settings': {
+      id: '/api/settings'
+      path: '/api/settings'
+      fullPath: '/api/settings'
+      preLoaderRoute: typeof ApiSettingsRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/api/orders/list': {
-      id: '/api/orders/list'
-      path: '/api/orders/list'
-      fullPath: '/api/orders/list'
-      preLoaderRoute: typeof ApiOrdersListRouteImport
+    '/api/watchlist': {
+      id: '/api/watchlist'
+      path: '/api/watchlist'
+      fullPath: '/api/watchlist'
+      preLoaderRoute: typeof ApiWatchlistRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/api/match/my-unmatched': {
-      id: '/api/match/my-unmatched'
-      path: '/api/match/my-unmatched'
-      fullPath: '/api/match/my-unmatched'
-      preLoaderRoute: typeof ApiMatchMyUnmatchedRouteImport
+    '/master/$id': {
+      id: '/master/$id'
+      path: '/master/$id'
+      fullPath: '/master/$id'
+      preLoaderRoute: typeof MasterIdRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/api/match/candidates': {
-      id: '/api/match/candidates'
-      path: '/api/match/candidates'
-      fullPath: '/api/match/candidates'
-      preLoaderRoute: typeof ApiMatchCandidatesRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/api/master/$id': {
-      id: '/api/master/$id'
-      path: '/$id'
-      fullPath: '/api/master/$id'
-      preLoaderRoute: typeof ApiMasterIdRouteImport
-      parentRoute: typeof ApiMasterRoute
-    }
-    '/api/live/events': {
-      id: '/api/live/events'
-      path: '/api/live/events'
-      fullPath: '/api/live/events'
-      preLoaderRoute: typeof ApiLiveEventsRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/api/insights/spend': {
-      id: '/api/insights/spend'
-      path: '/api/insights/spend'
-      fullPath: '/api/insights/spend'
-      preLoaderRoute: typeof ApiInsightsSpendRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/api/insights/sparklines': {
-      id: '/api/insights/sparklines'
-      path: '/api/insights/sparklines'
-      fullPath: '/api/insights/sparklines'
-      preLoaderRoute: typeof ApiInsightsSparklinesRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/api/insights/recurring': {
-      id: '/api/insights/recurring'
-      path: '/api/insights/recurring'
-      fullPath: '/api/insights/recurring'
-      preLoaderRoute: typeof ApiInsightsRecurringRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/api/auth/register': {
-      id: '/api/auth/register'
-      path: '/api/auth/register'
-      fullPath: '/api/auth/register'
-      preLoaderRoute: typeof ApiAuthRegisterRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/api/auth/me': {
-      id: '/api/auth/me'
-      path: '/api/auth/me'
-      fullPath: '/api/auth/me'
-      preLoaderRoute: typeof ApiAuthMeRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/api/auth/logout': {
-      id: '/api/auth/logout'
-      path: '/api/auth/logout'
-      fullPath: '/api/auth/logout'
-      preLoaderRoute: typeof ApiAuthLogoutRouteImport
+    '/match/review': {
+      id: '/match/review'
+      path: '/match/review'
+      fullPath: '/match/review'
+      preLoaderRoute: typeof MatchReviewRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/auth/login': {
@@ -1029,53 +889,144 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiAuthLoginRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/api/watchlist/$id/edit': {
-      id: '/api/watchlist/$id/edit'
-      path: '/$id/edit'
-      fullPath: '/api/watchlist/$id/edit'
-      preLoaderRoute: typeof ApiWatchlistIdEditRouteImport
-      parentRoute: typeof ApiWatchlistRoute
-    }
-    '/api/watchlist/$id/delete': {
-      id: '/api/watchlist/$id/delete'
-      path: '/$id/delete'
-      fullPath: '/api/watchlist/$id/delete'
-      preLoaderRoute: typeof ApiWatchlistIdDeleteRouteImport
-      parentRoute: typeof ApiWatchlistRoute
-    }
-    '/api/product/$shop/$slug': {
-      id: '/api/product/$shop/$slug'
-      path: '/api/product/$shop/$slug'
-      fullPath: '/api/product/$shop/$slug'
-      preLoaderRoute: typeof ApiProductShopSlugRouteImport
+    '/api/auth/logout': {
+      id: '/api/auth/logout'
+      path: '/api/auth/logout'
+      fullPath: '/api/auth/logout'
+      preLoaderRoute: typeof ApiAuthLogoutRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/api/notifications/$id/ack': {
-      id: '/api/notifications/$id/ack'
-      path: '/$id/ack'
-      fullPath: '/api/notifications/$id/ack'
-      preLoaderRoute: typeof ApiNotificationsIdAckRouteImport
-      parentRoute: typeof ApiNotificationsRoute
-    }
-    '/api/match/my-unmatched/attach': {
-      id: '/api/match/my-unmatched/attach'
-      path: '/attach'
-      fullPath: '/api/match/my-unmatched/attach'
-      preLoaderRoute: typeof ApiMatchMyUnmatchedAttachRouteImport
-      parentRoute: typeof ApiMatchMyUnmatchedRoute
-    }
-    '/api/match/$candidate/reject': {
-      id: '/api/match/$candidate/reject'
-      path: '/api/match/$candidate/reject'
-      fullPath: '/api/match/$candidate/reject'
-      preLoaderRoute: typeof ApiMatchCandidateRejectRouteImport
+    '/api/auth/me': {
+      id: '/api/auth/me'
+      path: '/api/auth/me'
+      fullPath: '/api/auth/me'
+      preLoaderRoute: typeof ApiAuthMeRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/api/match/$candidate/accept': {
-      id: '/api/match/$candidate/accept'
-      path: '/api/match/$candidate/accept'
-      fullPath: '/api/match/$candidate/accept'
-      preLoaderRoute: typeof ApiMatchCandidateAcceptRouteImport
+    '/api/auth/register': {
+      id: '/api/auth/register'
+      path: '/api/auth/register'
+      fullPath: '/api/auth/register'
+      preLoaderRoute: typeof ApiAuthRegisterRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/insights/recurring': {
+      id: '/api/insights/recurring'
+      path: '/api/insights/recurring'
+      fullPath: '/api/insights/recurring'
+      preLoaderRoute: typeof ApiInsightsRecurringRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/insights/sparklines': {
+      id: '/api/insights/sparklines'
+      path: '/api/insights/sparklines'
+      fullPath: '/api/insights/sparklines'
+      preLoaderRoute: typeof ApiInsightsSparklinesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/insights/spend': {
+      id: '/api/insights/spend'
+      path: '/api/insights/spend'
+      fullPath: '/api/insights/spend'
+      preLoaderRoute: typeof ApiInsightsSpendRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/live/events': {
+      id: '/api/live/events'
+      path: '/api/live/events'
+      fullPath: '/api/live/events'
+      preLoaderRoute: typeof ApiLiveEventsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/master/$id': {
+      id: '/api/master/$id'
+      path: '/$id'
+      fullPath: '/api/master/$id'
+      preLoaderRoute: typeof ApiMasterIdRouteImport
+      parentRoute: typeof ApiMasterRoute
+    }
+    '/api/match/candidates': {
+      id: '/api/match/candidates'
+      path: '/api/match/candidates'
+      fullPath: '/api/match/candidates'
+      preLoaderRoute: typeof ApiMatchCandidatesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/match/my-unmatched': {
+      id: '/api/match/my-unmatched'
+      path: '/api/match/my-unmatched'
+      fullPath: '/api/match/my-unmatched'
+      preLoaderRoute: typeof ApiMatchMyUnmatchedRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/orders/list': {
+      id: '/api/orders/list'
+      path: '/api/orders/list'
+      fullPath: '/api/orders/list'
+      preLoaderRoute: typeof ApiOrdersListRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/providers/backfill': {
+      id: '/api/providers/backfill'
+      path: '/api/providers/backfill'
+      fullPath: '/api/providers/backfill'
+      preLoaderRoute: typeof ApiProvidersBackfillRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/providers/connect': {
+      id: '/api/providers/connect'
+      path: '/api/providers/connect'
+      fullPath: '/api/providers/connect'
+      preLoaderRoute: typeof ApiProvidersConnectRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/providers/disconnect': {
+      id: '/api/providers/disconnect'
+      path: '/api/providers/disconnect'
+      fullPath: '/api/providers/disconnect'
+      preLoaderRoute: typeof ApiProvidersDisconnectRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/providers/list': {
+      id: '/api/providers/list'
+      path: '/api/providers/list'
+      fullPath: '/api/providers/list'
+      preLoaderRoute: typeof ApiProvidersListRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/providers/sync': {
+      id: '/api/providers/sync'
+      path: '/api/providers/sync'
+      fullPath: '/api/providers/sync'
+      preLoaderRoute: typeof ApiProvidersSyncRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/providers/update': {
+      id: '/api/providers/update'
+      path: '/api/providers/update'
+      fullPath: '/api/providers/update'
+      preLoaderRoute: typeof ApiProvidersUpdateRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/watchlist/add': {
+      id: '/api/watchlist/add'
+      path: '/add'
+      fullPath: '/api/watchlist/add'
+      preLoaderRoute: typeof ApiWatchlistAddRouteImport
+      parentRoute: typeof ApiWatchlistRoute
+    }
+    '/api/watchlist/bulk-add': {
+      id: '/api/watchlist/bulk-add'
+      path: '/bulk-add'
+      fullPath: '/api/watchlist/bulk-add'
+      preLoaderRoute: typeof ApiWatchlistBulkAddRouteImport
+      parentRoute: typeof ApiWatchlistRoute
+    }
+    '/product/$shop/$slug': {
+      id: '/product/$shop/$slug'
+      path: '/product/$shop/$slug'
+      fullPath: '/product/$shop/$slug'
+      preLoaderRoute: typeof ProductShopSlugRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/master/$id/history': {
@@ -1084,6 +1035,55 @@ declare module '@tanstack/react-router' {
       fullPath: '/api/master/$id/history'
       preLoaderRoute: typeof ApiMasterIdHistoryRouteImport
       parentRoute: typeof ApiMasterIdRoute
+    }
+    '/api/match/$candidate/accept': {
+      id: '/api/match/$candidate/accept'
+      path: '/api/match/$candidate/accept'
+      fullPath: '/api/match/$candidate/accept'
+      preLoaderRoute: typeof ApiMatchCandidateAcceptRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/match/$candidate/reject': {
+      id: '/api/match/$candidate/reject'
+      path: '/api/match/$candidate/reject'
+      fullPath: '/api/match/$candidate/reject'
+      preLoaderRoute: typeof ApiMatchCandidateRejectRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/match/my-unmatched/attach': {
+      id: '/api/match/my-unmatched/attach'
+      path: '/attach'
+      fullPath: '/api/match/my-unmatched/attach'
+      preLoaderRoute: typeof ApiMatchMyUnmatchedAttachRouteImport
+      parentRoute: typeof ApiMatchMyUnmatchedRoute
+    }
+    '/api/notifications/$id/ack': {
+      id: '/api/notifications/$id/ack'
+      path: '/$id/ack'
+      fullPath: '/api/notifications/$id/ack'
+      preLoaderRoute: typeof ApiNotificationsIdAckRouteImport
+      parentRoute: typeof ApiNotificationsRoute
+    }
+    '/api/product/$shop/$slug': {
+      id: '/api/product/$shop/$slug'
+      path: '/api/product/$shop/$slug'
+      fullPath: '/api/product/$shop/$slug'
+      preLoaderRoute: typeof ApiProductShopSlugRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/watchlist/$id/delete': {
+      id: '/api/watchlist/$id/delete'
+      path: '/$id/delete'
+      fullPath: '/api/watchlist/$id/delete'
+      preLoaderRoute: typeof ApiWatchlistIdDeleteRouteImport
+      parentRoute: typeof ApiWatchlistRoute
+    }
+    '/api/watchlist/$id/edit': {
+      id: '/api/watchlist/$id/edit'
+      path: '/$id/edit'
+      fullPath: '/api/watchlist/$id/edit'
+      preLoaderRoute: typeof ApiWatchlistIdEditRouteImport
+      parentRoute: typeof ApiWatchlistRoute
     }
   }
 }

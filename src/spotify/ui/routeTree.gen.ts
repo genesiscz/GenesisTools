@@ -9,63 +9,23 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
-import { Route as WrappedRouteImport } from './routes/wrapped'
-import { Route as TopRouteImport } from './routes/top'
-import { Route as TogetherRouteImport } from './routes/together'
-import { Route as TimeRouteImport } from './routes/time'
-import { Route as SettingsRouteImport } from './routes/settings'
-import { Route as LibraryRouteImport } from './routes/library'
-import { Route as HabitsRouteImport } from './routes/habits'
-import { Route as ExploreRouteImport } from './routes/explore'
-import { Route as DnaRouteImport } from './routes/dna'
-import { Route as BiographyRouteImport } from './routes/biography'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as BiographyRouteImport } from './routes/biography'
+import { Route as DnaRouteImport } from './routes/dna'
+import { Route as ExploreRouteImport } from './routes/explore'
+import { Route as HabitsRouteImport } from './routes/habits'
+import { Route as LibraryRouteImport } from './routes/library'
+import { Route as SettingsRouteImport } from './routes/settings'
+import { Route as TimeRouteImport } from './routes/time'
+import { Route as TogetherRouteImport } from './routes/together'
+import { Route as TopRouteImport } from './routes/top'
+import { Route as WrappedRouteImport } from './routes/wrapped'
 import { Route as ApiProfilesRouteImport } from './routes/api/profiles'
 import { Route as ApiReportNameRouteImport } from './routes/api/report.$name'
 
-const WrappedRoute = WrappedRouteImport.update({
-  id: '/wrapped',
-  path: '/wrapped',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const TopRoute = TopRouteImport.update({
-  id: '/top',
-  path: '/top',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const TogetherRoute = TogetherRouteImport.update({
-  id: '/together',
-  path: '/together',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const TimeRoute = TimeRouteImport.update({
-  id: '/time',
-  path: '/time',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const SettingsRoute = SettingsRouteImport.update({
-  id: '/settings',
-  path: '/settings',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const LibraryRoute = LibraryRouteImport.update({
-  id: '/library',
-  path: '/library',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const HabitsRoute = HabitsRouteImport.update({
-  id: '/habits',
-  path: '/habits',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ExploreRoute = ExploreRouteImport.update({
-  id: '/explore',
-  path: '/explore',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const DnaRoute = DnaRouteImport.update({
-  id: '/dna',
-  path: '/dna',
+const IndexRoute = IndexRouteImport.update({
+  id: '/',
+  path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
 const BiographyRoute = BiographyRouteImport.update({
@@ -73,9 +33,49 @@ const BiographyRoute = BiographyRouteImport.update({
   path: '/biography',
   getParentRoute: () => rootRouteImport,
 } as any)
-const IndexRoute = IndexRouteImport.update({
-  id: '/',
-  path: '/',
+const DnaRoute = DnaRouteImport.update({
+  id: '/dna',
+  path: '/dna',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ExploreRoute = ExploreRouteImport.update({
+  id: '/explore',
+  path: '/explore',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const HabitsRoute = HabitsRouteImport.update({
+  id: '/habits',
+  path: '/habits',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const LibraryRoute = LibraryRouteImport.update({
+  id: '/library',
+  path: '/library',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SettingsRoute = SettingsRouteImport.update({
+  id: '/settings',
+  path: '/settings',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const TimeRoute = TimeRouteImport.update({
+  id: '/time',
+  path: '/time',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const TogetherRoute = TogetherRouteImport.update({
+  id: '/together',
+  path: '/together',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const TopRoute = TopRouteImport.update({
+  id: '/top',
+  path: '/top',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const WrappedRoute = WrappedRouteImport.update({
+  id: '/wrapped',
+  path: '/wrapped',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApiProfilesRoute = ApiProfilesRouteImport.update({
@@ -201,67 +201,11 @@ export interface RootRouteChildren {
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
-    '/wrapped': {
-      id: '/wrapped'
-      path: '/wrapped'
-      fullPath: '/wrapped'
-      preLoaderRoute: typeof WrappedRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/top': {
-      id: '/top'
-      path: '/top'
-      fullPath: '/top'
-      preLoaderRoute: typeof TopRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/together': {
-      id: '/together'
-      path: '/together'
-      fullPath: '/together'
-      preLoaderRoute: typeof TogetherRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/time': {
-      id: '/time'
-      path: '/time'
-      fullPath: '/time'
-      preLoaderRoute: typeof TimeRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/settings': {
-      id: '/settings'
-      path: '/settings'
-      fullPath: '/settings'
-      preLoaderRoute: typeof SettingsRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/library': {
-      id: '/library'
-      path: '/library'
-      fullPath: '/library'
-      preLoaderRoute: typeof LibraryRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/habits': {
-      id: '/habits'
-      path: '/habits'
-      fullPath: '/habits'
-      preLoaderRoute: typeof HabitsRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/explore': {
-      id: '/explore'
-      path: '/explore'
-      fullPath: '/explore'
-      preLoaderRoute: typeof ExploreRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/dna': {
-      id: '/dna'
-      path: '/dna'
-      fullPath: '/dna'
-      preLoaderRoute: typeof DnaRouteImport
+    '/': {
+      id: '/'
+      path: '/'
+      fullPath: '/'
+      preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/biography': {
@@ -271,11 +215,67 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof BiographyRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/': {
-      id: '/'
-      path: '/'
-      fullPath: '/'
-      preLoaderRoute: typeof IndexRouteImport
+    '/dna': {
+      id: '/dna'
+      path: '/dna'
+      fullPath: '/dna'
+      preLoaderRoute: typeof DnaRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/explore': {
+      id: '/explore'
+      path: '/explore'
+      fullPath: '/explore'
+      preLoaderRoute: typeof ExploreRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/habits': {
+      id: '/habits'
+      path: '/habits'
+      fullPath: '/habits'
+      preLoaderRoute: typeof HabitsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/library': {
+      id: '/library'
+      path: '/library'
+      fullPath: '/library'
+      preLoaderRoute: typeof LibraryRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/settings': {
+      id: '/settings'
+      path: '/settings'
+      fullPath: '/settings'
+      preLoaderRoute: typeof SettingsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/time': {
+      id: '/time'
+      path: '/time'
+      fullPath: '/time'
+      preLoaderRoute: typeof TimeRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/together': {
+      id: '/together'
+      path: '/together'
+      fullPath: '/together'
+      preLoaderRoute: typeof TogetherRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/top': {
+      id: '/top'
+      path: '/top'
+      fullPath: '/top'
+      preLoaderRoute: typeof TopRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/wrapped': {
+      id: '/wrapped'
+      path: '/wrapped'
+      fullPath: '/wrapped'
+      preLoaderRoute: typeof WrappedRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/profiles': {

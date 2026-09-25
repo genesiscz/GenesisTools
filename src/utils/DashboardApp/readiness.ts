@@ -11,6 +11,9 @@
  * Each takes a deadline; on timeout the function returns `{ ready: false }`
  * and the caller decides whether to detach the child anyway (dev-dashboard
  * does this on `restart` after 30s — see plan §Decisions).
+ *
+ * An optional `signal` ends the wait early. The launcher aborts it when the
+ * child exits, so a crashed server is reported at once, not after the deadline.
  */
 import { closeSync, existsSync, openSync, readSync, statSync } from "node:fs";
 import { logger } from "@genesiscz/utils/logger";
@@ -36,26 +39,39 @@ export interface ReadinessResult {
 
 export async function waitForReady(
     probe: ReadinessProbe | undefined,
-    args: { port: number; logFile: string }
+    args: { port: number; logFile: string; signal?: AbortSignal }
 ): Promise<ReadinessResult> {
     if (!probe) {
         // Default = wait for the TCP port to bind.
-        return waitForPort({ kind: "port" }, args.port);
+        return waitForPort({ kind: "port" }, args.port, args.signal);
     }
 
     switch (probe.kind) {
         case "http":
-            return waitForHttp(probe, args.port);
+            return waitForHttp(probe, args.port, args.signal);
         case "log":
-            return waitForLog(probe, args.logFile);
+            return waitForLog(probe, args.logFile, args.signal);
         case "port":
-            return waitForPort(probe, args.port);
+            return waitForPort(probe, args.port, args.signal);
     }
 }
 
-async function waitForPort(probe: { kind: "port"; timeoutMs?: number }, port: number): Promise<ReadinessResult> {
+function abortedResult(signal: AbortSignal): ReadinessResult {
+    const reason = signal.reason instanceof Error ? signal.reason.message : String(signal.reason);
+    return { ready: false, detail: reason };
+}
+
+async function waitForPort(
+    probe: { kind: "port"; timeoutMs?: number },
+    port: number,
+    signal?: AbortSignal
+): Promise<ReadinessResult> {
     const deadline = Date.now() + (probe.timeoutMs ?? DEFAULT_TIMEOUT_MS);
     while (Date.now() < deadline) {
+        if (signal?.aborted) {
+            return abortedResult(signal);
+        }
+
         if (await isPortInUse(port)) {
             return { ready: true };
         }
@@ -66,20 +82,34 @@ async function waitForPort(probe: { kind: "port"; timeoutMs?: number }, port: nu
 
 async function waitForHttp(
     probe: { kind: "http"; path?: string; timeoutMs?: number },
-    port: number
+    port: number,
+    signal?: AbortSignal
 ): Promise<ReadinessResult> {
     const url = `http://localhost:${port}${probe.path ?? "/"}`;
-    return waitForUrlReady(url, probe.timeoutMs ?? DEFAULT_TIMEOUT_MS);
+    return waitForUrlReady(url, probe.timeoutMs ?? DEFAULT_TIMEOUT_MS, { signal });
 }
 
-export async function waitForUrlReady(url: string, timeoutMs = DEFAULT_TIMEOUT_MS): Promise<ReadinessResult> {
+export async function waitForUrlReady(
+    url: string,
+    timeoutMs = DEFAULT_TIMEOUT_MS,
+    options: { signal?: AbortSignal } = {}
+): Promise<ReadinessResult> {
+    const { signal } = options;
     const deadline = Date.now() + timeoutMs;
     let lastStatus: number | undefined;
     let lastError: unknown;
 
     while (Date.now() < deadline) {
+        if (signal?.aborted) {
+            return abortedResult(signal);
+        }
+
         try {
-            const res = await fetch(url, { redirect: "manual", signal: AbortSignal.timeout(2_000) });
+            const attemptTimeout = AbortSignal.timeout(2_000);
+            const res = await fetch(url, {
+                redirect: "manual",
+                signal: signal ? AbortSignal.any([attemptTimeout, signal]) : attemptTimeout,
+            });
             lastStatus = res.status;
 
             // 4xx still means the app is serving; 502/503/504 means proxy-without-upstream.
@@ -103,13 +133,18 @@ export async function waitForUrlReady(url: string, timeoutMs = DEFAULT_TIMEOUT_M
 
 async function waitForLog(
     probe: { kind: "log"; regex: RegExp; timeoutMs?: number },
-    logFile: string
+    logFile: string,
+    signal?: AbortSignal
 ): Promise<ReadinessResult> {
     const deadline = Date.now() + (probe.timeoutMs ?? DEFAULT_TIMEOUT_MS);
     let pos = 0;
     let acc = "";
 
     while (Date.now() < deadline) {
+        if (signal?.aborted) {
+            return abortedResult(signal);
+        }
+
         if (existsSync(logFile)) {
             const size = statSync(logFile).size;
             if (size > pos) {

@@ -11,3 +11,6 @@ tools text eol=lf
 .claude/ export-ignore
 .handoff export-ignore
 README.json-to-ts.md export-ignore
+
+# TanStack Router writes these; mark them generated so GitHub collapses them in diffs.
+**/routeTree.gen.ts linguist-generated=true

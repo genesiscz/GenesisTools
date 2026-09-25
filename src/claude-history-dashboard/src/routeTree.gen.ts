@@ -9,38 +9,23 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
-import { Route as StatsRouteImport } from './routes/stats'
 import { Route as IndexRouteImport } from './routes/index'
-import { Route as ConversationIdRouteImport } from './routes/conversation.$id'
-import { Route as ApiStatsRouteImport } from './routes/api/stats'
-import { Route as ApiProjectsRouteImport } from './routes/api/projects'
+import { Route as StatsRouteImport } from './routes/stats'
 import { Route as ApiConversationsRouteImport } from './routes/api/conversations'
-import { Route as ApiStatsFullRouteImport } from './routes/api/stats.full'
+import { Route as ApiProjectsRouteImport } from './routes/api/projects'
+import { Route as ApiStatsRouteImport } from './routes/api/stats'
+import { Route as ConversationIdRouteImport } from './routes/conversation.$id'
 import { Route as ApiConversationsIdRouteImport } from './routes/api/conversations.$id'
+import { Route as ApiStatsFullRouteImport } from './routes/api/stats.full'
 
-const StatsRoute = StatsRouteImport.update({
-  id: '/stats',
-  path: '/stats',
-  getParentRoute: () => rootRouteImport,
-} as any)
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
-const ConversationIdRoute = ConversationIdRouteImport.update({
-  id: '/conversation/$id',
-  path: '/conversation/$id',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ApiStatsRoute = ApiStatsRouteImport.update({
-  id: '/api/stats',
-  path: '/api/stats',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ApiProjectsRoute = ApiProjectsRouteImport.update({
-  id: '/api/projects',
-  path: '/api/projects',
+const StatsRoute = StatsRouteImport.update({
+  id: '/stats',
+  path: '/stats',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApiConversationsRoute = ApiConversationsRouteImport.update({
@@ -48,15 +33,30 @@ const ApiConversationsRoute = ApiConversationsRouteImport.update({
   path: '/api/conversations',
   getParentRoute: () => rootRouteImport,
 } as any)
-const ApiStatsFullRoute = ApiStatsFullRouteImport.update({
-  id: '/full',
-  path: '/full',
-  getParentRoute: () => ApiStatsRoute,
+const ApiProjectsRoute = ApiProjectsRouteImport.update({
+  id: '/api/projects',
+  path: '/api/projects',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiStatsRoute = ApiStatsRouteImport.update({
+  id: '/api/stats',
+  path: '/api/stats',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ConversationIdRoute = ConversationIdRouteImport.update({
+  id: '/conversation/$id',
+  path: '/conversation/$id',
+  getParentRoute: () => rootRouteImport,
 } as any)
 const ApiConversationsIdRoute = ApiConversationsIdRouteImport.update({
   id: '/$id',
   path: '/$id',
   getParentRoute: () => ApiConversationsRoute,
+} as any)
+const ApiStatsFullRoute = ApiStatsFullRouteImport.update({
+  id: '/full',
+  path: '/full',
+  getParentRoute: () => ApiStatsRoute,
 } as any)
 
 export interface FileRoutesByFullPath {
@@ -134,13 +134,6 @@ export interface RootRouteChildren {
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
-    '/stats': {
-      id: '/stats'
-      path: '/stats'
-      fullPath: '/stats'
-      preLoaderRoute: typeof StatsRouteImport
-      parentRoute: typeof rootRouteImport
-    }
     '/': {
       id: '/'
       path: '/'
@@ -148,25 +141,11 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/conversation/$id': {
-      id: '/conversation/$id'
-      path: '/conversation/$id'
-      fullPath: '/conversation/$id'
-      preLoaderRoute: typeof ConversationIdRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/api/stats': {
-      id: '/api/stats'
-      path: '/api/stats'
-      fullPath: '/api/stats'
-      preLoaderRoute: typeof ApiStatsRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/api/projects': {
-      id: '/api/projects'
-      path: '/api/projects'
-      fullPath: '/api/projects'
-      preLoaderRoute: typeof ApiProjectsRouteImport
+    '/stats': {
+      id: '/stats'
+      path: '/stats'
+      fullPath: '/stats'
+      preLoaderRoute: typeof StatsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/conversations': {
@@ -176,12 +155,26 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiConversationsRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/api/stats/full': {
-      id: '/api/stats/full'
-      path: '/full'
-      fullPath: '/api/stats/full'
-      preLoaderRoute: typeof ApiStatsFullRouteImport
-      parentRoute: typeof ApiStatsRoute
+    '/api/projects': {
+      id: '/api/projects'
+      path: '/api/projects'
+      fullPath: '/api/projects'
+      preLoaderRoute: typeof ApiProjectsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/stats': {
+      id: '/api/stats'
+      path: '/api/stats'
+      fullPath: '/api/stats'
+      preLoaderRoute: typeof ApiStatsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/conversation/$id': {
+      id: '/conversation/$id'
+      path: '/conversation/$id'
+      fullPath: '/conversation/$id'
+      preLoaderRoute: typeof ConversationIdRouteImport
+      parentRoute: typeof rootRouteImport
     }
     '/api/conversations/$id': {
       id: '/api/conversations/$id'
@@ -189,6 +182,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/api/conversations/$id'
       preLoaderRoute: typeof ApiConversationsIdRouteImport
       parentRoute: typeof ApiConversationsRoute
+    }
+    '/api/stats/full': {
+      id: '/api/stats/full'
+      path: '/full'
+      fullPath: '/api/stats/full'
+      preLoaderRoute: typeof ApiStatsFullRouteImport
+      parentRoute: typeof ApiStatsRoute
     }
   }
 }

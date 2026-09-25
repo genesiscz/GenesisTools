@@ -167,7 +167,7 @@ export async function up(ctx: LifecycleContext, opts: UpOptions = {}): Promise<U
 
     // Background: detached spawn with stdio → logfile.
     resetLogFile(config.key);
-    const { pid } = spawnDetached({
+    const { pid, exited } = spawnDetached({
         cmd: resolveSpawnCmd(config, opts),
         cwd: config.spawn.cwd,
         env: spawnEnv(config),
@@ -175,7 +175,20 @@ export async function up(ctx: LifecycleContext, opts: UpOptions = {}): Promise<U
     });
     writePid(config.key, pid);
 
-    const readiness = await waitForReady(config.readiness, { port, logFile: ctx.logFile });
+    const childExit = new AbortController();
+    exited.then(({ code, signal }) => {
+        childExit.abort(new Error(`pid ${pid} exited (${signal ?? `code ${code}`}) before it was ready`));
+    });
+
+    const readiness = await waitForReady(config.readiness, { port, logFile: ctx.logFile, signal: childExit.signal });
+    if (childExit.signal.aborted) {
+        clearPid(config.key);
+        logger.debug({ pid, detail: readiness.detail }, `[${config.key}] child exited before readiness`);
+        out.error(`${config.name ?? config.key} did not start: ${readiness.detail}\n  Log: ${ctx.logFile}`);
+        process.exitCode = 1;
+        return { started: false, port, mode, pid, logPath: ctx.logFile };
+    }
+
     if (!readiness.ready) {
         out.warn(
             `Readiness check failed: ${readiness.detail ?? "(no detail)"}\n  Started anyway — tail the log: tools ${config.key} ${config.commandName} attach`

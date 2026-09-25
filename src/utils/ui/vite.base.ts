@@ -4,7 +4,7 @@ import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import tailwindcss from "@tailwindcss/vite";
 import { tanstackStart } from "@tanstack/react-start/plugin/vite";
 import viteReact from "@vitejs/plugin-react";
-import { defineConfig, type Plugin, type PluginOption, type UserConfig } from "vite";
+import { defineConfig, normalizePath, type Plugin, type PluginOption, type Rolldown, type UserConfig } from "vite";
 
 export interface DashboardViteConfig {
     /** Root directory of the dashboard app */
@@ -30,6 +30,11 @@ export interface DashboardViteConfig {
      * and has no authentication, so it is not readable by everything on the network.
      */
     host?: boolean | string;
+    /**
+     * Directories under `root` whose modules only run on the server: TanStack server functions and
+     * API route files. The client dependency scan reads them but does not follow their imports.
+     */
+    serverOnlyDirs?: string[];
 }
 
 /**
@@ -38,8 +43,9 @@ export interface DashboardViteConfig {
  * TanStack Start imports AsyncLocalStorage at module level in code paths that
  * run on both server and browser. In the browser Vite replaces node:async_hooks
  * with a stub that throws on use. This polyfill provides a no-op implementation
- * that satisfies the import without crashing. Used via resolve.alias below;
- * ssr.external ensures the real Node.js module is used during SSR.
+ * that satisfies the import without crashing. Used via resolve.alias below.
+ * The alias also reaches SSR code that Vite inlines (TanStack Start's own
+ * packages), so the polyfill hands out the real module on a server runtime.
  */
 const BROWSER_ASYNC_HOOKS_POLYFILL = resolve(__dirname, "browser-async-hooks.ts");
 
@@ -101,6 +107,38 @@ function pinNodeModules(dashboardRoot: string): Plugin {
             });
 
             return resolved;
+        },
+    };
+}
+
+/**
+ * Dependency-scan plugin that stops at server-only code.
+ *
+ * Vite's client dependency scan reads raw source. It does not run the TanStack Start compiler, which
+ * strips server function bodies and server route handlers (and the imports only they use) from the
+ * client bundle. Without this boundary the scan follows a server function into the repo's server
+ * libraries and hands their packages to the browser optimizer. A package with a native addon
+ * (`@napi-rs/keyring`, `sherpa-onnx-node`) then fails the whole optimize run with
+ * UNLOADABLE_DEPENDENCY, and the dev server exits.
+ *
+ * `@tanstack/*` imports pass through, because the client keeps the route and server function stubs.
+ */
+export function stopDepScanAtServerCode(dirs: string[]): Rolldown.Plugin {
+    const prefixes = dirs.map((dir) => `${normalizePath(dir).replace(/\/$/, "")}/`);
+
+    return {
+        name: "dep-scan-stop-at-server-code",
+        resolveId(source, importer) {
+            if (!importer || source.startsWith("@tanstack/")) {
+                return null;
+            }
+
+            const importerPath = normalizePath(importer.split("?")[0]);
+            if (!prefixes.some((prefix) => importerPath.startsWith(prefix))) {
+                return null;
+            }
+
+            return { id: source, external: true };
         },
     };
 }
@@ -245,6 +283,7 @@ export function createDashboardViteConfig({
     reactOptions,
     watchDirs: extraWatchDirs = [],
     host = true,
+    serverOnlyDirs = [],
 }: DashboardViteConfig): UserConfig {
     const { plugins: _ignored, resolve: _resolveIgnored, optimizeDeps: overrideOptimizeDeps, ...rest } = overrides;
     const allAliases: Record<string, string> = {
@@ -299,6 +338,17 @@ export function createDashboardViteConfig({
         },
         optimizeDeps: {
             ...overrideOptimizeDeps,
+            ...(serverOnlyDirs.length > 0
+                ? {
+                      rolldownOptions: {
+                          ...overrideOptimizeDeps?.rolldownOptions,
+                          plugins: [
+                              stopDepScanAtServerCode(serverOnlyDirs.map((dir) => resolve(root, dir))),
+                              overrideOptimizeDeps?.rolldownOptions?.plugins,
+                          ],
+                      },
+                  }
+                : {}),
             exclude: [
                 "bun",
                 "@tanstack/react-start-client",

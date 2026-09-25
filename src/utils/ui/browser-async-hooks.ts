@@ -7,9 +7,16 @@
  *
  * The server callbacks that actually USE the context are never invoked in the
  * browser, so the polyfill never needs to do real context propagation.
+ *
+ * The alias is global, so SSR resolves here too: TanStack Start marks its own
+ * packages noExternal, which inlines `@tanstack/start-storage-context` and routes
+ * its `node:async_hooks` import through the alias. The no-op store drops the
+ * request context after the first `await`, and a server function called from an
+ * SSR loader then fails with "No Start context found in AsyncLocalStorage". So
+ * every export defers to the real module when the runtime has one.
  */
 
-export class AsyncLocalStorage<T = unknown> {
+class BrowserAsyncLocalStorage<T = unknown> {
     private _store: T | undefined = undefined;
 
     run<R>(store: T, callback: (...args: unknown[]) => R, ...args: unknown[]): R {
@@ -51,7 +58,7 @@ export class AsyncLocalStorage<T = unknown> {
     }
 }
 
-export class AsyncResource {
+class BrowserAsyncResource {
     static bind<T extends (...args: unknown[]) => unknown>(fn: T): T {
         return fn;
     }
@@ -69,14 +76,22 @@ export class AsyncResource {
     }
 }
 
-export function createHook(_hooks: unknown) {
+function browserCreateHook(_hooks: unknown) {
     return { enable: () => {}, disable: () => {} };
 }
 
-export function executionAsyncId(): number {
+function browserExecutionAsyncId(): number {
     return 1;
 }
 
-export function triggerAsyncId(): number {
+function browserTriggerAsyncId(): number {
     return 0;
 }
+
+const nativeAsyncHooks = typeof process === "undefined" ? undefined : process.getBuiltinModule?.("node:async_hooks");
+
+export const AsyncLocalStorage = nativeAsyncHooks?.AsyncLocalStorage ?? BrowserAsyncLocalStorage;
+export const AsyncResource = nativeAsyncHooks?.AsyncResource ?? BrowserAsyncResource;
+export const createHook = nativeAsyncHooks?.createHook ?? browserCreateHook;
+export const executionAsyncId = nativeAsyncHooks?.executionAsyncId ?? browserExecutionAsyncId;
+export const triggerAsyncId = nativeAsyncHooks?.triggerAsyncId ?? browserTriggerAsyncId;

@@ -26,6 +26,13 @@ export interface DetachOptions {
 
 export interface DetachResult {
     pid: number;
+    /** Settles when the child exits. A readiness wait uses it to stop as soon as the child dies. */
+    exited: Promise<DetachedExit>;
+}
+
+export interface DetachedExit {
+    code: number | null;
+    signal: NodeJS.Signals | null;
 }
 
 export function spawnDetached(opts: DetachOptions): DetachResult {
@@ -43,13 +50,16 @@ export function spawnDetached(opts: DetachOptions): DetachResult {
         closeSync(logFd); // child holds its own dup'd fd now
     }
 
+    const exited = new Promise<DetachedExit>((resolveExit) => {
+        child.once("exit", (code, signal) => resolveExit({ code, signal }));
+    });
     child.unref();
 
     if (!child.pid) {
         throw new Error("Failed to spawn detached process — no PID returned");
     }
 
-    return { pid: child.pid };
+    return { pid: child.pid, exited };
 }
 
 function filterUndefined(env: Record<string, string | undefined> | undefined): Record<string, string> {

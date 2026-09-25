@@ -9,50 +9,30 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
-import { Route as WatchlistRouteImport } from './routes/watchlist'
-import { Route as ListingsRouteImport } from './routes/listings'
-import { Route as HistoryRouteImport } from './routes/history'
-import { Route as HealthRouteImport } from './routes/health'
-import { Route as CompareRouteImport } from './routes/compare'
-import { Route as AnalyzeRouteImport } from './routes/analyze'
 import { Route as IndexRouteImport } from './routes/index'
-import { Route as WatchlistPropertyIdRouteImport } from './routes/watchlist.$propertyId'
-import { Route as ApiProviderHealthRouteImport } from './routes/api/provider-health'
-import { Route as ApiPropertyDetailRouteImport } from './routes/api/property-detail'
-import { Route as ApiPropertiesRouteImport } from './routes/api/properties'
-import { Route as ApiMapClustersRouteImport } from './routes/api/map-clusters'
-import { Route as ApiListingsRouteImport } from './routes/api/listings'
-import { Route as ApiHistoryRouteImport } from './routes/api/history'
-import { Route as ApiDistrictsRouteImport } from './routes/api/districts'
-import { Route as ApiDistrictSnapshotsRouteImport } from './routes/api/district-snapshots'
-import { Route as ApiDistrictComparisonRouteImport } from './routes/api/district-comparison'
+import { Route as AnalyzeRouteImport } from './routes/analyze'
+import { Route as CompareRouteImport } from './routes/compare'
+import { Route as HealthRouteImport } from './routes/health'
+import { Route as HistoryRouteImport } from './routes/history'
+import { Route as ListingsRouteImport } from './routes/listings'
+import { Route as WatchlistRouteImport } from './routes/watchlist'
 import { Route as ApiAnalysisRouteImport } from './routes/api/analysis'
+import { Route as ApiDistrictComparisonRouteImport } from './routes/api/district-comparison'
+import { Route as ApiDistrictSnapshotsRouteImport } from './routes/api/district-snapshots'
+import { Route as ApiDistrictsRouteImport } from './routes/api/districts'
+import { Route as ApiHistoryRouteImport } from './routes/api/history'
+import { Route as ApiListingsRouteImport } from './routes/api/listings'
+import { Route as ApiMapClustersRouteImport } from './routes/api/map-clusters'
+import { Route as ApiPropertiesRouteImport } from './routes/api/properties'
+import { Route as ApiPropertyDetailRouteImport } from './routes/api/property-detail'
+import { Route as ApiProviderHealthRouteImport } from './routes/api/provider-health'
+import { Route as WatchlistPropertyIdRouteImport } from './routes/watchlist.$propertyId'
 import { Route as ApiListingsIdRouteImport } from './routes/api/listings.$id'
 import { Route as ApiPropertiesIdHistoryRouteImport } from './routes/api/properties.$id.history'
 
-const WatchlistRoute = WatchlistRouteImport.update({
-  id: '/watchlist',
-  path: '/watchlist',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ListingsRoute = ListingsRouteImport.update({
-  id: '/listings',
-  path: '/listings',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const HistoryRoute = HistoryRouteImport.update({
-  id: '/history',
-  path: '/history',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const HealthRoute = HealthRouteImport.update({
-  id: '/health',
-  path: '/health',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const CompareRoute = CompareRouteImport.update({
-  id: '/compare',
-  path: '/compare',
+const IndexRoute = IndexRouteImport.update({
+  id: '/',
+  path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AnalyzeRoute = AnalyzeRouteImport.update({
@@ -60,54 +40,34 @@ const AnalyzeRoute = AnalyzeRouteImport.update({
   path: '/analyze',
   getParentRoute: () => rootRouteImport,
 } as any)
-const IndexRoute = IndexRouteImport.update({
-  id: '/',
-  path: '/',
+const CompareRoute = CompareRouteImport.update({
+  id: '/compare',
+  path: '/compare',
   getParentRoute: () => rootRouteImport,
 } as any)
-const WatchlistPropertyIdRoute = WatchlistPropertyIdRouteImport.update({
-  id: '/$propertyId',
-  path: '/$propertyId',
-  getParentRoute: () => WatchlistRoute,
-} as any)
-const ApiProviderHealthRoute = ApiProviderHealthRouteImport.update({
-  id: '/api/provider-health',
-  path: '/api/provider-health',
+const HealthRoute = HealthRouteImport.update({
+  id: '/health',
+  path: '/health',
   getParentRoute: () => rootRouteImport,
 } as any)
-const ApiPropertyDetailRoute = ApiPropertyDetailRouteImport.update({
-  id: '/api/property-detail',
-  path: '/api/property-detail',
+const HistoryRoute = HistoryRouteImport.update({
+  id: '/history',
+  path: '/history',
   getParentRoute: () => rootRouteImport,
 } as any)
-const ApiPropertiesRoute = ApiPropertiesRouteImport.update({
-  id: '/api/properties',
-  path: '/api/properties',
+const ListingsRoute = ListingsRouteImport.update({
+  id: '/listings',
+  path: '/listings',
   getParentRoute: () => rootRouteImport,
 } as any)
-const ApiMapClustersRoute = ApiMapClustersRouteImport.update({
-  id: '/api/map-clusters',
-  path: '/api/map-clusters',
+const WatchlistRoute = WatchlistRouteImport.update({
+  id: '/watchlist',
+  path: '/watchlist',
   getParentRoute: () => rootRouteImport,
 } as any)
-const ApiListingsRoute = ApiListingsRouteImport.update({
-  id: '/api/listings',
-  path: '/api/listings',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ApiHistoryRoute = ApiHistoryRouteImport.update({
-  id: '/api/history',
-  path: '/api/history',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ApiDistrictsRoute = ApiDistrictsRouteImport.update({
-  id: '/api/districts',
-  path: '/api/districts',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ApiDistrictSnapshotsRoute = ApiDistrictSnapshotsRouteImport.update({
-  id: '/api/district-snapshots',
-  path: '/api/district-snapshots',
+const ApiAnalysisRoute = ApiAnalysisRouteImport.update({
+  id: '/api/analysis',
+  path: '/api/analysis',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApiDistrictComparisonRoute = ApiDistrictComparisonRouteImport.update({
@@ -115,10 +75,50 @@ const ApiDistrictComparisonRoute = ApiDistrictComparisonRouteImport.update({
   path: '/api/district-comparison',
   getParentRoute: () => rootRouteImport,
 } as any)
-const ApiAnalysisRoute = ApiAnalysisRouteImport.update({
-  id: '/api/analysis',
-  path: '/api/analysis',
+const ApiDistrictSnapshotsRoute = ApiDistrictSnapshotsRouteImport.update({
+  id: '/api/district-snapshots',
+  path: '/api/district-snapshots',
   getParentRoute: () => rootRouteImport,
+} as any)
+const ApiDistrictsRoute = ApiDistrictsRouteImport.update({
+  id: '/api/districts',
+  path: '/api/districts',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiHistoryRoute = ApiHistoryRouteImport.update({
+  id: '/api/history',
+  path: '/api/history',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiListingsRoute = ApiListingsRouteImport.update({
+  id: '/api/listings',
+  path: '/api/listings',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiMapClustersRoute = ApiMapClustersRouteImport.update({
+  id: '/api/map-clusters',
+  path: '/api/map-clusters',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiPropertiesRoute = ApiPropertiesRouteImport.update({
+  id: '/api/properties',
+  path: '/api/properties',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiPropertyDetailRoute = ApiPropertyDetailRouteImport.update({
+  id: '/api/property-detail',
+  path: '/api/property-detail',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiProviderHealthRoute = ApiProviderHealthRouteImport.update({
+  id: '/api/provider-health',
+  path: '/api/provider-health',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const WatchlistPropertyIdRoute = WatchlistPropertyIdRouteImport.update({
+  id: '/$propertyId',
+  path: '/$propertyId',
+  getParentRoute: () => WatchlistRoute,
 } as any)
 const ApiListingsIdRoute = ApiListingsIdRouteImport.update({
   id: '/$id',
@@ -289,39 +289,11 @@ export interface RootRouteChildren {
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
-    '/watchlist': {
-      id: '/watchlist'
-      path: '/watchlist'
-      fullPath: '/watchlist'
-      preLoaderRoute: typeof WatchlistRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/listings': {
-      id: '/listings'
-      path: '/listings'
-      fullPath: '/listings'
-      preLoaderRoute: typeof ListingsRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/history': {
-      id: '/history'
-      path: '/history'
-      fullPath: '/history'
-      preLoaderRoute: typeof HistoryRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/health': {
-      id: '/health'
-      path: '/health'
-      fullPath: '/health'
-      preLoaderRoute: typeof HealthRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/compare': {
-      id: '/compare'
-      path: '/compare'
-      fullPath: '/compare'
-      preLoaderRoute: typeof CompareRouteImport
+    '/': {
+      id: '/'
+      path: '/'
+      fullPath: '/'
+      preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/analyze': {
@@ -331,74 +303,46 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AnalyzeRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/': {
-      id: '/'
-      path: '/'
-      fullPath: '/'
-      preLoaderRoute: typeof IndexRouteImport
+    '/compare': {
+      id: '/compare'
+      path: '/compare'
+      fullPath: '/compare'
+      preLoaderRoute: typeof CompareRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/watchlist/$propertyId': {
-      id: '/watchlist/$propertyId'
-      path: '/$propertyId'
-      fullPath: '/watchlist/$propertyId'
-      preLoaderRoute: typeof WatchlistPropertyIdRouteImport
-      parentRoute: typeof WatchlistRoute
-    }
-    '/api/provider-health': {
-      id: '/api/provider-health'
-      path: '/api/provider-health'
-      fullPath: '/api/provider-health'
-      preLoaderRoute: typeof ApiProviderHealthRouteImport
+    '/health': {
+      id: '/health'
+      path: '/health'
+      fullPath: '/health'
+      preLoaderRoute: typeof HealthRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/api/property-detail': {
-      id: '/api/property-detail'
-      path: '/api/property-detail'
-      fullPath: '/api/property-detail'
-      preLoaderRoute: typeof ApiPropertyDetailRouteImport
+    '/history': {
+      id: '/history'
+      path: '/history'
+      fullPath: '/history'
+      preLoaderRoute: typeof HistoryRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/api/properties': {
-      id: '/api/properties'
-      path: '/api/properties'
-      fullPath: '/api/properties'
-      preLoaderRoute: typeof ApiPropertiesRouteImport
+    '/listings': {
+      id: '/listings'
+      path: '/listings'
+      fullPath: '/listings'
+      preLoaderRoute: typeof ListingsRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/api/map-clusters': {
-      id: '/api/map-clusters'
-      path: '/api/map-clusters'
-      fullPath: '/api/map-clusters'
-      preLoaderRoute: typeof ApiMapClustersRouteImport
+    '/watchlist': {
+      id: '/watchlist'
+      path: '/watchlist'
+      fullPath: '/watchlist'
+      preLoaderRoute: typeof WatchlistRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/api/listings': {
-      id: '/api/listings'
-      path: '/api/listings'
-      fullPath: '/api/listings'
-      preLoaderRoute: typeof ApiListingsRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/api/history': {
-      id: '/api/history'
-      path: '/api/history'
-      fullPath: '/api/history'
-      preLoaderRoute: typeof ApiHistoryRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/api/districts': {
-      id: '/api/districts'
-      path: '/api/districts'
-      fullPath: '/api/districts'
-      preLoaderRoute: typeof ApiDistrictsRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/api/district-snapshots': {
-      id: '/api/district-snapshots'
-      path: '/api/district-snapshots'
-      fullPath: '/api/district-snapshots'
-      preLoaderRoute: typeof ApiDistrictSnapshotsRouteImport
+    '/api/analysis': {
+      id: '/api/analysis'
+      path: '/api/analysis'
+      fullPath: '/api/analysis'
+      preLoaderRoute: typeof ApiAnalysisRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/district-comparison': {
@@ -408,12 +352,68 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiDistrictComparisonRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/api/analysis': {
-      id: '/api/analysis'
-      path: '/api/analysis'
-      fullPath: '/api/analysis'
-      preLoaderRoute: typeof ApiAnalysisRouteImport
+    '/api/district-snapshots': {
+      id: '/api/district-snapshots'
+      path: '/api/district-snapshots'
+      fullPath: '/api/district-snapshots'
+      preLoaderRoute: typeof ApiDistrictSnapshotsRouteImport
       parentRoute: typeof rootRouteImport
+    }
+    '/api/districts': {
+      id: '/api/districts'
+      path: '/api/districts'
+      fullPath: '/api/districts'
+      preLoaderRoute: typeof ApiDistrictsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/history': {
+      id: '/api/history'
+      path: '/api/history'
+      fullPath: '/api/history'
+      preLoaderRoute: typeof ApiHistoryRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/listings': {
+      id: '/api/listings'
+      path: '/api/listings'
+      fullPath: '/api/listings'
+      preLoaderRoute: typeof ApiListingsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/map-clusters': {
+      id: '/api/map-clusters'
+      path: '/api/map-clusters'
+      fullPath: '/api/map-clusters'
+      preLoaderRoute: typeof ApiMapClustersRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/properties': {
+      id: '/api/properties'
+      path: '/api/properties'
+      fullPath: '/api/properties'
+      preLoaderRoute: typeof ApiPropertiesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/property-detail': {
+      id: '/api/property-detail'
+      path: '/api/property-detail'
+      fullPath: '/api/property-detail'
+      preLoaderRoute: typeof ApiPropertyDetailRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/provider-health': {
+      id: '/api/provider-health'
+      path: '/api/provider-health'
+      fullPath: '/api/provider-health'
+      preLoaderRoute: typeof ApiProviderHealthRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/watchlist/$propertyId': {
+      id: '/watchlist/$propertyId'
+      path: '/$propertyId'
+      fullPath: '/watchlist/$propertyId'
+      preLoaderRoute: typeof WatchlistPropertyIdRouteImport
+      parentRoute: typeof WatchlistRoute
     }
     '/api/listings/$id': {
       id: '/api/listings/$id'

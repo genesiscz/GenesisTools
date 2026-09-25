@@ -6,6 +6,7 @@ import { createDashboardViteConfig } from "../utils/ui/vite.base";
 const config = createDashboardViteConfig({
 	root: __dirname,
 	port: 3069,
+	serverOnlyDirs: ["src/server", "src/routes/api"],
 	plugins: [
 		devtools(),
 		viteTsConfigPaths({

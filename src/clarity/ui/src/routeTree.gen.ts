@@ -9,46 +9,36 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
-import { Route as SettingsRouteImport } from './routes/settings'
-import { Route as MappingsRouteImport } from './routes/mappings'
-import { Route as ImportRouteImport } from './routes/import'
-import { Route as ExportRouteImport } from './routes/export'
 import { Route as IndexRouteImport } from './routes/index'
-import { Route as ApiWorkitemTypeColorsRouteImport } from './routes/api/workitem-type-colors'
-import { Route as ApiUpdateAuthRouteImport } from './routes/api/update-auth'
-import { Route as ApiTimelogEntriesRouteImport } from './routes/api/timelog-entries'
-import { Route as ApiTestConnectionRouteImport } from './routes/api/test-connection'
-import { Route as ApiTeamMembersRouteImport } from './routes/api/team-members'
-import { Route as ApiStatusRouteImport } from './routes/api/status'
-import { Route as ApiPostNoteRouteImport } from './routes/api/post-note'
-import { Route as ApiMoveMappingRouteImport } from './routes/api/move-mapping'
-import { Route as ApiMappingsRouteImport } from './routes/api/mappings'
-import { Route as ApiGranularStatusRouteImport } from './routes/api/granular-status'
-import { Route as ApiExportRouteImport } from './routes/api/export'
-import { Route as ApiConfigureTimelogUserRouteImport } from './routes/api/configure-timelog-user'
-import { Route as ApiConfigureTimelogKeyRouteImport } from './routes/api/configure-timelog-key'
-import { Route as ApiConfigureAdoRouteImport } from './routes/api/configure-ado'
-import { Route as ApiClarityWeeksRouteImport } from './routes/api/clarity-weeks'
-import { Route as ApiClarityTasksRouteImport } from './routes/api/clarity-tasks'
-import { Route as ApiAssignmentViewRouteImport } from './routes/api/assignment-view'
-import { Route as ApiAdoWorkitemsRouteImport } from './routes/api/ado-workitems'
+import { Route as ExportRouteImport } from './routes/export'
+import { Route as ImportRouteImport } from './routes/import'
+import { Route as MappingsRouteImport } from './routes/mappings'
+import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as ApiAdoConfigRouteImport } from './routes/api/ado-config'
-import { Route as ApiFillPreviewRouteImport } from './routes/api/fill.preview'
+import { Route as ApiAdoWorkitemsRouteImport } from './routes/api/ado-workitems'
+import { Route as ApiAssignmentViewRouteImport } from './routes/api/assignment-view'
+import { Route as ApiClarityTasksRouteImport } from './routes/api/clarity-tasks'
+import { Route as ApiClarityWeeksRouteImport } from './routes/api/clarity-weeks'
+import { Route as ApiConfigureAdoRouteImport } from './routes/api/configure-ado'
+import { Route as ApiConfigureTimelogKeyRouteImport } from './routes/api/configure-timelog-key'
+import { Route as ApiConfigureTimelogUserRouteImport } from './routes/api/configure-timelog-user'
+import { Route as ApiExportRouteImport } from './routes/api/export'
+import { Route as ApiGranularStatusRouteImport } from './routes/api/granular-status'
+import { Route as ApiMappingsRouteImport } from './routes/api/mappings'
+import { Route as ApiMoveMappingRouteImport } from './routes/api/move-mapping'
+import { Route as ApiPostNoteRouteImport } from './routes/api/post-note'
+import { Route as ApiStatusRouteImport } from './routes/api/status'
+import { Route as ApiTeamMembersRouteImport } from './routes/api/team-members'
+import { Route as ApiTestConnectionRouteImport } from './routes/api/test-connection'
+import { Route as ApiTimelogEntriesRouteImport } from './routes/api/timelog-entries'
+import { Route as ApiUpdateAuthRouteImport } from './routes/api/update-auth'
+import { Route as ApiWorkitemTypeColorsRouteImport } from './routes/api/workitem-type-colors'
 import { Route as ApiFillExecuteRouteImport } from './routes/api/fill.execute'
+import { Route as ApiFillPreviewRouteImport } from './routes/api/fill.preview'
 
-const SettingsRoute = SettingsRouteImport.update({
-  id: '/settings',
-  path: '/settings',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const MappingsRoute = MappingsRouteImport.update({
-  id: '/mappings',
-  path: '/mappings',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ImportRoute = ImportRouteImport.update({
-  id: '/import',
-  path: '/import',
+const IndexRoute = IndexRouteImport.update({
+  id: '/',
+  path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ExportRoute = ExportRouteImport.update({
@@ -56,99 +46,19 @@ const ExportRoute = ExportRouteImport.update({
   path: '/export',
   getParentRoute: () => rootRouteImport,
 } as any)
-const IndexRoute = IndexRouteImport.update({
-  id: '/',
-  path: '/',
+const ImportRoute = ImportRouteImport.update({
+  id: '/import',
+  path: '/import',
   getParentRoute: () => rootRouteImport,
 } as any)
-const ApiWorkitemTypeColorsRoute = ApiWorkitemTypeColorsRouteImport.update({
-  id: '/api/workitem-type-colors',
-  path: '/api/workitem-type-colors',
+const MappingsRoute = MappingsRouteImport.update({
+  id: '/mappings',
+  path: '/mappings',
   getParentRoute: () => rootRouteImport,
 } as any)
-const ApiUpdateAuthRoute = ApiUpdateAuthRouteImport.update({
-  id: '/api/update-auth',
-  path: '/api/update-auth',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ApiTimelogEntriesRoute = ApiTimelogEntriesRouteImport.update({
-  id: '/api/timelog-entries',
-  path: '/api/timelog-entries',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ApiTestConnectionRoute = ApiTestConnectionRouteImport.update({
-  id: '/api/test-connection',
-  path: '/api/test-connection',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ApiTeamMembersRoute = ApiTeamMembersRouteImport.update({
-  id: '/api/team-members',
-  path: '/api/team-members',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ApiStatusRoute = ApiStatusRouteImport.update({
-  id: '/api/status',
-  path: '/api/status',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ApiPostNoteRoute = ApiPostNoteRouteImport.update({
-  id: '/api/post-note',
-  path: '/api/post-note',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ApiMoveMappingRoute = ApiMoveMappingRouteImport.update({
-  id: '/api/move-mapping',
-  path: '/api/move-mapping',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ApiMappingsRoute = ApiMappingsRouteImport.update({
-  id: '/api/mappings',
-  path: '/api/mappings',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ApiGranularStatusRoute = ApiGranularStatusRouteImport.update({
-  id: '/api/granular-status',
-  path: '/api/granular-status',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ApiExportRoute = ApiExportRouteImport.update({
-  id: '/api/export',
-  path: '/api/export',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ApiConfigureTimelogUserRoute = ApiConfigureTimelogUserRouteImport.update({
-  id: '/api/configure-timelog-user',
-  path: '/api/configure-timelog-user',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ApiConfigureTimelogKeyRoute = ApiConfigureTimelogKeyRouteImport.update({
-  id: '/api/configure-timelog-key',
-  path: '/api/configure-timelog-key',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ApiConfigureAdoRoute = ApiConfigureAdoRouteImport.update({
-  id: '/api/configure-ado',
-  path: '/api/configure-ado',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ApiClarityWeeksRoute = ApiClarityWeeksRouteImport.update({
-  id: '/api/clarity-weeks',
-  path: '/api/clarity-weeks',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ApiClarityTasksRoute = ApiClarityTasksRouteImport.update({
-  id: '/api/clarity-tasks',
-  path: '/api/clarity-tasks',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ApiAssignmentViewRoute = ApiAssignmentViewRouteImport.update({
-  id: '/api/assignment-view',
-  path: '/api/assignment-view',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ApiAdoWorkitemsRoute = ApiAdoWorkitemsRouteImport.update({
-  id: '/api/ado-workitems',
-  path: '/api/ado-workitems',
+const SettingsRoute = SettingsRouteImport.update({
+  id: '/settings',
+  path: '/settings',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApiAdoConfigRoute = ApiAdoConfigRouteImport.update({
@@ -156,14 +66,104 @@ const ApiAdoConfigRoute = ApiAdoConfigRouteImport.update({
   path: '/api/ado-config',
   getParentRoute: () => rootRouteImport,
 } as any)
-const ApiFillPreviewRoute = ApiFillPreviewRouteImport.update({
-  id: '/api/fill/preview',
-  path: '/api/fill/preview',
+const ApiAdoWorkitemsRoute = ApiAdoWorkitemsRouteImport.update({
+  id: '/api/ado-workitems',
+  path: '/api/ado-workitems',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiAssignmentViewRoute = ApiAssignmentViewRouteImport.update({
+  id: '/api/assignment-view',
+  path: '/api/assignment-view',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiClarityTasksRoute = ApiClarityTasksRouteImport.update({
+  id: '/api/clarity-tasks',
+  path: '/api/clarity-tasks',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiClarityWeeksRoute = ApiClarityWeeksRouteImport.update({
+  id: '/api/clarity-weeks',
+  path: '/api/clarity-weeks',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiConfigureAdoRoute = ApiConfigureAdoRouteImport.update({
+  id: '/api/configure-ado',
+  path: '/api/configure-ado',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiConfigureTimelogKeyRoute = ApiConfigureTimelogKeyRouteImport.update({
+  id: '/api/configure-timelog-key',
+  path: '/api/configure-timelog-key',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiConfigureTimelogUserRoute = ApiConfigureTimelogUserRouteImport.update({
+  id: '/api/configure-timelog-user',
+  path: '/api/configure-timelog-user',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiExportRoute = ApiExportRouteImport.update({
+  id: '/api/export',
+  path: '/api/export',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiGranularStatusRoute = ApiGranularStatusRouteImport.update({
+  id: '/api/granular-status',
+  path: '/api/granular-status',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiMappingsRoute = ApiMappingsRouteImport.update({
+  id: '/api/mappings',
+  path: '/api/mappings',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiMoveMappingRoute = ApiMoveMappingRouteImport.update({
+  id: '/api/move-mapping',
+  path: '/api/move-mapping',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiPostNoteRoute = ApiPostNoteRouteImport.update({
+  id: '/api/post-note',
+  path: '/api/post-note',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiStatusRoute = ApiStatusRouteImport.update({
+  id: '/api/status',
+  path: '/api/status',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiTeamMembersRoute = ApiTeamMembersRouteImport.update({
+  id: '/api/team-members',
+  path: '/api/team-members',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiTestConnectionRoute = ApiTestConnectionRouteImport.update({
+  id: '/api/test-connection',
+  path: '/api/test-connection',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiTimelogEntriesRoute = ApiTimelogEntriesRouteImport.update({
+  id: '/api/timelog-entries',
+  path: '/api/timelog-entries',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiUpdateAuthRoute = ApiUpdateAuthRouteImport.update({
+  id: '/api/update-auth',
+  path: '/api/update-auth',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiWorkitemTypeColorsRoute = ApiWorkitemTypeColorsRouteImport.update({
+  id: '/api/workitem-type-colors',
+  path: '/api/workitem-type-colors',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApiFillExecuteRoute = ApiFillExecuteRouteImport.update({
   id: '/api/fill/execute',
   path: '/api/fill/execute',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiFillPreviewRoute = ApiFillPreviewRouteImport.update({
+  id: '/api/fill/preview',
+  path: '/api/fill/preview',
   getParentRoute: () => rootRouteImport,
 } as any)
 
@@ -370,25 +370,11 @@ export interface RootRouteChildren {
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
-    '/settings': {
-      id: '/settings'
-      path: '/settings'
-      fullPath: '/settings'
-      preLoaderRoute: typeof SettingsRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/mappings': {
-      id: '/mappings'
-      path: '/mappings'
-      fullPath: '/mappings'
-      preLoaderRoute: typeof MappingsRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/import': {
-      id: '/import'
-      path: '/import'
-      fullPath: '/import'
-      preLoaderRoute: typeof ImportRouteImport
+    '/': {
+      id: '/'
+      path: '/'
+      fullPath: '/'
+      preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/export': {
@@ -398,137 +384,25 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ExportRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/': {
-      id: '/'
-      path: '/'
-      fullPath: '/'
-      preLoaderRoute: typeof IndexRouteImport
+    '/import': {
+      id: '/import'
+      path: '/import'
+      fullPath: '/import'
+      preLoaderRoute: typeof ImportRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/api/workitem-type-colors': {
-      id: '/api/workitem-type-colors'
-      path: '/api/workitem-type-colors'
-      fullPath: '/api/workitem-type-colors'
-      preLoaderRoute: typeof ApiWorkitemTypeColorsRouteImport
+    '/mappings': {
+      id: '/mappings'
+      path: '/mappings'
+      fullPath: '/mappings'
+      preLoaderRoute: typeof MappingsRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/api/update-auth': {
-      id: '/api/update-auth'
-      path: '/api/update-auth'
-      fullPath: '/api/update-auth'
-      preLoaderRoute: typeof ApiUpdateAuthRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/api/timelog-entries': {
-      id: '/api/timelog-entries'
-      path: '/api/timelog-entries'
-      fullPath: '/api/timelog-entries'
-      preLoaderRoute: typeof ApiTimelogEntriesRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/api/test-connection': {
-      id: '/api/test-connection'
-      path: '/api/test-connection'
-      fullPath: '/api/test-connection'
-      preLoaderRoute: typeof ApiTestConnectionRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/api/team-members': {
-      id: '/api/team-members'
-      path: '/api/team-members'
-      fullPath: '/api/team-members'
-      preLoaderRoute: typeof ApiTeamMembersRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/api/status': {
-      id: '/api/status'
-      path: '/api/status'
-      fullPath: '/api/status'
-      preLoaderRoute: typeof ApiStatusRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/api/post-note': {
-      id: '/api/post-note'
-      path: '/api/post-note'
-      fullPath: '/api/post-note'
-      preLoaderRoute: typeof ApiPostNoteRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/api/move-mapping': {
-      id: '/api/move-mapping'
-      path: '/api/move-mapping'
-      fullPath: '/api/move-mapping'
-      preLoaderRoute: typeof ApiMoveMappingRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/api/mappings': {
-      id: '/api/mappings'
-      path: '/api/mappings'
-      fullPath: '/api/mappings'
-      preLoaderRoute: typeof ApiMappingsRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/api/granular-status': {
-      id: '/api/granular-status'
-      path: '/api/granular-status'
-      fullPath: '/api/granular-status'
-      preLoaderRoute: typeof ApiGranularStatusRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/api/export': {
-      id: '/api/export'
-      path: '/api/export'
-      fullPath: '/api/export'
-      preLoaderRoute: typeof ApiExportRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/api/configure-timelog-user': {
-      id: '/api/configure-timelog-user'
-      path: '/api/configure-timelog-user'
-      fullPath: '/api/configure-timelog-user'
-      preLoaderRoute: typeof ApiConfigureTimelogUserRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/api/configure-timelog-key': {
-      id: '/api/configure-timelog-key'
-      path: '/api/configure-timelog-key'
-      fullPath: '/api/configure-timelog-key'
-      preLoaderRoute: typeof ApiConfigureTimelogKeyRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/api/configure-ado': {
-      id: '/api/configure-ado'
-      path: '/api/configure-ado'
-      fullPath: '/api/configure-ado'
-      preLoaderRoute: typeof ApiConfigureAdoRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/api/clarity-weeks': {
-      id: '/api/clarity-weeks'
-      path: '/api/clarity-weeks'
-      fullPath: '/api/clarity-weeks'
-      preLoaderRoute: typeof ApiClarityWeeksRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/api/clarity-tasks': {
-      id: '/api/clarity-tasks'
-      path: '/api/clarity-tasks'
-      fullPath: '/api/clarity-tasks'
-      preLoaderRoute: typeof ApiClarityTasksRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/api/assignment-view': {
-      id: '/api/assignment-view'
-      path: '/api/assignment-view'
-      fullPath: '/api/assignment-view'
-      preLoaderRoute: typeof ApiAssignmentViewRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/api/ado-workitems': {
-      id: '/api/ado-workitems'
-      path: '/api/ado-workitems'
-      fullPath: '/api/ado-workitems'
-      preLoaderRoute: typeof ApiAdoWorkitemsRouteImport
+    '/settings': {
+      id: '/settings'
+      path: '/settings'
+      fullPath: '/settings'
+      preLoaderRoute: typeof SettingsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/ado-config': {
@@ -538,11 +412,130 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiAdoConfigRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/api/fill/preview': {
-      id: '/api/fill/preview'
-      path: '/api/fill/preview'
-      fullPath: '/api/fill/preview'
-      preLoaderRoute: typeof ApiFillPreviewRouteImport
+    '/api/ado-workitems': {
+      id: '/api/ado-workitems'
+      path: '/api/ado-workitems'
+      fullPath: '/api/ado-workitems'
+      preLoaderRoute: typeof ApiAdoWorkitemsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/assignment-view': {
+      id: '/api/assignment-view'
+      path: '/api/assignment-view'
+      fullPath: '/api/assignment-view'
+      preLoaderRoute: typeof ApiAssignmentViewRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/clarity-tasks': {
+      id: '/api/clarity-tasks'
+      path: '/api/clarity-tasks'
+      fullPath: '/api/clarity-tasks'
+      preLoaderRoute: typeof ApiClarityTasksRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/clarity-weeks': {
+      id: '/api/clarity-weeks'
+      path: '/api/clarity-weeks'
+      fullPath: '/api/clarity-weeks'
+      preLoaderRoute: typeof ApiClarityWeeksRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/configure-ado': {
+      id: '/api/configure-ado'
+      path: '/api/configure-ado'
+      fullPath: '/api/configure-ado'
+      preLoaderRoute: typeof ApiConfigureAdoRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/configure-timelog-key': {
+      id: '/api/configure-timelog-key'
+      path: '/api/configure-timelog-key'
+      fullPath: '/api/configure-timelog-key'
+      preLoaderRoute: typeof ApiConfigureTimelogKeyRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/configure-timelog-user': {
+      id: '/api/configure-timelog-user'
+      path: '/api/configure-timelog-user'
+      fullPath: '/api/configure-timelog-user'
+      preLoaderRoute: typeof ApiConfigureTimelogUserRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/export': {
+      id: '/api/export'
+      path: '/api/export'
+      fullPath: '/api/export'
+      preLoaderRoute: typeof ApiExportRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/granular-status': {
+      id: '/api/granular-status'
+      path: '/api/granular-status'
+      fullPath: '/api/granular-status'
+      preLoaderRoute: typeof ApiGranularStatusRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/mappings': {
+      id: '/api/mappings'
+      path: '/api/mappings'
+      fullPath: '/api/mappings'
+      preLoaderRoute: typeof ApiMappingsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/move-mapping': {
+      id: '/api/move-mapping'
+      path: '/api/move-mapping'
+      fullPath: '/api/move-mapping'
+      preLoaderRoute: typeof ApiMoveMappingRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/post-note': {
+      id: '/api/post-note'
+      path: '/api/post-note'
+      fullPath: '/api/post-note'
+      preLoaderRoute: typeof ApiPostNoteRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/status': {
+      id: '/api/status'
+      path: '/api/status'
+      fullPath: '/api/status'
+      preLoaderRoute: typeof ApiStatusRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/team-members': {
+      id: '/api/team-members'
+      path: '/api/team-members'
+      fullPath: '/api/team-members'
+      preLoaderRoute: typeof ApiTeamMembersRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/test-connection': {
+      id: '/api/test-connection'
+      path: '/api/test-connection'
+      fullPath: '/api/test-connection'
+      preLoaderRoute: typeof ApiTestConnectionRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/timelog-entries': {
+      id: '/api/timelog-entries'
+      path: '/api/timelog-entries'
+      fullPath: '/api/timelog-entries'
+      preLoaderRoute: typeof ApiTimelogEntriesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/update-auth': {
+      id: '/api/update-auth'
+      path: '/api/update-auth'
+      fullPath: '/api/update-auth'
+      preLoaderRoute: typeof ApiUpdateAuthRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/workitem-type-colors': {
+      id: '/api/workitem-type-colors'
+      path: '/api/workitem-type-colors'
+      fullPath: '/api/workitem-type-colors'
+      preLoaderRoute: typeof ApiWorkitemTypeColorsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/fill/execute': {
@@ -550,6 +543,13 @@ declare module '@tanstack/react-router' {
       path: '/api/fill/execute'
       fullPath: '/api/fill/execute'
       preLoaderRoute: typeof ApiFillExecuteRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/fill/preview': {
+      id: '/api/fill/preview'
+      path: '/api/fill/preview'
+      fullPath: '/api/fill/preview'
+      preLoaderRoute: typeof ApiFillPreviewRouteImport
       parentRoute: typeof rootRouteImport
     }
   }
