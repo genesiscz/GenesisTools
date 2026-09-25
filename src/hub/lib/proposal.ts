@@ -18,8 +18,13 @@ export type ProposalProvider = "github" | "gitlab";
 export type ProposalSide = "additions" | "deletions";
 export type ProposalSeverity = "blocker" | "major" | "minor" | "nit" | "question" | "praise";
 export type ProposalDecision = "approve" | "request_changes" | "comment";
-/** proposed (agent) → accepted | edited | rejected (Martin) → drafted (a provider review draft) → posted. */
-export type ProposalDraftStatus = "proposed" | "accepted" | "edited" | "rejected" | "drafted" | "posted";
+/**
+ * proposed (agent) → accepted | edited | rejected (Martin) → sent (to the agent) | drafted (a provider review
+ * draft) → posted. Everything after `proposed` is written by the window, never by the agent.
+ */
+export type ProposalDraftStatus = "proposed" | "accepted" | "edited" | "rejected" | "sent" | "drafted" | "posted";
+/** What the window did with the agent's suggested reply to an existing thread. */
+export type ProposalReplyStatus = "sent" | "drafted" | "posted";
 
 export interface ProposalMeta {
     /** One line: what is wrong or right here, e.g. "Race: the observer is torn down before the POST resolves". */
@@ -50,13 +55,31 @@ export interface ProposalDraft {
     providerId?: string;
 }
 
-export interface ProposalThreadVerdict {
+/**
+ * A review thread that already exists on the PR. The provider's facts (who opened it, its first
+ * note, how many notes, resolved) put it on the diff in the window; the agent's read of it
+ * (`verdict`, `proof`, `suggestedReply`) is optional, because carrying a thread over is not the
+ * same as having checked it.
+ */
+export interface ProposalThread {
     threadId: string;
     path?: string;
     line?: number;
-    verdict: "valid" | "invalid" | "already-fixed" | "needs-discussion" | "out-of-scope";
+    author?: string;
+    body?: string;
+    noteCount?: number;
+    resolved?: boolean;
+    verdict?: "valid" | "invalid" | "already-fixed" | "needs-discussion" | "out-of-scope";
     proof?: string;
+    confidence?: number;
+    reasoning?: string;
+    /** On your own PR (the receive side): the change that answers the thread, markdown with a fenced diff. */
+    fix?: string;
     suggestedReply?: string;
+    /** Window-owned, like a draft's status: Martin's reworded reply and where it went. */
+    editedReply?: string;
+    replyStatus?: ProposalReplyStatus;
+    providerId?: string;
 }
 
 export interface ReviewProposal {
@@ -78,7 +101,7 @@ export interface ReviewProposal {
     author: { agent: string; sessionId?: string; model?: string };
     verdict: { decision: ProposalDecision; summary: string; confidence?: number; proof?: string };
     drafts: ProposalDraft[];
-    threads?: ProposalThreadVerdict[];
+    threads?: ProposalThread[];
     notes?: string;
 }
 
@@ -86,7 +109,7 @@ export class ProposalError extends Error {}
 
 const SEVERITIES: ProposalSeverity[] = ["blocker", "major", "minor", "nit", "question", "praise"];
 const DECISIONS: ProposalDecision[] = ["approve", "request_changes", "comment"];
-const THREAD_VERDICTS: ProposalThreadVerdict["verdict"][] = [
+const THREAD_VERDICTS: NonNullable<ProposalThread["verdict"]>[] = [
     "valid",
     "invalid",
     "already-fixed",
@@ -237,13 +260,26 @@ export function parseProposal(value: unknown, now = new Date()): ReviewProposal 
             throw new ProposalError(`threads[${index}] must be an object`);
         }
 
+        const at = `threads[${index}]`;
+
+        if (thread.resolved !== undefined && typeof thread.resolved !== "boolean") {
+            throw new ProposalError(`${at}.resolved must be a boolean`);
+        }
+
         return {
-            threadId: str(thread.threadId, `threads[${index}].threadId`) as string,
-            path: str(thread.path, `threads[${index}].path`, true),
-            line: lineNumber(thread.line, `threads[${index}].line`, true),
-            verdict: oneOf(thread.verdict, THREAD_VERDICTS, `threads[${index}].verdict`),
-            proof: str(thread.proof, `threads[${index}].proof`, true),
-            suggestedReply: str(thread.suggestedReply, `threads[${index}].suggestedReply`, true),
+            threadId: str(thread.threadId, `${at}.threadId`) as string,
+            path: str(thread.path, `${at}.path`, true),
+            line: lineNumber(thread.line, `${at}.line`, true),
+            author: str(thread.author, `${at}.author`, true),
+            body: str(thread.body, `${at}.body`, true),
+            noteCount: int(thread.noteCount, `${at}.noteCount`, true),
+            resolved: thread.resolved as boolean | undefined,
+            verdict: thread.verdict === undefined ? undefined : oneOf(thread.verdict, THREAD_VERDICTS, `${at}.verdict`),
+            proof: str(thread.proof, `${at}.proof`, true),
+            confidence: int(thread.confidence, `${at}.confidence`, true),
+            reasoning: str(thread.reasoning, `${at}.reasoning`, true),
+            fix: str(thread.fix, `${at}.fix`, true),
+            suggestedReply: str(thread.suggestedReply, `${at}.suggestedReply`, true),
         };
     });
 
@@ -318,6 +354,92 @@ function readStoredProposal(path: string): ReviewProposal | null {
     return stored;
 }
 
+/** What the hub's PR list shows about a stored proposal: where it is and what is still undecided. */
+export interface ProposalSummary {
+    path: string;
+    decision: ProposalDecision;
+    drafts: number;
+    /** Drafts Martin has not rejected and that are not posted yet. */
+    pending: number;
+    /** When an agent last pushed it; the hub rebuilds its review when this moves (the path never does). */
+    updatedAt: string;
+    /** Existing PR threads the proposal carries, and how many of them are still open. */
+    threads: number;
+    openThreads: number;
+    /** The checkout the agent read, when it still exists: the PR list diffs there if no worktree has the branch. */
+    repoPath: string | null;
+}
+
+/** The stored proposal for one PR, read by its key (one file, no folder scan); null when none. */
+export function proposalFor(
+    ref: Pick<ReviewProposal, "provider" | "host" | "project" | "number">,
+    base?: string
+): ProposalSummary | null {
+    const path = join(proposalsDir(base), `${proposalKey(ref)}.json`);
+
+    if (!existsSync(path)) {
+        return null;
+    }
+
+    try {
+        const stored = SafeJSON.parse(readFileSync(path, "utf8"));
+        const proposal = parseProposal(stored);
+        // parseProposal resets every status to `proposed` (an agent never sets one) and stamps a new
+        // createdAt; the decisions the window made and the push stamp live only in the stored file.
+        const statusOf = storedStatuses(stored);
+        const pending = proposal.drafts.filter((draft) => {
+            const status = statusOf.get(draft.id) ?? "proposed";
+            return status !== "rejected" && status !== "posted" && status !== "sent" && status !== "drafted";
+        });
+        const threads = proposal.threads ?? [];
+        return {
+            path,
+            decision: proposal.verdict.decision,
+            drafts: proposal.drafts.length,
+            pending: pending.length,
+            updatedAt: storedStamp(stored),
+            threads: threads.length,
+            openThreads: threads.filter((thread) => thread.resolved !== true).length,
+            repoPath: proposal.repoPath && existsSync(proposal.repoPath) ? proposal.repoPath : null,
+        };
+    } catch (error) {
+        logger.warn({ error, path }, "review proposal unreadable; the PR list shows none");
+        return null;
+    }
+}
+
+/** The stored file's push stamp (`updatedAt`, else `createdAt`); "" when it has neither. */
+function storedStamp(stored: unknown): string {
+    if (!isRecord(stored)) {
+        return "";
+    }
+
+    for (const key of ["updatedAt", "createdAt"]) {
+        const value = stored[key];
+        if (typeof value === "string") {
+            return value;
+        }
+    }
+
+    return "";
+}
+
+function storedStatuses(stored: unknown): Map<string, string> {
+    const statuses = new Map<string, string>();
+
+    if (!isRecord(stored) || !Array.isArray(stored.drafts)) {
+        return statuses;
+    }
+
+    for (const draft of stored.drafts) {
+        if (isRecord(draft) && typeof draft.id === "string" && typeof draft.status === "string") {
+            statuses.set(draft.id, draft.status);
+        }
+    }
+
+    return statuses;
+}
+
 export function proposalsDir(base?: string): string {
     return join(base ?? new Storage("review").getBaseDir(), "proposals");
 }
@@ -362,11 +484,28 @@ function mergeAndWrite({ incoming, key, path }: { incoming: ReviewProposal; key:
         return { ...draft, status: before.status, editedBody: before.editedBody, providerId: before.providerId };
     });
 
+    const threads = incoming.threads?.map((thread) => {
+        const before = previous?.threads?.find((old) => old.threadId === thread.threadId);
+
+        if (!before || (before.editedReply === undefined && before.replyStatus === undefined)) {
+            return thread;
+        }
+
+        kept += 1;
+        return {
+            ...thread,
+            editedReply: before.editedReply,
+            replyStatus: before.replyStatus,
+            providerId: before.providerId,
+        };
+    });
+
     const merged: ReviewProposal = {
         ...incoming,
         createdAt: previous?.createdAt ?? incoming.createdAt,
         updatedAt: incoming.createdAt,
         drafts,
+        ...(threads ? { threads } : {}),
     };
     const temp = `${path}.${process.pid}.tmp`;
     writeFileSync(temp, `${SafeJSON.stringify(merged, null, 2)}\n`);

@@ -3,7 +3,15 @@ import { mkdtempSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { listProposals, ProposalError, parseProposal, proposalKey, proposalMarkdown, saveProposal } from "./proposal";
+import {
+    listProposals,
+    ProposalError,
+    parseProposal,
+    proposalFor,
+    proposalKey,
+    proposalMarkdown,
+    saveProposal,
+} from "./proposal";
 
 function input(overrides: Record<string, unknown> = {}) {
     return {
@@ -182,5 +190,162 @@ describe("review proposal", () => {
         expect(markdown).toContain("# !42 Invented MR");
         expect(markdown).toContain("Better wording");
         expect(markdown).toContain("Race on reset");
+    });
+
+    test("proposalFor finds the stored proposal of one PR by its key and counts undecided drafts", async () => {
+        const base = mkdtempSync(join(tmpdir(), "review-proposal-"));
+        const ref = { provider: "gitlab" as const, host: "gitlab.example.com", project: "group/app", number: 42 };
+        expect(proposalFor(ref, base)).toBeNull();
+
+        const saved = await saveProposal(parseProposal(input()), base);
+        const summary = proposalFor(ref, base);
+
+        expect(summary).toEqual({
+            path: saved.path,
+            decision: "request_changes",
+            drafts: 1,
+            pending: 1,
+            updatedAt: expect.any(String),
+            threads: 0,
+            openThreads: 0,
+            repoPath: null,
+        });
+        expect(proposalFor({ ...ref, number: 43 }, base)).toBeNull();
+
+        // A decision made in the window (stored status) is not undecided any more.
+        const stored = SafeJSON.parse(readFileSync(saved.path, "utf8"));
+        stored.drafts[0].status = "rejected";
+        writeFileSync(saved.path, SafeJSON.stringify(stored));
+        expect(proposalFor(ref, base)).toEqual({
+            path: saved.path,
+            decision: "request_changes",
+            drafts: 1,
+            pending: 0,
+            updatedAt: expect.any(String),
+            threads: 0,
+            openThreads: 0,
+            repoPath: null,
+        });
+    });
+
+    test("carries existing PR threads with their own content, with or without the agent's read", () => {
+        const proposal = parseProposal(
+            input({
+                threads: [
+                    {
+                        threadId: "t1",
+                        path: "src/a.ts",
+                        line: 12,
+                        author: "reviewer",
+                        body: "Why reset here?",
+                        noteCount: 2,
+                        resolved: true,
+                    },
+                    {
+                        threadId: "t2",
+                        path: "src/b.ts",
+                        line: 3,
+                        author: "reviewer",
+                        body: "Rename?",
+                        resolved: false,
+                        verdict: "valid",
+                        proof: "src/b.ts:3",
+                    },
+                ],
+            })
+        );
+
+        expect(proposal.threads?.[0]).toEqual({
+            threadId: "t1",
+            path: "src/a.ts",
+            line: 12,
+            author: "reviewer",
+            body: "Why reset here?",
+            noteCount: 2,
+            resolved: true,
+            verdict: undefined,
+            proof: undefined,
+            confidence: undefined,
+            reasoning: undefined,
+            fix: undefined,
+            suggestedReply: undefined,
+        });
+        expect(proposal.threads?.[1]?.verdict).toBe("valid");
+        expect(() => parseProposal(input({ threads: [{ threadId: "t1", resolved: "yes" }] }))).toThrow(
+            "threads[0].resolved must be a boolean"
+        );
+        expect(() => parseProposal(input({ threads: [{ threadId: "t1", verdict: "maybe" }] }))).toThrow(
+            "threads[0].verdict must be one of"
+        );
+    });
+
+    test("a thread on your own PR carries the proposed fix, a confidence and the reasoning", () => {
+        const fix = "Move the reset into the finally block:\n```diff\n- reset()\n+ finally { reset() }\n```";
+        const proposal = parseProposal(
+            input({
+                threads: [{ threadId: "t1", verdict: "valid", confidence: 85, reasoning: "The race is real.", fix }],
+            })
+        );
+
+        expect(proposal.threads?.[0]).toMatchObject({ confidence: 85, reasoning: "The race is real.", fix });
+        expect(() => parseProposal(input({ threads: [{ threadId: "t1", confidence: -1 }] }))).toThrow(
+            "threads[0].confidence must be a non-negative integer"
+        );
+    });
+
+    test("proposalFor counts the window's decisions, which live only in the stored file", async () => {
+        const base = mkdtempSync(join(tmpdir(), "review-proposal-"));
+        const ref = { provider: "gitlab" as const, host: "gitlab.example.com", project: "group/app", number: 42 };
+        const draft = (id: string) => ({ ...input().drafts[0], id });
+        const saved = await saveProposal(parseProposal(input({ drafts: ["a", "b", "c", "d", "e"].map(draft) })), base);
+        const stored = SafeJSON.parse(readFileSync(saved.path, "utf8")) as { drafts: Array<{ status: string }> };
+        stored.drafts[0].status = "accepted";
+        stored.drafts[1].status = "sent";
+        stored.drafts[2].status = "drafted";
+        stored.drafts[3].status = "posted";
+        writeFileSync(saved.path, SafeJSON.stringify(stored));
+
+        // a (accepted) and e (proposed) still wait for a send; b, c and d already went somewhere.
+        expect(proposalFor(ref, base)).toMatchObject({ drafts: 5, pending: 2 });
+    });
+
+    test("a second push keeps the window's reworded thread reply and where it went", async () => {
+        const base = mkdtempSync(join(tmpdir(), "review-proposal-"));
+        const threads = [{ threadId: "t1", path: "src/a.ts", line: 3, suggestedReply: "Fixed in abc." }];
+        const saved = await saveProposal(parseProposal(input({ threads })), base);
+        const stored = SafeJSON.parse(readFileSync(saved.path, "utf8")) as { threads: Array<Record<string, unknown>> };
+        stored.threads[0] = {
+            ...stored.threads[0],
+            editedReply: "Opraveno v abc.",
+            replyStatus: "drafted",
+            providerId: "n1",
+        };
+        writeFileSync(saved.path, SafeJSON.stringify(stored));
+
+        const again = await saveProposal(
+            parseProposal(input({ threads: [{ ...threads[0], suggestedReply: "Fixed in def." }] })),
+            base
+        );
+        const after = SafeJSON.parse(readFileSync(again.path, "utf8")) as { threads: Array<Record<string, unknown>> };
+        expect(after.threads[0]).toMatchObject({
+            suggestedReply: "Fixed in def.",
+            editedReply: "Opraveno v abc.",
+            replyStatus: "drafted",
+            providerId: "n1",
+        });
+        expect(again.kept).toBe(1);
+    });
+
+    test("proposalFor counts open threads and names the checkout only while it exists", async () => {
+        const base = mkdtempSync(join(tmpdir(), "review-proposal-"));
+        const checkout = mkdtempSync(join(tmpdir(), "review-checkout-"));
+        const ref = { provider: "gitlab" as const, host: "gitlab.example.com", project: "group/app", number: 42 };
+        const threads = [{ threadId: "t1", resolved: true }, { threadId: "t2", resolved: false }, { threadId: "t3" }];
+
+        await saveProposal(parseProposal(input({ repoPath: checkout, threads })), base);
+        expect(proposalFor(ref, base)).toMatchObject({ threads: 3, openThreads: 2, repoPath: checkout });
+
+        await saveProposal(parseProposal(input({ repoPath: join(checkout, "gone"), threads })), base);
+        expect(proposalFor(ref, base)?.repoPath).toBeNull();
     });
 });

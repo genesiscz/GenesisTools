@@ -100,6 +100,28 @@ describe("hubPrs / hubPr", () => {
             (cmd[1] === "pr" && ["list", "view"].includes(cmd[2])) || (cmd[1] === "api" && cmd.at(-1) === "user");
         expect(calls.every(readOnly)).toBe(true);
 
+        // A date range reaches the host as update order cut at the bound, not the newest 30 PRs by creation.
+        const ranged: string[][] = [];
+        const graph: CommandRunner = async (cmd) => {
+            ranged.push(cmd);
+            const node = { ...GH_ROW, updatedAt: "2026-03-02T00:00:00Z", labels: { nodes: [] } };
+            const answer =
+                cmd[2] === "graphql"
+                    ? { data: { repository: { pullRequests: { nodes: [node] } } } }
+                    : { login: "alice" };
+            return { code: 0, stdout: SafeJSON.stringify(answer), stderr: "" };
+        };
+        const bounded = await hubPrs({
+            paths: [repo.dir],
+            runner: graph,
+            updatedSince: new Date("2026-03-01T10:00:00Z"),
+        });
+        expect(bounded.prs.map((pr) => pr.number)).toEqual([7]);
+        const query = ranged.find((cmd) => cmd[2] === "graphql") ?? [];
+        expect(query.slice(0, 5)).toEqual(["gh", "api", "graphql", "--hostname", "github.com"]);
+        expect(query.join(" ")).toContain("orderBy: {field: UPDATED_AT, direction: DESC}");
+        expect(ranged.some((cmd) => cmd[2] === "list")).toBe(false);
+
         const detail = await hubPr({ ref: `${worktree}#7`, runner: fakeGh(calls) });
         expect(detail).toMatchObject({ number: 7, body: "why", repoRoot: repo.dir, localWorktree: worktree });
     });

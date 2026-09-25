@@ -1,0 +1,27 @@
+{
+    "note": "Every `tools hub pr` argv the review window builds (src/macos/GenesisTools/Sources/Review/PRThreads.swift PRCommand), for the checkout /work/shop and the body file /tmp/b.md. PRThreadsTests checks that Swift builds exactly these; pr.test.ts checks that the CLI parses each one and answers a failure as {error, code}.",
+    "argv": {
+        "threads": ["hub", "pr", "threads", "--repo", "/work/shop", "--json"],
+        "threadsNoCache": ["hub", "pr", "threads", "--repo", "/work/shop", "--json", "--no-cache"],
+        "replyDraft": ["hub", "pr", "reply", "--repo", "/work/shop", "--thread", "PRRT_1", "--body-file", "/tmp/b.md", "--json", "--draft"],
+        "replyNow": ["hub", "pr", "reply", "--repo", "/work/shop", "--thread", "PRRT_1", "--body-file", "/tmp/b.md", "--json"],
+        "draftAdd": ["hub", "pr", "draft", "add", "--repo", "/work/shop", "--path", "src/cart.ts", "--line", "14", "--start-line", "10", "--side", "deletions", "--body-file", "/tmp/b.md", "--json"],
+        "comment": ["hub", "pr", "comment", "--repo", "/work/shop", "--path", "src/cart.ts", "--line", "14", "--start-line", "10", "--side", "deletions", "--body-file", "/tmp/b.md", "--json"],
+        "draftUpdate": ["hub", "pr", "draft", "update", "PRRC_9", "--repo", "/work/shop", "--body-file", "/tmp/b.md", "--json"],
+        "draftDelete": ["hub", "pr", "draft", "delete", "PRRC_9", "--repo", "/work/shop", "--json"],
+        "resolve": ["hub", "pr", "resolve", "PRRT_1", "--repo", "/work/shop", "--json"],
+        "unresolve": ["hub", "pr", "resolve", "PRRT_1", "--repo", "/work/shop", "--json", "--unresolve"],
+        "publishComment": ["hub", "pr", "publish", "--repo", "/work/shop", "--json"],
+        "publishApprove": ["hub", "pr", "publish", "--repo", "/work/shop", "--approve", "--body-file", "/tmp/b.md", "--json"],
+        "publishRequestChanges": ["hub", "pr", "publish", "--repo", "/work/shop", "--request-changes", "--json"],
+        "fixPlan": ["hub", "pr", "fix", "--repo", "/work/shop", "--threads", "PRRT_1,PRRT_2", "--dry-run", "--json"],
+        "fixNewAgent": ["hub", "pr", "fix", "--repo", "/work/shop", "--threads", "PRRT_1", "--no-send", "--json"],
+        "fixCheckPlan": ["hub", "pr", "fix-check", "--check", "https://github.com/o/r/actions/runs/1/job/2", "--name", "ci", "--repo", "/work/shop", "--pr", "/work/shop#42", "--dry-run", "--json"],
+        "fixCheckNewAgent": ["hub", "pr", "fix-check", "--check", "https://github.com/o/r/actions/runs/1/job/2", "--name", "ci", "--repo", "/work/shop", "--pr", "/work/shop#42", "--session", "aaaaaaaa-0000-4000-8000-000000000001", "--no-send", "--json"]
+    },
+    "answersNote": "What each argv prints in a folder that is no git checkout; the default is {code: no-pr, error: not a git checkout}. A `--pr <path>#<n>` ref fails one step earlier, when the path yields no host.",
+    "answers": {
+        "fixCheckPlan": { "code": "bad-input" },
+        "fixCheckNewAgent": { "code": "bad-input" }
+    }
+}

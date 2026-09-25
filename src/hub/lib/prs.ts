@@ -17,6 +17,8 @@ import {
     type WorktreeInfo,
 } from "@genesiscz/utils/git";
 import { logger } from "@genesiscz/utils/logger";
+import { branchMentions, localBranchNames } from "./branches";
+import { type ProposalSummary, proposalFor } from "./proposal";
 import { type RepoFacts, repoFacts, repoFactsMany } from "./repo";
 
 /** The hub's PR row: the host's PR plus where it lives on this machine. */
@@ -30,15 +32,20 @@ export interface HubPr extends PrSummary {
     localWorktree: string | null;
     /** Authored by the logged-in host user; null when that user could not be looked up. */
     isMine: boolean | null;
+    /** An agent's review proposal for this PR (`tools hub proposal push`), when one is stored. */
+    proposal: ProposalSummary | null;
 }
 
 export interface HubPrDetail extends HubPr, Omit<PrDetail, keyof PrSummary> {
     warnings: string[];
+    /** Names in the description that are branches of the local checkout (none without one). */
+    branchMentions: string[];
 }
 
 /** One project the paths resolved to. `error` set means its PRs are unknown, not absent. */
 export interface HubPrRepo {
-    repo: string | null;
+    /** Never null: the hub decodes it as a String (Hub/HubPRs.swift `HubPRList.Repo`). */
+    repo: string;
     repoRoot: string | null;
     /** The input paths that resolved to this project. */
     paths: string[];
@@ -99,13 +106,21 @@ function toHubPr({
     viewer: string | null;
     mine: boolean;
 }): HubPr {
+    const proposal = proposalFor({
+        provider: project.kind,
+        host: project.host,
+        project: project.path,
+        number: pr.number,
+    });
     return {
         repo,
         repoRoot,
         origin: { kind: project.kind, host: project.host, web: project.web },
         ...pr,
-        localWorktree: worktrees.get(pr.headBranch) ?? null,
+        // A detached review worktree has no branch to match; the proposal names the checkout it read.
+        localWorktree: worktrees.get(pr.headBranch) ?? proposal?.repoPath ?? null,
         isMine: mine ? true : viewer && pr.author ? viewer === pr.author : null,
+        proposal,
     };
 }
 
@@ -172,24 +187,32 @@ function viewerCache(runner: CommandRunner): (project: ProjectRef, cwd: string) 
     };
 }
 
-/** PRs/MRs of every project among `paths`, one host query per project, four projects at a time. Read-only. */
+/**
+ * PRs/MRs of every project among `paths`, one host query per project, four projects at a time.
+ * Read-only. `updatedSince` keeps only PRs updated since then (`listPrs`).
+ */
 export async function hubPrs({
     paths,
     state = "open",
     mine = false,
     limit = 30,
+    updatedSince,
     runner = spawnRunner,
 }: {
     paths: string[];
     state?: PrListState;
     mine?: boolean;
     limit?: number;
+    updatedSince?: Date;
     runner?: CommandRunner;
 }): Promise<HubPrsResult> {
     const facts = await repoFactsMany({ paths });
     const { groups, skipped } = groupByOrigin(facts);
     const viewerFor = viewerCache(runner);
-    log.debug({ paths: paths.length, projects: groups.length, skipped: skipped.length, state, mine, limit }, "hub prs");
+    log.debug(
+        { paths: paths.length, projects: groups.length, skipped: skipped.length, state, mine, limit, updatedSince },
+        "hub prs"
+    );
 
     const results = await concurrentMap({
         items: groups,
@@ -223,7 +246,7 @@ export async function hubPrs({
 
             const cwd = repoRoot ?? first.path;
             const [listed, viewer] = await Promise.all([
-                listPrs({ project, state, mine, limit, cwd, runner }),
+                listPrs({ project, state, mine, limit, updatedSince, cwd, runner }),
                 viewerFor(project, cwd),
             ]);
             const byBranch = worktreeByBranch(worktrees.all);
@@ -252,7 +275,7 @@ export async function hubPrs({
             prs.push(...result.prs);
         } else {
             repos.push({
-                repo: group.facts[0].repo,
+                repo: group.facts[0].repo ?? basename(group.facts[0].root ?? group.facts[0].path),
                 repoRoot: group.facts[0].root,
                 paths: group.paths,
                 origin: null,
@@ -322,9 +345,10 @@ export async function hubPr({
     }
 
     const cwd = repoRoot ?? process.cwd();
-    const [viewed, viewer] = await Promise.all([
+    const [viewed, viewer, branches] = await Promise.all([
         viewPr({ project, number, cwd, runner }),
         viewerLogin({ project, cwd, runner }),
+        repoRoot ? localBranchNames(repoRoot) : Promise.resolve(new Set<string>()),
     ]);
     log.debug({ project: project.path, number, error: viewed.error, warnings: viewed.warnings }, "hub pr");
 
@@ -336,5 +360,6 @@ export async function hubPr({
         ...toHubPr({ pr: viewed.pr, project, repo, repoRoot, worktrees, viewer, mine: false }),
         ...viewed.pr,
         warnings: viewed.warnings,
+        branchMentions: branchMentions(viewed.pr.body, branches),
     };
 }
