@@ -6,7 +6,15 @@ import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { readJsonlRows } from "@genesiscz/utils/jsonl";
 import { computeSessionChanges, gitBlobOid } from "@genesiscz/utils/session-changes";
-import { changeStatus, diffsFor, rawLogFiles, rawTransition, selectTurns, toolCallFiles } from "../../commands/changes";
+import {
+    changeStatus,
+    diffsFor,
+    rawLogFiles,
+    rawTransition,
+    resolveSessionArgument,
+    selectTurns,
+    toolCallFiles,
+} from "../../commands/changes";
 import { fileDiff, readBlobs } from "./diff";
 import {
     type ChangeEvent,
@@ -50,6 +58,31 @@ describe("the changes command, as the hub calls it", () => {
         const raw = run("00000000-0000-4000-8000-00000000abcd", "--raw", "--tools", "toolu_b", "--json");
         expect(raw.status).toBe(1);
         expect(raw.stderr).toContain("--raw takes one call");
+    });
+});
+
+describe("the session argument", () => {
+    const full = "7399934a-6a92-4ee1-bb4c-3f8694fb42bf";
+    const match = { sessionId: full, providerId: "claude", title: "agents-window", mtime: 0 };
+
+    test("a leading part of an id is completed from the index, and says so", () => {
+        expect(resolveSessionArgument("7399934a", () => ({ kind: "unique", sessionId: full, match }))).toEqual({
+            id: full,
+            note: `7399934a is session ${full}`,
+        });
+    });
+
+    test("a full id, or one the index cannot see, is used as given", () => {
+        expect(resolveSessionArgument(full, () => ({ kind: "exact", sessionId: full }))).toEqual({ id: full });
+        expect(resolveSessionArgument("s-x", () => ({ kind: "unavailable", sessionId: "s-x" }))).toEqual({ id: "s-x" });
+        expect(resolveSessionArgument("s-x", () => ({ kind: "none" }))).toEqual({ id: "s-x" });
+    });
+
+    test("an ambiguous prefix is refused with the candidates, never guessed", () => {
+        const other = { sessionId: "7399934a-0000-4000-8000-000000000000", providerId: "codex", title: null, mtime: 0 };
+        const result = resolveSessionArgument("7399934a", () => ({ kind: "ambiguous", candidates: [match, other] }));
+        expect("error" in result && result.error).toContain("more than one session");
+        expect("error" in result && result.error).toContain(other.sessionId);
     });
 });
 

@@ -23,6 +23,9 @@ struct CodeLine: Equatable, Sendable {
         case context, added, removed
         /// `⋯ 12 unchanged lines` between hunks.
         case gap
+        // GenesisTools adaptation: the line a `file:line` reference points at, tinted so it stands
+        // out of the lines around it (the Inbox excerpt cards).
+        case focus
     }
 
     var number: Int?
@@ -50,7 +53,8 @@ extension CodeBlock: Hashable {}
 enum CodeBlockBuilder {
     /// Output or file content, numbered from `start`. A Read result that already carries
     /// `   12→` or `12\t` prefixes keeps those numbers instead.
-    static func numbered(_ text: String, start: Int = 1, language: SyntaxLanguage, failed: Bool = false) -> CodeBlock {
+    // GenesisTools adaptation: `focus` marks the line with that number (see `CodeLine.Mark.focus`).
+    static func numbered(_ text: String, start: Int = 1, language: SyntaxLanguage, failed: Bool = false, focus: Int? = nil) -> CodeBlock {
         var body = text
         if body.hasSuffix("\n") { body.removeLast() }
         let raw = body.split(separator: "\n", omittingEmptySubsequences: false)
@@ -60,9 +64,9 @@ enum CodeBlockBuilder {
         for line in raw.prefix(3) where readPrefix(line) == nil { readNumbers = false }
         for (offset, line) in raw.enumerated() {
             if readNumbers, let (number, rest) = readPrefix(line) {
-                lines.append(CodeLine(number: number, mark: .context, text: rest))
+                lines.append(CodeLine(number: number, mark: number == focus ? .focus : .context, text: rest))
             } else {
-                lines.append(CodeLine(number: start + offset, mark: .context, text: String(line)))
+                lines.append(CodeLine(number: start + offset, mark: start + offset == focus ? .focus : .context, text: String(line)))
             }
         }
         return CodeBlock(lines: lines, language: language, failed: failed)
@@ -253,7 +257,8 @@ enum CodeBlockRenderer {
     static func attributed(_ block: CodeBlock, limit: Int?, highlight: Bool) -> CodeBlockAttributed {
         let lines = limit.map { Array(block.lines.prefix($0)) } ?? block.lines
         let width = String(lines.compactMap(\.number).max() ?? 0).count
-        let band = min(bandWidth, lines.filter { $0.mark == .added || $0.mark == .removed }.map { $0.text.count }.max() ?? 0)
+        // GenesisTools adaptation: a focus line is banded like a diff line.
+        let band = min(bandWidth, lines.filter { $0.mark == .added || $0.mark == .removed || $0.mark == .focus }.map { $0.text.count }.max() ?? 0)
         var highlighter = SyntaxHighlighter(language: highlight ? block.language : .plain)
         var gutter = AttributedString()
         var out = AttributedString()
@@ -277,7 +282,8 @@ enum CodeBlockRenderer {
             if width > 0 {
                 let label = line.number.map(String.init) ?? ""
                 var number = AttributedString(String(repeating: " ", count: width - label.count) + label)
-                number.foregroundColor = SessionPalette.faint
+                // GenesisTools adaptation: the focus line's number is drawn in the tint.
+                number.foregroundColor = line.mark == .focus ? SessionPalette.blue : SessionPalette.faint
                 gutter.append(number)
             }
 
@@ -285,6 +291,8 @@ enum CodeBlockRenderer {
             switch line.mark {
             case .added: background = SessionPalette.green.opacity(0.16)
             case .removed: background = SessionPalette.red.opacity(0.16)
+            // GenesisTools adaptation: see `CodeLine.Mark.focus`.
+            case .focus: background = SessionPalette.blue.opacity(0.16)
             default: background = nil
             }
             if block.isDiff {

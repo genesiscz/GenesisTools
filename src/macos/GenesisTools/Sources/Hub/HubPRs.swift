@@ -621,10 +621,11 @@ struct PRListView: View {
                         .foregroundColor(Color.white.opacity(0.92))
                         .lineLimit(2)
                     HStack(spacing: 5) {
-                        Text(verbatim: pr.label).font(.system(size: 11, design: .monospaced))
+                        Text(verbatim: pr.label).font(.system(size: 11, design: .monospaced)).fixedSize()
                         Text(verbatim: pr.author ?? "")
-                        Text(verbatim: "·")
-                        Text(verbatim: HubFormat.ago(pr.updated))
+                        Text(verbatim: "·").fixedSize()
+                        // Whole, so the author truncates and the age never reads "4 hr. a…".
+                        Text(verbatim: HubFormat.ago(pr.updated)).fixedSize()
                     }
                     .font(.system(size: 11))
                     .foregroundColor(ReviewPalette.dim)

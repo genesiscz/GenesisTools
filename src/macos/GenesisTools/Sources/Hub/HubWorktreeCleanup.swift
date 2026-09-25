@@ -443,7 +443,9 @@ struct WorktreeCleanupView: View {
         }
         .padding(.horizontal, 18)
         .padding(.vertical, 6)
-        .hubSurface(.content)
+        // A pinned header: `.bar` is frosted in glass mode, where `.content` let the row scrolled
+        // under it show through the text (snapshot 2026-09-25).
+        .hubSurface(.bar)
     }
 
     private func rowView(_ row: CleanupRow) -> some View {

@@ -105,10 +105,29 @@ export async function waitingBlock(
     return found?.blocks.find((block) => block.number === number) ?? null;
 }
 
+/** The folder of a session that has no stored row: the agent session list (the Inbox's own source), recent first. */
+async function lookupSessionCwd(session: string): Promise<string | null> {
+    for (const hours of [72, 24 * 90]) {
+        const row = (await listAgentSessionRows({ hours })).find(
+            (candidate) => candidate.sessionId === session || candidate.sessionId.startsWith(session)
+        );
+
+        if (row) {
+            return row.cwd || null;
+        }
+    }
+
+    return null;
+}
+
 /** Every decision of one session (the hub's Decisions pane). A transcript that cannot be read leaves the stored rows. */
 export async function loadSessionDecisions(
     session: string,
-    { rows = realInboxDeps.rows, scan = scanSession }: { rows?: () => DecisionRecord[]; scan?: typeof scanSession } = {}
+    {
+        rows = realInboxDeps.rows,
+        scan = scanSession,
+        sessionCwd = lookupSessionCwd,
+    }: { rows?: () => DecisionRecord[]; scan?: typeof scanSession; sessionCwd?: typeof lookupSessionCwd } = {}
 ): Promise<InboxDecision[]> {
     let found: TranscriptScan | null = null;
 
@@ -118,7 +137,9 @@ export async function loadSessionDecisions(
         log.debug({ error, session }, "session decisions: transcript not readable, stored rows only");
     }
 
-    const cwd = rows().find((row) => row.sessionId === session)?.cwd;
+    // A decision harvested from the transcript has no stored row to carry the folder; without it
+    // every `file:line` of the Decisions pane read "file not found" while the Inbox showed the lines.
+    const cwd = rows().find((row) => row.sessionId === session)?.cwd ?? (await sessionCwd(session)) ?? undefined;
     return withExcerpts(sessionDecisions({ sessionId: session, rows: rows(), scan: found }), cwd);
 }
 

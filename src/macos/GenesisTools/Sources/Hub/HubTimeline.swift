@@ -983,6 +983,10 @@ struct TimelineMain: View {
     @ObservedObject var model: HubModel
     @ObservedObject var timeline: HubTimelineModel
     @State private var find = PanelFindModel(scope: "timeline", title: "Activity")
+    /// Below this width a row drops its branch label: squeezed, it drew as one letter ("f") beside
+    /// the title (snapshot at 1000 pt, 2026-09-25). One geometry read for the list, not one per row.
+    @State private var compact = false
+    static let compactWidth: CGFloat = 1180
 
     static let hourFormat: DateFormatter = {
         let formatter = DateFormatter()
@@ -1024,7 +1028,7 @@ struct TimelineMain: View {
                             ForEach(day.hours) { hour in
                                 hourHeader(hour.hour, count: hour.events.count)
                                 ForEach(hour.events) { event in
-                                    TimelineRowView(model: model, timeline: timeline, event: event)
+                                    TimelineRowView(model: model, timeline: timeline, event: event, compact: compact)
                                         .findRow(event.id)
                                         .padding(.horizontal, 10)
                                 }
@@ -1039,15 +1043,17 @@ struct TimelineMain: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        // Only the flag is state: a resize step on the same side of the threshold changes nothing.
+        .onGeometryChange(for: Bool.self, of: { $0.size.width < Self.compactWidth }) { compact = $0 }
         // The find re-runs when the shown rows change, a row folds open or closed, or a detail lands.
         .panelFind(find, revision: findRevision(events)) {
-            events.map { TimelineRowView.searchable($0, detail: timeline.isExpanded($0) ? timeline.details[$0.id] : nil) }
+            events.map { TimelineRowView.searchable($0, detail: timeline.isExpanded($0) ? timeline.details[$0.id] : nil, compact: compact) }
         }
     }
 
     private func findRevision(_ events: [TimelineEvent]) -> String {
         let open = events.filter(timeline.isExpanded).map { "\($0.id)\(timeline.details[$0.id] == nil ? "" : "+")" }
-        return events.map(\.id).joined(separator: "\n") + "\u{1}" + open.joined(separator: "\n")
+        return events.map(\.id).joined(separator: "\n") + "\u{1}" + open.joined(separator: "\n") + (compact ? "\u{2}" : "")
     }
 
     private func dayHeader(_ day: TimelineDay) -> some View {
@@ -1167,6 +1173,8 @@ struct TimelineRowView: View {
     @ObservedObject var model: HubModel
     @ObservedObject var timeline: HubTimelineModel
     let event: TimelineEvent
+    /// A narrow list (`TimelineMain.compactWidth`): the branch label is left out.
+    var compact = false
     @State private var popover: TimelinePopover?
     @State private var hovering = false
 
@@ -1178,13 +1186,14 @@ struct TimelineRowView: View {
 
     /// What ⌘F searches in a row: the texts the row shows, under the keys its FindTexts use, plus
     /// the texts of its folded-open detail while it is open (nothing of a closed one).
-    static func searchable(_ event: TimelineEvent, detail: TimelineDetail?) -> PanelFindRow {
-        // In drawing order; the branch shows on every kind but a push (its title already names it).
+    static func searchable(_ event: TimelineEvent, detail: TimelineDetail?, compact: Bool = false) -> PanelFindRow {
+        // In drawing order; the branch shows on every kind but a push (its title already names it),
+        // and on no row of a compact list.
         let own = [
             PanelFindField("project", event.project ?? ""),
             PanelFindField("title", event.title),
             PanelFindField("detail", event.detail ?? ""),
-            PanelFindField("branch", event.timelineKind == .push ? "" : event.branch ?? ""),
+            PanelFindField("branch", event.timelineKind == .push || compact ? "" : event.branch ?? ""),
             PanelFindField("author", event.author ?? ""),
         ]
         return PanelFindRow(id: event.id, fields: own + (detail.map(TimelineDetailFind.fields) ?? []))
@@ -1254,7 +1263,7 @@ struct TimelineRowView: View {
                 if let detail = event.detail {
                     detailLabel(detail, kind: kind)
                 }
-                if let branch = event.branch, kind != .push {
+                if let branch = event.branch, kind != .push, !compact {
                     branchLabel(branch)
                 }
                 Spacer(minLength: 6)
@@ -1265,7 +1274,8 @@ struct TimelineRowView: View {
                     .font(.system(size: 10.5))
                     .foregroundColor(ReviewPalette.dim)
                     .lineLimit(1)
-                    .frame(width: 52, alignment: .trailing)
+                    .fixedSize()
+                    .frame(minWidth: 52, alignment: .trailing)
                 HStack(spacing: 2) {
                     ForEach(actions) { action in
                         IconButton(systemName: action.symbol, tooltip: action.title, size: 11) { run(action) }
@@ -1305,14 +1315,24 @@ struct TimelineRowView: View {
         }
     }
 
+    /// A short detail (a sha, "last turn", "started", "#2 answered: a)") is drawn whole; a long one (a
+    /// PR's "updated …", a thread's path) is capped and gives way before the title. Before this, every
+    /// label had a lower priority than the title, and a long commit title squeezed the sha to "6…2b",
+    /// "last turn" to "l…" and the age to "10 sec. a…" (snapshot 2026-09-25). Order of giving way: the
+    /// branch first, then a long detail, then the title; short labels and the age stay whole.
+    private static let longDetailKinds: Set<TimelineKind> = [.pr, .ci, .thread]
+
     /// The detail text. For a PR, comment or CI row it opens the host page; for a commit, its commit page.
     @ViewBuilder
     private func detailLabel(_ detail: String, kind: TimelineKind) -> some View {
-        let text = FindText(detail, field: "detail")
+        let base = FindText(detail, field: "detail")
             .font(.system(size: 11, design: kind == .commit || kind == .push ? .monospaced : .default))
             .foregroundColor(ReviewPalette.dim)
             .lineLimit(1)
             .truncationMode(.middle)
+        let text = Self.longDetailKinds.contains(kind)
+            ? AnyView(base.frame(maxWidth: 200, alignment: .leading).layoutPriority(-1))
+            : AnyView(base.fixedSize())
         if kind == .pr || kind == .ci || kind == .thread || kind == .commit {
             Button {
                 if let url = model.timelineHostURL(event) {
@@ -1325,9 +1345,8 @@ struct TimelineRowView: View {
             }
             .buttonStyle(.genHoverPlain())
             .instantTooltip(kind == .commit ? "Open the commit on the host" : "Open \(event.pr?.ref ?? "the PR") on the host")
-            .layoutPriority(-1)
         } else {
-            text.layoutPriority(-1)
+            text
         }
     }
 
@@ -1337,7 +1356,7 @@ struct TimelineRowView: View {
         return ExternalLink(text: branch, url: url, font: .system(size: 10.5, design: .monospaced), glyph: .onHover, tooltip: "Branch \(branch)", findField: "branch")
             .lineLimit(1)
             .frame(maxWidth: 160, alignment: .leading)
-            .layoutPriority(-1)
+            .layoutPriority(-2)
     }
 
     private func authorLabel(_ author: String) -> some View {

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync } from "node:fs";
+import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentSessionRow } from "@app/ai/lib/sessions/agent-session-rows";
@@ -15,7 +15,7 @@ import { type AskDeps, getAskForm, postAskForm } from "../pending/ask";
 import type { AskForm } from "../pending/types";
 import { answerInboxDecision, answerInboxDecisions, answerInboxForm } from "./answer";
 import { buildInbox, type InboxSessionInfo, inboxDelivery, scanTurns, sessionDecisions } from "./build";
-import { type InboxDeps, loadInbox, waitingBlock } from "./load";
+import { type InboxDeps, loadInbox, loadSessionDecisions, waitingBlock } from "./load";
 
 function turn(role: TranscriptTurn["role"], text: string, at = "2026-03-01T10:00:00.000Z"): TranscriptTurn {
     return { id: `${role}-${at}`, role, at, text, tools: [] };
@@ -143,6 +143,34 @@ describe("buildInbox", () => {
         expect(shown[0]?.waiting).toBe(0);
         expect(shown[0]?.items[0]).toMatchObject({ status: "sent", option: "b", source: "store" });
         expect(buildInbox({ sessions: [SESSION], scans: new Map(), rows: [sent], forms: [] })).toEqual([]);
+    });
+});
+
+describe("loadSessionDecisions", () => {
+    test("a transcript-harvested decision reads its excerpts from the session's folder, looked up without a stored row", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "inbox-cwd-"));
+        writeFileSync(join(dir, "notes.txt"), "first line\nsecond line\n");
+        const reply = [
+            "See notes.txt:2 before you pick.",
+            "",
+            "❓ DECISION 1: Keep it?",
+            "- **a)** yes",
+            "- **b)** no",
+        ].join("\n");
+        const scan = async () => ({ at: "2026-03-01T10:04:00.000Z", blocks: parseDecisionBlocks(reply) });
+        const asked: string[] = [];
+        const sessionCwd = async (id: string) => {
+            asked.push(id);
+            return dir;
+        };
+
+        const decisions = await loadSessionDecisions("s-alpha", { rows: () => [], scan, sessionCwd });
+        expect(asked).toEqual(["s-alpha"]);
+        expect(decisions[0]?.refs.map((ref) => [ref.path, ref.line, ref.missing])).toEqual([["notes.txt", 2, false]]);
+        expect(decisions[0]?.refs[0]?.excerpt).toContain("second line");
+
+        const unknown = await loadSessionDecisions("s-alpha", { rows: () => [], scan, sessionCwd: async () => null });
+        expect(unknown[0]?.refs[0]?.missing).toBe(true);
     });
 });
 

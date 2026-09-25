@@ -755,13 +755,12 @@ private struct InboxSessionRow: View {
                 Text(session.displayTitle)
                     .font(.system(size: 12.5, weight: selected ? .semibold : .regular))
                     .lineLimit(2)
+                // Project and age only: the meta line is about 150 pt wide, and a branch beside them
+                // read "fe…nts", then "f" (snapshots 2026-09-25). The card header names the branch.
                 HStack(spacing: 6) {
-                    Text(session.projectName)
-                    if let branch = session.branch {
-                        Text(branch).lineLimit(1).truncationMode(.middle)
-                    }
+                    Text(session.projectName).lineLimit(1)
                     Spacer(minLength: 0)
-                    Text(HubFormat.ago(session.date))
+                    Text(HubFormat.ago(session.date)).fixedSize()
                 }
                 .font(.system(size: 10.5))
                 .foregroundColor(ReviewPalette.dim)
@@ -1445,7 +1444,7 @@ private struct InboxExcerptCard: View {
             }
             if let excerpt = ref.excerpt, !excerpt.isEmpty {
                 CodeBlockText(
-                    block: CodeBlockBuilder.numbered(excerpt, start: ref.startLine ?? ref.line ?? 1, language: SyntaxLanguage.forPath(ref.path)),
+                    block: CodeBlockBuilder.numbered(excerpt, start: ref.startLine ?? ref.line ?? 1, language: SyntaxLanguage.forPath(ref.path), focus: ref.line),
                     limit: nil,
                     cacheKey: "inbox-\(ref.path):\(ref.line ?? 0)"
                 )

@@ -318,10 +318,19 @@ struct WorktreeDetailView: View {
                 .buttonStyle(.genHoverPlain())
                 PathLabel(path: worktree.path)
                 if !touching.isEmpty {
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 6) {
-                            ForEach(touching) { session in
-                                sessionChip(session)
+                    // The chips scroll sideways with no indicator, so the count says how many there
+                    // are: the row used to end in a cut "Open R" with nothing to say 30 more followed.
+                    HStack(spacing: 8) {
+                        Text(verbatim: "\(touching.count) session\(touching.count == 1 ? "" : "s")")
+                            .font(.system(size: 11))
+                            .foregroundColor(ReviewPalette.dim)
+                            .fixedSize()
+                            .instantTooltip("Agent sessions that worked in this worktree; the row scrolls sideways")
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(spacing: 6) {
+                                ForEach(touching) { session in
+                                    sessionChip(session)
+                                }
                             }
                         }
                     }

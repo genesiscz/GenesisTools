@@ -674,38 +674,48 @@ struct TranscriptSectionHeader: View {
     let section: TranscriptSection
 
     var body: some View {
+        // GenesisTools adaptation: the short labels are drawn whole and the usage text is the one
+        // that truncates (behind the hairline, which gives way first). In a 650 pt transcript pane
+        // the fixed-size usage once squeezed the rest to "Pr… #3… 00… 5m…" (snapshot 2026-09-25).
         HStack(spacing: 10) {
             Text(verbatim: section.number > 0 ? "Prompt" : "Earlier")
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(SessionPalette.secondary)
+                .fixedSize()
             if section.number > 0 {
                 Text(verbatim: "#\(section.number)")
                     .font(SessionPalette.mono(10.5))
                     .foregroundStyle(SessionPalette.faint)
+                    .fixedSize()
                     .instantTooltip("Turn \(section.number) of the session file")
             }
             if let startedAt = section.startedAt {
                 Text(verbatim: SessionFormat.moment(startedAt))
                     .font(SessionPalette.mono(11))
                     .foregroundStyle(SessionPalette.dim)
+                    .fixedSize()
             }
             if let duration = section.duration {
                 Text(verbatim: SessionFormat.duration(duration))
                     .font(SessionPalette.mono(11))
                     .foregroundStyle(SessionPalette.faint)
+                    .fixedSize()
             }
-            Rectangle().fill(SessionPalette.hairline).frame(height: 1)
+            Rectangle().fill(SessionPalette.hairline).frame(height: 1).layoutPriority(-2)
             if let usage = section.usage, !usage.compact.isEmpty {
                 Text(verbatim: usage.compact)
                     .font(SessionPalette.mono(10.5))
                     .foregroundStyle(SessionPalette.dim)
-                    .fixedSize()
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .layoutPriority(-1)
                     .instantTooltip(usage.detailed)
             }
             if section.toolCount > 0 {
                 Text(verbatim: "\(section.toolCount) tool\(section.toolCount == 1 ? "" : "s")")
                     .font(SessionPalette.mono(10.5))
                     .foregroundStyle(SessionPalette.dim)
+                    .fixedSize()
             }
             if section.errorCount > 0 {
                 HStack(spacing: 4) {
