@@ -215,16 +215,25 @@ final class HubTimelineModel: ObservableObject {
 
     /// The sidebar's project filter; nil = every project.
     @Published var project: String? = HubDefaults.store.string(forKey: "hub.timeline.project") {
-        didSet { HubDefaults.store.set(project, forKey: "hub.timeline.project") }
+        didSet {
+            HubDefaults.store.set(project, forKey: "hub.timeline.project")
+            HubMainBusy.measure("timeline.filter.project")
+        }
     }
     /// Hidden kinds: a client-side switch over the loaded page, so a toggle never reloads.
     @Published var hidden: Set<String> = Set(HubDefaults.store.stringArray(forKey: "hub.timeline.hidden") ?? []) {
-        didSet { HubDefaults.store.set(Array(hidden), forKey: "hub.timeline.hidden") }
+        didSet {
+            HubDefaults.store.set(Array(hidden), forKey: "hub.timeline.hidden")
+            HubMainBusy.measure("timeline.filter.kinds")
+        }
     }
     @Published var range: TimelineRange = TimelineRange(rawValue: HubDefaults.store.string(forKey: "hub.timeline.range") ?? "") ?? .fallback {
         didSet {
             HubDefaults.store.set(range.rawValue, forKey: "hub.timeline.range")
-            if range != oldValue { load(fresh: false) }
+            if range != oldValue {
+                HubMainBusy.measure("timeline.filter.range")
+                load(fresh: false)
+            }
         }
     }
     @Published var customFrom: Date = HubDefaults.store.object(forKey: "hub.timeline.customFrom") as? Date ?? Calendar.current.date(byAdding: .day, value: -7, to: Date()) ?? Date() {
@@ -243,13 +252,19 @@ final class HubTimelineModel: ObservableObject {
     @Published var author: TimelineAuthor = TimelineAuthor(rawValue: HubDefaults.store.string(forKey: "hub.timeline.author") ?? "") ?? .all {
         didSet {
             HubDefaults.store.set(author.rawValue, forKey: "hub.timeline.author")
-            if author != oldValue { load(fresh: false) }
+            if author != oldValue {
+                HubMainBusy.measure("timeline.filter.author")
+                load(fresh: false)
+            }
         }
     }
     @Published var needsMe: Bool = HubDefaults.store.bool(forKey: "hub.timeline.needsMe") {
         didSet {
             HubDefaults.store.set(needsMe, forKey: "hub.timeline.needsMe")
-            if needsMe != oldValue { load(fresh: false) }
+            if needsMe != oldValue {
+                HubMainBusy.measure("timeline.filter.needsMe")
+                load(fresh: false)
+            }
         }
     }
 
@@ -348,6 +363,8 @@ final class HubTimelineModel: ObservableObject {
                     self.loading = false
                     switch result {
                     case .success(let envelope):
+                        // A range or filter reload redraws the list when its page lands.
+                        HubMainBusy.measure("timeline.page.render")
                         self.events = envelope.events
                         self.warnings = envelope.warnings
                         self.truncated = envelope.truncated ?? []
@@ -982,6 +999,8 @@ struct TimelineDay: Identifiable {
 struct TimelineMain: View {
     @ObservedObject var model: HubModel
     @ObservedObject var timeline: HubTimelineModel
+    /// The rows' branch and author links; read here, so a landing fact redraws only its repository's rows.
+    @ObservedObject private var repos = RepoFactsStore.shared
     @State private var find = PanelFindModel(scope: "timeline", title: "Activity")
     /// Below this width a row drops its branch label: squeezed, it drew as one letter ("f") beside
     /// the title (snapshot at 1000 pt, 2026-09-25). One geometry read for the list, not one per row.
@@ -1028,8 +1047,16 @@ struct TimelineMain: View {
                             ForEach(day.hours) { hour in
                                 hourHeader(hour.hour, count: hour.events.count)
                                 ForEach(hour.events) { event in
-                                    TimelineRowView(model: model, timeline: timeline, event: event, compact: compact)
-                                        .findRow(event.id)
+                                    TimelineRowView(
+                                        model: model,
+                                        timeline: timeline,
+                                        event: event,
+                                        compact: compact,
+                                        expanded: timeline.isExpanded(event),
+                                        projectPicked: event.project != nil && timeline.project == event.project,
+                                        forge: event.repo.flatMap { repos.facts(for: $0)?.forge }
+                                    )
+                                    .findRow(event.id)
                                         .padding(.horizontal, 10)
                                 }
                             }
@@ -1169,12 +1196,22 @@ struct TimelineMain: View {
 
 // MARK: - Row
 
+/// Not an observer of the hub or the feed: a row redraws when its own inputs change (the event, its
+/// fold, the project filter, its repository's links), not on every change of either model. With an
+/// accessibility client running (the live hub always has one), SwiftUI walks every responder of the
+/// window for each accessibility node a redraw touches; one filter click redrew every realized row
+/// and cost 1.6 s of main thread (`--bench` `activity` with `GENESIS_HUB_BENCH_AX=1`, 2026-09-25).
 struct TimelineRowView: View {
-    @ObservedObject var model: HubModel
-    @ObservedObject var timeline: HubTimelineModel
+    let model: HubModel
+    let timeline: HubTimelineModel
     let event: TimelineEvent
     /// A narrow list (`TimelineMain.compactWidth`): the branch label is left out.
     var compact = false
+    let expanded: Bool
+    /// The project filter is this row's project.
+    let projectPicked: Bool
+    /// The repository's web pages (`RepoFactsStore`), for the branch and author links.
+    let forge: ForgeWeb?
     @State private var popover: TimelinePopover?
     @State private var hovering = false
 
@@ -1209,14 +1246,28 @@ struct TimelineRowView: View {
         }
     }
 
+    /// Controls where a click can land: the hovered row, the open one, the one with a popover. The
+    /// others draw the same labels with no button, hover sensor or tooltip. Every control is a
+    /// responder, and with an accessibility client SwiftUI walks all of them once per accessibility
+    /// node an update touches, so the cost of a filter click grew with rows × controls × rows: 1.25 to
+    /// 1.5 s with every row live, 0.1 s with only the hovered one (`--bench` `activity`, AX client on).
+    private var live: Bool { hovering || expanded || popover != nil }
+
     var body: some View {
         let kind = event.timelineKind
-        let expanded = timeline.isExpanded(event)
         let actions = model.timelineActions(for: event, timeline: timeline)
+        let live = live
         VStack(alignment: .leading, spacing: 0) {
             HStack(alignment: .center, spacing: 8) {
-                IconButton(systemName: expanded ? "chevron.down" : "chevron.right", tooltip: expanded ? "Fold the details" : "Show the details (loaded once, on demand)", size: 10) {
-                    timeline.toggle(event)
+                if live {
+                    IconButton(systemName: expanded ? "chevron.down" : "chevron.right", tooltip: expanded ? "Fold the details" : "Show the details (loaded once, on demand)", size: 10) {
+                        timeline.toggle(event)
+                    }
+                } else {
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 10))
+                        .frame(width: 16, height: 16)
+                        .padding(3)
                 }
                 Text(verbatim: event.date.map { Self.timeFormat.string(from: $0) } ?? "")
                     .font(.system(size: 11, design: .monospaced))
@@ -1226,16 +1277,16 @@ struct TimelineRowView: View {
                     .font(.system(size: 11.5))
                     .foregroundColor(kind.color)
                     .frame(width: 16)
-                    .instantTooltip(kind.title)
+                    .liveTooltip(live, kind.title)
                 if event.waitsForMe {
                     Image(systemName: "hand.raised.fill")
                         .font(.system(size: 10))
                         .foregroundColor(ReviewPalette.modified)
-                        .instantTooltip("Waits for you")
+                        .liveTooltip(live, "Waits for you")
                 }
                 if let project = event.project {
-                    Button {
-                        timeline.project = timeline.project == project ? nil : project
+                    LiveButton(live: live, tooltip: projectPicked ? "Show every project again" : "Only \(project)") {
+                        timeline.project = projectPicked ? nil : project
                     } label: {
                         FindText(project, field: "project")
                             .font(.system(size: 10.5, weight: .medium))
@@ -1246,10 +1297,8 @@ struct TimelineRowView: View {
                             .lineLimit(1)
                             .fixedSize()
                     }
-                    .buttonStyle(.genHoverPlain())
-                    .instantTooltip(timeline.project == project ? "Show every project again" : "Only \(project)")
                 }
-                Button {
+                LiveButton(live: live, tooltip: openTooltip) {
                     model.openTimelineEvent(event)
                 } label: {
                     FindText(event.title, field: "title")
@@ -1258,17 +1307,15 @@ struct TimelineRowView: View {
                         .lineLimit(1)
                         .truncationMode(.tail)
                 }
-                .buttonStyle(.genHoverPlain())
-                .instantTooltip(openTooltip)
                 if let detail = event.detail {
-                    detailLabel(detail, kind: kind)
+                    detailLabel(detail, kind: kind, live: live)
                 }
                 if let branch = event.branch, kind != .push, !compact {
-                    branchLabel(branch)
+                    branchLabel(branch, live: live)
                 }
                 Spacer(minLength: 6)
                 if let author = event.author, kind != .session, kind != .sessionStart {
-                    authorLabel(author)
+                    authorLabel(author, live: live)
                 }
                 Text(verbatim: HubFormat.ago(event.date))
                     .font(.system(size: 10.5))
@@ -1277,13 +1324,27 @@ struct TimelineRowView: View {
                     .fixedSize()
                     .frame(minWidth: 52, alignment: .trailing)
                 HStack(spacing: 2) {
-                    ForEach(actions) { action in
-                        IconButton(systemName: action.symbol, tooltip: action.title, size: 11) { run(action) }
-                            .disabled(action.disabled)
-                            .opacity(action.disabled ? 0.35 : 1)
+                    // The same glyphs in the same boxes when the row is not live; the context menu lists
+                    // every action on every row.
+                    if live {
+                        ForEach(actions) { action in
+                            IconButton(systemName: action.symbol, tooltip: action.title, size: 11) { run(action) }
+                                .disabled(action.disabled)
+                                .opacity(action.disabled ? 0.35 : 1)
+                        }
+                    } else {
+                        ForEach(actions) { action in
+                            Image(systemName: action.symbol)
+                                .font(.system(size: 11))
+                                .frame(width: 16, height: 16)
+                                .padding(3)
+                                // A disabled IconButton: the style's 0.4 under the row's 0.35.
+                                .opacity(action.disabled ? 0.4 * 0.35 : 1)
+                        }
+                        .accessibilityHidden(true)
                     }
                 }
-                .opacity(hovering || expanded ? 1 : 0.55)
+                .opacity(live ? 1 : 0.55)
             }
             .padding(.horizontal, 8)
             .frame(minHeight: 26)
@@ -1324,7 +1385,7 @@ struct TimelineRowView: View {
 
     /// The detail text. For a PR, comment or CI row it opens the host page; for a commit, its commit page.
     @ViewBuilder
-    private func detailLabel(_ detail: String, kind: TimelineKind) -> some View {
+    private func detailLabel(_ detail: String, kind: TimelineKind, live: Bool) -> some View {
         let base = FindText(detail, field: "detail")
             .font(.system(size: 11, design: kind == .commit || kind == .push ? .monospaced : .default))
             .foregroundColor(ReviewPalette.dim)
@@ -1334,7 +1395,7 @@ struct TimelineRowView: View {
             ? AnyView(base.frame(maxWidth: 200, alignment: .leading).layoutPriority(-1))
             : AnyView(base.fixedSize())
         if kind == .pr || kind == .ci || kind == .thread || kind == .commit {
-            Button {
+            LiveButton(live: live, tooltip: kind == .commit ? "Open the commit on the host" : "Open \(event.pr?.ref ?? "the PR") on the host") {
                 if let url = model.timelineHostURL(event) {
                     ExternalOpener.open(url)
                 } else {
@@ -1343,30 +1404,28 @@ struct TimelineRowView: View {
             } label: {
                 text
             }
-            .buttonStyle(.genHoverPlain())
-            .instantTooltip(kind == .commit ? "Open the commit on the host" : "Open \(event.pr?.ref ?? "the PR") on the host")
         } else {
             text
         }
     }
 
     /// The branch a session or commit row belongs to, linked to its host page when the origin is known.
-    private func branchLabel(_ branch: String) -> some View {
-        let url = event.repo.flatMap { RepoFactsStore.shared.facts(for: $0)?.forge?.branch(branch) }
-        return ExternalLink(text: branch, url: url, font: .system(size: 10.5, design: .monospaced), glyph: .onHover, tooltip: "Branch \(branch)", findField: "branch")
+    private func branchLabel(_ branch: String, live: Bool) -> some View {
+        let url = forge?.branch(branch)
+        return ExternalLink(text: branch, url: url, font: .system(size: 10.5, design: .monospaced), glyph: .onHover, tooltip: "Branch \(branch)", findField: "branch", interactive: live)
             .lineLimit(1)
             .frame(maxWidth: 160, alignment: .leading)
             .layoutPriority(-2)
     }
 
-    private func authorLabel(_ author: String) -> some View {
-        let forge = event.pr == nil ? nil : event.repo.flatMap { RepoFactsStore.shared.facts(for: $0)?.forge }
+    private func authorLabel(_ author: String, live: Bool) -> some View {
+        let forge = event.pr == nil ? nil : forge
         return HStack(spacing: 3) {
             Image(systemName: event.isMine ? "person.crop.circle.fill" : "person.crop.circle")
                 .font(.system(size: 10))
                 .foregroundColor(ReviewPalette.dim)
             if let url = forge?.user(author) {
-                ExternalLink(text: author, url: url, font: .system(size: 11), glyph: .onHover, tooltip: event.isMine ? "\(author) (you)" : "\(author)'s profile", findField: "author")
+                ExternalLink(text: author, url: url, font: .system(size: 11), glyph: .onHover, tooltip: event.isMine ? "\(author) (you)" : "\(author)'s profile", findField: "author", interactive: live)
             } else {
                 FindText(author, field: "author")
                     .font(.system(size: 11))
@@ -1374,7 +1433,7 @@ struct TimelineRowView: View {
                     .lineLimit(1)
             }
         }
-        .instantTooltip(event.isMine ? "\(author) (you)" : author)
+        .liveTooltip(live, event.isMine ? "\(author) (you)" : author)
     }
 
     private func run(_ action: TimelineAction) {
@@ -1402,6 +1461,37 @@ struct TimelineRowView: View {
                 popover = nil
                 if let notice { model.notice = notice }
             }
+        }
+    }
+}
+
+/// A text-like button of a dense row (`genHoverPlain`, a tooltip) while its row is live; the bare label
+/// otherwise, drawn the same (the style adds no padding or background at rest).
+private struct LiveButton<Label: View>: View {
+    let live: Bool
+    let tooltip: String
+    let action: () -> Void
+    @ViewBuilder let label: () -> Label
+
+    var body: some View {
+        if live {
+            Button(action: action, label: label)
+                .buttonStyle(.genHoverPlain())
+                .instantTooltip(tooltip)
+        } else {
+            label()
+        }
+    }
+}
+
+private extension View {
+    /// `.instantTooltip` only while the row is live (`LiveButton`).
+    @ViewBuilder
+    func liveTooltip(_ live: Bool, _ text: String) -> some View {
+        if live {
+            instantTooltip(text)
+        } else {
+            self
         }
     }
 }

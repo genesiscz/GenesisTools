@@ -79,10 +79,25 @@ struct ExternalLink: View {
     var tooltip: String?
     /// The key a panel find row lists this text under (a row with several links names each one).
     var findField = "link"
+    /// False draws the same label with no button, hover or tooltip: a dense list's rows away from the
+    /// pointer (`TimelineRowView`), where every control is a responder SwiftUI walks per update.
+    var interactive = true
     @State private var hovering = false
 
     var body: some View {
-        if let url {
+        if let url, !interactive {
+            HStack(spacing: 3) {
+                if let icon {
+                    Image(systemName: icon)
+                }
+                FindText(text, field: findField).lineLimit(1).truncationMode(.middle)
+                Image(systemName: "arrow.up.right.square").font(.system(size: 9))
+                    .opacity(glyph == .always ? 1 : 0)
+                    .accessibilityHidden(true)
+            }
+            .font(font)
+            .foregroundColor(color)
+        } else if let url {
             Button {
                 ExternalOpener.open(url)
             } label: {
