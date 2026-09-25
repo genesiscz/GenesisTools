@@ -37,6 +37,29 @@ function isValidIsoDay(day: string): boolean {
     return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === day;
 }
 
+const DAY_FORMATTERS = new Map<string, Intl.DateTimeFormat>();
+
+/**
+ * One formatter per zone. Constructing it is the expensive part (tens of
+ * microseconds), and `filterEvents` asks for a day per event: 42k events of
+ * one large session spent most of a second building formatters.
+ */
+function dayFormatter(timeZone: string): Intl.DateTimeFormat {
+    let formatter = DAY_FORMATTERS.get(timeZone);
+
+    if (!formatter) {
+        formatter = new Intl.DateTimeFormat("en-US", {
+            timeZone,
+            year: "numeric",
+            month: "2-digit",
+            day: "2-digit",
+        });
+        DAY_FORMATTERS.set(timeZone, formatter);
+    }
+
+    return formatter;
+}
+
 export function zonedDay(timestamp: string, timeZone: string): string {
     const date = new Date(timestamp);
 
@@ -44,12 +67,7 @@ export function zonedDay(timestamp: string, timeZone: string): string {
         return "";
     }
 
-    const parts = new Intl.DateTimeFormat("en-US", {
-        timeZone,
-        year: "numeric",
-        month: "2-digit",
-        day: "2-digit",
-    }).formatToParts(date);
+    const parts = dayFormatter(timeZone).formatToParts(date);
     const get = (type: string): string => parts.find((part) => part.type === type)?.value ?? "";
     return `${get("year")}-${get("month")}-${get("day")}`;
 }

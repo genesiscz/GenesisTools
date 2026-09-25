@@ -1,8 +1,10 @@
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it, spyOn } from "bun:test";
+import * as fs from "node:fs";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { findCodexRollout } from "@genesiscz/utils/session-changes/codex";
 import { Storage } from "@genesiscz/utils/storage/storage";
 import { withTimeZone } from "@genesiscz/utils/test/timezone";
 import { aggregate } from "./lib/aggregate";
@@ -11,7 +13,9 @@ import { isolateAgentHomeEnv } from "./lib/drivers/test-env";
 import { parseTranscriptLine } from "./lib/parse";
 import { costOf, DEFAULT_PRICING, priceFor, resolvePrice } from "./lib/pricing";
 import { renderSummary } from "./lib/render";
+import { resolveSessionFlag } from "./lib/reports/commands";
 import { loadEvents } from "./lib/reports/load";
+import type { SpendEvent } from "./lib/reports/types";
 import { resolveSince } from "./lib/since";
 import type { UsageEvent } from "./lib/types";
 
@@ -313,6 +317,172 @@ describe("claude transcript discovery", () => {
     });
 });
 
+describe("session-scoped loading (session --id)", () => {
+    isolateAgentHomeEnv();
+
+    const usageLine = (over: { id: string; sessionId: string; writtenBy?: string; sidechain?: boolean }): string =>
+        SafeJSON.stringify({
+            type: "assistant",
+            timestamp: "2026-06-01T10:00:00.000Z",
+            cwd: "/Users/x/Foo",
+            sessionId: over.sessionId,
+            ...(over.writtenBy ? { session_id: over.writtenBy } : {}),
+            isSidechain: over.sidechain ?? false,
+            message: { id: over.id, model: "claude-opus-4-8", usage: { input_tokens: 10, output_tokens: 2 } },
+        });
+
+    /**
+     * `sess-work` owns a file, a subagent and a legacy `agent-*.jsonl`. The
+     * other project holds `sess-personal`, whose file ALSO carries one line of
+     * `sess-work` and one of a workflow run id no file is named after.
+     */
+    function claudeFixture(): { home: string; projects: string } {
+        const home = mkdtempSync(join(tmpdir(), "ai-spend-session-"));
+        const projects = join(home, ".claude", "projects");
+        const own = join(projects, "-Users-x-Foo");
+        const other = join(projects, "-Users-x-Bar");
+        mkdirSync(join(own, "sess-work", "subagents"), { recursive: true });
+        mkdirSync(join(other, "sess-personal", "subagents"), { recursive: true });
+        writeFileSync(join(own, "sess-work.jsonl"), `${usageLine({ id: "m-main", sessionId: "sess-work" })}\n`);
+        writeFileSync(
+            join(own, "sess-work", "subagents", "agent-a1.jsonl"),
+            `${usageLine({ id: "m-sub", sessionId: "sess-work", sidechain: true })}\n`
+        );
+        writeFileSync(
+            join(own, "agent-legacy.jsonl"),
+            `${usageLine({ id: "m-legacy", sessionId: "sess-work", sidechain: true })}\n`
+        );
+        writeFileSync(
+            join(own, "agent-elsewhere.jsonl"),
+            `${usageLine({ id: "m-other-legacy", sessionId: "sess-personal", sidechain: true })}\n`
+        );
+        writeFileSync(
+            join(other, "sess-personal.jsonl"),
+            [
+                usageLine({ id: "m-personal", sessionId: "sess-personal" }),
+                usageLine({ id: "m-copied", sessionId: "sess-work" }),
+                usageLine({ id: "m-workflow", sessionId: "wf-run-1" }),
+            ].join("\n")
+        );
+        writeFileSync(
+            join(other, "sess-personal", "subagents", "agent-b1.jsonl"),
+            `${usageLine({ id: "m-personal-sub", sessionId: "sess-personal", sidechain: true })}\n`
+        );
+        return { home, projects };
+    }
+
+    it("a fork bills only its own turns: a copied line keeps the parent's session_id", () => {
+        const home = mkdtempSync(join(tmpdir(), "ai-spend-fork-"));
+        const dir = join(home, ".claude", "projects", "-Users-x-Foo");
+        mkdirSync(dir, { recursive: true });
+        writeFileSync(
+            join(dir, "sess-parent.jsonl"),
+            `${usageLine({ id: "m-1", sessionId: "sess-parent", writtenBy: "sess-parent" })}\n`
+        );
+        writeFileSync(
+            join(dir, "sess-fork.jsonl"),
+            [
+                usageLine({ id: "m-1", sessionId: "sess-fork", writtenBy: "sess-parent" }),
+                usageLine({ id: "m-2", sessionId: "sess-fork", writtenBy: "sess-fork" }),
+            ].join("\n")
+        );
+
+        expect(idsOf(loadEvents({ home, sources: ["claude"], sessionId: "sess-fork" }), "sess-fork")).toEqual(["m-2"]);
+        expect(idsOf(loadEvents({ home, sources: ["claude"], sessionId: "sess-parent" }), "sess-parent")).toEqual([
+            "m-1",
+        ]);
+    });
+
+    /** Files read below `root` while `run` executes, relative and sorted. */
+    function readsUnder(root: string, run: () => void): string[] {
+        const spy = spyOn(fs, "readFileSync");
+
+        try {
+            run();
+            return spy.mock.calls
+                .map(([path]) => String(path))
+                .filter((path) => path.startsWith(`${root}/`))
+                .map((path) => path.slice(root.length + 1))
+                .sort();
+        } finally {
+            spy.mockRestore();
+        }
+    }
+
+    const idsOf = (events: SpendEvent[], sessionId: string): string[] =>
+        events
+            .filter((event) => event.sessionId === sessionId)
+            .map((event) => event.id)
+            .sort();
+
+    it("reads only the session's file, its subagents and the legacy agent files beside it", () => {
+        const { home, projects } = claudeFixture();
+        let events: SpendEvent[] = [];
+        const reads = readsUnder(projects, () => {
+            events = loadEvents({ home, sources: ["claude"], sessionId: "sess-work" });
+        });
+
+        expect(idsOf(events, "sess-work")).toEqual(["m-legacy", "m-main", "m-sub"]);
+        // A legacy agent file names its session only inside, so the ones beside the
+        // session are read; nothing of the other project ever is.
+        expect(reads).toEqual([
+            "-Users-x-Foo/agent-elsewhere.jsonl",
+            "-Users-x-Foo/agent-legacy.jsonl",
+            "-Users-x-Foo/sess-work.jsonl",
+            "-Users-x-Foo/sess-work/subagents/agent-a1.jsonl",
+        ]);
+    });
+
+    it("the full walk still reads every transcript (the unscoped path is unchanged)", () => {
+        const { home, projects } = claudeFixture();
+        let events: SpendEvent[] = [];
+        const reads = readsUnder(projects, () => {
+            events = loadEvents({ home, sources: ["claude"] });
+        });
+
+        expect(reads).toHaveLength(6);
+        // The line of `sess-work` inside another session's file: only the full walk sees it.
+        expect(idsOf(events, "sess-work")).toEqual(["m-copied", "m-legacy", "m-main", "m-sub"]);
+    });
+
+    it("falls back to the full walk for an id no file is named after", () => {
+        const { home } = claudeFixture();
+        const events = loadEvents({ home, sources: ["claude"], sessionId: "wf-run-1" });
+
+        expect(idsOf(events, "wf-run-1")).toEqual(["m-workflow"]);
+    });
+
+    it("an id a Codex rollout is named after never touches the Claude tree", () => {
+        const { home, projects } = claudeFixture();
+        const rollout = "rollout-2026-06-01T10-00-00-fixture";
+        const dir = join(home, ".codex", "sessions", "2026", "06", "01");
+        mkdirSync(dir, { recursive: true });
+        const usage = { input_tokens: 100, cached_input_tokens: 40, output_tokens: 10, reasoning_output_tokens: 0 };
+        writeFileSync(
+            join(dir, `${rollout}.jsonl`),
+            [
+                SafeJSON.stringify({
+                    timestamp: "2026-06-01T10:00:00.000Z",
+                    type: "turn_context",
+                    payload: { cwd: "/tmp/proj", model: "gpt-5.6-sol" },
+                }),
+                SafeJSON.stringify({
+                    timestamp: "2026-06-01T10:00:10.000Z",
+                    type: "event_msg",
+                    payload: { type: "token_count", info: { total_token_usage: usage, last_token_usage: usage } },
+                }),
+            ].join("\n")
+        );
+        let events: SpendEvent[] = [];
+        const reads = readsUnder(projects, () => {
+            events = loadEvents({ home, sessionId: rollout });
+        });
+
+        expect(reads).toEqual([]);
+        expect(events.map((event) => [event.source, event.sessionId])).toEqual([["codex", rollout]]);
+    });
+});
+
 describe("loadPricing", () => {
     it("merges user config pricing over defaults", async () => {
         const home = mkdtempSync(join(tmpdir(), "ai-spend-cfg-"));
@@ -346,5 +516,74 @@ describe("renderSummary", () => {
         expect(text).toContain("TOTAL");
         expect(text).toContain("claude-opus-4-8");
         expect(text).toContain("(unpriced)");
+    });
+});
+
+describe("session --id prefix", () => {
+    isolateAgentHomeEnv();
+
+    const match = (sessionId: string) => ({ sessionId, providerId: "anthropic-sub", title: "Fixture", mtime: 1 });
+
+    const noRollout = () => null;
+
+    it("resolves a unique prefix through the index, refuses an ambiguous one, and passes an unknown id through", () => {
+        expect(
+            resolveSessionFlag("aaaa", {
+                resolve: () => ({ kind: "unique", sessionId: "aaaa-1", match: match("aaaa-1") }),
+                findRollout: noRollout,
+            })
+        ).toEqual({
+            id: "aaaa-1",
+            note: "--id aaaa is session aaaa-1",
+        });
+
+        const ambiguous = resolveSessionFlag("bbbb", {
+            resolve: () => ({ kind: "ambiguous", candidates: [match("bbbb-1"), match("bbbb-2")] }),
+            findRollout: noRollout,
+        });
+        expect("error" in ambiguous && ambiguous.error).toContain("bbbb-2");
+        expect(resolveSessionFlag("run-7", { resolve: () => ({ kind: "none" }), findRollout: noRollout })).toEqual({
+            id: "run-7",
+        });
+        expect(
+            resolveSessionFlag("full", {
+                resolve: () => ({ kind: "exact", sessionId: "full" }),
+                findRollout: noRollout,
+            })
+        ).toEqual({ id: "full" });
+    });
+
+    it("a Codex thread id, as the hub passes it, finds the usage keyed by its rollout's file name", () => {
+        const home = mkdtempSync(join(tmpdir(), "ai-spend-codex-id-"));
+        const thread = "0190aaaa-bbbb-7ccc-8ddd-eeeeeeeeeeee";
+        const rollout = `rollout-2026-06-01T10-00-00-${thread}`;
+        const dir = join(home, ".codex", "sessions", "2026", "06", "01");
+        mkdirSync(dir, { recursive: true });
+        const usage = { input_tokens: 100, cached_input_tokens: 40, output_tokens: 10, reasoning_output_tokens: 0 };
+        writeFileSync(
+            join(dir, `${rollout}.jsonl`),
+            [
+                SafeJSON.stringify({
+                    timestamp: "2026-06-01T10:00:00.000Z",
+                    type: "turn_context",
+                    payload: { cwd: "/tmp/proj", model: "gpt-5.6-sol" },
+                }),
+                SafeJSON.stringify({
+                    timestamp: "2026-06-01T10:00:10.000Z",
+                    type: "event_msg",
+                    payload: { type: "token_count", info: { total_token_usage: usage, last_token_usage: usage } },
+                }),
+            ].join("\n")
+        );
+
+        const resolved = resolveSessionFlag(thread, {
+            resolve: () => ({ kind: "exact", sessionId: thread }),
+            findRollout: (id) => findCodexRollout(id, [join(home, ".codex")]),
+        });
+        const id = "error" in resolved ? "" : resolved.id;
+
+        expect(loadEvents({ home, sources: ["codex"], sessionId: id }).map((event) => event.sessionId)).toEqual([
+            rollout,
+        ]);
     });
 });

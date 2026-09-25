@@ -117,9 +117,13 @@ export async function runSpend(cmd: Command, view: SpendView): Promise<void> {
 export function monitorEnvelope(report: MonitorReport): Record<string, unknown> {
     const envelope: Record<string, unknown> = {
         today: report.today,
+        yesterday: report.yesterday,
         week: report.week,
+        last7d: report.last7d,
         todayDate: report.todayDate,
+        yesterdayDate: report.yesterdayDate,
         weekStart: report.weekStart,
+        last7dStart: report.last7dStart,
         timezone: report.timezone,
         agents: report.agents,
     };
@@ -323,9 +327,12 @@ export function registerSpendCommand(program: Command): Command {
     const monitor = program
         .command("monitor")
         .description(
-            "Today + current week (local timezone, Monday start) across claude/codex/grok in <1s — for status bars/monitors"
+            "Today, yesterday, current week (local timezone, Monday start) and last 7 days across claude/codex/grok in <1s — for status bars/monitors"
         )
-        .option("--json", "Emit {today, week, todayDate, weekStart, timezone, agents, accounts} as JSON");
+        .option(
+            "--json",
+            "Emit {today, yesterday, week, last7d, todayDate, yesterdayDate, weekStart, last7dStart, timezone, agents, accounts} as JSON"
+        );
 
     addAccountFlags(monitor).action(async (_opts: MonitorOpts, cmd: Command) => {
         // Root also defines --json (addSpendOptions), so commander binds it there;
@@ -358,7 +365,9 @@ export function registerSpendCommand(program: Command): Command {
 
         out.println(
             `today ${report.todayDate}: $${report.today.cost.toFixed(2)} (${report.today.tokens.toLocaleString()} tok)\n` +
-                `week from ${report.weekStart}: $${report.week.cost.toFixed(2)} (${report.week.tokens.toLocaleString()} tok) [${report.timezone}]` +
+                `yesterday ${report.yesterdayDate}: $${report.yesterday.cost.toFixed(2)} (${report.yesterday.tokens.toLocaleString()} tok)\n` +
+                `week from ${report.weekStart}: $${report.week.cost.toFixed(2)} (${report.week.tokens.toLocaleString()} tok)\n` +
+                `last 7 days from ${report.last7dStart}: $${report.last7d.cost.toFixed(2)} (${report.last7d.tokens.toLocaleString()} tok) [${report.timezone}]` +
                 (perAgent ? `\ntoday by agent: ${perAgent}` : "") +
                 (perAccount ? `\ntoday by account: ${perAccount}` : "")
         );

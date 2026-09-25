@@ -1,5 +1,6 @@
 import { Database } from "bun:sqlite";
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it, spyOn } from "bun:test";
+import * as fs from "node:fs";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -421,6 +422,32 @@ describe("extra source loaders", () => {
         expect(events[0].outputTokens).toBe(5);
         expect(events[0].cacheReadTokens).toBe(8);
         expect(events[0].recordedCostUsd).toBe(0.02);
+    });
+
+    it("openclaw with a session id reads only the file named after it", () => {
+        const root = home();
+        const dir = join(root, ".openclaw/agents/main/sessions");
+        mkdirSync(dir, { recursive: true });
+        const line = SafeJSON.stringify({
+            type: "message",
+            timestamp: "2026-06-01T10:00:00.000Z",
+            message: { role: "assistant", model: "gpt-5.2", usage: { input: 16, output: 5 } },
+        });
+        writeFileSync(join(dir, "work.jsonl"), line);
+        writeFileSync(join(dir, "personal.jsonl"), line);
+        const spy = spyOn(fs, "readFileSync");
+
+        try {
+            const events = loadOpenclawEvents(root, "work");
+            const reads = spy.mock.calls.map(([path]) => String(path)).filter((path) => path.startsWith(root));
+
+            expect(events.map((event) => event.sessionId)).toEqual(["work"]);
+            expect(reads).toEqual([join(dir, "work.jsonl")]);
+        } finally {
+            spy.mockRestore();
+        }
+
+        expect(loadOpenclawEvents(root).map((event) => event.sessionId)).toEqual(["personal", "work"]);
     });
 
     it("skips a malformed amp thread instead of throwing", () => {

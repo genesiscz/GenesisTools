@@ -28,6 +28,18 @@ function rootsFromEnv(envName: string, home: string, fallbacks: string[]): strin
     return fallbacks.map((rel) => join(home, rel));
 }
 
+/**
+ * Walk filter for a loader whose session id comes from the file's PATH: with
+ * `sessionId` set, a file of any other session is never read.
+ */
+function ofSession(sessionId: string | undefined, sessionOf: (file: string) => string): (file: string) => boolean {
+    return (file) => sessionId === undefined || sessionOf(file) === sessionId;
+}
+
+const droidSession = (file: string): string => basename(file).replace(/\.settings\.json$/, "");
+const codebuffSession = (file: string): string => dirname(file).split("/").slice(-2).join("/");
+const kimiSession = (file: string): string => basename(dirname(file));
+
 function emit(partial: Omit<SpendEvent, "source"> & { source: SourceId }): SpendEvent | null {
     if (
         partial.inputTokens === 0 &&
@@ -167,9 +179,13 @@ export function loadAmpEvents(home: string): SpendEvent[] {
     return events;
 }
 
-export function loadDroidEvents(home: string): SpendEvent[] {
+export function loadDroidEvents(home: string, onlySession?: string): SpendEvent[] {
     const roots = rootsFromEnv("DROID_SESSIONS_DIR", home, [".factory/sessions"]);
-    const files = walkFiles(roots, { maxDepth: 3, isFile: (name) => name.endsWith(".settings.json") });
+    const mine = ofSession(onlySession, droidSession);
+    const files = walkFiles(roots, {
+        maxDepth: 3,
+        isFile: (name, full) => name.endsWith(".settings.json") && mine(full),
+    });
     const events: SpendEvent[] = [];
 
     for (const file of files) {
@@ -191,7 +207,7 @@ export function loadDroidEvents(home: string): SpendEvent[] {
             id: file,
             model: asString(settings.model) ?? "unknown",
             timestamp: isoFromUnknown(settings.updatedAt ?? settings.createdAt ?? settings.timestamp),
-            sessionId: basename(file).replace(/\.settings\.json$/, ""),
+            sessionId: droidSession(file),
             project: "droid",
             inputTokens: pickNumber(usage, ["inputTokens"]),
             outputTokens: pickNumber(usage, ["outputTokens"]),
@@ -208,7 +224,7 @@ export function loadDroidEvents(home: string): SpendEvent[] {
     return events;
 }
 
-export function loadCodebuffEvents(home: string): SpendEvent[] {
+export function loadCodebuffEvents(home: string, onlySession?: string): SpendEvent[] {
     const override = envPathList(env.getTrimmed("CODEBUFF_DATA_DIR"));
     const roots =
         override.length > 0
@@ -216,7 +232,11 @@ export function loadCodebuffEvents(home: string): SpendEvent[] {
             : ["manicode", "manicode-dev", "manicode-staging"].map((channel) =>
                   join(home, ".config", channel, "projects")
               );
-    const files = walkFiles(roots, { maxDepth: 6, isFile: (name) => name === "chat-messages.json" });
+    const mine = ofSession(onlySession, codebuffSession);
+    const files = walkFiles(roots, {
+        maxDepth: 6,
+        isFile: (name, full) => name === "chat-messages.json" && mine(full),
+    });
     const events: SpendEvent[] = [];
 
     for (const file of files) {
@@ -228,7 +248,7 @@ export function loadCodebuffEvents(home: string): SpendEvent[] {
 
         const parsed = parseJsonValue(content);
         const messages = Array.isArray(parsed) ? parsed : [];
-        const sessionId = dirname(file).split("/").slice(-2).join("/");
+        const sessionId = codebuffSession(file);
 
         for (const [index, raw] of messages.entries()) {
             const message = asRecord(raw);
@@ -263,9 +283,10 @@ export function loadCodebuffEvents(home: string): SpendEvent[] {
     return events;
 }
 
-export function loadPiEvents(home: string): SpendEvent[] {
+export function loadPiEvents(home: string, onlySession?: string): SpendEvent[] {
     const roots = rootsFromEnv("PI_AGENT_DIR", home, [".pi/agent/sessions"]);
-    const files = walkFiles(roots, { maxDepth: 4, isFile: (name) => name.endsWith(".jsonl") });
+    const mine = ofSession(onlySession, fileStem);
+    const files = walkFiles(roots, { maxDepth: 4, isFile: (name, full) => name.endsWith(".jsonl") && mine(full) });
     const events: SpendEvent[] = [];
 
     for (const file of files) {
@@ -315,12 +336,13 @@ export function loadPiEvents(home: string): SpendEvent[] {
     return events;
 }
 
-export function loadKimiEvents(home: string): SpendEvent[] {
+export function loadKimiEvents(home: string, onlySession?: string): SpendEvent[] {
     const override = envPathList(env.getTrimmed("KIMI_DATA_DIR"));
     const roots = override.length > 0 ? override : [join(home, ".kimi"), join(home, ".kimi-code")];
+    const mine = ofSession(onlySession, kimiSession);
     const files = walkFiles(
         roots.map((root) => join(root, "sessions")),
-        { maxDepth: 4, isFile: (name) => name === "wire.jsonl" }
+        { maxDepth: 4, isFile: (name, full) => name === "wire.jsonl" && mine(full) }
     );
     const events: SpendEvent[] = [];
 
@@ -331,7 +353,7 @@ export function loadKimiEvents(home: string): SpendEvent[] {
             continue;
         }
 
-        const sessionId = basename(dirname(file));
+        const sessionId = kimiSession(file);
 
         for (const row of parseJsonl(content)) {
             const raw = asRecord(row);
@@ -478,13 +500,14 @@ export function loadQwenEvents(home: string): SpendEvent[] {
     return events;
 }
 
-export function loadOpenclawEvents(home: string): SpendEvent[] {
+export function loadOpenclawEvents(home: string, onlySession?: string): SpendEvent[] {
     const override = envPathList(env.getTrimmed("OPENCLAW_DIR"));
     const roots =
         override.length > 0
             ? override
             : [".openclaw", ".clawdbot", ".moltbot", ".moldbot"].map((dir) => join(home, dir));
-    const files = walkFiles(roots, { maxDepth: 8, isFile: (name) => name.endsWith(".jsonl") });
+    const mine = ofSession(onlySession, fileStem);
+    const files = walkFiles(roots, { maxDepth: 8, isFile: (name, full) => name.endsWith(".jsonl") && mine(full) });
     const events: SpendEvent[] = [];
 
     for (const file of files) {
@@ -792,7 +815,16 @@ export function loadGooseEvents(home: string): SpendEvent[] {
     return events;
 }
 
-const LOADERS: Record<Exclude<SourceId, "claude" | "codex" | "grok">, (home: string) => SpendEvent[]> = {
+/**
+ * `onlySession` narrows the loaders whose session id is part of the file path
+ * (droid, codebuff, pi, kimi, openclaw) to that session's files. The others
+ * take the id from content or a database row, ignore it, and load whole; the
+ * caller filters by id either way.
+ */
+const LOADERS: Record<
+    Exclude<SourceId, "claude" | "codex" | "grok">,
+    (home: string, onlySession?: string) => SpendEvent[]
+> = {
     amp: loadAmpEvents,
     droid: loadDroidEvents,
     codebuff: loadCodebuffEvents,
@@ -808,6 +840,10 @@ const LOADERS: Record<Exclude<SourceId, "claude" | "codex" | "grok">, (home: str
     goose: loadGooseEvents,
 };
 
-export function loadExtraSource(source: Exclude<SourceId, "claude" | "codex" | "grok">, home: string): SpendEvent[] {
-    return LOADERS[source](home);
+export function loadExtraSource(
+    source: Exclude<SourceId, "claude" | "codex" | "grok">,
+    home: string,
+    onlySession?: string
+): SpendEvent[] {
+    return LOADERS[source](home, onlySession);
 }

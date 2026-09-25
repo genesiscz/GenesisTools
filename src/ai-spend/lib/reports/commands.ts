@@ -1,6 +1,9 @@
 import { homedir } from "node:os";
+import { basename } from "node:path";
+import { resolveCachedSessionId, type SessionIdResolution } from "@genesiscz/utils/agent-sessions/cached-title";
 import { suggestEnumFlag } from "@genesiscz/utils/cli";
 import { out } from "@genesiscz/utils/logger";
+import { findCodexRollout } from "@genesiscz/utils/session-changes/codex";
 import { Storage } from "@genesiscz/utils/storage/storage";
 import type { Command } from "commander";
 import { loadSpendAccountsContext } from "../accounts-context";
@@ -130,6 +133,50 @@ function parseVisualBurnRate(raw: string | boolean | undefined): (typeof VISUAL_
     return undefined;
 }
 
+/**
+ * `--id` as the full session id. A leading part resolves through the history index, so the loader
+ * reads one session's files instead of walking every transcript; an ambiguous part is refused.
+ * An id the index does not know passes through (a workflow run id lives only inside transcripts).
+ *
+ * Codex usage is keyed by its rollout's file name (`rollout-<time>-<thread id>`), while the hub and
+ * the history index name the thread: a thread id becomes that name, or Codex spend reads as zero.
+ */
+export function resolveSessionFlag(
+    id: string,
+    {
+        resolve = (value) => resolveCachedSessionId({ id: value }),
+        findRollout = findCodexRollout,
+    }: {
+        resolve?: (id: string) => SessionIdResolution;
+        findRollout?: (threadId: string) => string | null;
+    } = {}
+): { id: string; note?: string } | { error: string } {
+    const found = resolve(id);
+
+    if (found.kind !== "ambiguous") {
+        const sessionId = found.kind === "unique" ? found.sessionId : id;
+        const rollout = sessionId.startsWith("rollout-") ? null : findRollout(sessionId);
+
+        if (rollout) {
+            const stem = basename(rollout, ".jsonl");
+            return { id: stem, note: `--id ${id} is Codex rollout ${stem}` };
+        }
+    }
+
+    if (found.kind === "unique") {
+        return { id: found.sessionId, note: `--id ${id} is session ${found.sessionId}` };
+    }
+
+    if (found.kind === "ambiguous") {
+        const lines = found.candidates.map((row) =>
+            `  ${row.sessionId}  ${row.providerId ?? ""}  ${row.title ?? ""}`.trimEnd()
+        );
+        return { error: [`--id ${id} matches more than one session. Pass more of the id:`, ...lines].join("\n") };
+    }
+
+    return { id };
+}
+
 async function runReport(cmd: Command, kind: ReportKind, source?: SourceId): Promise<void> {
     const flags = flagsOf(cmd);
 
@@ -180,6 +227,24 @@ async function runReport(cmd: Command, kind: ReportKind, source?: SourceId): Pro
         minMtimeMs = now.getTime() - 2 * 24 * 60 * 60 * 1000;
     }
 
+    const bySession = kind === "session" || kind === "reviews";
+
+    if (bySession && flags.id) {
+        const resolved = resolveSessionFlag(flags.id);
+
+        if ("error" in resolved) {
+            process.stderr.write(`${resolved.error}\n`);
+            process.exitCode = 1;
+            return;
+        }
+
+        if (resolved.note) {
+            out.log.info(resolved.note);
+        }
+
+        flags.id = resolved.id;
+    }
+
     const context = await loadSpendAccountsContext({ allHomes: flags.allHomes });
     const loaded = loadEvents({
         home,
@@ -187,11 +252,19 @@ async function runReport(cmd: Command, kind: ReportKind, source?: SourceId): Pro
         minMtimeMs: Number.isFinite(minMtimeMs) ? minMtimeMs : 0,
         accounts: context.accounts,
         discoveredHomes: context.discoveredHomes,
+        // `session` and `reviews` read nothing but events of `--id`, so only
+        // that session's files need reading.
+        sessionId: kind === "session" || kind === "reviews" ? flags.id : undefined,
     });
     // Filtering here rather than inside each report builder: `--account` means
     // the same thing for daily, session and blocks, and the builders each own a
     // frozen ccusage-compatible row shape that must not learn a new dimension.
     const events = flags.account ? filterEvents(loaded, { timezone, accountIds: flags.account }) : loaded;
+    const sessionId = flags.id;
+
+    if (bySession && sessionId && !loaded.some((event) => event.sessionId === sessionId)) {
+        out.log.warn(`No usage found for session ${sessionId}: every total below is zero because nothing matched.`);
+    }
 
     if (kind === "statusline") {
         const stdin = await readStdin();

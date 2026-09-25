@@ -71,6 +71,15 @@ export function readText(file: string): string | null {
     }
 }
 
+export function readBytes(file: string): Buffer | null {
+    try {
+        return readFileSync(file);
+    } catch (err) {
+        logger.debug({ err, file }, "ai-spend: failed to read usage file");
+        return null;
+    }
+}
+
 export function envPathList(raw: string | undefined): string[] {
     if (!raw) {
         return [];

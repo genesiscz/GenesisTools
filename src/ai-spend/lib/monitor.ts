@@ -20,13 +20,14 @@ import { costOf, resolvePrice } from "./pricing";
 import type { ModelPriceEntry, PricingTable } from "./types";
 
 /**
- * `ai-spend monitor` — today + current week (local timezone, Monday start)
- * in well under a second, across every agent that leaves usage on disk.
- * Two tricks keep it fast:
+ * `ai-spend monitor` — today, yesterday, the current week (local timezone,
+ * Monday start) and the last 7 days, in well under a second, across every
+ * agent that leaves usage on disk. Two tricks keep it fast:
  *
- * 1. mtime pruning: a transcript whose mtime predates the local week start
- *    cannot contain events inside the week (transcripts are append-only), so
- *    it is never opened.
+ * 1. mtime pruning: a transcript whose mtime predates the window start (local
+ *    midnight six days ago, which always reaches back to the Monday too)
+ *    cannot contain events inside the window (transcripts are append-only),
+ *    so it is never opened.
  * 2. incremental cache: per file we persist (size, mtime, byte offset, per-day
  *    sums, driver resume state). An unchanged file is never re-read; a grown
  *    file is parsed only from the previous end-of-file offset.
@@ -44,11 +45,16 @@ export interface MonitorTotals {
 
 export interface AgentTotals {
     today: MonitorTotals;
+    yesterday: MonitorTotals;
     week: MonitorTotals;
+    /** Today and the six local days before it. */
+    last7d: MonitorTotals;
 }
 
+export type MonitorWindow = keyof AgentTotals;
+
 /**
- * One account's slice of the same today/week windows.
+ * One account's slice of the same today/yesterday/week/last-7-days windows.
  *
  * Claude contributes exactly ONE row, `CLAUDE_ALL_ACCOUNT_ID`, because
  * `~/.claude/projects` carries no account marker (campaign decision D6).
@@ -61,16 +67,23 @@ export interface MonitorAccountSpend {
     provider: string;
     source: AgentId;
     today: MonitorTotals;
+    yesterday: MonitorTotals;
     week: MonitorTotals;
+    last7d: MonitorTotals;
 }
 
 export interface MonitorReport {
     today: MonitorTotals;
+    yesterday: MonitorTotals;
     week: MonitorTotals;
+    last7d: MonitorTotals;
     todayDate: string;
+    yesterdayDate: string;
     weekStart: string;
+    /** First local day of `last7d`: six days before `todayDate`. */
+    last7dStart: string;
     timezone: string;
-    /** Per-agent split of the same today/week windows. Sums to the top level. */
+    /** Per-agent split of the same windows. Sums to the top level. */
     agents: Record<AgentId, AgentTotals>;
     /**
      * Per-account split, when the caller passed accounts. Sums to the top level
@@ -80,7 +93,7 @@ export interface MonitorReport {
     accounts?: MonitorAccountSpend[];
     /** Files parsed (fully or incrementally) on this run — cache misses. */
     parsedFiles: number;
-    /** Recent files considered (mtime within the week). */
+    /** Recent files considered (mtime within the window). */
     recentFiles: number;
 }
 
@@ -103,6 +116,11 @@ export function mondayOfWeek(date: Date): Date {
     return midnight;
 }
 
+/** Local midnight `days` calendar days before `date` (DST-safe: calendar fields, not ms). */
+export function daysBefore(date: Date, days: number): Date {
+    return new Date(date.getFullYear(), date.getMonth(), date.getDate() - days);
+}
+
 /**
  * All transcripts under `roots` whose mtime is >= minMtimeMs, per the driver's file test.
  *
@@ -111,7 +129,13 @@ export function mondayOfWeek(date: Date): Date {
  * subtree of it. Returning the same transcript twice makes every caller add its
  * events twice, which doubles the reported cost and tokens instead of failing.
  */
-export function findRecentTranscripts(roots: string[], minMtimeMs: number, driver: MonitorDriver): string[] {
+export function findRecentTranscripts(
+    roots: string[],
+    minMtimeMs: number,
+    driver: MonitorDriver,
+    /** Path test run BEFORE stat(), so a rejected transcript costs no syscall. */
+    accept?: (file: string) => boolean
+): string[] {
     const found = new Set<string>();
 
     const walk = (dir: string, depth: number): void => {
@@ -136,6 +160,10 @@ export function findRecentTranscripts(roots: string[], minMtimeMs: number, drive
             }
 
             if (!entry.isFile() || !driver.isTranscript(entry.name)) {
+                continue;
+            }
+
+            if (accept && !accept(full)) {
                 continue;
             }
 
@@ -207,13 +235,18 @@ interface AgentCache {
 }
 
 /**
+ * Bumped to 6 when the window grew from "since Monday" to "the last 7 days":
+ * a v5 cache pruned every file older than Monday, so on a Tuesday it holds no
+ * rows for the Wednesday-to-Sunday before. Keeping it would report a short
+ * yesterday and last 7 days until the next sweep; one full re-parse is cheaper
+ * than a wrong number.
  * Bumped to 5 for Astra context/fast pricing and Codex cache-write tokens.
  * Previously bumped to 4 when file rows gained `accountId`: a v3 row has no account tag,
  * and reporting it under "(unbound)" would be a guess. Discarding the file
  * costs one full re-parse and gets every row tagged from the live root map.
  */
 interface MonitorCache {
-    version: 5;
+    version: 6;
     agents: Record<AgentId, AgentCache>;
 }
 
@@ -239,7 +272,7 @@ function freshAgentCache(): AgentCache {
 
 function freshCache(): MonitorCache {
     return {
-        version: 5,
+        version: 6,
         agents: { claude: freshAgentCache(), codex: freshAgentCache(), grok: freshAgentCache() },
     };
 }
@@ -254,7 +287,7 @@ function loadCache(storage: Storage): MonitorCache {
     try {
         const raw = SafeJSON.parse(readFileSync(path, "utf8"), { strict: true }) as MonitorCache;
 
-        if (raw?.version === 5 && raw.agents) {
+        if (raw?.version === 6 && raw.agents) {
             const cache = freshCache();
 
             for (const id of AGENT_IDS) {
@@ -629,7 +662,17 @@ function scanAgent(options: ScanOptions): ScanResult {
 }
 
 function emptyAgentTotals(): AgentTotals {
-    return { today: { cost: 0, tokens: 0 }, week: { cost: 0, tokens: 0 } };
+    return {
+        today: { cost: 0, tokens: 0 },
+        yesterday: { cost: 0, tokens: 0 },
+        week: { cost: 0, tokens: 0 },
+        last7d: { cost: 0, tokens: 0 },
+    };
+}
+
+function addSums(target: MonitorTotals, sums: DaySums): void {
+    target.cost += sums.cost;
+    target.tokens += sums.tokens;
 }
 
 /**
@@ -650,7 +693,7 @@ function accountRowId(agent: AgentId, fileAccountId: string | undefined): string
 
 function newAccountRow(agent: AgentId, rowId: string, accounts: readonly AccountEntry[]): MonitorAccountSpend {
     const provider = AGENT_PLUGIN_IDS[agent];
-    const empty = { today: { cost: 0, tokens: 0 }, week: { cost: 0, tokens: 0 } };
+    const empty = emptyAgentTotals();
 
     if (rowId === CLAUDE_ALL_ACCOUNT_ID) {
         return { accountId: rowId, accountName: CLAUDE_ALL_ACCOUNT_NAME, provider, source: agent, ...empty };
@@ -677,9 +720,15 @@ export function buildMonitorReport(options: BuildMonitorOptions): MonitorReport 
     const drivers = options.drivers ?? MONITOR_DRIVERS;
     const weekStartDate = mondayOfWeek(now);
     const todayDate = localDayString(now);
+    const yesterdayDate = localDayString(daysBefore(now, 1));
     const weekStart = localDayString(weekStartDate);
+    const last7dStartDate = daysBefore(now, 6);
+    const last7dStart = localDayString(last7dStartDate);
     const cache = loadCache(storage);
-    const minMtimeMs = weekStartDate.getTime();
+    // Six days back always reaches the Monday as well (a Sunday is six days after
+    // it), so one window serves the week and the last seven days. `min` keeps
+    // that true even if the week start ever moves.
+    const minMtimeMs = Math.min(weekStartDate.getTime(), last7dStartDate.getTime());
     const sweepTtlMs = options.sweepTtlMs ?? SWEEP_TTL_MS;
     const agents: Record<AgentId, AgentTotals> = {
         claude: emptyAgentTotals(),
@@ -708,8 +757,7 @@ export function buildMonitorReport(options: BuildMonitorOptions): MonitorReport 
 
     atomicWriteFileSync(cachePath(storage), SafeJSON.stringify(cache, { strict: true }));
 
-    const today: MonitorTotals = { cost: 0, tokens: 0 };
-    const week: MonitorTotals = { cost: 0, tokens: 0 };
+    const overall = emptyAgentTotals();
 
     // Only the agents scanned on this run may contribute. An unscanned agent still
     // has cached day sums on disk, and reporting those next to freshly refreshed
@@ -747,32 +795,42 @@ export function buildMonitorReport(options: BuildMonitorOptions): MonitorReport 
             }
 
             for (const [day, sums] of Object.entries(entry.days)) {
-                if (day >= weekStart && day <= todayDate) {
-                    totals.week.cost += sums.cost;
-                    totals.week.tokens += sums.tokens;
-                    week.cost += sums.cost;
-                    week.tokens += sums.tokens;
-                    row.week.cost += sums.cost;
-                    row.week.tokens += sums.tokens;
-                }
+                const windows: MonitorWindow[] = [];
 
                 if (day === todayDate) {
-                    totals.today.cost += sums.cost;
-                    totals.today.tokens += sums.tokens;
-                    today.cost += sums.cost;
-                    today.tokens += sums.tokens;
-                    row.today.cost += sums.cost;
-                    row.today.tokens += sums.tokens;
+                    windows.push("today");
+                }
+
+                if (day === yesterdayDate) {
+                    windows.push("yesterday");
+                }
+
+                if (day >= weekStart && day <= todayDate) {
+                    windows.push("week");
+                }
+
+                if (day >= last7dStart && day <= todayDate) {
+                    windows.push("last7d");
+                }
+
+                for (const window of windows) {
+                    addSums(totals[window], sums);
+                    addSums(overall[window], sums);
+                    addSums(row[window], sums);
                 }
             }
         }
     }
 
     return {
-        today,
-        week,
+        today: overall.today,
+        yesterday: overall.yesterday,
+        week: overall.week,
+        last7d: overall.last7d,
         todayDate,
+        yesterdayDate,
         weekStart,
+        last7dStart,
         timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
         agents,
         accounts: accountBreakdown(rows, options),
@@ -787,7 +845,7 @@ export function buildMonitorReport(options: BuildMonitorOptions): MonitorReport 
  * Nothing when the caller never asked about accounts: a bare `monitor` would
  * otherwise grow an "(unbound)" row that is a verbatim copy of `agents.codex`,
  * which reads like a finding and is only an artefact. Rows that earned nothing
- * this week are dropped for the same reason.
+ * in the last 7 days are dropped for the same reason (the week lies inside it).
  */
 function accountBreakdown(
     rows: Map<string, MonitorAccountSpend>,
@@ -803,6 +861,6 @@ function accountBreakdown(
     }
 
     return [...rows.values()]
-        .filter((row) => row.week.tokens > 0 || row.week.cost > 0)
+        .filter((row) => row.last7d.tokens > 0 || row.last7d.cost > 0)
         .sort((a, b) => a.accountName.localeCompare(b.accountName) || a.source.localeCompare(b.source));
 }

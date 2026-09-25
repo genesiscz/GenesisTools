@@ -162,6 +162,50 @@ describe("monitor report", () => {
         expect(third.today.tokens).toBe(3_850_000);
     });
 
+    test("yesterday and the last 7 days come from the same day sums, and day 8 is out", () => {
+        const dir = join(home, ".claude", "projects", "p3");
+        mkdirSync(dir, { recursive: true });
+        // One clock for the fixtures, the report and the expectations: a midnight falling between
+        // them would otherwise move a fixture across a window boundary.
+        const now = new Date();
+        const at = (daysAgo: number): Date => {
+            const date = new Date(now);
+            date.setDate(date.getDate() - daysAgo);
+            date.setHours(12, 0, 0, 0);
+
+            return date;
+        };
+        // 1M input tokens = $0.80 each, as in the fixture above.
+        writeFileSync(
+            join(dir, "history.jsonl"),
+            line("msg-y", at(1).toISOString(), { input_tokens: 1_000_000 }) +
+                line("msg-5", at(5).toISOString(), { input_tokens: 1_000_000 }) +
+                line("msg-8", at(8).toISOString(), { input_tokens: 1_000_000 })
+        );
+
+        const report = buildMonitorReport({
+            home,
+            pricing: DEFAULT_PRICING,
+            storage: new Storage("ai-spend"),
+            sweepTtlMs: 0,
+            now,
+        });
+
+        expect(report.yesterdayDate).toBe(localDayString(at(1)));
+        expect(report.last7dStart).toBe(localDayString(at(6)));
+        expect(report.yesterday.tokens).toBe(1_000_000);
+        expect(report.yesterday.cost).toBeCloseTo(0.8, 6);
+        // Today's fixture (2.85M, $3.48) plus yesterday and five days ago; eight days ago is out.
+        expect(report.last7d.tokens).toBe(4_850_000);
+        expect(report.last7d.cost).toBeCloseTo(5.08, 5);
+        expect(report.agents.claude.last7d).toEqual(report.last7d);
+        expect(report.today.tokens).toBe(2_850_000);
+
+        const weekStart = localDayString(mondayOfWeek(now));
+        const inWeek = [1, 5].filter((daysAgo) => localDayString(at(daysAgo)) >= weekStart).length;
+        expect(report.week.tokens).toBe(2_850_000 + inWeek * 1_000_000);
+    });
+
     test("an old cache is discarded, and the current one it writes is reused", () => {
         const storage = new Storage("ai-spend");
         const cacheFile = join(storage.getCacheDir(), "monitor-cache.json");
@@ -170,9 +214,9 @@ describe("monitor report", () => {
         // file is dropped rather than reported under a guessed account.
         buildMonitorReport({ home, pricing: DEFAULT_PRICING, storage, sweepTtlMs: 0 });
         const written = SafeJSON.parse(readFileSync(cacheFile, "utf8"), { strict: true }) as { version: number };
-        expect(written.version).toBe(5);
+        expect(written.version).toBe(6);
 
-        writeFileSync(cacheFile, SafeJSON.stringify({ ...written, version: 4 }, { strict: true }));
+        writeFileSync(cacheFile, SafeJSON.stringify({ ...written, version: 5 }, { strict: true }));
         const afterDowngrade = buildMonitorReport({ home, pricing: DEFAULT_PRICING, storage, sweepTtlMs: 0 });
         expect(afterDowngrade.parsedFiles).toBe(3);
         expect(afterDowngrade.today.cost).toBeCloseTo(3.48, 5);
@@ -392,8 +436,10 @@ describe("multi-agent monitor report", () => {
             drivers: [claudeDriver],
         });
 
-        expect(claudeOnly.agents.codex).toEqual({ today: { cost: 0, tokens: 0 }, week: { cost: 0, tokens: 0 } });
-        expect(claudeOnly.agents.grok).toEqual({ today: { cost: 0, tokens: 0 }, week: { cost: 0, tokens: 0 } });
+        const zero = { cost: 0, tokens: 0 };
+        const empty = { today: zero, yesterday: zero, week: zero, last7d: zero };
+        expect(claudeOnly.agents.codex).toEqual(empty);
+        expect(claudeOnly.agents.grok).toEqual(empty);
         expect(claudeOnly.today.cost).toBeCloseTo(0.8, 6);
         expect(claudeOnly.today.tokens).toBe(1_000_000);
     });

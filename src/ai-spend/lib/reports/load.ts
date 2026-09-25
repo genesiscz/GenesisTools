@@ -6,7 +6,15 @@ import type { AgentId } from "../drivers";
 import type { PricingTable } from "../types";
 import { priceCandidates as defaultCandidates, eventCost } from "./cost";
 import { inDayWindow, zonedDay } from "./dates";
-import { loadClaudeEvents, loadCodexEvents, loadGrokEvents, nativePriceCandidates } from "./native";
+import {
+    type LoadNativeOptions,
+    loadClaudeEvents,
+    loadCodexEvents,
+    loadGrokEvents,
+    loadNativeSessionEvents,
+    type NativeSourceId,
+    nativePriceCandidates,
+} from "./native";
 import { loadExtraSource } from "./sources";
 import type { CostMode, SourceId, SpendEvent } from "./types";
 import { SOURCE_IDS } from "./types";
@@ -20,6 +28,12 @@ export interface LoadOptions {
     accounts?: readonly AccountEntry[];
     /** Homes from `--all-homes`; the caller already awaited `discoverHomes()`. */
     discoveredHomes?: Partial<Record<AgentId, readonly DiscoveredHome[]>>;
+    /**
+     * Only this session's events are wanted (`session --id`). Every source that
+     * names its files after the session reads only those; the rest load whole.
+     * The caller still filters the result by id.
+     */
+    sessionId?: string;
 }
 
 function appendAll(into: SpendEvent[], extra: SpendEvent[]): void {
@@ -30,8 +44,6 @@ function appendAll(into: SpendEvent[], extra: SpendEvent[]): void {
 
 export function loadEvents(options: LoadOptions): SpendEvent[] {
     const wanted = new Set(options.sources ?? SOURCE_IDS);
-    const events: SpendEvent[] = [];
-
     const minMtimeMs = options.minMtimeMs ?? 0;
 
     const native = (agent: AgentId) => ({
@@ -40,6 +52,13 @@ export function loadEvents(options: LoadOptions): SpendEvent[] {
         accounts: options.accounts,
         discoveredHomes: options.discoveredHomes?.[agent],
     });
+
+    // Empty is no filter, exactly as `filterEvents` reads it.
+    if (options.sessionId) {
+        return dedupEvents(loadSessionEvents({ wanted, native, home: options.home, sessionId: options.sessionId }));
+    }
+
+    const events: SpendEvent[] = [];
 
     if (wanted.has("claude")) {
         appendAll(events, loadClaudeEvents(native("claude")));
@@ -53,19 +72,79 @@ export function loadEvents(options: LoadOptions): SpendEvent[] {
         appendAll(events, loadGrokEvents(native("grok")));
     }
 
+    appendAll(events, loadExtraSources(wanted, options.home));
+
+    return dedupEvents(events);
+}
+
+function loadExtraSources(wanted: ReadonlySet<SourceId>, home: string, onlySession?: string): SpendEvent[] {
+    const events: SpendEvent[] = [];
+
     for (const source of SOURCE_IDS) {
         if (source === "claude" || source === "codex" || source === "grok" || !wanted.has(source)) {
             continue;
         }
 
         try {
-            appendAll(events, loadExtraSource(source, options.home));
+            appendAll(events, loadExtraSource(source, home, onlySession));
         } catch (err) {
             logger.debug({ err, source }, "ai-spend: extra source failed");
         }
     }
 
-    return dedupEvents(events);
+    return events;
+}
+
+const NATIVE_SOURCES: readonly NativeSourceId[] = ["claude", "codex", "grok"];
+
+interface SessionLoadOptions {
+    wanted: ReadonlySet<SourceId>;
+    native: (agent: AgentId) => LoadNativeOptions;
+    home: string;
+    sessionId: string;
+}
+
+/**
+ * One session's events, read from the files named after it.
+ *
+ * Every native agent names a session's files after its id, so the first agent
+ * whose layout holds the id owns it and the rest are never searched: a Claude
+ * UUID is not also a Codex rollout name or a Grok session directory. Only when
+ * none does are the extra sources loaded (narrowed to the id where their
+ * files are named after it).
+ *
+ * Claude is the one agent whose id comes from the file's CONTENT, so an id no
+ * layout holds (a workflow run id) can still sit inside another Claude
+ * transcript. That last case falls back to the full walk, which still skips
+ * the parse of every file that never mentions the id.
+ */
+function loadSessionEvents(options: SessionLoadOptions): SpendEvent[] {
+    const { wanted, native, home, sessionId } = options;
+
+    for (const agent of NATIVE_SOURCES) {
+        if (!wanted.has(agent)) {
+            continue;
+        }
+
+        const events = loadNativeSessionEvents(agent, { ...native(agent), sessionId });
+
+        if (events !== undefined) {
+            logger.debug({ agent, sessionId, events: events.length }, "ai-spend: session found by file name");
+            return events;
+        }
+    }
+
+    const extras = loadExtraSources(wanted, home, sessionId);
+
+    if (!wanted.has("claude") || extras.some((event) => event.sessionId === sessionId)) {
+        return extras;
+    }
+
+    logger.debug({ sessionId }, "ai-spend: no file is named after the session, scanning every Claude transcript");
+    const events = loadClaudeEvents({ ...native("claude"), sessionId });
+    appendAll(events, extras);
+
+    return events;
 }
 
 function dedupEvents(events: SpendEvent[]): SpendEvent[] {

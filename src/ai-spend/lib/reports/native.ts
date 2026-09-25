@@ -1,16 +1,18 @@
-import { basename, dirname } from "node:path";
+import { type Dirent, existsSync, readdirSync, statSync } from "node:fs";
+import { basename, dirname, join, sep } from "node:path";
 import type { AccountEntry } from "@genesiscz/utils/ai/config/schema";
 import type { DiscoveredHome } from "@genesiscz/utils/ai/providers/account-features";
+import { logger } from "@genesiscz/utils/logger";
 import { resolveDriverRoots, rootForFile } from "../account-roots";
 import { claudeDriver } from "../drivers/claude";
 import { codexDriver } from "../drivers/codex";
 import { grokDriver } from "../drivers/grok";
 import { num } from "../drivers/parse-helpers";
-import type { DriverUsageEvent, MonitorDriver } from "../drivers/types";
+import type { DriverRoot, DriverUsageEvent, MonitorDriver } from "../drivers/types";
 import { findRecentTranscripts } from "../monitor";
 import { asRecord, asString, parseJsonValue } from "./jsonl";
 import type { SourceId, SpendEvent } from "./types";
-import { readText } from "./walk";
+import { readBytes, readText } from "./walk";
 
 const MIN_MTIME = 0;
 
@@ -78,7 +80,11 @@ function parseClaudeLine(line: string, file: string): SpendEvent[] {
         return [];
     }
 
-    const sessionId = asString(entry.sessionId) ?? basename(file).replace(/\.jsonl$/, "");
+    // `session_id` names the session that WROTE the line. A fork or `--resume` copies the parent's
+    // history into its own file and restamps `sessionId`, but keeps the parent's `session_id`: so the
+    // copied lines stay the parent's, and a fork bills only its own turns (1351539e: 927 of its 1,052
+    // usage lines were copies of 44bc9984's). On every other line the two fields agree.
+    const sessionId = asString(entry.session_id) ?? asString(entry.sessionId) ?? basename(file).replace(/\.jsonl$/, "");
     const project = asString(entry.cwd) ?? "";
     const timestamp = asString(entry.timestamp) ?? "";
     const isSidechain = entry.isSidechain === true;
@@ -243,26 +249,116 @@ export interface LoadNativeOptions {
     minMtimeMs?: number;
     accounts?: readonly AccountEntry[];
     discoveredHomes?: readonly DiscoveredHome[];
+    /**
+     * Skip Claude transcripts that cannot hold this session's events: a file
+     * whose text never mentions the id, unless the id is its own stem (the
+     * parser falls back to the stem when a line carries no `sessionId`). The
+     * caller still filters events by id; this only saves the JSON parse.
+     */
+    sessionId?: string;
 }
 
-function loadDriverFiles(driver: MonitorDriver, source: SourceId, options: LoadNativeOptions): SpendEvent[] {
-    const roots = resolveDriverRoots({
+/** Claude's pre-`subagents/` layout: sidechain transcripts beside the session file. */
+const LEGACY_AGENT_PREFIX = "agent-";
+
+interface DriverFilesOptions {
+    driver: MonitorDriver;
+    source: SourceId;
+    roots: DriverRoot[];
+    files: string[];
+    sessionId?: string;
+}
+
+function driverRoots(driver: MonitorDriver, options: LoadNativeOptions): DriverRoot[] {
+    return resolveDriverRoots({
         driver,
         userHome: options.home,
         accounts: options.accounts,
         discoveredHomes: options.discoveredHomes,
     });
-    const files = findRecentTranscripts(
-        roots.map((root) => root.path),
-        options.minMtimeMs ?? MIN_MTIME,
-        driver
-    );
+}
+
+/**
+ * A Claude file whose events can carry `sessionId` only through the text of
+ * its lines, so a file that never mentions the id cannot contribute one.
+ * The session's own file and everything under `<project>/<id>/` always can.
+ */
+function mustMentionSession(file: string, sessionId: string): boolean {
+    if (basename(file) === `${sessionId}.jsonl`) {
+        return false;
+    }
+
+    return !file.includes(`${sep}${sessionId}${sep}`);
+}
+
+const USAGE_NEEDLE = Buffer.from('"usage"');
+const NEWLINE = 0x0a;
+
+/**
+ * `parseNativeChunk`'s Claude branch for a whole file held as BYTES: the same
+ * lines, the same `"usage"` filter and the same `parseClaudeLine`, but only
+ * the lines that can carry usage are ever decoded. A newline byte never
+ * occurs inside a UTF-8 sequence, so byte lines are exactly the string lines.
+ * Measured on a 172 MB session plus its subagents (525 MB): 360 ms as one
+ * decoded string split into lines, 250 ms this way.
+ */
+function parseClaudeBytes(bytes: Buffer, file: string): SpendEvent[] {
+    const events: SpendEvent[] = [];
+    let hit = bytes.indexOf(USAGE_NEEDLE);
+
+    while (hit !== -1) {
+        const start = bytes.lastIndexOf(NEWLINE, hit) + 1;
+        const newline = bytes.indexOf(NEWLINE, hit);
+        const end = newline === -1 ? bytes.length : newline;
+
+        for (const event of parseClaudeLine(bytes.toString("utf8", start, end), file)) {
+            events.push(event);
+        }
+
+        if (newline === -1) {
+            break;
+        }
+
+        hit = bytes.indexOf(USAGE_NEEDLE, newline);
+    }
+
+    return events;
+}
+
+function parseFile(options: {
+    driver: MonitorDriver;
+    source: SourceId;
+    file: string;
+    sessionId?: string;
+}): SpendEvent[] | null {
+    const { driver, source, file, sessionId } = options;
+
+    if (source !== "claude") {
+        const content = readText(file);
+        return content === null ? null : parseNativeChunk({ driver, source, file, chunk: content }).events;
+    }
+
+    const bytes = readBytes(file);
+
+    if (bytes === null) {
+        return null;
+    }
+
+    if (sessionId !== undefined && mustMentionSession(file, sessionId) && !bytes.includes(sessionId)) {
+        return null;
+    }
+
+    return parseClaudeBytes(bytes, file);
+}
+
+function parseDriverFiles(options: DriverFilesOptions): SpendEvent[] {
+    const { driver, source, roots, files, sessionId } = options;
     const events: SpendEvent[] = [];
 
     for (const file of files) {
-        const content = readText(file);
+        const parsed = parseFile({ driver, source, file, sessionId });
 
-        if (content === null) {
+        if (parsed === null) {
             continue;
         }
 
@@ -272,7 +368,7 @@ function loadDriverFiles(driver: MonitorDriver, source: SourceId, options: LoadN
         const accountId = root?.accountId;
         const home = root?.home;
 
-        for (const event of parseNativeChunk({ driver, source, file, chunk: content }).events) {
+        for (const event of parsed) {
             if (accountId !== undefined) {
                 event.accountId = accountId;
             }
@@ -288,6 +384,17 @@ function loadDriverFiles(driver: MonitorDriver, source: SourceId, options: LoadN
     return events;
 }
 
+function loadDriverFiles(driver: MonitorDriver, source: SourceId, options: LoadNativeOptions): SpendEvent[] {
+    const roots = driverRoots(driver, options);
+    const files = findRecentTranscripts(
+        roots.map((root) => root.path),
+        options.minMtimeMs ?? MIN_MTIME,
+        driver
+    );
+
+    return parseDriverFiles({ driver, source, roots, files, sessionId: options.sessionId });
+}
+
 export function loadClaudeEvents(options: LoadNativeOptions): SpendEvent[] {
     return loadDriverFiles(claudeDriver, "claude", options);
 }
@@ -298,6 +405,166 @@ export function loadCodexEvents(options: LoadNativeOptions): SpendEvent[] {
 
 export function loadGrokEvents(options: LoadNativeOptions): SpendEvent[] {
     return loadDriverFiles(grokDriver, "grok", options);
+}
+
+export type NativeSourceId = Extract<SourceId, "claude" | "codex" | "grok">;
+
+const NATIVE_DRIVERS: Record<NativeSourceId, MonitorDriver> = {
+    claude: claudeDriver,
+    codex: codexDriver,
+    grok: grokDriver,
+};
+
+function readDirEntries(dir: string): Dirent[] {
+    try {
+        return readdirSync(dir, { withFileTypes: true });
+    } catch (err) {
+        logger.debug({ err, dir }, "ai-spend: unreadable dir skipped");
+        return [];
+    }
+}
+
+function modifiedSince(file: string, minMtimeMs: number): boolean {
+    try {
+        return statSync(file).mtimeMs >= minMtimeMs;
+    } catch (err) {
+        logger.debug({ err, file }, "ai-spend: stat failed");
+        return false;
+    }
+}
+
+interface SessionFilesOptions {
+    driver: MonitorDriver;
+    source: NativeSourceId;
+    roots: string[];
+    sessionId: string;
+    minMtimeMs: number;
+}
+
+/**
+ * Claude names a session's files after its id: `<project>/<id>.jsonl`, its
+ * subagents under `<project>/<id>/`, and (older builds) `agent-*.jsonl` beside
+ * it. Only the project directories holding the id are listed, in readdir
+ * order, so these files arrive in the order the full walk meets them.
+ *
+ * What this cannot see: a copy of one of the session's messages inside
+ * ANOTHER session's file (a resumed or forked session repeats the history it
+ * came from, under the same message ids). The full walk keeps whichever copy
+ * it met first, so there a message could land on the other session; here the
+ * session's own copy always counts.
+ */
+function claudeSessionFiles(options: SessionFilesOptions): string[] | undefined {
+    const { driver, roots, sessionId, minMtimeMs } = options;
+    const stemName = `${sessionId}.jsonl`;
+    const found = new Set<string>();
+    let located = false;
+
+    for (const root of roots) {
+        for (const project of readDirEntries(root)) {
+            if (!project.isDirectory()) {
+                continue;
+            }
+
+            const dir = join(root, project.name);
+
+            if (!existsSync(join(dir, stemName)) && !existsSync(join(dir, sessionId))) {
+                continue;
+            }
+
+            located = true;
+
+            for (const entry of readDirEntries(dir)) {
+                const full = join(dir, entry.name);
+
+                if (entry.isDirectory()) {
+                    // The full walk enters this directory two levels below the root.
+                    if (entry.name === sessionId && driver.maxDepth >= 2) {
+                        const nested = { ...driver, maxDepth: driver.maxDepth - 2 };
+
+                        for (const file of findRecentTranscripts([full], minMtimeMs, nested)) {
+                            found.add(file);
+                        }
+                    }
+
+                    continue;
+                }
+
+                if (!entry.isFile() || !driver.isTranscript(entry.name)) {
+                    continue;
+                }
+
+                if (entry.name !== stemName && !entry.name.startsWith(LEGACY_AGENT_PREFIX)) {
+                    continue;
+                }
+
+                if (modifiedSince(full, minMtimeMs)) {
+                    found.add(full);
+                }
+            }
+        }
+    }
+
+    return located ? [...found] : undefined;
+}
+
+/**
+ * Codex and Grok take the session id from the PATH (`sessionFromFile`), so
+ * matching names is exact: a file named otherwise cannot yield an event of
+ * this session. Located is decided before the mtime cut, so a session older
+ * than `--since` still counts as found (with no events) instead of sending
+ * the caller to a full scan.
+ */
+function pathSessionFiles(options: SessionFilesOptions): string[] | undefined {
+    const { driver, source, roots, sessionId, minMtimeMs } = options;
+    const named = findRecentTranscripts(
+        roots,
+        MIN_MTIME,
+        driver,
+        (file) => sessionFromFile(file, source) === sessionId
+    );
+
+    if (named.length === 0) {
+        return undefined;
+    }
+
+    return named.filter((file) => modifiedSince(file, minMtimeMs));
+}
+
+/**
+ * The transcripts of ONE session, found by name instead of reading every
+ * transcript and filtering by id afterwards.
+ *
+ * Returns `undefined` when no file of this agent is named after the session.
+ * For Codex and Grok that means the agent has no such session; for Claude it
+ * means the id may still live inside another file (a workflow run id, say),
+ * which only the caller can decide to scan for.
+ */
+export function loadNativeSessionEvents(
+    source: NativeSourceId,
+    options: LoadNativeOptions & { sessionId: string }
+): SpendEvent[] | undefined {
+    const { sessionId } = options;
+
+    if (!sessionId || sessionId === "." || sessionId === ".." || /[\\/]/.test(sessionId)) {
+        return undefined;
+    }
+
+    const driver = NATIVE_DRIVERS[source];
+    const roots = driverRoots(driver, options);
+    const finder = source === "claude" ? claudeSessionFiles : pathSessionFiles;
+    const files = finder({
+        driver,
+        source,
+        roots: roots.map((root) => root.path),
+        sessionId,
+        minMtimeMs: options.minMtimeMs ?? MIN_MTIME,
+    });
+
+    if (files === undefined) {
+        return undefined;
+    }
+
+    return parseDriverFiles({ driver, source, roots, files, sessionId });
 }
 
 export function nativePriceCandidates(source: SourceId, model: string): string[] {
