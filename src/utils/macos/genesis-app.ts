@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
 
@@ -85,7 +85,34 @@ export function assertGenesisAppNotUpdating(): void {
  * re-wrapping would add a second pair of launcher stages for no gain.
  */
 export function genesisAppLauncher(): string | null {
-    return isRunningUnderGenesisApp() ? null : installedGenesisAppLauncher();
+    const launcher = installedGenesisAppLauncher();
+
+    if (!launcher) {
+        return null;
+    }
+
+    return isRunningUnderGenesisApp() && runsUnderInstalledBuild(launcher) ? null : launcher;
+}
+
+/**
+ * Whether the launcher this process tree inherited is still the installed one. A rebuild replaces
+ * the binary; a long-lived tree (a Claude session started through `gt-cc`) keeps the old one, and
+ * macOS cannot resolve a responsible process whose binary is gone, so it denies every grant
+ * (tccd: "proc_pidpath_audittoken() failed", 2026-09-24). Such a tree, and one from a launcher
+ * too old to record the inode, re-enters through the current launcher instead.
+ */
+function runsUnderInstalledBuild(launcher: string): boolean {
+    const recorded = env.tools.getAppInode();
+
+    if (!recorded) {
+        return false;
+    }
+
+    try {
+        return String(statSync(launcher).ino) === recorded;
+    } catch {
+        return false;
+    }
 }
 
 /**

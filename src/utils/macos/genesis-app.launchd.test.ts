@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
@@ -107,10 +107,35 @@ describe.skipIf(skip.unlessMac)("writing a plist while running under the app", (
     });
 
     it("does not double-wrap a process this command spawns itself", async () => {
-        const { home } = homeWithLauncher();
-        await env.testing.withOverrides({ ...underApp, GENESIS_TOOLS_HOME: home }, () => {
-            // The dispatcher question stays "no": the tree is already covered.
-            expect(genesisAppLauncher()).toBeNull();
-        });
+        const { home, launcher } = homeWithLauncher();
+        const inode = String(statSync(launcher).ino);
+        await env.testing.withOverrides(
+            { ...underApp, GENESIS_TOOLS_HOME: home, GENESIS_TOOLS_APP_INODE: inode },
+            () => {
+                // The dispatcher question stays "no": the tree is already covered.
+                expect(genesisAppLauncher()).toBeNull();
+            }
+        );
+    });
+
+    it("re-enters the launcher when a rebuild replaced the binary this tree runs under", async () => {
+        const { home, launcher } = homeWithLauncher();
+        const stale = String(statSync(launcher).ino + 1);
+        await env.testing.withOverrides(
+            { ...underApp, GENESIS_TOOLS_HOME: home, GENESIS_TOOLS_APP_INODE: stale },
+            () => {
+                expect(genesisAppLauncher()).toBe(launcher);
+            }
+        );
+    });
+
+    it("re-enters the launcher from a tree whose launcher predates the inode record", async () => {
+        const { home, launcher } = homeWithLauncher();
+        await env.testing.withOverrides(
+            { ...underApp, GENESIS_TOOLS_HOME: home, GENESIS_TOOLS_APP_INODE: undefined },
+            () => {
+                expect(genesisAppLauncher()).toBe(launcher);
+            }
+        );
     });
 });

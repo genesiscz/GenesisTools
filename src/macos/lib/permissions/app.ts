@@ -316,7 +316,10 @@ async function buildDiffViewer(contents: string, step: (message: string) => void
     }
 
     await Bun.write(join(out, "index.html"), Bun.file(join(source, "index.html")));
-    logger.debug({ out, outputs: result.outputs.length }, "diff viewer bundled");
+    // The highlight worker (main.ts `createHighlightWorkers`): pierre's self-contained build, as is.
+    const worker = Bun.resolveSync("@pierre/diffs/worker/worker-portable.js", source);
+    await Bun.write(join(out, "pierre-worker.js"), Bun.file(worker));
+    logger.debug({ out, outputs: result.outputs.length, worker }, "diff viewer bundled");
 }
 
 interface StageAndInstallOptions {
@@ -350,6 +353,19 @@ async function stageAndInstall(options: StageAndInstallOptions): Promise<BuildRe
         run(["security", "find-identity", "-v", "-p", "codesigning"]).stdout,
         env.tools.getCodesignIdentity()
     );
+    const installed = readSignature(bundlePath);
+
+    // No identity usually means the keychain was out of reach (a sandboxed shell), not that the
+    // certificate is gone. An ad-hoc build over a Developer ID one is a new app to macOS: every
+    // grant would stop matching, so refuse instead of installing it.
+    if (identity.kind === "adhoc" && !env.tools.getCodesignIdentity() && installed && !installed.adhoc) {
+        throw new Error(
+            `No code-signing identity is visible, but ${bundlePath} is signed by ${installed.authority}. ` +
+                "An ad-hoc build would lose every privacy grant. Build from a shell that can read the login keychain " +
+                "(not a sandboxed one), or set the signing identity to '-' to force ad-hoc on purpose."
+        );
+    }
+
     const identityArg = identity.kind === "adhoc" ? "-" : identity.name;
     step(`codesign (${identity.kind === "adhoc" ? "ad-hoc" : identity.name})`);
     const sign = run([
@@ -416,7 +432,7 @@ async function stageAndInstall(options: StageAndInstallOptions): Promise<BuildRe
         throw error;
     }
 
-    rmSync(previous, { recursive: true, force: true });
+    retirePreviousBundle(previous, appDir);
 
     // Launch Services must know the bundle, or every permission dialog falls back to the file
     // name and says "GenesisTools.app" instead of the CFBundleDisplayName "GenesisTools".
@@ -436,6 +452,78 @@ async function stageAndInstall(options: StageAndInstallOptions): Promise<BuildRe
     logger.info({ bundlePath, signedWith: signature.authority }, "GenesisTools.app built");
 
     return { bundlePath, identity, signature, manifest };
+}
+
+/**
+ * Moves the replaced bundle to `<appDir>/retired/<ms>/` instead of deleting it.
+ *
+ * Every `tools` process, and every Claude session started through `gt-cc`, runs inside this
+ * app's binary and keeps the one it started with. macOS judges Full Disk Access by that
+ * responsible process. With its binary deleted, tccd logs "proc_pidpath_audittoken() failed:
+ * No such file or directory", cannot resolve the process, and denies the grant, so every
+ * session started before a rebuild lost Messages, Mail and Voice Memos (2026-09-24 13:53).
+ * A moved file keeps a path, so tccd still resolves it and the grant still matches.
+ */
+function retirePreviousBundle(previous: string, appDir: string): void {
+    if (!existsSync(previous)) {
+        return;
+    }
+
+    const retiredRoot = join(appDir, "retired");
+    const retiredAt = Date.now();
+    const target = join(retiredRoot, String(retiredAt), `${GENESIS_APP_NAME}.app`);
+    mkdirSync(dirname(target), { recursive: true });
+    renameSync(previous, target);
+    // Launch Services must not offer the retired copy in the Full Disk Access picker.
+    run([LSREGISTER, "-u", target]);
+    pruneRetiredBundles(retiredRoot);
+}
+
+/**
+ * The retirement time below which a retired bundle may be deleted, from `ps -axo lstart=,command=`:
+ * a bundle retired before every running GenesisTools process started is the binary of none of them.
+ * `null` keeps every bundle. A failed listing or a start time that does not parse would otherwise
+ * read as "no process runs", and the bundle retired a moment ago would go with the rest.
+ */
+export function retiredBundleCutoff(listing: { code: number; stdout: string }): number | null {
+    if (listing.code !== 0) {
+        return null;
+    }
+
+    const starts = listing.stdout
+        .split("\n")
+        .filter((line) => line.includes(`${GENESIS_APP_NAME}.app/Contents/MacOS/${GENESIS_APP_NAME}`))
+        .map((line) => Date.parse(line.trim().slice(0, 24)));
+
+    if (starts.some((ms) => !Number.isFinite(ms))) {
+        return null;
+    }
+
+    // lstart has one-second resolution; a process started in the same second may still use it.
+    return starts.length > 0 ? Math.min(...starts) - 1000 : Number.POSITIVE_INFINITY;
+}
+
+/** Deletes a retired bundle once no running GenesisTools process can have started from it. */
+function pruneRetiredBundles(retiredRoot: string): void {
+    // lstart is strftime's %c, so a localized LC_TIME spells it in words Date.parse cannot read.
+    const listing = run(["env", "LC_ALL=C", "ps", "-axo", "lstart=,command="]);
+    const cutoff = retiredBundleCutoff(listing);
+
+    if (cutoff === null) {
+        logger.debug(
+            { code: listing.code, stderr: listing.stderr },
+            "cannot read the process start times; keeping retired bundles"
+        );
+        return;
+    }
+
+    for (const entry of readdirSync(retiredRoot, { withFileTypes: true })) {
+        const retiredAt = Number(entry.name);
+
+        if (entry.isDirectory() && Number.isFinite(retiredAt) && retiredAt < cutoff) {
+            rmSync(join(retiredRoot, entry.name), { recursive: true, force: true });
+        }
+    }
 }
 
 const STALE_FACE_TERM_GRACE_MS = 500;

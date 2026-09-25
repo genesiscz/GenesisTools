@@ -198,6 +198,8 @@ export const env = {
         hasExplicitHome: () => isNonEmpty("GENESIS_TOOLS_HOME"),
         /** Set by the GenesisTools.app launcher for its children: the TCC identity this process runs under. */
         getAppBundleId: () => getTrimmed("GENESIS_TOOLS_APP_BUNDLE_ID"),
+        /** Set by the launcher beside the bundle id: the inode of the launcher binary this process tree runs under. */
+        getAppInode: () => getTrimmed("GENESIS_TOOLS_APP_INODE"),
         /** GENESIS_TOOLS_NO_APP=1 runs tools straight from the terminal, without the GenesisTools.app launcher. */
         isAppLauncherDisabled: () => getRaw("GENESIS_TOOLS_NO_APP") === "1",
         /** codesign identity for the GenesisTools.app build; overrides the automatic Developer ID / Apple Development pick. */
