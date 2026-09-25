@@ -1,4 +1,4 @@
-// Copied from /Users/Martin/Tresors/Projects/GenesisPlayground.worktrees/genesis-session-redesign/Genesis/apps/Genesis/Sources/Genesis/Sessions/SessionToolCallView.swift at 2026-09-24T05:05:23+02:00 at commit hash 786292605d31a39fe795dafe34fb0f8d6f96d0a1
+// Copied from /Users/Martin/Tresors/Projects/GenesisPlayground.worktrees/genesis-session-redesign/Genesis/apps/Genesis/Sources/Genesis/Sessions/SessionToolCallView.swift at 2026-09-24T08:22:05+02:00 at commit hash 352701bd4e327a97ee223015319f46223ad3a6e5
 //
 //  SessionToolCallView.swift
 //  Genesis
@@ -19,6 +19,7 @@
 //  Portable except for the app's `.genHover*` / `.instantTooltip` conventions.
 //
 
+import AppKit
 import Foundation
 import SwiftUI
 
@@ -80,6 +81,9 @@ final class TranscriptServices: @unchecked Sendable {
     let nativeLog: SessionNativeLog?
     let changes: ToolChangeSource?
     let showChange: ((String, Int?) -> Void)?
+    // GenesisTools adaptation: the host hears the applied search query, so ⌘F can search the whole
+    // session (`tools ai sessions grep`) and not only the loaded window. Never set on `.none`.
+    var onQuery: ((String) -> Void)?
 
     init(sessionId: String, cwd: String?, nativeLog: SessionNativeLog?, changes: ToolChangeSource?, showChange: ((String, Int?) -> Void)?) {
         self.sessionId = sessionId
@@ -454,8 +458,7 @@ private struct ToolResultBody: View {
             if let block = presentation.block, !block.lines.isEmpty {
                 CodeBlockText(block: block, limit: limit, cacheKey: rowId)
                     .padding(.leading, 16)
-                    .contentShape(Rectangle())
-                    .simultaneousGesture(TapGesture().onEnded { onCollapse() })
+                    .background(ClickUpCatcher(action: onCollapse))
                 if let limit, block.lines.count > limit {
                     Button(action: onShowAll) {
                         Text(verbatim: "… +\(block.lines.count - limit) lines")
@@ -547,7 +550,10 @@ struct ToolChangesView: View {
         }
         .task(id: toolId) {
             guard files == nil else { return }
-            files = await source.changes(sessionId: sessionId, toolUseId: toolId)
+            let loaded = await source.changes(sessionId: sessionId, toolUseId: toolId)
+            // GenesisTools adaptation: a row that left the screen got an empty answer; keep asking when it returns.
+            guard !Task.isCancelled else { return }
+            files = loaded
         }
     }
 
@@ -564,12 +570,19 @@ struct ToolChangesView: View {
             Text(verbatim: "\(files.count) file\(files.count == 1 ? "" : "s") changed")
                 .font(.system(size: 12, weight: .medium))
                 .foregroundStyle(SessionPalette.secondary)
-            Text(verbatim: "+\(additions)")
-                .font(SessionPalette.mono(11.5, weight: .semibold))
-                .foregroundStyle(SessionPalette.green)
-            Text(verbatim: "−\(deletions)")
-                .font(SessionPalette.mono(11.5, weight: .semibold))
-                .foregroundStyle(SessionPalette.red)
+            // GenesisTools adaptation: when the log has no diff for any file, say so instead of "+0 −0".
+            if files.allSatisfy({ $0.skipReason != nil }) {
+                Text(verbatim: "no diff recorded")
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(SessionPalette.dim)
+            } else {
+                Text(verbatim: "+\(additions)")
+                    .font(SessionPalette.mono(11.5, weight: .semibold))
+                    .foregroundStyle(SessionPalette.green)
+                Text(verbatim: "−\(deletions)")
+                    .font(SessionPalette.mono(11.5, weight: .semibold))
+                    .foregroundStyle(SessionPalette.red)
+            }
             Spacer(minLength: 0)
             Image(systemName: "chevron.right")
                 .font(.system(size: 9, weight: .semibold))
@@ -593,11 +606,13 @@ struct ToolChangesView: View {
                     .foregroundStyle(SessionPalette.text)
                     .lineLimit(1)
                     .truncationMode(.head)
-                Text(verbatim: "+\(counts.additions) −\(counts.deletions)")
+                // GenesisTools adaptation: a skipped file names why it has no diff instead of "+0 −N".
+                Text(verbatim: file.skipLabel ?? "+\(counts.additions) −\(counts.deletions)")
                     .font(SessionPalette.mono(10.5))
                     .foregroundStyle(SessionPalette.dim)
                 Spacer(minLength: 6)
-                if file.beforeBlob != nil || file.afterBlob != nil {
+                // GenesisTools adaptation: no "More context" for a skipped file.
+                if file.skipReason == nil, file.beforeBlob != nil || file.afterBlob != nil {
                     Button {
                         Task { await moreContext(file) }
                     } label: {
@@ -637,6 +652,88 @@ struct ToolChangesView: View {
         if let diff = await source.expandedDiff(for: file, context: next) {
             context[file.path] = next
             expanded[file.path] = diff
+        }
+    }
+}
+
+/// Calls `action` on a plain click inside its bounds: one mouse-up, no drag, no modifiers, and no
+/// second click within the double-click interval. It sits BEHIND selectable text and only watches
+/// the app's own mouse events (a local monitor that returns every event unchanged), because the
+/// text view underneath takes the mouse first and a SwiftUI tap gesture on it never fired: the
+/// "click the output to collapse" feature did nothing (2026-09-24). A drag that selects text and a
+/// double-click that selects a word stay with the text.
+struct ClickUpCatcher: NSViewRepresentable {
+    let action: () -> Void
+
+    func makeNSView(context: Context) -> CatcherView {
+        let view = CatcherView()
+        view.action = action
+        return view
+    }
+
+    func updateNSView(_ view: CatcherView, context: Context) {
+        view.action = action
+    }
+
+    final class CatcherView: NSView {
+        var action: (() -> Void)?
+        private var monitor: Any?
+        private var downPoint: NSPoint?
+        private var pending: DispatchWorkItem?
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            if let monitor {
+                NSEvent.removeMonitor(monitor)
+                self.monitor = nil
+            }
+            guard window != nil else { return }
+            monitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .leftMouseUp]) { [weak self] event in
+                self?.handle(event)
+                return event
+            }
+        }
+
+        private func handle(_ event: NSEvent) {
+            guard event.window === window else { return }
+            let inside = bounds.contains(convert(event.locationInWindow, from: nil))
+            if event.type == .leftMouseDown {
+                // Only a second click on THIS output (a double-click selecting a word) cancels its
+                // pending collapse; a click anywhere else lets it complete.
+                if inside {
+                    pending?.cancel()
+                    pending = nil
+                }
+                downPoint = inside && event.clickCount == 1 ? event.locationInWindow : nil
+                guard downPoint != nil else { return }
+                // Selectable text runs its own tracking loop inside this mouse-down and takes the
+                // mouse-up before any monitor sees it. That loop has returned by the next turn of the
+                // main queue, and the event it ended on is the mouse-up.
+                DispatchQueue.main.async { [weak self] in
+                    guard let self, let up = NSApp.currentEvent, up.type == .leftMouseUp else { return }
+                    self.release(up)
+                }
+                return
+            }
+            release(event)
+        }
+
+        private func release(_ event: NSEvent) {
+            guard let down = downPoint, event.window === window, event.clickCount <= 1,
+                  bounds.contains(convert(event.locationInWindow, from: nil)),
+                  event.modifierFlags.isDisjoint(with: [.command, .option, .shift, .control]),
+                  hypot(event.locationInWindow.x - down.x, event.locationInWindow.y - down.y) < 4
+            else { return }
+            downPoint = nil
+            let work = DispatchWorkItem { [weak self] in self?.action?() }
+            pending = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + NSEvent.doubleClickInterval, execute: work)
+        }
+
+        deinit {
+            if let monitor {
+                NSEvent.removeMonitor(monitor)
+            }
         }
     }
 }

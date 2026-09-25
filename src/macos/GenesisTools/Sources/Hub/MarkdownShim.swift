@@ -24,6 +24,10 @@ struct MarkdownStyle {
 struct MarkdownContentView: View {
     let markdown: String
     var style = MarkdownStyle()
+    // Inside a panel find row (Hub/HubPanelFind.swift) the matches are marked, block by block.
+    @Environment(\.panelFindHighlight) private var findHighlight
+    @Environment(\.panelFindRow) private var findRow
+    @Environment(\.panelFindField) private var findField
 
     private enum Block: Hashable {
         case text(String)
@@ -31,7 +35,7 @@ struct MarkdownContentView: View {
         case heading(String, level: Int)
     }
 
-    private var blocks: [Block] {
+    nonisolated private static func blocks(_ markdown: String) -> [Block] {
         var blocks: [Block] = []
         var paragraph: [String] = []
         var code: [String]?
@@ -74,35 +78,60 @@ struct MarkdownContentView: View {
         return blocks
     }
 
+    /// The text each block shows, in order: what a panel find matches (a match names its block).
+    nonisolated static func searchBlocks(_ markdown: String) -> [String] {
+        blocks(markdown).map { block in
+            switch block {
+            case .text(let text), .heading(let text, _): return String(inline(text).characters)
+            case .code(let text): return text
+            }
+        }
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: style.blockSpacing) {
-            ForEach(Array(blocks.enumerated()), id: \.offset) { _, block in
+            ForEach(Array(Self.blocks(markdown).enumerated()), id: \.offset) { index, block in
                 switch block {
                 case .text(let text):
-                    Text(inline(text))
+                    Text(found(Self.inline(text), block: index))
                         .font(style.monoBody ? .system(size: style.bodySize, design: .monospaced) : .system(size: style.bodySize))
                         .foregroundColor(style.textColor)
                         .lineSpacing(style.lineSpacing)
                         .textSelection(.enabled)
                         .fixedSize(horizontal: false, vertical: true)
+                        .panelFindAnchor(anchor(block: index))
                 case .heading(let text, let level):
-                    Text(inline(text))
+                    Text(found(Self.inline(text), block: index))
                         .font(.system(size: (20 - CGFloat(level) * 1.5) * style.headingScale, weight: .semibold))
                         .foregroundColor(style.textColor)
+                        .panelFindAnchor(anchor(block: index))
                 case .code(let text):
-                    Text(text)
+                    Text(found(AttributedString(text), block: index))
                         .font(.system(size: style.bodySize - 1.5, design: .monospaced))
                         .foregroundColor(style.codeColor)
                         .textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(8)
                         .background(RoundedRectangle(cornerRadius: 6).fill(style.codeBackground))
+                        .panelFindAnchor(anchor(block: index))
                 }
             }
         }
     }
 
-    private func inline(_ text: String) -> AttributedString {
+    private func found(_ text: AttributedString, block: Int) -> AttributedString {
+        guard let findHighlight else { return text }
+        var marked = text
+        findHighlight.mark(&marked, row: findRow, field: findField, block: block)
+        return marked
+    }
+
+    private func anchor(block: Int) -> String? {
+        guard findHighlight != nil, let findRow, let findField else { return nil }
+        return PanelFind.anchorID(row: findRow, field: findField, block: block)
+    }
+
+    nonisolated private static func inline(_ text: String) -> AttributedString {
         let options = AttributedString.MarkdownParsingOptions(interpretedSyntax: .inlineOnlyPreservingWhitespace)
         return (try? AttributedString(markdown: text, options: options)) ?? AttributedString(text)
     }

@@ -146,8 +146,10 @@ struct CmuxHost: TerminalHost {
         let span = HubPerf.begin("cmux.tree")
         defer { span.end() }
         do {
-            let data = try ToolsCLIRunner.run(["ai", "cmux", "tree", "--json"])
-            return try JSONDecoder().decode(TerminalTree.self, from: data)
+            // Not `run`: with cmux unreachable the command prints {available: false, error} and exits 1,
+            // and the picker shows that error only if the JSON is decoded despite the exit status.
+            let capture = try ToolsCLIRunner.capture(["ai", "cmux", "tree", "--json"])
+            return try JSONDecoder().decode(TerminalTree.self, from: capture.stdout)
         } catch {
             HubPerf.log("cmux.tree failed: \(error)")
             return nil
@@ -165,7 +167,8 @@ struct CmuxHost: TerminalHost {
 
     func send(sessionId: String, text: String) -> String? {
         do {
-            _ = try ToolsCLIRunner.run(["claude", "cmux", "send", sessionId, text, "--first"])
+            // After `--`: a line that starts with a hyphen ("- fix this") is text, not an unknown option.
+            _ = try ToolsCLIRunner.run(["claude", "cmux", "send", "--first", "--", sessionId, text])
             return nil
         } catch {
             return "\(error)"
@@ -179,8 +182,8 @@ struct CmuxHost: TerminalHost {
         case .resume(let session) where session.provider == "claude":
             if let args = Self.openSessionArgs(target) {
                 do {
-                    _ = try ToolsCLIRunner.run(["claude", "cmux", "open-session", session.sessionId] + args + ["--json"])
-                    return nil
+                    let capture = try ToolsCLIRunner.capture(["claude", "cmux", "open-session", session.sessionId] + args + ["--json"])
+                    return capture.status == 0 ? nil : Self.failure(of: capture)
                 } catch {
                     return "\(error)"
                 }
@@ -193,6 +196,16 @@ struct CmuxHost: TerminalHost {
         case .command(let command, let cwd, let name):
             return run(command, cwd: cwd, name: name, at: target)
         }
+    }
+
+    /// `open-session --json` reports a failure as {ok: false, error} on stdout, with stderr empty.
+    private static func failure(of capture: ProcessCapture) -> String {
+        struct Failure: Decodable { let error: String }
+        if let failure = try? JSONDecoder().decode(Failure.self, from: capture.stdout) {
+            return failure.error
+        }
+        let stderr = String(decoding: capture.stderr, as: UTF8.self).trimmed
+        return stderr.isEmpty ? "tools claude cmux open-session exited \(capture.status)" : String(stderr.suffix(300))
     }
 
     private static func openSessionArgs(_ target: TerminalTarget) -> [String]? {
@@ -291,12 +304,17 @@ final class TerminalTreeModel: ObservableObject {
 /// or as the real layout (pane rectangles as cmux draws them). With `selection` it only marks the
 /// choice (the launch sheet confirms); without it a click opens right away through `onPick`.
 struct TerminalTargetPicker: View {
+    /// "tree" or "layout", shared by every picker (and read by `LaunchPicker` to size its popover).
+    static let modeKey = "hub.terminal.pickerMode"
+
     @ObservedObject var model: TerminalTreeModel
     var selection: TerminalTarget?
     var highlightSession: String?
+    /// How wide the inline layout draws the panes (the launch popover widens for it).
+    var layoutWidth: CGFloat = 300
     let onPick: (TerminalTarget) -> Void
 
-    @AppStorage("hub.terminal.pickerMode") private var mode = "tree"
+    @AppStorage(TerminalTargetPicker.modeKey) private var mode = "tree"
     @State private var layoutOpen = false
 
     var body: some View {
@@ -333,7 +351,7 @@ struct TerminalTargetPicker: View {
                     .font(.system(size: 11))
                     .foregroundColor(ReviewPalette.removed)
             } else if mode == "layout" {
-                TerminalLayoutView(tree: model.tree, selection: selection, highlightSession: highlightSession, width: 300, onPick: onPick)
+                TerminalLayoutView(tree: model.tree, selection: selection, highlightSession: highlightSession, width: layoutWidth, onPick: onPick)
             } else {
                 TerminalTreeList(tree: model.tree, selection: selection, highlightSession: highlightSession, onPick: onPick)
             }
@@ -615,11 +633,32 @@ enum AgentHarness: String, CaseIterable {
 
     var title: String { rawValue.capitalized }
 
-    func newCommand(account: String) -> [String] {
+    func newCommand(account: String, prompt: String? = nil) -> [String] {
+        let first = prompt.map { [$0] } ?? []
         switch self {
-        case .claude: return account.isEmpty ? ["tools", "claude", "run"] : ["tools", "claude", "run", account]
-        case .codex: return ["codex"]
-        case .grok: return ["grok"]
+        case .claude:
+            let run = account.isEmpty ? ["tools", "claude", "run"] : ["tools", "claude", "run", account]
+            return run + (first.isEmpty ? [] : ["--"] + first)
+        case .codex: return ["codex"] + first
+        case .grok: return ["grok"] + first
+        }
+    }
+}
+
+/// How a `LaunchPicker` ended. Callers act on the case, never on the wording: a resume that failed
+/// must not look like one that worked.
+enum LaunchOutcome: Equatable {
+    case cancelled
+    /// The session started or resumed; the label names it ("Resume: fix the cart").
+    case launched(String)
+    /// The terminal host refused; the reason starts with the host's name.
+    case failed(String)
+
+    /// The line a caller shows; nil for Cancel.
+    var notice: String? {
+        switch self {
+        case .cancelled: return nil
+        case .launched(let text), .failed(let text): return text
         }
     }
 }
@@ -628,43 +667,51 @@ enum AgentHarness: String, CaseIterable {
 /// before anything runs.
 struct LaunchPicker: View {
     enum Mode {
-        case new(cwd: String, name: String)
+        /// `prompt`: the agent's first message, passed on its command line after the command.
+        case new(cwd: String, name: String, prompt: String? = nil)
         case resume(HubSession)
     }
 
     let mode: Mode
-    let done: (String) -> Void
+    let done: (LaunchOutcome) -> Void
 
     @State private var harness = AgentHarness.claude
     @AppStorage("hub.launch.account") private var account = ""
     @StateObject private var model = TerminalTreeModel()
     @State private var target = TerminalTarget.newWorkspace(window: nil)
     @State private var busy = false
+    @AppStorage(TerminalTargetPicker.modeKey) private var pickerMode = "tree"
+    @State private var targetsHeight: CGFloat = 0
+
+    /// The popover's width: the tree fits the narrow one; the layout gets room to draw real panes.
+    static let narrowWidth: CGFloat = 460
+    static let wideWidth: CGFloat = 800
+    private var wide: Bool { pickerMode == "layout" }
 
     private var cwd: String {
         switch mode {
-        case .new(let cwd, _): return cwd
+        case .new(let cwd, _, _): return cwd
         case .resume(let session): return session.cwd
         }
     }
 
     private var command: [String] {
         switch mode {
-        case .new: return harness.newCommand(account: account.trimmed)
+        case .new(_, _, let prompt): return harness.newCommand(account: account.trimmed, prompt: prompt)
         case .resume(let session): return AgentLauncher.resumeCommand(for: session) ?? []
         }
     }
 
     private var name: String {
         switch mode {
-        case .new(_, let name): return name
+        case .new(_, let name, _): return name
         case .resume(let session): return session.displayTitle
         }
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text(title).font(.system(size: 13, weight: .semibold))
+            header
             if case .new = mode {
                 Picker("", selection: $harness) {
                     ForEach(AgentHarness.allCases, id: \.self) { Text($0.title).tag($0) }
@@ -681,9 +728,14 @@ struct LaunchPicker: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text("Where (\(model.host.name))").font(.system(size: 11, weight: .semibold)).foregroundColor(ReviewPalette.dim)
                 ScrollView {
-                    TerminalTargetPicker(model: model, selection: target) { target = $0 }
+                    // The width the layout gets: the wide popover less its padding and the scroller.
+                    TerminalTargetPicker(model: model, selection: target, layoutWidth: Self.wideWidth - 28 - 16) { target = $0 }
+                        .onGeometryChange(for: CGFloat.self, of: \.size.height) { targetsHeight = $0 }
                 }
-                .frame(maxHeight: 260)
+                // As tall as the targets, up to a cap. With only a maximum the popover sized the scroll
+                // view to its minimum, and the tree or layout under the switch never showed
+                // (screenshot 2026-09-24 19:55).
+                .frame(height: min(max(targetsHeight, 30), wide ? 420 : 260))
             }
             VStack(alignment: .leading, spacing: 3) {
                 Text("Will run").font(.system(size: 11, weight: .semibold)).foregroundColor(ReviewPalette.dim)
@@ -698,14 +750,43 @@ struct LaunchPicker: View {
             }
             HStack {
                 Spacer()
-                Button("Cancel") { done("") }
+                Button("Cancel") { done(.cancelled) }
                 Button(buttonTitle) { start() }
                     .keyboardShortcut(.defaultAction)
                     .disabled(command.isEmpty || busy)
             }
         }
         .padding(14)
-        .frame(width: 460)
+        // Layout widens the popover so the panes draw at a readable size; Tree narrows it again.
+        // The same component backs "Start an agent here" and "Resume", so both do it.
+        .frame(width: wide ? Self.wideWidth : Self.narrowWidth)
+        .animation(.snappy(duration: 0.3), value: wide)
+    }
+
+    @ViewBuilder
+    private var header: some View {
+        switch mode {
+        case .new:
+            Text("Start an agent here").font(.system(size: 13, weight: .semibold))
+        case .resume(let session):
+            // The session's own name and id, so the popover says which session it resumes.
+            VStack(alignment: .leading, spacing: 5) {
+                Text("Resume").font(.system(size: 11, weight: .semibold)).foregroundColor(ReviewPalette.dim)
+                Text(session.displayTitle)
+                    .font(.system(size: 13, weight: .semibold))
+                    .lineLimit(2)
+                    .truncationMode(.tail)
+                    .fixedSize(horizontal: false, vertical: true)
+                HStack(spacing: 8) {
+                    CopyChip(label: String(session.sessionId.prefix(8)), value: session.sessionId, tooltip: "Copy the full session id: \(session.sessionId)")
+                    Text(verbatim: [AIProviders.meta(for: session.provider).displayName, session.account, HubFormat.ago(session.lastActivity)]
+                        .compactMap { $0 }.joined(separator: " · "))
+                        .font(.system(size: 11))
+                        .foregroundColor(ReviewPalette.dim)
+                        .lineLimit(1)
+                }
+            }
+        }
     }
 
     private func start() {
@@ -721,14 +802,7 @@ struct LaunchPicker: View {
         Task {
             let error = await Task.detached(priority: .userInitiated) { host.open(launch, at: target) }.value
             busy = false
-            done(error.map { "\(host.name): \($0)" } ?? label)
-        }
-    }
-
-    private var title: String {
-        switch mode {
-        case .new: return "Start an agent here"
-        case .resume(let session): return "Resume \(session.displayTitle)"
+            done(error.map { .failed("\(host.name): \($0)") } ?? .launched(label))
         }
     }
 

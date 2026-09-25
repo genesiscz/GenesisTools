@@ -1,4 +1,4 @@
-// Copied from /Users/Martin/Tresors/Projects/GenesisPlayground.worktrees/genesis-session-redesign/Genesis/apps/Genesis/Sources/Genesis/Sessions/SessionDetailScreen.swift at 2026-09-24T05:05:15+02:00 at commit hash 786292605d31a39fe795dafe34fb0f8d6f96d0a1
+// Copied from /Users/Martin/Tresors/Projects/GenesisPlayground.worktrees/genesis-session-redesign/Genesis/apps/Genesis/Sources/Genesis/Sessions/SessionDetailScreen.swift at 2026-09-24T08:22:05+02:00 at commit hash 352701bd4e327a97ee223015319f46223ad3a6e5
 //
 //  SessionDetailScreen.swift
 //  Genesis
@@ -261,43 +261,11 @@ struct SessionDetailHeader: View {
             .padding(.trailing, 12)
             .frame(height: SessionDetailScreenChrome.rowHeight)
 
-            HStack(spacing: 14) {
-                if let cwd = info.cwd, !cwd.isEmpty {
-                    metaItem("folder", (cwd as NSString).abbreviatingWithTildeInPath, tip: "\(cwd) · click to show it in Finder", action: info.cwdExists ? actions.openInFinder : nil)
-                        .layoutPriority(1)
-                }
-                if let branch = info.branch {
-                    metaItem("arrow.triangle.branch", branch, tip: actions.openBranch == nil ? "Git branch of the session folder · click to copy" : "Git branch of the session folder · click to open its web page", action: actions.openBranch ?? { actions.copy(branch) })
-                }
-                if let startedAt = info.startedAt {
-                    metaItem("clock", "started \(SessionFormat.moment(startedAt))", tip: "First entry of the loaded transcript")
-                }
-                if let last = info.lastActivityAt {
-                    // Its own 15 s clock, so the rest of the header never re-renders for it.
-                    TimelineView(.periodic(from: .now, by: 15)) { context in
-                        HStack(spacing: 5) {
-                            Image(systemName: "waveform.path")
-                                .font(.system(size: 10))
-                            Text(verbatim: "active \(SessionFormat.ago(context.date.timeIntervalSince(last)))")
-                        }
-                        .font(.system(size: 11.5))
-                        .foregroundStyle(SessionPalette.dim)
-                        .lineLimit(1)
-                        .fixedSize()
-                    }
-                    .instantTooltip("Last transcript entry or file write, \(SessionFormat.moment(last))")
-                }
-                Spacer(minLength: 8)
-                Button {
-                    actions.copy(info.sessionId)
-                } label: {
-                    Text(verbatim: info.shortId)
-                        .font(SessionPalette.mono(11))
-                        .foregroundStyle(SessionPalette.faint)
-                }
-                .buttonStyle(.genHoverPlain())
-                .instantTooltip("Copy the session id \(info.sessionId)")
-                .accessibilityIdentifier("session-details-copy-id")
+            // The full row when it fits; otherwise the same row without "started", so a narrow pane
+            // keeps the folder and branch readable instead of squeezing all three.
+            ViewThatFits(in: .horizontal) {
+                metaRow(showStarted: true)
+                metaRow(showStarted: false)
             }
             .padding(.horizontal, 16)
             .frame(height: 28)
@@ -306,6 +274,51 @@ struct SessionDetailHeader: View {
             Rectangle().fill(SessionPalette.hairline).frame(height: 1)
         }
         .accessibilityIdentifier("session-details-header")
+    }
+
+    private func metaRow(showStarted: Bool) -> some View {
+        HStack(spacing: 14) {
+            if let cwd = info.cwd, !cwd.isEmpty {
+                metaItem("folder", (cwd as NSString).abbreviatingWithTildeInPath, tip: "\(cwd) · click to show it in Finder", action: info.cwdExists ? actions.openInFinder : nil)
+                    .layoutPriority(1)
+            }
+            if let branch = info.branch {
+                metaItem("arrow.triangle.branch", branch, tip: actions.openBranch == nil ? "Git branch of the session folder · click to copy" : "Git branch of the session folder · click to open its web page", action: actions.openBranch ?? { actions.copy(branch) })
+                    .layoutPriority(1)
+            }
+            if showStarted, let startedAt = info.startedAt {
+                metaItem("clock", "started \(SessionFormat.moment(startedAt))", tip: "First entry of the loaded transcript")
+                    .fixedSize()
+            }
+            if let last = info.lastActivityAt {
+                // Its own 15 s clock, so the rest of the header never re-renders for it.
+                TimelineView(.periodic(from: .now, by: 15)) { context in
+                    HStack(spacing: 5) {
+                        Image(systemName: "waveform.path")
+                            .font(.system(size: 10))
+                        Text(verbatim: "active \(SessionFormat.ago(context.date.timeIntervalSince(last)))")
+                    }
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(SessionPalette.dim)
+                    .lineLimit(1)
+                    .fixedSize()
+                }
+                .instantTooltip("Last transcript entry or file write, \(SessionFormat.moment(last))")
+            }
+            Spacer(minLength: 8)
+            Button {
+                actions.copy(info.sessionId)
+            } label: {
+                Text(verbatim: info.shortId)
+                    .font(SessionPalette.mono(11))
+                    .foregroundStyle(SessionPalette.faint)
+                    .lineLimit(1)
+                    .fixedSize()
+            }
+            .buttonStyle(.genHoverPlain())
+            .instantTooltip("Copy the session id \(info.sessionId)")
+            .accessibilityIdentifier("session-details-copy-id")
+        }
     }
 
     private var counters: some View {
@@ -324,7 +337,8 @@ struct SessionDetailHeader: View {
                     counter("out", SessionFormat.tokens(usage.outputTokens), color: SessionPalette.green, tip: "Output tokens of the session\n\(usage.detailed)")
                 }
                 if let cost = usage.costUsd, cost > 0 {
-                    counter(nil, SessionFormat.usd(cost), color: SessionPalette.orange, tip: "Cost the session file reports")
+                    // GenesisTools adaptation: an estimate names its source (the same note as the Cost tile).
+                    counter(nil, SessionFormat.usd(cost), color: SessionPalette.orange, tip: usage.costNote ?? "Cost the session file reports")
                 }
             }
             if info.errorCount > 0 {

@@ -263,6 +263,7 @@ struct TranscriptDocument: Equatable {
         var sectionFirstTurn: [String] = []
         var pendingFirstTurn: String?
         var sectionEnvelopeUsage = SessionUsage()
+        var previousIndex: Int?
 
         func closeSection(endingAt end: Date?) {
             guard !rows.isEmpty else { return }
@@ -302,12 +303,25 @@ struct TranscriptDocument: Equatable {
             let nextAt = dates[(index + 1)...].lazy.compactMap { $0 }.first
             let clock = at.map(SessionFormat.clock)
 
+            // GenesisTools adaptation: search hits merged with the window are sparse. A reply or tool
+            // turn whose index does not follow the previous turn's belongs to a prompt that is not in
+            // the list, so it opens its own unnumbered section instead of joining the last prompt's.
+            if turn.role != "user", let own = turn.index, let previous = previousIndex, own != previous + 1 {
+                closeSection(endingAt: nil)
+                sectionNumber = 0
+                sectionId = "s-gap-\(turn.id)"
+                sectionStart = nil
+            }
+            previousIndex = turn.index
+
             if turn.role == "user" {
                 // The section's work ends at its last entry; the gap before the next prompt is the
                 // user reading, not the agent working.
                 closeSection(endingAt: nil)
                 pendingFirstTurn = turn.id
-                sectionNumber = turnOffset + index + 1
+                // GenesisTools adaptation: a turn that knows its session-wide index (search hits merged
+                // with the window) numbers itself; a contiguous page counts from `turnOffset`.
+                sectionNumber = turn.index.map { $0 + 1 } ?? turnOffset + index + 1
                 sectionId = "s-\(turn.id)"
                 sectionStart = at
                 let text = turn.text.trimmingCharacters(in: .whitespacesAndNewlines)

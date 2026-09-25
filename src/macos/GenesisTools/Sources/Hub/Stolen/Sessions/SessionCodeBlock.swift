@@ -1,4 +1,4 @@
-// Copied from /Users/Martin/Tresors/Projects/GenesisPlayground.worktrees/genesis-session-redesign/Genesis/apps/Genesis/Sources/Genesis/Sessions/SessionCodeBlock.swift at 2026-09-24T05:05:23+02:00 at commit hash 786292605d31a39fe795dafe34fb0f8d6f96d0a1
+// Copied from /Users/Martin/Tresors/Projects/GenesisPlayground.worktrees/genesis-session-redesign/Genesis/apps/Genesis/Sources/Genesis/Sessions/SessionCodeBlock.swift at 2026-09-24T08:22:05+02:00 at commit hash 352701bd4e327a97ee223015319f46223ad3a6e5
 //
 //  SessionCodeBlock.swift
 //  Genesis
@@ -364,6 +364,7 @@ struct CodeBlockText: View {
     // count, and the old highlighted body used to stay on screen.
     @State private var highlighted: (key: String, value: CodeBlockAttributed)?
 
+    // GenesisTools adaptation: the key hashes the content (see `highlighted`).
     private var key: String {
         var hasher = Hasher()
         hasher.combine(block)
@@ -371,6 +372,7 @@ struct CodeBlockText: View {
     }
 
     var body: some View {
+        // GenesisTools adaptation: a highlighted body counts only for its own key (see `highlighted`).
         let key = key
         let current = highlighted?.key == key ? highlighted?.value : nil
         let rendered = current ?? CodeBlockCache.shared.get(key) ?? CodeBlockRenderer.attributed(block, limit: limit, highlight: false)
@@ -394,6 +396,7 @@ struct CodeBlockText: View {
         .frame(maxWidth: .infinity, alignment: .leading)
             .task(id: key) {
                 if let cached = CodeBlockCache.shared.get(key) {
+                    // GenesisTools adaptation: `highlighted` remembers its key (see its declaration).
                     highlighted = (key, cached)
                     return
                 }
@@ -404,6 +407,7 @@ struct CodeBlockText: View {
                 }.value
                 guard !Task.isCancelled else { return }
                 CodeBlockCache.shared.set(key, result)
+                // GenesisTools adaptation: `highlighted` remembers its key (see its declaration).
                 highlighted = (key, result)
             }
     }

@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 // Shared building blocks for every GenesisTools.app window (hub, review). See ../../CLAUDE.md:
 // every icon-only control gets `.instantTooltip`, every external URL is an `ExternalLink`, every
@@ -34,7 +35,7 @@ extension View {
     /// instead of an `onTapGesture` that none of them see.
     func rowButton(cornerRadius: CGFloat = 8, _ action: @escaping () -> Void) -> some View {
         Button(action: action) { self }
-            .buttonStyle(.genHoverRow(accent: .white, cornerRadius: cornerRadius))
+            .buttonStyle(HubRowButtonStyle(cornerRadius: cornerRadius))
     }
 }
 
@@ -58,11 +59,27 @@ enum ExternalOpener {
 }
 
 /// Text that opens a web page, marked with the external-link glyph so it never looks like plain text.
+/// URLs come from `ForgeWeb` (Hub/HubForgeLinks.swift) or from `tools` JSON, never pasted per view.
 struct ExternalLink: View {
+    enum Glyph {
+        /// The ↗ glyph always shows: a link that stands on its own.
+        case always
+        /// Dense rows: the label keeps its look, and the glyph and an underline appear on hover.
+        case onHover
+    }
+
     let text: String
     let url: URL?
     var font: Font = .system(size: 12)
     var color: Color = ReviewPalette.dim
+    /// An SF Symbol before the text (the person icon of an author).
+    var icon: String?
+    var glyph: Glyph = .always
+    /// The tooltip; the URL itself when nil.
+    var tooltip: String?
+    /// The key a panel find row lists this text under (a row with several links names each one).
+    var findField = "link"
+    @State private var hovering = false
 
     var body: some View {
         if let url {
@@ -70,19 +87,38 @@ struct ExternalLink: View {
                 ExternalOpener.open(url)
             } label: {
                 HStack(spacing: 3) {
-                    Text(text).lineLimit(1).truncationMode(.middle)
+                    if let icon {
+                        Image(systemName: icon)
+                    }
+                    // Under a panel find row the matches are marked (field `findField`).
+                    FindText(text, field: findField).lineLimit(1).truncationMode(.middle)
+                        .underline(glyph == .onHover && hovering)
                     Image(systemName: "arrow.up.right.square").font(.system(size: 9))
+                        .opacity(glyph == .always || hovering ? 1 : 0)
                 }
                 .font(font)
                 .foregroundColor(color)
             }
             .buttonStyle(.genHoverPlain())
             .onHover { inside in
+                hovering = inside
                 if inside { NSCursor.pointingHand.push() } else { NSCursor.pop() }
             }
-            .instantTooltip(url.absoluteString)
+            .instantTooltip(tooltip.map { "\($0)\n\(url.absoluteString)" } ?? url.absoluteString)
+            // A link, not a button, for VoiceOver and `tools control find --role link`.
+            .accessibilityRemoveTraits(.isButton)
+            .accessibilityAddTraits(.isLink)
+            .accessibilityLabel(Text(text))
+            .accessibilityValue(Text(url.absoluteString))
         } else {
-            Text(text).font(font).foregroundColor(color).lineLimit(1)
+            HStack(spacing: 3) {
+                if let icon {
+                    Image(systemName: icon)
+                }
+                FindText(text, field: findField).lineLimit(1)
+            }
+            .font(font)
+            .foregroundColor(color)
         }
     }
 }
@@ -125,6 +161,12 @@ struct RepoFacts: Decodable, Equatable {
     var webURL: URL? { origin?.web.flatMap(URL.init(string:)) }
     var branchURL: URL? { branchUrl.flatMap(URL.init(string:)) }
     var prURL: URL? { pr.flatMap { URL(string: $0.url) } }
+    var forge: ForgeWeb? { ForgeWeb(kind: origin?.kind, web: origin?.web) }
+    /// The branch against its PR/MR's target; nil without a PR.
+    var compareURL: URL? {
+        guard let pr, let branch else { return nil }
+        return forge?.compare(base: pr.target, head: branch)
+    }
 
     /// Blocking: runs `tools`, so call it off the main thread only.
     static func fetch(_ paths: [String], pr: Bool) -> [RepoFacts] {
@@ -226,6 +268,17 @@ struct PullRequestLink: View {
     }
 }
 
+/// "→ master" after a branch with a PR/MR: the host's compare view of the branch against the target.
+struct CompareLink: View {
+    let facts: RepoFacts?
+
+    var body: some View {
+        if let facts, let pr = facts.pr, let branch = facts.branch, let url = facts.compareURL {
+            ExternalLink(text: "→ \(pr.target)", url: url, font: .system(size: 11.5, design: .monospaced), glyph: .onHover, tooltip: "Compare \(pr.target)...\(branch)")
+        }
+    }
+}
+
 extension NSWindow {
     /// Shows a `--snapshot` window without it ever reaching the screen: alpha 0, no mouse, not in
     /// the window cycle. AppKit and WebKit still lay it out and draw it, so the PNG is complete,
@@ -284,9 +337,14 @@ struct PathLabel: View {
     let path: String
     var font: Font = .system(size: 11, design: .monospaced)
     var showIcons = true
+    /// The key a panel find row lists this path under (a row with several paths names each one).
+    var findField = "path"
     @State private var showingActions = false
 
-    private var display: String {
+    private var display: String { Self.display(path) }
+
+    /// The shown text ("~/…"): what a panel find row lists under `findField`.
+    static func display(_ path: String) -> String {
         let home = FileManager.default.homeDirectoryForCurrentUser.path
         return path.hasPrefix(home) ? "~" + path.dropFirst(home.count) : path
     }
@@ -296,7 +354,7 @@ struct PathLabel: View {
             Button {
                 showingActions = true
             } label: {
-                Text(display).font(font).foregroundColor(ReviewPalette.dim).lineLimit(1).truncationMode(.middle)
+                FindText(display, field: findField).font(font).foregroundColor(ReviewPalette.dim).lineLimit(1).truncationMode(.middle)
             }
             .buttonStyle(.genHoverPlain())
             .instantTooltip("Open or copy \(display)")
@@ -311,6 +369,7 @@ struct PathLabel: View {
                 }
                 .padding(8)
                 .frame(width: 240)
+                .onAppear { HubPerf.log("pathLabel.actions shown for \(display)") }
             }
             if showIcons {
                 IconButton(systemName: "doc.on.doc", tooltip: "Copy path", size: 10) { PathOpener.copy(path) }
@@ -333,92 +392,6 @@ struct PathLabel: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.genHoverRow())
-    }
-}
-
-// MARK: - Resizable side panel
-
-/// A side panel you drag to any width; dragging it below `snap` collapses it to the edge, and the
-/// thin strip left behind opens it again. Width and collapsed state persist per `key`.
-enum SidePanelEdge { case leading, trailing }
-
-struct ResizableSidePanel<Content: View>: View {
-    typealias Edge = SidePanelEdge
-
-    let key: String
-    let edge: Edge
-    var defaultWidth: CGFloat = 300
-    var minWidth: CGFloat = 180
-    var snap: CGFloat = 120
-    @ViewBuilder let content: () -> Content
-
-    @AppStorage private var width: Double
-    @AppStorage private var collapsed: Bool
-    @State private var dragStart: Double?
-
-    init(key: String, edge: Edge, defaultWidth: CGFloat = 300, minWidth: CGFloat = 180, snap: CGFloat = 120, @ViewBuilder content: @escaping () -> Content) {
-        self.key = key
-        self.edge = edge
-        self.defaultWidth = defaultWidth
-        self.minWidth = minWidth
-        self.snap = snap
-        self.content = content
-        _width = AppStorage(wrappedValue: Double(defaultWidth), "panel.\(key).width")
-        _collapsed = AppStorage(wrappedValue: false, "panel.\(key).collapsed")
-    }
-
-    var body: some View {
-        HStack(spacing: 0) {
-            if edge == .trailing { handle }
-            if collapsed {
-                VStack {
-                    IconButton(systemName: edge == .leading ? "sidebar.left" : "sidebar.right", tooltip: "Show panel") {
-                        collapsed = false
-                    }
-                    .padding(.top, 44)
-                    Spacer()
-                }
-                .frame(width: 26)
-                .background(ReviewPalette.sidebar)
-            } else {
-                // Flexible below the saved width, so a parent (`SideSplit`) can clamp it.
-                content().frame(minWidth: 0, idealWidth: CGFloat(width), maxWidth: CGFloat(width))
-            }
-            if edge == .leading { handle }
-        }
-    }
-
-    private var handle: some View {
-        Rectangle()
-            .fill(ReviewPalette.hairline)
-            .frame(width: 1)
-            .overlay(Color.clear.frame(width: 7).contentShape(Rectangle()))
-            .onHover { inside in
-                if inside { NSCursor.resizeLeftRight.push() } else { NSCursor.pop() }
-            }
-            .gesture(
-                DragGesture(minimumDistance: 1)
-                    .onChanged { value in
-                        if collapsed {
-                            collapsed = false
-                            width = Double(minWidth)
-                        }
-                        let start = dragStart ?? width
-                        dragStart = start
-                        let delta = edge == .leading ? value.translation.width : -value.translation.width
-                        width = max(0, min(900, start + delta))
-                    }
-                    .onEnded { _ in
-                        dragStart = nil
-                        if width < Double(snap) {
-                            collapsed = true
-                            width = Double(defaultWidth)
-                        } else if width < Double(minWidth) {
-                            width = Double(minWidth)
-                        }
-                    }
-            )
-            .instantTooltip("Drag to resize; drag to the edge to collapse")
     }
 }
 
@@ -486,25 +459,74 @@ struct NoticePill: View {
     }
 }
 
+// MARK: - Copy chip
+
+/// A short monospaced value (a session id's first 8 characters) that copies the full value on
+/// click, and says "Copied" in its own place for a moment.
+struct CopyChip: View {
+    let label: String
+    let value: String
+    let tooltip: String
+    @State private var copied = false
+
+    var body: some View {
+        Button {
+            PathOpener.copy(value)
+            withAnimation(.easeOut(duration: 0.15)) { copied = true }
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: copied ? "checkmark" : "number")
+                    .font(.system(size: 9.5, weight: .semibold))
+                    .foregroundColor(copied ? ReviewPalette.added : ReviewPalette.dim)
+                Text(verbatim: copied ? "Copied" : label)
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundColor(copied ? ReviewPalette.added : Color.white.opacity(0.8))
+            }
+            .padding(.horizontal, 7)
+            .padding(.vertical, 2)
+            .background(RoundedRectangle(cornerRadius: 5).fill(Color.white.opacity(0.06)))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.genHoverPlain())
+        .instantTooltip(tooltip)
+        .accessibilityLabel(Text(tooltip))
+        .task(id: copied) {
+            guard copied else { return }
+            try? await Task.sleep(for: .milliseconds(1400))
+            withAnimation(.easeOut(duration: 0.2)) { copied = false }
+        }
+    }
+}
+
 // MARK: - Group preferences (pin, collapse, order) for list sections
 
 /// Persisted per list: which groups are pinned (on top), collapsed, and their manual order.
 final class GroupPrefs: ObservableObject {
-    private let key: String
+    /// Which list these are (`prs.repos`): a header dragged from one list never drops into another.
+    let key: String
     @Published var pinned: [String] { didSet { save() } }
     @Published var collapsed: Set<String> { didSet { save() } }
     @Published var order: [String] { didSet { save() } }
 
     init(key: String) {
         self.key = key
-        let defaults = UserDefaults.standard
+        let defaults = HubDefaults.store
         pinned = defaults.stringArray(forKey: "groups.\(key).pinned") ?? []
         collapsed = Set(defaults.stringArray(forKey: "groups.\(key).collapsed") ?? [])
         order = defaults.stringArray(forKey: "groups.\(key).order") ?? []
+        // The `--bench` fold sweep clicks a header through this; a live hub never listens.
+        if HubDefaults.isolated {
+            benchFold = NotificationCenter.default.addObserver(forName: HubBench.groupFold, object: nil, queue: .main) { [weak self] note in
+                guard let self, let fold = note.object as? HubBench.GroupFold, fold.list == key else { return }
+                self.toggleCollapsed(fold.key)
+            }
+        }
     }
 
+    private var benchFold: NSObjectProtocol?
+
     private func save() {
-        let defaults = UserDefaults.standard
+        let defaults = HubDefaults.store
         defaults.set(pinned, forKey: "groups.\(key).pinned")
         defaults.set(Array(collapsed), forKey: "groups.\(key).collapsed")
         defaults.set(order, forKey: "groups.\(key).order")
@@ -528,6 +550,7 @@ final class GroupPrefs: ObservableObject {
     }
 
     func toggleCollapsed(_ name: String) {
+        MainActor.assumeIsolated { HubMainBusy.measure("groups.\(key).toggle") }
         if collapsed.contains(name) { collapsed.remove(name) } else { collapsed.insert(name) }
     }
 
@@ -538,6 +561,82 @@ final class GroupPrefs: ObservableObject {
         current.remove(at: index)
         current.insert(name, at: target)
         order = current
+    }
+
+    /// A header dragged onto another: `name` lands just before `target` (or after it) in the shown
+    /// order, the same order `move` and `sorted` use. It takes the target's side of the pin line, so
+    /// a group dropped among the pinned ones is pinned and one dropped below them is not. Groups
+    /// not shown right now (filtered out) keep their stored places behind the shown ones.
+    func drop(_ name: String, on target: String, after: Bool, among names: [String]) {
+        guard name != target, names.contains(name), names.contains(target) else { return }
+        var shown = sorted(names).filter { $0 != name }
+        guard let index = shown.firstIndex(of: target) else { return }
+        shown.insert(name, at: after ? index + 1 : index)
+        let pinnedAfter = pinned.contains(target)
+        let isPinned: (String) -> Bool = { [pinned] in $0 == name ? pinnedAfter : pinned.contains($0) }
+        pinned = shown.filter(isPinned) + pinned.filter { !names.contains($0) }
+        order = shown.filter { !isPinned($0) } + order.filter { !names.contains($0) }
+    }
+}
+
+/// The group header being dragged, so a header under the pointer knows whether the drag comes from
+/// its own list. In-process only; the drop itself checks the dragged text too.
+@MainActor
+enum GroupDrag {
+    static var current: (list: String, key: String)?
+
+    static func token(list: String, key: String) -> String { "genesistools-group\n\(list)\n\(key)" }
+}
+
+/// A header over which another header of the same list is dragged: a line above or below it shows
+/// where the dragged group lands.
+private struct GroupDropDelegate: DropDelegate {
+    let key: String
+    let height: CGFloat
+    let prefs: GroupPrefs
+    let allNames: [String]
+    @Binding var edge: VerticalEdge?
+
+    private var source: String? {
+        guard let drag = GroupDrag.current, drag.list == prefs.key, drag.key != key else { return nil }
+        return drag.key
+    }
+
+    func validateDrop(info: DropInfo) -> Bool { source != nil }
+
+    func dropEntered(info: DropInfo) { update(info) }
+
+    func dropUpdated(info: DropInfo) -> DropProposal? {
+        update(info)
+        return DropProposal(operation: source == nil ? .forbidden : .move)
+    }
+
+    func dropExited(info: DropInfo) { edge = nil }
+
+    func performDrop(info: DropInfo) -> Bool {
+        let after = edge == .bottom
+        edge = nil
+        guard let source, let provider = info.itemProviders(for: [.plainText]).first else { return false }
+        let expected = GroupDrag.token(list: prefs.key, key: source)
+        let (prefs, key, allNames) = (prefs, key, allNames)
+        // The text confirms the drag is this header's: a stale `current` must not turn some other
+        // text dropped here into a reorder.
+        _ = provider.loadObject(ofClass: NSString.self) { object, _ in
+            guard (object as? NSString) as String? == expected else { return }
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated { GroupDrag.current = nil }
+                HubPerf.log("groups.\(prefs.key) dropped \(source) \(after ? "after" : "before") \(key)")
+                withAnimation(.snappy(duration: 0.25)) {
+                    prefs.drop(source, on: key, after: after, among: allNames)
+                }
+            }
+        }
+        return true
+    }
+
+    private func update(_ info: DropInfo) {
+        let next: VerticalEdge? = source == nil ? nil : (info.location.y < height / 2 ? .top : .bottom)
+        if edge != next { edge = next }
     }
 }
 
@@ -552,6 +651,10 @@ struct GroupHeader: View {
     /// The group's identity in `prefs` and `allNames` when the title is not unique (two projects
     /// both named `service`); the title otherwise.
     var key: String?
+
+    /// Where a header dragged over this one would land (a line on that edge); nil when none is.
+    @State private var dropEdge: VerticalEdge?
+    @State private var height: CGFloat = 26
 
     var body: some View {
         let key = key ?? title
@@ -586,7 +689,25 @@ struct GroupHeader: View {
         .padding(.horizontal, 14)
         .padding(.vertical, 6)
         .background(ReviewPalette.sidebar)
+        .overlay(alignment: dropEdge == .top ? .top : .bottom) {
+            if dropEdge != nil {
+                Capsule()
+                    .fill(Color.accentColor)
+                    .frame(height: 2)
+                    .padding(.horizontal, 8)
+                    .allowsHitTesting(false)
+            }
+        }
         .contentShape(Rectangle())
+        .onGeometryChange(for: CGFloat.self, of: \.size.height) { height = $0 }
+        // Drag a header onto another to reorder the groups; the order is the one `prefs` keeps for
+        // Move up / Move down. A click without a drag still folds the group.
+        .onDrag {
+            let list = prefs.key
+            MainActor.assumeIsolated { GroupDrag.current = (list, key) }
+            return NSItemProvider(object: GroupDrag.token(list: list, key: key) as NSString)
+        }
+        .onDrop(of: [.plainText], delegate: GroupDropDelegate(key: key, height: height, prefs: prefs, allNames: allNames, edge: $dropEdge))
         .contextMenu {
             Button(isPinned ? "Unpin" : "Pin to top") { prefs.togglePin(key) }
             Button("Move up") { prefs.move(key, by: -1, among: allNames) }.disabled(isPinned)
@@ -599,7 +720,21 @@ struct GroupHeader: View {
                 Button("Open in Cursor") { PathOpener.cursor(path) }
             }
         }
-        .instantTooltip("Click to fold; right-click to pin or reorder")
+        .instantTooltip("Click to fold; drag onto another group to reorder; right-click to pin")
+        // One accessible button: VoiceOver and `tools control` can fold it, and pin it through a named
+        // action, instead of meeting an unlabelled group with a tap gesture on it.
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(Text(verbatim: "\(title), \(count)\(isPinned ? ", pinned" : "")\(isCollapsed ? ", folded" : "")"))
+        .accessibilityAddTraits(.isButton)
+        // `key`, not `title`: two projects can share a title, and their prefs are keyed apart.
+        .accessibilityAction { prefs.toggleCollapsed(key) }
+        .accessibilityAction(named: Text(isPinned ? "Unpin" : "Pin to top")) { prefs.togglePin(key) }
+        // `.ignore` hides the copy button above, so a project header offers its job as a named action.
+        .accessibilityActions {
+            if let path {
+                Button("Copy absolute path") { PathOpener.copy(path) }
+            }
+        }
     }
 }
 

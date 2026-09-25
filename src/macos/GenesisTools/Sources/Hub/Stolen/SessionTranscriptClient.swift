@@ -117,6 +117,9 @@ public struct TranscriptTurn: Equatable, Sendable, Codable, Identifiable {
     public var reasoning: String?
     /// This call's token cost. Absent on a user turn, and on a provider that reports none.
     public var usage: TranscriptUsage?
+    // GenesisTools adaptation: the session-wide 0-based index, set by `tools ai sessions tail --turns`
+    // (a sparse envelope) and by the hub when it merges search hits with its window.
+    public var index: Int?
 }
 
 public struct TranscriptEnvelope: Equatable, Sendable, Codable {

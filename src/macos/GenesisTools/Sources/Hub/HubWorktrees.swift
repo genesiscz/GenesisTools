@@ -162,6 +162,18 @@ enum HubMarkdownExport {
 /// A child still running after `runCapturing`'s 60 s default is killed, and the call throws.
 enum ToolsCLIRunner {
     static func run(_ args: [String]) throws -> Data {
+        let result = try capture(args)
+        if result.status != 0 {
+            let message = String(decoding: result.stderr, as: UTF8.self)
+            throw ReviewError.git("tools \(args.first ?? "") exited \(result.status): \(message.trimmed.suffix(300))")
+        }
+
+        return result.stdout
+    }
+
+    /// The exit status and both streams, for verbs that print a JSON error on stdout when they
+    /// fail (`tools hub pr … --json` prints `{error, code}` and exits 1).
+    static func capture(_ args: [String], timeout: TimeInterval = 60) throws -> ProcessCapture {
         let span = HubPerf.begin("tools.\(args.prefix(3).joined(separator: "."))")
         defer { span.end() }
         let process = Process()
@@ -170,19 +182,11 @@ enum ToolsCLIRunner {
         process.currentDirectoryURL = plan.workingDirectory
         process.arguments = plan.arguments
         process.standardInput = FileHandle.nullDevice
-        let result: ProcessCapture
         do {
-            result = try process.runCapturing()
+            return try process.runCapturing(timeout: timeout)
         } catch let timeout as ProcessTimeout {
             throw ReviewError.git("tools \(args.prefix(3).joined(separator: " ")) did not exit within \(Int(timeout.seconds)) s and was killed")
         }
-
-        if result.status != 0 {
-            let message = String(decoding: result.stderr, as: UTF8.self)
-            throw ReviewError.git("tools \(args.first ?? "") exited \(result.status): \(message.trimmed.suffix(300))")
-        }
-
-        return result.stdout
     }
 }
 
@@ -205,6 +209,8 @@ struct WorktreeListView: View {
             LazyVStack(alignment: .leading, spacing: 2, pinnedViews: [.sectionHeaders]) {
                 if model.loadingWorktrees {
                     ProgressView().frame(maxWidth: .infinity).padding()
+                } else if !model.worktrees.isEmpty {
+                    WorktreeCleanupEntry(model: model)
                 }
                 ForEach(groups, id: \.repo) { group in
                     Section {
@@ -286,6 +292,7 @@ struct WorktreeDetailView: View {
                         font: .system(size: 15, weight: .semibold),
                         color: Color.white.opacity(0.92)
                     )
+                    CompareLink(facts: facts)
                     ExternalLink(text: worktree.repo, url: facts?.webURL)
                     PullRequestLink(facts: facts)
                     Spacer()
@@ -299,9 +306,9 @@ struct WorktreeDetailView: View {
                     }
                     .instantTooltip("Start Claude, Codex or Grok in this worktree; pick the cmux target first")
                     .popover(isPresented: $launchingNew, arrowEdge: .bottom) {
-                        LaunchPicker(mode: .new(cwd: worktree.path, name: worktree.branch)) { message in
+                        LaunchPicker(mode: .new(cwd: worktree.path, name: worktree.branch)) { outcome in
                             launchingNew = false
-                            if !message.isEmpty { model.notice = message }
+                            if let notice = outcome.notice { model.notice = notice }
                         }
                     }
                     IconButton(systemName: "doc.richtext", tooltip: "Copy as Markdown (json2md): branch, changed files, sessions") {
@@ -352,9 +359,9 @@ struct WorktreeDetailView: View {
         .padding(.vertical, 4)
         .background(RoundedRectangle(cornerRadius: 7).fill(Color.white.opacity(0.05)))
         .popover(isPresented: Binding(get: { resuming?.id == session.id }, set: { if !$0 { resuming = nil } }), arrowEdge: .bottom) {
-            LaunchPicker(mode: .resume(session)) { message in
+            LaunchPicker(mode: .resume(session)) { outcome in
                 resuming = nil
-                if !message.isEmpty { model.notice = message }
+                if let notice = outcome.notice { model.notice = notice }
             }
         }
     }

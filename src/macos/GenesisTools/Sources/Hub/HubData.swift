@@ -65,40 +65,8 @@ enum HubFormat {
     }
 }
 
-// MARK: - Decisions (no source yet: handoff h_wjwlim7x wires question_post type "decision" to sessions)
-
-struct HubDecision: Identifiable {
-    struct Option: Identifiable {
-        var id: String
-        var label: String
-        var detail: String?
-    }
-
-    struct Ref: Identifiable {
-        var id: String { "\(path):\(line)" }
-        var path: String
-        var line: Int
-        var excerpt: String
-    }
-
-    var id: String
-    var sessionID: String
-    var number: Int
-    var title: String
-    var question: String
-    var proposal: String?
-    var options: [Option]
-    var recommended: String?
-    var reasoning: String?
-    var confidence: Int?
-    var confidenceProof: String?
-    var refs: [Ref]
-    var blocking: Bool
-    var createdAt: Date
-    var status: String
-    var draftOption: String?
-    var draftText: String = ""
-}
+// The session's Decisions pane draws `InboxItem` (Hub/HubInbox.swift) through the same card as the
+// Inbox; Hub/HubDecisionsSource.swift loads it, Hub/HubDecisionsPane.swift shows it.
 
 /// A session's price from `tools ai-spend session --id <id> --json`: list prices over every model
 /// call, subagents included. It is an estimate, and the UI says so; the session file has no price.
@@ -117,20 +85,12 @@ enum HubSpend {
         return cache[sessionId]
     }
 
-    /// Blocking (a `tools` run of several seconds): call it off the main thread only.
-    static func fetch(_ session: HubSession) -> Estimate? {
-        let since = Date(timeIntervalSince1970: session.mtime / 1000 - 14 * 86_400)
-        let day = DateFormatter()
-        day.locale = Locale(identifier: "en_US_POSIX")
-        day.dateFormat = "yyyyMMdd"
-        guard let data = try? ToolsCLIRunner.run(["ai-spend", "session", "--id", session.sessionId, "--json", "--since", day.string(from: since)]),
-              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+    /// `tools ai-spend session --json` stdout (src/ai-spend/lib/reports/session.ts); nil for no spend.
+    static func estimate(from data: Data) -> Estimate? {
+        guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let totals = object["totals"] as? [String: Any],
               let usd = totals["totalCost"] as? Double, usd > 0
-        else {
-            HubPerf.log("spend.session none for \(session.sessionId.prefix(8))")
-            return nil
-        }
+        else { return nil }
 
         let rows = (object["session"] as? [[String: Any]])?.first?["modelBreakdowns"] as? [[String: Any]] ?? []
         let models = rows.compactMap { row -> String? in
@@ -138,7 +98,22 @@ enum HubSpend {
             return "\(name) \(SessionFormat.usd(cost))"
         }
         let note = "List-price estimate by tools ai-spend (subagents included)" + (models.isEmpty ? "" : ": " + models.joined(separator: ", "))
-        let estimate = Estimate(usd: usd, note: note)
+        return Estimate(usd: usd, note: note)
+    }
+
+    /// Blocking (a `tools` run of several seconds): call it off the main thread only.
+    static func fetch(_ session: HubSession) -> Estimate? {
+        let since = Date(timeIntervalSince1970: session.mtime / 1000 - 14 * 86_400)
+        let day = DateFormatter()
+        day.locale = Locale(identifier: "en_US_POSIX")
+        day.dateFormat = "yyyyMMdd"
+        guard let data = try? ToolsCLIRunner.run(["ai-spend", "session", "--id", session.sessionId, "--json", "--since", day.string(from: since)]),
+              let estimate = estimate(from: data)
+        else {
+            HubPerf.log("spend.session none for \(session.sessionId.prefix(8))")
+            return nil
+        }
+
         lock.lock()
         cache[session.sessionId] = estimate
         lock.unlock()

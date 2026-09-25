@@ -27,6 +27,22 @@ struct ToolFileChange: Equatable, Sendable, Identifiable {
     var unifiedDiff: String?
     var beforeBlob: String?
     var afterBlob: String?
+    // GenesisTools adaptation: why the change log has no diff for this file (`diffSkipped` or `skipped`
+    // in `tools agents changes --json`). When set, no diff is drawn from the blobs: a before-state alone
+    // is not a deletion when the after-state is unknown.
+    var skipReason: String? = nil
+
+    // GenesisTools adaptation: the reason in words, shown where the counts would be.
+    var skipLabel: String? {
+        switch skipReason {
+        case nil: return nil
+        case "no-after-state": return "no diff: state after the call unknown"
+        case "no-before-state": return "no diff: state before the call unknown"
+        case "binary", "large": return "no diff: binary or large file"
+        case "missing-blob": return "no diff: content not in the change log"
+        case let other?: return "no diff: \(other)"
+        }
+    }
 
     /// `+` and `-` lines of the diff, file headers excluded.
     var counts: (additions: Int, deletions: Int) {
@@ -102,9 +118,12 @@ final class CLIToolChangeSource: ToolChangeSource, @unchecked Sendable {
         lock.unlock()
 
         guard let binary else { return [] }
-        let output = await Self.run(binary, ["agents", "changes", sessionId, "--tool", toolUseId, "--json"], timeout: timeout)
+        // GenesisTools adaptation: `changes` stores the before and after blobs only when asked, and
+        // `expandedDiff` reads them from the object store.
+        let output = await Self.run(binary, ["agents", "changes", sessionId, "--tool", toolUseId, "--json", "--store-blobs"], timeout: timeout)
         var files = output.map(Self.decode) ?? []
-        for index in files.indices where files[index].unifiedDiff == nil {
+        // GenesisTools adaptation: a file the log skipped keeps no diff.
+        for index in files.indices where files[index].unifiedDiff == nil && files[index].skipReason == nil {
             files[index].unifiedDiff = await expandedDiff(for: files[index], context: 3)
         }
 
@@ -115,6 +134,8 @@ final class CLIToolChangeSource: ToolChangeSource, @unchecked Sendable {
     }
 
     func expandedDiff(for change: ToolFileChange, context: Int) async -> String? {
+        // GenesisTools adaptation: never draw a skipped file from one side's blob.
+        guard change.skipReason == nil else { return nil }
         let git = "/usr/bin/git"
         switch (change.beforeBlob, change.afterBlob) {
         case let (before?, after?):
@@ -151,7 +172,10 @@ final class CLIToolChangeSource: ToolChangeSource, @unchecked Sendable {
                 status: status,
                 unifiedDiff: (file["unifiedDiff"] ?? file["diff"]) as? String,
                 beforeBlob: before,
-                afterBlob: after
+                afterBlob: after,
+                // GenesisTools adaptation: `skipped` / `diffSkipped` (see `skipReason`). The log's own reason
+                // first: an unknown before-state also has no blob, and "missing-blob" would hide why.
+                skipReason: (file["skipped"] as? String) ?? (file["diffSkipped"] as? String)
             )
         }
     }

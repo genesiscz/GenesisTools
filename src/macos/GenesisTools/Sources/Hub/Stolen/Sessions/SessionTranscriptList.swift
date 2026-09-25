@@ -1,4 +1,4 @@
-// Copied from /Users/Martin/Tresors/Projects/GenesisPlayground.worktrees/genesis-session-redesign/Genesis/apps/Genesis/Sources/Genesis/Sessions/SessionTranscriptList.swift at 2026-09-24T05:05:15+02:00 at commit hash 786292605d31a39fe795dafe34fb0f8d6f96d0a1
+// Copied from /Users/Martin/Tresors/Projects/GenesisPlayground.worktrees/genesis-session-redesign/Genesis/apps/Genesis/Sources/Genesis/Sessions/SessionTranscriptList.swift at 2026-09-24T08:22:05+02:00 at commit hash 352701bd4e327a97ee223015319f46223ad3a6e5
 //
 //  SessionTranscriptList.swift
 //  Genesis
@@ -96,6 +96,9 @@ struct SessionTranscriptList: View {
     @State private var promptCursor: Int?
     @State private var scrollTarget: ScrollRequest?
     @State private var didInitialScroll = false
+    // GenesisTools adaptation: whether the reader is at the latest row (the last section's end marker is
+    // on screen); a live transcript follows new rows only then, never pulling a reader who scrolled up.
+    @State private var atLatest = true
     @StateObject private var expansion = TranscriptExpansion()
     @FocusState private var searchFocused: Bool
 
@@ -137,7 +140,18 @@ struct SessionTranscriptList: View {
             expansion.setAll(nil)
             recompute(.preserve)
         }
-        .onChange(of: appliedQuery) { recompute(.firstHit) }
+        .onChange(of: appliedQuery) {
+            // GenesisTools adaptation: tell the host, which searches the whole session.
+            services.onQuery?(appliedQuery)
+            recompute(.firstHit)
+        }
+        // GenesisTools adaptation: the host's services arrive after the first page, so a query applied
+        // before that (a preset, fast typing) is sent again once they exist.
+        .onChange(of: ObjectIdentifier(services)) {
+            if !appliedQuery.isEmpty {
+                services.onQuery?(appliedQuery)
+            }
+        }
     }
 
     // MARK: Toolbar
@@ -156,6 +170,23 @@ struct SessionTranscriptList: View {
                 searchField
                 HStack(spacing: 10) {
                     toolbarControls
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            // GenesisTools adaptation: a third layout for a hub pane of about 440 pt, where the row
+            // above was still wider than the column and clipped at both edges (audit 2026-09-24).
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 8) {
+                    searchField
+                    Spacer(minLength: 4)
+                    promptNavigator
+                }
+                HStack(spacing: 8) {
+                    chipBar
+                    verbosityMenu
+                    expandButtons
+                    Spacer(minLength: 0)
                 }
             }
             .padding(.horizontal, 12)
@@ -450,6 +481,9 @@ struct SessionTranscriptList: View {
                                 .listRowBackground(Color.clear)
                             case .end(let id):
                                 marker(id)
+                                    // GenesisTools adaptation: track `atLatest` (see its declaration).
+                                    .onAppear { if id == latestEndMarker { atLatest = true } }
+                                    .onDisappear { if id == latestEndMarker { atLatest = false } }
                             }
                         }
                     } header: {
@@ -467,6 +501,11 @@ struct SessionTranscriptList: View {
             .onChange(of: scrollTarget) { _, request in
                 guard let request else { return }
                 Self.scroll(proxy, to: request.id, anchor: request.anchor)
+            }
+            // GenesisTools adaptation: a live session appended rows while the reader was at the latest one.
+            .onChange(of: visible.last?.rows.last?.id) { _, newLast in
+                guard didInitialScroll, atLatest, appliedQuery.isEmpty, chips.isEmpty, let newLast else { return }
+                Self.scroll(proxy, to: newLast, anchor: .bottom)
             }
             .onAppear {
                 guard !didInitialScroll, let last = visible.last?.rows.last?.id else { return }
@@ -519,6 +558,9 @@ struct SessionTranscriptList: View {
     }
 
     private static func endMarker(_ sectionId: String) -> String { "end-\(sectionId)" }
+
+    // GenesisTools adaptation: the end marker of the newest section (see `atLatest`).
+    private var latestEndMarker: String? { visible.last.map { Self.endMarker($0.id) } }
 
     private var loadEarlierRow: some View {
         HStack {

@@ -11,11 +11,20 @@ struct HubSessionDetailHost: View {
     var onShowChange: ((String, Int?) -> Void)?
     /// False in a multi-pane layout: the screen's own sidebar starts folded to leave room.
     var showsSidebar = true
+    /// Opens with this transcript search applied (`--transcript-query`, snapshots and links).
+    var transcriptQuery: String?
     static let pageSize = 150
+    /// Viewport first: the newest turns only, so the first layout (which scrolls to the last row and so
+    /// measures every row above it) handles a screenful instead of `pageSize` turns. A 172 MB session
+    /// stalled the main thread 0.9–1.5 s at open with the whole window in one go.
+    /// `GENESIS_HUB_FIRST_PAGE=150` restores the old one-shot window, for A/B measurements.
+    static let firstPage = ProcessInfo.processInfo.environment["GENESIS_HUB_FIRST_PAGE"].flatMap(Int.init) ?? 12
+    /// The rest of the window arrives in chunks of this many turns while the reader is idle.
+    static let fillChunk = 24
 
     @State private var nativeLog: SessionNativeLog?
     @State private var services = TranscriptServices.none
-    @State private var changeSource: CLIToolChangeSource?
+    @State private var changeSource: ToolChangeSource?
     @State private var spend: HubSpend.Estimate?
     @State private var branch: String?
     /// The branch web page arrives from `tools hub repo` after the first draw.
@@ -30,19 +39,35 @@ struct HubSessionDetailHost: View {
     @State private var loadingEarlier = false
     @State private var banner: String?
     @State private var loadID = 0
+    /// ⌘F over the whole session: the window plus the earlier turns that match, while a query is on.
+    @State private var searchDocument: TranscriptDocument?
+    @State private var searchNote: String?
+    @State private var searchID = 0
+    /// Live tail: the session file's growth appends turns without reloading the window.
+    @State private var tail: HubTranscriptTail?
+    @State private var tailInFlight = false
+    @State private var tailAgain = false
+    /// A tail event that came while earlier turns loaded, replayed when that load ends.
+    @State private var tailDeferred = false
+    /// Every sub-agent of the session from `tools ai sessions subagents` (its `subagents/` directory),
+    /// with the state each one's own transcript shows. nil until the first read, or for a provider
+    /// without one: the digest's rows from the loaded turns stand then.
+    @State private var subagents: [SessionSubagent]?
+    @State private var subagentsReadAt = Date.distantPast
 
     var body: some View {
         SessionDetailScreen(
             info: info,
-            digest: digest,
-            document: document,
+            digest: shownDigest,
+            document: searchDocument ?? document,
             loadState: loadState,
-            hasEarlier: windowStart > 0,
+            hasEarlier: windowStart > 0 && searchDocument == nil,
             loadingEarlier: loadingEarlier,
-            windowNote: windowStart > 0 ? envelope.map { "Turns \(windowStart + 1)–\($0.nextOffset)" } : nil,
+            windowNote: searchNote ?? (windowStart > 0 ? envelope.map { "Turns \(windowStart + 1)–\($0.nextOffset)" } : nil),
             banner: banner,
             onLoadEarlier: { Task { await loadEarlier() } },
             onDismissBanner: { banner = nil },
+            preset: TranscriptPreset(query: transcriptQuery ?? ""),
             leadingInset: 16,
             services: services,
             showsSidebar: showsSidebar,
@@ -50,7 +75,11 @@ struct HubSessionDetailHost: View {
         ) {
             SessionTerminalSection(session: session)
         }
+        // A click in the transcript keeps ⌘F on its own search (Hub/HubPanelFind.swift).
+        .panelFindNative("transcript")
         .task(id: session.id) {
+            tail?.stop()
+            tail = nil
             envelope = nil
             turns = []
             windowStart = 0
@@ -58,16 +87,53 @@ struct HubSessionDetailHost: View {
             digest = .empty
             nativeLog = nil
             services = .none
+            subagents = nil
+            subagentsReadAt = .distantPast
+            // The last session's whole-session search: its result must not stay on screen, and one
+            // still running must not land here.
+            searchID += 1
+            searchDocument = nil
+            searchNote = nil
             spend = HubSpend.cached(session.sessionId)
-            branch = session.cwd.isEmpty ? nil : Self.branch(of: session.cwd)
+            branch = Self.branch(of: session)
             loadState = .loading
-            await load(offset: nil, limit: Self.pageSize)
+            await load(offset: nil, limit: Self.firstPage)
+            await refreshSubagents()
+            await fillWindow()
             let row = session
             let fresh = await Task.detached(priority: .utility) { HubSpend.fetch(row) }.value
             if let fresh, row.id == session.id {
                 spend = fresh
             }
+            // A working sub-agent writes its own file, not the session's: nothing else wakes the view.
+            while !Task.isCancelled, subagents?.contains(where: { $0.state == .running }) == true {
+                try? await Task.sleep(for: .seconds(20))
+                await refreshSubagents()
+            }
         }
+    }
+
+    /// The digest with the session's full sub-agent list, when there is one.
+    private var shownDigest: SessionActivityDigest {
+        guard let subagents, !subagents.isEmpty else { return digest }
+        var merged = digest
+        // A failed Agent call in the loaded turns is the one thing the directory cannot tell.
+        let failed = Set(digest.subagents.filter { $0.state == .failed }.map(\.id))
+        merged.subagents = subagents.map { agent in
+            failed.contains(agent.id) ? SessionSubagent(id: agent.id, kind: agent.kind, summary: agent.summary, state: .failed) : agent
+        }
+        return merged
+    }
+
+    /// Off the main thread; at most once per 5 s (the live tail calls it on every append).
+    private func refreshSubagents() async {
+        guard session.provider == "claude", Date().timeIntervalSince(subagentsReadAt) >= 5 else { return }
+        subagentsReadAt = Date()
+        let id = session.id
+        let sessionId = session.sessionId
+        let listed = await Task.detached(priority: .utility) { HubSubagents.list(sessionId: sessionId) }.value
+        guard id == session.id, let listed else { return }
+        subagents = listed
     }
 
     // MARK: info
@@ -133,6 +199,30 @@ struct HubSessionDetailHost: View {
         SessionGitBranch.read(cwd: cwd)
     }
 
+    /// The branch the session ran on: the folder's branch while it runs there now, else the branch its
+    /// transcript recorded (`gitBranch` from `tools ai usage sessions`). An old session no longer
+    /// shows whatever the folder has checked out today, nor that branch's PR.
+    static func branch(of session: HubSession) -> String? {
+        let recorded = session.gitBranch.flatMap { $0.isEmpty ? nil : $0 }
+        guard !session.cwd.isEmpty else { return recorded }
+        if session.isLive || recorded == nil {
+            return branch(of: session.cwd)
+        }
+
+        return recorded
+    }
+
+    /// The web page of `branch` in the session folder's repository, which need not be the branch
+    /// checked out there now.
+    static func branchURL(_ branch: String, facts: RepoFacts?) -> URL? {
+        guard let facts else { return nil }
+        if facts.branch == branch {
+            return facts.branchURL
+        }
+
+        return facts.forge?.branch(branch)
+    }
+
     // MARK: actions
 
     private var actions: SessionDetailActions {
@@ -161,11 +251,25 @@ struct HubSessionDetailHost: View {
                 Task.detached(priority: .userInitiated) { _ = TerminalHosts.current.focus(sessionId: id) }
             }
             actions.openTerminal = actions.focus
+            // The same lines Genesis types (MonitorSessionActions), through `tools claude cmux send`.
+            actions.wake = { poke(id, text: "Just poking, say \"OK\"", what: "Wake") }
+            actions.keepalive = { poke(id, text: "/keepalive", what: "Keepalive") }
         }
-        if let url = RepoFactsStore.shared.facts(for: session.cwd)?.branchURL {
+        if let branch, let url = Self.branchURL(branch, facts: RepoFactsStore.shared.facts(for: session.cwd)) {
             actions.openBranch = { ExternalOpener.open(url) }
         }
         return actions
+    }
+
+    /// Types one line into the session's cmux pane, off the main thread; a failure shows in the banner.
+    private func poke(_ sessionId: String, text: String, what: String) {
+        HubPerf.log("session.\(what.lowercased()) \(sessionId.prefix(8))")
+        Task {
+            let error = await Task.detached(priority: .userInitiated) { TerminalHosts.current.send(sessionId: sessionId, text: text) }.value
+            if let error {
+                banner = "\(what) failed: \(error)"
+            }
+        }
     }
 
     // MARK: loading
@@ -173,6 +277,10 @@ struct HubSessionDetailHost: View {
     private func load(offset: Int?, limit: Int) async {
         loadID += 1
         let id = loadID
+        // A new window (another session, a refresh): an earlier page or a tail still on its way
+        // belongs to the old one and is dropped on arrival, so its flags must not stop this one.
+        loadingEarlier = false
+        tailDeferred = false
         let span = HubPerf.begin("transcript.page", "limit=\(limit) offset=\(offset.map(String.init) ?? "-")", awaits: true)
         defer { span.end("\(turns.count) turns") }
         do {
@@ -183,6 +291,11 @@ struct HubSessionDetailHost: View {
             windowStart = fetched.windowStart
             await rebuild()
             loadState = .loaded
+            if tail == nil, FileManager.default.fileExists(atPath: fetched.filePath) {
+                tail = HubTranscriptTail(path: fetched.filePath) {
+                    Task { @MainActor in await followTail() }
+                }
+            }
             // Second pass: the session file adds per-call usage, models and full tool inputs.
             let path = fetched.filePath
             let scan = HubPerf.begin("transcript.nativeScan", awaits: true)
@@ -191,15 +304,23 @@ struct HubSessionDetailHost: View {
             guard id == loadID else { return }
             nativeLog = log
             if changeSource == nil {
-                changeSource = CLIToolChangeSource(toolsBinary: HubSource.bridge.binaryPath)
+                // `GENESIS_HUB_TOOL_CHANGES=per-row` brings back one process per row, for A/B measurements.
+                changeSource = ProcessInfo.processInfo.environment["GENESIS_HUB_TOOL_CHANGES"] == "per-row"
+                    ? CLIToolChangeSource(toolsBinary: HubSource.bridge.binaryPath)
+                    : HubToolChangeSource(toolsBinary: HubSource.bridge.binaryPath)
             }
-            services = TranscriptServices(
+            let fresh = TranscriptServices(
                 sessionId: fetched.sessionId,
                 cwd: session.cwd.isEmpty ? nil : session.cwd,
                 nativeLog: log,
                 changes: changeSource,
                 showChange: onShowChange
             )
+            let sessionId = fetched.sessionId
+            fresh.onQuery = { query in
+                Task { @MainActor in await searchWholeSession(query, sessionId: sessionId) }
+            }
+            services = fresh
             await rebuild()
         } catch {
             guard id == loadID else { return }
@@ -211,21 +332,172 @@ struct HubSessionDetailHost: View {
         }
     }
 
-    private func loadEarlier() async {
-        guard windowStart > 0, !loadingEarlier else { return }
+    /// Prepends earlier turns in `fillChunk` steps until the window holds `pageSize` turns, one step per
+    /// idle moment: each step inserts only its own rows above the viewport, so no step stalls the way
+    /// one full-window layout did. Stops when the session changes or the start is reached.
+    private func fillWindow() async {
+        let id = session.id
+        let span = HubPerf.begin("transcript.fill", session.sessionId.prefix(8).description, awaits: true)
+        var steps = 0
+        while windowStart > 0, turns.count < Self.pageSize, id == session.id, !Task.isCancelled {
+            try? await Task.sleep(for: .milliseconds(250))
+            guard id == session.id, !Task.isCancelled else { break }
+            // A failed step would fail the same way every 250 ms: stop, the banner says why.
+            guard await loadEarlier(count: min(Self.fillChunk, Self.pageSize - turns.count)) else { break }
+            steps += 1
+        }
+        span.end("\(steps) steps, \(turns.count) turns")
+    }
+
+    /// True when a page came in.
+    @discardableResult
+    private func loadEarlier(count: Int = HubSessionDetailHost.pageSize) async -> Bool {
+        guard windowStart > 0, !loadingEarlier else { return false }
+        let owner = session.id
+        let generation = loadID
         loadingEarlier = true
-        defer { loadingEarlier = false }
-        let start = max(0, windowStart - Self.pageSize)
+        defer {
+            // After a newer load the flags are that load's; this page only ends itself.
+            if generation == loadID {
+                loadingEarlier = false
+                // The file grew while this page loaded; that growth fires no second event.
+                if tailDeferred {
+                    tailDeferred = false
+                    Task { await followTail() }
+                }
+            }
+        }
+        let start = max(0, windowStart - count)
         let span = HubPerf.begin("transcript.earlier", "offset=\(start)", awaits: true)
         defer { span.end() }
         do {
             let page = try await SessionTranscriptClient.fetch(using: HubSource.bridge, sessionId: session.sessionId, limit: windowStart - start, offset: start)
+            // Another session or a refresh while it loaded: these turns are not this window's.
+            guard owner == session.id, generation == loadID else { return false }
             let known = Set(turns.map(\.id))
             turns = page.turns.filter { !known.contains($0.id) } + turns
             windowStart = page.windowStart
             await rebuild()
+            return true
         } catch {
+            guard owner == session.id, generation == loadID else { return false }
             banner = "Could not load earlier turns: \(error.localizedDescription)"
+            return false
+        }
+    }
+
+    /// The session file grew: fetch from the last known turn on (it may have grown too: a streaming
+    /// reply, a tool result) and append. Only the new rows change, at the bottom, so existing rows keep
+    /// their frames (a moved focusable frame rebuilds the key view loop over every row). One fetch at a
+    /// time; growth during a fetch runs one more.
+    private func followTail() async {
+        guard !tailInFlight else {
+            tailAgain = true
+            return
+        }
+        tailInFlight = true
+        defer { tailInFlight = false }
+        repeat {
+            tailAgain = false
+            await tailOnce()
+        } while tailAgain
+    }
+
+    private func tailOnce() async {
+        guard let current = envelope, loadState == .loaded else { return }
+        guard !loadingEarlier else {
+            // Not `tailAgain`: that would loop here without a pause. `loadEarlier` runs it when it ends.
+            tailDeferred = true
+            return
+        }
+        let from = max(windowStart, current.nextOffset - 1)
+        let startBefore = windowStart
+        let owner = session.id
+        let generation = loadID
+        let span = HubPerf.begin("transcript.tail", "from=\(from)", awaits: true)
+        do {
+            let fetched = try await SessionTranscriptClient.fetch(using: HubSource.bridge, sessionId: session.sessionId, limit: 400, offset: from)
+            // Another session or a refresh while it loaded (both can start at turn 0, so the
+            // window check below would pass): this tail is not this window's.
+            guard owner == session.id, generation == loadID else {
+                span.end("superseded")
+                return
+            }
+            // The idle fill prepended earlier turns meanwhile: the merge point moved, so go again.
+            guard windowStart == startBefore, !loadingEarlier else {
+                span.end("window moved")
+                tailAgain = true
+                return
+            }
+            guard fetched.nextOffset >= current.nextOffset, fetched.windowStart == from else {
+                span.end("stale")
+                return
+            }
+            let keep = max(0, from - windowStart)
+            if fetched.nextOffset == current.nextOffset, Array(turns.suffix(from: keep)) == fetched.turns {
+                span.end("unchanged")
+                return
+            }
+            turns = Array(turns.prefix(keep)) + fetched.turns
+            var merged = fetched
+            merged.turns = turns
+            envelope = merged
+            span.end("+\(max(0, fetched.nextOffset - current.nextOffset)) turns, \(turns.count) in window")
+            await rebuild()
+            await refreshSubagents()
+            // The renderer's side of an append: the List inserting the new rows and laying them out.
+            HubMainBusy.measure("transcript.tail.render")
+        } catch {
+            span.end("failed: \(error.localizedDescription)")
+        }
+    }
+
+    /// ⌘F over the whole session: `tools ai sessions grep` names every matching turn; the ones before
+    /// the loaded window come in with `tail --turns` and join the window in session order, so the list's
+    /// own filter finds them. An empty query, or hits all inside the window, puts the window back.
+    private func searchWholeSession(_ query: String, sessionId: String) async {
+        searchID += 1
+        let id = searchID
+        let text = query.trimmingCharacters(in: .whitespaces)
+        guard text.count >= 2 else {
+            searchDocument = nil
+            searchNote = nil
+            return
+        }
+        let start = windowStart
+        let window = turns
+        let span = HubPerf.begin("transcript.search", "\(text.count) chars", awaits: true)
+        let result = await Task.detached(priority: .userInitiated) { () -> Result<(TranscriptDocument?, String), Error> in
+            Result {
+                let hits = try HubSessionSearch.grep(sessionId: sessionId, query: text)
+                let earlier = hits.turns.filter { $0 < start }
+                guard !earlier.isEmpty else {
+                    return (nil, hits.total == 0 ? "No turn in this session matches" : "All \(hits.total) matching turns are in this window")
+                }
+                let fetched = try HubSessionSearch.turns(sessionId: sessionId, indices: Array(earlier.suffix(HubSessionSearch.maxEarlier)))
+                let numbered = window.enumerated().map { offset, turn -> TranscriptTurn in
+                    var copy = turn
+                    copy.index = start + offset
+                    return copy
+                }
+                let document = TranscriptDocument.build(fetched + numbered)
+                let more = earlier.count > HubSessionSearch.maxEarlier ? " (the latest \(HubSessionSearch.maxEarlier) of them)" : ""
+                return (document, "Whole session: \(hits.total)\(hits.truncated ? "+" : "") matching turns, \(earlier.count) before this window\(more)")
+            }
+        }.value
+        guard id == searchID else {
+            span.end("superseded")
+            return
+        }
+        switch result {
+        case .success(let (document, note)):
+            span.end(note)
+            searchDocument = document
+            searchNote = note
+        case .failure(let error):
+            span.end("failed")
+            searchDocument = nil
+            searchNote = "Whole-session search failed: \(error.localizedDescription)"
         }
     }
 
@@ -241,5 +513,79 @@ struct HubSessionDetailHost: View {
         }.value
         document = built.0
         digest = built.1
+    }
+}
+
+/// `tools ai sessions subagents --json`: every sub-agent of a Claude session and whether it still works.
+enum HubSubagents {
+    private struct Envelope: Decodable {
+        struct Agent: Decodable {
+            let id: String
+            let name: String?
+            let description: String?
+            let agentType: String?
+            let toolUseId: String?
+            let lastAt: String
+            let state: String
+        }
+
+        let subagents: [Agent]
+    }
+
+    /// Blocking: call off the main thread. nil when the read failed (the digest's rows stay).
+    static func list(sessionId: String) -> [SessionSubagent]? {
+        do {
+            let rows = try decode(ToolsCLIRunner.run(["ai", "sessions", "subagents", sessionId, "--json"]))
+            let running = rows.filter { $0.state == .running }.count
+            HubPerf.log("subagents \(sessionId.prefix(8)): \(rows.count), \(running) running")
+            return rows
+        } catch {
+            HubPerf.log("subagents failed for \(sessionId.prefix(8)): \(error)")
+            return nil
+        }
+    }
+
+    /// The command's stdout as rows (src/utils/ai/transcripts/subagents.ts).
+    static func decode(_ data: Data) throws -> [SessionSubagent] {
+        try JSONDecoder().decode(Envelope.self, from: MonitorJSON.dataByDroppingPreamble(data)).subagents.map(row)
+    }
+
+    private static func row(_ agent: Envelope.Agent) -> SessionSubagent {
+        let title = agent.description ?? agent.agentType ?? agent.id
+        var summary = agent.name.map { "\($0): \(title)" } ?? title
+        // The stolen row has no "stopped" state: the text says it, the row keeps the "done" state.
+        if agent.state == "stopped" {
+            summary += " (stopped, last write \(agent.lastAt.prefix(16).replacingOccurrences(of: "T", with: " ")) UTC)"
+        }
+
+        let state: SessionSubagent.State = agent.state == "running" ? .running : .done
+        return SessionSubagent(id: agent.toolUseId ?? agent.id, kind: agent.agentType ?? "Agent", summary: summary, state: state)
+    }
+}
+
+/// The `tools ai sessions grep` / `tail --turns` doors behind the transcript's whole-session ⌘F.
+enum HubSessionSearch {
+    /// Earlier turns merged into one search view at most (the latest ones win).
+    static let maxEarlier = 150
+
+    struct Hits: Decodable {
+        let total: Int
+        let turns: [Int]
+        let truncated: Bool
+    }
+
+    /// Blocking: call off the main thread.
+    static func grep(sessionId: String, query: String) throws -> Hits {
+        // `--` first: a query such as "-v" is the text to find, not an option (commander refuses it).
+        let data = try ToolsCLIRunner.run(["ai", "sessions", "grep", "--json", "--limit", "500", "--", sessionId, query])
+        return try JSONDecoder().decode(Hits.self, from: MonitorJSON.dataByDroppingPreamble(data))
+    }
+
+    /// Blocking: call off the main thread. The turns carry their session-wide `index`.
+    static func turns(sessionId: String, indices: [Int]) throws -> [TranscriptTurn] {
+        guard !indices.isEmpty else { return [] }
+        let list = indices.map(String.init).joined(separator: ",")
+        let data = try ToolsCLIRunner.run(["ai", "sessions", "tail", sessionId, "--json", "--turns", list])
+        return try SessionTranscriptClient.decode(data).turns
     }
 }
