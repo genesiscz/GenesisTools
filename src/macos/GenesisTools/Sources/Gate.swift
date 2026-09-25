@@ -1,6 +1,7 @@
 // The account gate's approval window (`--rpc {"method":"gate.approve"}`).
 //
-// Another process asked `tools ai gate request` for an AI account token. The TypeScript side
+// Another process asked `tools ai gate request` for an AI account token or an API-key account's
+// stored key. The TypeScript side
 // verified the account and found no remembered grant; this side shows WHO asks (declared name,
 // pid, executable, cwd, parent chain) and WHAT for (provider, account), then confirms the allow
 // with Touch ID (password fallback). The reply is the decision plus how long to remember it.
@@ -45,12 +46,17 @@ struct GateApproveParams: Decodable {
     var account: GateAccountInfo
     /// Button choices in seconds. 0 is "allow once". Defaults to once, 8 hours, 7 days.
     var rememberChoicesSeconds: [Int]?
-    /// "long-lived" (an Anthropic setup token that survives refreshes) or "access" (an OAuth
-    /// access token another process can revoke by refreshing). Decided by the CLI before the window.
+    /// "long-lived" (an Anthropic setup token that survives refreshes), "access" (an OAuth
+    /// access token another process can revoke by refreshing) or "api-key" (the account's stored
+    /// API key, xai/openai). Decided by the CLI before the window.
     var tokenKind: String?
 }
 
-private func describeToken(_ kind: String?) -> String {
+private func describeToken(_ kind: String?, provider: String) -> String {
+    if kind == "api-key" {
+        return "The API KEY itself is shared, not a token. It does not expire: this app can use it, and bill the \(provider) account, until you rotate the key in the \(provider) console. It is read from the GenesisTools vault and handed to this app only."
+    }
+
     if kind == "long-lived" {
         return "A long-lived token is shared: the same one `tools claude run` gives Claude Code. It carries no refresh token and stays valid when other apps refresh their sessions."
     }
@@ -192,11 +198,14 @@ func approveGate(_ params: GateApproveParams) {
     DispatchQueue.main.async {
         NSApplication.shared.activate(ignoringOtherApps: true)
 
+        let isApiKey = params.tokenKind == "api-key"
         let alert = NSAlert()
         alert.alertStyle = .warning
-        alert.messageText = "“\(params.client.name)” asks for the \(params.provider) token of \(accountLabel)"
+        alert.messageText = isApiKey
+            ? "“\(params.client.name)” asks for the API KEY of the \(params.provider) account \(accountLabel)"
+            : "“\(params.client.name)” asks for the \(params.provider) token of \(accountLabel)"
         alert.informativeText = describeClient(params.client)
-            + "\n\n" + describeToken(params.tokenKind) + " Touch ID confirms an allow."
+            + "\n\n" + describeToken(params.tokenKind, provider: params.provider) + " Touch ID confirms an allow."
 
         for seconds in choices {
             alert.addButton(withTitle: rememberLabel(seconds))
@@ -213,7 +222,9 @@ func approveGate(_ params: GateApproveParams) {
         }
 
         let remember = choices[index]
-        let reason = "allow “\(params.client.name)” to use the \(params.provider) account \(params.account.name)"
+        let reason = isApiKey
+            ? "give “\(params.client.name)” the API key of the \(params.provider) account \(params.account.name)"
+            : "allow “\(params.client.name)” to use the \(params.provider) account \(params.account.name)"
 
         authenticate(reason: reason) { method, failure in
             guard let method else {

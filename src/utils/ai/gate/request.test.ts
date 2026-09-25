@@ -1,14 +1,22 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { randomBytes } from "node:crypto";
 import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AccountEntry } from "@genesiscz/utils/ai/config/schema";
 import { env } from "@genesiscz/utils/env";
 import type { PsRow } from "@genesiscz/utils/process/ps";
+import {
+    _resetMasterKeyProviders,
+    _resetSecretsForTest,
+    _setMasterKeyProvidersForTest,
+    type MasterKeyProvider,
+    secrets,
+} from "@genesiscz/utils/security";
 import { decisionFromReply } from "./approve";
 import type { ProcessLookup } from "./client-identity";
 import { auditPath, listGrants } from "./grants";
-import { type GateDeps, providerTokenResolver, requestAccountAccess } from "./request";
+import { type GateDeps, providerTokenKind, providerTokenResolver, requestAccountAccess } from "./request";
 import { type ApprovalDecision, GateDeniedError } from "./types";
 
 function account(id: string, name: string, overrides: Partial<AccountEntry> = {}): AccountEntry {
@@ -297,6 +305,203 @@ describe("requestAccountAccess", () => {
     });
 });
 
+describe("API keys (xai, openai)", () => {
+    const SECRET = "xai-stored-in-the-gate-account";
+    const MASTER = randomBytes(32);
+    let vaultOpens = 0;
+    let vaultLocked = false;
+
+    function openVault(): Buffer {
+        vaultOpens++;
+
+        if (vaultLocked) {
+            throw new Error("the vault was opened on a path that must never reach it");
+        }
+
+        return MASTER;
+    }
+
+    /** The master-key read every vault access starts with: counted, and it THROWS once locked. */
+    const keyring: MasterKeyProvider = {
+        id: "keychain",
+        available: async () => true,
+        get: async () => openVault(),
+        getSync: () => openVault(),
+        set: async () => {},
+    };
+
+    const envOnly = account("acc_xai_env", "xai-env", {
+        provider: "xai",
+        billing: { mode: "metered" },
+        useEnvApiKey: ["XAI_API_KEY"],
+    });
+
+    /** A gate-only account whose key sits in the test vault; the spy counts from zero afterwards. */
+    async function gateAccount(): Promise<AccountEntry> {
+        const ref = await (await secrets()).set("ai/acc_xai_gate/apiKey", SECRET);
+        _resetSecretsForTest();
+        _setMasterKeyProvidersForTest([keyring]);
+        vaultOpens = 0;
+
+        return account("acc_xai_gate", "xai-gate", {
+            provider: "xai",
+            billing: { mode: "metered" },
+            tags: ["gate-only"],
+            credentials: { apiKey: ref },
+        });
+    }
+
+    /** The real token resolver (it reads the test vault); the approver is the only stand-in. */
+    function deps(accounts: AccountEntry[], decide: () => ApprovalDecision, prompts: { count: number }): GateDeps {
+        return {
+            lookup,
+            selfPid: SELF_PID,
+            now: () => 1_000_000,
+            loadAccounts: async () => accounts,
+            approve: async (request) => {
+                prompts.count++;
+                expect(request.tokenKind).toBe("api-key");
+                return decide();
+            },
+        };
+    }
+
+    beforeEach(() => {
+        vaultLocked = false;
+        vaultOpens = 0;
+        _setMasterKeyProvidersForTest([keyring]);
+        _resetSecretsForTest();
+        // The gate process's own environment holds ANOTHER key; the gate must never hand that out.
+        env.testing.set("XAI_API_KEY", "xai-from-the-gate-process-environment");
+    });
+
+    afterEach(() => {
+        env.testing.unset("XAI_API_KEY");
+        _resetMasterKeyProviders();
+        _resetSecretsForTest();
+    });
+
+    test("an allow hands out the account's STORED key, never the environment's, and the audit never holds it", async () => {
+        const gate = await gateAccount();
+        const prompts = { count: 0 };
+        const result = await requestAccountAccess(
+            { client: { name: "Genesis", pid: 700 }, provider: "xai" },
+            deps([envOnly, gate], () => ({ decision: "allow", rememberSeconds: 0, method: "touch-id" }), prompts)
+        );
+
+        expect(result).toMatchObject({
+            accessToken: SECRET,
+            tokenKind: "api-key",
+            expiresAt: null,
+            grantedUntil: null,
+            prompted: true,
+            account: { id: "acc_xai_gate", name: "xai-gate" },
+        });
+        expect(prompts.count).toBe(1);
+        expect(vaultOpens).toBeGreaterThan(0);
+        expect(listGrants(1_000_000)).toEqual([]);
+
+        const audit = readFileSync(auditPath(), "utf8");
+        expect(audit).toContain('"event":"allowed"');
+        expect(audit).toContain("api-key");
+        expect(audit).not.toContain(SECRET);
+    });
+
+    test("a deny, a cancel or a timeout returns nothing, remembers nothing and never opens the vault", async () => {
+        const gate = await gateAccount();
+        vaultLocked = true;
+
+        for (const reason of ["denied in the approval window", "User canceled.", "timeout: gate.approve timed out"]) {
+            const prompts = { count: 0 };
+            const error = await requestAccountAccess(
+                { client: { name: "Genesis", pid: 700 }, provider: "xai", account: "xai-gate" },
+                deps([envOnly, gate], () => ({ decision: "deny", reason }), prompts)
+            ).catch((e: unknown) => e);
+
+            expect(error).toBeInstanceOf(GateDeniedError);
+            expect(error).toMatchObject({ code: "denied" });
+            expect(String(error)).toContain(reason);
+            expect(prompts.count).toBe(1);
+        }
+
+        expect(vaultOpens).toBe(0);
+        expect(listGrants(1_000_000)).toEqual([]);
+
+        const audit = readFileSync(auditPath(), "utf8");
+        expect(audit).toContain("timeout: gate.approve timed out");
+        expect(audit).not.toContain(SECRET);
+    });
+
+    test("a remembered grant answers the next request without a window", async () => {
+        const gate = await gateAccount();
+        const prompts = { count: 0 };
+        const d = deps(
+            [envOnly, gate],
+            () => {
+                if (prompts.count > 1) {
+                    throw new Error("the window opened although a grant was remembered");
+                }
+
+                return { decision: "allow", rememberSeconds: 8 * 3600, method: "touch-id" };
+            },
+            prompts
+        );
+
+        const first = await requestAccountAccess({ client: { name: "Genesis", pid: 700 }, provider: "xai" }, d);
+        const second = await requestAccountAccess({ client: { name: "Genesis", pid: 700 }, provider: "xai" }, d);
+
+        expect(first.grantedUntil).toBe(1_000_000 + 8 * 3600 * 1000);
+        expect(second).toMatchObject({ prompted: false, accessToken: SECRET, grantedUntil: first.grantedUntil });
+        expect(prompts.count).toBe(1);
+        expect(listGrants(1_000_000)).toMatchObject([
+            { provider: "xai", accountName: "xai-gate", tokenKind: "api-key" },
+        ]);
+    });
+
+    test("an account that stores no key is refused before any window, even with the variable set", async () => {
+        vaultLocked = true;
+        const prompts = { count: 0 };
+        const allow = (): ApprovalDecision => ({ decision: "allow", rememberSeconds: 0, method: "touch-id" });
+        const named = await requestAccountAccess(
+            { client: { name: "Genesis", pid: 700 }, provider: "xai", account: "xai-env" },
+            deps([envOnly], allow, prompts)
+        ).catch((e: unknown) => e);
+        const unnamed = await requestAccountAccess(
+            { client: { name: "Genesis", pid: 700 }, provider: "xai" },
+            deps([envOnly], allow, prompts)
+        ).catch((e: unknown) => e);
+
+        expect(named).toMatchObject({ code: "no_stored_key" });
+        expect(unnamed).toMatchObject({ code: "unknown_account" });
+        expect(String(unnamed)).toContain("--tag gate-only --api-key-stdin");
+        expect(prompts.count).toBe(0);
+        expect(vaultOpens).toBe(0);
+    });
+
+    test("subscription requests keep their token kinds and never become an API key (negative control)", async () => {
+        const codex = ACCOUNTS[1];
+
+        expect(await providerTokenKind("openai-sub", codex)).toBe("access");
+        expect(await providerTokenKind("xai", envOnly)).toBe("api-key");
+        await expect(providerTokenResolver("openai-sub", codex, "api-key")).rejects.toMatchObject({
+            code: "token_kind_changed",
+        });
+        await expect(providerTokenResolver("xai", envOnly, "access")).rejects.toMatchObject({
+            code: "token_kind_changed",
+        });
+
+        const h = harness({ decision: "allow", rememberSeconds: 0, method: "touch-id" });
+        const unnamed = await requestAccountAccess(
+            { client: { name: "pi", pid: 700 }, provider: "anthropic-sub" },
+            h.deps
+        ).catch((e: unknown) => e);
+
+        expect(unnamed).toMatchObject({ code: "unknown_account" });
+        expect(h.prompts).toBe(0);
+        expect(h.resolves).toBe(0);
+    });
+});
+
 describe("decisionFromReply (the approval window's answer)", () => {
     test("every failure to get a clear allow is a deny with its reason", () => {
         expect(decisionFromReply({ ok: false, error: { code: "timeout", message: "gate.approve timed out" } })).toEqual(
@@ -355,6 +560,14 @@ describe("tools ai gate request (CLI door)", () => {
 
         expect({ exitCode: proc.exitCode, stdout: proc.stdout.toString() }).toEqual({ exitCode: 77, stdout: "" });
         expect(proc.stderr.toString()).toContain("unknown_account");
+    });
+
+    test("an xai request with no account storing a key exits 77 before any window and names the store command", () => {
+        const proc = gateCli(["request", "--client", "Genesis", "--provider", "xai"]);
+
+        expect({ exitCode: proc.exitCode, stdout: proc.stdout.toString() }).toEqual({ exitCode: 77, stdout: "" });
+        expect(proc.stderr.toString()).toContain("unknown_account");
+        expect(proc.stderr.toString()).toContain("--tag gate-only");
     });
 
     test("a malformed --pid is an error (exit 1), never a silently unidentified client", () => {

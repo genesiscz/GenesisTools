@@ -9,6 +9,7 @@ import { assertSafeToWriteRealConfig } from "./migration-guard";
 import { convertConfig } from "./migrations/2026-08-configV4";
 import { type AccountRef, accountRef, type Referrer, referrersOf } from "./refs";
 import { type AccountEntry, type AiConfigData, aiConfigSchema, CONFIG_VERSION, emptyConfig } from "./schema";
+import { isGateOnly } from "./selectors";
 
 /**
  * Read a pre-v4 config into the v4 shape, in memory only.
@@ -37,12 +38,23 @@ export function adaptOlderConfig(raw: Record<string, unknown>): AiConfigData | u
 export interface AccountFilter {
     provider?: string | string[];
     billing?: AccountEntry["billing"]["mode"];
+    /**
+     * `true` asks for the accounts an ordinary caller may USE, which leaves out accounts tagged
+     * `gate-only`: those are enabled for `tools ai gate` alone (see `GATE_ONLY_TAG`). Every "pick an
+     * account to spend" path passes `enabled: true`, so a caller added later is safe by default.
+     */
     enabled?: boolean;
     tag?: string;
+    /** Keep `gate-only` accounts in an `enabled: true` query. Only the gate itself needs this. */
+    includeGateOnly?: boolean;
 }
 
 function matches(account: AccountEntry, filter: AccountFilter): boolean {
     if (filter.enabled !== undefined && account.enabled !== filter.enabled) {
+        return false;
+    }
+
+    if (filter.enabled === true && !filter.includeGateOnly && isGateOnly(account)) {
         return false;
     }
 

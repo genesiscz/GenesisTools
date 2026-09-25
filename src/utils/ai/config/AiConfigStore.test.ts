@@ -123,6 +123,28 @@ describe("AiConfigStore lookup", () => {
         expect(store.accounts({ tag: "absent" })).toEqual([]);
     });
 
+    test("an enabled:true query leaves out gate-only accounts; listing and includeGateOnly keep them", async () => {
+        const store = await AiConfigStore.load();
+        await store.mutate((data) => {
+            data.accounts.push(
+                account("acc_xai_gate", "xai-gate", {
+                    provider: "xai",
+                    billing: { mode: "metered" },
+                    tags: ["gate-only"],
+                })
+            );
+        });
+
+        expect(store.accounts({ provider: "xai", enabled: true }).map((a) => a.id)).toEqual(["acc_xai"]);
+        expect(store.accounts({ enabled: true }).map((a) => a.id)).toEqual(["acc_max", "acc_xai"]);
+        expect(store.accounts({ provider: "xai", enabled: true, includeGateOnly: true }).map((a) => a.id)).toEqual([
+            "acc_xai",
+            "acc_xai_gate",
+        ]);
+        expect(store.accounts({ provider: "xai" }).map((a) => a.id)).toEqual(["acc_xai", "acc_xai_gate"]);
+        expect(store.accounts().map((a) => a.id)).toContain("acc_xai_gate");
+    });
+
     test("ref() builds a ref from the immutable id, not the name", async () => {
         const store = await AiConfigStore.load();
 

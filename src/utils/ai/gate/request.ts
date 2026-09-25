@@ -1,7 +1,10 @@
 import { AIConfig } from "@genesiscz/utils/ai/AIConfig";
 import { AiConfigStore } from "@genesiscz/utils/ai/config/AiConfigStore";
 import type { AccountEntry } from "@genesiscz/utils/ai/config/schema";
+import { GATE_ONLY_TAG, isGateOnly } from "@genesiscz/utils/ai/config/selectors";
 import { extractExpiry, resolveCodexAccountToken } from "@genesiscz/utils/ai/openai/codex-auth";
+import { CredentialUnavailableError, resolveCredential } from "@genesiscz/utils/ai/providers/credentials";
+import type { CredentialSpec } from "@genesiscz/utils/ai/providers/plugin-types";
 import { resolveAccountToken } from "@genesiscz/utils/claude/subscription-auth";
 import { longLivedTokenUsable } from "@genesiscz/utils/claude/token-verify";
 import { logger } from "@genesiscz/utils/logger";
@@ -10,10 +13,12 @@ import { describeClient, type ProcessLookup } from "./client-identity";
 import { appendAudit, findGrant, rememberGrant } from "./grants";
 import {
     type ClientIdentity,
+    type GateApiKeyProvider,
     GateDeniedError,
     type GateProvider,
     type GateRequest,
     type GateResult,
+    isApiKeyGateProvider,
     type TokenKind,
 } from "./types";
 
@@ -60,6 +65,10 @@ async function longLivedFor(account: AccountEntry): Promise<{ token: string; exp
  * only the fallback for an account that has no long-lived token yet.
  */
 export const providerTokenKind: TokenKindResolver = async (provider, account) => {
+    if (isApiKeyGateProvider(provider)) {
+        return "api-key";
+    }
+
     if (provider !== "anthropic-sub") {
         return "access";
     }
@@ -67,7 +76,58 @@ export const providerTokenKind: TokenKindResolver = async (provider, account) =>
     return (await longLivedFor(account)) ? "long-lived" : "access";
 };
 
+/** The variable a store command pipes in, so the printed line runs as written in a shell that exports it. */
+const API_KEY_ENV: Record<GateApiKeyProvider, string> = { xai: "XAI_API_KEY", openai: "OPENAI_API_KEY" };
+
+/** A stored key only: the credential chokepoint with the environment switched off. */
+const STORED_API_KEY_SPEC: CredentialSpec = { fields: ["apiKey"], envKeys: [], required: ["apiKey"] };
+
+function hasStoredApiKey(account: AccountEntry): boolean {
+    return account.credentials.apiKey !== undefined;
+}
+
+function addGateAccountCommand(provider: GateApiKeyProvider): string {
+    return `printf '%s' "$${API_KEY_ENV[provider]}" | tools ai config account add --provider ${provider} --name ${provider}-gate --tag ${GATE_ONLY_TAG} --api-key-stdin`;
+}
+
+/**
+ * The account's STORED key, read in this process (the vault opens under the gate's own launcher
+ * name). `useEnvApiKey` is forced off: a variable in the gate process's environment is not the
+ * account's key, and the gate would otherwise hand out whatever its own environment happened to hold.
+ */
+async function storedApiKey(account: AccountEntry): Promise<string> {
+    try {
+        const resolved = await resolveCredential({ ...account, useEnvApiKey: false }, STORED_API_KEY_SPEC);
+
+        if (!resolved.apiKey) {
+            throw new CredentialUnavailableError(account.name, account.provider, "no api key");
+        }
+
+        return resolved.apiKey;
+    } catch (error) {
+        if (!(error instanceof CredentialUnavailableError)) {
+            throw error;
+        }
+
+        throw new GateDeniedError(
+            "no_stored_key",
+            `The API key of "${account.name}" could not be read from the vault: ${error.message}`
+        );
+    }
+}
+
 export const providerTokenResolver: TokenResolver = async (provider, account, kind) => {
+    if (kind === "api-key" || isApiKeyGateProvider(provider)) {
+        if (kind !== "api-key" || !isApiKeyGateProvider(provider)) {
+            throw new GateDeniedError(
+                "token_kind_changed",
+                `"${account.name}" (${provider}) cannot hand out a ${kind} token; ask again.`
+            );
+        }
+
+        return { accessToken: await storedApiKey(account), expiresAt: null, kind: "api-key" };
+    }
+
     if (kind === "long-lived") {
         const longLived = provider === "anthropic-sub" ? await longLivedFor(account) : null;
 
@@ -106,13 +166,32 @@ export interface GateDeps {
 
 async function defaultLoadAccounts(): Promise<AccountEntry[]> {
     // A read-only snapshot: the lookup must not run migrations or rotate anything. The token
-    // resolver below opens its own writable store when a refresh is really needed.
+    // resolver below opens its own writable store when a refresh is really needed. No filter, so
+    // `gate-only` accounts are in: this door is the one they exist for.
     const store = await AiConfigStore.readOnly();
     return store.accounts();
 }
 
 function findAccount(accounts: AccountEntry[], selector: string): AccountEntry | undefined {
     return accounts.find((entry) => entry.id === selector) ?? accounts.find((entry) => entry.name === selector);
+}
+
+/** No account named: an enabled one of the provider that stores a key, a `gate-only` one first. */
+function defaultApiKeyAccount(accounts: AccountEntry[], provider: GateApiKeyProvider): AccountEntry | undefined {
+    const stored = accounts.filter((entry) => entry.provider === provider && entry.enabled && hasStoredApiKey(entry));
+    return stored.find(isGateOnly) ?? stored[0];
+}
+
+function unknownAccountMessage(request: GateRequest): string {
+    if (request.account !== undefined) {
+        return `No AI account named "${request.account}" (tools ai accounts list).`;
+    }
+
+    if (isApiKeyGateProvider(request.provider)) {
+        return `No enabled ${request.provider} account stores an API key. Add one for the gate with: ${addGateAccountCommand(request.provider)}`;
+    }
+
+    return `Name the ${request.provider} account with --account (tools ai accounts list).`;
 }
 
 function auditClient(identity: ClientIdentity) {
@@ -126,11 +205,13 @@ function auditClient(identity: ClientIdentity) {
 }
 
 /**
- * Hand one token to an asking process, after Martin approves it in the app window.
+ * Hand one token (or, for an API-key provider, the account's stored API key) to an asking process,
+ * after the user approves it in the app window.
  *
- * Order matters: the account is checked BEFORE any window is shown, so a typo never costs a
- * Touch ID; the grant file is checked before the window, so a remembered client is not asked
- * twice; and the token is resolved only AFTER an allow, so a deny can never reach the refresh.
+ * Order matters: the account is checked BEFORE any window is shown, so a typo or an API-key account
+ * with nothing stored never costs a Touch ID; the grant file is checked before the window, so a
+ * remembered client is not asked twice; and the token is resolved only AFTER an allow, so a deny can
+ * never reach the refresh or the vault.
  *
  * Identity: a running pid that is NOT an ancestor of this process is a lie (a bystander naming
  * another app's pid to wear its name in the window and pick up its remembered grant) and is
@@ -145,23 +226,25 @@ export async function requestAccountAccess(request: GateRequest, deps: GateDeps 
     const tokenKindOf = deps.tokenKind ?? providerTokenKind;
     const identity = describeClient(request.client, deps.lookup, deps.selfPid);
     const accounts = await (deps.loadAccounts ?? defaultLoadAccounts)();
-    const account = findAccount(accounts, request.account);
+    const account =
+        request.account !== undefined
+            ? findAccount(accounts, request.account)
+            : isApiKeyGateProvider(request.provider)
+              ? defaultApiKeyAccount(accounts, request.provider)
+              : undefined;
     const audit = (event: "denied" | "prompted" | "allowed" | "remembered", detail?: string) =>
         appendAudit({
             at: new Date(now()).toISOString(),
             event,
             client: auditClient(identity),
             provider: request.provider,
-            account: account?.name ?? request.account,
+            account: account?.name ?? request.account ?? "(none named)",
             ...(detail ? { detail } : {}),
         });
 
     if (!account) {
         await audit("denied", "unknown account");
-        throw new GateDeniedError(
-            "unknown_account",
-            `No AI account named "${request.account}" (tools ai accounts list).`
-        );
+        throw new GateDeniedError("unknown_account", unknownAccountMessage(request));
     }
 
     if (account.provider !== request.provider) {
@@ -175,6 +258,14 @@ export async function requestAccountAccess(request: GateRequest, deps: GateDeps 
     if (!account.enabled) {
         await audit("denied", "account disabled");
         throw new GateDeniedError("disabled_account", `Account "${account.name}" is disabled.`);
+    }
+
+    if (isApiKeyGateProvider(request.provider) && !hasStoredApiKey(account)) {
+        await audit("denied", "no stored key");
+        throw new GateDeniedError(
+            "no_stored_key",
+            `Account "${account.name}" stores no API key, and the gate never hands out an environment variable. Add an account for the gate with: ${addGateAccountCommand(request.provider)}`
+        );
     }
 
     if (identity.executable !== null && !identity.isAncestor) {

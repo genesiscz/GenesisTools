@@ -54,3 +54,17 @@ export function hasStoredCredential(account: AccountEntry): boolean {
     const { apiKey, accessToken, longLivedToken, authFile } = account.credentials;
     return Boolean(apiKey ?? accessToken ?? longLivedToken ?? authFile);
 }
+
+/**
+ * The tag that reserves an account for `tools ai gate`: the gate reads its stored key in its own
+ * process and hands it over after Touch ID, and nothing else may spend it. It exists so a key can
+ * sit in the vault for the gate WITHOUT an app or launchd `tools say` (no env key) falling through
+ * the env-only account to it and reading the vault under a new `gt-<tool>` name, which raises a
+ * keychain prompt at a random moment. `AiConfigStore.accounts({ enabled: true })` leaves such an
+ * account out; see `AccountFilter.includeGateOnly`.
+ */
+export const GATE_ONLY_TAG = "gate-only";
+
+export function isGateOnly(account: AccountEntry): boolean {
+    return (account.tags ?? []).includes(GATE_ONLY_TAG);
+}
