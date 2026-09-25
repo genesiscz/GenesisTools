@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { type AgentRuntimeContext, getAgentRuntimeContext } from "@genesiscz/utils/agent/runtime";
+import { type AgentRuntimeContext, gatherHarnessPoster } from "@genesiscz/utils/agent/runtime";
 import { logger } from "@genesiscz/utils/logger";
 import { loadConfig, type QuestionConfig } from "./config";
 import { appendEntry } from "./log-store";
@@ -31,7 +31,7 @@ export async function recordAnswer(input: RecordInput, deps: RecordDeps = {}): P
         throw new Error("recordAnswer: answer is empty");
     }
 
-    const ctx = getAgentRuntimeContext(
+    const ctx = gatherHarnessPoster(
         {
             ...deps.ctx,
             ...(input.sessionId ? { sessionId: input.sessionId } : {}),

@@ -110,7 +110,11 @@ export function sanitizeTimeoutMs(timeoutMs: unknown): number | undefined {
     return Math.min(ms, MAX_WAIT_BUDGET_MS);
 }
 
-export function createAskForm(input: CreateAskFormInput): AskForm {
+/**
+ * Builds a form from input whose project path is already resolved. `postAskForm` is the door
+ * that fills an omitted path from the harness cwd; this function requires one in its type.
+ */
+export function createAskForm(input: CreateAskFormInput & { projectPath: string }): AskForm {
     if (input.items.length === 0) {
         throw new Error("createAskForm: a form needs at least one item");
     }
@@ -123,13 +127,19 @@ export function createAskForm(input: CreateAskFormInput): AskForm {
         throw new Error("createAskForm: duplicate item id");
     }
 
+    const projectPath = input.projectPath.trim();
+
+    if (!projectPath) {
+        throw new Error("createAskForm: projectPath is required");
+    }
+
     return {
         id: input.id ?? `ask_${randomUUID()}`,
         createdAt: Date.now(),
         source: input.source,
         sessionHint: input.sessionHint,
-        projectPath: resolve(input.projectPath),
-        cwd: resolveAskCwd(input.projectPath),
+        projectPath: resolve(projectPath),
+        cwd: resolveAskCwd(projectPath),
         items: input.items.map((item, index) => ({
             id: item.id ?? `q${index + 1}`,
             promptMarkdown: item.promptMarkdown,

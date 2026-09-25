@@ -1,8 +1,18 @@
+import { readFileSync } from "node:fs";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
 import { createBoxTable, renderCliHeader, truncateDisplay } from "@genesiscz/utils/table";
 import { type Command, InvalidArgumentError } from "commander";
 import pc from "picocolors";
+import {
+    checkDecisionItems,
+    isDecisionId,
+    postDecisionItems,
+    type QuestionItemInput,
+    splitItems,
+} from "../lib/decisions/items";
+import { decisionFiles } from "../lib/decisions/read";
+import { updateDecisions } from "../lib/decisions/store";
 import {
     answerAskForm,
     cancelAskForm,
@@ -14,13 +24,7 @@ import {
     waitForAskForm,
 } from "../lib/pending/ask";
 import { summarizeForm } from "../lib/pending/render";
-import {
-    type AskAnswer,
-    type AskForm,
-    type CreateAskItemInput,
-    DEFAULT_WAIT_BUDGET_MS,
-    type WaiterStatus,
-} from "../lib/pending/types";
+import { type AskAnswer, type AskForm, DEFAULT_WAIT_BUDGET_MS, type WaiterStatus } from "../lib/pending/types";
 
 const { log } = logger.scoped("question-ask");
 
@@ -70,17 +74,35 @@ function collect(value: string, previous: string[] = []): string[] {
     return [...previous, value];
 }
 
-function parseItems(opts: Record<string, unknown>): CreateAskItemInput[] {
-    const raw = opts.json;
+/** The question_post fields `ask --json -` honours besides `items`; a CLI flag still wins. */
+interface PostPayloadFields {
+    projectPath?: string;
+    source?: string;
+    sessionHint?: string;
+    timeoutMs?: number;
+}
+
+/**
+ * `--json <items>` is an array of items. `--json -` reads stdin, and there it may also be the
+ * whole question_post payload (`{ items, projectPath?, source?, sessionHint?, timeoutMs? }`), so an
+ * agent pipes the same JSON it would send the MCP tool.
+ */
+function parseItems(opts: Record<string, unknown>): { items: QuestionItemInput[]; fields: PostPayloadFields } {
+    const raw = opts.json === "-" ? readFileSync(0, "utf8") : opts.json;
 
     if (typeof raw === "string" && raw.trim()) {
         const parsed = SafeJSON.parse(raw, { strict: true });
 
-        if (!Array.isArray(parsed)) {
-            throw new Error("--json must be an array of items");
+        if (Array.isArray(parsed)) {
+            return { items: parsed as QuestionItemInput[], fields: {} };
         }
 
-        return parsed as CreateAskItemInput[];
+        if (typeof parsed === "object" && parsed !== null && Array.isArray((parsed as { items?: unknown }).items)) {
+            const { items, ...fields } = parsed as PostPayloadFields & { items: QuestionItemInput[] };
+            return { items, fields };
+        }
+
+        throw new Error("--json must be an array of items, or a question_post payload with an items array");
     }
 
     const question = typeof opts.q === "string" ? opts.q : "";
@@ -89,17 +111,24 @@ function parseItems(opts: Record<string, unknown>): CreateAskItemInput[] {
         throw new Error("either -q <question> or --json <items> is required");
     }
 
-    return [
-        {
-            promptMarkdown: question,
-            choices: typeof opts.choices === "string" ? splitList(opts.choices) : undefined,
-            allowMultiple: opts.multiple === true,
-            allowFreeText: opts.freeText !== false,
-            allowFileTags: opts.fileTags === true,
-            allowImagePaste: opts.imagePaste === true,
-            required: opts.optional !== true,
-        },
-    ];
+    return {
+        items: [
+            {
+                promptMarkdown: question,
+                choices: typeof opts.choices === "string" ? splitList(opts.choices) : undefined,
+                allowMultiple: opts.multiple === true,
+                allowFreeText: opts.freeText !== false,
+                allowFileTags: opts.fileTags === true,
+                allowImagePaste: opts.imagePaste === true,
+                required: opts.optional !== true,
+            },
+        ],
+        fields: {},
+    };
+}
+
+function flag(value: unknown): string | undefined {
+    return typeof value === "string" ? value : undefined;
 }
 
 /**
@@ -199,8 +228,11 @@ export function registerAskCommand(program: Command): void {
         .option("--file-tags", "allow @file tags, resolved against the form cwd")
         .option("--image-paste", "allow pasted images")
         .option("--optional", "the item may be left blank")
-        .option("--json <items>", "multi-question form as a JSON array of items")
-        .option("-p, --project <path>", "project path the question is about", process.cwd())
+        .option(
+            "--json <items>",
+            'items as a JSON array; "-" reads stdin, which may be the whole question_post payload. Items with type decision or todo are numbered in the decision log and printed as markdown'
+        )
+        .option("-p, --project <path>", "project path the question is about. Defaults to the harness checkout.")
         .option("--source <name>", "who is asking (agent, skill, app)")
         .option("--session <id>", "session id to attribute the answer to")
         .option("--timeout <ms>", "auto-retire the form after this long", parseMs)
@@ -209,31 +241,56 @@ export function registerAskCommand(program: Command): void {
         .option("--no-notify", "do not raise a notification for this form")
         .option("--format <fmt>", "human|json", "human")
         .action(async (opts: Record<string, unknown>) => {
-            let items: CreateAskItemInput[];
+            let parsed: ReturnType<typeof parseItems>;
 
             try {
-                items = parseItems(opts);
+                parsed = parseItems(opts);
             } catch (err) {
                 out.error(pc.red(err instanceof Error ? err.message : String(err)));
                 process.exit(1);
             }
 
+            const { questions, decisions } = splitItems(parsed.items);
+            const projectPath = flag(opts.project) ?? parsed.fields.projectPath;
+            const sessionHint = flag(opts.session) ?? parsed.fields.sessionHint;
+            const { file, events } = decisionFiles();
+            const hint = { sessionId: sessionHint, cwd: projectPath };
+
+            if (questions.length === 0) {
+                const posted = await postDecisionItems({ file, events, items: decisions, hint });
+
+                if (opts.format === "json") {
+                    out.result(SafeJSON.stringify(posted, null, 2));
+                } else {
+                    out.print(posted.markdown);
+                }
+
+                process.exit(0);
+            }
+
+            // Both halves are checked before either is written; see `checkDecisionItems`.
+            checkDecisionItems(decisions, hint);
             const form = await postAskForm(
                 {
-                    projectPath: String(opts.project ?? process.cwd()),
-                    items,
-                    timeoutMs: typeof opts.timeout === "number" ? opts.timeout : undefined,
-                    source: typeof opts.source === "string" ? opts.source : "cli",
-                    sessionHint: typeof opts.session === "string" ? opts.session : undefined,
+                    projectPath,
+                    items: questions,
+                    timeoutMs: typeof opts.timeout === "number" ? opts.timeout : parsed.fields.timeoutMs,
+                    source: flag(opts.source) ?? parsed.fields.source ?? "cli",
+                    sessionHint,
                 },
                 { notify: opts.notify !== false }
             );
+            const posted = await postDecisionItems({ file, events, items: decisions, hint });
 
             if (opts.wait !== true) {
                 if (opts.format === "json") {
-                    out.result(SafeJSON.stringify({ form }, null, 2));
+                    out.result(SafeJSON.stringify({ form, ...posted }, null, 2));
                 } else {
                     renderForm(form);
+
+                    if (posted.markdown) {
+                        out.print(posted.markdown);
+                    }
                 }
 
                 process.exit(0);
@@ -317,8 +374,9 @@ export function registerAskCommand(program: Command): void {
 
     program
         .command("answer <id>")
-        .description("Answer a pending ask form from the terminal")
+        .description("Answer a pending ask form, or a decision (d_<n>_<session>) with --option and/or --text")
         .option("-t, --text <text>", "free-text answer")
+        .option("--option <letter>", "decision: the chosen option letter, e.g. b")
         .option("--choice <id>", "selected choice id (repeatable)", collect, [])
         .option("--file <path>", "@file tag, relative to the form cwd (repeatable)", collect, [])
         .option("--item <itemId>", "which item this answers (single-item forms default to the only one)")
@@ -327,8 +385,25 @@ export function registerAskCommand(program: Command): void {
         .action(
             async (
                 id: string,
-                opts: { text?: string; choice: string[]; file: string[]; item?: string; json?: string; format?: string }
+                opts: {
+                    text?: string;
+                    option?: string;
+                    choice: string[];
+                    file: string[];
+                    item?: string;
+                    json?: string;
+                    format?: string;
+                }
             ) => {
+                if (isDecisionId(id)) {
+                    const { file, events } = decisionFiles();
+                    const [row] = await updateDecisions(file, events, {
+                        updates: [{ id, state: "answered", answer: opts.text, option: opts.option }],
+                    });
+                    out.result(SafeJSON.stringify(row, null, 2));
+                    process.exit(0);
+                }
+
                 const form = getAskForm(id);
 
                 if (!form) {

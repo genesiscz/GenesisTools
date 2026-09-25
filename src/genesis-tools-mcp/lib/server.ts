@@ -97,6 +97,11 @@ import {
     type QuestionRespondArgs,
     type QuestionWaitArgs,
 } from "./tools/question-post";
+import {
+    handleQuestionUpdate,
+    QUESTION_UPDATE_DESCRIPTION,
+    QUESTION_UPDATE_INPUT_SCHEMA,
+} from "./tools/question-update";
 
 const log = logger.child({ component: "claude:mcp" });
 
@@ -120,7 +125,13 @@ const SERVER_INSTRUCTIONS =
     "question_post only when you genuinely cannot proceed, because a blocking-by-default ask hangs agent " +
     "loops. Same surface from the CLI: `tools question ask|wait|poll|answer|cancel` (the CLI `answer` verb " +
     "is `question_respond` here). Answering a form ALSO writes it into the Q→A history below, so /qa stays " +
-    "one list.\n\n" +
+    "one list.\n" +
+    'DECISIONS AND TODOS: a `question_post` item with `type: "decision"` or `type: "todo"` is not a form. ' +
+    "It is numbered in this session's decision log (❓ DECISION N, TODO N; numbers never reused) and the " +
+    "result is the markdown section to paste into your reply. Post every ❓ DECISION this way. Record " +
+    "progress (acknowledged, implemented, commit refs, verdict, comments, a copy of a chat answer) with " +
+    "`question_update`, several items per call. CLI: `tools question ask --json -`, " +
+    "`tools question list|update|answers|answer|draft|send`.\n\n" +
     "2. LOG YOUR OWN ANSWER (after the fact, no waiting): `question_answer`, described next.\n\n" +
     "WHEN TO USE THE question_answer TOOL:\n" +
     '- The user directly asks a question important enough to preserve for later review: rationale ("why did ' +
@@ -255,6 +266,11 @@ function buildToolRegistry(): Record<string, ToolEntry> {
             description: HANDOFF_ACTION_DESCRIPTION,
             inputSchema: HANDOFF_ACTION_INPUT_SCHEMA as unknown as Record<string, unknown>,
             handler: async (args) => handleHandoffAction(args as unknown as HandoffActionArgs),
+        },
+        question_update: {
+            description: QUESTION_UPDATE_DESCRIPTION,
+            inputSchema: QUESTION_UPDATE_INPUT_SCHEMA,
+            handler: async (args) => handleQuestionUpdate(args),
         },
         annotate_image: {
             description:
@@ -502,7 +518,14 @@ const QUESTION_ASK_TOOLS = new Set([
     "question_poll",
     "question_respond",
     "question_cancel",
+    "question_update",
 ]);
+
+/**
+ * `decision` predates the merge into question_post: a config that enabled it for the decision
+ * tools still gets what posting and updating a decision needs, without the rest of the ask surface.
+ */
+const DECISION_TOOLS = new Set(["question_post", "question_poll", "question_update"]);
 
 /**
  * Known capability names, keyed to what counts as membership.
@@ -516,6 +539,7 @@ const CAPABILITY_MATCHERS: Record<string, (name: string) => boolean> = {
     question_ask: (name) => QUESTION_ASK_TOOLS.has(name),
     boards: (name) => name.startsWith("boards_"),
     handoff: (name) => name.startsWith("handoff_"),
+    decision: (name) => DECISION_TOOLS.has(name),
     annotate: (name) => name.startsWith("annotate_"),
     jev: (name) => name.startsWith("jev_"),
 };

@@ -84,7 +84,8 @@ export interface CreateAskItemInput {
 }
 
 export interface CreateAskFormInput {
-    projectPath: string;
+    /** Omitted means the harness poster cwd, the same directory a handoff would stamp. */
+    projectPath?: string;
     items: CreateAskItemInput[];
     timeoutMs?: number;
     id?: string;

@@ -64,6 +64,34 @@ describe("postAskForm", () => {
         expect(listPendingForms(deps).map((f) => f.id)).toContain(form.id);
     });
 
+    test("an omitted session hint is the harness that posted the question", async () => {
+        const form = await postAskForm(
+            { projectPath: PROJECT, items: [{ promptMarkdown: "Ship?" }] },
+            { ...deps, env: { CLAUDE_CODE_SESSION_ID: "sess-9", CLAUDECODE: "1" } }
+        );
+
+        expect(form.sessionHint).toBe("sess-9");
+    });
+
+    test("a typed session hint is kept when this process is a test", async () => {
+        const form = await postAskForm(
+            { projectPath: PROJECT, sessionHint: "typed", items: [{ promptMarkdown: "Ship?" }] },
+            { ...deps, env: { CLAUDE_CODE_SESSION_ID: "sess-9", CLAUDECODE: "1" } }
+        );
+
+        expect(form.sessionHint).toBe("typed");
+    });
+
+    test("a server posting for a remote caller stamps none of its own context", async () => {
+        const server = { ...deps, ambient: false, env: { CLAUDE_CODE_SESSION_ID: "server-sess", CLAUDECODE: "1" } };
+        const form = await postAskForm({ projectPath: PROJECT, items: [{ promptMarkdown: "Ship?" }] }, server);
+
+        expect(form.sessionHint).toBeUndefined();
+        await expect(postAskForm({ items: [{ promptMarkdown: "Ship?" }] }, server)).rejects.toThrow(
+            /projectPath is required/
+        );
+    });
+
     test("a form with no items is refused", async () => {
         await expect(postAskForm({ projectPath: PROJECT, items: [] }, deps)).rejects.toThrow("at least one item");
     });

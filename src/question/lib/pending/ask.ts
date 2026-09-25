@@ -1,7 +1,9 @@
 import type { Database } from "bun:sqlite";
 import { buildQaDeepLink } from "@app/dev-dashboard/lib/qa-deep-link";
+import { type AgentRuntimeContext, gatherHarnessPoster } from "@genesiscz/utils/agent/runtime";
 import { logger } from "@genesiscz/utils/logger";
 import { dispatchNotification } from "@genesiscz/utils/notifications";
+import { isTestProcess } from "@genesiscz/utils/test-process";
 import { loadConfig } from "../config";
 import { recordAnswer } from "../record";
 import type { RecordResult } from "../types";
@@ -58,6 +60,16 @@ export interface AskDeps {
     logBase?: string;
     /** Off in tests so no banner fires. */
     notify?: boolean;
+    /** Harness env override. Tests pass `{}` so a live session id cannot leak in. */
+    env?: NodeJS.ProcessEnv;
+    ctx?: Partial<AgentRuntimeContext>;
+    /**
+     * Whether THIS process speaks for the caller. True for the CLI and for the stdio MCP server
+     * (a child of the calling harness). False for a long-lived server such as the dashboard:
+     * its cwd and harness session are its own, so it must not stamp them on a remote caller's
+     * form. Then `projectPath` is required and an explicit `sessionHint` is kept as sent.
+     */
+    ambient?: boolean;
 }
 
 function withStore<T>(deps: AskDeps, fn: (db: Database) => T): T {
@@ -82,6 +94,29 @@ function sweep(db: Database, deps: AskDeps): void {
     }
 }
 
+/** The project path and session a form is filed under; see `AskDeps.ambient`. */
+function callerContext(
+    input: CreateAskFormInput,
+    deps: AskDeps
+): { projectPath: string; sessionHint: string | undefined } {
+    const given = input.projectPath?.trim() ? input.projectPath : undefined;
+
+    if (deps.ambient === false) {
+        if (!given) {
+            throw new Error("projectPath is required: this server cannot tell which project the caller is in");
+        }
+
+        return { projectPath: given, sessionHint: input.sessionHint };
+    }
+
+    const poster = gatherHarnessPoster(deps.ctx, deps.env ?? (isTestProcess() ? {} : undefined));
+    const harnessSession = poster.agent !== "unknown" && poster.sessionId ? poster.sessionId : null;
+    const sessionHint =
+        !isTestProcess() && harnessSession ? harnessSession : (input.sessionHint ?? harnessSession ?? undefined);
+
+    return { projectPath: given ?? poster.cwd, sessionHint };
+}
+
 /**
  * Create a pending form and tell the user about it.
  *
@@ -90,7 +125,7 @@ function sweep(db: Database, deps: AskDeps): void {
  * there is a hang, so it is opt-OUT (`notifyPending`) rather than opt-in.
  */
 export async function postAskForm(input: CreateAskFormInput, deps: AskDeps = {}): Promise<AskForm> {
-    const form = createAskForm(input);
+    const form = createAskForm({ ...input, ...callerContext(input, deps) });
     withStore(deps, (db) => insertForm(db, form));
     publishEvent("created", form, deps);
     log.info({ id: form.id, items: form.items.length, source: form.source }, "pending ask form created");
@@ -144,21 +179,15 @@ export type AnswerOutcome =
     | { ok: true; form: AskForm; entryId: string }
     | { ok: false; code: "not_found" | "not_pending" | "incomplete"; error: string; missing?: string[] };
 
+export type AnswerCheck =
+    | { ok: true; form: AskForm; answers: Record<string, AskAnswer> }
+    | Extract<AnswerOutcome, { ok: false }>;
+
 /**
- * Claim the form, record the answer, then write the matching QaEntry so /qa history stays ONE
- * list.
- *
- * The claim comes FIRST and is exclusive, so only one submit ever reaches `recordAnswer`: a
- * loser is turned away before it can write a QaEntry that no form would ever point at. Two
- * concurrent answers, and a cancel racing an answer, used to produce exactly that orphan.
- *
- * Inside the claim the QaEntry is still written BEFORE the row flips to `answered`, so its id
- * can be stored on the form. A crash between the two leaves an orphan history entry, which is
- * recoverable; the reverse would leave an answered form that never reached history, which is
- * not. The claim itself is a lease (`ANSWER_CLAIM_TTL_MS`), so that crash costs one stale claim
- * rather than a form nobody can ever answer.
+ * Everything `answerAskForm` checks before it writes, and nothing it writes: the form exists and
+ * is pending, and every required item has an answer. A dry run stops here.
  */
-export async function answerAskForm(id: string, answers: AskAnswer[], deps: AskDeps = {}): Promise<AnswerOutcome> {
+export function checkAskAnswer(id: string, answers: AskAnswer[], deps: AskDeps = {}): AnswerCheck {
     const form = getAskForm(id, deps);
 
     if (!form) {
@@ -197,6 +226,32 @@ export async function answerAskForm(id: string, answers: AskAnswer[], deps: AskD
             missing: missing.map((item) => item.id),
         };
     }
+
+    return { ok: true, form, answers: sanitized };
+}
+
+/**
+ * Claim the form, record the answer, then write the matching QaEntry so /qa history stays ONE
+ * list.
+ *
+ * The claim comes FIRST and is exclusive, so only one submit ever reaches `recordAnswer`: a
+ * loser is turned away before it can write a QaEntry that no form would ever point at. Two
+ * concurrent answers, and a cancel racing an answer, used to produce exactly that orphan.
+ *
+ * Inside the claim the QaEntry is still written BEFORE the row flips to `answered`, so its id
+ * can be stored on the form. A crash between the two leaves an orphan history entry, which is
+ * recoverable; the reverse would leave an answered form that never reached history, which is
+ * not. The claim itself is a lease (`ANSWER_CLAIM_TTL_MS`), so that crash costs one stale claim
+ * rather than a form nobody can ever answer.
+ */
+export async function answerAskForm(id: string, answers: AskAnswer[], deps: AskDeps = {}): Promise<AnswerOutcome> {
+    const checked = checkAskAnswer(id, answers, deps);
+
+    if (!checked.ok) {
+        return checked;
+    }
+
+    const { form, answers: sanitized } = checked;
 
     // Everything above is a pure read, so a malformed submit never costs a claim. Everything
     // below is durable, so it happens exactly once per form.

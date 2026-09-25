@@ -26,6 +26,7 @@ const ALL = registry(
     "question_cancel",
     "boards_read",
     "handoff_post",
+    "question_update",
     "annotate_image",
     "jev_live"
 );
@@ -51,6 +52,7 @@ describe("filterRegistryByCapabilities", () => {
             "question_poll",
             "question_post",
             "question_respond",
+            "question_update",
             "question_wait",
         ]);
         expect(tools).not.toContain("question_answer");
@@ -67,6 +69,7 @@ describe("filterRegistryByCapabilities", () => {
             "question_poll",
             "question_post",
             "question_respond",
+            "question_update",
             "question_wait",
         ]);
     });
@@ -74,6 +77,7 @@ describe("filterRegistryByCapabilities", () => {
     test("a prefix capability still matches its whole family", () => {
         expect(withCapabilities("boards")).toEqual(["boards_read"]);
         expect(withCapabilities("handoff")).toEqual(["handoff_post"]);
+        expect(withCapabilities("decision")).toEqual(["question_poll", "question_post", "question_update"]);
         expect(withCapabilities("annotate")).toEqual(["annotate_image"]);
         expect(withCapabilities("jev")).toEqual(["jev_live"]);
     });
