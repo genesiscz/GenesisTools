@@ -46,11 +46,18 @@ Every load that can be slow runs in a span: `HubPerf.begin("area.what", detail)`
 `span.end()`, or `HubPerf.measure(...)`. Spans, stalls and hang samples go to
 `~/.genesis-tools/logs/app-perf.log` (stolen `PerfLog`; `.main` suffix = ran on the main
 thread; `SLOW` marks at 100 ms). `HangWatch` samples the main thread into
-`~/.genesis-tools/logs/hangs/` after 1 s. Summary: `bun scripts/perf-report.ts --tail 5000`.
-Watch it while you click: `tail -f ~/.genesis-tools/logs/app-perf.log | rg 'SLOW|stall|main '`.
+`~/.genesis-tools/logs/hangs/` after 1 s. Summary: `bun scripts/perf-report.ts --tail 5000` (run in
+this folder). Watch it while you click: `tail -f ~/.genesis-tools/logs/app-perf.log | rg 'SLOW|stall|main '`.
 A span times work, not the SwiftUI layout it causes: after a state change the renderer runs in the
 next run-loop passes. `HubMainBusy.measure("area.what")` (HubPerf.swift) logs the main thread's busy
 time over the next 600 ms, which is what an append or a reload really costs on screen.
+
+🛑 The live hub always has an accessibility client, and then SwiftUI walks every responder of the
+window once per accessibility node an update touches: a click's cost grows with rows × controls per
+row × rows (stall stacks: `AccessibilityNode.updateFocusResponder`). Rows of a dense list take values,
+not the hub's models (`TimelineRowView`), and carry buttons, hover sensors and tooltips only while the
+pointer is on them (its `live`, `ExternalLink(interactive:)`). A list that inserts rows above the
+viewport holds it with `TranscriptScrollAnchor` (Hub/HubTranscriptAnchor.swift).
 
 ## Look
 
