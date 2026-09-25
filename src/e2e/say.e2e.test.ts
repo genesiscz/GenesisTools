@@ -1,17 +1,16 @@
-import { afterAll, describe, expect, it } from "bun:test";
-import { existsSync, mkdtempSync, statSync } from "node:fs";
+import { describe, expect, it } from "bun:test";
+import { existsSync, mkdtempSync, readFileSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { execTool, getOutput } from "@genesiscz/utils/e2e/helpers";
+import { execTool as execToolIn, getOutput } from "@genesiscz/utils/e2e/helpers";
 import { skip } from "@genesiscz/utils/test/skip";
 
-describe.skipIf(skip.integration)("tools say", () => {
-    afterAll(async () => {
-        // Restore default + e2e-test profiles to unmuted state.
-        await execTool(["say", "--unmute", "--save", "--app", "default"]);
-        await execTool(["say", "--unmute", "--save", "--app", "e2e-test"]);
-    });
+// `--save` writes the say config. A scratch home keeps the mute and profile writes below out of the
+// user's real ~/.genesis-tools/say/config.json, where they once left `e2e-test` behind.
+const home = mkdtempSync(join(tmpdir(), "say-e2e-home-"));
+const execTool = (args: string[]) => execToolIn(args, 15_000, { GENESIS_TOOLS_HOME: home });
 
+describe.skipIf(skip.integration)("tools say", () => {
     describe("help", () => {
         it("--help exits 0 and shows description", async () => {
             const r = await execTool(["say", "--help"]);
@@ -65,8 +64,9 @@ describe.skipIf(skip.integration)("tools say", () => {
     });
 
     describe("per-app mute", () => {
-        it("--mute --save --app e2e-test exits 0", async () => {
+        it("--mute --save --app e2e-test exits 0 and saves into the scratch home", async () => {
             const r = await execTool(["say", "--mute", "--save", "--app", "e2e-test"]);
+            expect(readFileSync(join(home, ".genesis-tools", "say", "config.json"), "utf8")).toContain("e2e-test");
             expect(r.exitCode).toBe(0);
         });
 

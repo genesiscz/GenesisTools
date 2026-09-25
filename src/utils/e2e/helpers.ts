@@ -29,11 +29,19 @@ export interface RunResult {
     exitCode: number;
 }
 
-export async function execTool(args: string[], timeoutMs = 15_000): Promise<RunResult> {
+/**
+ * Run `tools <args>` as a child. `extraEnv` overrides the inherited env, e.g. a scratch
+ * `GENESIS_TOOLS_HOME` for a tool that saves config, so the run never touches `~/.genesis-tools`.
+ */
+export async function execTool(
+    args: string[],
+    timeoutMs = 15_000,
+    extraEnv: Record<string, string> = {}
+): Promise<RunResult> {
     const proc = Bun.spawn(["bun", "run", TOOLS_PATH, ...args], {
         stdout: "pipe",
         stderr: "pipe",
-        env: { ...env.getProcessEnv(), NO_COLOR: "1" },
+        env: { ...env.getProcessEnv(), NO_COLOR: "1", ...extraEnv },
     });
 
     const timeout = setTimeout(() => proc.kill(), timeoutMs);

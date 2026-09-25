@@ -4,6 +4,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
 import { namedBunExecPath } from "@genesiscz/utils/cli/bun-link";
+import { takeDetachedMarker } from "@genesiscz/utils/cli/detached";
 import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
 import { genesisAppLauncher } from "@genesiscz/utils/macos/genesis-app";
@@ -283,6 +284,8 @@ async function spawnAndCaptureStderr(args: string[], workspaceRoot: string, exec
     const launcher = genesisAppLauncher();
     const command = launcher ? launcher : execPath;
     const commandArgs = launcher ? [execPath, ...args] : args;
+    // spawnToolDetached (a dashboard a link click starts) is orphaned on purpose; see DETACHED_ENV.
+    const detached = takeDetachedMarker(process.env);
 
     return new Promise<number>((resolvePromise, reject) => {
         const child = spawn(command, commandArgs, {
@@ -314,7 +317,7 @@ async function spawnAndCaptureStderr(args: string[], workspaceRoot: string, exec
         // get reparented to launchd (PPID=1) — without this poll, a long-lived
         // dashboard (`tools <foo> --dashboard`) survives invisibly and burns
         // CPU/holds DB locks for days. Detect reparent → kill child → exit.
-        const orphanTimer = setInterval(() => {
+        const orphanTimer = detached ? undefined : setInterval(() => {
             if (process.ppid === 1) {
                 try {
                     child.kill("SIGTERM");
@@ -332,7 +335,7 @@ async function spawnAndCaptureStderr(args: string[], workspaceRoot: string, exec
                 }, 5000).unref();
             }
         }, 2000);
-        orphanTimer.unref();
+        orphanTimer?.unref();
 
         // Forward standard signals to the child so it can clean up before exit.
         const forward = (sig: NodeJS.Signals) => () => {

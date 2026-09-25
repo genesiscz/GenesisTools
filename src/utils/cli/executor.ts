@@ -425,6 +425,8 @@ export interface ExecResult {
     stdout: string;
     stderr: string;
     exitCode: number;
+    /** Set when the caller's `timeout` killed the child. */
+    timedOut?: boolean;
 }
 
 export interface ExecutorOptions {
