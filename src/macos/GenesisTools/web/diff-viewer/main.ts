@@ -11,10 +11,10 @@ import {
     type OnDiffLineEnterLeaveProps,
     type OnLineClickProps,
     type OnLineEnterLeaveProps,
-    parseDiffFromFile,
     type SelectedLineRange,
 } from "@pierre/diffs";
 import { WorkerPoolManager } from "@pierre/diffs/worker";
+import { parseFileDiff } from "./file-diff";
 
 /**
  * The web half of GenesisTools.app's diff renderer (PierreWebDiffRenderer.swift). Swift owns the
@@ -523,16 +523,7 @@ function toItem(file: BridgeFile): CodeViewItem<AnnotationMeta> {
     let fileDiff = cached?.key === file.key ? cached.fileDiff : undefined;
 
     if (!fileDiff) {
-        // A missing side (new or deleted file) is empty text: parseDiffFromFile's null path throws on
-        // `.split` in 1.4.3 even though its types accept null.
-        // The keys name the text for the workers' highlight cache.
-        const oldFile = {
-            name: file.oldPath ?? file.path,
-            contents: file.oldContents ?? "",
-            cacheKey: `${file.key}:old`,
-        };
-        const newFile = { name: file.path, contents: file.newContents ?? "", cacheKey: `${file.key}:new` };
-        fileDiff = parseDiffFromFile(oldFile, newFile);
+        fileDiff = parseFileDiff(file);
         parsed.set(file.id, { key: file.key, fileDiff });
     }
 
