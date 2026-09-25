@@ -55,8 +55,13 @@ enum HangWatch {
     @MainActor
     static func start(force: Bool = false) {
         guard force || PerfLog.enabled, monitor == nil else { return }
-        let timer = DispatchSource.makeTimerSource(queue: .global(qos: .utility))
-        timer.schedule(deadline: .now() + 1, repeating: 0.25)
+        MainStackSampler.start(directory: hangsDirectory) // GenesisTools adaptation: in-process stacks (Hub/MainStackSampler.swift).
+        // GenesisTools adaptation: userInitiated, not utility. At utility QoS the stall capture's 20 ms
+        // sleeps were coalesced to ~120 ms, and a 1.5 s stall yielded 8 stacks.
+        let timer = DispatchSource.makeTimerSource(queue: .global(qos: .userInitiated))
+        // GenesisTools adaptation: an explicit leeway. The default one lets App Nap push a tick of a
+        // background hub by ~0.5 s, and a 843 ms stall was first seen 2 ms before it ended.
+        timer.schedule(deadline: .now() + 1, repeating: 0.25, leeway: .milliseconds(10))
         timer.setEventHandler { tick() }
         timer.resume()
         monitor = timer
@@ -118,6 +123,7 @@ enum HangWatch {
         if shouldAlert { reportWedge(stallSoFar: gap) }
     }
 
+
     private static func post(at now: CFAbsoluteTime) {
         lock.lock()
         pingPostedAt = now
@@ -133,6 +139,7 @@ enum HangWatch {
             lock.unlock()
             guard let postedAt else { return }
             let ms = (ran - postedAt) * 1000
+
             if ms > stallThreshold * 1000 {
                 PerfLog.mark(String(format: "main-stall recovered after %.0fms", ms))
             }

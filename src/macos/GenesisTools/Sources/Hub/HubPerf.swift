@@ -61,3 +61,38 @@ enum HubPerf {
         PerfLog.mark("hub.\(text)")
     }
 }
+
+/// Main-thread busy time after an event: the run loop's awake time (after-waiting to before-waiting)
+/// summed over `window` seconds, then one line in app-perf.log. It includes anything else the main
+/// thread did in that window, so it is an upper bound; an idle window measures the floor.
+@MainActor
+enum HubMainBusy {
+    private final class Meter {
+        var busy: CFAbsoluteTime = 0
+        var wokeAt: CFAbsoluteTime?
+    }
+
+    static func measure(_ label: String, window: TimeInterval = 0.6) {
+        let meter = Meter()
+        meter.wokeAt = CFAbsoluteTimeGetCurrent()
+        let wake = CFRunLoopObserverCreateWithHandler(kCFAllocatorDefault, CFRunLoopActivity.afterWaiting.rawValue, true, Int.min) { _, _ in
+            meter.wokeAt = CFAbsoluteTimeGetCurrent()
+        }
+        let sleep = CFRunLoopObserverCreateWithHandler(kCFAllocatorDefault, CFRunLoopActivity.beforeWaiting.rawValue, true, Int.max) { _, _ in
+            if let woke = meter.wokeAt {
+                meter.busy += CFAbsoluteTimeGetCurrent() - woke
+                meter.wokeAt = nil
+            }
+        }
+        CFRunLoopAddObserver(CFRunLoopGetMain(), wake, .commonModes)
+        CFRunLoopAddObserver(CFRunLoopGetMain(), sleep, .commonModes)
+        DispatchQueue.main.asyncAfter(deadline: .now() + window) {
+            if let woke = meter.wokeAt {
+                meter.busy += CFAbsoluteTimeGetCurrent() - woke
+            }
+            CFRunLoopRemoveObserver(CFRunLoopGetMain(), wake, .commonModes)
+            CFRunLoopRemoveObserver(CFRunLoopGetMain(), sleep, .commonModes)
+            HubPerf.log(String(format: "%@ main busy %.1f ms of %.0f ms", label, meter.busy * 1000, window * 1000))
+        }
+    }
+}

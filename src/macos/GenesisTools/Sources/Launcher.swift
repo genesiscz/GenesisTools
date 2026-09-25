@@ -18,6 +18,7 @@ func responsibility_spawnattrs_setdisclaim(_ attrs: UnsafeMutablePointer<posix_s
 
 let stageMarker = "GENESIS_TOOLS_APP_STAGE"
 let bundleIdVariable = "GENESIS_TOOLS_APP_BUNDLE_ID"
+let inodeVariable = "GENESIS_TOOLS_APP_INODE"
 let fallbackBundleId = "com.genesiscz.genesistools"
 
 var childPid: pid_t = 0
@@ -146,6 +147,12 @@ func runLauncher(_ arguments: [String]) -> Never {
     } else {
         environment.removeValue(forKey: stageMarker)
         environment[bundleIdVariable] = bundleId
+        // Lets `tools` in this tree notice when a rebuild replaced the binary: macOS cannot resolve
+        // a responsible process whose binary is gone, so the tree must re-enter the new launcher.
+        var info = stat()
+        if let me = Bundle.main.executablePath, stat(me, &info) == 0 {
+            environment[inodeVariable] = String(info.st_ino)
+        }
         childPid = spawnChild(path: arguments[0], arguments: arguments, environment: environment, disclaim: false)
     }
 

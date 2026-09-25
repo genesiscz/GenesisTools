@@ -7,5 +7,8 @@ let package = Package(
     platforms: [.macOS(.v14)],
     targets: [
         .executableTarget(name: "GenesisTools", path: "Sources"),
+        // Pure logic only (settings, pane order, request parsing, proposals). Nothing here opens a
+        // window: UI is checked with `--snapshot` and `--bench` runs.
+        .testTarget(name: "GenesisToolsTests", dependencies: ["GenesisTools"], path: "Tests"),
     ]
 )

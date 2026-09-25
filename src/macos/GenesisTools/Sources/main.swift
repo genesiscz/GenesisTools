@@ -63,8 +63,8 @@ if arguments[0] == "--capsule" {
     runCapsule(Array(arguments.dropFirst()))
 }
 
-// GenesisTools --hub [--session <id>] [--tab transcript|changes|decisions] [--snapshot <png>]: every
-// agent session with its transcript, changes and decisions (see Hub/HubWindow.swift).
+// GenesisTools --hub [--session <id>] [--tab transcript|changes|files|decisions] [--snapshot <png>]:
+// every agent session with its transcript, changes, files and decisions (see Hub/HubWindow.swift).
 if arguments[0] == "--hub" {
     runHub(Array(arguments.dropFirst()))
 }

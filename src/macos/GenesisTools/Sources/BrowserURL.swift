@@ -149,7 +149,9 @@ func handleBrowserLink(_ raw: String) {
         case .success(.recorded(let message)):
             card?.append(message)
         case .success(.ran):
-            if let note = decision.notify, !note.isEmpty, note != copy.headline, !copy.detail.contains(note) {
+            if startsLocalServer(decision) {
+                card?.append("Opening")
+            } else if let note = decision.notify, !note.isEmpty, note != copy.headline, !copy.detail.contains(note) {
                 card?.append(note)
             }
         case .failure(let error):
@@ -226,8 +228,20 @@ private func decoded(_ value: String) -> String {
     value.removingPercentEncoding ?? value
 }
 
+/// A click on a registered local server that is not running: `tools browser-router ensure <port>`
+/// starts it, and the page opens only after the command succeeded (route.ts `registeredService`).
+private func startsLocalServer(_ decision: RouteDecision) -> Bool {
+    guard decision.kind == "run", let argv = decision.argv, argv.count == 4 else { return false }
+    return argv[0] == "tools" && argv[1] == "browser-router" && argv[2] == "ensure"
+}
+
 private func toastCopy(_ decision: RouteDecision) -> ToastCopy {
     let clicked = decoded(decision.original)
+    if startsLocalServer(decision) {
+        // notify is "Starting <name>": the card says Starting <name> while ensure waits, then Opening.
+        let name = decision.notify.map { $0.hasPrefix("Starting ") ? String($0.dropFirst("Starting ".count)) : $0 }
+        return ToastCopy(kicker: "Starting", headline: name ?? "Local server", detail: decoded(decision.open ?? decision.url))
+    }
     if decision.kind == "run" {
         return runCopy(argv: decision.argv ?? [], clicked: clicked)
     }
@@ -345,7 +359,7 @@ private func performBrowserDecision(_ decision: RouteDecision, toastEnabled: Boo
         return .ran
     }
     if decision.kind == "tool" {
-        // The shared contract (src/browser-router/lib/route.ts): a `tool` action "is recorded and not
+        // The shared contract (src/utils/browser-router/route.ts): a `tool` action "is recorded and not
         // executed", and the CLI's perform() refuses it. The app keeps the same boundary.
         let message = "Tool routes are recorded, not run: " + (["tools", decision.tool ?? ""] + (decision.args ?? [])).joined(separator: " ")
         if !toastEnabled {
