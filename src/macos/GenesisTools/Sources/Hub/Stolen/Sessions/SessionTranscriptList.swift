@@ -99,6 +99,9 @@ struct SessionTranscriptList: View {
     // GenesisTools adaptation: whether the reader is at the latest row (the last section's end marker is
     // on screen); a live transcript follows new rows only then, never pulling a reader who scrolled up.
     @State private var atLatest = true
+    // GenesisTools adaptation: holds the rows on screen still while earlier turns are prepended
+    // (Hub/HubTranscriptAnchor.swift).
+    @StateObject private var anchor = TranscriptScrollAnchor()
     @StateObject private var expansion = TranscriptExpansion()
     @FocusState private var searchFocused: Bool
 
@@ -497,6 +500,8 @@ struct SessionTranscriptList: View {
             }
             .listStyle(.plain)
             .scrollContentBackground(.hidden)
+            // GenesisTools adaptation: where the list is, for `anchor`.
+            .background(TranscriptScrollAnchorProbe(anchor: anchor))
             .environment(\.defaultMinListRowHeight, 1)            .accessibilityIdentifier("session-transcript-list")
             .onChange(of: scrollTarget) { _, request in
                 guard let request else { return }
@@ -594,7 +599,7 @@ struct SessionTranscriptList: View {
 
     private enum ScrollIntent {
         /// New data: keep the reader where they are. Earlier turns prepended above the first
-        /// row would otherwise push the view; scroll back to that row.
+        /// row would otherwise push the view; hold it (GenesisTools adaptation: `anchor`).
         case preserve
         /// A new filter or query: start at the first hit.
         case firstHit
@@ -639,7 +644,11 @@ struct SessionTranscriptList: View {
             guard didInitialScroll, let previousFirst, sections.first?.rows.first?.id != previousFirst,
                   sections.contains(where: { $0.rows.contains { $0.id == previousFirst } })
             else { return }
-            request(previousFirst, anchor: .top)
+            // GenesisTools adaptation: the scroll back to the previous first row came a pass after the
+            // insert and put that row at the top, not where the reader was; a transcript opened at its
+            // latest turn ended thousands of points above it after the fill. The anchor holds the
+            // viewport inside the insert's own layout pass instead.
+            anchor.holdForPrepend()
         }
     }
 
@@ -664,6 +673,8 @@ struct SessionTranscriptList: View {
     }
 
     private func request(_ id: String, anchor: UnitPoint) {
+        // GenesisTools adaptation: a jump the list asks for is not undone by a prepend's hold.
+        self.anchor.releaseHold()
         scrollTarget = ScrollRequest(id: id, anchor: anchor, serial: (scrollTarget?.serial ?? 0) + 1)
     }
 }

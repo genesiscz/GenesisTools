@@ -290,6 +290,7 @@ struct HubSessionDetailHost: View {
             turns = fetched.turns
             windowStart = fetched.windowStart
             await rebuild()
+            HubMainBusy.measure("transcript.page.render")
             loadState = .loaded
             if tail == nil, FileManager.default.fileExists(atPath: fetched.filePath) {
                 tail = HubTranscriptTail(path: fetched.filePath) {
@@ -378,6 +379,8 @@ struct HubSessionDetailHost: View {
             turns = page.turns.filter { !known.contains($0.id) } + turns
             windowStart = page.windowStart
             await rebuild()
+            // The list inserting the earlier rows above the viewport (Hub/HubTranscriptAnchor.swift).
+            HubMainBusy.measure("transcript.earlier.render")
             return true
         } catch {
             guard owner == session.id, generation == loadID else { return false }

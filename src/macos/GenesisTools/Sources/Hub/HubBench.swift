@@ -40,7 +40,8 @@ enum HubDefaults {
 /// - `fold`: PRs mode only, the largest PR group folded and unfolded, 0.7 s apart (`busy` is the
 ///   main thread's whole awake time in that window, the SwiftUI update and every layout after it);
 /// - `activity`: Activity mode (`--mode timeline`) only, the rail's kind and project filters clicked;
-/// - `inbox`, `inbox.back`: Activity mode only, the mode switch to the Inbox and back.
+/// - `inbox`, `inbox.back`: the mode switch to the Inbox and back (by default in Activity mode only);
+/// - `open` (opt-in): sessions opened one after another, with how far the transcript sits from its latest turn.
 ///
 /// `GENESIS_HUB_BENCH_AX=1` adds an accessibility client (`HubBenchAccessibilityClient`), which the
 /// live hub always has; the click scenarios measured 2 to 18 times higher with it (2026-09-25).
@@ -144,9 +145,11 @@ enum HubBench {
             if wants("split") { addSplitSweep() }
             if wants("fold"), model.mode == .prs { addFoldSweep() }
             if wants("activity"), model.mode == .timeline { addActivitySweep() }
-            if wants("inbox"), model.mode == .timeline { addInboxSwitch() }
+            // From another mode (a session's transcript open), opt-in: GENESIS_HUB_BENCH_ONLY=inbox.
+            if model.mode == .timeline ? wants("inbox") : model.mode != .inbox && only.contains("inbox") { addInboxSwitch() }
             // Opt-in only (not in the default run): it scrolls the transcript, which loads rows.
             if only.contains("scroll"), model.panes.contains(.transcript) { addTranscriptScroll() }
+            if only.contains("open"), model.mode == .sessions, model.panes.contains(.transcript) { addTranscriptOpen() }
             PerfLog.mark("hub.bench start: \(steps.count) steps, panes \(model.panes.map(\.rawValue).joined(separator: ","))")
             guard ProcessInfo.processInfo.environment["GENESIS_HUB_BENCH_AX"] == "1" else {
                 tick()
@@ -181,8 +184,8 @@ enum HubBench {
             }
         }
 
-        /// `inbox`: the mode switch from Activity to Inbox and back, 1.5 s apart; the first switch also
-        /// waits for the Inbox's own load, which lands inside that window.
+        /// `inbox`: the mode switch to the Inbox and back to the starting mode, 1.5 s apart; the first switch
+        /// also waits for the Inbox's own load, which lands inside that window.
         private func addInboxSwitch() {
             order += ["inbox", "inbox.back"]
             let model = model
@@ -305,6 +308,29 @@ enum HubBench {
             if let root { visit(root) }
             let top = counts.sorted { $0.value > $1.value }.prefix(12).map { "\($0.value) \($0.key)" }
             return ["total": total, "top": top]
+        }
+
+        /// `open` (opt-in, sessions mode): up to three other recent sessions opened one after another, 5 s
+        /// each. A transcript opens on its latest turns and fills the earlier ones in behind them. Every
+        /// 50 ms the probe `transcript.fromBottom.<n>` records how far the viewport's end sits from the
+        /// content's end (0: the latest turn in view); a reader at the latest turn should see it stay 0
+        /// through the fill, and every flip after the first settle is a jump on screen.
+        private func addTranscriptOpen() {
+            let sessions = Array(model.sessions.filter { $0.id != model.selectedID }.prefix(3))
+            order.append("open")
+            PerfLog.mark("hub.bench open: \(sessions.map { $0.sessionId.prefix(8) }.joined(separator: " "))")
+            for (n, session) in sessions.enumerated() {
+                steps.append(Step(scenario: "open", action: { [weak self] in self?.model.select(session.id) }, delay: 0.05))
+                for _ in 0..<100 {
+                    steps.append(Step(scenario: "open", action: { [weak self] in
+                        guard let self, let table = Self.largestTable(in: self.window.contentView), let clip = table.enclosingScrollView?.contentView else {
+                            return
+                        }
+                        HubBench.note("transcript.fromBottom.\(n)", Int((table.frame.height - clip.bounds.maxY).rounded()))
+                        HubBench.note("transcript.rows.\(n)", table.numberOfRows)
+                    }, delay: 0.05))
+                }
+            }
         }
 
         private static func largestTable(in view: NSView?) -> NSTableView? {
