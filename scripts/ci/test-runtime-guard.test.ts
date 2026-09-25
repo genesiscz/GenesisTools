@@ -168,7 +168,16 @@ describe("--top ranking", () => {
         expect(report.ranked.length).toBeGreaterThan(0);
         expect(top).toContain("src/foo.test.ts");
         expect(top).toMatch(/1\.5s/);
+        expect(top).toContain("Slowest 25 test files");
         expect(top).not.toMatch(/^\s*$/);
+    });
+
+    test("the heading names the limit it was given", () => {
+        const top = formatTopRanking(analyze(GROUPED).ranked, 1);
+
+        expect(top).toContain("Slowest 1 test files");
+        expect(top).toContain("src/foo.test.ts");
+        expect(top).not.toContain("src/bar.test.ts");
     });
 
     test("the CLI --top path prints that ranking for a ::group:: log", async () => {
