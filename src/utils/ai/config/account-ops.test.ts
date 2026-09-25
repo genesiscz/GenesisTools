@@ -15,6 +15,7 @@ import {
 import type { LoginOutcome } from "../providers/account-features";
 import type { BindContext, ProviderPlugin } from "../providers/plugin-types";
 import { _resetPluginsForTest, registerPlugin } from "../providers/registry";
+import { resolveProviderApiKey } from "../providers/resolve";
 import { AiConfigStore } from "./AiConfigStore";
 import {
     AccountChangedError,
@@ -181,6 +182,30 @@ describe("editAccount", () => {
         expect(isSecureRef(stored)).toBe(true);
         expect(await resolveSecret(stored)).toBe("sk-fixture-edit");
         expect(readRawConfig().accounts[0].useEnvApiKey).toEqual(["FAKE_API_KEY"]);
+    });
+
+    test("the linked key is what the provider ladder resolves, with no variable set", async () => {
+        env.testing.unset("FAKE_API_KEY");
+        await addAccount({ provider: "fake", name: "keyless", useEnvApiKey: ["FAKE_API_KEY"] });
+        await expect(resolveProviderApiKey("fake")).rejects.toThrow("account edit keyless --api-key-stdin");
+
+        await editAccount("keyless", { apiKey: "sk-fixture-edit" });
+        const resolved = await resolveProviderApiKey("fake");
+
+        expect(resolved.apiKey).toBe("sk-fixture-edit");
+        expect(resolved.source).toBe("vault");
+    });
+
+    test("an empty key is refused, and nothing else in that edit is applied", async () => {
+        await addAccount({ provider: "fake", name: "keyless" });
+
+        await expect(editAccount("keyless", { apiKey: "  ", label: "Relabelled" })).rejects.toThrow(
+            "The API key is empty; nothing was changed."
+        );
+
+        const stored = readRawConfig().accounts[0];
+        expect(stored.label).toBeUndefined();
+        expect(stored.credentials.apiKey).toBeUndefined();
     });
 
     test("an edit without a key leaves the stored key alone", async () => {

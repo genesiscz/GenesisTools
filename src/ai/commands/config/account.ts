@@ -379,8 +379,9 @@ export async function cmdAccountEdit(idOrName: string, flags: EditFlags): Promis
 
     const apiKey = flags.apiKeyStdin ? await readStdinValue() : undefined;
 
+    // Refused before editAccount, so the other flags of this call are not applied either.
     if (flags.apiKeyStdin && !apiKey) {
-        throw new Error("--api-key-stdin was passed but stdin was empty.");
+        throw new Error("--api-key-stdin was passed but stdin was empty; nothing was changed.");
     }
 
     const account = await editAccount(idOrName, {

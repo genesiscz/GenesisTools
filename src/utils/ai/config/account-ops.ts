@@ -489,6 +489,12 @@ function applyAccountFields(account: AccountEntry, fields: LoginOutcome["account
 }
 
 export async function editAccount(idOrName: string, patch: EditAccountPatch): Promise<AccountEntry> {
+    // Before the lock and before any other field: a half-applied edit that
+    // renamed the account but stored no key is worse than a refused one.
+    if (patch.apiKey !== undefined && patch.apiKey.trim().length === 0) {
+        throw new Error("The API key is empty; nothing was changed.");
+    }
+
     const store = await AiConfigStore.load();
 
     return store.withLock(async (config) => {
