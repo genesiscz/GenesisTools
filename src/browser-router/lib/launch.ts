@@ -1,18 +1,38 @@
+import {
+    type RouteDecision,
+    RouteError,
+    type RouterConfig,
+    route,
+    routeMintedUrl,
+} from "@genesiscz/utils/browser-router/route";
+import { takeToken, withTokenLock } from "@genesiscz/utils/browser-router/tokens";
 import { logger } from "@genesiscz/utils/logger";
 import { GENESIS_APP_BUNDLE_ID } from "@genesiscz/utils/macos/genesis-app";
-import { type RouteDecision, RouteError, type RouterConfig, route } from "./route";
-import { takeToken, withTokenLock } from "./tokens";
+import { confirmDialog, type OpenBundleDeps, openBundle } from "./tabs";
 
-/** What a click on a minted link does once its use is spent. */
-export type MintedLinkPlan = { kind: "perform"; decision: RouteDecision } | { kind: "app"; url: string };
+/** What a click on a minted link does. A bundle's use is not spent yet: see `spendBundleUse`. */
+export type MintedLinkPlan =
+    | { kind: "perform"; decision: RouteDecision }
+    | { kind: "app"; url: string }
+    | { kind: "bundle"; urls: string[] };
 
 /**
  * Spends one use of a minted link (`https://genesis.tools/t/<id>`) and decides what to do with its URL.
  * A decision that asks first goes back to GenesisTools.app, because only the app shows the approval
- * card; this process has no prompt of its own.
+ * card; this process has no prompt of its own. A bundle is only peeked: a click above the tab cap
+ * asks first, and a cancel must leave the use for another click.
  */
 export function redeemMintedLink(id: string, config: RouterConfig): Promise<MintedLinkPlan> {
     return withTokenLock(() => redeemLocked(id, config));
+}
+
+/** Spends the one use a bundle click costs, after its confirmation and before its first launch. */
+export async function spendBundleUse(id: string): Promise<void> {
+    await withTokenLock(() => {
+        if (!takeToken(id, true)) {
+            throw new RouteError("link used up");
+        }
+    });
 }
 
 function redeemLocked(id: string, config: RouterConfig): MintedLinkPlan {
@@ -22,8 +42,13 @@ function redeemLocked(id: string, config: RouterConfig): MintedLinkPlan {
         throw new RouteError("link used up");
     }
 
+    // A bundle spends one use for all of its links; each link is routed when it opens.
+    if (peeked.urls) {
+        return { kind: "bundle", urls: peeked.urls };
+    }
+
     // Routed before the use is spent, so a config error does not burn the link.
-    const decision = route(peeked.url, config, false, false, true);
+    const decision = routeMintedUrl(peeked.url, config);
 
     if (!takeToken(id, true)) {
         throw new RouteError("link used up");
@@ -57,12 +82,21 @@ export async function openUrl(url: string, config: RouterConfig): Promise<void> 
     await perform(decision);
 }
 
-export async function openMintedLink(id: string, config: RouterConfig): Promise<void> {
+export async function openMintedLink(
+    id: string,
+    config: RouterConfig,
+    deps: Pick<OpenBundleDeps, "open" | "confirm"> = { open: launchOpen, confirm: confirmDialog }
+): Promise<void> {
     const plan = await redeemMintedLink(id, config);
 
     if (plan.kind === "app") {
         logger.debug(`browser-router: minted link asks first, handing ${plan.url} to GenesisTools.app`);
-        await launchOpen(["-b", GENESIS_APP_BUNDLE_ID, plan.url]);
+        await deps.open(["-b", GENESIS_APP_BUNDLE_ID, plan.url]);
+        return;
+    }
+
+    if (plan.kind === "bundle") {
+        await openBundle(plan.urls, config, { ...deps, beforeOpen: () => spendBundleUse(id) });
         return;
     }
 

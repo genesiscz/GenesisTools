@@ -1,10 +1,8 @@
 import { existsSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
-import { SafeJSON } from "@genesiscz/utils/json";
-import { Storage, withFileLock } from "@genesiscz/utils/storage";
-import { atomicWriteFileSync } from "@genesiscz/utils/storage/storage";
-import { listPortRegistry } from "@genesiscz/utils/ui/dashboards";
-import { applyPresets } from "./presets";
+import { type CapabilityCheck, hasCapability } from "@genesiscz/utils/browser-router/capabilities";
+import { browserRouterStorage, configFile } from "@genesiscz/utils/browser-router/config";
+import { applyPresets, presetById } from "@genesiscz/utils/browser-router/presets";
 import {
     type BrowserTarget,
     bindTemplateNames,
@@ -17,15 +15,11 @@ import {
     type RouteRule,
     type RouterConfig,
     type ToastSettings,
-} from "./route";
-
-export function browserRouterStorage(): Storage {
-    return new Storage("browser-router");
-}
-
-export function configFile(): string {
-    return browserRouterStorage().getConfigPath();
-}
+} from "@genesiscz/utils/browser-router/route";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { withFileLock } from "@genesiscz/utils/storage";
+import { atomicWriteFileSync } from "@genesiscz/utils/storage/storage";
+import { listPortRegistry } from "@genesiscz/utils/ui/dashboards";
 
 export function stateFile(name: string): string {
     return `${browserRouterStorage().getBaseDir()}/${name}`;
@@ -109,6 +103,38 @@ export async function ensureConfig(): Promise<RouterConfig> {
     const created = defaultRouterConfig(preferredDefaultBrowser());
     await saveConfig(created);
     return created;
+}
+
+/**
+ * Writes a preset's routes into the saved config, tagged with its id, so `install` keeps them while
+ * the preset's capabilities hold. The way to switch on an opt-in preset such as `decide`.
+ */
+export function enablePreset(id: string, check: CapabilityCheck = hasCapability): Promise<RouterConfig> {
+    return withConfigLock(async () => {
+        const preset = presetById(id, check);
+
+        if (!preset) {
+            throw new Error(`no preset named ${id}. See: tools browser-router presets`);
+        }
+
+        if (!preset.available) {
+            throw new Error(`${id} needs ${preset.enabledIf.join(", ")} on this Mac`);
+        }
+
+        const config = await ensureConfig();
+        const patterns = new Set(preset.routes.map((rule) => rule.pattern));
+        // A route tagged with this preset belongs to it, so one whose pattern it dropped goes too
+        // (`status` reports it as drift and names this command as the fix).
+        const next = {
+            ...config,
+            routes: [
+                ...config.routes.filter((rule) => !patterns.has(rule.pattern) && rule.preset !== id),
+                ...preset.routes,
+            ],
+        };
+        await saveConfig(next);
+        return next;
+    });
 }
 
 export function upsertRoute(rule: RouteRule): Promise<RouterConfig> {

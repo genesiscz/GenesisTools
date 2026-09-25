@@ -388,8 +388,9 @@ private func apply(_ action: ParsedAction, match: NSTextCheckingResult, href: St
     case .run(let argv, let approval, let open, let notify, let touchId):
         var filled = fillArgs(argv, href: href, match: match, url: url)
         let launch = try launchQuery(url, argv: filled)
-        for arg in launch?.runArgs ?? [] { filled += ["--run-arg", arg] }
-        for arg in launch?.extra ?? [] { filled += ["--claude-arg", arg] }
+        // Joined with "=", as route.ts does: a lone "--verbose" is taken by the `tools` root, not by launch.
+        for arg in launch?.runArgs ?? [] { filled.append("--run-arg=\(arg)") }
+        for arg in launch?.extra ?? [] { filled.append("--claude-arg=\(arg)") }
         // A clicked link that carries an agent prompt always asks (route.ts `asks`). Only a minted link
         // redeemed by `tools browser-router token open` may skip the card, and that runs in TypeScript.
         let asks = launch?.hasPrompt == true || approval == "ask"

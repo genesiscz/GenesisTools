@@ -445,14 +445,77 @@ function placeholder(name: string, url: URL | undefined): string {
 }
 
 function redeemToken(id: string, raw: string, config: RouterConfig, consume: boolean): RouteDecision {
-    const token = takeToken(id, consume);
+    const peeked = takeToken(id, false);
+    // A bundle spends its use in `token open`, after its confirmation, never here: spending it here
+    // too cost a click two uses, and a one-use bundle never opened.
+    const token = peeked?.urls || !consume ? peeked : takeToken(id, true);
 
     if (!token) {
         throw new RouteError("link used up");
     }
 
-    const inner = route(token.url, config, false, false, true);
+    // A bundle is opened by `token open` (as GenesisTools.app does for every token): one use, many tabs.
+    if (token.urls) {
+        return {
+            kind: "run",
+            original: raw,
+            url: raw,
+            argv: ["tools", "browser-router", "token", "open", id],
+            approval: "allow",
+            needsApproval: false,
+            touchId: false,
+            open: null,
+            notify: `Open ${token.urls.length} tabs`,
+            browserArguments: [],
+            via: "route",
+            routeIndex: null,
+        };
+    }
+
+    const inner = routeMintedUrl(token.url, config);
     return { ...inner, original: raw };
+}
+
+/**
+ * The URL a minted link carries, routed as a trusted click. `links --convert --uses` mints the raw
+ * `genesis-md://` link, so a target no route claims gets the /link/ rule: genesis-md opens in its app,
+ * any other non-http(s) scheme is refused, and only http(s) goes to the browser.
+ */
+export function routeMintedUrl(url: string, config: RouterConfig): RouteDecision {
+    const inner = route(url, config, false, false, true);
+
+    if (inner.via !== "default") {
+        return inner;
+    }
+
+    return localScheme(parseHttpUrl(url, "minted link"), url, null, "minted link") ?? inner;
+}
+
+/**
+ * Null for http(s). A genesis-md URL opens in its app; any other scheme (file:, an editor scheme,
+ * x-apple.systempreferences:) would reach its handler unasked, so it throws.
+ */
+function localScheme(parsed: URL, raw: string, routeIndex: number | null, label: string): OpenDecision | null {
+    if (parsed.protocol === "http:" || parsed.protocol === "https:") {
+        return null;
+    }
+
+    const browser = schemeHandler(parsed.protocol);
+
+    if (!browser) {
+        const verb = label === "wrapped link" ? "unwrapped" : "opened";
+        throw new RouteError(`${label} uses ${parsed.protocol}, and only http(s) and genesis-md links are ${verb}`);
+    }
+
+    return {
+        kind: "open",
+        original: raw,
+        url: parsed.href,
+        browser,
+        openArguments: openArguments(browser, parsed.href),
+        via: "route",
+        routeIndex,
+    };
 }
 
 function unwrap(match: RegExpExecArray, raw: string, config: RouterConfig, routeIndex: number): RouteDecision {
@@ -470,31 +533,13 @@ function unwrap(match: RegExpExecArray, raw: string, config: RouterConfig, route
         return { ...inner, original: raw };
     }
 
-    const parsed = parseHttpUrl(decoded, "wrapped link");
-
-    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-        const browser = schemeHandler(parsed.protocol);
-
-        // A /link/ URL arrives from any app with no prompt, so it may only open http(s) and genesis-md.
-        // Anything else (file:, x-apple.systempreferences:, an editor scheme) would reach its handler unasked.
-        if (!browser) {
-            throw new RouteError(
-                `wrapped link uses ${parsed.protocol}, and only http(s) and genesis-md links are unwrapped`
-            );
-        }
-
-        return {
-            kind: "open",
+    // A /link/ URL arrives from any app with no prompt, so it may only open http(s) and genesis-md.
+    return (
+        localScheme(parseHttpUrl(decoded, "wrapped link"), raw, routeIndex, "wrapped link") ?? {
+            ...inner,
             original: raw,
-            url: parsed.href,
-            browser,
-            openArguments: openArguments(browser, parsed.href),
-            via: "route",
-            routeIndex,
-        };
-    }
-
-    return { ...inner, original: raw };
+        }
+    );
 }
 
 const PROMPT_CAP = 8_192;
@@ -550,12 +595,14 @@ function applyAction(
         const argv = fillArgs(action.argv, match, url);
         const launch = launchFields(url, argv);
 
+        // Joined with `=`: a value such as `--verbose` in its own word is taken by the `tools` root, which
+        // owns `-v, --verbose`, and `launch` then fails with "--claude-arg argument missing".
         for (const arg of launch?.runArgs ?? []) {
-            argv.push("--run-arg", arg);
+            argv.push(`--run-arg=${arg}`);
         }
 
         for (const arg of launch?.extra ?? []) {
-            argv.push("--claude-arg", arg);
+            argv.push(`--claude-arg=${arg}`);
         }
 
         const open = action.open === undefined ? null : substitute(action.open, match, url);

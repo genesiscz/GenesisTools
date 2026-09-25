@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import * as p from "@clack/prompts";
+import { AIConfig } from "@genesiscz/utils/ai/AIConfig";
 import { isInteractive, suggestEnumFlag } from "@genesiscz/utils/cli";
 import { focusedPlace, launchTarget, openCommandAt } from "@genesiscz/utils/cmux/open-command";
 import { logger, out } from "@genesiscz/utils/logger";
@@ -9,7 +10,7 @@ import { buildCmuxCommand, type ClaudeLaunch } from "../lib/launchers/claudeLaun
 
 interface LaunchFlags {
     agent?: string | true;
-    account: string;
+    account?: string;
     prompt?: string;
     promptFile?: string;
     name?: string;
@@ -37,7 +38,7 @@ export function registerLaunchCommand(program: Command): void {
         .command("launch")
         .description("Print the quoted command that opens Claude in a new cmux surface, or run it there with --open")
         .argument("[claudeArgs...]", "Extra claude arguments, after --. Same destination as --claude-arg.")
-        .requiredOption("--account <name>")
+        .option("--account <name>", "Saved Claude account. Empty or omitted: the default Claude account.")
         .option("--prompt <text>")
         .option("--prompt-file <path>", "Read the prompt from a file. Not subject to the 8 KB URL cap.")
         .option("--name <name>")
@@ -61,6 +62,7 @@ export function registerLaunchCommand(program: Command): void {
         .action(async (claudeArgs: string[], options: LaunchFlags) => {
             try {
                 // Only claude has a launcher so far (src/cmux/lib/launchers/claudeLauncher.ts).
+                assertLauncherExists(options.agent);
                 const agent = await pickEnum({
                     flag: "--agent",
                     raw: options.agent,
@@ -86,7 +88,7 @@ export function registerLaunchCommand(program: Command): void {
                 }
 
                 const launch: ClaudeLaunch = {
-                    account: options.account,
+                    account: blank(options.account) ?? (await defaultClaudeAccount()),
                     prompt,
                     name: blank(options.name),
                     resume: blank(options.resume),
@@ -140,6 +142,33 @@ export function registerLaunchCommand(program: Command): void {
 }
 const SURFACES = ["new", "split", "workspace"] as const;
 const AGENTS = ["claude"] as const;
+
+/** A named agent without a launcher module fails and names the file that would add it. */
+export function assertLauncherExists(agent: string | true | undefined): void {
+    const name = typeof agent === "string" ? agent.trim() : "";
+
+    if (name === "" || AGENTS.some((known) => known === name) || !/^[a-z][a-z0-9-]*$/.test(name)) {
+        return;
+    }
+
+    throw new Error(`no launcher for ${name}: add src/cmux/lib/launchers/${name}Launcher.ts`);
+}
+
+/**
+ * The account a link that names none launches under: the default Claude account, the same one
+ * `tools claude` picks. A minted handoff link carries no account, so the click resolves it here.
+ */
+async function defaultClaudeAccount(): Promise<string> {
+    const config = await AIConfig.load();
+    const account = config.getDefaultAccount("claude");
+
+    if (!account) {
+        throw new Error("no default Claude account; pass --account <name>");
+    }
+
+    logger.debug({ account: account.name }, "cmux launch: using the default Claude account");
+    return account.name;
+}
 
 /**
  * A closed-set flag. Omitted or empty is the default: a link whose `{surface}` placeholder was not

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { convertMarkdown, wrapLink } from "./links";
-import { defaultRouterConfig, route } from "./route";
+import { defaultRouterConfig, route } from "@genesiscz/utils/browser-router/route";
+import { collectLinks, convertMarkdown, wrapLink } from "./links";
 
 describe("convertMarkdown", () => {
     test("leaves ordinary web links and rewrites local ones", () => {
@@ -41,5 +41,24 @@ describe("convertMarkdown", () => {
     test("does not wrap a link that is already a router link", () => {
         const href = "https://127.0.0.1:6666/open?path=%2Ftmp%2Fa.md";
         expect(convertMarkdown(`[open](${href})`)).toBe(`[open](${href})`);
+    });
+});
+
+describe("collectLinks", () => {
+    test("markdown links, autolinks and bare URLs, in order, once each, never from a code fence", () => {
+        const note = [
+            "Standup: [PR 1](https://git.example/pr/1) and <https://git.example/pr/2>.",
+            "Board https://board.example/sprint?view=me. Again [PR 1](https://git.example/pr/1)",
+            "```",
+            "https://inside.example/fence",
+            "```",
+            "[mail](mailto:alice@example.com) [local](genesis-md://open)",
+        ].join("\n");
+
+        expect(collectLinks(note)).toEqual([
+            "https://git.example/pr/1",
+            "https://git.example/pr/2",
+            "https://board.example/sprint?view=me",
+        ]);
     });
 });

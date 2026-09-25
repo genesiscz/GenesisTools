@@ -1,9 +1,49 @@
-import { type RouterConfig, route, UNWRAP_PATTERN } from "./route";
-import { mintToken } from "./tokens";
+import { tokenLink } from "@genesiscz/utils/browser-router/links";
+import { type RouterConfig, route, UNWRAP_PATTERN } from "@genesiscz/utils/browser-router/route";
+import { mintToken } from "@genesiscz/utils/browser-router/tokens";
 
 const FENCE = /^(```|~~~)/;
 const MARKDOWN_LINK = /\[([^\]]*)\]\(([^)\s]+)\)/g;
 const AUTOLINK = /<([a-z][a-z0-9+.-]*:[^>]+)>/gi;
+const BARE_HTTP = /https?:\/\/[^\s<>()[\]"'`]+/g;
+
+/**
+ * Every http(s) link in a note, in order and without repeats: markdown links, `<autolinks>`, and
+ * bare URLs. Fenced code blocks are skipped, as `convertMarkdown` skips them.
+ */
+export function collectLinks(markdown: string): string[] {
+    const found: string[] = [];
+    let fenced = false;
+
+    for (const line of markdown.split("\n")) {
+        if (FENCE.test(line.trim())) {
+            fenced = !fenced;
+            continue;
+        }
+
+        if (fenced) {
+            continue;
+        }
+
+        const rest = line
+            .replace(MARKDOWN_LINK, (_whole, _text: string, href: string) => {
+                found.push(href);
+                return " ";
+            })
+            .replace(AUTOLINK, (_whole, href: string) => {
+                found.push(href);
+                return " ";
+            });
+
+        for (const bare of rest.match(BARE_HTTP) ?? []) {
+            // A sentence that ends with the link keeps its period out of the URL.
+            found.push(bare.replace(/[.,;:!?]+$/, ""));
+        }
+    }
+
+    const http = found.filter((href) => /^https?:\/\//i.test(href));
+    return [...new Set(http)];
+}
 
 /** localhost, loopback, and custom schemes. Ordinary https websites stay as they are. */
 export function isLocalLink(href: string): boolean {
@@ -43,10 +83,6 @@ export function isRouterLink(href: string): boolean {
 
 export function wrapLink(href: string): string {
     return `https://genesis.tools/link/${encodeURIComponent(href)}`;
-}
-
-export function tokenLink(id: string): string {
-    return `https://genesis.tools/t/${id}`;
 }
 
 export function convertMarkdown(markdown: string, uses?: number, config?: RouterConfig): string {

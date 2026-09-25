@@ -1,25 +1,38 @@
 #!/usr/bin/env bun
 
+import { configFile } from "@genesiscz/utils/browser-router/config";
+import { tokenLink } from "@genesiscz/utils/browser-router/links";
+import { presets } from "@genesiscz/utils/browser-router/presets";
+import { RouteError, route } from "@genesiscz/utils/browser-router/route";
+import { routerStatus } from "@genesiscz/utils/browser-router/status";
+import { mintBundleToken, withTokenLock } from "@genesiscz/utils/browser-router/tokens";
 import { runTool } from "@genesiscz/utils/cli";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
 import { Command } from "commander";
 import {
-    configFile,
     deleteRoute,
+    enablePreset,
     ensureBuiltinRoutes,
     loadConfig,
     type RouteFlags,
     routeFromFlags,
     upsertRoute,
 } from "./lib/config";
-import { ensureRegisteredPort } from "./lib/ensure";
-import { installRouterApp, restorePreviousBrowser, routerStatus } from "./lib/install";
+import { ensureRegisteredPort, parsePort } from "./lib/ensure";
+import { defaultBrowserStatus, installRouterApp, restorePreviousBrowser } from "./lib/install";
 import { launchOpen, openMintedLink, openUrl } from "./lib/launch";
-import { convertMarkdown } from "./lib/links";
-import { RouteError, route } from "./lib/route";
-import { bundleUrls, saveBundle } from "./lib/tabs";
-import { withTokenLock } from "./lib/tokens";
+import { collectLinks, convertMarkdown } from "./lib/links";
+import {
+    bundleLink,
+    bundleNames,
+    bundleUrls,
+    checkBundleUrls,
+    confirmDialog,
+    openBundle,
+    saveBundle,
+    TAB_CAP,
+} from "./lib/tabs";
 
 const program = new Command();
 
@@ -35,7 +48,7 @@ program
             const installed = await installRouterApp();
             out.println(`Installed ${installed.app}`);
             out.println(`Signed with ${installed.signedWith === "-" ? "an ad-hoc signature" : installed.signedWith}`);
-            out.println(routerStatus());
+            out.println(defaultBrowserStatus());
         } catch (error) {
             fail(error);
         }
@@ -55,55 +68,144 @@ program
 program
     .command("status")
     .description("Show the config path and which app currently handles https")
-    .action(async () => {
+    .option("--json", "Print installed, defaultHandler and the enabled presets as JSON (fast; skills call this)")
+    .action(async (options: { json?: boolean }) => {
+        if (options.json) {
+            out.result(routerStatus());
+            return;
+        }
+
         await printStatus();
     });
 
-program
-    .command("tabs")
-    .description("Save or open a named set of links in one browser window")
-    .argument("<action>", "save or open")
-    .argument("<name>")
+const tabs = program.command("tabs").description("Many links, one click: named bundles and minted bundle links");
+
+tabs.command("save")
+    .description("Save a named bundle and print its link, https://genesis.tools/tabs/<name>")
+    .argument("<name>", "A letter or digit, then letters, numbers, _ or -")
     .argument("[urls...]")
-    .action(async (action: string, name: string, urls: string[]) => {
+    .option("--from-md <file>", "Also take every http(s) link in this markdown file (- for stdin)")
+    .action(async (name: string, urls: string[], options: { fromMd?: string }) => {
         try {
-            if (action === "save") {
-                await saveBundle(name, urls);
-                out.println(`https://genesis.tools/tabs/${name}`);
-                return;
-            }
-            if (action !== "open") {
-                throw new Error("use save or open");
-            }
-            for (const url of bundleUrls(name)) {
-                await launchOpen([url]);
+            const all = await bundleInput(urls, options.fromMd);
+            await saveBundle(name, all);
+            out.println(bundleLink(name));
+            logger.debug({ name, links: all.length }, "browser-router: saved a tab bundle");
+        } catch (error) {
+            fail(error);
+        }
+    });
+
+tabs.command("mint")
+    .description("Print one minted link that opens every URL. It works --uses times (default 1).")
+    .argument("[urls...]")
+    .option("--from-md <file>", "Also take every http(s) link in this markdown file (- for stdin)")
+    .option("--uses <count>", "How many clicks the link survives", "1")
+    .action(async (urls: string[], options: { fromMd?: string; uses: string }) => {
+        try {
+            const all = await bundleInput(urls, options.fromMd);
+            const id = await withTokenLock(() => mintBundleToken(all, Number(options.uses)));
+            out.println(tokenLink(id));
+            logger.debug({ links: all.length, uses: options.uses }, "browser-router: minted a tab bundle");
+        } catch (error) {
+            fail(error);
+        }
+    });
+
+tabs.command("open")
+    .description(`Open a saved bundle. GenesisTools.app runs this on a click. Above ${TAB_CAP} links it asks first.`)
+    .argument("<name>")
+    .action(async (name: string) => {
+        try {
+            const plan = await openBundle(bundleUrls(name), await requiredConfig(), {
+                open: launchOpen,
+                confirm: confirmDialog,
+            });
+            const opened = plan.windows.reduce((sum, window) => sum + window.urls.length, 0) + plan.routed.length;
+            out.println(`Opened ${opened} of ${opened + plan.skipped.length} links`);
+
+            for (const skipped of plan.skipped) {
+                out.println(`skipped ${skipped.url}: ${skipped.reason}`);
             }
         } catch (error) {
             fail(error);
         }
     });
 
+tabs.command("list")
+    .description("List the saved bundles")
+    .action(() => {
+        try {
+            const names = bundleNames();
+
+            if (names.length === 0) {
+                out.printlnErr("No saved bundles. Save one: tools browser-router tabs save <name> <urls...>");
+                return;
+            }
+
+            for (const name of names) {
+                out.println(`${name}  ${bundleUrls(name).length} links  ${bundleLink(name)}`);
+            }
+        } catch (error) {
+            fail(error);
+        }
+    });
+
+async function bundleInput(urls: string[], fromMd: string | undefined): Promise<string[]> {
+    if (!fromMd) {
+        return checkBundleUrls(urls);
+    }
+
+    const text = fromMd === "-" ? await Bun.stdin.text() : await Bun.file(fromMd).text();
+    return checkBundleUrls([...new Set([...urls, ...collectLinks(text)])]);
+}
+
 program
     .command("ensure")
     .description("Start the registered server on a port if it is not already listening")
     .argument("<port>")
     .action(async (portText: string) => {
-        const result = await ensureRegisteredPort(Number(portText));
+        const port = parsePort(portText);
+
+        if (port === null) {
+            out.error(`port must be a whole number from 1 to 65535, got ${portText}`);
+            process.exitCode = 1;
+            return;
+        }
+
+        const result = await ensureRegisteredPort(port);
+
         if (!result.ok) {
             out.error(result.message);
             process.exitCode = result.code;
             return;
         }
+
         out.println(result.started ? `started ${result.name}` : `${result.name} is up`);
     });
 
-program
+const presetsCommand = program
     .command("presets")
     .description("Show built-in routes. A preset is hidden when its app is not installed.")
-    .action(async () => {
-        const { presets } = await import("./lib/presets");
+    .action(() => {
         for (const preset of presets()) {
-            out.println(`${preset.installed ? "on " : "off"}  ${preset.id}  ${preset.title}`);
+            const state = preset.installed ? "on " : preset.optIn && preset.available ? "opt" : "off";
+            out.println(`${state}  ${preset.id}  ${preset.title}`);
+        }
+
+        out.println("opt = opt-in; switch it on with: tools browser-router presets enable <id>");
+    });
+
+presetsCommand
+    .command("enable")
+    .description("Write a preset's routes into the config (the way to switch on an opt-in preset such as decide)")
+    .argument("<id>")
+    .action(async (id: string) => {
+        try {
+            const saved = await enablePreset(id);
+            out.println(`Enabled ${id}: ${saved.routes.filter((rule) => rule.preset === id).length} route(s)`);
+        } catch (error) {
+            fail(error);
         }
     });
 
@@ -265,14 +367,24 @@ async function requiredConfig() {
 
 async function printStatus(): Promise<void> {
     out.println(`config=${configFile()}`);
-    out.println(routerStatus());
+    out.println(defaultBrowserStatus());
     const config = await loadConfig();
     out.println(`routes=${config?.routes.length ?? 0}`);
+
+    for (const preset of routerStatus({ config }).presets) {
+        if (preset.drift.length === 0) {
+            continue;
+        }
+
+        out.println(`drift ${preset.id}: ${preset.drift.join("; ")}`);
+        out.println(preset.fix ? `  fix: ${preset.fix}` : `  needs: ${preset.missing?.join(", ")}`);
+    }
 }
 
 function fail(error: unknown): never {
     const message = error instanceof Error ? error.message : String(error);
-    logger.error(message);
+    // The message is printed once below; the log file keeps the stack.
+    logger.debug({ error }, "browser-router: refused");
     out.error(message);
     process.exit(1);
 }

@@ -3,8 +3,10 @@ import { spawnSync } from "node:child_process";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { presetById } from "@genesiscz/utils/browser-router/presets";
+import { defaultRouterConfig, parseConfig, type RouteDecision, route } from "@genesiscz/utils/browser-router/route";
+import { CLEAN_CASES } from "@genesiscz/utils/browser-router/testing/clean-cases";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { defaultRouterConfig, parseConfig, type RouteDecision, route } from "./route";
 
 // The router ships in a macOS app. swiftc on Linux is not its toolchain, and its compile outlives the
 // default 5 s test timeout on a CI runner.
@@ -42,6 +44,11 @@ describe.skipIf(!canCompile)("swift router parity", () => {
             `https://nam.safelinks.protection.outlook.com/x?url=${encodeURIComponent(
                 `https://www.google.com/url?q=${encodeURIComponent("https://shop.example/item?id=1")}`
             )}`,
+            // An unregistered local port keeps today's routing; only a registered one is started.
+            "http://127.0.0.1:4555/x",
+            "http://localhost:3999/",
+            // One sample per link-cleaner rule.
+            ...CLEAN_CASES.map((row) => row.input),
         ];
 
         for (const sample of samples) {
@@ -175,6 +182,38 @@ describe.skipIf(!canCompile)("swift router parity", () => {
         expect(route("https://genesis.tools/cmux/claude/run?prompt=hello", parseConfig(launchConfig))).toMatchObject({
             needsApproval: true,
         });
+
+        // The decide preset: a session id, a number and one letter run the fixed command; anything
+        // else (extra segments, text in the option) does not match in either router.
+        const decideConfig = { ...defaultRouterConfig(), routes: presetById("decide", () => true)?.routes ?? [] };
+        const decidePath = join(home, "decide.json");
+        writeFileSync(decidePath, `${SafeJSON.stringify(decideConfig, null, 2)}\n`);
+        const session = "3f2a9c1e-0000-4000-8000-00000000abcd";
+
+        for (const sample of [
+            `https://genesis.tools/decide/${session}/4/b`,
+            `https://genesis.tools/decide/${session}/4/b/extra`,
+            `https://genesis.tools/decide/${session}/4/bb`,
+            `https://genesis.tools/decide/${session}/4/b%20now`,
+        ]) {
+            const expected = route(sample, parseConfig(decideConfig));
+            const ran = spawnSync(binary, [decidePath, sample], { encoding: "utf8", env: process.env });
+            expect(ran.status, ran.stderr).toBe(0);
+            const actual = SafeJSON.parse(ran.stdout, { strict: true }) as RouteDecision;
+            expect({
+                sample,
+                kind: actual.kind,
+                argv: actual.kind === "run" ? actual.argv : null,
+                notify: actual.kind === "run" ? actual.notify : null,
+            }).toEqual({
+                sample,
+                kind: expected.kind,
+                argv: expected.kind === "run" ? expected.argv : null,
+                notify: expected.kind === "run" ? expected.notify : null,
+            });
+        }
+
+        expect(route(`https://genesis.tools/decide/${session}/4/b`, parseConfig(decideConfig)).kind).toBe("run");
 
         // A template with an emoji before its placeholders: regex offsets are UTF-16 units, and the
         // Swift substitution once applied them as Character counts.

@@ -7,27 +7,64 @@ import { Storage, withFileLock } from "@genesiscz/utils/storage";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/storage";
 
 export interface TokenRecord {
+    /** The URL a click routes. In a bundle it is the first of `urls`, so an older reader still gets a link. */
     url: string;
     usesLeft: number;
+    /** A bundle: one click opens every URL and spends one use. Absent on a single-link token. */
+    urls?: string[];
 }
 
 /** A token is a bearer capability (a minted run may skip its prompt), so only the owner may read the file. */
 const TOKEN_FILE_MODE = 0o600;
+const TOKEN_ID = /^[A-Za-z0-9_-]{8,64}$/;
 
 export function tokenFile(): string {
     return `${new Storage("browser-router").getBaseDir()}/tokens.json`;
 }
 
-export function mintToken(url: string, uses: number): string {
+/** A fresh id for `https://genesis.tools/t/<id>`: 72 random bits. */
+export function newTokenId(): string {
+    return randomBytes(9).toString("base64url");
+}
+
+/** `id` lets a caller print the link before the record is written (`planMintedLink`). */
+export function mintToken(url: string, uses: number, id: string = newTokenId()): string {
+    return writeToken(id, { url, usesLeft: checkedUses(uses) });
+}
+
+/** One link that opens every URL in `urls` on one click. */
+export function mintBundleToken(urls: string[], uses: number, id: string = newTokenId()): string {
+    const [first] = urls;
+
+    if (!first) {
+        throw new Error("a bundle needs at least one link");
+    }
+
+    return writeToken(id, { url: first, usesLeft: checkedUses(uses), urls: [...urls] });
+}
+
+function checkedUses(uses: number): number {
     if (!Number.isInteger(uses) || uses < 1) {
         throw new Error("--uses must be a positive integer");
     }
 
+    return uses;
+}
+
+function writeToken(id: string, record: TokenRecord): string {
+    if (!TOKEN_ID.test(id)) {
+        throw new Error(`token id ${id} is not 8 to 64 letters, digits, _ or -`);
+    }
+
     assertLocked("mintToken");
 
-    const id = randomBytes(9).toString("base64url");
     const all = readTokens();
-    all[id] = { url, usesLeft: uses };
+
+    if (all[id]) {
+        throw new Error(`token ${id} already exists`);
+    }
+
+    all[id] = record;
     writeTokens(all);
     return id;
 }

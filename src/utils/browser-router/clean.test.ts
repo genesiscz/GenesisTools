@@ -1,15 +1,20 @@
 import { describe, expect, test } from "bun:test";
 import { cleanUrl } from "./clean";
+import { defaultRouterConfig, route } from "./route";
+import { CLEAN_CASES } from "./testing/clean-cases";
 
 describe("cleanUrl", () => {
-    test("unwraps an outlook safelink and strips tracking", () => {
-        const inner = "https://shop.example/item?id=1&utm_source=mail&fbclid=abc";
-        const wrapped = `https://nam.safelinks.protection.outlook.com/x?url=${encodeURIComponent(inner)}`;
-        expect(cleanUrl(wrapped)).toBe("https://shop.example/item?id=1");
-    });
+    for (const row of CLEAN_CASES) {
+        test(row.name, () => {
+            expect(cleanUrl(row.input)).toBe(row.output);
+        });
+    }
 
-    test("strips utm parameters and leaves the rest", () => {
-        expect(cleanUrl("https://example.com/a?utm_source=x&id=2")).toBe("https://example.com/a?id=2");
+    test("the router forwards the cleaned link, and `clean: false` forwards it as clicked", () => {
+        const dirty = "https://shop.example/a?utm_source=mail&id=2";
+
+        expect(route(dirty, defaultRouterConfig()).url).toBe("https://shop.example/a?id=2");
+        expect(route(dirty, { ...defaultRouterConfig(), clean: false }).url).toBe(dirty);
     });
 });
 

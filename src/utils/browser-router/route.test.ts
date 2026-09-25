@@ -53,7 +53,39 @@ describe("route", () => {
             argv: ["tools", "browser-router", "ensure", "3999"],
             notify: "Starting Example",
             open: "http://127.0.0.1:3999/x",
+            approval: "allow",
+            needsApproval: false,
         });
+        expect(route("http://localhost:3999/", custom).kind).toBe("run");
+    });
+
+    test("an unregistered port and the router's own 6666 keep today's routing", () => {
+        const custom = {
+            ...config,
+            services: [
+                { port: 3999, name: "Example" },
+                { port: 6666, name: "Router" },
+            ],
+        };
+
+        expect(route("http://127.0.0.1:4555/x", custom)).toMatchObject({ kind: "forward", via: "default" });
+        expect(route("http://127.0.0.1:6666/panel/chat", custom)).toMatchObject({
+            kind: "open",
+            url: "genesis-md://panel/chat",
+        });
+        // A saved route still wins over the registry: routes and aliases come first.
+        const routed = {
+            ...custom,
+            routes: [
+                {
+                    pattern: "https?://127\\.0\\.0\\.1:3999/special",
+                    action: { type: "open" as const, to: "genesis-md://x" },
+                },
+                ...custom.routes,
+            ],
+        };
+        expect(route("http://127.0.0.1:3999/special", routed).kind).toBe("open");
+        expect(route("https://example.com:3999/x", custom).kind).toBe("forward");
     });
 
     test("a raw cmux launch asks and names the prompt; a minted one does not", () => {
@@ -95,7 +127,7 @@ describe("route", () => {
             extra: ["--permission-mode", "plan"],
             runArgs: [],
         });
-        expect(raw.argv).toContain("--claude-arg");
+        expect(raw.argv.slice(-2)).toEqual(["--claude-arg=--permission-mode", "--claude-arg=plan"]);
 
         const minted = route(url, custom, true, false, true);
 
