@@ -14,6 +14,8 @@ private struct FakeNode {
     var settable: Bool? = nil
     var frame = CGRect(x: 0, y: 0, width: 100, height: 100)
     var childrenError: AXError? = nil
+    /// The element went away during the walk (`VanishedElement`).
+    var vanished = false
 }
 
 private final class FakeSource: HierarchySource {
@@ -55,6 +57,9 @@ private final class FakeSource: HierarchySource {
     func children(of element: AXUIElement) throws -> [AXUIElement] {
         guard let node = nodes[pid(element)] else {
             return []
+        }
+        if node.vanished {
+            throw VanishedElement()
         }
         if let error = node.childrenError {
             throw ObservedTreeError("AX tree read failed (\(error.rawValue)); refresh instead of assuming an empty subtree")
@@ -113,6 +118,15 @@ final class ObservedTreeBuilderTests: XCTestCase {
         XCTAssertEqual(tree.rows[3]["valueSettable"] as? Bool, false, "an element with a value reports settability")
         XCTAssertEqual(tree.frames.count, 4)
         XCTAssertEqual(tree.digest.count, 64)
+    }
+
+    func testAVanishedElementLeavesNoRowAndNoSubtree() throws {
+        let fake = source()
+        fake.nodes[3]?.vanished = true
+        let tree = try buildObservedTree(root: fake.element(1), source: fake, depth: 5, scope: "window")
+        XCTAssertEqual(tree.rows.map { $0["role"] as? String }, ["AXWindow", "AXButton"], "the group and its text are gone")
+        XCTAssertEqual(tree.elements.count, 2)
+        XCTAssertEqual(tree.vanished, 1)
     }
 
     func testSharedChildIsVisitedOnce() throws {

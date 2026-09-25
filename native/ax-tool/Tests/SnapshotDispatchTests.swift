@@ -409,6 +409,19 @@ extension SnapshotDispatchTests {
         XCTAssertEqual(inputs, 1)
         XCTAssertEqual(reads, 2)
     }
+    func testAVanishedElementIsReadAgainButAnOtherTreeErrorIsNot() throws {
+        var reads = 0
+        let recovered = try recoverSnapshotRead(now: { 1 }, isTransient: ObservedTreeError.isVanished) {
+            reads += 1
+            if reads == 1 { throw ObservedTreeError("AX tree read failed (-25202)", vanished: true) }
+            return "tree"
+        }
+        XCTAssertEqual(recovered.value, "tree")
+        XCTAssertEqual(reads, 2)
+        XCTAssertThrowsError(try recoverSnapshotRead(now: { 1 }, isTransient: ObservedTreeError.isVanished) { () -> String in
+            throw ObservedTreeError("AX tree exceeds 2000 elements")
+        })
+    }
     func testObservationRecoveryIsBoundedAndDoesNotRetryPermanentFailures() {
         for transient in [true, false] {
             var reads = 0

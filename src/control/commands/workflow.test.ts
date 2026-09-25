@@ -158,6 +158,13 @@ test("act takes a snapshot or an identifier, never both and never neither", () =
     expect(both.status).toBe(1);
     expect(both.stderr).toContain("cannot also take a --snapshot token");
     expect(both.stderr).not.toContain("app not found");
+
+    // A menu press has no key state, so --modifiers is refused before any menu action runs.
+    const menuToken = Buffer.from(SafeJSON.stringify({ surface: "menu" }, { strict: true })).toString("base64");
+    const modified = run(["--snapshot", menuToken, "--element", "1", "--modifiers", "alt"]);
+    expect(modified.status).toBe(1);
+    expect(modified.stderr).toContain("cannot take --modifiers");
+    expect(modified.stderr).not.toContain("app not found");
 });
 
 test("see and act help name the diff and refresh options", () => {

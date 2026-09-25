@@ -66,6 +66,7 @@ interface WorkflowOptions {
     targetKey?: string;
     revalidateScope?: string;
     button?: string | boolean;
+    modifiers?: string;
     to?: string;
     duration?: string;
     pages?: string;
@@ -415,6 +416,10 @@ export function registerWorkflowCommands(program: Command): void {
         )
         .option("--double", "click: double-click the observed element")
         .option(
+            "--modifiers <list>",
+            "click: modifiers held during the click, comma-separated cmd,ctrl,alt,shift (option-click, cmd-click). They ride on the click events, not the real keyboard."
+        )
+        .option(
             "--hold",
             "hover: leave the real pointer on the target instead of putting it back. A control revealed by hover exists only while the pointer is over it, so hold it when the next act must press one. Restore with `control restore`."
         )
@@ -516,6 +521,16 @@ export function registerWorkflowCommands(program: Command): void {
                     return;
                 }
 
+                // The menu dispatcher performs an AX action with no key state, so modifiers would be
+                // dropped without a word; refuse instead of running a plain press.
+                if (opts.modifiers !== undefined) {
+                    logger.error(
+                        "a menu snapshot cannot take --modifiers: a menu action carries no modifier keys. Click the menu item from a window snapshot to hold modifiers."
+                    );
+                    process.exitCode = 1;
+                    return;
+                }
+
                 const menuArgs = [
                     "menu-act",
                     "--app",
@@ -568,6 +583,7 @@ export function registerWorkflowCommands(program: Command): void {
                 ["text", opts.text],
                 ["keys", opts.keys],
                 ["button", opts.button],
+                ["modifiers", opts.modifiers],
                 ["to", opts.to],
                 ["duration", opts.duration],
                 ["dwell", opts.dwell],

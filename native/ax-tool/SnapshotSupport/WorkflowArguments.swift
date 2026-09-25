@@ -27,7 +27,7 @@ public struct WorkflowArguments {
                 "--app", "--snapshot", "--element", "--action", "--value", "--ax-action", "--direction", "--text",
                 "--keys", "--coords", "--button", "--to", "--duration", "--pages", "--pixels", "--range", "--prefix",
                 "--suffix", "--selection", "--format", "--path", "--region", "--target-key", "--dwell",
-                "--revalidate-scope", "--frame", "--by-identifier", "--window-index", "--depth",
+                "--revalidate-scope", "--frame", "--by-identifier", "--window-index", "--depth", "--modifiers",
             ]
             flagOptions = ["--background", "--double", "--refresh", "--no-cursor", "--no-image", "--prepare", "--replace", "--hold", "--no-activate"]
         default:
@@ -117,11 +117,14 @@ public struct WorkflowArguments {
             }
         }
 
-        try reject(["--button", "--double"], unless: ["click"])
+        try reject(["--button", "--double", "--modifiers"], unless: ["click"])
+        if let modifiers = values["--modifiers"] {
+            _ = try NativeKeyChord.modifiers(modifiers)
+        }
         try reject(["--prepare"], unless: ["press","click","key","type","paste","select","set"])
         // A target key is the row's identity, so it is useful to every action that names a row,
         // not only to the prepared ones. It is what lets a live-updating window stay actionable.
-        try reject(["--target-key"], unless: ["press","click","key","type","paste","select","set","perform","hover","move","scroll","get"])
+        try reject(["--target-key"], unless: ["press","click","key","type","paste","select","set","perform","focus","hover","move","scroll","get"])
         let revalidateScope = values["--revalidate-scope"] ?? "window"
         // `app` used to be accepted and behaved exactly like `window`: nothing ever implemented
         // an app-wide revalidation, so the flag promised a scope it did not check.

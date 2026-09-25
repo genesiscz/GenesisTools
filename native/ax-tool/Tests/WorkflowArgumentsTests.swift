@@ -65,6 +65,14 @@ final class WorkflowArgumentsTests: XCTestCase {
         ], command: "act"))
     }
 
+    func testAnUnpreparedFocusTakesTheRowPin() {
+        // `elementAction` in src/control/lib/computer-use/session.ts pins every unprepared row this way.
+        XCTAssertNoThrow(try WorkflowArguments([
+            "--app", "Fixture", "--snapshot", "token", "--element", "3", "--action", "focus",
+            "--target-key", String(repeating: "a", count: 64), "--revalidate-scope", "element",
+        ], command: "act"))
+    }
+
     func testRevalidateScopeOffersOnlyTheScopesThatAreImplemented() {
         // `app` was accepted and behaved exactly like `window`: no app-wide check existed.
         let base = ["--app", "Fixture", "--snapshot", "token", "--element", "0", "--action", "press"]
@@ -188,6 +196,15 @@ extension WorkflowArgumentsTests {
         XCTAssertThrowsError(try NativeKeyChord("cmd"))
         XCTAssertThrowsError(try NativeKeyChord("cmd,,a"))
         XCTAssertThrowsError(try NativeKeyChord("exec shell"))
+        XCTAssertEqual(try NativeKeyChord.modifiers("alt"), .maskAlternate)
+        XCTAssertEqual(try NativeKeyChord.modifiers("cmd+shift"), [.maskCommand, .maskShift])
+        XCTAssertThrowsError(try NativeKeyChord.modifiers("cmd,a"))
+        XCTAssertNoThrow(try WorkflowArguments(["--app", "Fixture", "--snapshot", "token", "--element", "0",
+                                                "--action", "click", "--modifiers", "alt"], command: "act"))
+        XCTAssertThrowsError(try WorkflowArguments(["--app", "Fixture", "--snapshot", "token", "--element", "0",
+                                                   "--action", "press", "--modifiers", "alt"], command: "act"))
+        XCTAssertThrowsError(try WorkflowArguments(["--app", "Fixture", "--snapshot", "token", "--element", "0",
+                                                   "--action", "click", "--modifiers", "alt,q"], command: "act"))
         XCTAssertThrowsError(try WorkflowArguments(["--app", "Fixture", "--snapshot", "token", "--element", "0",
                                                    "--action", "key", "--keys", "cmd,a,b"], command: "act"))
     }

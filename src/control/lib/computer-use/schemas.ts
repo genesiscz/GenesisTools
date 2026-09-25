@@ -137,6 +137,11 @@ export const computerSchemas = {
             ...point,
             mouse_button: z.enum(["left", "right", "middle", "l", "r", "m"]).default("left"),
             click_count: z.number().int().min(1).max(2).default(1),
+            /** Held during the click, on the events themselves: option-click, cmd-click. */
+            modifiers: z
+                .array(z.enum(["cmd", "ctrl", "alt", "shift"]))
+                .max(4)
+                .default([]),
             background: z.boolean().default(true),
             physical: z.boolean().default(false),
             prepare: z.boolean().default(false),
@@ -197,7 +202,14 @@ export const computerSchemas = {
                 .refine((text) => !/[\r\n]/.test(text), "Use paste for multiline text; typing return can submit."),
         })
         .strict(),
-    press_key: z.object({ ...preparedTarget, key: z.string().min(1).max(200) }).strict(),
+    press_key: z
+        .object({
+            ...preparedTarget,
+            key: z.string().min(1).max(200),
+            /** false: deliver to the app without bringing it to the front (`--no-activate`). */
+            activate: z.boolean().default(true),
+        })
+        .strict(),
     focus: z.object(target).strict(),
     get_elements: z
         .object({

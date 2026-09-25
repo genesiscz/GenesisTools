@@ -150,6 +150,17 @@ function safeRows(rows: Observation["elements"]): Observation["elements"] {
     );
 }
 
+/**
+ * An unprepared row, pinned by identity, so a window that re-renders between observe and act (a live
+ * transcript, a clock) is re-resolved instead of refused with "UI changed; run see again". The stable
+ * key goes first: targetKey folds in sibling text, so a clock beside the target changes it, while a
+ * shared stable key is already promoted to the unique targetKey natively (promoteSharedStableKeys).
+ */
+function rowPin(row: Observation["elements"][number]): string[] {
+    const pin = row.stableKey ?? row.targetKey;
+    return pin ? ["--target-key", pin, "--revalidate-scope", "element"] : [];
+}
+
 function webActivationKey(rows: Observation["elements"], target: Observation["elements"][number]) {
     if (!hasAncestorRole(rows, target, "AXWebArea")) {
         return undefined;
@@ -859,6 +870,7 @@ export class ComputerUse {
                         "--button",
                         button,
                         ...(options.click_count === 2 ? ["--double"] : []),
+                        ...(options.modifiers.length > 0 ? ["--modifiers", options.modifiers.join(",")] : []),
                         ...(options.background ? ["--background"] : []),
                     ];
                 }
@@ -890,6 +902,7 @@ export class ComputerUse {
                         "--button",
                         button,
                         ...(options.click_count === 2 ? ["--double"] : []),
+                        ...(options.modifiers.length > 0 ? ["--modifiers", options.modifiers.join(",")] : []),
                         ...(options.background ? ["--background"] : []),
                     ];
                 }
@@ -901,6 +914,7 @@ export class ComputerUse {
                     !options.physical &&
                     button === "left" &&
                     options.click_count === 1 &&
+                    options.modifiers.length === 0 &&
                     row.actions?.includes("AXPress")
                 ) {
                     const activationKey = options.prepare
@@ -912,9 +926,11 @@ export class ComputerUse {
                         "--element",
                         String(row.index),
                         ...(activationKey ? ["--keys", activationKey] : []),
+                        // Unprepared, AXPress is pinned like a background click: a default left click on
+                        // a row that exposes AXPress lands here and never reaches that branch.
                         ...(options.prepare
                             ? ["--prepare", ...(row.targetKey ? ["--target-key", row.targetKey] : [])]
-                            : []),
+                            : rowPin(row)),
                     ];
                 }
                 return [
@@ -925,10 +941,13 @@ export class ComputerUse {
                     "--button",
                     button,
                     ...(options.click_count === 2 ? ["--double"] : []),
+                    ...(options.modifiers.length > 0 ? ["--modifiers", options.modifiers.join(",")] : []),
                     ...(options.prepare
                         ? ["--prepare", ...(row.targetKey ? ["--target-key", row.targetKey] : [])]
                         : options.background
-                          ? ["--background"]
+                          ? // The post-feedback check resolves by stableKey anyway (SnapshotWorkflow
+                            // validateAfterFeedback), so the pin adds no new way to fail.
+                            ["--background", ...rowPin(row)]
                           : []),
                 ];
             },
@@ -1054,13 +1073,17 @@ export class ComputerUse {
             input,
             build: (record) => {
                 const row = this.select({ record, input, fallback });
+                // Unprepared, the row is pinned by identity too, as a background click is: the
+                // whole-window digest refused every set/select on a streaming transcript with "UI changed".
                 return [
                     "--action",
                     action,
                     "--element",
                     String(row.index),
                     ...flags,
-                    ...(input.prepare ? ["--prepare", ...(row.targetKey ? ["--target-key", row.targetKey] : [])] : []),
+                    ...(input.prepare
+                        ? ["--prepare", ...(row.targetKey ? ["--target-key", row.targetKey] : [])]
+                        : rowPin(row)),
                 ];
             },
             signal,
@@ -1170,7 +1193,7 @@ export class ComputerUse {
         return this.elementAction({
             input: options,
             action: "key",
-            flags: ["--keys", key],
+            flags: ["--keys", key, ...(options.activate ? [] : ["--no-activate"])],
             signal,
             fallback: "window",
         });

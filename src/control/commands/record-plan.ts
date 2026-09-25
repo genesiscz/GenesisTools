@@ -101,7 +101,7 @@ function readJsonl<T>(path: string): T[] {
             continue;
         }
         try {
-            items.push(SafeJSON.parse(trimmed) as T);
+            items.push(SafeJSON.parse(trimmed, { jsonl: true }) as T);
         } catch (error) {
             logger.debug({ error, path, lineNumber: lineNumber + 1 }, "record-plan: ignored incomplete JSONL line");
         }

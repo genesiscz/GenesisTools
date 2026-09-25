@@ -17,8 +17,26 @@ public protocol HierarchySource {
 
 public struct ObservedTreeError: Error, LocalizedError {
     public let message: String
-    public init(_ message: String) { self.message = message }
+    /// An element went away during the walk (kAXErrorInvalidUIElement): a live window re-rendered.
+    /// A moment, not an empty subtree, so a reader may read the whole tree again.
+    public let vanished: Bool
+    public init(_ message: String, vanished: Bool = false) {
+        self.message = message
+        self.vanished = vanished
+    }
     public var errorDescription: String? { message }
+
+    /// True for the moment a live window re-rendered under the walk.
+    public static func isVanished(_ error: Error) -> Bool {
+        (error as? ObservedTreeError)?.vanished == true
+    }
+}
+
+/// Thrown by `children(of:)` for an element below the root that went away during the walk (a
+/// streaming transcript row, a ticking label). The builder leaves out its row and its subtree and
+/// counts it in `ObservedTreeData.vanished`; the root going away is still an `ObservedTreeError`.
+public struct VanishedElement: Error {
+    public init() {}
 }
 
 public struct ObservedTreeData {
@@ -26,6 +44,8 @@ public struct ObservedTreeData {
     public var frames: [CGRect] = []
     public var rows: [[String: Any]] = []
     public var digest: String = ""
+    /// Elements that vanished during this walk, left out with their subtrees.
+    public var vanished = 0
     public init() {}
 }
 
@@ -83,7 +103,14 @@ public func buildObservedTree(root: AXUIElement, source: HierarchySource, depth:
         guard tree.elements.count < observedElementLimit else {
             throw ObservedTreeError("AX tree exceeds \(observedElementLimit) elements; snapshot refused rather than truncated")
         }
-        let rawChildren = try source.children(of: element)
+        let rawChildren: [AXUIElement]
+        do {
+            rawChildren = try source.children(of: element)
+        } catch is VanishedElement {
+            // Gone from the UI: no row for it, so no index can point at a dead element.
+            tree.vanished += 1
+            return
+        }
         let subrole = source.attribute(element, "AXSubrole") as? String ?? ""
         let windowButton = windowButtonSubroles.contains(subrole)
         let role = source.attribute(element, "AXRole") as? String ?? ""
@@ -101,6 +128,14 @@ public func buildObservedTree(root: AXUIElement, source: HierarchySource, depth:
             "visible": frame.width > 0 && frame.height > 0 && clip.contains(CGPoint(x: frame.midX, y: frame.midY)),
             "actions": source.actionNames(of: element).sorted(),
         ]
+        // A long line or a wide text node can have its CENTER clipped by a narrow column while most of
+        // it is on screen. Record where the visible part is, so a click can land there instead of being
+        // refused ("element center is outside its window/scroll clip").
+        let shown = frame.intersection(clip)
+        if row["visible"] as? Bool != true, !shown.isNull, shown.width >= 4, shown.height >= 4 {
+            row["visibleX"] = snapshotPx(shown.midX)
+            row["visibleY"] = snapshotPx(shown.midY)
+        }
         if omittedWebContent {
             row["childrenOmitted"] = "chrome scope"
         }

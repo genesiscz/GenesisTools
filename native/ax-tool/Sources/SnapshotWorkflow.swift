@@ -7,6 +7,9 @@ import SnapshotSupport
 /// The per-attribute walk: one AX round trip per attribute per element. It is the ground truth
 /// the bulk read is measured against, and the fallback when the bulk read has a gap.
 struct LiveHierarchySource: HierarchySource {
+    /// The window the walk starts at: it vanishing is a real failure, never skipped.
+    var root: AXUIElement?
+
     func attribute(_ element: AXUIElement, _ name: String) -> Any? {
         axAttribute(element, name)
     }
@@ -14,8 +17,15 @@ struct LiveHierarchySource: HierarchySource {
     func children(of element: AXUIElement) throws -> [AXUIElement] {
         var raw: CFTypeRef?
         let read = AXUIElementCopyAttributeValue(element, kAXChildrenAttribute as CFString, &raw)
+        // An element below the window that went away during the walk (a streaming transcript row, a
+        // ticking label) is no longer in the UI: the builder leaves out its row and subtree and counts
+        // it, and the snapshot says how many (`vanishedDuringWalk`), instead of the whole read failing.
+        if read == .invalidUIElement, let root, !CFEqual(element, root) {
+            throw VanishedElement()
+        }
         guard read == .success || read == .attributeUnsupported || read == .noValue else {
-            throw ObservedTreeError("AX tree read failed (\(read.rawValue)); refresh instead of assuming an empty subtree")
+            throw ObservedTreeError("AX tree read failed (\(read.rawValue)); refresh instead of assuming an empty subtree",
+                                    vanished: read == .invalidUIElement)
         }
         return raw as? [AXUIElement] ?? []
     }
@@ -207,12 +217,16 @@ private func observedTree(_ window: AXUIElement, depth: Int, scope: String) thro
             // children list) is answered by the per-attribute walk, which is the ground truth.
         }
     }
-    return try buildObservedTree(root: window, source: LiveHierarchySource(), depth: depth, scope: scope)
+    return try buildObservedTree(root: window, source: LiveHierarchySource(root: window), depth: depth, scope: scope)
 }
 
 private func workflowTree(_ window: AXUIElement, depth: Int, scope: String) -> ObservedTreeData {
     do {
-        return try observedTree(window, depth: depth, scope: scope)
+        // A streaming window (a hub transcript, a ticking list) drops an element mid-walk: read the
+        // whole tree again (bounded by recoverSnapshotRead) instead of refusing the act.
+        return try recoverSnapshotRead(isTransient: ObservedTreeError.isVanished) {
+            try observedTree(window, depth: depth, scope: scope)
+        }.value
     } catch {
         workflowFailure(error)
     }
@@ -230,7 +244,7 @@ private func workflowSnapshot(appName: String, pid: pid_t, launch: Double, windo
                               depth: Int, scope: String, path requestedPath: String?,
                               settled: ObservedTreeData?, captureImage: Bool = true, perception: VisualPerceptionOptions? = nil) throws -> [String: Any] {
     var firstRead = true
-    let recovered = try recoverSnapshotRead(isTransient: { $0 is SnapshotUnstable }) {
+    let recovered = try recoverSnapshotRead(isTransient: { $0 is SnapshotUnstable || ObservedTreeError.isVanished($0) }) {
         let initialTree = firstRead ? settled : nil
         firstRead = false
         let currentWindow = try observedWindow(window.ax, pid: pid)
@@ -309,6 +323,8 @@ private func workflowSnapshotOnce(appName: String, pid: pid_t, launch: Double, w
                        "width": window.bounds.width, "height": window.bounds.height],
             "screenshot": screenshot, "imageCaptured": captureImage, "perception": perceptionResult,
             "snapshot": encoded, "scope": scope, "expiresInSeconds": 120, "bulk": workflowBulkUsed,
+            // The count of the tree these elements came from, not of the second read that checked it.
+            "vanishedDuringWalk": tree.vanished,
             "elements": publicRows]
 }
 
@@ -1164,11 +1180,38 @@ func cmdAct(appName _: String) {
                         throw WindowEventError.unavailable("web-content coordinates require window scope; no event dispatched")
                     }
                     if CFEqual(current, target) {
-                        try validatePointerHitEnabled(enabledStates)
+                        // Only a point pinned to the ELEMENT must land on an enabled control. A drag's
+                        // later points are pinned to the window: passing over a disabled button on the
+                        // way is not a click on it, and refusing there broke every drag across one.
+                        if pin == .element {
+                            try validatePointerHitEnabled(enabledStates)
+                        }
                         return hit
                     }
                     guard let parent = axAttribute(current, "AXParent"), CFGetTypeID(parent) == AXUIElementGetTypeID() else { break }
                     ancestor = (parent as! AXUIElement)
+                }
+                // A coarse answer: SwiftUI hit-tests some regions (a title-bar accessory, a hosting
+                // container) to the CONTAINER rather than the control, although a real click reaches
+                // the control (seen 2026-09-24 on the GenesisTools hub's pane toggles: the hit was an
+                // AXGroup directly under the window). Accept it only when the hit is an ancestor of the
+                // target, below the window, and the point lies inside the target's own frame: nothing
+                // more specific claimed the point, so no sibling covers it.
+                if pin == .element, !CFEqual(hit, window.ax), axFrame(target).contains(point) {
+                    var up: AXUIElement? = target
+                    var targetStates: [Bool?] = []
+                    for _ in 0..<50 {
+                        // Only an ancestor BELOW the selected window: a hit on the window or the
+                        // application above it does not show that this window owns the point.
+                        guard let current = up, !CFEqual(current, window.ax) else { break }
+                        targetStates.append((axAttribute(current, "AXEnabled") as? NSNumber)?.boolValue)
+                        if CFEqual(current, hit) {
+                            try validatePointerHitEnabled(targetStates)
+                            return target
+                        }
+                        guard let parent = axAttribute(current, "AXParent"), CFGetTypeID(parent) == AXUIElementGetTypeID() else { break }
+                        up = (parent as! AXUIElement)
+                    }
                 }
             }
             throw WindowEventError.unavailable("observed target is occluded or hit testing disagrees; no event dispatched")
@@ -1206,10 +1249,12 @@ func cmdAct(appName _: String) {
             throw ScrollViewportError.unavailable
         }
         do {
-            guard rawCoords != nil || tree.rows[elementIndex]["visible"] as? Bool == true else {
-                throw WindowEventError.unavailable("element center is outside its window/scroll clip")
+            let row = tree.rows[elementIndex]
+            let visiblePart = (row["visibleX"] as? Int).flatMap { x in (row["visibleY"] as? Int).map { CGPoint(x: x, y: $0) } }
+            guard rawCoords != nil || row["visible"] as? Bool == true || visiblePart != nil else {
+                throw WindowEventError.unavailable("element is outside its window/scroll clip")
             }
-            let point = try rawCoords.map(parsePoint) ?? CGPoint(x: frame.midX, y: frame.midY)
+            let point = try rawCoords.map(parsePoint) ?? visiblePart ?? CGPoint(x: frame.midX, y: frame.midY)
             // A caller that passed a window-relative point cannot otherwise tell WHERE it landed,
             // and that is the number to compare against a screenshot or a later observation.
             if let raw = rawCoords {
@@ -1347,10 +1392,17 @@ func cmdAct(appName _: String) {
                 guard let (downType, upType) = types[button] else {
                     throw WindowEventError.unavailable("--button must be left, right or middle")
                 }
+                // Held modifiers travel on the events themselves (the app reads them from its current
+                // event), so an option-click or cmd-click never touches the real keyboard state.
+                let modifierFlags = try workflowArgument("--modifiers").map(NativeKeyChord.modifiers) ?? []
                 for click in 1...(workflowFlag("--double") ? 2 : 1) {
                     _ = try verifyPoint(point, pin: .element)
                     let down = try factory.mouse(type: downType, point: point, clickCount: click)
                     let up = try factory.mouse(type: upType, point: point, clickCount: click)
+                    if !modifierFlags.isEmpty {
+                        down.flags = modifierFlags
+                        up.flags = modifierFlags
+                    }
                     if button == "middle" {
                         down.setIntegerValueField(.mouseEventButtonNumber, value: 2)
                         up.setIntegerValueField(.mouseEventButtonNumber, value: 2)

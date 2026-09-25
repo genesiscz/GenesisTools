@@ -60,11 +60,29 @@ tools control act --app APP --by-identifier focus-hud-primary --action press
 | `perform` | `--ax-action` from observed action list | Depends on the exposed action |
 | `set` | `--value` | Exact AXValue/native popup selection; no keyboard fallback |
 | `focus` | selected element/window | Explicit activation |
-| `click` | `--button`, `--double`, `--background`, `--coords` | Foreground unless explicitly background |
+| `click` | `--button`, `--double`, `--modifiers cmd,alt,shift,ctrl`, `--background`, `--coords` | Foreground unless explicitly background |
 | `move`, `drag`, `scroll` | Fresh geometry; see help for direction/destination | Window-addressed; no hardware-pointer assumption |
 | `select` | unique `--text`, context, range or selection mode | AX selection must actually be settable; preparation may be needed |
 | `paste` | `--text`, `--format`; `--replace --prepare` for replacement | Focused field, clipboard restoration, exact replacement readback |
 | `type`, `key` | `--text` or `--keys` | Correct app/window/input must be focused |
+
+`--modifiers` rides on the click events only (option-click, cmd-click); the real keyboard state
+is untouched, so an app must read the flags from its CURRENT EVENT (`NSApp.currentEvent`), not
+from `NSEvent.modifierFlags`. A web view sees them as `metaKey`/`altKey`.
+
+A background click (`--background`) posts to the process and needs no focus. Rules learned on a
+SwiftUI app (the GenesisTools hub, 2026-09-24):
+- SwiftUI can hit-test a title-bar accessory or hosting container to the CONTAINER, not the
+  control. The verifier accepts such a coarse hit only when the hit is an ancestor of the target
+  below the window and the point is inside the target's frame.
+- An element whose center is clipped (a long non-wrapping line in a narrow column) is clicked at
+  the center of its VISIBLE part (`visibleX`/`visibleY` on the row) instead of being refused.
+- A drag verifies only its start point against an enabled control; later points just stay in the
+  window, so passing over a disabled button no longer aborts the drag.
+- A synthetic drag in a BACKGROUND window does not drive a SwiftUI `DragGesture`. Give the control
+  an accessibility adjustable action or a named action and use that instead.
+- A background Cmd+C does nothing: a background app has no key window. To prove what a copy would
+  put on the clipboard, read the element's `AXSelectedText` after a background drag-select.
 
 `--prepare --target-key OBSERVED_KEY` rebinds one matching target inside the same process and
 window before focus/reveal. It does not permit arbitrary repair. Browser document and nearby

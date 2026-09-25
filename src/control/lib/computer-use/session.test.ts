@@ -681,6 +681,22 @@ test("prepared web activation uses the focused keyboard contract instead of an u
     expect(state.page.total).toBe(6);
 });
 
+test("an unprepared click that takes AXPress pins its row by identity, as a background click does", async () => {
+    const f = fixture();
+    const stable = "a".repeat(64);
+    Object.assign(f.snapshot.elements[1], { stableKey: stable, targetKey: "b".repeat(64) });
+    const state = await f.computer.get_app_state({ app: "Fixture", image: false });
+    const result = await f.computer.click({ app: "Fixture", element_ref: state.elements[1].ref });
+    expect(result.ok).toBe(true);
+    const dispatch = f.calls.at(-1)!;
+    expect(dispatch[dispatch.indexOf("--action") + 1]).toBe("press");
+    expect(dispatch).not.toContain("--prepare");
+    // The stable key first: a live window re-renders between observe and act, and the whole-window
+    // digest would refuse the press with "UI changed".
+    expect(dispatch[dispatch.indexOf("--target-key") + 1]).toBe(stable);
+    expect(dispatch[dispatch.indexOf("--revalidate-scope") + 1]).toBe("element");
+});
+
 test("prepared web form writes replace through clipboard-safe paste while native fields retain AXValue", async () => {
     const f = fixture();
     f.snapshot.elements.push(

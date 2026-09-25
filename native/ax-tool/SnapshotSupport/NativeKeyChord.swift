@@ -31,6 +31,23 @@ public struct NativeKeyChord {
         self.flags = flags
     }
 
+    /// Modifiers alone, for a click: `cmd,alt` or `shift+ctrl`. A key name is refused, so a typo
+    /// cannot turn a click into a keystroke.
+    public static func modifiers(_ raw: String) throws -> CGEventFlags {
+        var flags: CGEventFlags = []
+        for part in raw.lowercased().components(separatedBy: CharacterSet(charactersIn: ",+")) {
+            switch part.trimmingCharacters(in: .whitespaces) {
+            case "cmd", "command", "super", "meta": flags.insert(.maskCommand)
+            case "ctrl", "control": flags.insert(.maskControl)
+            case "alt", "option", "opt": flags.insert(.maskAlternate)
+            case "shift": flags.insert(.maskShift)
+            default:
+                throw WorkflowArgumentError.invalid("--modifiers takes cmd, ctrl, alt and shift only")
+            }
+        }
+        return flags
+    }
+
     private static let codes: [String: CGKeyCode] = [
         "a":0, "s":1, "d":2, "f":3, "h":4, "g":5, "z":6, "x":7, "c":8, "v":9, "b":11,
         "q":12, "w":13, "e":14, "r":15, "y":16, "t":17, "1":18, "2":19, "3":20, "4":21, "6":22,
