@@ -168,6 +168,28 @@ describe("editAccount", () => {
     test("an unknown account names the listing command", async () => {
         await expect(editAccount("ghost", { enabled: false })).rejects.toThrow("tools ai config account list");
     });
+
+    // The command the "missing apiKey" hint names. `secret set` stores the same
+    // vault entry but leaves `credentials.apiKey` empty, so only this repairs it.
+    test("an api key lands in the vault AND is linked to the account", async () => {
+        const created = await addAccount({ provider: "fake", name: "keyless", useEnvApiKey: ["FAKE_API_KEY"] });
+        expect(created.credentials.apiKey).toBeUndefined();
+
+        await editAccount("keyless", { apiKey: "sk-fixture-edit" });
+
+        const stored = readRawConfig().accounts[0].credentials.apiKey;
+        expect(isSecureRef(stored)).toBe(true);
+        expect(await resolveSecret(stored)).toBe("sk-fixture-edit");
+        expect(readRawConfig().accounts[0].useEnvApiKey).toEqual(["FAKE_API_KEY"]);
+    });
+
+    test("an edit without a key leaves the stored key alone", async () => {
+        await addAccount({ provider: "fake", name: "keyed", secrets: { apiKey: "sk-fixture-kept" } });
+
+        await editAccount("keyed", { label: "Relabelled" });
+
+        expect(await resolveSecret(readRawConfig().accounts[0].credentials.apiKey)).toBe("sk-fixture-kept");
+    });
 });
 
 describe("removeAccount", () => {

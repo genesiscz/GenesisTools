@@ -108,7 +108,47 @@ describe("resolveProviderApiKey", () => {
         const promise = resolveProviderApiKey("openai");
 
         await expect(promise).rejects.toThrow(CredentialUnavailableError);
-        await expect(promise).rejects.toThrow("tools ai config account add --provider openai");
+        await expect(promise).rejects.toThrow(
+            `printf '%s' "$OPENAI_API_KEY" | tools ai config account add --provider openai --name openai --api-key-stdin`
+        );
+    });
+
+    /**
+     * A keyless account needs a key of its own. A second account would not fix
+     * it: the model ladder binds the first account for a provider. And `secret
+     * set` writes the vault entry without linking it, so it must not be offered.
+     */
+    test("a keyless account is told to take a key with account edit, never secret set", async () => {
+        const store = await AiConfigStore.load();
+        await store.mutate((data) => {
+            data.accounts.push({
+                id: "acc_openai_env",
+                name: "openai-env",
+                provider: "openai",
+                enabled: true,
+                billing: { mode: "metered" },
+                credentials: {},
+                useEnvApiKey: ["OPENAI_API_KEY"],
+            });
+        });
+
+        try {
+            const message = await resolveProviderApiKey("openai").then(
+                () => "resolved unexpectedly",
+                (err: unknown) => (err instanceof Error ? err.message : String(err))
+            );
+
+            expect(message).toContain("no key in account openai-env");
+            expect(message).toContain(
+                `printf '%s' "$OPENAI_API_KEY" | tools ai config account edit openai-env --api-key-stdin`
+            );
+            expect(message).not.toContain("secret set");
+            expect(message).not.toContain("account add");
+        } finally {
+            await store.mutate((data) => {
+                data.accounts = emptyConfig().accounts;
+            });
+        }
     });
 
     /**

@@ -31,12 +31,34 @@ export class CredentialUnavailableError extends Error {
 }
 
 /**
+ * The key a pasted command pipes in: the variable the account or plugin names,
+ * so the line runs as written in a shell that exports it, else a placeholder.
+ */
+function keySource(envKey: string | undefined): string {
+    return envKey ? `printf '%s' "$${envKey}"` : "<command that prints the key>";
+}
+
+/** Gives an EXISTING account an API key. A keyless account needs this, not a second account. */
+export function storeApiKeyCommand(args: { accountName: string; envKey?: string }): string {
+    return `${keySource(args.envKey)} | tools ai config account edit ${args.accountName} --api-key-stdin`;
+}
+
+/** Creates an account holding an API key, for a provider that has no account at all. */
+export function addApiKeyAccountCommand(args: { providerId: string; envKey?: string }): string {
+    return `${keySource(args.envKey)} | tools ai config account add --provider ${args.providerId} --name ${args.providerId} --api-key-stdin`;
+}
+
+/**
  * Repair instructions for the fields that are ACTUALLY missing.
  *
  * A plugin may require `accessToken`, `authFile` or `dataDir` instead of an API
  * key, and telling the user to store an `apiKey` in those cases is a command
  * that cannot help and, for a subscription account, points at the wrong
  * credential entirely.
+ *
+ * It used to name `tools ai config secret set ai/<id>/<field>`, which writes the
+ * vault entry but never links it to the account (`resolveCredential` reads
+ * `account.credentials` only), so a user who followed it still had no key.
  */
 function fixHint(account: AccountEntry, spec: CredentialSpec, missing: readonly string[]): string {
     const hints = missing.map((field) => {
@@ -45,7 +67,13 @@ function fixHint(account: AccountEntry, spec: CredentialSpec, missing: readonly 
             return `Set it with: tools ai config account edit ${account.name} ${flag} <path>`;
         }
 
-        return `Store it with: tools ai config secret set ai/${account.id}/${field}`;
+        if (field === "apiKey") {
+            const envKey = envKeyNames(account, spec.envKeys)[0] ?? spec.envKeys[0];
+            return `Store it with: ${storeApiKeyCommand({ accountName: account.name, envKey })}`;
+        }
+
+        // A token is minted by a login, and a login by name updates that account.
+        return `Log in again with: tools ai accounts login ${account.name} --provider ${account.provider}`;
     });
 
     // Only an API key can come from the environment (`resolveCredential` consults

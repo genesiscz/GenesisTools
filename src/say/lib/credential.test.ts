@@ -170,7 +170,10 @@ describe("tools say: the xAI key", () => {
 
         expect(check.line).toStartWith("[say] xai has no usable key, falling back to macos.");
         expect(check.line).toContain("no key in account env-only");
-        expect(check.line).toContain("tools ai config account add --provider xai");
+        expect(check.line).toContain(
+            `printf '%s' "$XAI_API_KEY" | tools ai config account edit env-only --api-key-stdin`
+        );
+        expect(check.line).not.toContain("secret set");
         expect(check.line).not.toContain("\n");
 
         // The engine refuses on its own too, before any request leaves the process.
@@ -188,7 +191,9 @@ describe("tools say: the xAI key", () => {
 
         expect(check.line).toStartWith("[say] xai has no usable key.");
         expect(check.reason).toContain("no account and none of XAI_API_KEY, X_AI_API_KEY is set");
-        expect(check.reason).toContain("tools ai config account add --provider xai");
+        expect(check.reason).toContain(
+            `printf '%s' "$XAI_API_KEY" | tools ai config account add --provider xai --name xai --api-key-stdin`
+        );
         expect(requests).toHaveLength(0);
     });
 
