@@ -5,6 +5,7 @@ import { createAiUsageProducer } from "@app/dev-dashboard/lib/live/ai-usage-prod
 import type { LiveHub } from "@app/dev-dashboard/lib/live/hub";
 import type { LiveChannel } from "@app/dev-dashboard/lib/live/types";
 import { classifyListeningPorts, listListeningPorts } from "@app/dev-dashboard/lib/ports/scanner";
+import { clipQaEntry } from "@app/dev-dashboard/lib/qa-clip";
 import { enrichQaEntry } from "@app/dev-dashboard/lib/qa-render";
 import { createQaStream } from "@app/dev-dashboard/lib/qa-sse";
 import { getCachedPulse, markPulseClientSeen } from "@app/dev-dashboard/lib/system/poller";
@@ -111,7 +112,7 @@ export function startLiveProducers(hub: LiveHub): { stop: () => void } {
                     v: 1,
                     channel: "qa",
                     type: "entry",
-                    payload: enrichQaEntry(entry),
+                    payload: enrichQaEntry(clipQaEntry(entry)),
                 });
             });
         } catch (err) {

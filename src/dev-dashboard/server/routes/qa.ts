@@ -1,6 +1,7 @@
 import { getConfig } from "@app/dev-dashboard/config";
 import { createHandoffStream } from "@app/dev-dashboard/lib/handoff-sse";
 import { saveToObsidianUnique } from "@app/dev-dashboard/lib/obsidian-save";
+import { clipQaEntry } from "@app/dev-dashboard/lib/qa-clip";
 import { formatQaAsMarkdown } from "@app/dev-dashboard/lib/qa-clipboard";
 import { createPendingStream } from "@app/dev-dashboard/lib/qa-pending-sse";
 import { enrichQaEntry } from "@app/dev-dashboard/lib/qa-render";
@@ -87,11 +88,34 @@ export function qaRoutes(): RouteDef[] {
                         limit: Number.parseInt(ctx.query.get("limit") ?? "100", 10),
                     });
 
-                    return { kind: "json", status: 200, body: { entries: rows } };
+                    return { kind: "json", status: 200, body: { entries: rows.map((row) => clipQaEntry(row)) } };
                 } catch (err) {
                     return errorResult(err);
                 } finally {
                     db?.close(); // bun:sqlite has no GC finalizer — close every request or leak an FD (t1)
+                }
+            },
+        },
+        {
+            // The whole entry, unclipped: what "load the full answer" and the copy buttons fetch.
+            method: "GET",
+            pattern: "/api/qa/entry/:id",
+            handler: (ctx) => {
+                let db: ReturnType<typeof openReadModel> | undefined;
+
+                try {
+                    db = openReadModel(defaultDbPath());
+                    const row = getEntryById(db, ctx.params.id ?? "");
+
+                    if (!row) {
+                        return { kind: "json", status: 404, body: { error: `unknown entry: ${ctx.params.id}` } };
+                    }
+
+                    return { kind: "json", status: 200, body: { entry: row } };
+                } catch (err) {
+                    return errorResult(err);
+                } finally {
+                    db?.close();
                 }
             },
         },
@@ -207,7 +231,9 @@ export function qaRoutes(): RouteDef[] {
                     }
 
                     const qaStream = createQaStream((entry) =>
-                        emit.data(SafeJSON.stringify({ type: "qa", ...enrichQaEntry(entry) }, { strict: true }))
+                        emit.data(
+                            SafeJSON.stringify({ type: "qa", ...enrichQaEntry(clipQaEntry(entry)) }, { strict: true })
+                        )
                     );
                     const handoffStream = createHandoffStream((event) =>
                         emit.data(
@@ -273,7 +299,17 @@ export function qaRoutes(): RouteDef[] {
                         return { kind: "json", status: 400, body: { error: "items[] is required" } };
                     }
 
-                    const form = await postAskForm({ ...body, projectPath: body.projectPath || process.cwd() });
+                    // The body is an unchecked cast, so a number would crash `.trim()`. And this is a
+                    // long-lived server: its own cwd is not the caller's project, so the caller names it.
+                    if (typeof body.projectPath !== "string" || !body.projectPath.trim()) {
+                        return {
+                            kind: "json",
+                            status: 400,
+                            body: { error: "projectPath is required (a string naming the caller's project)" },
+                        };
+                    }
+
+                    const form = await postAskForm(body, { ambient: false });
 
                     return { kind: "json", status: 201, body: { form } };
                 } catch (err) {

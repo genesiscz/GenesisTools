@@ -3,17 +3,20 @@ import type { QaRow } from "@app/dev-dashboard/lib/qa-types";
 import { IconButton } from "@ui/components/icon-button";
 import { FileText, FileType2, NotebookPen } from "lucide-react";
 import { useState } from "react";
+import { fullQaEntry } from "@/lib/api";
 
 export function QaCopyButtons({ entry, onSaveToObsidian }: { entry: QaRow; onSaveToObsidian: () => void }) {
     const [copied, setCopied] = useState<"md" | "html" | "error" | null>(null);
 
     const copy = async (kind: "md" | "html"): Promise<void> => {
         try {
+            const full = await fullQaEntry(entry);
+
             if (kind === "md") {
-                await navigator.clipboard.writeText(formatQaAsMarkdown(entry));
+                await navigator.clipboard.writeText(formatQaAsMarkdown(full));
             } else {
-                const html = formatQaAsHtml(entry);
-                const md = formatQaAsMarkdown(entry);
+                const html = formatQaAsHtml(full);
+                const md = formatQaAsMarkdown(full);
 
                 await navigator.clipboard.write([
                     new ClipboardItem({

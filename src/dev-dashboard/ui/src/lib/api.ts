@@ -17,9 +17,14 @@ import type {
 import type { SavedCommand, SavedCommandInput } from "@app/dev-dashboard/lib/commands/types";
 import type { VaultEntry } from "@app/dev-dashboard/lib/obsidian/types";
 import type { KillPortResult, PortsResult } from "@app/dev-dashboard/lib/ports/types";
+import type { QaRow } from "@app/dev-dashboard/lib/qa-types";
 import type { FocusSessionResult } from "@app/dev-dashboard/lib/session-focus";
 import type { ProcessSort } from "@app/dev-dashboard/lib/system/types";
 import type { TtydSession } from "@app/dev-dashboard/lib/ttyd/types";
+import type { SendResult } from "@app/question/lib/decisions/send";
+import type { DecisionAnswer, InboxAnswerResult } from "@app/question/lib/inbox/answer";
+import type { InboxDecision } from "@app/question/lib/inbox/build";
+import type { InboxResult } from "@app/question/lib/inbox/load";
 import type { AskAnswer, AskForm } from "@app/question/lib/pending/types";
 import { SafeJSON } from "@genesiscz/utils/json";
 import type { TmuxScrollState } from "@genesiscz/utils/tmux/sessions";
@@ -221,6 +226,70 @@ export const qaPendingApi = {
             return { ok: false, code: "not_found", error: `answer failed (${res.status})` };
         }
     },
+};
+
+export const qaLogApi = {
+    /** The unclipped entry: `/api/qa/log` clips answers over `QA_ANSWER_MAX_CHARS`. */
+    entry: (id: string) => jsonFetch<{ entry: QaRow }>(`/api/qa/entry/${encodeURIComponent(id)}`),
+};
+
+/** The entry as stored: fetched only when the log clipped its answer. */
+export async function fullQaEntry(entry: QaRow): Promise<QaRow> {
+    if (entry.answerFullChars === undefined) {
+        return entry;
+    }
+
+    return (await qaLogApi.entry(entry.id)).entry;
+}
+
+/** The hub inbox's doors: the same list, answer-and-deliver and re-send as `tools question inbox` / `send`. */
+export const qaDecisionsApi = {
+    inbox: () => jsonFetch<InboxResult>("/api/qa/decisions"),
+    session: (id: string) =>
+        jsonFetch<{ sessionId: string; decisions: InboxDecision[] }>(
+            `/api/qa/decisions/session/${encodeURIComponent(id)}`
+        ),
+    answer: (input: {
+        session: string;
+        provider?: string | null;
+        cwd?: string | null;
+        answers: DecisionAnswer[];
+        dryRun?: boolean;
+    }) =>
+        jsonFetch<InboxAnswerResult>("/api/qa/decisions/answer", {
+            method: "POST",
+            body: SafeJSON.stringify(input),
+        }),
+    resend: (session: string, provider?: string | null) =>
+        jsonFetch<SendResult>("/api/qa/decisions/send", {
+            method: "POST",
+            body: SafeJSON.stringify({ session, ...(provider ? { provider } : {}) }),
+        }),
+    /** Marks or clears one decision's pick and note; nothing is sent. */
+    draft: (input: {
+        session: string;
+        number: number;
+        option?: string;
+        text?: string;
+        provider?: string | null;
+        cwd?: string | null;
+    }) =>
+        jsonFetch<InboxDecision>("/api/qa/decisions/draft", {
+            method: "POST",
+            body: SafeJSON.stringify(input),
+        }),
+    /** Drops a decision without answering it. */
+    dismiss: (input: { session: string; number: number }) =>
+        jsonFetch<InboxDecision>("/api/qa/decisions/dismiss", {
+            method: "POST",
+            body: SafeJSON.stringify(input),
+        }),
+    /** Promotes every drafted answer of a session and delivers them as one message. */
+    sendDrafts: (input: { session: string; provider?: string | null; dryRun?: boolean }) =>
+        jsonFetch<SendResult & { promoted: number[] }>("/api/qa/decisions/send-drafts", {
+            method: "POST",
+            body: SafeJSON.stringify(input),
+        }),
 };
 
 export type AnswerResponse =

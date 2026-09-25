@@ -3,6 +3,7 @@ import { renderQaAnswerHtml, renderQaQuestionHtml } from "@app/dev-dashboard/lib
 import { searchQa } from "@app/dev-dashboard/lib/qa-search";
 import type { QaRow } from "@app/dev-dashboard/lib/qa-types";
 import { worktreeLabel } from "@app/question/lib/worktree-label";
+import { formatNumber } from "@genesiscz/utils/format";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { highlightMatchesInHtml } from "@genesiscz/utils/ui/helpers/highlight-matches.client";
 import { useScrollProgress } from "@genesiscz/utils/ui/hooks/useScrollProgress.client";
@@ -16,6 +17,7 @@ import { truncateMiddle } from "@/components/handoff/handoff-format";
 import { useHandoffList } from "@/components/handoff/useHandoffApi";
 import { QaClockProvider } from "@/components/QaClockProvider";
 import { QaCopyButtons } from "@/components/QaCopyButtons";
+import { QaDecisionsTab, useDecisionInbox, waitingDecisionCount } from "@/components/QaDecisionsTab";
 import { QaPendingCard } from "@/components/QaPendingCard";
 import { QaReadTime } from "@/components/QaReadTime";
 import { QaRecencyTime } from "@/components/QaRecencyTime";
@@ -28,7 +30,7 @@ import { QaSourceToggle, type QaViewMode } from "@/components/QaSourceToggle";
 import { QaTopBar } from "@/components/QaTopBar";
 import { usePendingForms } from "@/hooks/usePendingForms";
 import { useQaStream } from "@/hooks/useQaStream";
-import { qaPendingApi } from "@/lib/api";
+import { qaLogApi, qaPendingApi } from "@/lib/api";
 import { prependQaLiveEntry } from "./qa-live-cap";
 
 const READ_PERSIST_DEBOUNCE_MS = 400;
@@ -152,8 +154,44 @@ function QaContextStrip({ entry }: { entry: QaRow }) {
     );
 }
 
+/** Shown under an answer the log clipped: how much is missing, and the button that loads the rest. */
+function QaClippedNotice({
+    shownChars,
+    fullChars,
+    loading,
+    error,
+    onLoad,
+}: {
+    shownChars: number;
+    fullChars: number;
+    loading: boolean;
+    error: string | null;
+    onLoad: () => void;
+}) {
+    return (
+        <div className="flex flex-wrap items-center gap-2 rounded-md border border-[var(--dd-border)] px-3 py-2 text-xs text-[var(--dd-text-muted)]">
+            <span>
+                Showing {formatNumber(shownChars)} of {formatNumber(fullChars)} characters. The rest stays on the server
+                so this page loads fast.
+            </span>
+            <button
+                type="button"
+                className="dd-accent-text cursor-pointer transition-opacity hover:opacity-80 disabled:opacity-50"
+                disabled={loading}
+                onClick={(ev) => {
+                    ev.stopPropagation();
+                    onLoad();
+                }}
+            >
+                {loading ? "Loading…" : "Load the full answer"}
+            </button>
+            {error ? <span className="text-[var(--dd-danger)]">{error}</span> : null}
+        </div>
+    );
+}
+
 const QaCard = memo(function QaCard({
-    entry,
+    entry: listEntry,
     unread,
     readAt,
     viewMode,
@@ -171,7 +209,24 @@ const QaCard = memo(function QaCard({
     onSeen: (id: string) => void;
     onUnseen: (id: string) => void;
 }) {
+    const [fullEntry, setFullEntry] = useState<QaRow | null>(null);
+    const [fullLoading, setFullLoading] = useState(false);
+    const [fullError, setFullError] = useState<string | null>(null);
+    const entry = fullEntry ?? listEntry;
     const [open, setOpen] = useState(unread || pinned === true);
+
+    const loadFull = useCallback(() => {
+        setFullLoading(true);
+        setFullError(null);
+        qaLogApi
+            .entry(listEntry.id)
+            .then((res) => {
+                setFullEntry(res.entry);
+                setOpen(true);
+            })
+            .catch((err: unknown) => setFullError(err instanceof Error ? err.message : String(err)))
+            .finally(() => setFullLoading(false));
+    }, [listEntry.id]);
 
     useEffect(() => {
         if (pinned) {
@@ -339,6 +394,15 @@ const QaCard = memo(function QaCard({
             ) : (
                 <pre className="dd-qa-section-body text-xs whitespace-pre-wrap">{entry.answerMd}</pre>
             )}
+            {entry.answerFullChars !== undefined && (open || !truncated) ? (
+                <QaClippedNotice
+                    shownChars={entry.answerMd.length}
+                    fullChars={entry.answerFullChars}
+                    loading={fullLoading}
+                    error={fullError}
+                    onLoad={loadFull}
+                />
+            ) : null}
             {truncated ? (
                 <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-[var(--dd-text-muted)]">
                     <button
@@ -373,21 +437,28 @@ const QaCard = memo(function QaCard({
     );
 });
 
+type QaTab = "qa" | "decisions" | "tasks";
+
+function tabFromUrl(): QaTab {
+    const tab = new URLSearchParams(window.location.search).get("tab");
+
+    return tab === "tasks" || tab === "decisions" ? tab : "qa";
+}
+
 export function QaRoute() {
-    const [tab, setTab] = useState<"qa" | "tasks">(() =>
-        new URLSearchParams(window.location.search).get("tab") === "tasks" ? "tasks" : "qa"
-    );
+    const [tab, setTab] = useState<QaTab>(tabFromUrl);
     const handoffList = useHandoffList();
     const openCount = (handoffList.data?.handoffs ?? []).filter(
         (h) => h.status === "open" || h.status === "claimed"
     ).length;
+    const waitingDecisions = waitingDecisionCount(useDecisionInbox().data ?? []);
 
-    const switchTab = (next: "qa" | "tasks"): void => {
+    const switchTab = (next: QaTab): void => {
         setTab(next);
         const url = new URL(window.location.href);
 
-        if (next === "tasks") {
-            url.searchParams.set("tab", "tasks");
+        if (next !== "qa") {
+            url.searchParams.set("tab", next);
         } else {
             url.searchParams.delete("tab");
         }
@@ -408,6 +479,14 @@ export function QaRoute() {
                 <button type="button" className={tabClass(tab === "qa")} onClick={() => switchTab("qa")}>
                     Q&amp;A
                 </button>
+                <button type="button" className={tabClass(tab === "decisions")} onClick={() => switchTab("decisions")}>
+                    Decisions
+                    {waitingDecisions > 0 ? (
+                        <span className="ml-1.5 rounded-full border border-[var(--color-primary)] px-1.5 py-px text-[10px] dd-accent-text">
+                            {waitingDecisions}
+                        </span>
+                    ) : null}
+                </button>
                 <button type="button" className={tabClass(tab === "tasks")} onClick={() => switchTab("tasks")}>
                     Agent tasks
                     {openCount > 0 ? (
@@ -417,7 +496,7 @@ export function QaRoute() {
                     ) : null}
                 </button>
             </div>
-            {tab === "qa" ? <QaFeed /> : <HandoffTab />}
+            {tab === "qa" ? <QaFeed /> : tab === "decisions" ? <QaDecisionsTab /> : <HandoffTab />}
         </div>
     );
 }

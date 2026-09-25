@@ -122,7 +122,7 @@ export function QaPendingCard({ form, pinned }: { form: AskForm; pinned?: boolea
 
     const card = (
         <div
-            className="dd-panel flex flex-col gap-3 border-l-2 border-l-[var(--color-primary)] p-4"
+            className="dd-panel dd-qa-card--unread flex flex-col gap-3 p-4"
             data-qa-pending-id={form.id}
             style={{ scrollMarginTop: "5rem" }}
         >

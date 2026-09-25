@@ -26,6 +26,7 @@ import { obsidianRoutes } from "@app/dev-dashboard/server/routes/obsidian";
 import { portsRoutes } from "@app/dev-dashboard/server/routes/ports";
 import { processesRoutes } from "@app/dev-dashboard/server/routes/processes";
 import { qaRoutes } from "@app/dev-dashboard/server/routes/qa";
+import { qaDecisionRoutes } from "@app/dev-dashboard/server/routes/qa-decisions";
 import { shareRoutes } from "@app/dev-dashboard/server/routes/share";
 import { systemRoutes } from "@app/dev-dashboard/server/routes/system";
 import { timelineRoutes } from "@app/dev-dashboard/server/routes/timeline";
@@ -65,6 +66,7 @@ export function createDashboardRouter(): Router {
         ...liveRoutes(getLiveHub()),
         ...processesRoutes(),
         ...qaRoutes(),
+        ...qaDecisionRoutes(),
         ...handoffRoutes(),
         ...attentionRoutes(),
         ...todosRoutes(),
