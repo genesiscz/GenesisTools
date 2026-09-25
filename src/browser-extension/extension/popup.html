@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <title>GenesisTools</title>
+    <style>body { width: 360px; }</style>
+</head>
+<body>
+    <main>
+        <div class="gt-row">
+            <h1 class="gt-title"><span class="mark">GT</span> GenesisTools</h1>
+            <span id="host" class="gt-muted">checking host...</span>
+        </div>
+        <section id="page" class="gt-surface" hidden>
+            <h2>This page</h2>
+            <div id="page-info" class="gt-muted"></div>
+            <div id="page-buttons" class="gt-row"></div>
+        </section>
+        <section id="actions" class="gt-surface" hidden>
+            <h2>Actions</h2>
+            <div id="action-buttons" class="gt-row"></div>
+        </section>
+        <pre id="result" class="gt-pre" role="status" aria-live="polite"></pre>
+        <div class="gt-row"><a href="#" id="options">Options</a></div>
+    </main>
+    <script type="module" src="popup.js"></script>
+</body>
+</html>

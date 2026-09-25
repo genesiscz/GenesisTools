@@ -1,0 +1,27 @@
+{
+    "manifest_version": 3,
+    "name": "GenesisTools",
+    "version": "0.1.0",
+    "description": "GenesisTools on GitHub, GitLab and work-item pages: review with an agent, explain a hunk, open locally, start a branch and session. Runs locally through the tools native host.",
+    "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAwEca1EM86J9fPCpLb/BGVr9/z7itD4VS6ghXUxET3byphmYVgdccWk/qnv+aWv+cnKwII4V7i+BbB5d8Kg8hVoxUPaOzM3D0xwvDpeTStX/pXaePG9IpGj9pfdCnYFDlUUQCV5GYeMTRiXHofV1wihC3WB4vicH/h7prvI048s2OJppOL6EjQ9JoSc9CZjOtprxODyWjUbxrurwT/RcxELao0uxQEGrWmJoepvmxoNAWuVXg2cuHkyJLRMqk+Lwj9ziD/56mjfMJRYiUdfOJ/f3qKHB40UskHEhbRqRjIRpf2MMzKu2s+sas9km+32BH57UIx8ljoDFpfaVCPfEsfwIDAQAB",
+    "minimum_chrome_version": "120",
+    "permissions": ["nativeMessaging", "storage", "contextMenus", "activeTab", "scripting", "declarativeNetRequest"],
+    "host_permissions": ["https://github.com/*", "https://genesis.tools/*"],
+    "optional_host_permissions": ["https://*/*"],
+    "background": { "service_worker": "background.js", "type": "module" },
+    "action": {
+        "default_popup": "popup.html",
+        "default_title": "GenesisTools",
+        "default_icon": { "16": "icons/icon16.png", "48": "icons/icon48.png", "128": "icons/icon128.png" }
+    },
+    "options_page": "options.html",
+    "content_scripts": [
+        {
+            "matches": ["https://github.com/*"],
+            "js": ["content.js"],
+            "run_at": "document_idle"
+        }
+    ],
+    "web_accessible_resources": [{ "resources": ["route.html"], "matches": ["<all_urls>"] }],
+    "icons": { "16": "icons/icon16.png", "48": "icons/icon48.png", "128": "icons/icon128.png" }
+}

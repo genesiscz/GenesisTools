@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <title>GenesisTools options</title>
+    <style>main { max-width: 880px; margin: 0 auto; }</style>
+</head>
+<body>
+    <main>
+        <h1 class="gt-title"><span class="mark">GT</span> GenesisTools extension</h1>
+        <section class="gt-surface">
+            <h2>Native host</h2>
+            <div id="host" class="gt-muted">checking...</div>
+            <div class="gt-muted">Register it once from a terminal: <span class="gt-code">tools browser-extension install-host</span></div>
+        </section>
+        <section class="gt-surface">
+            <h2>Self-hosted GitLab</h2>
+            <div class="gt-muted">Hosts come from <span class="gt-code">gitlabHosts</span> below. Grant each one so the page buttons appear there.</div>
+            <div id="gitlab" class="gt-row"></div>
+        </section>
+        <section class="gt-surface">
+            <h2>Config</h2>
+            <div id="path" class="gt-muted"></div>
+            <label for="config" class="gt-muted">Configuration JSON</label>
+            <textarea id="config" spellcheck="false"></textarea>
+            <div class="gt-row">
+                <button id="save" type="button" class="gt-btn primary">Save</button>
+                <button id="reload" type="button" class="gt-btn">Reload</button>
+                <span id="status" class="gt-muted" role="status" aria-live="polite"></span>
+            </div>
+            <details>
+                <summary class="gt-muted">Example action</summary>
+                <pre id="example" class="gt-pre"></pre>
+            </details>
+        </section>
+    </main>
+    <script type="module" src="options.js"></script>
+</body>
+</html>
