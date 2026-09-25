@@ -362,7 +362,10 @@ struct WorktreeCleanupView: View {
                     ProgressView().controlSize(.small)
                     Text(verbatim: "Removing \(progress.done) of \(progress.total)…").font(.system(size: 11.5)).foregroundColor(ReviewPalette.dim)
                 }
-                Toggle("Show blocked (\(store.rows.count - removable.count))", isOn: $showBlocked)
+                Toggle("Show blocked (\(store.rows.count - removable.count))", isOn: Binding(get: { showBlocked }, set: { next in
+                    HubMainBusy.measure("worktrees.cleanup.showBlocked")
+                    showBlocked = next
+                }))
                     .toggleStyle(.checkbox)
                     .font(.system(size: 12))
                     .instantTooltip("Also list the worktrees that stay, each with the reason")

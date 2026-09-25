@@ -373,7 +373,10 @@ struct HubPaletteView: View {
             refresh()
             focused = true
         }
-        .onChange(of: query) { refresh(resetSelection: true) }
+        .onChange(of: query) {
+            HubMainBusy.measure("palette.query")
+            refresh(resetSelection: true)
+        }
         // The session list and PRs can land after the palette opened (a launch with --palette).
         .onChange(of: context.signature) { refresh() }
         .onExitCommand { close() }

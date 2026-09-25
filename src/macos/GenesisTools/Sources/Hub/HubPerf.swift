@@ -72,7 +72,12 @@ enum HubMainBusy {
         var wokeAt: CFAbsoluteTime?
     }
 
+    /// Labels with a window open: the same event again inside it (a keystroke in a filter) joins that
+    /// window instead of logging a line per keystroke.
+    private static var open = Set<String>()
+
     static func measure(_ label: String, window: TimeInterval = 0.6) {
+        guard open.insert(label).inserted else { return }
         let meter = Meter()
         meter.wokeAt = CFAbsoluteTimeGetCurrent()
         let wake = CFRunLoopObserverCreateWithHandler(kCFAllocatorDefault, CFRunLoopActivity.afterWaiting.rawValue, true, Int.min) { _, _ in
@@ -92,6 +97,7 @@ enum HubMainBusy {
             }
             CFRunLoopRemoveObserver(CFRunLoopGetMain(), wake, .commonModes)
             CFRunLoopRemoveObserver(CFRunLoopGetMain(), sleep, .commonModes)
+            open.remove(label)
             HubPerf.log(String(format: "%@ main busy %.1f ms of %.0f ms", label, meter.busy * 1000, window * 1000))
         }
     }

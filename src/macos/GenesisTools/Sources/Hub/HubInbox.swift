@@ -706,6 +706,7 @@ struct InboxListView: View {
                 Menu {
                     ForEach(InboxSort.allCases, id: \.self) { option in
                         Button {
+                            HubMainBusy.measure("inbox.sort")
                             sortKey = option.rawValue
                         } label: {
                             if option == sort { Label(option.title, systemImage: "checkmark") } else { Text(option.title) }

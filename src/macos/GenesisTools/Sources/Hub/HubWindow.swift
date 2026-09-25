@@ -348,7 +348,14 @@ final class HubModel: ObservableObject {
     }
     @Published var loadingSessions = false
     @Published var error: String?
-    @Published var filter = ""
+    /// The sidebar's filter text, which every mode's list applies.
+    @Published var filter = "" {
+        didSet {
+            if filter != oldValue {
+                MainActor.assumeIsolated { HubMainBusy.measure("filter.\(mode.rawValue)") }
+            }
+        }
+    }
     @Published var selectedID: String?
     /// The pane that was asked for last (`--tab`, "Open diff"); it is always among `panes`.
     @Published var tab: HubTab {
@@ -1387,6 +1394,7 @@ private struct SessionListView: View {
                     Menu {
                         ForEach(SessionGrouping.allCases, id: \.self) { option in
                             Button {
+                                HubMainBusy.measure("sessions.grouping")
                                 grouping = option.rawValue
                             } label: {
                                 if option == mode { Label(option.title, systemImage: "checkmark") } else { Text(option.title) }

@@ -164,7 +164,14 @@ final class ReviewModel: ObservableObject {
     /// into `repo`): this repository's files open on the host at that head (Review/ReviewRemoteHead.swift).
     var remoteHead: ReviewRemoteHead?
     @Published var files: [DiffFile] = []
-    @Published var filter = ""
+    /// The file list's filter text; the list's rows are rebuilt from it in the view.
+    @Published var filter = "" {
+        didSet {
+            if filter != oldValue {
+                MainActor.assumeIsolated { HubMainBusy.measure("review.files.filter") }
+            }
+        }
+    }
     @Published var selectedID: String?
     @Published var options: DiffViewOptions
     @Published var error: String?
@@ -173,7 +180,9 @@ final class ReviewModel: ObservableObject {
     @Published var commentCount = 0
     @Published var unsentCount = 0
     @Published var notice: String?
-    @Published var treeMode = true
+    @Published var treeMode = true {
+        didSet { MainActor.assumeIsolated { HubMainBusy.measure("review.files.tree") } }
+    }
     @Published var collapsed: Set<String> = []
     /// Set only when the diff moves to a file on its own (a find match), so a click in the list never scrolls the list.
     @Published var sidebarScrollTarget: String?

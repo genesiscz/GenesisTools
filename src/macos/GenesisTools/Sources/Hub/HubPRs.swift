@@ -180,10 +180,16 @@ final class PRsModel: ObservableObject {
     @Published private(set) var fetches: [String: PRFetchEntry] = [:]
     // Published and saved by hand: `@AppStorage` inside an ObservableObject never publishes.
     @Published var state = HubDefaults.store.string(forKey: "hub.prs.state") ?? "open" {
-        didSet { HubDefaults.store.set(state, forKey: "hub.prs.state") }
+        didSet {
+            HubDefaults.store.set(state, forKey: "hub.prs.state")
+            HubMainBusy.measure("prs.filter.state")
+        }
     }
     @Published var mineOnly = HubDefaults.store.bool(forKey: "hub.prs.mine") {
-        didSet { HubDefaults.store.set(mineOnly, forKey: "hub.prs.mine") }
+        didSet {
+            HubDefaults.store.set(mineOnly, forKey: "hub.prs.mine")
+            HubMainBusy.measure("prs.filter.mine")
+        }
     }
     /// Called once after a list load (the `--snapshot` launch waits on it).
     var onLoaded: (() -> Void)?
@@ -243,6 +249,7 @@ final class PRsModel: ObservableObject {
             switch result {
             case .success(let list):
                 span.end("\(list.prs.count) prs")
+                HubMainBusy.measure("prs.list.render")
                 prs = list.prs.sorted { ($0.updatedAt ?? "") > ($1.updatedAt ?? "") }
                 errors = list.repos.compactMap { repo in repo.error.map { "\(repo.repo): \($0)" } }
                 if let wanted {
@@ -351,7 +358,10 @@ final class PRsModel: ObservableObject {
         // The agent's drafts sit on the lines they are about, with accept / edit / reject.
         if let proposal = pr.proposal {
             do {
-                next.proposal = try ProposalDocument(url: URL(fileURLWithPath: proposal.path))
+                // On the main thread: the file is read and parsed before the review shows.
+                next.proposal = try HubPerf.measure("prs.proposal.read", proposal.path) {
+                    try ProposalDocument(url: URL(fileURLWithPath: proposal.path))
+                }
             } catch {
                 HubPerf.log("prs.proposal unreadable \(proposal.path): \(error)")
             }
