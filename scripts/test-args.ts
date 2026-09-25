@@ -1,10 +1,24 @@
 /**
- * Argument parsing for the `--profile` mode of `scripts/test.ts`, and the stall-tripwire
- * ceiling, in their own module so they can be tested: importing the runner would run the
- * whole suite.
+ * Argument parsing for the `--profile` mode of `scripts/test.ts`, the stall-tripwire
+ * ceiling, and serial isolation, in their own module so they can be tested: importing the
+ * runner would run the whole suite.
  *
  * No imports on purpose — the runner loads this before `node_modules` is known to be present.
  */
+
+/**
+ * The `bun test` argv with per-file isolation added to a serial run, so a serial run sees
+ * the same module registry per file as `--parallel` (which implies `--isolate`). An explicit
+ * `--isolate` or `--no-isolate` is left alone. Why and what it costs: the block comment above
+ * `runBunTest` in `scripts/test.ts`.
+ */
+export function withSerialIsolation(testArgs: string[]): string[] {
+    const decided = testArgs.some(
+        (arg) => arg.startsWith("--parallel") || arg === "--isolate" || arg === "--no-isolate"
+    );
+
+    return decided ? testArgs : [...testArgs, "--isolate"];
+}
 
 /** Default wall-clock ceiling for one `bun test` process, in minutes. */
 export const DEFAULT_MAX_MINUTES = 15;

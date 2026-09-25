@@ -1,4 +1,10 @@
-import { beforeEach, expect, mock, test } from "bun:test";
+import { afterEach, beforeEach, expect, mock, spyOn, test } from "bun:test";
+import * as offline from "@app/cmux/lib/offline-snapshot";
+import { ProfileStore } from "@app/cmux/lib/store";
+import { PROFILE_VERSION } from "@app/cmux/lib/types";
+import * as prompts from "@clack/prompts";
+import * as health from "@genesiscz/utils/cmux/lib/health";
+import { runRescue } from "./rescue";
 
 /**
  * The confirmation gate is the only thing between `tools cmux rescue` and
@@ -6,57 +12,17 @@ import { beforeEach, expect, mock, test } from "bun:test";
  * both RECORDS and THROWS, so a path that reaches the kill fails loudly rather
  * than passing quietly — and the last test is the negative control proving a
  * confirmed run still gets there.
+ *
+ * Only `spyOn` + `mock.restore()` here, never `mock.module`: a module mock is
+ * process-global in Bun and outlives this file. The store mock this file used
+ * to install had no `read`, so every later file in a serial run (`bun
+ * scripts/test.ts src/cmux`) got a ProfileStore without `read`, `list` or
+ * `exists`.
  */
 
 let interactive = true;
 let confirmAnswer: boolean | symbol = true;
-
-mock.module("@genesiscz/utils/cli", () => ({
-    isInteractive: () => interactive,
-    suggestCommand: (cmd: string) => cmd,
-}));
-
-mock.module("@genesiscz/utils/prompts/clack/helpers", () => ({
-    withCancel: async (value: unknown) => await value,
-}));
-
-mock.module("@clack/prompts", () => ({
-    intro: () => {},
-    outro: () => {},
-    note: () => {},
-    cancel: () => {},
-    confirm: async () => confirmAnswer,
-    log: { info: () => {}, warn: () => {}, step: () => {}, error: () => {}, success: () => {} },
-}));
-
-mock.module("@genesiscz/utils/cmux/lib/health", () => ({
-    probeCmuxHealth: async () => ({ state: "starved", appPid: 4242, appCpu: 99 }),
-    // Mocking a module replaces ALL of its exports; the rescue lib reads this one
-    // to re-check a pid's identity before signalling, so it has to be here too.
-    APP_BINARY_SUFFIX: "cmux.app/Contents/MacOS/cmux",
-}));
-
-mock.module("@app/cmux/lib/offline-snapshot", () => ({
-    captureOfflineProfile: async () => ({
-        version: 1,
-        name: "rescue",
-        scope: "all",
-        captured_at: "2026-08-27T12:00:00.000Z",
-        cmux_version: "test",
-        windows: [],
-    }),
-}));
-
-mock.module("@app/cmux/lib/store", () => ({
-    ProfileStore: class {
-        write() {
-            return "/tmp/does-not-matter.json";
-        }
-    },
-    ProfileExistsError: class extends Error {},
-}));
-
-const { runRescue } = await import("./rescue");
+let realIsTty: boolean | undefined;
 
 let killed: number[] = [];
 let relaunched = 0;
@@ -77,6 +43,40 @@ beforeEach(() => {
     relaunched = 0;
     interactive = true;
     confirmAnswer = true;
+
+    // `isInteractive()` reads `process.stdin.isTTY`; a getter lets a test flip it.
+    realIsTty = process.stdin.isTTY;
+    Object.defineProperty(process.stdin, "isTTY", { get: () => interactive, configurable: true });
+
+    spyOn(health, "probeCmuxHealth").mockResolvedValue({
+        state: "ui-starved",
+        appPid: 4242,
+        appCpu: 99,
+        probes: { ping: { ok: true, ms: 1 }, identify: { ok: false, ms: 1 } },
+    });
+    spyOn(offline, "captureOfflineProfile").mockResolvedValue({
+        version: PROFILE_VERSION,
+        name: "rescue",
+        scope: "all",
+        captured_at: "2026-08-27T12:00:00.000Z",
+        cmux_version: "test",
+        windows: [],
+    });
+    spyOn(ProfileStore.prototype, "write").mockReturnValue("/tmp/does-not-matter.json");
+    spyOn(prompts, "confirm").mockImplementation(async () => confirmAnswer);
+
+    for (const name of ["intro", "outro", "note", "cancel"] as const) {
+        spyOn(prompts, name).mockImplementation(() => {});
+    }
+
+    for (const name of ["info", "warn", "step"] as const) {
+        spyOn(prompts.log, name).mockImplementation(() => {});
+    }
+});
+
+afterEach(() => {
+    mock.restore();
+    Object.defineProperty(process.stdin, "isTTY", { value: realIsTty, configurable: true, writable: true });
 });
 
 test("--dry-run never reaches the kill", async () => {

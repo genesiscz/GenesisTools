@@ -1,8 +1,7 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { pickEnumFlag } from "./door";
 import { isTranscriptFormat, TRANSCRIPT_FORMATS, type TranscriptFormat } from "./render";
 
-// bun test never has a TTY on stdin, so every case here is the non-interactive branch.
 const base = {
     tool: "tools grok read",
     subcommand: ["read"],
@@ -13,9 +12,19 @@ const base = {
 };
 
 describe("pickEnumFlag (non-interactive)", () => {
+    // `bun test` inherits the terminal's stdin, so a run from a shell has a TTY and a
+    // bare flag would open the picker and wait. Pin stdin to non-interactive.
+    let realIsTty: boolean | undefined;
+
+    beforeEach(() => {
+        realIsTty = process.stdin.isTTY;
+        Object.defineProperty(process.stdin, "isTTY", { value: false, configurable: true, writable: true });
+    });
+
     // Bun coerces `process.exitCode = undefined` to 0, so "untouched" means 0 here.
     afterEach(() => {
         process.exitCode = 0;
+        Object.defineProperty(process.stdin, "isTTY", { value: realIsTty, configurable: true, writable: true });
     });
 
     test("an absent flag is the default, and does not touch the exit code", async () => {
