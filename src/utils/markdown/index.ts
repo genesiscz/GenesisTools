@@ -643,7 +643,9 @@ export function renderMarkdownToCli(markdown: string, options?: MarkdownRenderOp
     tableEngine = options?.tableEngine ?? "auto";
 
     const html = mdInstance.render(markdown);
-    let output = cliHtml(html);
+    // cli-html wraps at the terminal's width unless told otherwise, so an explicit
+    // width has to reach it too; the pass below would only truncate its lines.
+    let output = cliHtml(html, options?.width ? { lineWidth: { value: options.width } } : {});
 
     // Apply width constraint
     if (options?.width) {

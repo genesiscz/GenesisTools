@@ -182,14 +182,12 @@ const ATTRLIST_BUF = new ArrayBuffer(24);
     dv.setUint32(16, ATTR_FILE_TOTALSIZE | ATTR_FILE_ALLOCSIZE, true);
     dv.setUint32(20, ATTR_CMNEXT_PRIVATESIZE | ATTR_CMNEXT_CLONEID, true);
 }
-const ATTRLIST_PTR = ptr(ATTRLIST_BUF);
 
 // 128 KB output buffer — matches the size Healey's dumac landed on after
 // scanning the parameter space. Reused across syscalls and across dirs to
 // avoid GC churn (this module isn't multi-threaded so single-buf is safe).
 const BUF_BYTES = 128 * 1024;
 const OUT_BUF = new ArrayBuffer(BUF_BYTES);
-const OUT_BUF_PTR = ptr(OUT_BUF);
 const OUT_VIEW = new DataView(OUT_BUF);
 const OUT_U8 = new Uint8Array(OUT_BUF);
 const DECODER = new TextDecoder();
@@ -250,7 +248,11 @@ export function* iterDir(dirPath: string): Generator<BulkEntry> {
 
     try {
         while (true) {
-            const n = lib.getattrlistbulk(fd, ATTRLIST_PTR, OUT_BUF_PTR, BigInt(BUF_BYTES), BULK_OPTS);
+            // Take the pointers here, never once at module load: a raw pointer
+            // number does not keep its ArrayBuffer alive, so a buffer no
+            // function references is collected after load and the kernel
+            // reads freed memory (EINVAL once a GC reuses it).
+            const n = lib.getattrlistbulk(fd, ptr(ATTRLIST_BUF), ptr(OUT_BUF), BigInt(BUF_BYTES), BULK_OPTS);
             if (n < 0) {
                 const errno = readErrno(lib);
                 if (errno === ENOTSUP) {

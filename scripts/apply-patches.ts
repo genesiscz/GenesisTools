@@ -17,6 +17,8 @@ import { logger } from "@genesiscz/utils/logger";
 const PATCHES: Array<{ pkg: string; patch: string }> = [
     { pkg: "node_modules/cli-table3", patch: "patches/cli-table3@0.6.5.patch" },
     { pkg: "node_modules/@opentui/solid", patch: "patches/@opentui%2Fsolid@0.5.9.patch" },
+    // Upstream fix for server.close() hanging on a mid-optimize dep; drop at vite >= 8.3.1.
+    { pkg: "node_modules/vite", patch: "patches/vite@8.2.2.patch" },
 ];
 
 async function gitApply(args: string[]): Promise<number> {
