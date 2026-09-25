@@ -73,7 +73,10 @@ marked adaptation (`// GenesisTools adaptation: …`). Missing Genesis types go 
 - Resize performance: `GenesisTools --hub --session <id> --panes transcript,changes --bench /tmp/b.json`
   (sidebar drag, file-list drag, window and pane-divider sweeps with jitter; main-thread busy ms per step from run-loop
   observers, plus layout-flip probes; `GENESIS_HUB_BENCH_ONLY=sidebar` for one sweep, e.g. under `sample`). Scripted
-  runs use a scratch copy of the hub's settings (`HubDefaults`), never the live layout.
+  runs use a scratch copy of the hub's settings (`HubDefaults`), never the live layout. `--mode timeline` adds
+  `activity` (the Activity rail's filters clicked) and `inbox` (the mode switch). 🛑 Measure clicks with
+  `GENESIS_HUB_BENCH_AX=1`: the live hub always has an accessibility client (dictation, `tools control`), and with
+  one SwiftUI walks every responder per changed accessibility node; a click that costs 90 ms without it costs 1.6 s.
 - Logic tests: `swift test` in this folder (Tests/, no windows).
 - Read the PNG. The web diff is composited from WKWebView's own snapshot, so it needs no Screen Recording grant.
 - A `--snapshot` run uses the `.prohibited` activation policy and an alpha-0 window (`orderInForSnapshot`): it never
