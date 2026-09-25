@@ -96,6 +96,17 @@ final class ReviewCommentStore {
         save()
     }
 
+    /// A comment that went to the PR: a pending review draft, or published.
+    func mark(_ id: String, _ state: ReviewComment.State, remoteID: String? = nil) {
+        guard let index = comments.firstIndex(where: { $0.id == id }) else { return }
+        comments[index].state = state
+        if let remoteID {
+            comments[index].remoteDraftID = remoteID
+        }
+        comments[index].updatedAt = Date()
+        save()
+    }
+
     // MARK: anchoring
 
     /// Moves every comment of a file in `files` to where its anchor text is now. Returns true when
@@ -192,7 +203,9 @@ final class ReviewCommentStore {
         let chosen = comments
             .filter { ids.contains($0.id) }
             .sorted { ($0.path, $0.startLine) < ($1.path, $1.startLine) }
-        var out = "Review comments on \(repo.lastPathComponent) (\(branch)). Address each one and reply with what you changed for each.\n"
+        // The folder too: a review of several repositories sends one section per repository, and each
+        // file path below is relative to its own.
+        var out = "Review comments on \(repo.lastPathComponent) (\(branch)) in \(repo.path). Address each one and reply with what you changed for each.\n"
 
         for (index, comment) in chosen.enumerated() {
             let lineRange = comment.startLine == comment.endLine ? "\(comment.endLine)" : "\(comment.startLine)-\(comment.endLine)"
