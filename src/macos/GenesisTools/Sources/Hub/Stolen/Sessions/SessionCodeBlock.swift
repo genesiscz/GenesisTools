@@ -15,6 +15,7 @@
 //  Portable: Foundation and SwiftUI only (plus `SessionSyntaxHighlighter.swift`).
 //
 
+import AppKit
 import Foundation
 import SwiftUI
 
@@ -402,6 +403,8 @@ struct CodeBlockText: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        // GenesisTools adaptation: vertical wheel events over the block go to the list (upstream 9b6a354a).
+        .background(VerticalWheelToEnclosingScroll())
             .task(id: key) {
                 if let cached = CodeBlockCache.shared.get(key) {
                     // GenesisTools adaptation: `highlighted` remembers its key (see its declaration).
@@ -418,5 +421,60 @@ struct CodeBlockText: View {
                 // GenesisTools adaptation: `highlighted` remembers its key (see its declaration).
                 highlighted = (key, result)
             }
+    }
+}
+
+// GenesisTools adaptation: taken from upstream 9b6a354a (Genesis), where the scroll bug was reported.
+/// Hands vertical wheel scrolls over a code block to the list around it.
+///
+/// Each code block scrolls its long lines sideways in a horizontal `ScrollView`. On macOS that nested
+/// scroll view takes EVERY wheel event while the pointer is over it, vertical ones included, so the
+/// transcript stopped scrolling whenever the pointer rested on a tool output (Martin, 2026-09-25). This
+/// view sits behind the block, watches the app's wheel events (a local monitor that returns the others
+/// unchanged), and sends a mostly vertical one that lands inside its bounds to the nearest enclosing
+/// scroll view, which is the transcript list: the horizontal scroller is a sibling, not an ancestor.
+/// A mostly horizontal scroll still reaches the block.
+struct VerticalWheelToEnclosingScroll: NSViewRepresentable {
+    func makeNSView(context: Context) -> RouterView {
+        RouterView()
+    }
+
+    func updateNSView(_ view: RouterView, context: Context) {}
+
+    final class RouterView: NSView {
+        private var monitor: Any?
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            if let monitor {
+                NSEvent.removeMonitor(monitor)
+                self.monitor = nil
+            }
+            guard window != nil else { return }
+            monitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { [weak self] event in
+                guard let self else { return event }
+                return self.route(event) ? nil : event
+            }
+        }
+
+        deinit {
+            if let monitor {
+                NSEvent.removeMonitor(monitor)
+            }
+        }
+
+        /// True when the event went to the enclosing scroll view instead.
+        private func route(_ event: NSEvent) -> Bool {
+            guard event.window === window, !isHiddenOrHasHiddenAncestor,
+                  abs(event.scrollingDeltaY) > abs(event.scrollingDeltaX),
+                  bounds.contains(convert(event.locationInWindow, from: nil)),
+                  let outer = enclosingScrollView
+            else { return false }
+            outer.scrollWheel(with: event)
+            return true
+        }
+
+        /// Never takes a click or a hover meant for the text above it.
+        override func hitTest(_ point: NSPoint) -> NSView? { nil }
     }
 }
