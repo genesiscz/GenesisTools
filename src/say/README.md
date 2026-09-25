@@ -234,7 +234,7 @@ In a non-TTY context both entry points fail fast — pass `--app <name> --save` 
 | `--app <name>` | App profile to load; required target for `--save` |
 | `--mute` | Mute the app (requires `--save`) |
 | `--unmute` | Unmute the app (requires `--save`) |
-| `--provider <name>` | TTS backend: `macos`, `xai`, `openai` |
+| `--provider <name>` | TTS backend: `macos`, `xai`, `openai`. A cloud key comes from the provider's AI accounts first (`tools ai config account add --provider xai`), then `XAI_API_KEY` / `OPENAI_API_KEY`, so a GUI app with no shell exports can still speak. |
 | `--language <bcp47>` | Language hint (xAI) |
 | `--format <codec>` | `mp3` or `wav` |
 | `--file <path>` | Read text from a file |

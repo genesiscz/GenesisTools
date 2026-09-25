@@ -37,7 +37,9 @@ export async function resolveProviderApiKey(providerId: string): Promise<Resolve
     const plugin = tryProviderPlugin(providerId);
     const spec: CredentialSpec = plugin?.credential ?? { fields: ["apiKey"], envKeys: [], required: ["apiKey"] };
 
-    for (const account of await accountsFor(providerId)) {
+    const accounts = await accountsFor(providerId);
+
+    for (const account of accounts) {
         try {
             const resolved = await resolveCredential(account, spec);
             logger.debug(
@@ -61,12 +63,20 @@ export async function resolveProviderApiKey(providerId: string): Promise<Resolve
         }
     }
 
+    // "no account" is false when an env-only account exists (the seeded `xai-api`
+    // is one), and a user who can see it in `account list` stops trusting the rest
+    // of the line. Adding an account is still the fix: `account edit` cannot
+    // attach a key to an existing one.
+    const found =
+        accounts.length > 0
+            ? `no key in account${accounts.length === 1 ? "" : "s"} ${accounts.map((account) => account.name).join(", ")}`
+            : "no account";
+    const detail = spec.envKeys.length > 0 ? `${found} and none of ${spec.envKeys.join(", ")} is set` : found;
+
     throw new CredentialUnavailableError(
         "<none>",
         providerId,
-        spec.envKeys.length > 0
-            ? `no account and none of ${spec.envKeys.join(", ")} is set. Add one with: tools ai config account add --provider ${providerId}`
-            : `no account configured. Add one with: tools ai config account add --provider ${providerId}`
+        `${detail}. Add one with: tools ai config account add --provider ${providerId}`
     );
 }
 
