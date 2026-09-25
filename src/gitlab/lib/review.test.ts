@@ -1,11 +1,14 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expectedLabels, parseIids, parseLabels, renderChangeTable, sameLabels } from "@app/gitlab/lib/label-batch";
+import type { DiffFile } from "@app/gitlab/lib/pr-review";
 import {
+    anchorDrift,
     type DiscussionSummary,
     type DraftSummary,
+    diffLinePosition,
     findUnanchoredDrafts,
     renderDiscussionTable,
     renderDraftTable,
@@ -85,6 +88,93 @@ describe("writeAnchoredDraft", () => {
             expect(result.draftId).toBe(77);
             expect(result.error).toContain("deleting it failed");
             // One DELETE, not three: a retried delete that had landed would answer 404.
+            expect(calls).toEqual(["GET", "POST", "DELETE"]);
+        } finally {
+            server.stop(true);
+        }
+    });
+});
+
+describe("positioned drafts", () => {
+    const file: DiffFile = {
+        path: "src/a.ts",
+        oldPath: "src/a.ts",
+        status: "modified",
+        binary: false,
+        additions: 1,
+        deletions: 0,
+        truncated: false,
+        hunks: [
+            {
+                header: "@@ -10,2 +10,3 @@",
+                oldStart: 10,
+                newStart: 10,
+                lines: [
+                    { kind: " ", oldLine: 10, newLine: 10, text: "a" },
+                    { kind: "+", oldLine: null, newLine: 11, text: "b" },
+                    { kind: " ", oldLine: 11, newLine: 12, text: "c" },
+                ],
+            },
+        ],
+    };
+
+    test("a range endpoint on a context line is `old`, as GitLab's API documents it", () => {
+        // docs.gitlab.com/api/discussions: line_range type is "new for lines added by this commit, otherwise old".
+        const position = diffLinePosition({ file, side: "additions", line: 12, startLine: 10 });
+
+        expect(typeof position).not.toBe("string");
+        expect(typeof position === "string" ? null : position.line_range).toMatchObject({
+            start: { type: "old", old_line: 10, new_line: 10 },
+            end: { type: "old", old_line: 11, new_line: 12 },
+        });
+        expect(diffLinePosition({ file, side: "additions", line: 11, startLine: 10 })).toMatchObject({
+            line_range: { end: { type: "new", old_line: null, new_line: 11 } },
+        });
+    });
+
+    test("an anchor GitLab dropped, moved or narrowed is drift; the same anchor is not", () => {
+        const position = diffLinePosition({ file, side: "additions", line: 12, startLine: 10 });
+
+        if (typeof position === "string") {
+            throw new Error(position);
+        }
+
+        const stored = { ...position, line_range: position.line_range };
+        expect(anchorDrift(position, stored)).toBeNull();
+        expect(anchorDrift(position, null)).toBe("dropped the anchor");
+        expect(anchorDrift(position, { ...stored, new_line: 13 })).toContain("new_line 12 became 13");
+        expect(anchorDrift(position, { ...stored, new_path: "src/b.ts" })).toContain("new_path");
+        expect(anchorDrift(position, { ...stored, line_range: null })).toBe("dropped the line range");
+    });
+
+    test("a draft GitLab stored on another line is deleted again", async () => {
+        const calls: string[] = [];
+        const server = Bun.serve({
+            port: 0,
+            fetch(request) {
+                calls.push(request.method);
+
+                if (request.method === "GET") {
+                    return Response.json({ diff_refs: { base_sha: "a", start_sha: "b", head_sha: "c" } });
+                }
+
+                if (request.method === "POST") {
+                    return Response.json({
+                        id: 78,
+                        position: { new_path: "a.ts", old_path: "a.ts", new_line: 4, old_line: null },
+                    });
+                }
+
+                return new Response(null, { status: 204 });
+            },
+        });
+
+        try {
+            const api = { host: `http://localhost:${server.port}`, token: "t", project: "group/app" };
+            const result = await writeAnchoredDraft(api, { iid: "1", path: "a.ts", line: 3, body: "x" });
+
+            expect(result.ok).toBe(false);
+            expect(result.error).toContain("new_line 3 became 4");
             expect(calls).toEqual(["GET", "POST", "DELETE"]);
         } finally {
             server.stop(true);
@@ -291,6 +381,203 @@ describe("review render", () => {
         expect(md).toContain("_(file not in current working tree)_");
         expect(md).toContain("2 ▶ two");
         expect(md).toContain("**@bob**:\n> Why \\| this?");
+    });
+
+    test("the report keeps its sections, excerpts and quotes (snapshot taken before the json2md move)", () => {
+        const cwd = mkdtempSync(join(tmpdir(), "gt-render-"));
+        mkdirSync(join(cwd, "src"));
+        writeFileSync(join(cwd, "src/app.ts"), ["one", "two", "three", "four", "five"].join("\n"));
+        writeFileSync(join(cwd, "src/moved.ts"), ["alpha", "beta", "gamma"].join("\n"));
+        const at = (sha: string, path: string, newLine: number | null, oldLine: number | null = null) => ({
+            head_sha: sha,
+            base_sha: "b0b0b0b0b0b0",
+            new_path: path,
+            old_path: path,
+            new_line: newLine,
+            old_line: oldLine,
+        });
+        const rich: Discussion[] = [
+            {
+                id: "match",
+                notes: [
+                    {
+                        resolvable: true,
+                        resolved: false,
+                        position: at("1111111111aa", "src/app.ts", 3),
+                        author: { username: "alice" },
+                        created_at: "2026-09-01T10:00:00Z",
+                        body: "Rename this.\nIt reads | badly.",
+                    },
+                    { resolvable: true, resolved: false, author: { username: "bob" }, body: "Agreed." },
+                ],
+            },
+            {
+                id: "diverged",
+                notes: [
+                    {
+                        resolvable: true,
+                        resolved: false,
+                        position: at("2222222222bb", "src/moved.ts", 2),
+                        author: { username: "bob" },
+                        body: "Moved?",
+                    },
+                ],
+            },
+            {
+                id: "deleted",
+                notes: [
+                    {
+                        resolvable: true,
+                        resolved: false,
+                        position: at("3333333333cc", "src/gone.ts", null, 7),
+                        body: "Why remove it?",
+                    },
+                ],
+            },
+            {
+                id: "closed",
+                notes: [{ resolvable: true, resolved: true, position: at("1111111111aa", "src/app.ts", 1) }],
+            },
+            { id: "chat", individual_note: true, notes: [{ body: "top-level chat" }] },
+        ];
+        const { md } = renderMarkdown(rich, {
+            mrIid: "42",
+            project: "group/app",
+            cwd,
+            contextLines: 1,
+            anchorViews: new Map([
+                ["1111111111aa:src/app.ts", ["one", "two", "three", "four", "five"]],
+                ["2222222222bb:src/moved.ts", ["alpha", "BETA", "gamma"]],
+            ]),
+        });
+
+        expect(md.replaceAll(cwd, "<cwd>")).toMatchInlineSnapshot(`
+          "# GitLab MR 42 review — unresolved threads
+
+          - **Project**: \`group/app\`
+          - **Discussions total**: 5
+          - **Unresolved diff-attached threads**: 3
+          - **Files touched**: 3
+          - **Distinct head_shas**: 3  _(each comment may be anchored to a different commit — fetch / read at its own \`head_sha\`)_
+          - **Local cwd**: \`<cwd>\`
+
+          ---
+
+          ## Thread 1 — \`src/app.ts\`:3
+
+          - **Anchored at**: \`1111111111\` _(per-thread head_sha; **NOT** necessarily MR HEAD)_
+          - **Base sha**: \`b0b0b0b0b0\`
+          - **Local state**: file is 5 lines locally
+
+          ### Local working tree (lines 2–4):
+
+          \`\`\`
+          2   two
+          3 ▶ three
+          4   four
+          \`\`\`
+
+          ### Reviewer's frozen view at \`1111111111\` (lines 2–4):
+
+          \`\`\`
+          2   two
+          3 ▶ three
+          4   four
+          \`\`\`
+
+          > ✓ Local working tree matches this view at the anchor lines.
+
+          ### Discussion (2 notes):
+
+          **@alice** _(2026-09-01)_:
+          > Rename this.
+          > It reads \\| badly.
+
+          **@bob**:
+          > Agreed.
+
+          ---
+
+          ## Thread 2 — \`src/moved.ts\`:2
+
+          - **Anchored at**: \`2222222222\` _(per-thread head_sha; **NOT** necessarily MR HEAD)_
+          - **Base sha**: \`b0b0b0b0b0\`
+          - **Local state**: file is 3 lines locally
+
+          ### Local working tree (lines 1–3):
+
+          \`\`\`
+          1   alpha
+          2 ▶ beta
+          3   gamma
+          \`\`\`
+
+          ### Reviewer's frozen view at \`2222222222\` (lines 1–3):
+
+          \`\`\`
+          1   alpha
+          2 ▶ BETA
+          3   gamma
+          \`\`\`
+
+          > ⚠️ **Local working tree diverges from this view** — the line may have moved or been refactored. Read both before applying.
+
+          ### Discussion (1 note):
+
+          **@bob**:
+          > Moved?
+
+          ---
+
+          ## Thread 3 — \`src/gone.ts\`:7 _(deleted line — comment on removed code)_
+
+          - **Anchored at**: \`3333333333\` _(per-thread head_sha; **NOT** necessarily MR HEAD)_
+          - **Base sha**: \`b0b0b0b0b0\`
+          - **Local state**: file not in cwd
+
+          ### Local working tree (lines 6–8):
+
+          _(file not in current working tree)_
+
+          ### Reviewer's frozen view at \`3333333333\` (lines 6–8):
+
+          _(fetch failed — see stderr)_
+
+          ### Discussion (1 note):
+
+          **@(unknown)**:
+          > Why remove it?
+
+          ---
+
+          ## Next steps
+
+          - Apply the fixes to the current working tree (not to the reviewer's frozen view).
+          - Resolve threads in the GitLab UI after verifying.
+          "
+        `);
+        expect(
+            renderMarkdown([], { mrIid: "7", project: "group/app", cwd: "/x", contextLines: 3 }).md
+        ).toMatchInlineSnapshot(`
+              "# GitLab MR 7 review — unresolved threads
+
+              - **Project**: \`group/app\`
+              - **Discussions total**: 0
+              - **Unresolved diff-attached threads**: 0
+              - **Files touched**: 0
+              - **Distinct head_shas**: 0  _(each comment may be anchored to a different commit — fetch / read at its own \`head_sha\`)_
+              - **Local cwd**: \`/x\`
+
+              ---
+
+              _No unresolved diff-attached threads._
+
+              ## Next steps
+
+              - Apply the fixes to the current working tree (not to the reviewer's frozen view).
+              - Resolve threads in the GitLab UI after verifying.
+              "
+            `);
     });
 });
 

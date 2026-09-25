@@ -18,7 +18,8 @@ Talks to the GitLab REST and GraphQL APIs directly. Nothing about the instance i
 | **Per-day activity** | `activity` groups one user's events per local day, with links; the window is widened so late-evening events land on the right day |
 | **Activity reports** | `analyze-user` and `analyze-project` avoid the GitLab `?all=true` pagination bug |
 | **Pagination that does not lie** | Follows `X-Next-Page`; GitLab can return a short page while more pages exist, and some endpoints ignore `page` entirely |
-| **Review threads** | `fetch-review` renders unresolved threads with the local code and the reviewer's frozen view |
+| **Review threads** | `fetch-review` returns the MR's discussions as JSON; `--md` renders unresolved threads with the local code and the reviewer's frozen view |
+| **Reviewing an MR** | `pr review` gathers what a reviewer of someone else's MR needs: numbered hunks, file checklist, existing threads, your drafts, open MRs this one breaks or overlaps, configured gates; JSON, markdown, a compact `--llm` view, or a review-proposal skeleton for the GenesisTools.app review window |
 | **Draft replies** | `draft-reply` folds into the one pending draft GitLab allows per thread instead of failing |
 | **Batch writes** | `batch-comment` and `batch-label` keep a ledger, dedupe, and log before/after |
 | **Stale-MR cleanup** | `stale-branches` collects facts, lets an agent review, renders a note, then posts, labels and closes one MR at a time |
@@ -41,8 +42,16 @@ tools gitlab analyze-project --project acme/web-app --since 2026-01-01
 # Open MRs that touch a file (exact path or path suffix)
 tools gitlab search-by-file --file bun.lock --file package.json
 
-# Review threads of MR !42 with code excerpts
+# Review threads of MR !42: JSON, or the report with code excerpts
 tools gitlab fetch-review 42 --cwd ~/code/web-app
+tools gitlab fetch-review 42 --cwd ~/code/web-app --md
+
+# Review someone else's MR !57: facts JSON, report, compact view, drill-down, proposal skeleton
+tools gitlab pr review 57 --repo ~/code/web-app
+tools gitlab pr review 57 --md
+tools gitlab pr review 57 --llm
+tools gitlab pr review 57 --expand f3,t1
+tools gitlab pr review 57 --proposal-skeleton --agent claude > /tmp/review-57.json
 
 # Threads, draft replies, publish
 tools gitlab discussions 42 --unresolved
@@ -78,7 +87,8 @@ The host is normalised to `https://host` (an explicit `http://` and a relative r
 | `analyze-project --since <date>` | Monthly commit report and maintainer leaderboard for one project |
 | `batch-comment <iids> --comment <text>` | Post the same comment on many MRs; skips a (project, MR, text) already in the ledger |
 | `batch-label <iids> --add/--remove <label>` | Change labels on many MRs; refuses unknown labels unless `--create-missing` |
-| `fetch-review <iid>` | Discussions JSON + per-thread Markdown report with local and frozen code views |
+| `fetch-review <iid>` | Discussions JSON (default); `--md` (or `--format md\|both`) renders the per-thread report with local and frozen code views |
+| `pr review <iid>` | Facts for reviewing an MR (see below); `--md`, `--llm`, `--expand <refs>`, `--proposal-skeleton` |
 | `discussions <iid>` | Threads with author, anchor and state |
 | `draft-reply <iid>` | Draft reply, anchored draft (`--file/--line`), top-level draft, or `--now` with `--resolve` |
 | `drafts <iid>` | Pending drafts with where each one landed; `--publish`, `--delete <id>` |
@@ -105,6 +115,17 @@ tools gitlab stale-branches closed-bug sweep.json --dry-run                    #
 
 Other steps: `reconcile`, `sync-note`, `shipped-detail`, `side-comment`, `mark-review`. The sweep JSON records the host and project, so later steps need no `--host` or `--project`.
 
+### `pr review`
+
+The reviewer's twin of `fetch-review`. Read-only: GETs on GitLab, and `git diff` / `cat-file` / `worktree list` in the checkout.
+
+- **Diff**: from local git when the checkout has both the base and head commits (`--context-lines`, default 8), else from GitLab's diffs API. Every line carries its old- and new-side number.
+- **Checkout**: `--repo <checkout>` (default: the current checkout when `--project` is not given). File links point at the worktree that has the MR's source branch checked out; the report warns when there is none or it is behind the MR head.
+- **Impact**: other open MRs that add an import of a module this MR deletes or renames (relative, root-relative and `@/` or `~/` aliased imports), or change the same files. It reads the diffs of at most 50 other open MRs, the most recently updated first (`--impact-limit <n>` changes that), and warns when the result is partial. `--no-impact` skips the scan.
+- **Gates**: the `review.gates` from the config, below. None configured, no gates section.
+- **Output**: stdout is the facts JSON by default; `--md` the numbered report (json2md); `--llm` a compact view with refs (`f1` files, `t1` threads, `d1` your drafts, `m1` affected MRs); `--expand f3,t1` prints refs in full from the saved facts (`--refresh` collects again). Every collecting run writes `$TMPDIR/gitlab-pr-<project>-<key>-<iid>.json` and `.md` (`<key>` is a hash of the host and project, so two hosts never share a file) and prints both paths on stderr.
+- **Review window**: `--proposal-skeleton` prints a review proposal pre-filled from the facts (provider, host, project, number, branches, `baseSha`, `headSha`, `repoPath`, every thread with its `resolved` state). An agent adds the verdict and drafts and pushes it with `tools hub proposal push`; the `gt:review-proposal` skill describes the flow.
+
 **Content check, not history.** `shipped` samples the lines an MR branch adds and looks for them in the environment branches, because squash merges and rebases make ancestry say "never merged" for code that shipped.
 
 ---
@@ -129,6 +150,12 @@ Other steps: `reconcile`, `sync-note`, `shipped-detail`, `side-comment`, `mark-r
         "mergeLabelPattern": "^(NOT\\s+)?merged into (\\S+)$",
         "environments": { "uat": "staging", "production": null, "releasePrefix": "release/", "test": "develop" },
         "draftCommentGuide": null
+    },
+    "review": {
+        "gates": [
+            { "label": "types", "command": "bunx tsgo --noEmit" },
+            { "label": "unit tests", "command": "bun test {files}", "when": "src/**/*.test.ts" }
+        ]
     }
 }
 ```
@@ -147,6 +174,7 @@ Other steps: `reconcile`, `sync-note`, `shipped-detail`, `side-comment`, `mark-r
 | `stale.environments.production` | `null` | Production branch; `null` means the default branch |
 | `stale.environments.releasePrefix` | `null` | Dated release branches (`release/2026-09-10`); the newest past one is production |
 | `stale.draftCommentGuide` | `null` | Replaces the draft-comment guidance in the preflight instructions |
+| `review.gates` | `[]` | Checks `pr review` lists for the reviewer to run: `label`, `command` (`{files}` becomes the matching changed files), optional `when` glob over changed paths; a gate with `when` is listed only when a changed file matches |
 
 Ledgers of writes live next to the config: `comment-batch.jsonl` and `label-batch.jsonl`.
 

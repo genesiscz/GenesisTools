@@ -55,6 +55,19 @@ export interface StaleConfig {
     draftCommentGuide: string | null;
 }
 
+/** One check a reviewer runs in the MR checkout before calling it clean, listed by `pr review`. */
+export interface ReviewGate {
+    label: string;
+    /** Shell command; `{files}` is replaced by the changed files the gate applies to. */
+    command: string;
+    /** Glob over changed paths (`*.ts`, `app/**`); the gate is listed only when a changed file matches. Null = always. */
+    when: string | null;
+}
+
+export interface ReviewConfig {
+    gates: ReviewGate[];
+}
+
 export interface GitLabToolConfig {
     /** Language of the texts `stale-branches` writes onto merge requests. */
     language: MessageLanguage;
@@ -63,6 +76,7 @@ export interface GitLabToolConfig {
     messages: Partial<Record<MessageKey, string>>;
     workItems: WorkItemConfig;
     stale: StaleConfig;
+    review: ReviewConfig;
 }
 
 export const DEFAULT_CONFIG: GitLabToolConfig = {
@@ -81,6 +95,7 @@ export const DEFAULT_CONFIG: GitLabToolConfig = {
         environments: { uat: null, production: null, releasePrefix: null, test: null },
         draftCommentGuide: null,
     },
+    review: { gates: [] },
 };
 
 export const storage = new Storage("gitlab");
@@ -211,7 +226,35 @@ export function mergeConfig(raw: unknown): GitLabToolConfig {
         messages,
         workItems,
         stale,
+        review: { gates: parseGates(section(raw.review, "review").gates) },
     };
+}
+
+function parseGates(value: unknown): ReviewGate[] {
+    if (value === undefined) {
+        return [];
+    }
+
+    if (!Array.isArray(value)) {
+        throw new Error("gitlab config: review.gates must be an array of { label, command, when? }");
+    }
+
+    return value.map((gate, index) => {
+        const field = `review.gates[${index}]`;
+
+        if (!isRecord(gate)) {
+            throw new Error(`gitlab config: ${field} must be an object`);
+        }
+
+        const label = stringOrNull(gate.label, `${field}.label`, null);
+        const command = stringOrNull(gate.command, `${field}.command`, null);
+
+        if (!label || !command) {
+            throw new Error(`gitlab config: ${field} needs a non-empty label and command`);
+        }
+
+        return { label, command, when: stringOrNull(gate.when, `${field}.when`, null) };
+    });
 }
 
 let cached: Promise<GitLabToolConfig> | null = null;

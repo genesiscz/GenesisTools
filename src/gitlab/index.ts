@@ -6,6 +6,7 @@ import { registerAnalyzeUser } from "@app/gitlab/commands/analyze-user";
 import { registerBatchComment } from "@app/gitlab/commands/batch-comment";
 import { registerBatchLabel } from "@app/gitlab/commands/batch-label";
 import { registerFetchReview } from "@app/gitlab/commands/fetch-review";
+import { registerPrReview } from "@app/gitlab/commands/pr-review";
 import { registerReviewDrafts } from "@app/gitlab/commands/review-drafts";
 import { registerSearchByFile } from "@app/gitlab/commands/search-by-file";
 import { registerStaleBranches } from "@app/gitlab/commands/stale-branches";
@@ -20,7 +21,7 @@ const program = new Command();
 program
     .name("gitlab")
     .description(
-        "GitLab for any instance: per-day activity, user and project reports, MR review threads and drafts, batch comments and labels, open MRs by file, stale-MR cleanup"
+        "GitLab for any instance: per-day activity, user and project reports, MR review threads and drafts, reviewing someone else's MR, batch comments and labels, open MRs by file, stale-MR cleanup"
     );
 
 registerActivity(program);
@@ -29,6 +30,7 @@ registerAnalyzeProject(program);
 registerBatchComment(program);
 registerBatchLabel(program);
 registerFetchReview(program);
+registerPrReview(program);
 registerReviewDrafts(program);
 registerSearchByFile(program);
 registerStaleBranches(program);

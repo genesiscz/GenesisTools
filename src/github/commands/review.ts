@@ -1,5 +1,6 @@
 // Review command - fetch, display, reply to, and resolve PR review threads
 
+import { postReviewComment } from "@app/github/lib/review-comments";
 import {
     formatPrCommentsLLM,
     formatReviewJSON,
@@ -507,6 +508,79 @@ Examples:
                     process.exit(1);
                 }
             })
+    );
+
+    cmd.addCommand(
+        new Command("comment")
+            .description(
+                "Write to a PR's review: a reply in a thread (--thread) or a new comment on a line (--file --line); a pending review draft unless --now publishes it"
+            )
+            .argument("<pr>", "PR number or full GitHub URL")
+            .option("--repo <owner/repo>", "Repository (auto-detected from URL or git)")
+            .option("--body-file <path>", "The comment text (markdown), read from this file")
+            .option("--body <text>", "The comment text, inline")
+            .option("--thread <id>", "Reply in this review thread (PRRT_… node id)")
+            .option("--file <path>", "A new comment on this file (repo-relative)")
+            .option("--line <n>", "…at this line of the file")
+            .option("--start-line <n>", "…spanning from this line to --line (a multi-line comment)")
+            .option("--old-side", "The line is on the old side of the diff (deleted lines)", false)
+            .option("--now", "Publish at once, visible to everyone; default is a pending review draft", false)
+            .option("--json", "Print the result as JSON", false)
+            .action(
+                async (
+                    input: string,
+                    opts: {
+                        repo?: string;
+                        bodyFile?: string;
+                        body?: string;
+                        thread?: string;
+                        file?: string;
+                        line?: string;
+                        startLine?: string;
+                        oldSide: boolean;
+                        now: boolean;
+                        json: boolean;
+                    }
+                ) => {
+                    try {
+                        const parsed = parseGitHubUrl(input, opts.repo || (await detectRepoFromGit()) || undefined);
+
+                        if (!parsed) {
+                            throw new Error("Invalid input. Please provide a GitHub PR URL or number.");
+                        }
+
+                        const body = opts.bodyFile ? await Bun.file(opts.bodyFile).text() : (opts.body ?? "");
+                        const result = await postReviewComment({
+                            owner: parsed.owner,
+                            repo: parsed.repo,
+                            number: parsed.number,
+                            body,
+                            threadId: opts.thread,
+                            path: opts.file,
+                            line: opts.line === undefined ? undefined : Number(opts.line),
+                            startLine: opts.startLine === undefined ? undefined : Number(opts.startLine),
+                            side: opts.oldSide ? "LEFT" : "RIGHT",
+                            publish: opts.now,
+                        });
+
+                        if (opts.json) {
+                            out.result(result);
+                            return;
+                        }
+
+                        // Status, not a result: stderr. `--json` is the machine-readable stdout.
+                        out.log.success(
+                            result.publish
+                                ? `Posted (${result.kind}) ${result.url ?? result.commentId}`
+                                : `Added to your pending review (${result.kind}); submit the review on GitHub to publish it`
+                        );
+                    } catch (error) {
+                        logger.error({ error }, "github review comment failed");
+                        out.error(chalk.red(`Error: ${error instanceof Error ? error.message : String(error)}`));
+                        process.exit(1);
+                    }
+                }
+            )
     );
 
     cmd.addCommand(

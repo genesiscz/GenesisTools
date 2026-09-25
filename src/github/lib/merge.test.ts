@@ -10,6 +10,7 @@ import {
     safeMergePull,
 } from "./merge";
 import { NATIVE_STACK_BASE_ERROR } from "./native-stack";
+import { postReviewComment, type ReviewCommentClient } from "./review-comments";
 import type { PullCommitSubject } from "./squash-message";
 import type { RestackBranchInput, RestackBranchResult, StackRestackOps } from "./stack-restack";
 
@@ -1088,5 +1089,177 @@ describe("safeMergePull — stack retarget order (cli/cli#1168)", () => {
         expect(result.remainingWork).toEqual([]);
         expect(calls.filter((c) => c.op === "unstack").map((c) => c.args[0])).toEqual([8, 9]);
         expect(calls.filter((c) => c.op === "updatePullBase")).toHaveLength(4);
+    });
+});
+
+describe("postReviewComment (the review window's GitHub writes)", () => {
+    const base = { owner: "acme", repo: "web", number: 7, body: "Rename this." };
+
+    /** Records every call; a call the case does not expect throws, so a wrong path fails loudly. */
+    function fakeClient(options: {
+        pending?: string;
+        allowPublish?: boolean;
+        /** The PR the replied-to thread belongs to. */
+        threadOn?: { number: number; nameWithOwner: string };
+        /** Another send starts this pending review between our query and our start, which then fails. */
+        raceWinner?: string;
+        /** The REST comment write fails with this message. */
+        commentError?: string;
+    }) {
+        const calls: string[] = [];
+        let pending = options.pending;
+        const client: ReviewCommentClient = {
+            async graphql<T>(query: string, variables: Record<string, unknown>): Promise<T> {
+                const op =
+                    /(viewer|node|addPullRequestReviewThreadReply|addPullRequestReviewThread|addPullRequestReview)\b/.exec(
+                        query
+                    )?.[1] ?? "?";
+                calls.push(`${op}${variables.reviewId ? `@${variables.reviewId}` : ""}`);
+
+                if (op === "addPullRequestReview" && options.raceWinner) {
+                    pending = options.raceWinner;
+                    throw new Error("User can only have one pending review per pull request");
+                }
+
+                const answers: Record<string, unknown> = {
+                    viewer: {
+                        viewer: { login: "work" },
+                        repository: {
+                            pullRequest: {
+                                id: "PR_1",
+                                headRefOid: "abc123",
+                                reviews: {
+                                    nodes: pending ? [{ id: pending, author: { login: "work" } }] : [],
+                                },
+                            },
+                        },
+                    },
+                    node: {
+                        node: {
+                            pullRequest: {
+                                number: options.threadOn?.number ?? 7,
+                                repository: { nameWithOwner: options.threadOn?.nameWithOwner ?? "acme/web" },
+                            },
+                        },
+                    },
+                    addPullRequestReview: { addPullRequestReview: { pullRequestReview: { id: "REV_new" } } },
+                    addPullRequestReviewThread: {
+                        addPullRequestReviewThread: {
+                            thread: { id: "T_1", comments: { nodes: [{ id: "C_1", url: "u" }] } },
+                        },
+                    },
+                    addPullRequestReviewThreadReply: {
+                        addPullRequestReviewThreadReply: { comment: { id: "C_2", url: "u2" } },
+                    },
+                };
+                return answers[op] as T;
+            },
+            async createReviewComment(input) {
+                if (!options.allowPublish) {
+                    throw new Error("published a comment the case did not ask to publish");
+                }
+                calls.push(`createReviewComment ${input.path}:${input.line}@${input.commit_id}`);
+
+                if (options.commentError) {
+                    throw new Error(options.commentError);
+                }
+
+                return { id: 99, html_url: "https://example.com/c/99" };
+            },
+        };
+        return { client, calls };
+    }
+
+    test("a draft on a line starts the pending review when there is none, and never publishes", async () => {
+        const { client, calls } = fakeClient({});
+        const result = await postReviewComment({ ...base, path: "src/a.ts", line: 12, publish: false }, client);
+        expect(calls).toEqual(["viewer", "addPullRequestReview", "addPullRequestReviewThread@REV_new"]);
+        expect(result).toMatchObject({ kind: "comment", publish: false, reviewId: "REV_new", commentId: "C_1" });
+    });
+
+    test("a draft goes into the viewer's existing pending review", async () => {
+        const { client, calls } = fakeClient({ pending: "REV_mine" });
+        await postReviewComment({ ...base, path: "src/a.ts", line: 12, publish: false }, client);
+        expect(calls).toEqual(["viewer", "addPullRequestReviewThread@REV_mine"]);
+    });
+
+    test("publishing a new comment posts on the head commit; a reply draft joins the pending review", async () => {
+        const published = fakeClient({ allowPublish: true });
+        await postReviewComment({ ...base, path: "src/a.ts", line: 3, publish: true }, published.client);
+        expect(published.calls).toEqual(["viewer", "createReviewComment src/a.ts:3@abc123"]);
+
+        const reply = fakeClient({ pending: "REV_mine" });
+        const result = await postReviewComment({ ...base, threadId: "PRRT_1", publish: false }, reply.client);
+        expect(reply.calls).toEqual(["node", "viewer", "addPullRequestReviewThreadReply@REV_mine"]);
+        expect(result.kind).toBe("reply");
+    });
+
+    test("a reply to a thread of another pull request is refused before any write", async () => {
+        for (const threadOn of [
+            { number: 8, nameWithOwner: "acme/web" },
+            { number: 7, nameWithOwner: "acme/api" },
+        ]) {
+            for (const publish of [true, false]) {
+                const { client, calls } = fakeClient({ pending: "REV_mine", threadOn });
+                await expect(postReviewComment({ ...base, threadId: "PRRT_other", publish }, client)).rejects.toThrow(
+                    `belongs to ${threadOn.nameWithOwner}#${threadOn.number}`
+                );
+                expect(calls).toEqual(["node"]);
+            }
+        }
+
+        // The owner's case does not matter: GitHub names are case-insensitive.
+        const { client } = fakeClient({ threadOn: { number: 7, nameWithOwner: "Acme/Web" } });
+        expect((await postReviewComment({ ...base, threadId: "PRRT_1", publish: true }, client)).kind).toBe("reply");
+    });
+
+    test("GitHub's 422 for a pending review comes back saying what to do; other errors pass as they are", async () => {
+        const conflict = fakeClient({
+            pending: "REV_mine",
+            allowPublish: true,
+            commentError: "Validation Failed: user_id can only have one pending review per pull request",
+        });
+        await expect(
+            postReviewComment({ ...base, path: "src/a.ts", line: 3, publish: true }, conflict.client)
+        ).rejects.toThrow("submit or discard it on GitHub first, or add this comment to it as a draft");
+
+        const other = fakeClient({ allowPublish: true, commentError: "Bad credentials" });
+        await expect(
+            postReviewComment({ ...base, path: "src/a.ts", line: 3, publish: true }, other.client)
+        ).rejects.toThrow(/^Bad credentials$/);
+    });
+
+    test("a line that is not a positive whole number is refused before any call", async () => {
+        const { client, calls } = fakeClient({ allowPublish: true });
+
+        for (const [line, startLine] of [
+            [Number.NaN, undefined],
+            [3.5, undefined],
+            [12, Number.NaN],
+            [12, 0],
+        ]) {
+            await expect(
+                postReviewComment({ ...base, path: "src/a.ts", line, startLine, publish: false }, client)
+            ).rejects.toThrow("positive whole number");
+        }
+
+        expect(calls).toEqual([]);
+    });
+
+    test("a draft that loses the race to start the pending review joins the winner's", async () => {
+        const { client, calls } = fakeClient({ raceWinner: "REV_theirs" });
+        const result = await postReviewComment({ ...base, path: "src/a.ts", line: 12, publish: false }, client);
+
+        expect(calls).toEqual(["viewer", "addPullRequestReview", "viewer", "addPullRequestReviewThread@REV_theirs"]);
+        expect(result.reviewId).toBe("REV_theirs");
+    });
+
+    test("an empty comment or a new comment without a line is refused before any call", async () => {
+        const { client, calls } = fakeClient({});
+        await expect(
+            postReviewComment({ ...base, body: "  ", path: "a", line: 1, publish: false }, client)
+        ).rejects.toThrow("empty");
+        await expect(postReviewComment({ ...base, path: "a", publish: false }, client)).rejects.toThrow("--line");
+        expect(calls).toEqual([]);
     });
 });

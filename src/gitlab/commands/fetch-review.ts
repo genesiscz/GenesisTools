@@ -1,11 +1,12 @@
 /**
- * `gitlab fetch-review` — the discussions of one MR as raw JSON (always saved) and a per-thread
- * Markdown report with code excerpts from the local working tree and the reviewer's frozen view.
+ * `gitlab fetch-review` — the discussions of one MR as raw JSON (always saved, and the default
+ * stdout) and, with `--md`, a per-thread Markdown report rendered through json2md with code
+ * excerpts from the local working tree and the reviewer's frozen view.
  *
  * In a terminal it shows clack status lines and a confirm prompt; piped or redirected, it writes
- * plain status to stderr and the Markdown to stdout.
+ * plain status to stderr and the result to stdout.
  *
- *   tools gitlab fetch-review <MR_IID> [--project group/name] [--cwd <checkout>] [--format md|json|both]
+ *   tools gitlab fetch-review <MR_IID> [--project group/name] [--cwd <checkout>] [--md | --format json|md|both]
  */
 
 import { existsSync, writeFileSync } from "node:fs";
@@ -33,6 +34,7 @@ interface Options extends TargetOptions {
     cwd?: string;
     out?: string;
     format?: string;
+    md?: boolean;
     contextLines?: string;
     confirm?: boolean;
     anchors?: boolean;
@@ -56,7 +58,7 @@ export function registerFetchReview(parent: Command): Command {
     return withProject(
         parent
             .command("fetch-review")
-            .description("Fetch MR discussions and render a per-thread Markdown report")
+            .description("Fetch MR discussions as JSON; --md renders the per-thread Markdown report")
             .argument("<mr-iid>", "MR IID (the small number in the URL, not the global id)")
             .option(
                 "--cwd <dir>",
@@ -65,9 +67,9 @@ export function registerFetchReview(parent: Command): Command {
             .option("--out <file>", "Save JSON here (default: $TMPDIR/gitlab-review-<iid>.json)")
             .option(
                 "--format <fmt>",
-                "stdout: md = the Markdown report, json = the discussions JSON, both = Markdown on stdout plus the JSON file",
-                "md"
+                "stdout: json = the discussions JSON (default), md = the Markdown report, both = Markdown on stdout plus the JSON file"
             )
+            .option("--md", "Same as --format md")
             .option("--context-lines <n>", "Lines of code excerpt around each anchor", "3")
             .option(
                 "--no-anchors",
@@ -94,7 +96,11 @@ async function runFetchReview(mrIid: string, opts: Options): Promise<void> {
         throw new Error(`MR_IID must be a positive integer; got "${mrIid}".`);
     }
 
-    const format = opts.format ?? "md";
+    if (opts.md && opts.format && opts.format !== "md") {
+        throw new Error(`--md conflicts with --format ${opts.format}; pass one of them.`);
+    }
+
+    const format = opts.md ? "md" : (opts.format ?? "json");
     if (!FORMATS.includes(format as (typeof FORMATS)[number])) {
         throw new Error(`Invalid --format ${format}; expected ${FORMATS.join(" | ")}`);
     }
