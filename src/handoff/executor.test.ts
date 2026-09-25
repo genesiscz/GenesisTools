@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { DASHBOARD_ACTOR, executeHandoffActions, getHandoff, listHandoffs, postHandoff } from "./executor";
+import { DASHBOARD_ACTOR, executeHandoffActions, getHandoff, launchCwd, listHandoffs, postHandoff } from "./executor";
 import { byFor, freshEnv } from "./test-utils";
 
 const A = byFor("session-a", "poster-a");
@@ -37,6 +37,60 @@ describe("handoff_post (§8.1)", () => {
         expect(edit.results[0].ok).toBe(true);
         expect(edit.results[0].assignedTaskIds).toEqual(["t3"]);
         expect(edit.handoff.tasks).toHaveLength(3);
+    });
+
+    test("the launch link opens in the resolved actor's repo when no actor is injected", () => {
+        const env = freshEnv();
+        const seen: Array<string | null> = [];
+        const link = { url: "https://genesis.tools/cmux/claude/run", markdown: "cmux-claude" };
+
+        postHandoff(
+            { title: "T", tasks: [{ text: "one" }] },
+            {
+                base: env.base,
+                dbPath: env.dbPath,
+                ctx: { cwd: process.cwd() },
+                linkFor: () => link,
+                mintLaunchLink: (input) => {
+                    seen.push(input.cwd);
+                    return link;
+                },
+            }
+        );
+
+        expect(seen).toHaveLength(1);
+        expect(typeof seen[0]).toBe("string");
+    });
+
+    test("a Claude launch link is offered only when Claude may work the handoff", () => {
+        const link = { url: "https://genesis.tools/cmux/claude/run", markdown: "cmux-claude" };
+        const minted = (target?: { agent: string }) => {
+            const env = freshEnv();
+            let calls = 0;
+            const res = postHandoff(
+                { title: "T", tasks: [{ text: "one" }], ...(target ? { target } : {}) },
+                {
+                    ...env.depsFor(A),
+                    linkFor: () => link,
+                    mintLaunchLink: () => {
+                        calls += 1;
+                        return link;
+                    },
+                }
+            );
+            return { calls, runLink: res.paste.runLink };
+        };
+
+        expect(minted()).toEqual({ calls: 1, runLink: link });
+        expect(minted({ agent: "claude-code" })).toEqual({ calls: 1, runLink: link });
+        expect(minted({ agent: "codex" })).toEqual({ calls: 0, runLink: undefined });
+        expect(minted({ agent: "grok" })).toEqual({ calls: 0, runLink: undefined });
+    });
+
+    test("a launch from a linked worktree opens in the worktree, not the main checkout", () => {
+        expect(launchCwd({ cwd: "/code/app-feat", repoRoot: "/code/app", isWorktree: true })).toBe("/code/app-feat");
+        expect(launchCwd({ cwd: "/code/app/src", repoRoot: "/code/app", isWorktree: false })).toBe("/code/app");
+        expect(launchCwd({ cwd: null, repoRoot: "/code/app", isWorktree: true })).toBe("/code/app");
     });
 
     test("rejects empty input with copy-pasteable example", () => {

@@ -1,6 +1,6 @@
 import type { Database } from "bun:sqlite";
 import type { AgentRuntimeContext } from "@genesiscz/utils/agent/runtime";
-import { getAgentRuntimeContext } from "@genesiscz/utils/agent/runtime";
+import { gatherHarnessPoster } from "@genesiscz/utils/agent/runtime";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { attachmentFilePath, ingestAttachmentBytes, ingestAttachmentFromPath } from "./attachments";
@@ -19,6 +19,7 @@ import {
 } from "./read-model";
 import {
     agentFilterMatches,
+    canonicalAgent,
     HANDOFF_AGENTS_LIST,
     handoffNameFor,
     isKnownAgent,
@@ -52,6 +53,14 @@ export interface HandoffDeps {
     /** Full actor override — the dashboard's owner-authority human actor (§7.1). */
     by?: HandoffEventBy;
     nowIso?: () => string;
+    /** When this returns a link, handoff_post offers a one-click cmux launch. Null means the preset is off. */
+    linkFor?: (presetId: string) => { url: string; markdown: string } | null;
+    mintLaunchLink?: (input: {
+        name: string;
+        prompt: string;
+        cwd: string | null;
+        account?: string | null;
+    }) => { url: string; markdown: string } | null;
 }
 
 export const DASHBOARD_ACTOR: HandoffEventBy = {
@@ -73,7 +82,7 @@ function buildBy(deps: HandoffDeps): HandoffEventBy {
         return deps.by;
     }
 
-    const ctx = getAgentRuntimeContext(deps.ctx ?? {});
+    const ctx = gatherHarnessPoster(deps.ctx ?? {});
     return {
         sessionId: ctx.sessionId,
         sessionTitle: ctx.sessionTitle,
@@ -286,8 +295,49 @@ export interface PostHandoffInput {
 export interface PostHandoffResponse {
     handoff: PublicHandoff;
     editId: string;
-    paste: { _agent: string; id: string; title: string; tasks: string; name?: string };
+    paste: {
+        _agent: string;
+        id: string;
+        title: string;
+        tasks: string;
+        name?: string;
+        runLink?: { url: string; markdown: string };
+    };
     info: string[];
+}
+
+/**
+ * Where a launch from this actor opens: the checkout it posted from. In a linked worktree
+ * `repoRoot` names the MAIN checkout, so the worktree's own cwd is the one to use.
+ */
+export function launchCwd(by: Pick<HandoffEventBy, "cwd" | "repoRoot" | "isWorktree">): string | null {
+    return by.isWorktree ? (by.cwd ?? by.repoRoot) : (by.repoRoot ?? by.cwd);
+}
+
+/** `cwd` comes from the RESOLVED actor, so the link opens in the handoff's checkout even with default deps. */
+function mintHandoffLaunch({
+    name,
+    prompt,
+    cwd,
+    deps,
+}: {
+    name: string;
+    prompt: string;
+    cwd: string | null;
+    deps: HandoffDeps;
+}): { url: string; markdown: string } | null {
+    if (!deps.linkFor || deps.linkFor("cmux-claude") === null) {
+        return null;
+    }
+
+    return (
+        deps.mintLaunchLink?.({
+            name: `handoff ${name}`,
+            prompt,
+            cwd,
+            account: null,
+        }) ?? null
+    );
 }
 
 export function postHandoff(input: PostHandoffInput, deps: HandoffDeps = {}): PostHandoffResponse {
@@ -371,6 +421,24 @@ export function postHandoff(input: PostHandoffInput, deps: HandoffDeps = {}): Po
             );
         }
 
+        // The link starts a CLAUDE session, so it is offered only when Claude may work the handoff:
+        // no target harness, or Claude. A Codex or Grok target would get a session its own paste
+        // text tells to stop.
+        const targetAgent = handoff.target?.agent;
+        const runLink =
+            targetAgent === undefined || canonicalAgent(targetAgent) === "claude"
+                ? mintHandoffLaunch({
+                      name: handoff.name ?? handoff.id,
+                      prompt: pasteAgentText(handoff.id),
+                      cwd: launchCwd(by),
+                      deps,
+                  })
+                : null;
+
+        if (runLink) {
+            info.push("Show paste.runLink.markdown to the user so they can open the handoff in a new cmux surface.");
+        }
+
         if (target?.agent !== undefined && !isKnownAgent(target.agent)) {
             info.push(
                 `target.agent "${target.agent}" is not a documented harness (${HANDOFF_AGENTS_LIST}) — it is stored as given, but no recipient warning can ever fire for it.`
@@ -386,6 +454,7 @@ export function postHandoff(input: PostHandoffInput, deps: HandoffDeps = {}): Po
                 title: handoff.title,
                 tasks: `0/${handoff.tasks.length}`,
                 ...(handoff.name !== undefined ? { name: handoff.name } : {}),
+                ...(runLink ? { runLink } : {}),
             },
             info,
         };

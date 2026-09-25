@@ -1,6 +1,16 @@
-import { executeHandoffActions, getHandoff, type HandoffDeps, listHandoffs, postHandoff } from "@app/handoff/executor";
+import {
+    executeHandoffActions,
+    getHandoff,
+    type HandoffDeps,
+    listHandoffs,
+    type PostHandoffResponse,
+    postHandoff,
+} from "@app/handoff/executor";
 import type { HandoffActionInput, HandoffTarget, HandoffTaskInput } from "@app/handoff/types";
+import { linkFor, type PlannedLink, planMintedLink } from "@genesiscz/utils/browser-router/links";
+import { CMUX_LAUNCH_URL } from "@genesiscz/utils/browser-router/presets";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { isTestProcess } from "@genesiscz/utils/test-process";
 
 export interface HandoffPostArgs {
     title: string;
@@ -44,8 +54,63 @@ function render(value: unknown): string {
 
 const DEFAULT_MCP_INCLUDE = ["tasks"];
 
+const RUN_LINK_LABEL = "Run handoff in new cmux surface";
+const RUN_LINK_INFO = "Show paste.runLink.markdown to the user so they can open the handoff in a new cmux surface.";
+
+/**
+ * `postHandoff` is synchronous and the token file is written under an async lock, so the link id is
+ * chosen during the post and the token is saved right after it (`settleRunLinks`). The account is left
+ * out: `tools cmux launch` resolves the default Claude account when the link is clicked.
+ */
+function cmuxLaunchDeps(planned: PlannedLink[]): HandoffDeps {
+    return {
+        linkFor(presetId) {
+            return linkFor({ presetId, url: CMUX_LAUNCH_URL, label: RUN_LINK_LABEL });
+        },
+        mintLaunchLink(input) {
+            const params = new URLSearchParams();
+            params.set("name", input.name);
+            params.set("prompt", input.prompt);
+            params.set("surface", "new");
+
+            if (input.cwd) {
+                params.set("cwd", input.cwd);
+            }
+
+            if (input.account) {
+                params.set("account", input.account);
+            }
+
+            const plan = planMintedLink({ target: `${CMUX_LAUNCH_URL}?${params.toString()}`, label: RUN_LINK_LABEL });
+            planned.push(plan);
+            return plan.link;
+        },
+    };
+}
+
+/** Writes each planned token. A link whose token could not be written is removed, so no dead link is shown. */
+export async function settleRunLinks<T extends Pick<PostHandoffResponse, "paste" | "info">>(
+    response: T,
+    planned: PlannedLink[]
+): Promise<T> {
+    let settled = response;
+
+    for (const plan of planned) {
+        if ((await plan.save()) !== null || settled.paste.runLink?.url !== plan.link.url) {
+            continue;
+        }
+
+        const { runLink: _dropped, ...paste } = settled.paste;
+        settled = { ...settled, paste, info: settled.info.filter((line) => line !== RUN_LINK_INFO) };
+    }
+
+    return settled;
+}
+
 export async function handleHandoffPost(args: HandoffPostArgs, deps: HandoffDeps = {}): Promise<string> {
-    return render(postHandoff(args, deps));
+    const planned: PlannedLink[] = [];
+    const withLaunch = deps.linkFor !== undefined || isTestProcess() ? deps : { ...cmuxLaunchDeps(planned), ...deps };
+    return render(await settleRunLinks(postHandoff(args, withLaunch), planned));
 }
 
 export async function handleHandoffGet(args: HandoffGetArgs, deps: HandoffDeps = {}): Promise<string> {
