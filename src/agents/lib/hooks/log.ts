@@ -19,7 +19,7 @@ import { defaultLogPath } from "./config";
 
 export interface DecisionRecord {
     at: string;
-    phase: "pre" | "post" | "guard" | "diag";
+    phase: "pre" | "post" | "guard" | "diag" | "stop";
     harness: string;
     session?: string;
     toolUseId?: string;

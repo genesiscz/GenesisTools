@@ -1,8 +1,9 @@
 #!/usr/bin/env bun
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { fileToolSource } from "../lib/changes/log";
 import { loadHooksConfig, megabytes } from "../lib/hooks/config";
-import { runDiffPost } from "../lib/hooks/diff/run";
+import { recordFileToolChange, runDiffPost } from "../lib/hooks/diff/run";
 import { logDecision, setDiagLogPath, setMaxLogBytes } from "../lib/hooks/log";
 import { isTerminalTool, normalizeEvent, parseHookPayload } from "../lib/hooks/payload";
 
@@ -17,7 +18,17 @@ setMaxLogBytes(megabytes(config.maxLogMB));
 
 const payload = parseHookPayload(await Bun.stdin.text());
 
-if (!payload || normalizeEvent(payload.event) !== "posttooluse" || !isTerminalTool(payload.tool)) {
+if (!payload || normalizeEvent(payload.event) !== "posttooluse") {
+    process.exit(0);
+}
+
+// Edit and Write render their own diff; they only need a row in the session change log.
+if (fileToolSource(payload.tool)) {
+    recordFileToolChange(payload);
+    process.exit(0);
+}
+
+if (!isTerminalTool(payload.tool)) {
     process.exit(0);
 }
 

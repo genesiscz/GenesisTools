@@ -13,7 +13,7 @@ import {
     writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { DEFAULT_HOOKS_CONFIG, type DiffConfig } from "../config";
 import { isDeleted, statusEntries, untrackedFilesIn } from "../git";
@@ -26,7 +26,15 @@ import { classifyChange, type DiffCategory } from "./classify";
 import { changedFiles } from "./collect";
 import { commandDirs, namedArguments } from "./command-paths";
 import { assembleMessage, type DiffBlock, hasContext, highlightRange, hunkRange, renderPatch } from "./render";
-import { runDiffPost, silentReason } from "./run";
+import {
+    blobBatches,
+    type CapturedEdit,
+    captureChunks,
+    capturedBefore,
+    capturedBefores,
+    runDiffPost,
+    silentReason,
+} from "./run";
 
 let repo: string;
 let calls = 0;
@@ -176,6 +184,139 @@ describe("beforeCopy", () => {
 
 describe("runDiffPost", () => {
     const plain = { ...DEFAULT_HOOKS_CONFIG, diff: { ...DEFAULT_HOOKS_CONFIG.diff, highlight: "none" as const } };
+
+    it("logs every file an editing command touched, past the render cap; a read-only command stops at it", () => {
+        const capped = { ...plain, diff: { ...plain.diff, maxFiles: 1 } };
+        const seen = (command: string) => {
+            const current = begin({ command }, capped.diff);
+            writeFileSync(join(repo, "cap-a.ts"), "a\n");
+            writeFileSync(join(repo, "cap-b.ts"), "b\n");
+            let logged: string[] = [];
+            const decision = runDiffPost(current, capped, (_payload, captures) => {
+                logged = captures.map((item) => item.path);
+            });
+            rmSync(join(repo, "cap-a.ts"));
+            rmSync(join(repo, "cap-b.ts"));
+            return { rendered: decision.files.length, logged: logged.map((path) => relative(repo, path)).sort() };
+        };
+
+        // Other cases in this shared repo can leave a file changed within the same second, so
+        // the editing case checks for its two files rather than an exact list.
+        const editing = seen("perl -pi -e 's/a/b/' cap-a.ts cap-b.ts");
+        expect(editing.rendered).toBe(1);
+        expect(editing.logged).toEqual(expect.arrayContaining(["cap-a.ts", "cap-b.ts"]));
+        expect(seen("true")).toMatchObject({ rendered: 1, logged: [expect.any(String)] });
+    });
+
+    it("a clean tracked file's before-state comes from the commit the command started on", () => {
+        const current = begin({ command: "perl -pi -e 's/bravo/BRAVO/' kept.ts" }, plain.diff);
+        writeFileSync(join(repo, "kept.ts"), "alpha\nBRAVO\ncharlie\ndelta\necho\n");
+        let kept: CapturedEdit | undefined;
+        runDiffPost(current, plain, (_payload, captures) => {
+            kept = captures.find((item) => item.path.endsWith("kept.ts"));
+        });
+        git(["checkout", "--", "kept.ts"]);
+
+        expect(kept?.before).toBeNull();
+        expect(kept?.gitBase?.root).toBe(repo);
+        expect(kept ? capturedBefore(kept).after?.toString("utf8") : undefined).toBe(
+            "alpha\nbravo\ncharlie\ndelta\necho\n"
+        );
+    });
+
+    it("a file the harness rendered natively still reaches the change log", () => {
+        const current = begin(
+            { command: "perl -pi -e 's/bravo/NATIVE/' kept.ts", nativeDiffFiles: [join(repo, "kept.ts")] },
+            plain.diff
+        );
+        writeFileSync(join(repo, "kept.ts"), "alpha\nNATIVE\ncharlie\ndelta\necho\n");
+        let logged: string[] = [];
+        const decision = runDiffPost(current, plain, (_payload, captures) => {
+            logged = captures.map((item) => relative(repo, item.path));
+        });
+        git(["checkout", "--", "kept.ts"]);
+
+        expect(decision.files).toEqual([]);
+        expect(logged).toContain("kept.ts");
+    });
+
+    it("a dirty file the capture left out gets no git before-state", () => {
+        const current = begin({ command: "perl -pi -e 's/bravo/LEFT/' kept.ts" }, plain.diff);
+        writeFileSync(join(callDir("claude", "gt-diff-test", current.toolUseId ?? ""), "1.left"), "kept.ts\n");
+        writeFileSync(join(repo, "kept.ts"), "alpha\nLEFT\ncharlie\ndelta\necho\n");
+        let kept: CapturedEdit | undefined;
+        runDiffPost(current, plain, (_payload, captures) => {
+            kept = captures.find((item) => item.path.endsWith("kept.ts"));
+        });
+        git(["checkout", "--", "kept.ts"]);
+
+        expect(kept?.before).toBeNull();
+        expect(kept?.gitBase).toBeUndefined();
+    });
+
+    it("git before-states come back per file, in order, with a missing path empty", () => {
+        const base = { root: repo, base: "HEAD" };
+        const read = capturedBefores([
+            { path: join(repo, "kept.ts"), before: null, deleted: false, gitBase: base },
+            { path: join(repo, "no-such-file.ts"), before: null, deleted: false, gitBase: base },
+            { path: join(repo, "kept.ts"), before: null, deleted: false, gitBase: base },
+        ]);
+
+        expect(read.map((bytes) => bytes.after?.toString("utf8") ?? null)).toEqual([
+            "alpha\nbravo\ncharlie\ndelta\necho\n",
+            null,
+            "alpha\nbravo\ncharlie\ndelta\necho\n",
+        ]);
+    });
+
+    it("a size check past 1 MiB of output still reads the before-states (a codemod over thousands of files)", () => {
+        const base = { root: repo, base: "HEAD" };
+        // 3600 lines of about 330 bytes each: past the 1 MiB default with few lines to look up.
+        const deep = join("x".repeat(150), "y".repeat(150));
+        const missing = Array.from({ length: 3_600 }, (_, index) => ({
+            path: join(repo, "generated", `${deep}-${index}.ts`),
+            before: null,
+            deleted: false,
+            gitBase: base,
+        }));
+        const read = capturedBefores([
+            ...missing,
+            { path: join(repo, "kept.ts"), before: null, deleted: false, gitBase: base },
+        ]);
+
+        expect(read.at(-1)?.after?.toString("utf8")).toBe("alpha\nbravo\ncharlie\ndelta\necho\n");
+    });
+
+    it("an editing command's captures are recorded in chunks with bounded bytes, never all at once", () => {
+        const sizes: Record<string, number> = { "/r/a": 40, "/r/b": 30, "/copy/b": 30, "/r/c": 10, "/r/d": 90 };
+        const size = (path: string) => sizes[path] ?? 0;
+        const plan = captureChunks(
+            [
+                { path: "/r/a", before: null, deleted: false, gitBase: { root: "/r", base: "HEAD" } },
+                { path: "/r/b", before: "/copy/b", deleted: false },
+                { path: "/r/c", before: null, deleted: true, gitBase: { root: "/r", base: "HEAD" } },
+                { path: "/r/d", before: null, deleted: false },
+            ],
+            { chunkBytes: 100, size }
+        );
+
+        // a: 40 + 40 (git stands in at its current size), b: 30 + 30 starts a new chunk, a deleted c
+        // counts nothing, and d's 90 does not fit beside b.
+        expect(plan.map((chunk) => chunk.map((item) => item.path))).toEqual([["/r/a"], ["/r/b", "/r/c"], ["/r/d"]]);
+        expect(captureChunks([])).toEqual([[]]);
+    });
+
+    it("git before-states are read in byte-bounded batches, and past the total the rest get none", () => {
+        const wanted = [10, 30, 30, 50, 40].map((size, index) => ({ index, size }));
+        const plan = blobBatches(wanted, { batchBytes: 60, totalBytes: 130 });
+
+        // 10+30 fit one batch, the next 30 would pass 60; 50 alone; 40 would pass the 130 total.
+        expect(plan.batches.map((batch) => batch.map((item) => item.size))).toEqual([[10, 30], [30], [50]]);
+        expect(plan.dropped).toBe(1);
+        expect(blobBatches([{ index: 0, size: 90 }], { batchBytes: 60, totalBytes: 130 }).batches).toEqual([
+            [{ index: 0, size: 90 }],
+        ]);
+    });
 
     it("reports only what this command changed", () => {
         const current = begin();

@@ -15,20 +15,32 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { postDecisions, readDecisions, updateDecision } from "@app/question/lib/decisions/store";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import {
     DEFAULT_HOOKS_CONFIG,
+    type DecisionsHookConfig,
+    decisionHooksWanted,
     diffFor,
     keepsCommand,
     lastConfigLoadError,
     lastConfigProblems,
     loadHooksConfig,
 } from "./config";
+import { finalReply, type PromptHookOutput, runDecisionInject, runDecisionStop } from "./decisions";
 import { collectStaleCaptures, parseHorizon } from "./gc";
 import { evaluateCommand, evaluateGuard } from "./guard";
 import { guardFromLegacy, importedHooksConfig, importGuardConfig } from "./import-config";
-import { hooksDistPath, installAndPoint, installHooks, pointDist, readSettings, uninstallHooks } from "./install";
+import {
+    hooksDistPath,
+    installAndPoint,
+    installHooks,
+    pointDist,
+    readSettings,
+    uninstallHooks,
+    wiringStatus,
+} from "./install";
 import { logDecision, releaseRotationLock, setMaxLogBytes, takeRotationLock } from "./log";
 import { matchesGlob, resolveOutcome } from "./outcome";
 import { callDir, hookDataRoot, safeSegment, sessionDir } from "./paths";
@@ -279,6 +291,8 @@ describe("installHooks", () => {
             "bun '/dist/src/agents/bin/hook-pre.ts'",
         ]);
         expect(after.hooks?.PostToolUse?.[0]?.hooks[0]?.command).toBe("bun '/dist/src/agents/bin/hook-diff-post.ts'");
+        // The file tools reach the post hook only for the session change log.
+        expect(after.hooks?.PostToolUse?.[0]?.matcher).toBe("Bash|Edit|MultiEdit|Write");
     });
 
     it("quotes the script path, so a dist under a directory with a space still runs", () => {
@@ -393,6 +407,28 @@ describe("installHooks", () => {
         expect(after.hooks?.PreToolUse).toEqual([{ hooks: [{ type: "command", command: "/existing.sh" }] }]);
         expect(after.hooks?.PostToolUse).toEqual([]);
         expect(after.hooks?.SessionEnd).toEqual([]);
+    });
+
+    it("doctor's wiring check calls an entry from an older install stale, not installed", () => {
+        // What this machine had on 2026-09-24: the post hook on Bash only, from before Edit and
+        // Write were recorded, so no file-tool call ever reached the session change log.
+        const post = "bun /dist/src/agents/bin/hook-diff-post.ts";
+        const path = settingsFile({
+            hooks: { PostToolUse: [{ matcher: "Bash", hooks: [{ type: "command", command: post, timeout: 15 }] }] },
+        });
+
+        expect(wiringStatus({ dist: "/dist", settingsPath: path, decisions: false })).toEqual({
+            state: "stale",
+            events: ["PreToolUse", "SessionEnd", "PostToolUse"],
+        });
+
+        installHooks({ dist: "/dist", settingsPath: path, write: true, decisions: false });
+        expect(wiringStatus({ dist: "/dist", settingsPath: path, decisions: false })).toEqual({
+            state: "installed",
+            events: [],
+        });
+        expect(wiringStatus({ dist: "/dist", settingsPath: settingsFile({}), decisions: false }).state).toBe("missing");
+        expect(readSettings(path).hooks?.PostToolUse?.[0]?.matcher).toBe("Bash|Edit|MultiEdit|Write");
     });
 
     it("dry run reports what it would add and writes nothing", () => {
@@ -1376,5 +1412,216 @@ describe("the diff is resolved per harness", () => {
         applySetting(DEFAULT_HOOKS_CONFIG, "diff.harnesses.claude.enabled", "false");
 
         expect(DEFAULT_HOOKS_CONFIG.diff.harnesses.claude).toBeUndefined();
+    });
+});
+
+describe("decision hub hooks", () => {
+    const decisionsOn = (overrides: Partial<DecisionsHookConfig> = {}): DecisionsHookConfig => ({
+        ...DEFAULT_HOOKS_CONFIG.decisions,
+        stopHook: "block",
+        ...overrides,
+    });
+
+    function stopPayload(reply: string, extra: Record<string, unknown> = {}): HookPayload {
+        const parsed = parseHookPayload(
+            SafeJSON.stringify({
+                hook_event_name: "Stop",
+                session_id: "sess-1",
+                cwd: "/tmp",
+                last_assistant_message: reply,
+                ...extra,
+            })
+        );
+
+        if (!parsed) {
+            throw new Error("fixture payload did not parse");
+        }
+
+        return parsed;
+    }
+
+    function harness() {
+        const dir = mkdtempSync(join(tmpdir(), "gt-decision-hooks-"));
+        const log = { file: join(dir, "decisions.jsonl"), events: join(dir, "events.jsonl") };
+        const blocks = new Map<string, number>();
+        const counts = {
+            read: (session: string) => blocks.get(session) ?? 0,
+            bump: (session: string) => blocks.set(session, (blocks.get(session) ?? 0) + 1),
+        };
+
+        return { log, counts, deps: { log, counts } };
+    }
+
+    const asking = "Ready.\n\n❓ DECISION 1 — Cache\nKeep it?\n- a) yes\n- b) no";
+
+    it("ships off: no Stop or prompt entry is wired and a reply with a marker is left alone", async () => {
+        const { deps, log } = harness();
+
+        expect(DEFAULT_HOOKS_CONFIG.decisions).toMatchObject({ stopHook: "off", harvest: false, injectAnswers: false });
+        expect(decisionHooksWanted(DEFAULT_HOOKS_CONFIG)).toBe(false);
+        expect(await runDecisionStop(stopPayload(asking), DEFAULT_HOOKS_CONFIG.decisions, deps)).toBeNull();
+        expect(existsSync(log.file)).toBe(false);
+    });
+
+    it("leaves a normal turn with no ❓ untouched even in block mode with harvest on", async () => {
+        const { deps, log } = harness();
+        const output = await runDecisionStop(stopPayload("Done. Tests pass."), decisionsOn({ harvest: true }), deps);
+
+        expect(output).toBeNull();
+        expect(existsSync(log.file)).toBe(false);
+    });
+
+    it("blocks an unposted DECISION, counts it, and falls back to a warning past the loop guard", async () => {
+        const { deps, counts } = harness();
+        const config = decisionsOn({ maxBlocksPerSession: 1 });
+
+        const first = await runDecisionStop(stopPayload(asking), config, deps);
+        expect(first).toMatchObject({ decision: "block" });
+        expect(counts.read("sess-1")).toBe(1);
+
+        const second = await runDecisionStop(stopPayload(asking), config, deps);
+        expect(second).toHaveProperty("systemMessage");
+        expect(counts.read("sess-1")).toBe(1);
+    });
+
+    it("warn mode only tells the user, and a posted number passes", async () => {
+        const { deps, log } = harness();
+        const warn = await runDecisionStop(stopPayload(asking), decisionsOn({ stopHook: "warn" }), deps);
+
+        expect(warn).toHaveProperty("systemMessage");
+
+        await postDecisions(log.file, log.events, {
+            sessionId: "sess-1",
+            decisions: [{ prompt: "Keep it?", options: [] }],
+        });
+        expect(await runDecisionStop(stopPayload(asking), decisionsOn(), deps)).toBeNull();
+    });
+
+    it("skips a harness that is not listed", async () => {
+        const { deps } = harness();
+        const codex = stopPayload(asking, { model: "gpt-5" });
+
+        expect(codex.harness).toBe("codex");
+        expect(await runDecisionStop(codex, decisionsOn({ harnesses: ["claude"] }), deps)).toBeNull();
+    });
+
+    it("harvest stores the unposted block under its number instead of blocking", async () => {
+        const { deps, log } = harness();
+        const output = await runDecisionStop(stopPayload(asking), decisionsOn({ harvest: true }), deps);
+
+        expect(output).toEqual({ systemMessage: "Stored ❓ DECISION 1 from the reply so the hub shows it." });
+        expect(readDecisions(log.file).map((row) => [row.id, row.options, row.harvested])).toEqual([
+            ["d_1_sess-1", ["yes", "no"], true],
+        ]);
+    });
+
+    it("reads the final reply from the transcript when the payload does not carry it", () => {
+        const lines = [
+            SafeJSON.stringify({ type: "user", message: { content: "go" } }),
+            SafeJSON.stringify({ type: "assistant", message: { content: [{ type: "text", text: "first" }] } }),
+            SafeJSON.stringify({
+                type: "assistant",
+                message: {
+                    content: [
+                        { type: "tool_use", name: "Bash" },
+                        { type: "text", text: "❓ DECISION 2" },
+                    ],
+                },
+            }),
+        ].join("\n");
+        const payload = stopPayload("", { last_assistant_message: undefined, transcript_path: "/fixture.jsonl" });
+
+        expect(finalReply(payload, () => `{"torn":${lines}`)).toBe("❓ DECISION 2");
+        expect(finalReply(stopPayload("given"), () => lines)).toBe("given");
+    });
+
+    it("hands answered decisions to the next prompt once, and stays silent when off or nothing is due", async () => {
+        const { log, counts } = harness();
+        const emitted: PromptHookOutput[] = [];
+        const deps = { log, counts, emit: (output: PromptHookOutput) => emitted.push(output) };
+        const prompt = { ...stopPayload(""), event: "UserPromptSubmit" };
+        const [row] = await postDecisions(log.file, log.events, {
+            sessionId: "sess-1",
+            decisions: [{ prompt: "Keep it?", options: ["yes", "no"] }],
+        });
+        await updateDecision(log.file, log.events, row.id, { state: "answered", option: "a" });
+
+        expect(await runDecisionInject(prompt, DEFAULT_HOOKS_CONFIG.decisions, deps)).toBeNull();
+        expect(readDecisions(log.file)[0]?.state).toBe("answered");
+
+        const output = await runDecisionInject(prompt, decisionsOn({ injectAnswers: true }), deps);
+        expect(output?.hookSpecificOutput.additionalContext).toContain("DECISION 1: a) yes");
+        expect(emitted).toEqual(output ? [output] : []);
+        expect(emitted).toHaveLength(1);
+        expect(readDecisions(log.file)[0]?.state).toBe("sent");
+        // The hub and /qa read the delivery, not the state: it must not still say "queued".
+        expect(readDecisions(log.file)[0]?.delivery?.route).toBe("prompt");
+        expect(await runDecisionInject(prompt, decisionsOn({ injectAnswers: true }), deps)).toBeNull();
+        expect(emitted).toHaveLength(1);
+        // The agent then confirms it read the answer: answered → sent → acknowledged.
+        expect((await updateDecision(log.file, log.events, row.id, { state: "acknowledged" })).state).toBe(
+            "acknowledged"
+        );
+    });
+
+    it("keeps the answers queued when the hook output cannot be written", async () => {
+        const { log, counts } = harness();
+        const prompt = { ...stopPayload(""), event: "UserPromptSubmit" };
+        const [row] = await postDecisions(log.file, log.events, {
+            sessionId: "sess-1",
+            decisions: [{ prompt: "Keep it?", options: ["yes", "no"] }],
+        });
+        await updateDecision(log.file, log.events, row.id, { state: "answered", option: "a" });
+        const broken = {
+            log,
+            counts,
+            emit: () => {
+                throw new Error("EPIPE");
+            },
+        };
+
+        await expect(runDecisionInject(prompt, decisionsOn({ injectAnswers: true }), broken)).rejects.toThrow("EPIPE");
+        expect(readDecisions(log.file)[0]?.state).toBe("answered");
+
+        const delivered: PromptHookOutput[] = [];
+        const retried = await runDecisionInject(prompt, decisionsOn({ injectAnswers: true }), {
+            log,
+            counts,
+            emit: (output: PromptHookOutput) => delivered.push(output),
+        });
+        expect(retried?.hookSpecificOutput.additionalContext).toContain("DECISION 1: a) yes");
+        expect(delivered).toHaveLength(1);
+    });
+
+    it("install wires Stop and UserPromptSubmit only when asked, and removes them when turned off", () => {
+        const path = join(mkdtempSync(join(tmpdir(), "gt-hooks-settings-")), "settings.json");
+        writeFileSync(
+            path,
+            SafeJSON.stringify({ hooks: { Stop: [{ hooks: [{ type: "command", command: "/mine.sh" }] }] } })
+        );
+
+        const on = installHooks({ dist: "/dist", settingsPath: path, write: true, decisions: true });
+        expect(on.added).toEqual(expect.arrayContaining(["Stop", "UserPromptSubmit"]));
+        expect(readSettings(path).hooks?.Stop?.map((entry) => entry.hooks[0]?.command)).toEqual([
+            "/mine.sh",
+            "bun '/dist/src/agents/bin/hook-stop.ts'",
+        ]);
+
+        const off = installHooks({ dist: "/dist", settingsPath: path, write: true, decisions: false });
+        expect(off.removed).toEqual(["Stop", "UserPromptSubmit"]);
+        expect(readSettings(path).hooks?.Stop).toEqual([{ hooks: [{ type: "command", command: "/mine.sh" }] }]);
+    });
+
+    it("config set validates the decision keys", () => {
+        const next = applySetting(DEFAULT_HOOKS_CONFIG, "decisions.stopHook", "warn");
+
+        expect(next.decisions.stopHook).toBe("warn");
+        expect(DEFAULT_HOOKS_CONFIG.decisions.stopHook).toBe("off");
+        expect(applySetting(next, "decisions.harnesses", "claude,grok").decisions.harnesses).toEqual([
+            "claude",
+            "grok",
+        ]);
+        expect(() => applySetting(next, "decisions.stopHook", "loud")).toThrow(/off, warn or block/);
+        expect(() => applySetting(next, "decisions.harnesses", "cursor")).toThrow(/no such harness/);
     });
 });

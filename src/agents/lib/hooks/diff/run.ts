@@ -1,5 +1,18 @@
+import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, rmSync, statSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, join, relative } from "node:path";
+import { isTestProcess } from "@genesiscz/utils/test-process";
+import {
+    type ChangeBytes,
+    capBlob,
+    commandEditsFiles,
+    MAX_BLOB_BYTES,
+    readCapped,
+    recordFileToolEdit,
+    recordScriptedEdits,
+    sessionChangesPath,
+} from "../../changes/log";
+import { gitObjectSink } from "../../changes/objects";
 import { type DiffConfig, diffFor, type HooksConfig } from "../config";
 import { committedPaths, gitOut, objectId, statusOf } from "../git";
 import { hookDiag } from "../log";
@@ -178,7 +191,200 @@ export function silentReason(
     return "no change since this command began";
 }
 
-export function runDiffPost(payload: HookPayload, config: HooksConfig): DiffDecision {
+/** What the session change log receives: every file the call captured, before the render cap. */
+export type EditRecorder = (payload: HookPayload, captures: CapturedEdit[], since: number) => void;
+
+export interface CapturedEdit {
+    path: string;
+    /** A copy of the file taken before the command, when one was captured. */
+    before: string | null;
+    deleted: boolean;
+    /**
+     * For a TRACKED file with no copy (it was clean when the command began), where its
+     * before-state lives in git: the repo root and the commit the command started on.
+     */
+    gitBase?: { root: string; base: string };
+}
+
+/** One captured file's before-state; see `capturedBefores`. */
+export function capturedBefore(item: CapturedEdit): ChangeBytes {
+    return capturedBefores([item])[0] ?? {};
+}
+
+/**
+ * The bytes each captured file had before the command, in input order: its copy, or for a clean
+ * tracked file the blob at the commit the command started on, capped like `readCapped`. Without
+ * either, nothing: a genuinely new file has no before-state.
+ *
+ * The git blobs are read per repository in TWO processes however many files there are: one
+ * `cat-file --batch-check` for the sizes, then one `cat-file --batch` for the blobs small enough to
+ * keep. A codemod over N clean files used to start N `git show` processes inside the hook budget.
+ */
+export function capturedBefores(items: CapturedEdit[]): ChangeBytes[] {
+    const results: ChangeBytes[] = items.map((item) => (item.before ? readCapped(item.before) : {}));
+    const byRoot = new Map<string, number[]>();
+
+    items.forEach((item, index) => {
+        if (!item.before && item.gitBase) {
+            byRoot.set(item.gitBase.root, [...(byRoot.get(item.gitBase.root) ?? []), index]);
+        }
+    });
+
+    for (const [root, indexes] of byRoot) {
+        const specs = indexes.map((index) => {
+            const item = items[index];
+            return `${item?.gitBase?.base}:${relative(root, item?.path ?? "")}`;
+        });
+        const read = readBlobs(root, specs);
+
+        indexes.forEach((index, at) => {
+            results[index] = read[at] ?? {};
+        });
+    }
+
+    return results;
+}
+
+const GIT_BATCH_TIMEOUT_MS = 5_000;
+/** One `cat-file --batch` buffers at most this much; a codemod's before-states go in several. */
+const GIT_BATCH_BYTES = 64 * 1024 * 1024;
+/** Every before-state of ONE command together. Past it the rest get none, not an out-of-memory hook. */
+const GIT_TOTAL_BYTES = 256 * 1024 * 1024;
+
+/**
+ * Groups `wanted` (spec indexes with their sizes, in order) into `cat-file --batch` runs of at most
+ * `batchBytes` each, and stops at `totalBytes` overall. A blob larger than a batch runs alone.
+ */
+export function blobBatches(
+    wanted: ReadonlyArray<{ index: number; size: number }>,
+    { batchBytes = GIT_BATCH_BYTES, totalBytes = GIT_TOTAL_BYTES } = {}
+): { batches: Array<Array<{ index: number; size: number }>>; dropped: number } {
+    const batches: Array<Array<{ index: number; size: number }>> = [];
+    let current: Array<{ index: number; size: number }> = [];
+    let currentBytes = 0;
+    let total = 0;
+
+    for (const [at, item] of wanted.entries()) {
+        if (total + item.size > totalBytes) {
+            if (current.length > 0) {
+                batches.push(current);
+            }
+
+            return { batches, dropped: wanted.length - at };
+        }
+
+        if (current.length > 0 && currentBytes + item.size > batchBytes) {
+            batches.push(current);
+            current = [];
+            currentBytes = 0;
+        }
+
+        current.push(item);
+        currentBytes += item.size;
+        total += item.size;
+    }
+
+    if (current.length > 0) {
+        batches.push(current);
+    }
+
+    return { batches, dropped: 0 };
+}
+
+/** `<rev>:<path>` specs of one repository, read through `cat-file`, capped. Never throws. */
+function readBlobs(root: string, specs: string[]): ChangeBytes[] {
+    const results: ChangeBytes[] = specs.map(() => ({}));
+    const check = spawnSync("git", ["-C", root, "cat-file", "--batch-check"], {
+        input: `${specs.join("\n")}\n`,
+        encoding: "utf8",
+        // One line per spec: `<oid> <type> <size>`, or the spec itself followed by `missing`. The
+        // 1 MiB default cut off a codemod over ~17k files, and every file lost its before-state.
+        maxBuffer: specs.reduce((sum, spec) => sum + Buffer.byteLength(spec) + 128, 0),
+        timeout: GIT_BATCH_TIMEOUT_MS,
+    });
+
+    if (check.status !== 0) {
+        hookDiag("No git before-states for captured files", { root, status: check.status, error: check.error });
+        return results;
+    }
+
+    // `<oid> <type> <size>` per found spec, `<spec> missing` otherwise, in input order.
+    const wanted: Array<{ index: number; size: number }> = [];
+    check.stdout
+        .split("\n")
+        .slice(0, specs.length)
+        .forEach((line, index) => {
+            const size = Number(line.match(/^[0-9a-f]+ blob (\d+)$/)?.[1]);
+
+            if (!Number.isFinite(size)) {
+                return;
+            }
+
+            if (size > MAX_BLOB_BYTES) {
+                results[index] = { afterSkipped: "large" };
+                return;
+            }
+
+            wanted.push({ index, size });
+        });
+
+    const { batches, dropped } = blobBatches(wanted);
+
+    if (dropped > 0) {
+        hookDiag("Too many bytes of git before-states for one command; the rest get none", {
+            root,
+            dropped,
+            totalBytes: GIT_TOTAL_BYTES,
+        });
+    }
+
+    for (const batch of batches) {
+        const read = spawnSync("git", ["-C", root, "cat-file", "--batch"], {
+            input: `${batch.map((item) => specs[item.index]).join("\n")}\n`,
+            maxBuffer: batch.reduce((sum, item) => sum + item.size + 128, 0),
+            timeout: GIT_BATCH_TIMEOUT_MS,
+        });
+
+        if (read.status !== 0) {
+            hookDiag("No git before-states for captured files", { root, status: read.status, error: read.error });
+            return results;
+        }
+
+        const out = read.stdout;
+        let offset = 0;
+
+        for (const { index } of batch) {
+            const newline = out.indexOf(0x0a, offset);
+
+            if (newline === -1) {
+                break;
+            }
+
+            const size = Number(
+                out
+                    .subarray(offset, newline)
+                    .toString("utf8")
+                    .match(/ (\d+)$/)?.[1]
+            );
+
+            if (!Number.isFinite(size)) {
+                offset = newline + 1;
+                continue;
+            }
+
+            results[index] = capBlob(Buffer.from(out.subarray(newline + 1, newline + 1 + size)));
+            offset = newline + 1 + size + 1;
+        }
+    }
+
+    return results;
+}
+
+export function runDiffPost(
+    payload: HookPayload,
+    config: HooksConfig,
+    record: EditRecorder = recordBashEdits
+): DiffDecision {
     const diff = diffFor(config, payload.harness);
 
     if (!diff.enabled) {
@@ -215,6 +421,12 @@ export function runDiffPost(payload: HookPayload, config: HooksConfig): DiffDeci
     const native = new Set(diff.standDownWhenNative ? payload.nativeDiffFiles : []);
     const blocks: DiffBlock[] = [];
     const files: string[] = [];
+    const captures: CapturedEdit[] = [];
+    // The render cap bounds the diff blocks only. A command that edits files keeps scanning
+    // past it, so the session change log gets every file it touched; a read-only command
+    // still stops at the cap and pays for no extra `git status`.
+    const logsEdits = commandEditsFiles(payload.command);
+    const full = () => blocks.length >= diff.maxFiles;
     let covered = 0;
     let uncaptured = 0;
     let claimed = 0;
@@ -225,7 +437,7 @@ export function runDiffPost(payload: HookPayload, config: HooksConfig): DiffDeci
         // The cap short-circuits the ROOT loop too. Breaking only the inner loop still called
         // `changedFiles` for every remaining root, and that is a `git status` plus an
         // `ls-files` per root, on the hot path, for output already capped away.
-        if (blocks.length >= diff.maxFiles) {
+        if (full() && !logsEdits) {
             return;
         }
 
@@ -239,13 +451,8 @@ export function runDiffPost(payload: HookPayload, config: HooksConfig): DiffDeci
         const base = moved && startedOn ? startedOn : "HEAD";
         const committed = moved && startedOn && nowOn ? committedPaths(root, startedOn, nowOn) : [];
         for (const file of changedFiles(root, since, diff, { entries: summary.entries, committed })) {
-            if (blocks.length >= diff.maxFiles) {
+            if (full() && !logsEdits) {
                 break;
-            }
-
-            if (native.has(file.path)) {
-                covered += 1;
-                continue;
             }
 
             if (file.deleted && alreadyGone(dir, root, file.path)) {
@@ -258,12 +465,30 @@ export function runDiffPost(payload: HookPayload, config: HooksConfig): DiffDeci
             }
 
             const before = file.deleted ? null : beforeCopy(dir, root, file.path);
+            // It was already dirty when the command began, and its before-state did not fit the
+            // capture budget. The commit is then NOT its before-state: it lacks every earlier
+            // uncommitted edit, from this session or another. So the log gets no before-state for
+            // it, and the diff says nothing.
+            const leftOut = before === null && !file.deleted && leftOutOfCapture(dir, root, file.path);
+            // Every changed file reaches the log, a natively rendered one included: the native
+            // stand-down below only decides what THIS hook prints.
+            captures.push({
+                path: file.path,
+                before,
+                deleted: file.deleted,
+                ...(before === null && !file.untracked && !leftOut ? { gitBase: { root, base } } : {}),
+            });
 
-            if (before === null && !file.deleted && leftOutOfCapture(dir, root, file.path)) {
-                // It was already dirty when the command began, and its before-state did not fit
-                // the capture budget. The fallback is `/dev/null` for an untracked file and HEAD
-                // for a tracked one, which also shows every earlier uncommitted edit, from this
-                // session or another. Neither is this command's change, so say nothing.
+            if (full()) {
+                continue;
+            }
+
+            if (native.has(file.path)) {
+                covered += 1;
+                continue;
+            }
+
+            if (leftOut) {
                 uncaptured += 1;
                 continue;
             }
@@ -287,8 +512,17 @@ export function runDiffPost(payload: HookPayload, config: HooksConfig): DiffDeci
     // Files the command NAMED rather than worked in. They are read from a copy, so this adds
     // no git process unless one of them actually changed.
     for (const change of namedChanges(dir)) {
-        if (blocks.length >= diff.maxFiles) {
+        if (full() && !logsEdits) {
             break;
+        }
+
+        // A named path inside a captured root was already captured, with its git before-state.
+        if (!captures.some((item) => item.path === change.path)) {
+            captures.push({ path: change.path, before: change.before, deleted: change.deleted });
+        }
+
+        if (full()) {
+            continue;
         }
 
         if (native.has(change.path)) {
@@ -341,6 +575,8 @@ export function runDiffPost(payload: HookPayload, config: HooksConfig): DiffDeci
         blocks.push(block);
     }
 
+    record(payload, captures, since);
+
     try {
         rmSync(dir, { recursive: true, force: true });
     } catch (err) {
@@ -357,4 +593,151 @@ export function runDiffPost(payload: HookPayload, config: HooksConfig): DiffDeci
         message: assembleMessage(blocks, diff),
         files,
     };
+}
+
+function turnOf(payload: HookPayload): string {
+    for (const key of ["turnId", "turn_id", "promptId", "prompt_id"]) {
+        const value = payload.raw[key];
+
+        if (typeof value === "string" && value.length > 0) {
+            return value;
+        }
+    }
+
+    return payload.toolUseId ?? "unknown";
+}
+
+/** The before and after bytes one chunk of `recordBashEdits` may hold at once. */
+const RECORD_CHUNK_BYTES = 64 * 1024 * 1024;
+
+function fileSize(path: string): number {
+    try {
+        return statSync(path).size;
+    } catch (err) {
+        hookDiag("Could not size a captured file", { err, path });
+        return 0;
+    }
+}
+
+/**
+ * The captures in consecutive chunks whose before and after bytes stay under `chunkBytes`, each side
+ * counted at most at the blob cap (a larger file is stored as a skip reason, not as bytes). A clean
+ * tracked file's before-state is in git; its current size stands in for it. Never an empty list.
+ */
+export function captureChunks(
+    captures: readonly CapturedEdit[],
+    { chunkBytes = RECORD_CHUNK_BYTES, size = fileSize }: { chunkBytes?: number; size?: (path: string) => number } = {}
+): CapturedEdit[][] {
+    const chunks: CapturedEdit[][] = [[]];
+    let bytes = 0;
+
+    for (const item of captures) {
+        const after = item.deleted ? 0 : Math.min(size(item.path), MAX_BLOB_BYTES);
+        const before = item.before ? Math.min(size(item.before), MAX_BLOB_BYTES) : item.gitBase ? after : 0;
+        const current = chunks[chunks.length - 1] ?? [];
+
+        if (current.length > 0 && bytes + before + after > chunkBytes) {
+            chunks.push([item]);
+            bytes = before + after;
+            continue;
+        }
+
+        current.push(item);
+        bytes += before + after;
+    }
+
+    return chunks;
+}
+
+/**
+ * Session log for scripted editors. A codemod can touch thousands of files, so their bytes are read,
+ * hashed and dropped one bounded chunk at a time instead of all held at once. Tests never touch the
+ * home directory. Never throws.
+ */
+function recordBashEdits(payload: HookPayload, captures: CapturedEdit[], since: number): void {
+    try {
+        if (!payload.sessionId || isTestProcess() || !commandEditsFiles(payload.command)) {
+            return;
+        }
+
+        const file = sessionChangesPath(payload.sessionId);
+        const known = new Set(captures.map((item) => item.path));
+        const sink = gitObjectSink(undefined, (line) => hookDiag(line));
+        const event = {
+            provider: payload.harness,
+            session: payload.sessionId,
+            turn: turnOf(payload),
+            tool: payload.tool,
+            ...(payload.toolUseId ? { toolUseId: payload.toolUseId } : {}),
+            cwd: payload.cwd,
+        };
+
+        captureChunks(captures).forEach((chunk, at) => {
+            const befores = capturedBefores(chunk);
+            const touched = chunk.map((item, index) => {
+                const before = befores[index] ?? {};
+                const after = item.deleted ? {} : readCapped(item.path);
+                return {
+                    path: item.path,
+                    before: before.after,
+                    beforeSkipped: before.afterSkipped,
+                    after: after.after,
+                    afterSkipped: after.afterSkipped,
+                };
+            });
+
+            // Paths the command only named are looked up once, and never one it captured.
+            recordScriptedEdits(
+                file,
+                payload.command,
+                { ...event, ...(at === 0 ? { since, known } : {}) },
+                touched,
+                sink
+            );
+        });
+    } catch (err) {
+        hookDiag("Could not record the session change", { err });
+    }
+}
+
+function field(value: unknown, key: string): unknown {
+    return typeof value === "object" && value !== null && key in value
+        ? (value as Record<string, unknown>)[key]
+        : undefined;
+}
+
+/**
+ * Session log row for an Edit, MultiEdit or Write call. The harness renders these diffs itself,
+ * so this only records. Tests never touch the home directory. Never throws.
+ */
+export function recordFileToolChange(payload: HookPayload): void {
+    try {
+        if (!payload.sessionId || isTestProcess()) {
+            return;
+        }
+
+        const path = field(payload.raw.tool_input ?? payload.raw.toolInput, "file_path");
+        const original = field(payload.raw.tool_response ?? payload.raw.toolResponse, "originalFile");
+
+        if (typeof path !== "string" || path.length === 0) {
+            return;
+        }
+
+        recordFileToolEdit(
+            sessionChangesPath(payload.sessionId),
+            {
+                provider: payload.harness,
+                session: payload.sessionId,
+                turn: turnOf(payload),
+                tool: payload.tool,
+                ...(payload.toolUseId ? { toolUseId: payload.toolUseId } : {}),
+                cwd: payload.cwd,
+                path,
+            },
+            typeof original === "string" || original === null ? original : undefined,
+            gitObjectSink(undefined, (line) => hookDiag(line))
+        );
+    } catch (err) {
+        hookDiag("Could not record the file-tool change", { err });
+    }
 }

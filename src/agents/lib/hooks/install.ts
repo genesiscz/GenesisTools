@@ -13,7 +13,7 @@ import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { shellQuote } from "@genesiscz/utils/shell/quote";
-import { agentsDataDir } from "./config";
+import { agentsDataDir, decisionHooksWanted, loadHooksConfig } from "./config";
 import { hookDiag } from "./log";
 import { writeJsonFile } from "./write-json";
 
@@ -48,13 +48,28 @@ export interface SettingsShape {
 /** Every command string this installer writes carries this, so uninstall is exact. */
 export const INSTALL_MARKER = "src/agents/bin/hook-";
 
-export function entriesFor(dist: string): { event: string; entry: HookEntry }[] {
+/** The Stop and UserPromptSubmit entries of the decision hub. Wired only while its config turns one on. */
+function decisionEntries(script: (name: string) => string): { event: string; entry: HookEntry }[] {
+    return [
+        {
+            event: "Stop",
+            entry: { hooks: [{ type: "command", command: script("hook-stop.ts"), timeout: 15 }] },
+        },
+        {
+            event: "UserPromptSubmit",
+            entry: { hooks: [{ type: "command", command: script("hook-prompt.ts"), timeout: 15 }] },
+        },
+    ];
+}
+
+export function entriesFor(dist: string, options: { decisions?: boolean } = {}): { event: string; entry: HookEntry }[] {
     // The harness runs each command through a shell, so a `dist` under a home directory or a
     // `--dist` with a space in it split into two arguments and every hook call failed. The
     // quoted form still contains INSTALL_MARKER, so a re-install converges an older entry.
     const script = (name: string): string => `bun ${shellQuote(`${dist}/src/agents/bin/${name}`)}`;
 
     return [
+        ...(options.decisions ? decisionEntries(script) : []),
         {
             // ONE process for the whole PreToolUse phase. Two entries cost a second bun
             // start and a second module graph, measured at about 10 ms, on every Bash call.
@@ -67,9 +82,10 @@ export function entriesFor(dist: string): { event: string; entry: HookEntry }[] 
             },
         },
         {
+            // Bash for the diff; the file tools only for the session change log.
             event: "PostToolUse",
             entry: {
-                matcher: "Bash",
+                matcher: "Bash|Edit|MultiEdit|Write",
                 hooks: [{ type: "command", command: script("hook-diff-post.ts"), timeout: 15 }],
             },
         },
@@ -144,10 +160,12 @@ export function installAndPoint(options: {
     target: string;
     settingsPath?: string;
     write: boolean;
+    decisions?: boolean;
 }): InstallAndPointResult {
     const dist = options.dist ?? hooksDistPath();
     const repoint = options.write && dist === hooksDistPath();
-    const planned = installHooks({ dist, settingsPath: options.settingsPath, write: false });
+    const decisions = options.decisions;
+    const planned = installHooks({ dist, settingsPath: options.settingsPath, write: false, decisions });
 
     if (!options.write) {
         return { ...planned, repointed: false };
@@ -160,7 +178,10 @@ export function installAndPoint(options: {
     }
 
     try {
-        return { ...installHooks({ dist, settingsPath: options.settingsPath, write: true }), repointed: repoint };
+        return {
+            ...installHooks({ dist, settingsPath: options.settingsPath, write: true, decisions }),
+            repointed: repoint,
+        };
     } catch (err) {
         if (repoint) {
             // The rollback can fail too (a full disk, a permission change). Its error must not
@@ -205,6 +226,8 @@ export interface InstallResult {
     updated: string[];
     /** Events already exactly right. */
     unchanged: string[];
+    /** Events whose entry of ours is no longer wanted (a decision hook turned off). */
+    removed: string[];
     /** Whether the settings file needs writing at all. */
     changed: boolean;
     backup?: string;
@@ -246,7 +269,13 @@ function sameEntry(a: HookEntry, b: HookEntry): boolean {
  * So: every entry of ours is replaced by the desired one, others are untouched and keep their
  * order, and the file is written ONLY when the result actually differs.
  */
-export function installHooks(options: { dist?: string; settingsPath?: string; write: boolean }): InstallResult {
+export function installHooks(options: {
+    dist?: string;
+    settingsPath?: string;
+    write: boolean;
+    /** Wire the decision hub's Stop and UserPromptSubmit hooks. Omitted: whatever the hooks config asks for. */
+    decisions?: boolean;
+}): InstallResult {
     const dist = options.dist ?? hooksDistPath();
     const settingsPath = options.settingsPath ?? claudeSettingsPath();
     const settings = readSettings(settingsPath);
@@ -254,10 +283,22 @@ export function installHooks(options: { dist?: string; settingsPath?: string; wr
     const added: string[] = [];
     const updated: string[] = [];
     const unchanged: string[] = [];
+    const removed: string[] = [];
+    const wanted = entriesFor(dist, { decisions: options.decisions ?? decisionHooksWanted(loadHooksConfig()) });
+    const wantedEvents = new Set(wanted.map((item) => item.event));
 
     settings.hooks ??= {};
 
-    for (const { event, entry } of entriesFor(dist)) {
+    // An entry of ours on an event no longer wanted (the decision hooks turned off) goes, so
+    // turning a feature off and re-running install converges instead of leaving it wired.
+    for (const [event, list] of Object.entries(settings.hooks)) {
+        if (!wantedEvents.has(event) && list.some(isOurs)) {
+            settings.hooks[event] = list.filter((existing) => !isOurs(existing));
+            removed.push(event);
+        }
+    }
+
+    for (const { event, entry } of wanted) {
         settings.hooks[event] ??= [];
 
         const list = settings.hooks[event];
@@ -277,7 +318,7 @@ export function installHooks(options: { dist?: string; settingsPath?: string; wr
     const changed = SafeJSON.stringify(settings) !== before;
 
     if (!options.write || !changed) {
-        return { added, updated, unchanged, changed, dist };
+        return { added, updated, unchanged, removed, changed, dist };
     }
 
     const backup = `${settingsPath}.pre-agents-hooks`;
@@ -288,7 +329,36 @@ export function installHooks(options: { dist?: string; settingsPath?: string; wr
 
     writeJsonFile(settingsPath, settings);
 
-    return { added, updated, unchanged, changed, backup, dist };
+    return { added, updated, unchanged, removed, changed, backup, dist };
+}
+
+export interface WiringStatus {
+    /** `stale`: an entry of ours is there but differs from what this checkout installs. */
+    state: "missing" | "installed" | "stale";
+    /** The events an install would add, update or remove. */
+    events: string[];
+}
+
+/**
+ * Whether `settings.json` carries exactly this checkout's wiring. Read-only: a dry-run install.
+ *
+ * "Our marker is somewhere in the file" used to count as installed, so an entry from an older
+ * install (the post hook on `Bash` only) read as fine while no Edit or Write call reached the
+ * session change log.
+ */
+export function wiringStatus(
+    options: { dist?: string; settingsPath?: string; decisions?: boolean } = {}
+): WiringStatus {
+    const settingsPath = options.settingsPath ?? claudeSettingsPath();
+
+    if (!existsSync(settingsPath) || !SafeJSON.stringify(readSettings(settingsPath)).includes(INSTALL_MARKER)) {
+        return { state: "missing", events: [] };
+    }
+
+    const plan = installHooks({ ...options, settingsPath, write: false });
+    const events = [...plan.added, ...plan.updated, ...plan.removed];
+
+    return events.length > 0 ? { state: "stale", events } : { state: "installed", events: [] };
 }
 
 export interface UninstallResult {

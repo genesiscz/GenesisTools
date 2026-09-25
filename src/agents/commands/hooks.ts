@@ -1,5 +1,5 @@
 import { existsSync, readFileSync, realpathSync } from "node:fs";
-import { suggestEnumFlag } from "@genesiscz/utils/cli";
+import { suggestCommand, suggestEnumFlag } from "@genesiscz/utils/cli";
 import { ui } from "@genesiscz/utils/cli/ui";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
@@ -19,15 +19,7 @@ import {
 } from "../lib/hooks/config";
 import { collectStaleCaptures, parseHorizon } from "../lib/hooks/gc";
 import { type ImportResult, importGuardConfig } from "../lib/hooks/import-config";
-import {
-    claudeSettingsPath,
-    hooksDistPath,
-    INSTALL_MARKER,
-    installAndPoint,
-    readSettings,
-    repoRoot,
-    uninstallHooks,
-} from "../lib/hooks/install";
+import { hooksDistPath, installAndPoint, repoRoot, uninstallHooks, wiringStatus } from "../lib/hooks/install";
 import { resolveOutcome } from "../lib/hooks/outcome";
 import { SETTABLE_KEYS, type SetResult, setHooksConfig } from "../lib/hooks/set-config";
 
@@ -171,17 +163,28 @@ export function registerHooksCommands(program: Command): void {
             table.push(["log rotates at", `${config.maxLogMB} MB, keeping one generation`]);
             out.println(table.toString());
 
-            const wired = existsSync(claudeSettingsPath())
-                ? SafeJSON.stringify(readSettings()).includes(INSTALL_MARKER)
-                : false;
+            const wired = wiringStatus();
             const dist = hooksDistPath();
             const distTarget = existsSync(dist) ? realpathSync(dist) : "not created";
             const wiring = createBoxTable(["WIRING", "VALUE"]);
 
-            wiring.push(["settings.json", wired ? "installed" : "not installed"]);
+            wiring.push([
+                "settings.json",
+                wired.state === "stale"
+                    ? `stale: ${wired.events.join(", ")} differ`
+                    : wired.state === "installed"
+                      ? "installed"
+                      : "not installed",
+            ]);
             wiring.push(["dist symlink", dist]);
             wiring.push(["dist points at", distTarget]);
             out.println(wiring.toString());
+
+            if (wired.state === "stale") {
+                ui.warn(
+                    `settings.json holds an older wiring of these hooks. Fix: ${suggestCommand("tools agents", { replaceCommand: ["hooks", "install", "--write"] })}`
+                );
+            }
 
             for (const problem of lastConfigProblems()) {
                 ui.warn(problem);
@@ -205,7 +208,9 @@ export function registerHooksCommands(program: Command): void {
 
     hooks
         .command("install")
-        .description("Wire the three hooks into Claude Code's ~/.claude/settings.json, additively")
+        .description(
+            "Wire the hooks into Claude Code's ~/.claude/settings.json, additively. The decision hub's Stop and UserPromptSubmit hooks are wired only while decisions.stopHook, decisions.harvest or decisions.injectAnswers is on"
+        )
         .option("--dist <path>", "Stable path the settings entries call (default: the agents dist symlink)")
         .option("--target <path>", "Checkout the dist symlink points at (default: this checkout)")
         .option("--write", "Actually write; without it this is a dry run")
@@ -222,6 +227,10 @@ export function registerHooksCommands(program: Command): void {
             ui.raw(`${pc.bold("added")}      ${result.added.join(", ") || "nothing"}`);
             ui.raw(`${pc.bold("updated")}    ${result.updated.join(", ") || "nothing"}`);
             ui.raw(`${pc.bold("unchanged")}  ${result.unchanged.join(", ") || "nothing"}`);
+
+            if (result.removed.length > 0) {
+                ui.raw(`${pc.bold("removed")}    ${result.removed.join(", ")}`);
+            }
 
             if (result.backup) {
                 ui.raw(`${pc.bold("backup")}     ${result.backup}`);

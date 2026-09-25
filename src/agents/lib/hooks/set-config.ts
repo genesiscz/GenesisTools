@@ -41,7 +41,65 @@ export const SETTABLE_KEYS = [
     "guard.contextCapPerSession",
     "rules.<rule-id>",
     "harnesses.<claude|codex|grok>.<rule-id>",
+    "decisions.stopHook",
+    "decisions.maxBlocksPerSession",
+    "decisions.harnesses",
+    "decisions.harvest",
+    "decisions.injectAnswers",
+    "decisions.staleness.<warnAfterMinutes|alarmAfterMinutes|notify>",
 ] as const;
+
+/** One `decisions.*` key. The stop hook takes off|warn|block; `harnesses` a comma list. */
+function withDecisions(next: HooksConfig, key: string, value: string): HooksConfig {
+    const decisions = { ...next.decisions, staleness: { ...next.decisions.staleness } };
+    next.decisions = decisions;
+
+    switch (key) {
+        case "decisions.stopHook": {
+            if (value !== "off" && value !== "warn" && value !== "block") {
+                throw new Error(`${key} takes off, warn or block, not ${SafeJSON.stringify(value)}`);
+            }
+
+            decisions.stopHook = value;
+            return next;
+        }
+        case "decisions.maxBlocksPerSession":
+            decisions.maxBlocksPerSession = asCount(key, value, 0);
+            return next;
+        case "decisions.harnesses": {
+            const names = value
+                .split(",")
+                .map((name) => name.trim())
+                .filter(Boolean);
+            const unknown = names.filter((name) => !(HARNESSES as readonly string[]).includes(name));
+
+            if (unknown.length > 0) {
+                throw new Error(`no such harness: ${unknown.join(", ")}`);
+            }
+
+            decisions.harnesses = names as HarnessName[];
+            return next;
+        }
+        case "decisions.harvest":
+            decisions.harvest = asBoolean(key, value);
+            return next;
+        case "decisions.injectAnswers":
+            decisions.injectAnswers = asBoolean(key, value);
+            return next;
+        case "decisions.staleness.warnAfterMinutes":
+        case "decisions.staleness.alarmAfterMinutes":
+            decisions.staleness[key.endsWith("warnAfterMinutes") ? "warnAfterMinutes" : "alarmAfterMinutes"] = asCount(
+                key,
+                value
+            );
+            return next;
+        case "decisions.staleness.notify":
+            decisions.staleness.notify = asBoolean(key, value);
+            return next;
+        default:
+            throw new Error(`unknown key: ${key}. Settable: ${SETTABLE_KEYS.join(", ")}`);
+    }
+}
 
 function asBoolean(key: string, value: string): boolean {
     if (value === "true" || value === "false") {
@@ -171,6 +229,10 @@ export function applySetting(config: HooksConfig, key: string, value: string): H
     if (key === "guard.longCommand.lines" || key === "guard.longCommand.chars") {
         next.guard.longCommand[key.endsWith("lines") ? "lines" : "chars"] = asCount(key, value);
         return next;
+    }
+
+    if (key.startsWith("decisions.")) {
+        return withDecisions(next, key, value);
     }
 
     if (key === "maxLogMB") {

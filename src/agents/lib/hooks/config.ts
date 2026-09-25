@@ -142,9 +142,36 @@ export interface GuardConfig {
  */
 export type LogCommandsPolicy = "shadow" | "always" | "never";
 
+export type DecisionStopHook = "off" | "warn" | "block";
+
+/**
+ * The decision hub's optional hooks. Everything ships OFF, and `tools agents hooks install` only
+ * wires the Stop and UserPromptSubmit entries once one of them is turned on here.
+ */
+export interface DecisionsHookConfig {
+    /**
+     * A final reply that asks `❓ DECISION N` without posting it through question_post: `warn`
+     * tells the user, `block` sends the agent back to post it, at most `maxBlocksPerSession`
+     * times per session, then it only warns (the loop guard).
+     */
+    stopHook: DecisionStopHook;
+    maxBlocksPerSession: number;
+    harnesses: HarnessName[];
+    /** Safety net: store an unposted `❓ DECISION N` block as an open decision under its number. */
+    harvest: boolean;
+    /** UserPromptSubmit: hand answered, undelivered decisions to the session's next prompt. */
+    injectAnswers: boolean;
+    /**
+     * A blocking decision still waiting this long raises one notification per threshold. Read by
+     * `tools question stale --notify`, which `tools question stale --install` runs every 5 minutes.
+     */
+    staleness: { warnAfterMinutes: number; alarmAfterMinutes: number; notify: boolean };
+}
+
 export interface HooksConfig {
     guard: GuardConfig;
     diff: DiffConfig;
+    decisions: DecisionsHookConfig;
     logPath: string;
     /**
      * Log the decision, emit nothing. It lets the new hooks run beside the old ones on real
@@ -247,6 +274,14 @@ export const DEFAULT_HOOKS_CONFIG: HooksConfig = {
             // have. Claude and Codex both render it correctly and are unaffected.
             grok: { enabled: false },
         },
+    },
+    decisions: {
+        stopHook: "off",
+        maxBlocksPerSession: 2,
+        harnesses: ["claude", "codex", "grok"],
+        harvest: false,
+        injectAnswers: false,
+        staleness: { warnAfterMinutes: 30, alarmAfterMinutes: 120, notify: true },
     },
     logPath: defaultLogPath(),
     // 🛑 `shadow: true` AND `logCommands: "shadow"` together mean `keepsCommand()` is true out
@@ -640,6 +675,7 @@ export function mergeStoredConfig(stored: StoredHooksConfig): HooksConfig {
             }),
         },
         diff: mergeDiff(stored.diff),
+        decisions: mergeDecisions(stored.decisions),
         shadow: boolOr(stored.shadow, DEFAULT_HOOKS_CONFIG.shadow),
         logCommands: logCommandsOr(stored.logCommands, DEFAULT_HOOKS_CONFIG.logCommands),
         maxLogMB: megabytesOr({
@@ -649,6 +685,50 @@ export function mergeStoredConfig(stored: StoredHooksConfig): HooksConfig {
         }),
         logPath: typeof stored.logPath === "string" && stored.logPath.length > 0 ? stored.logPath : defaultLogPath(),
     };
+}
+
+const STOP_HOOK_MODES: readonly DecisionStopHook[] = ["off", "warn", "block"];
+
+/** Field by field, like `diff`: a stored value of the wrong type falls back to the default. */
+function mergeDecisions(stored: Partial<DecisionsHookConfig> | undefined): DecisionsHookConfig {
+    const base = DEFAULT_HOOKS_CONFIG.decisions;
+    const staleness = stored?.staleness;
+    const harnesses = Array.isArray(stored?.harnesses)
+        ? stored.harnesses.filter((name): name is HarnessName => HARNESS_NAMES.includes(name))
+        : base.harnesses;
+
+    return {
+        stopHook: STOP_HOOK_MODES.includes(stored?.stopHook as DecisionStopHook)
+            ? (stored?.stopHook as DecisionStopHook)
+            : base.stopHook,
+        maxBlocksPerSession: countOr({
+            field: "decisions.maxBlocksPerSession",
+            value: stored?.maxBlocksPerSession,
+            fallback: base.maxBlocksPerSession,
+            min: 0,
+        }),
+        harnesses,
+        harvest: boolOr(stored?.harvest, base.harvest),
+        injectAnswers: boolOr(stored?.injectAnswers, base.injectAnswers),
+        staleness: {
+            warnAfterMinutes: countOr({
+                field: "decisions.staleness.warnAfterMinutes",
+                value: staleness?.warnAfterMinutes,
+                fallback: base.staleness.warnAfterMinutes,
+            }),
+            alarmAfterMinutes: countOr({
+                field: "decisions.staleness.alarmAfterMinutes",
+                value: staleness?.alarmAfterMinutes,
+                fallback: base.staleness.alarmAfterMinutes,
+            }),
+            notify: boolOr(staleness?.notify, base.staleness.notify),
+        },
+    };
+}
+
+/** Whether the decision hub needs its Stop and UserPromptSubmit hooks wired at all. */
+export function decisionHooksWanted(config: HooksConfig): boolean {
+    return config.decisions.stopHook !== "off" || config.decisions.harvest || config.decisions.injectAnswers;
 }
 
 /** Whether this run should record the command verbatim in the decision log. */

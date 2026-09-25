@@ -3,6 +3,8 @@
 import { runTool } from "@genesiscz/utils/cli";
 import { handleReadmeFlag } from "@genesiscz/utils/readme";
 import { Command } from "commander";
+import { registerBlameCommand } from "./commands/blame";
+import { registerChangesCommand } from "./commands/changes";
 import { registerDiscoverCommand } from "./commands/discover";
 import { registerHooksCommands } from "./commands/hooks";
 import { registerListenCommand } from "./commands/listen";
@@ -25,5 +27,7 @@ registerRequestCommand(program);
 registerDiscoverCommand(program);
 registerListenCommand(program);
 registerHooksCommands(program);
+registerChangesCommand(program);
+registerBlameCommand(program);
 
 await runTool(program, { tool: "agents" });
