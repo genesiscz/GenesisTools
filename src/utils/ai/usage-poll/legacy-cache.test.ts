@@ -12,6 +12,7 @@ import {
     projectRoundIntoLegacyCache,
     readSnapshotsCache,
     snapshotsCachePath,
+    stampSnapshotsRenewal,
     writeLegacyUsageShared,
     writeSnapshotsCache,
 } from "./legacy-cache";
@@ -434,5 +435,92 @@ describe("writeSnapshotsCache", () => {
         });
 
         expect(await Bun.file(legacyUsageSharedPath()).exists()).toBe(false);
+    });
+
+    test("a renewal stamp moves the renewal and the anchor of the named provider's account, and null removes both", async () => {
+        useTempHome();
+        const anchored: AccountUsageSnapshot = {
+            ...snapshot("anthropic-sub", "work"),
+            plan: { billingAnchor: "2026-06-24", renewsAt: "2026-09-24" },
+        };
+        await writeSnapshotsCache({
+            ...slice("grok-sub", "grok", "work"),
+            "anthropic-sub": {
+                alias: "claude",
+                displayName: "Claude",
+                prominent: ["monthly"],
+                accounts: [anchored, snapshot("anthropic-sub", "personal")],
+            },
+        });
+        const stamp = (renewsAt: string | null, billingAnchor: string | null) =>
+            stampSnapshotsRenewal({ provider: "anthropic-sub", accountName: "work", renewsAt, billingAnchor });
+
+        expect(await stamp("2026-10-07", "2026-07-07")).toBe(true);
+
+        const cache = await readSnapshotsCache();
+        const claude = cache?.providers["anthropic-sub"]?.accounts ?? [];
+        // The old anchor must not stay next to the new renewal: a reader projects from the anchor.
+        expect(claude.map((row) => [row.accountName, row.plan?.renewsAt, row.plan?.billingAnchor])).toEqual([
+            ["work", "2026-10-07", "2026-07-07"],
+            ["personal", undefined, undefined],
+        ]);
+        // Same account name under another provider: never touched.
+        expect(cache?.providers["grok-sub"]?.accounts[0]?.plan).toBeUndefined();
+
+        expect(await stamp(null, null)).toBe(true);
+        const cleared = (await readSnapshotsCache())?.providers["anthropic-sub"]?.accounts[0]?.plan ?? {};
+        expect("renewsAt" in cleared).toBe(false);
+        expect("billingAnchor" in cleared).toBe(false);
+    });
+
+    test("a renewal stamp never creates the cache file", async () => {
+        useTempHome();
+
+        expect(
+            await stampSnapshotsRenewal({
+                provider: "anthropic-sub",
+                accountName: "work",
+                renewsAt: "2026-10-07T10:00:00.000Z",
+                billingAnchor: "2026-07-07",
+            })
+        ).toBe(false);
+        expect(await Bun.file(snapshotsCachePath()).exists()).toBe(false);
+    });
+
+    test("a renewal stamp leaves an unreadable cache file alone", async () => {
+        useTempHome();
+        await writeSnapshotsCache(slice("grok-sub", "grok", "side"));
+        await Bun.write(snapshotsCachePath(), "{ not json");
+
+        expect(
+            await stampSnapshotsRenewal({
+                provider: "anthropic-sub",
+                accountName: "work",
+                renewsAt: "2026-10-07",
+                billingAnchor: "2026-07-07",
+            })
+        ).toBe(false);
+        expect(await Bun.file(snapshotsCachePath()).text()).toBe("{ not json");
+
+        // Valid JSON of the wrong shape is left alone too, instead of throwing inside the lock.
+        const wrongShapes = [
+            "null",
+            '{"fetchedAt":"x"}',
+            '{"providers":{"anthropic-sub":{"accounts":null}}}',
+            // Not JSON: a trailing comma. A lenient parse accepted it and rewrote the file.
+            '{"fetchedAt":"x","providers":{},}',
+        ];
+        for (const wrong of wrongShapes) {
+            await Bun.write(snapshotsCachePath(), wrong);
+            expect(
+                await stampSnapshotsRenewal({
+                    provider: "anthropic-sub",
+                    accountName: "work",
+                    renewsAt: "2026-10-07",
+                    billingAnchor: "2026-07-07",
+                })
+            ).toBe(false);
+            expect(await Bun.file(snapshotsCachePath()).text()).toBe(wrong);
+        }
     });
 });

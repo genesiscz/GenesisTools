@@ -135,6 +135,10 @@ export const accountEntrySchema = z.looseObject({
     /** Escape hatch for selector exceptions; empty in the common case. */
     overrides: z.record(z.string(), z.unknown()).optional(),
     subscriptionCreatedAt: z.string().optional(),
+    /** Hand-set billing day. Wins over `subscriptionCreatedAt`. */
+    subscriptionAnchorOverride: z.string().optional(),
+    /** Stamped when a poll watches the subscription return to active. */
+    subscriptionReactivatedAt: z.string().optional(),
     /**
      * Identity fingerprint, written on every successful login. A long-lived setup
      * token cannot read the profile, so `organizationUuid` is the only thing that

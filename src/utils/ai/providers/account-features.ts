@@ -150,7 +150,24 @@ export interface AccountUsageSnapshot {
     /** ISO. */
     fetchedAt: string;
     limits: LimitWindow[];
-    plan?: { name?: string; status?: string; createdAt?: string; checkedAt?: string; contradictedAt?: number };
+    plan?: {
+        name?: string;
+        status?: string;
+        createdAt?: string;
+        checkedAt?: string;
+        contradictedAt?: number;
+        /**
+         * The day the charges are projected from: a manual override, a watched reactivation, or
+         * the signup stamp. Carried so a reader that converts the snapshot back projects from the
+         * same anchor the producer used.
+         */
+        billingAnchor?: string;
+        /**
+         * Projected next charge as a calendar day, `YYYY-MM-DD` (older snapshots hold an ISO
+         * instant). A day-of-month guess, not an API period end.
+         */
+        renewsAt?: string;
+    };
     /** Login health, provider-neutral. */
     auth?: { refreshExpiresAt?: string; longLivedExpiresAt?: string; orgBlocked?: boolean; reason?: string };
     stale?: { lastSuccessAt: string; reason: string };

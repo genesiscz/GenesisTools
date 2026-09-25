@@ -3,7 +3,12 @@ import { BUCKET_LABELS, BUCKET_PERIODS_MS, colorForPct, isResetImminent } from "
 import { formatSpendBalance } from "@app/claude/lib/usage/display";
 import type { NormalizedLimit, NormalizedSpend, Severity } from "@app/claude/lib/usage/limits";
 import { normalizeLimits, normalizeSpend } from "@app/claude/lib/usage/limits";
-import { formatCoarseSpan, formatRenewsAt, planAllowsClaudeCode } from "@app/claude/lib/usage/subscription";
+import {
+    formatCoarseSpan,
+    formatRenewsAt,
+    planAllowsClaudeCode,
+    planRenewalWarning,
+} from "@app/claude/lib/usage/subscription";
 import { formatRelativeTime } from "@genesiscz/utils/format";
 import { useTerminalSize } from "@genesiscz/utils/ink/hooks/use-terminal-size";
 import { UsageBar } from "@genesiscz/utils/ink/usage-dashboard/components/usage-bar";
@@ -261,14 +266,19 @@ export function estimateAccountHeight(account: AccountUsage, prominentBuckets: s
         // reserve a row that is not there, skewing the two-column decision.
         const staleText = staleHeaderText(account);
         const staleOwnLine = staleText !== null && !staleFitsHeader(account, width);
+        const planLine = planRenewalLine(account) ? 1 : 0;
 
-        return staleOwnLine || !isPlanDead(account) ? 3 : 2;
+        return (staleOwnLine || !isPlanDead(account) ? 3 : 2) + planLine;
     }
 
     const layout = layoutFor(width);
     let lines = 2;
 
     if (account.stale && !staleFitsHeader(account, width)) {
+        lines += 1;
+    }
+
+    if (planRenewalLine(account)) {
         lines += 1;
     }
 
@@ -376,12 +386,27 @@ interface HeaderExtrasInput {
 /**
  * The two header extras, each dropped once the line is full — they never spend a
  * whole extra line, which would also desync estimateAccountHeight. The grant
- * warning is placed first because it is actionable (re-login) where the renewal
- * date is trivia, so on a tight line the warning is what survives.
+ * warning is placed first because it is actionable (re-login) where a far renewal
+ * date is trivia. A renewal inside the last week is `planText`, its own line,
+ * and is never dropped.
  */
+function renewalAnchor(account: AccountUsage): string | undefined {
+    return account.billingAnchor ?? account.subscriptionCreatedAt;
+}
+
+function planRenewalLine(account: AccountUsage, now: number = Date.now()): string | null {
+    if (isPlanDead(account)) {
+        return null;
+    }
+
+    return planRenewalWarning(renewalAnchor(account), new Date(now));
+}
+
 export function headerExtras({ account, staleText, width, now = Date.now() }: HeaderExtrasInput): {
     renewsText: string | null;
     grantText: string | null;
+    /** Set when the renewal is inside the warning window. Renders on its own line. */
+    planText: string | null;
 } {
     let used = headerLength(account, staleText);
 
@@ -395,28 +420,33 @@ export function headerExtras({ account, staleText, width, now = Date.now() }: He
     // A canceled plan has no next renewal, and the stored label still names the
     // paid tier it used to be — printing "none · renews in 29d" over a dead
     // account is the exact opposite of what the row means.
+    const planText = planRenewalLine(account, now);
+
     if (isPlanDead(account)) {
         const plan = planStateText(account);
         return {
             grantText: grantFits ? grant : null,
             renewsText: used + 2 + plan.length <= width ? plan : null,
+            planText: null,
         };
     }
 
     // Plan and renewal read as one fact ("max 20x · renews in 28d"); on a tight
     // line the countdown is dropped first and the plan label alone survives.
-    const renews = formatRenewsAt(account.subscriptionCreatedAt);
+    // Inside the last week the countdown has already moved to `planText`.
+    const renews = planText ? null : formatRenewsAt(renewalAnchor(account), new Date(now));
     const both = [account.label, renews].filter(Boolean).join(" · ");
+    const grantText = grantFits ? grant : null;
 
     if (both && used + 2 + both.length <= width) {
-        return { grantText: grantFits ? grant : null, renewsText: both };
+        return { grantText, renewsText: both, planText };
     }
 
     if (account.label && used + 2 + account.label.length <= width) {
-        return { grantText: grantFits ? grant : null, renewsText: account.label };
+        return { grantText, renewsText: account.label, planText };
     }
 
-    return { grantText: grantFits ? grant : null, renewsText: null };
+    return { grantText, renewsText: null, planText };
 }
 
 function worstSeverity(limits: NormalizedLimit[], spend: NormalizedSpend | null): Severity {
@@ -481,13 +511,12 @@ export function AccountSection({ account, prominentBuckets, width }: AccountSect
     const fetchError = overviewFetchError(account);
 
     if (fetchError) {
+        const { planText, ...header } = headerExtras({ account, staleText: null, width: sectionWidth });
+
         return (
             <Box flexDirection="column" marginBottom={1}>
-                <AccountHeader
-                    account={account}
-                    dotColor="red"
-                    {...headerExtras({ account, staleText: null, width: sectionWidth })}
-                />
+                <AccountHeader account={account} dotColor="red" {...header} />
+                {planText ? <Text color="yellow">{`  ${planText}`}</Text> : null}
                 <Text color="red">{`  ${fetchError}`}</Text>
             </Box>
         );
@@ -498,6 +527,12 @@ export function AccountSection({ account, prominentBuckets, width }: AccountSect
         const staleText = staleHeaderText(account);
         const staleInline = staleText !== null && staleFitsHeader(account, sectionWidth);
 
+        const { planText, ...header } = headerExtras({
+            account,
+            staleText: staleInline ? staleText : null,
+            width: sectionWidth,
+        });
+
         return (
             <Box flexDirection="column" marginBottom={1}>
                 <AccountHeader
@@ -505,8 +540,9 @@ export function AccountSection({ account, prominentBuckets, width }: AccountSect
                     dotColor={planDead ? "red" : undefined}
                     staleText={staleInline ? staleText : null}
                     staleColor={planDead ? "red" : "yellow"}
-                    {...headerExtras({ account, staleText: staleInline ? staleText : null, width: sectionWidth })}
+                    {...header}
                 />
+                {planText ? <Text color="yellow">{`  ${planText}`}</Text> : null}
                 {staleText && !staleInline ? <Text color={planDead ? "red" : "yellow"}>{`  ${staleText}`}</Text> : null}
                 {planDead ? null : <Text dimColor>{"  No usage data"}</Text>}
             </Box>
@@ -521,6 +557,12 @@ export function AccountSection({ account, prominentBuckets, width }: AccountSect
     const visibleLimits = visibleLimitsFor(account, prominentBuckets);
     const dotColor = severityColor(worstSeverity(visibleLimits, spend));
 
+    const { planText, ...header } = headerExtras({
+        account,
+        staleText: staleInline ? staleText : null,
+        width: sectionWidth,
+    });
+
     return (
         <Box flexDirection="column" marginBottom={1}>
             <AccountHeader
@@ -530,8 +572,9 @@ export function AccountSection({ account, prominentBuckets, width }: AccountSect
                 dotColor={planDead ? "red" : account.stale ? "yellow" : dotColor}
                 staleText={staleInline ? staleText : null}
                 staleColor={planDead ? "red" : "yellow"}
-                {...headerExtras({ account, staleText: staleInline ? staleText : null, width: sectionWidth })}
+                {...header}
             />
+            {planText ? <Text color="yellow">{`  ${planText}`}</Text> : null}
             {staleText && !staleInline ? <Text color={planDead ? "red" : "yellow"}>{`  ${staleText}`}</Text> : null}
             {visibleLimits.map((limit) => (
                 <BucketRow

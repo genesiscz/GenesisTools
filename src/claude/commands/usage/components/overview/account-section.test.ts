@@ -45,7 +45,7 @@ describe("grantWarningText", () => {
 });
 
 describe("headerExtras", () => {
-    test("plan label and renewal render as one fact", () => {
+    test("a charge inside the week leaves the header and takes its own line", () => {
         const extras = headerExtras({
             account: account({ label: "max 20x", subscriptionCreatedAt: "2026-01-28T09:44:00.000Z" }),
             staleText: null,
@@ -53,8 +53,25 @@ describe("headerExtras", () => {
             now: NOW,
         });
 
+        expect(extras.renewsText).toBe("max 20x");
+        expect(extras.planText).toMatch(/^⚠ plan ends ~\d{2}\.\d{2} \(in ~\d+d\)$/);
+    });
+
+    test("a manual billing day replaces the profile signup", () => {
+        const extras = headerExtras({
+            account: account({
+                label: "max 20x",
+                subscriptionCreatedAt: "2024-09-24T20:25:12.466Z",
+                billingAnchor: "2026-07-07T12:00:00.000Z",
+            }),
+            staleText: null,
+            width: WIDE,
+            now: NOW,
+        });
+
+        expect(extras.planText).toBeNull();
         expect(extras.renewsText).toContain("max 20x");
-        expect(extras.renewsText).toContain("renews in");
+        expect(extras.renewsText).toContain("ends ~07.");
     });
 
     test("the label alone survives when the line cannot fit both", () => {

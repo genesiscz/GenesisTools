@@ -4,6 +4,7 @@
  * This door keeps the claude TUI and `tools claude config` on the old specifier.
  */
 export {
+    billingAnchor,
     clearAnchorFailure,
     ensureSubscriptionAnchors,
     formatCoarseSpan,
@@ -14,6 +15,8 @@ export {
     isAnchorDue,
     nextRenewalDate,
     planAllowsClaudeCode,
+    planRenewalWarning,
+    reactivated,
     refreshSubscriptionProfile,
     revalidateStalePlan,
     SUBSCRIPTION_RECHECK_MS,

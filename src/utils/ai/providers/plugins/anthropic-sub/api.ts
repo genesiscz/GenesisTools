@@ -13,7 +13,13 @@ import {
 import { resolveAccountToken } from "@genesiscz/utils/claude/subscription-auth";
 import type { AIAccountEntry } from "@genesiscz/utils/config/ai.types";
 import { logger } from "@genesiscz/utils/logger";
-import { isAnchorDue, planAllowsClaudeCode, refreshSubscriptionProfile, revalidateStalePlan } from "./subscription";
+import {
+    billingAnchor,
+    isAnchorDue,
+    planAllowsClaudeCode,
+    refreshSubscriptionProfile,
+    revalidateStalePlan,
+} from "./subscription";
 
 export type { AccountInfo, KeychainCredentials } from "@genesiscz/utils/claude/auth";
 
@@ -147,8 +153,13 @@ export interface AccountStaleInfo {
 export interface AccountUsage {
     accountName: string;
     label?: string;
-    /** Stripe billing-cycle anchor (ISO) — renders as the next renewal date. */
+    /** Profile signup stamp. Not the current charge day once a plan change moved it. */
     subscriptionCreatedAt?: string;
+    /**
+     * The day the projection uses: manual override, else a reactivation we
+     * watched, else `subscriptionCreatedAt`.
+     */
+    billingAnchor?: string;
     /**
      * `organization_type` from the OAuth profile. A free org cannot run Claude
      * Code even while its usage buckets look healthy, so this is carried into
@@ -262,6 +273,7 @@ function identityOf(account: AIAccountEntry) {
         accountName: account.name,
         label: account.label,
         subscriptionCreatedAt: account.subscriptionCreatedAt,
+        billingAnchor: billingAnchor(account),
         subscriptionPlan: account.subscriptionPlan,
         subscriptionStatus: account.subscriptionStatus,
         planContradictedAt: account.planContradictedAt,

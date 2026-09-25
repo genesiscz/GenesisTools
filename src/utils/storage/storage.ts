@@ -605,6 +605,49 @@ export class Storage {
     }
 
     /**
+     * Like `atomicUpdate`, but only for a cache file that EXISTS, parses and passes `accepts`,
+     * checked under the same lock. Anything else is left alone and `null` comes back: an update of
+     * something another process just deleted must not recreate it, and a corrupt file (valid JSON
+     * of the wrong shape, such as `null`, included) must not reach `update` or be replaced by a
+     * fresh default built around one change.
+     */
+    async atomicUpdateExisting<T>(
+        relativePath: string,
+        { accepts, update }: { accepts: (value: unknown) => value is T; update: (current: T) => T }
+    ): Promise<T | null> {
+        await this.ensureDirs();
+        const filePath = this.getCacheFilePath(relativePath);
+
+        return this.withFileLock({
+            file: filePath,
+            fn: async () => {
+                if (!existsSync(filePath)) {
+                    return null;
+                }
+
+                let current: unknown;
+
+                try {
+                    // Strict: the program writes these files, so a comment or a trailing comma means damage.
+                    current = SafeJSON.parse(await Bun.file(filePath).text(), { strict: true });
+                } catch (error) {
+                    logger.debug(`atomicUpdateExisting: left ${filePath} alone, it does not parse: ${error}`);
+                    return null;
+                }
+
+                if (!accepts(current)) {
+                    logger.debug(`atomicUpdateExisting: left ${filePath} alone, it has the wrong shape`);
+                    return null;
+                }
+
+                const updated = update(current);
+                this.atomicWrite(filePath, SafeJSON.stringify(updated, null, 2));
+                return updated;
+            },
+        });
+    }
+
+    /**
      * Atomically read-modify-write the config file.
      *
      * Acquires the config file lock, reads the current config (or empty object),

@@ -59,8 +59,24 @@ export interface AIAccountEntry {
     secondary?: AISecondaryLogin;
     label?: string; // e.g. "max 20x", "pro"
     apps?: string[]; // which tools use this: ["ask", "claude"]
-    /** Stripe billing-cycle anchor from the OAuth profile; drives the renewal date. */
+    /**
+     * `subscription_created_at` from the OAuth profile. The original signup,
+     * not the current charge: a plan change moves Stripe's billing day and
+     * this stamp stays put. The projection uses `billingAnchor`.
+     */
     subscriptionCreatedAt?: string;
+    /**
+     * Hand-set billing day (`tools claude anchor`). Wins over the profile
+     * stamp, which the profile endpoint will never correct — it has no
+     * period-end field.
+     */
+    subscriptionAnchorOverride?: string;
+    /**
+     * When a profile poll watched the status return to `active`. A re-bought
+     * subscription keeps the original `subscription_created_at`, so this stamp
+     * is the cycle we actually observed.
+     */
+    subscriptionReactivatedAt?: string;
     /**
      * Identity fingerprint, written on every successful login. A long-lived setup
      * token cannot read the profile, so this is the only thing that can prove a

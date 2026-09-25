@@ -26,7 +26,11 @@ mock.module("@genesiscz/utils/claude/subscription-auth", () => ({
     },
 }));
 
+// The real module first, so an export this test does not stub (billingAnchor, nextRenewalDate) still exists.
+const realSubscription = await import("@genesiscz/utils/ai/providers/plugins/anthropic-sub/subscription");
+
 mock.module("@genesiscz/utils/ai/providers/plugins/anthropic-sub/subscription", () => ({
+    ...realSubscription,
     isAnchorDue: (account: { name: string }) => anchorDueFor.has(account.name),
     planAllowsClaudeCode: (entry: { subscriptionPlan?: string; planContradictedAt?: number }) =>
         Boolean(entry.planContradictedAt) || entry.subscriptionPlan !== "claude_free",

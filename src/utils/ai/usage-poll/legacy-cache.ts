@@ -1,5 +1,6 @@
 import { join } from "node:path";
 import { logger } from "@genesiscz/utils/logger";
+import { isObject } from "@genesiscz/utils/object";
 import { Storage } from "@genesiscz/utils/storage/storage";
 import { USAGE_CACHE_TTL, usagePollStorage } from "./storage";
 import type { AccountUsageSnapshot } from "./types";
@@ -204,6 +205,15 @@ export interface SnapshotsCache {
 
 const SNAPSHOTS_CACHE_KEY = "snapshots.json";
 
+/** The part of the cache shape a renewal stamp reads: a providers map whose slices hold account lists. */
+function isSnapshotsCache(value: unknown): value is SnapshotsCache {
+    return (
+        isObject(value) &&
+        isObject(value.providers) &&
+        Object.values(value.providers).every((slice) => isObject(slice) && Array.isArray(slice.accounts))
+    );
+}
+
 /**
  * Absolute path of the all-provider cache file. Exported so no producer or reader
  * hardcodes a home directory.
@@ -303,6 +313,64 @@ function mergeProviderAccounts(
     }
 
     return merged;
+}
+
+/**
+ * Sets, or with `null` removes, `plan.renewsAt` and `plan.billingAnchor` on one account's cached
+ * row, so a reader sees a new billing anchor before the next poll rewrites the file. Both move
+ * together: `snapshotToAccountUsage` hands readers the anchor, and a reader that projects from a
+ * stale one shows the old charge day. Only the named provider's slice is touched: another
+ * provider may have an account with the same name. It takes the same lock as
+ * `writeSnapshotsCache`, so a poll round that lands meanwhile is kept. No file yet means nothing
+ * to stamp. Returns whether a row matched.
+ */
+export async function stampSnapshotsRenewal({
+    provider,
+    accountName,
+    renewsAt,
+    billingAnchor,
+}: {
+    provider: string;
+    accountName: string;
+    renewsAt: string | null;
+    billingAnchor: string | null;
+}): Promise<boolean> {
+    let changed = false;
+
+    // The existence check runs under the lock: a cache another process removed after an earlier
+    // check stays removed instead of coming back as an empty file around this one row.
+    await usagePollStorage().atomicUpdateExisting(SNAPSHOTS_CACHE_KEY, {
+        accepts: isSnapshotsCache,
+        update: (cache) => {
+            const slice = cache.providers[provider];
+
+            if (!slice) {
+                return cache;
+            }
+
+            const accounts = slice.accounts.map((account) => {
+                if (account.accountName !== accountName) {
+                    return account;
+                }
+
+                changed = true;
+                const { renewsAt: _renewsAt, billingAnchor: _billingAnchor, ...plan } = account.plan ?? {};
+                return {
+                    ...account,
+                    plan: {
+                        ...plan,
+                        ...(renewsAt === null ? {} : { renewsAt }),
+                        ...(billingAnchor === null ? {} : { billingAnchor }),
+                    },
+                };
+            });
+
+            return { ...cache, providers: { ...cache.providers, [provider]: { ...slice, accounts } } };
+        },
+    });
+
+    logger.debug({ changed }, "[usage] snapshots cache renewal stamped");
+    return changed;
 }
 
 export async function readSnapshotsCache(): Promise<SnapshotsCache | null> {

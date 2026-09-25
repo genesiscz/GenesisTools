@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+    billingAnchor,
     formatCoarseSpan,
     formatCzechDateTime,
     formatRelativeSpan,
@@ -7,6 +8,7 @@ import {
     formatRenewsAtFull,
     nextRenewalDate,
     planAllowsClaudeCode,
+    planRenewalWarning,
 } from "./subscription";
 
 // Local time on purpose: nextRenewalDate builds candidates with the local-time
@@ -85,20 +87,35 @@ describe("formatCzechDateTime", () => {
     });
 });
 
+describe("billingAnchor", () => {
+    test("a manual day wins over the profile signup and a reactivation", () => {
+        expect(
+            billingAnchor({
+                subscriptionCreatedAt: "2024-09-24T20:25:12.466Z",
+                subscriptionReactivatedAt: "2026-06-01T00:00:00.000Z",
+                subscriptionAnchorOverride: "2026-07-07T10:00:00.000Z",
+            })
+        ).toBe("2026-07-07T10:00:00.000Z");
+    });
+
+    test("a reactivation we watched beats a signup stamp that never moves", () => {
+        expect(
+            billingAnchor({
+                subscriptionCreatedAt: "2024-09-24T20:25:12.466Z",
+                subscriptionReactivatedAt: "2026-07-07T10:00:00.000Z",
+            })
+        ).toBe("2026-07-07T10:00:00.000Z");
+    });
+});
+
 describe("formatRenewsAt / formatRenewsAtFull", () => {
-    test("null without an anchor", () => {
+    test("the projection is marked as one, and the last week is a warning", () => {
+        const anchor = new Date(2026, 0, 28, 9, 44).toISOString();
+        expect(formatRenewsAt(anchor, NOW)).toBe("ends ~28.07");
+        expect(formatRenewsAtFull(anchor, NOW)).toContain("ends ~28.07.2026");
+        expect(planRenewalWarning(anchor, NOW)).toMatch(/^⚠ plan ends ~28\.07 \(in ~\d+d\)$/);
+        expect(planRenewalWarning(new Date(2026, 0, 6, 9, 44).toISOString(), NOW)).toBeNull();
         expect(formatRenewsAt(undefined, NOW)).toBeNull();
-        expect(formatRenewsAtFull(undefined, NOW)).toBeNull();
-    });
-
-    test("compact form is a single-unit countdown", () => {
-        expect(formatRenewsAt(new Date(2026, 0, 28, 9, 44).toISOString(), NOW)).toBe("renews in 3d");
-    });
-
-    test("full form carries the absolute date and the distance", () => {
-        const full = formatRenewsAtFull(new Date(2026, 0, 28, 9, 44).toISOString(), NOW);
-        expect(full).toContain("renews 28.07.2026 09:44");
-        expect(full).toContain("(in 3d");
     });
 });
 

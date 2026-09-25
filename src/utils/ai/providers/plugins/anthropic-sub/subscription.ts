@@ -6,9 +6,12 @@ import type { AIAccountEntry } from "@genesiscz/utils/config/ai.types";
 import { logger } from "@genesiscz/utils/logger";
 
 /**
- * When a subscription's month rolls over. The anchor is the Stripe billing-cycle
- * start (`organization.subscription_created_at` from the OAuth profile), fetched
- * once per account and persisted forever — every later render is pure math.
+ * `organization.subscription_created_at` is when the subscription was first
+ * created. It is not the current charge date: a plan change moves Stripe's
+ * billing anchor and this field stays put. Observed on one account, 2026-09-24 —
+ * created 2024-09-24, Pro invoices on the 24th, Max invoices on the 7th, and
+ * the billing page says the next charge is 2026-10-07. The OAuth profile has
+ * no period end, so a countdown from the created day is a guess.
  */
 
 /**
@@ -122,12 +125,18 @@ export async function refreshSubscriptionProfile(
         return false;
     }
 
+    const status = profile.organization.subscription_status;
     const patch = {
         // A missing anchor must not erase the stored one.
         subscriptionCreatedAt: profile.organization.subscription_created_at || account.subscriptionCreatedAt,
         subscriptionPlan: profile.organization.organization_type,
-        subscriptionStatus: profile.organization.subscription_status,
+        subscriptionStatus: status,
         subscriptionCheckedAt: now,
+        // The profile stamp never moves when a lapsed sub is bought again.
+        // The flip we just watched is the only new cycle the API will admit.
+        ...(reactivated(account.subscriptionStatus, status)
+            ? { subscriptionReactivatedAt: new Date(now).toISOString() }
+            : {}),
         // Backfill the identity fingerprint on every profile read. Without this an
         // account keeps no org uuid until its next full re-login, and `login-long`
         // has nothing to compare a pasted setup token against.
@@ -261,13 +270,50 @@ export async function ensureSubscriptionAnchors(
     );
 }
 
+/** A profile check that watched a subscription come back to life. */
+export function reactivated(previousStatus: string | undefined, nextStatus: string | undefined): boolean {
+    return nextStatus === "active" && previousStatus !== undefined && previousStatus !== "active";
+}
+
+/**
+ * The day the current cycle is anchored to. A hand-set override wins, then a
+ * reactivation we watched, then the profile's original signup. Same precedence
+ * as claude-switcheroo: the profile endpoint has no period end, so a plan
+ * change that moved the charge day can only be corrected by hand.
+ */
+export function billingAnchor(account: {
+    subscriptionAnchorOverride?: string;
+    subscriptionCreatedAt?: string;
+    subscriptionReactivatedAt?: string;
+}): string | undefined {
+    if (account.subscriptionAnchorOverride) {
+        return account.subscriptionAnchorOverride;
+    }
+
+    const created = account.subscriptionCreatedAt;
+    const cameBack = account.subscriptionReactivatedAt;
+
+    if (!created || !cameBack) {
+        return created ?? cameBack;
+    }
+
+    return Date.parse(cameBack) > Date.parse(created) ? cameBack : created;
+}
+
 /**
  * Next monthly renewal derived from the billing anchor: the subscription's
  * created day-of-month, first occurrence after `now`. Approximate (~) for
  * anchors past the 28th — Stripe clamps short months the same way.
  */
 export function nextRenewalDate(subscriptionCreatedAt: string, now: Date = new Date()): Date | null {
-    const created = new Date(subscriptionCreatedAt);
+    // A date-only value (`2026-07-07`: what `tools claude anchor` stores, and the projected
+    // `renewsAt`) is a calendar day, read in THIS machine's zone and lasting until its end. An
+    // instant would be the 7th in Tokyo and the 6th in California; the day is the 7th everywhere,
+    // and a charge due today is still today's, not next month's, in the afternoon.
+    const dateOnly = /^(\d{4})-(\d{2})-(\d{2})$/.exec(subscriptionCreatedAt);
+    const created = dateOnly
+        ? new Date(Number(dateOnly[1]), Number(dateOnly[2]) - 1, Number(dateOnly[3]), 23, 59, 59, 999)
+        : new Date(subscriptionCreatedAt);
 
     if (!Number.isFinite(created.getTime())) {
         return null;
@@ -297,6 +343,14 @@ export function nextRenewalDate(subscriptionCreatedAt: string, now: Date = new D
 }
 
 const pad2 = (n: number) => String(n).padStart(2, "0");
+
+/**
+ * A date as the calendar day it is HERE (`2026-10-07`). The projected renewal is stored in this
+ * form, so a snapshot written in Tokyo does not read as the day before in Los Angeles.
+ */
+export function calendarDay(date: Date): string {
+    return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}`;
+}
 
 /** Czech datetime: "16.08.2026 09:44". */
 export function formatCzechDateTime(date: Date): string {
@@ -336,32 +390,66 @@ export function formatCoarseSpan(from: Date, to: Date): string {
     return `${Math.max(1, minutes)}m`;
 }
 
-/** "renews in 28d" — the compact form for headers. Null when no anchor is stored. */
-export function formatRenewsAt(subscriptionCreatedAt: string | undefined, now: Date = new Date()): string | null {
-    if (!subscriptionCreatedAt) {
-        return null;
-    }
+/** Shown once the projected charge is inside a week. Farther out stays the dim `ends ~dd.mm`. */
+export const PLAN_RENEWAL_WARNING_MS = 7 * 24 * 3_600_000;
 
-    const next = nextRenewalDate(subscriptionCreatedAt, now);
-
-    if (!next) {
-        return null;
-    }
-
-    return `renews in ${formatCoarseSpan(now, next)}`;
+function czechDayMonth(date: Date): string {
+    const day = String(date.getDate()).padStart(2, "0");
+    const month = String(date.getMonth() + 1).padStart(2, "0");
+    return `${day}.${month}`;
 }
 
-/** "renews 16.08.2026 09:44 (in 28d 21h)" — the full form for detail zones. */
-export function formatRenewsAtFull(subscriptionCreatedAt: string | undefined, now: Date = new Date()): string | null {
-    if (!subscriptionCreatedAt) {
+/**
+ * "⚠ plan ends ~07.10 (in ~6d)" during the last week of the projected cycle.
+ * The `~` is load-bearing: this is a day-of-month projection, not a date the
+ * API returned. Null when there is no anchor or the charge is farther out.
+ */
+export function planRenewalWarning(anchor: string | undefined, now: Date = new Date()): string | null {
+    if (!anchor) {
         return null;
     }
 
-    const next = nextRenewalDate(subscriptionCreatedAt, now);
+    const next = nextRenewalDate(anchor, now);
 
     if (!next) {
         return null;
     }
 
-    return `renews ${formatCzechDateTime(next)} (in ${formatRelativeSpan(now, next)})`;
+    const ms = next.getTime() - now.getTime();
+
+    if (ms <= 0 || ms > PLAN_RENEWAL_WARNING_MS) {
+        return null;
+    }
+
+    return `⚠ plan ends ~${czechDayMonth(next)} (in ~${formatCoarseSpan(now, next)})`;
+}
+
+/** "ends ~07.10" — the compact projection. Null when no anchor is stored. */
+export function formatRenewsAt(anchor: string | undefined, now: Date = new Date()): string | null {
+    if (!anchor) {
+        return null;
+    }
+
+    const next = nextRenewalDate(anchor, now);
+
+    if (!next) {
+        return null;
+    }
+
+    return `ends ~${czechDayMonth(next)}`;
+}
+
+/** "ends ~07.10.2026 (in ~13d)" — the full projection for a detail line. */
+export function formatRenewsAtFull(anchor: string | undefined, now: Date = new Date()): string | null {
+    if (!anchor) {
+        return null;
+    }
+
+    const next = nextRenewalDate(anchor, now);
+
+    if (!next) {
+        return null;
+    }
+
+    return `ends ~${czechDayMonth(next)}.${next.getFullYear()} (in ~${formatCoarseSpan(now, next)})`;
 }

@@ -31,7 +31,11 @@ mock.module("@genesiscz/utils/claude/subscription-auth", () => ({
     },
 }));
 
+// The real module first, so an export this test does not stub (billingAnchor, nextRenewalDate) still exists.
+const realSubscription = await import("@genesiscz/utils/ai/providers/plugins/anthropic-sub/subscription");
+
 mock.module("@genesiscz/utils/ai/providers/plugins/anthropic-sub/subscription", () => ({
+    ...realSubscription,
     isAnchorDue: () => false,
     planAllowsClaudeCode: () => true,
     refreshSubscriptionProfile: async () => true,
@@ -39,7 +43,12 @@ mock.module("@genesiscz/utils/ai/providers/plugins/anthropic-sub/subscription", 
     SUBSCRIPTION_RECHECK_MS: 6 * 60 * 60 * 1000,
 }));
 
-let legacyAccounts: Array<{ name: string; provider: string; tokens: Record<string, unknown> }> = [];
+let legacyAccounts: Array<{
+    name: string;
+    provider: string;
+    tokens: Record<string, unknown>;
+    subscriptionAnchorOverride?: string;
+}> = [];
 
 mock.module("@genesiscz/utils/ai/AIConfig", () => ({
     AIConfig: {
@@ -50,7 +59,9 @@ mock.module("@genesiscz/utils/ai/AIConfig", () => ({
     },
 }));
 
-const { classifyAnthropicFailure, pollAnthropicAccount, toLimitWindows } = await import("./usage");
+const { classifyAnthropicFailure, pollAnthropicAccount, snapshotToAccountUsage, toLimitWindows } = await import(
+    "./usage"
+);
 const { failureSnapshot } = await import("@genesiscz/utils/ai/usage-poll/poll");
 const { SNAPSHOT_OPS } = await import("@genesiscz/utils/ai/usage-poll/shared-cache");
 
@@ -131,6 +142,24 @@ describe("anthropic-sub usage.poll", () => {
         expect(snapshot.limits[2]).toMatchObject({ kind: "scoped", scopeModel: "Sonnet" });
         // The legacy `usage-shared` projection and the anthropic TUI presenter both read it.
         expect(snapshot.native).toEqual(USAGE_BODY);
+    });
+
+    it("the snapshot carries the billing anchor and a calendar-day renewal, and converts back to the anchor", async () => {
+        legacyAccounts = [
+            {
+                name: "work",
+                provider: "anthropic-sub",
+                tokens: { accessToken: "at", refreshToken: "rt" },
+                subscriptionAnchorOverride: "2026-07-07",
+            },
+        ];
+        stubFetch(0);
+
+        const snapshot = await pollAnthropicAccount(entry("work"));
+
+        expect(snapshot.plan?.billingAnchor).toBe("2026-07-07");
+        expect(snapshot.plan?.renewsAt).toMatch(/^\d{4}-\d{2}-07$/);
+        expect(snapshotToAccountUsage(snapshot).billingAnchor).toBe("2026-07-07");
     });
 
     // The negative control: the rotate-on-429 unlock is what makes a shared poll work at

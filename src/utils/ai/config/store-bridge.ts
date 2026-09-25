@@ -88,20 +88,47 @@ export function projectToV3(config: AiConfigData): V3ConfigData {
     };
 }
 
+type V3Account = V3ConfigData["accounts"][number];
+
+/**
+ * The v4 account each v3 entry writes to, by position. v3 has no ids, and two providers may each
+ * have an account of the same name, so a name alone sent both entries to the first of them and
+ * copied one provider's fields onto the other's account. Provider plus name decides first. A name
+ * alone decides second, for an entry whose provider the facade switched (`mergeAccountEntry`).
+ * No v4 account is claimed twice.
+ */
+function matchV3Accounts(accounts: AccountEntry[], incoming: V3Account[]): Array<AccountEntry | undefined> {
+    const claimed = new Set<AccountEntry>();
+    const claim = (matches: (account: AccountEntry) => boolean): AccountEntry | undefined => {
+        const account = accounts.find((entry) => !claimed.has(entry) && matches(entry));
+        if (account) {
+            claimed.add(account);
+        }
+
+        return account;
+    };
+
+    const exact = incoming.map((entry) =>
+        claim((account) => account.name === entry.name && account.provider === entry.provider)
+    );
+    return exact.map((account, index) => account ?? claim((candidate) => candidate.name === incoming[index].name));
+}
+
 /**
  * Fold v3-shaped edits back into the v4 config, in place.
  *
- * Accounts are matched by name (v3 has no ids), so a rename through the legacy
- * facade reads as a delete plus an add — which is exactly what v3 did, and why
- * ids exist in v4.
+ * Accounts are matched by provider and name (v3 has no ids), so a rename through
+ * the legacy facade reads as a delete plus an add — which is exactly what v3 did,
+ * and why ids exist in v4.
  */
 export async function syncV3IntoStore(config: AiConfigData, v3: V3ConfigData): Promise<void> {
     const taken = new Set(config.accounts.map((account) => account.id));
-    const seen = new Set<string>();
+    const incomingAccounts = v3.accounts ?? [];
+    const targets = matchV3Accounts(config.accounts, incomingAccounts);
+    const kept = new Set<AccountEntry>();
 
-    for (const incoming of v3.accounts ?? []) {
-        seen.add(incoming.name);
-        let account = config.accounts.find((entry) => entry.name === incoming.name);
+    for (const [index, incoming] of incomingAccounts.entries()) {
+        let account = targets[index];
 
         if (!account) {
             account = {
@@ -116,6 +143,7 @@ export async function syncV3IntoStore(config: AiConfigData, v3: V3ConfigData): P
             config.accounts.push(account);
         }
 
+        kept.add(account);
         account.provider = incoming.provider;
 
         if (incoming.label !== undefined) {
@@ -124,6 +152,18 @@ export async function syncV3IntoStore(config: AiConfigData, v3: V3ConfigData): P
 
         if (incoming.subscriptionCreatedAt !== undefined) {
             account.subscriptionCreatedAt = incoming.subscriptionCreatedAt;
+        }
+
+        if ("subscriptionAnchorOverride" in incoming) {
+            if (incoming.subscriptionAnchorOverride) {
+                account.subscriptionAnchorOverride = incoming.subscriptionAnchorOverride;
+            } else {
+                delete account.subscriptionAnchorOverride;
+            }
+        }
+
+        if (incoming.subscriptionReactivatedAt !== undefined) {
+            account.subscriptionReactivatedAt = incoming.subscriptionReactivatedAt;
         }
 
         if (incoming.subscriptionPlan !== undefined) {
@@ -161,9 +201,9 @@ export async function syncV3IntoStore(config: AiConfigData, v3: V3ConfigData): P
         }
     }
 
-    const removed = config.accounts.filter((account) => !seen.has(account.name));
+    const removed = config.accounts.filter((account) => !kept.has(account));
     if (removed.length > 0) {
-        config.accounts = config.accounts.filter((account) => seen.has(account.name));
+        config.accounts = config.accounts.filter((account) => kept.has(account));
         logger.debug({ removed: removed.map((account) => account.name) }, "legacy facade removed accounts");
     }
 

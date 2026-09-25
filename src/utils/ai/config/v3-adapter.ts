@@ -92,6 +92,14 @@ export function toV3Account(account: AccountEntry, config: AiConfigData): AIAcco
         entry.subscriptionCreatedAt = account.subscriptionCreatedAt;
     }
 
+    if (account.subscriptionAnchorOverride) {
+        entry.subscriptionAnchorOverride = account.subscriptionAnchorOverride;
+    }
+
+    if (account.subscriptionReactivatedAt) {
+        entry.subscriptionReactivatedAt = account.subscriptionReactivatedAt;
+    }
+
     if (account.organizationUuid) {
         entry.organizationUuid = account.organizationUuid;
     }

@@ -4,7 +4,7 @@ import { useTerminalSize } from "@genesiscz/utils/ink/hooks/use-terminal-size";
 import { Box, Text } from "ink";
 import { useEffect, useMemo, useState } from "react";
 import type { PollState } from "../types";
-import { GenericAccountSection, orderWindows } from "./account-section";
+import { GenericAccountSection, orderWindows, planRenewalLine } from "./account-section";
 
 export type OverviewSortMode = "config" | "urgency";
 
@@ -85,8 +85,9 @@ export function estimateHeight(
     }
 
     const windows = orderWindows(snapshot.limits, opts.prominent).length;
+    const planLine = planRenewalLine(snapshot) ? 1 : 0;
 
-    return 2 + Math.max(windows, 1) + (snapshot.error ? 1 : 0);
+    return 2 + Math.max(windows, 1) + (snapshot.error ? 1 : 0) + planLine;
 }
 
 /** Split into two columns balanced by rendered height, order preserved. */

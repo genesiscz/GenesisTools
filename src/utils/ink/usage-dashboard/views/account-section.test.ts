@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { AccountUsageSnapshot } from "@genesiscz/utils/ai/providers/account-features";
 import { formatResetCountdown, windowTail } from "../lib/reset-countdown";
-import { accountHeaderParts } from "./account-section";
+import { accountHeaderParts, planRenewalLine } from "./account-section";
 
 function snapshot(overrides: Partial<AccountUsageSnapshot>): AccountUsageSnapshot {
     return {
@@ -31,6 +31,24 @@ describe("accountHeaderParts", () => {
         expect(accountHeaderParts(snapshot({}))).toEqual(["work", "openai-sub"]);
     });
 });
+describe("planRenewalLine", () => {
+    test("warns from the projected charge, not from a signup day that is weeks away", () => {
+        const now = new Date(2026, 6, 24, 20, 0, 0).getTime();
+        const createdAt = new Date(2024, 8, 24, 20, 25).toISOString();
+        const renewsAt = new Date(2026, 6, 28, 12, 0, 0).toISOString();
+        expect(planRenewalLine(snapshot({ plan: { status: "active", createdAt, renewsAt } }), now)).toMatch(
+            /^⚠ plan ends ~/
+        );
+        expect(planRenewalLine(snapshot({ plan: { status: "canceled", renewsAt } }), now)).toBeNull();
+    });
+
+    test("no projected charge is no warning, even when the signup day falls in the last week", () => {
+        const now = new Date(2026, 6, 24, 20, 0, 0).getTime();
+        const createdAt = new Date(2024, 8, 27, 12, 0, 0).toISOString();
+        expect(planRenewalLine(snapshot({ plan: { status: "active", createdAt } }), now)).toBeNull();
+    });
+});
+
 describe("windowTail", () => {
     const now = Date.parse("2026-09-10T16:00:00.000Z");
 

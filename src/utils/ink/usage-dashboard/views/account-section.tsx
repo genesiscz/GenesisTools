@@ -1,4 +1,5 @@
 import type { AccountUsageSnapshot, LimitWindow } from "@genesiscz/utils/ai/providers/account-features";
+import { planRenewalWarning } from "@genesiscz/utils/ai/providers/plugins/anthropic-sub/subscription";
 import { formatBlockedNotice, formatNeedsLoginNotice } from "@genesiscz/utils/ai/usage-poll/format-blocked";
 import { formatMoney, percentOf } from "@genesiscz/utils/ai/usage-poll/format-money";
 import { formatRelativeTime } from "@genesiscz/utils/format";
@@ -69,6 +70,22 @@ export function accountHeaderParts(snapshot: AccountUsageSnapshot): string[] {
     return plan ? [snapshot.accountName, snapshot.provider, plan] : [snapshot.accountName, snapshot.provider];
 }
 
+/**
+ * "⚠ plan renews in 3d" for the last week of a monthly plan. A canceled plan
+ * has nothing to renew. Providers without a billing anchor stay quiet.
+ */
+export function planRenewalLine(snapshot: AccountUsageSnapshot, now: number = Date.now()): string | null {
+    if (snapshot.plan?.status && snapshot.plan.status !== "active") {
+        return null;
+    }
+
+    // `renewsAt` is already the projected charge, derived by the producer from the billing anchor
+    // (a manual override included). Its day-of-month projects back to the same charge, which is what
+    // the warning formats. No `createdAt` fallback: that is the signup day, which a manual anchor
+    // exists to replace, so a snapshot without `renewsAt` has nothing to warn about.
+    return planRenewalWarning(snapshot.plan?.renewsAt, new Date(now));
+}
+
 export function GenericAccountSection({
     snapshot,
     width = 60,
@@ -83,6 +100,7 @@ export function GenericAccountSection({
     // error alone would read as a failure happening right now.
     const blockedNotice = formatBlockedNotice(snapshot, now);
     const needsLoginNotice = formatNeedsLoginNotice(snapshot);
+    const planWarning = planRenewalLine(snapshot, now);
 
     return (
         <Box flexDirection="column" marginBottom={1}>
@@ -95,6 +113,11 @@ export function GenericAccountSection({
                     <Text color="yellow">{`  ! stale ${formatRelativeTime(new Date(snapshot.stale.lastSuccessAt))}`}</Text>
                 ) : null}
             </Box>
+            {planWarning ? (
+                <Box>
+                    <Text color="yellow">{`  ${planWarning}`}</Text>
+                </Box>
+            ) : null}
             {blockedNotice ? (
                 <Box>
                     <Text color="yellow">{`  ⏸ ${blockedNotice}`}</Text>

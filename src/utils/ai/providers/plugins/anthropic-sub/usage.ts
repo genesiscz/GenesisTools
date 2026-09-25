@@ -15,6 +15,7 @@ import { ANTHROPIC_SUB, isSubscriptionExpiredError, pollAccount } from "./api";
 import { BUCKET_LABELS, BUCKET_PERIODS_MS, bucketKind } from "./buckets";
 import type { Severity } from "./limits";
 import { normalizeLimits, normalizeSpend } from "./limits";
+import { calendarDay, nextRenewalDate } from "./subscription";
 
 /**
  * `accounts.usage` for the Claude Max/Pro subscription (spec 2026-09-04 section 4.2).
@@ -95,6 +96,18 @@ export function toLimitWindows(usage: UsageResponse): LimitWindow[] {
     return windows;
 }
 
+/** The projected next charge, omitted once the profile says the subscription is not active. */
+function projectedRenewal(usage: AccountUsage): { renewsAt: string } | Record<string, never> {
+    if (usage.subscriptionStatus !== undefined && usage.subscriptionStatus !== "active") {
+        return {};
+    }
+
+    const anchor = usage.billingAnchor ?? usage.subscriptionCreatedAt;
+    const next = anchor ? nextRenewalDate(anchor) : null;
+
+    return next ? { renewsAt: calendarDay(next) } : {};
+}
+
 /** Identity and login-health fields the TUI, the dashboard and Genesis all read. */
 function snapshotBase(account: AccountEntry, usage: AccountUsage, fetchedAt: string): AccountUsageSnapshot {
     const auth: AccountUsageSnapshot["auth"] = {};
@@ -123,7 +136,9 @@ function snapshotBase(account: AccountEntry, usage: AccountUsage, fetchedAt: str
             ...(usage.subscriptionPlan === undefined ? {} : { name: usage.subscriptionPlan }),
             ...(usage.subscriptionStatus === undefined ? {} : { status: usage.subscriptionStatus }),
             ...(usage.subscriptionCreatedAt === undefined ? {} : { createdAt: usage.subscriptionCreatedAt }),
+            ...(usage.billingAnchor === undefined ? {} : { billingAnchor: usage.billingAnchor }),
             ...(usage.planContradictedAt === undefined ? {} : { contradictedAt: usage.planContradictedAt }),
+            ...projectedRenewal(usage),
         },
         ...(Object.keys(auth).length > 0 ? { auth } : {}),
     };
@@ -194,6 +209,9 @@ export function snapshotToAccountUsage(snapshot: AccountUsageSnapshot): AccountU
         accountName: snapshot.accountName,
         ...(snapshot.label === undefined ? {} : { label: snapshot.label }),
         ...(snapshot.plan?.createdAt === undefined ? {} : { subscriptionCreatedAt: snapshot.plan.createdAt }),
+        // The anchor, not `renewsAt`: that is the projected next charge, and a reader that projects
+        // again from it would drift; the signup date is only the fallback when no anchor exists.
+        ...(snapshot.plan?.billingAnchor === undefined ? {} : { billingAnchor: snapshot.plan.billingAnchor }),
         ...(snapshot.plan?.name === undefined ? {} : { subscriptionPlan: snapshot.plan.name }),
         ...(snapshot.plan?.status === undefined ? {} : { subscriptionStatus: snapshot.plan.status }),
         ...(snapshot.plan?.contradictedAt === undefined ? {} : { planContradictedAt: snapshot.plan.contradictedAt }),
