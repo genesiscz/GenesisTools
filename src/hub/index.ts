@@ -10,6 +10,7 @@ import { out } from "@genesiscz/utils/logger";
 import { genesisAppBundlePath } from "@genesiscz/utils/macos/genesis-app";
 import { Command } from "commander";
 import { registerCheckLogCommand } from "./commands/checks";
+import { registerConfigCommands } from "./commands/config";
 import { registerNotifyCommands } from "./commands/notify";
 import { fixThreads, realFixThreadsDeps } from "./lib/fix-threads";
 import { HUB_MODES, HUB_TABS, openHub } from "./lib/open";
@@ -274,8 +275,9 @@ program
     .description("Checkout, branch, origin web pages and (with --pr) the PR/MR of each folder, as JSON")
     .argument("<paths...>", "folders inside git checkouts")
     .option("--pr", "also look up the PR/MR whose head is the branch (gh / glab; slower)")
-    .action(async (paths: string[], opts: { pr?: boolean }) => {
-        out.result(await repoFactsMany({ paths, withPr: Boolean(opts.pr) }));
+    .option("--fresh", "ignore the PR lookup cache (tools hub config)")
+    .action(async (paths: string[], opts: { pr?: boolean; fresh?: boolean }) => {
+        out.result(await repoFactsMany({ paths, withPr: Boolean(opts.pr), fresh: Boolean(opts.fresh) }));
     });
 
 const timeline = program
@@ -1052,5 +1054,6 @@ pr.command("publish")
 registerWorktreesCommand(program);
 registerCheckLogCommand(pr);
 registerNotifyCommands(program);
+registerConfigCommands(program);
 
 await runTool(program, { tool: "hub" });
