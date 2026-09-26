@@ -484,7 +484,8 @@ export async function prReadiness({
     const facts = await fetchFacts(ref, deps);
     const result: PrReadiness = { ...judgeReadiness(facts, now), fetchedAt: now.toISOString(), cached: false };
     await deps.storage.putCacheFile(key, result, CACHE_TTL);
-    log.info(
+    // debug: the verdict is the command's own output; at info it printed a second time on the console.
+    log.debug(
         {
             ref,
             verdict: result.verdict,

@@ -35,7 +35,7 @@ export function registerReadinessCommand(pr: Command): void {
         )
         .argument(
             "<refs...>",
-            "PR/MR URLs or <repoPath>#<n>; append @<headSha> when the head is known, so a cached answer for it is used"
+            "PR/MR URLs, <repoPath>#<n>, or <n> for this folder's repo; append @<headSha> when the head is known, so a cached answer for it is used"
         )
         .option("--fresh", "ask the forge even when a cached answer for this head exists")
         .option("--json", "machine-readable output: one {input, readiness, error} per ref")
