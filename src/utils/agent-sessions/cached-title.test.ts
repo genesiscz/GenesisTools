@@ -2,7 +2,12 @@ import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { listRecentCachedSessions, readCachedHistoryTitle, resolveCachedSessionId } from "./cached-title";
+import {
+    listRecentCachedSessions,
+    readCachedHistoryTitle,
+    readCachedSessionCwd,
+    resolveCachedSessionId,
+} from "./cached-title";
 import { initializeCompactHistorySchema, initializeHistorySchema } from "./migrations";
 import { createFixtureWorld } from "./testing/fixture-world";
 
@@ -181,6 +186,33 @@ test("an index that cannot answer is unavailable to the id lookup and empty to t
             expect(resolveCachedSessionId({ path, id: "aaaa" })).toEqual({ kind: "unavailable", sessionId: "aaaa" });
             expect(listRecentCachedSessions({ path, providerId: "anthropic-sub", limit: 5 })).toEqual([]);
         }
+    } finally {
+        await world.dispose();
+    }
+});
+
+test("a session's folder comes from the index: exact id first, main over subagent, then newest", async () => {
+    const world = await createFixtureWorld();
+    const db = new Database(world.databases.candidate);
+
+    try {
+        expect(readCachedSessionCwd({ path: join(world.root, "absent", "index.db"), sessionId: "abc" })).toBeNull();
+        initializeCompactHistorySchema(db);
+        const insert = db.prepare(
+            "INSERT INTO session_metadata(source_key,provider,native_id,file_path,session_id,cwd,mtime,is_subagent) VALUES (?,?,?,?,?,?,?,?)"
+        );
+        insert.run("main", "anthropic-sub", "abc-1", "/fixture/abc-1.jsonl", "abc-1", "/projects/main", 1, 0);
+        insert.run("child", "anthropic-sub", "abc-1-child", "/fixture/c.jsonl", "abc-1", "/projects/child", 9, 1);
+        insert.run("newer", "openai-sub", "abc-2", "/fixture/abc-2.jsonl", "abc-2", "/projects/newer", 5, 0);
+        insert.run("empty", "grok-sub", "zzz", "/fixture/zzz.jsonl", "zzz", "", 7, 0);
+        db.close();
+
+        const path = world.databases.candidate;
+        expect(readCachedSessionCwd({ path, sessionId: "abc-1" })).toBe("/projects/main");
+        // A prefix takes the newest main session it names.
+        expect(readCachedSessionCwd({ path, sessionId: "abc" })).toBe("/projects/newer");
+        expect(readCachedSessionCwd({ path, sessionId: "zzz" })).toBeNull();
+        expect(readCachedSessionCwd({ path, sessionId: "nothing" })).toBeNull();
     } finally {
         await world.dispose();
     }

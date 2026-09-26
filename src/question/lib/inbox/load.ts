@@ -4,6 +4,7 @@ import {
     listAgentSessionRows,
     POLLED_LISTING_REUSE_MS,
 } from "@app/ai/lib/sessions/agent-session-rows";
+import { readCachedSessionCwd } from "@genesiscz/utils/agent-sessions/cached-title";
 import { transcriptEnvelope } from "@genesiscz/utils/ai/transcripts/load";
 import { type ResolvedTranscript, resolveTranscript } from "@genesiscz/utils/ai/transcripts/resolve";
 import type { TranscriptTurn } from "@genesiscz/utils/ai/transcripts/types";
@@ -109,12 +110,23 @@ export async function waitingBlock(
     return found?.blocks.find((block) => block.number === number) ?? null;
 }
 
-/** The folder of a session that has no stored row: the agent session list (the Inbox's own source), recent first. */
+/**
+ * The folder of a session that has no stored row. The history index answers first: a hub session
+ * click used to list every provider's sessions, twice for one older than 72 h (0.7 to 1.2 s), to
+ * read one folder the index holds. The refreshed listing stays as the fallback for a session too
+ * new to be indexed yet.
+ */
 async function lookupSessionCwd(session: string): Promise<string | null> {
+    const cached = readCachedSessionCwd({ sessionId: session });
+
+    if (cached) {
+        return cached;
+    }
+
     for (const hours of [72, 24 * 90]) {
-        const row = (await listAgentSessionRows({ hours, withUsage: false })).find(
-            (candidate) => candidate.sessionId === session || candidate.sessionId.startsWith(session)
-        );
+        const row = (
+            await listAgentSessionRows({ hours, withUsage: false, maxDiscoveryAgeMs: POLLED_LISTING_REUSE_MS })
+        ).find((candidate) => candidate.sessionId === session || candidate.sessionId.startsWith(session));
 
         if (row) {
             return row.cwd || null;
