@@ -20,6 +20,13 @@ const WRAPPER_PREFIXES = [
     "<teammate-message",
     "<system-reminder>",
     "## Context Usage",
+    // What the harness delivers into a running session as a user turn: a peer's message and a
+    // background task's result. A handoff quoted a whole teammate report as the session's goal.
+    "Another Claude session sent a message",
+    "<task-notification>",
+    "[SYSTEM NOTIFICATION",
+    // Claude Code's marker for an Esc, stored as a user turn.
+    "[Request interrupted by user",
 ] as const;
 
 // A slash command WITH arguments is kept: `/rename board-polish` is the user's own text, and the

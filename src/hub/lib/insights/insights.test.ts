@@ -443,6 +443,21 @@ describe("composeHandoff", () => {
         expect(draft.markdown).toContain("Ran 4 commands · Read 1 file · Changed 1 file · 2 failed");
     });
 
+    test("a teammate message or task notification is never the goal: the user's last own prompt is", () => {
+        const turns = [
+            ...session(),
+            user(
+                "p4",
+                'Another Claude session sent a message:\n<teammate-message teammate_id="peer">done</teammate-message>',
+                90
+            ),
+            user("p5", "[SYSTEM NOTIFICATION - NOT USER INPUT]\n<task-notification>x</task-notification>", 95),
+        ];
+        const draft = composeHandoff({ turns, meta, range: { last: 2 } });
+
+        expect(draft.goal).toBe("Now add the tests");
+    });
+
     test("commits and an unanswered last prompt are reported", () => {
         const turns = [...session().slice(0, 2), user("p9", "and deploy it", 90)];
         const draft = composeHandoff({ turns, meta, range: { from: 1, to: 3 } });

@@ -4,6 +4,9 @@ import { listAgentSessionRows, POLLED_LISTING_REUSE_MS } from "@app/ai/lib/sessi
 import { costOf, DEFAULT_PRICING, priceFor, resolvePrice } from "@app/ai-spend/lib/pricing";
 import { DASHBOARD_ACTOR, type HandoffDeps, type PostHandoffResponse, postHandoff } from "@app/handoff/executor";
 import { resumeCommandLine } from "@genesiscz/utils/agent-sessions";
+import { readCachedHistoryTitle } from "@genesiscz/utils/agent-sessions/cached-title";
+import { cleanSessionTitle } from "@genesiscz/utils/agent-sessions/user-text";
+import { PROVIDER_ALIASES } from "@genesiscz/utils/ai/providers/aliases";
 import {
     allTranscriptTurns,
     type ResolvedTranscript,
@@ -300,6 +303,26 @@ export interface HandoffResult extends HandoffDraft {
     provider: string;
 }
 
+/**
+ * The session's name as the history index keeps it (a `/rename` title, else its summary). Without
+ * it a handoff was named after the session's first prompt, 5,000 turns before the range.
+ */
+function indexedTitle(provider: string, sessionId: string): string | null {
+    const providerId = PROVIDER_ALIASES[provider];
+
+    if (!providerId) {
+        return null;
+    }
+
+    try {
+        const cached = readCachedHistoryTitle({ providerId, sessionId });
+        return cleanSessionTitle(cached?.customTitle ?? cached?.summary);
+    } catch (error) {
+        log.debug({ error, sessionId }, "handoff: the history index has no title for this session");
+        return null;
+    }
+}
+
 /** The handoff markdown for a range of one session's prompts. */
 export async function sessionHandoff(options: HandoffOptions): Promise<HandoffResult> {
     const resolved = await resolveTranscript(options.sessionId);
@@ -308,7 +331,7 @@ export async function sessionHandoff(options: HandoffOptions): Promise<HandoffRe
     const meta: HandoffMeta = {
         sessionId: resolved.sessionId,
         provider: resolved.provider,
-        title: options.title ?? null,
+        title: options.title ?? indexedTitle(resolved.provider, resolved.sessionId),
         cwd,
         branch: options.branch ?? loaded.native?.branch ?? null,
         resumeCommand: resumeCommandLine(resolved.provider, resolved.sessionId, { account: options.account ?? null }),
