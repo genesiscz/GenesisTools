@@ -695,4 +695,32 @@ describe("rules", () => {
         const none = await runRules({ ...shared, readConfig: async () => ({ rules: [] }) });
         expect(none.skipped).toContain("no rules");
     });
+
+    test("a notification that fails to post fires again on the next run", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "hub-rules-"));
+        const statePath = join(dir, "rules-state.json");
+        let deliver = false;
+        const attempts: string[] = [];
+        const shared = {
+            now: NOW,
+            statePath,
+            readConfig: async () => ({ rules: [rule({ kind: "decision" })] }),
+            inputs: async () => inputs({ decisions: [decision({ id: "d1" }), decision({ id: "d2" })] }),
+            post: async (firing: { key: string }) => {
+                attempts.push(firing.key);
+                return deliver;
+            },
+        };
+
+        await runRules({ ...shared, inputs: async () => inputs({ decisions: [decision({ id: "d1" })] }) });
+        const failed = await runRules(shared);
+        expect(failed.posted).toBe(0);
+
+        deliver = true;
+        const retried = await runRules(shared);
+        expect(retried.posted).toBe(1);
+        expect(attempts).toEqual(["d2", "d2"]);
+        // Delivered once, it stays sent.
+        expect((await runRules(shared)).posted).toBe(0);
+    });
 });
