@@ -956,8 +956,15 @@ final class HubModel: ObservableObject {
         if request.prompts || request.handoff {
             MainActor.assumeIsolated {
                 if request.prompts { PromptLibraryStore.shared.pickerOpen = true }
-                // "" asks for the selected session's composer; a prefix waits for that session.
-                if request.handoff { HubHandoffRequests.shared.pending = request.session ?? "" }
+                // Resolved now to a real session: the --session prefix, else the selected one; with neither,
+                // nothing is queued (a wildcard would open on whatever session showed up next).
+                if request.handoff {
+                    if let target = request.session ?? selectedID {
+                        HubHandoffRequests.shared.pending = target
+                    } else {
+                        notice = "No session to hand off: select one, or pass --session."
+                    }
+                }
             }
         }
         // The inbox model is main-actor bound; overlays are applied on the main thread.
@@ -1308,6 +1315,8 @@ struct HubRootView: View {
         .hubDaily(model: model)
         // ⌘⇧P prompt library: saved prompts with {{variables}}, sent to the selected session (Hub/HubPrompts.swift).
         .hubPrompts(model: model)
+        // `tools hub --handoff`: the composer over every pane (Hub/HubHandoffComposer.swift).
+        .hubHandoff(model: model)
     }
 }
 
