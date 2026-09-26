@@ -318,7 +318,8 @@ struct HubDigestPanel: View {
                     close()
                 } label: {
                     Text(verbatim: clock(session.lastAt)).font(.system(size: 11, design: .monospaced)).foregroundColor(.settingsTextMuted)
-                    Text(verbatim: session.title).font(.system(size: 12)).foregroundColor(Color.white.opacity(0.88)).lineLimit(1)
+                    // The event title is the first prompt, harness tags and all; the session list cleans it the same way.
+                    Text(verbatim: TitleFormatter.cleanSessionTitle(session.title) ?? session.title).font(.system(size: 12)).foregroundColor(Color.white.opacity(0.88)).lineLimit(1)
                     Spacer(minLength: 8)
                     Text(verbatim: [session.provider, session.project, session.commits > 0 ? "\(session.commits) commits" : nil].compactMap { $0 }.joined(separator: " · "))
                         .font(.system(size: 10.5)).foregroundColor(ReviewPalette.dim).lineLimit(1)

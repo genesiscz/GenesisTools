@@ -1,5 +1,15 @@
 import { expect, test } from "bun:test";
-import { isWrapperUserText } from "./user-text";
+import { cleanSessionTitle, isWrapperUserText } from "./user-text";
+
+test("a session title drops harness tags and image marks but keeps the words", () => {
+    expect(cleanSessionTitle('<pasted_content id="b643"> 3) Restock · Add all')).toBe("3) Restock · Add all");
+    expect(cleanSessionTitle("<system-reminder>hidden</system-reminder> fix the [Image #2] badge")).toBe(
+        "fix the badge"
+    );
+    expect(cleanSessionTitle("<command-name>/clear</command-name>")).toBeNull();
+    expect(cleanSessionTitle(null)).toBeNull();
+    expect(cleanSessionTitle("plain title")).toBe("plain title");
+});
 
 test("machine-generated wrappers are not mistaken for the user's own words", () => {
     // Measured on this machine before the shared filter existed: of 111 Codex sessions, 60 opened
