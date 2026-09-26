@@ -77,12 +77,18 @@ export function worktreeByBranch(worktrees: WorktreeInfo[]): Map<string, string>
     return byBranch;
 }
 
-/** `<url>` or `<repoPath>#<number>`; null when neither shape matches. */
+/** `<url>`, `<repoPath>#<number>`, or `<number>` / `#<number>` for the current folder's repo; null otherwise. */
 export function parsePrRef(ref: string): { url: string } | { path: string; number: number } | null {
     const trimmed = ref.trim();
 
     if (/^https?:\/\//i.test(trimmed)) {
         return { url: trimmed };
+    }
+
+    const bare = /^#?(\d+)$/.exec(trimmed);
+
+    if (bare) {
+        return { path: process.cwd(), number: Number(bare[1]) };
     }
 
     const match = /^(.+)#(\d+)$/.exec(trimmed);

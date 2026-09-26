@@ -257,7 +257,7 @@ export async function findPrByRef({
     const parsed = parsePrRef(ref);
 
     if (!parsed) {
-        throw new HubPrError("bad-input", `--pr takes a PR/MR URL or <repoPath>#<number>, got "${ref}"`);
+        throw new HubPrError("bad-input", `--pr takes a PR/MR URL, <repoPath>#<number> or <number>, got "${ref}"`);
     }
 
     let project: ProjectRef | null;
