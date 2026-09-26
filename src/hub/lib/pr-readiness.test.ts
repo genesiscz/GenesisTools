@@ -221,6 +221,17 @@ describe("githubFacts", () => {
         expect(mapped?.threads).toEqual([{ resolved: false, outdated: false, author: "ghost" }]);
     });
 
+    test("without a push event the push time is unknown: a commit's date is not when it was pushed", () => {
+        const pullRequest = raw().repository?.pullRequest;
+
+        if (!pullRequest) {
+            throw new Error("the fixture always has a pull request");
+        }
+
+        const mapped = githubFacts({ repository: { pullRequest: { ...pullRequest, timelineItems: { nodes: [] } } } });
+        expect(mapped?.lastPushAt).toBeNull();
+    });
+
     test("thread pages past the first are appended; a missing PR is null", () => {
         const extra = [{ isResolved: true, isOutdated: false, comments: { nodes: [{ author: { login: "bot" } }] } }];
 
