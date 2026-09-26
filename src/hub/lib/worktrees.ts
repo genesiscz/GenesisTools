@@ -1,4 +1,4 @@
-import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { availableParallelism } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { listAgentSessionRows, POLLED_LISTING_REUSE_MS } from "@app/ai/lib/sessions/agent-session-rows";
@@ -7,6 +7,7 @@ import { detectWorktreeExcludes } from "@app/du/lib/worktrees";
 import { type CollectContext, collectRefReport } from "@app/git/lib/merged/collect";
 import type { How, Verdict } from "@app/git/lib/merged/verdict";
 import { createGit, type DetectedBase, detectBase, loadRepoConfig } from "@genesiscz/utils/git";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { readParentPid, readProcessCwd } from "@genesiscz/utils/process/cwd";
 import { listPsRows, processBasename } from "@genesiscz/utils/process/ps";
@@ -46,7 +47,8 @@ export type BlockerKind =
     | "process"
     | "session"
     | "locked"
-    | "missing";
+    | "missing"
+    | "recent";
 
 export interface Blocker {
     kind: BlockerKind;
@@ -132,9 +134,9 @@ function sample(items: string[]): string {
  * (merged by any route, or never had commits), nothing in it is uncommitted or untracked, no stash
  * names it, nothing runs in it, no agent session wrote in it recently, and git has it unlocked and
  * on disk. Ignored files never block: `git worktree remove` deletes them, and the confirmation
- * lists them.
+ * lists them. With `olderThanDays`, a worktree whose last activity is newer than that also stays.
  */
-export function cleanupBlockers(facts: WorktreeFacts): Blocker[] {
+export function cleanupBlockers(facts: WorktreeFacts, rules: AgeRule = {}): Blocker[] {
     const blockers: Blocker[] = [];
 
     if (facts.prunable || !facts.present) {
@@ -190,11 +192,47 @@ export function cleanupBlockers(facts: WorktreeFacts): Blocker[] {
         });
     }
 
+    const recent = recentBlocker(facts, rules);
+
+    if (recent) {
+        blockers.push(recent);
+    }
+
     return blockers;
 }
 
-export function toRow(facts: WorktreeFacts): WorktreeCleanupRow {
-    const blockers = cleanupBlockers(facts);
+/** `--older-than <days>`: only worktrees idle at least this long count as removable. */
+export interface AgeRule {
+    olderThanDays?: number;
+    /** Epoch ms; tests pin it. */
+    now?: number;
+}
+
+const DAY_MS = 86_400_000;
+
+function recentBlocker(facts: WorktreeFacts, { olderThanDays = 0, now = Date.now() }: AgeRule): Blocker | null {
+    if (olderThanDays <= 0) {
+        return null;
+    }
+
+    const last = facts.lastActivityAt ?? facts.lastCommitAt;
+
+    if (last === null) {
+        return { kind: "recent", text: `Its age is unknown, so it cannot be shown older than ${olderThanDays} days` };
+    }
+
+    const days = (now - last) / DAY_MS;
+
+    if (days >= olderThanDays) {
+        return null;
+    }
+
+    const shown = days < 1 ? `${Math.max(0, Math.round(days * 24))} h` : `${Math.floor(days)} days`;
+    return { kind: "recent", text: `Last activity ${shown} ago, newer than the ${olderThanDays}-day threshold` };
+}
+
+export function toRow(facts: WorktreeFacts, rules: AgeRule = {}): WorktreeCleanupRow {
+    const blockers = cleanupBlockers(facts, rules);
     return { ...facts, removable: blockers.length === 0, blockers };
 }
 
@@ -438,6 +476,10 @@ export interface ScanOptions {
     only?: string[];
     /** Tests inject the live users; production reads them. */
     live?: LiveUsers;
+    /** A worktree active more recently than this many days stays (blocker `recent`); 0 or absent: off. */
+    olderThanDays?: number;
+    /** Epoch ms for the age rule; tests pin it. */
+    now?: number;
 }
 
 interface RepoScan {
@@ -635,8 +677,10 @@ export async function scanWorktrees(options: ScanOptions): Promise<WorktreeClean
     const rows: WorktreeCleanupRow[] = [];
     const bases: WorktreeCleanupReport["bases"] = [];
 
+    const rules: AgeRule = { olderThanDays: options.olderThanDays, now: options.now };
+
     for (const scan of scans) {
-        rows.push(...scan.facts.map(toRow));
+        rows.push(...scan.facts.map((facts) => toRow(facts, rules)));
         warnings.push(...scan.warnings);
 
         if (scan.base) {
@@ -687,11 +731,13 @@ export async function removeWorktrees({
     liveMinutes,
     base,
     live,
+    olderThanDays,
 }: {
     paths: string[];
     liveMinutes?: number;
     base?: string;
     live?: LiveUsers;
+    olderThanDays?: number;
 }): Promise<RemoveOutcome[]> {
     const wanted = [...new Set(paths.map(realpathOr))];
     const fresh = await scanWorktrees({
@@ -700,6 +746,7 @@ export async function removeWorktrees({
         base,
         only: wanted,
         live,
+        olderThanDays,
     });
     const byPath = new Map(fresh.rows.map((row) => [row.path, row]));
     const outcomes: RemoveOutcome[] = [];
@@ -732,6 +779,182 @@ export async function removeWorktrees({
             reasons: res.success && gone ? [] : [res.stderr.trim() || "git worktree remove failed"],
             branch: row.branch,
         });
+    }
+
+    return outcomes;
+}
+
+// ---------------------------------------------------------------------------
+// Move aside: the repository's no-delete convention for a worktree that may go
+
+export interface MoveAsideOutcome {
+    path: string;
+    moved: boolean;
+    /** Where it went; null when it stayed. */
+    to: string | null;
+    /** The command that puts it back (git keeps it a working worktree at its new place). */
+    restore: string | null;
+    /** Why it stayed; empty when moved. */
+    reasons: string[];
+    branch: string | null;
+}
+
+/** One line of `moved-aside.jsonl`: what went where, and how to put it back. */
+export interface MoveAsideRecord {
+    from: string;
+    to: string;
+    repoRoot: string;
+    branch: string | null;
+    head: string;
+    restore: string;
+    at: string;
+}
+
+function pad(value: number): string {
+    return String(value).padStart(2, "0");
+}
+
+/** `/tmp/<YYYYMMDD>-agents-removals/hub-worktrees`: the day's move-aside folder, cleared at reboot. */
+export function moveAsideRoot(now = new Date()): string {
+    return join(
+        "/tmp",
+        `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-agents-removals`,
+        "hub-worktrees"
+    );
+}
+
+export function moveAsideJournalPath(): string {
+    return join(new Storage("hub").getBaseDir(), "moved-aside.jsonl");
+}
+
+function shellQuote(value: string): string {
+    return `'${value.replace(/'/g, `'\\''`)}'`;
+}
+
+/** The first of `<base>`, `<base>-2`, `<base>-3`… that does not exist yet. */
+function freeDestination(base: string): string {
+    let candidate = base;
+
+    for (let n = 2; existsSync(candidate); n++) {
+        candidate = `${base}-${n}`;
+    }
+
+    return candidate;
+}
+
+/** Same filesystem, so the move is a rename: a move across volumes would copy gigabytes instead. */
+function sameVolume(a: string, b: string): boolean {
+    try {
+        return statSync(a).dev === statSync(b).dev;
+    } catch (err) {
+        log.debug({ err, a, b }, "volume check failed; treating as different volumes");
+        return false;
+    }
+}
+
+/**
+ * Move the worktrees the rules still call removable into the day's move-aside folder with
+ * `git worktree move`, re-checked right before each move. Nothing is deleted: git keeps each one a
+ * working worktree at its new path (branch, index and ignored files included), `restore` moves it
+ * back, and the space returns when the machine clears /tmp. Refuses a move across volumes.
+ */
+export async function moveAsideWorktrees({
+    paths,
+    liveMinutes,
+    base,
+    live,
+    olderThanDays,
+    destRoot = moveAsideRoot(),
+    journal = moveAsideJournalPath(),
+    now = new Date(),
+}: {
+    paths: string[];
+    liveMinutes?: number;
+    base?: string;
+    live?: LiveUsers;
+    olderThanDays?: number;
+    destRoot?: string;
+    journal?: string;
+    now?: Date;
+}): Promise<MoveAsideOutcome[]> {
+    const wanted = [...new Set(paths.map(realpathOr))];
+    const fresh = await scanWorktrees({
+        repos: wanted.map((p) => (existsSync(p) ? p : dirname(p))),
+        liveMinutes,
+        base,
+        only: wanted,
+        live,
+        olderThanDays,
+        now: now.getTime(),
+    });
+    const byPath = new Map(fresh.rows.map((row) => [row.path, row]));
+    const outcomes: MoveAsideOutcome[] = [];
+
+    for (const path of wanted) {
+        const row = byPath.get(path);
+        const stay = (reasons: string[], branch: string | null = row?.branch ?? null) =>
+            outcomes.push({ path, moved: false, to: null, restore: null, reasons, branch });
+
+        if (!row) {
+            stay([
+                existsSync(path)
+                    ? "Not a linked worktree of a known repository (the main checkout never moves)"
+                    : "The folder does not exist",
+            ]);
+            continue;
+        }
+
+        if (!row.removable) {
+            stay(row.blockers.map((blocker) => blocker.text));
+            continue;
+        }
+
+        const parent = join(destRoot, row.repo);
+        mkdirSync(parent, { recursive: true });
+
+        if (!sameVolume(path, parent)) {
+            stay([`${parent} is on another volume: a move there would copy the whole folder, so it stays`]);
+            continue;
+        }
+
+        const to = freeDestination(join(realpathOr(parent), basename(path)));
+        const res = await createGit({ cwd: row.repoRoot }).executor.exec(["worktree", "move", path, to], {
+            cwd: row.repoRoot,
+            timeout: WORKTREE_REMOVE_TIMEOUT_MS,
+        });
+        const moved = res.success && existsSync(to) && !existsSync(path);
+        log.info(
+            { path, to, branch: row.branch, success: res.success, moved, stderr: res.stderr },
+            "git worktree move"
+        );
+
+        if (!moved) {
+            stay([res.stderr.trim() || "git worktree move failed"]);
+            continue;
+        }
+
+        const restore = `git -C ${shellQuote(row.repoRoot)} worktree move ${shellQuote(to)} ${shellQuote(path)}`;
+        const record: MoveAsideRecord = {
+            from: path,
+            to,
+            repoRoot: row.repoRoot,
+            branch: row.branch,
+            head: row.head,
+            restore,
+            at: now.toISOString(),
+        };
+
+        try {
+            mkdirSync(dirname(journal), { recursive: true });
+            appendFileSync(journal, `${SafeJSON.stringify(record)}\n`);
+        } catch (err) {
+            log.warn(
+                { err, journal },
+                "move-aside journal write failed; the outcome still carries the restore command"
+            );
+        }
+
+        outcomes.push({ path, moved: true, to, restore, reasons: [], branch: row.branch });
     }
 
     return outcomes;

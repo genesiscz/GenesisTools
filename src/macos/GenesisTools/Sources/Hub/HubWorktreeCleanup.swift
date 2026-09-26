@@ -13,6 +13,18 @@ enum WorktreeCleanup {
     /// The Worktrees mode's selection that shows this panel instead of one worktree.
     static let selectionID = "::cleanup"
     static let showBlockedKey = "hub.worktreeCleanup.showBlocked"
+    /// `--older-than <days>`: only worktrees idle at least this long are removable; 0 turns the rule off.
+    static let olderThanKey = "hub.worktreeCleanup.olderThanDays"
+
+    /// The list's arguments for the repositories and the age rule.
+    static func listArgs(repos: [String], olderThanDays: Int) -> [String] {
+        ["hub", "worktrees", "list"] + repos + (olderThanDays > 0 ? ["--older-than", String(olderThanDays)] : []) + ["--json"]
+    }
+
+    /// Every restore command of a move, one per line, for the clipboard.
+    static func restoreScript(_ outcomes: [MoveAsideOutcome]) -> String {
+        outcomes.compactMap(\.restore).joined(separator: "\n")
+    }
 
     /// `--worktree <path>`, `--worktree cleanup`, or `--worktree cleanup-blocked` (the panel with
     /// "Show blocked" on) into the Worktrees mode's selection.
@@ -48,11 +60,18 @@ struct CleanupRow: Decodable, Identifiable, Hashable {
     let blockers: [CleanupBlocker]
     /// Epoch ms.
     let lastActivityAt: Double?
+    /// Epoch ms of the HEAD commit.
+    let lastCommitAt: Double?
+    let changedCount: Int?
+    let untrackedCount: Int?
 
     var id: String { path }
     var name: String { (path as NSString).lastPathComponent }
     var title: String { branch ?? "detached \(head.prefix(9))" }
     var lastActivity: Date? { lastActivityAt.map { Date(timeIntervalSince1970: $0 / 1000) } }
+    var lastCommit: Date? { lastCommitAt.map { Date(timeIntervalSince1970: $0 / 1000) } }
+    /// Uncommitted and untracked entries together: what a removal would lose.
+    var dirtyCount: Int { (changedCount ?? 0) + (untrackedCount ?? 0) }
 
     /// How the branch reached the base, in words.
     var mergedHow: String {
@@ -90,6 +109,16 @@ struct CleanupOutcome: Decodable {
     let branch: String?
 }
 
+/// `tools hub worktrees move-aside --json`: where each worktree went and the command that puts it back.
+struct MoveAsideOutcome: Decodable, Hashable {
+    let path: String
+    let moved: Bool
+    let to: String?
+    let restore: String?
+    let reasons: [String]
+    let branch: String?
+}
+
 @MainActor
 final class WorktreeCleanupStore: ObservableObject {
     static let shared = WorktreeCleanupStore()
@@ -103,6 +132,13 @@ final class WorktreeCleanupStore: ObservableObject {
     @Published private(set) var removing: (done: Int, total: Int)?
     @Published var selected = Set<String>()
     @Published var notice: (text: String, isError: Bool)?
+    @Published private(set) var moving: (done: Int, total: Int)?
+    /// The last move-aside's outcomes: the bar under the header offers their restore commands.
+    @Published var lastMoved: [MoveAsideOutcome] = []
+    // Published and saved by hand: `@AppStorage` inside an ObservableObject never publishes.
+    @Published var olderThanDays = HubDefaults.store.integer(forKey: WorktreeCleanup.olderThanKey) {
+        didSet { HubDefaults.store.set(olderThanDays, forKey: WorktreeCleanup.olderThanKey) }
+    }
 
     /// Paths per `size` call: a cold scan of a 3 GB worktree takes about 5 s, so three fit the
     /// runner's deadline with room, and each batch shows up as it lands.
@@ -125,11 +161,12 @@ final class WorktreeCleanupStore: ObservableObject {
         }
 
         loading = true
+        let args = WorktreeCleanup.listArgs(repos: repos, olderThanDays: olderThanDays)
         Task {
             let span = HubPerf.begin("worktrees.cleanup.scan", "\(repos.count) repos", awaits: true)
             let result = await Task.detached(priority: .utility) { () -> Result<CleanupReport, Error> in
                 Result {
-                    try JSONDecoder().decode(CleanupReport.self, from: ToolsCLIRunner.run(["hub", "worktrees", "list"] + repos + ["--json"]))
+                    try JSONDecoder().decode(CleanupReport.self, from: ToolsCLIRunner.run(args))
                 }
             }.value
             loading = false
@@ -199,13 +236,15 @@ final class WorktreeCleanupStore: ObservableObject {
         var kept: [CleanupOutcome] = []
         var failure: String?
         var index = 0
+        // The re-check before each removal uses the same age rule the list showed.
+        let olderThan = olderThanDays > 0 ? ["--older-than", String(olderThanDays)] : []
         while index < paths.count {
             let batch = Array(paths[index..<min(index + Self.removeBatch, paths.count)])
             let span = HubPerf.begin("worktrees.cleanup.remove", "\(batch.count) paths", awaits: true)
             let result = await Task.detached(priority: .userInitiated) { () -> Result<[CleanupOutcome], Error> in
                 Result {
                     // Exit 1 means "some were kept"; the JSON on stdout still says which.
-                    let capture = try ToolsCLIRunner.capture(["hub", "worktrees", "remove"] + batch + ["--yes", "--json"], timeout: 300)
+                    let capture = try ToolsCLIRunner.capture(["hub", "worktrees", "remove"] + batch + olderThan + ["--yes", "--json"], timeout: 300)
                     return try JSONDecoder().decode([CleanupOutcome].self, from: capture.stdout)
                 }
             }.value
@@ -236,6 +275,53 @@ final class WorktreeCleanupStore: ObservableObject {
         }
         return removed
     }
+
+    /// Moves in small batches through `tools hub worktrees move-aside --yes` (the CLI re-checks each row
+    /// and runs `git worktree move` into the day's /tmp folder: nothing is deleted). Returns the moved paths.
+    func moveAside(_ paths: [String]) async -> [String] {
+        guard moving == nil, removing == nil, !paths.isEmpty else { return [] }
+        moving = (0, paths.count)
+        var outcomes: [MoveAsideOutcome] = []
+        var failure: String?
+        var index = 0
+        let olderThan = olderThanDays > 0 ? ["--older-than", String(olderThanDays)] : []
+        while index < paths.count {
+            let batch = Array(paths[index..<min(index + Self.removeBatch, paths.count)])
+            let span = HubPerf.begin("worktrees.cleanup.moveAside", "\(batch.count) paths", awaits: true)
+            let result = await Task.detached(priority: .userInitiated) { () -> Result<[MoveAsideOutcome], Error> in
+                Result {
+                    // Exit 1 means "some were kept"; the JSON on stdout still says which.
+                    let capture = try ToolsCLIRunner.capture(["hub", "worktrees", "move-aside"] + batch + olderThan + ["--yes", "--json"], timeout: 300)
+                    return try JSONDecoder().decode([MoveAsideOutcome].self, from: capture.stdout)
+                }
+            }.value
+            switch result {
+            case .success(let found):
+                span.end("\(found.filter(\.moved).count) moved")
+                outcomes += found
+            case .failure(let error):
+                span.end("failed")
+                failure = "\(error)"
+            }
+            index += batch.count
+            moving = (index, paths.count)
+            if failure != nil { break }
+        }
+        moving = nil
+        let moved = outcomes.filter(\.moved)
+        let gone = Set(moved.map(\.path))
+        rows.removeAll { gone.contains($0.path) }
+        selected.subtract(gone)
+        lastMoved = moved
+        if let failure {
+            notice = ("Move stopped: \(failure)", true)
+        } else if let kept = outcomes.first(where: { !$0.moved }) {
+            notice = ("Moved \(moved.count), kept \(kept.path.split(separator: "/").last ?? ""): \(kept.reasons.first ?? "refused")", true)
+        } else {
+            notice = ("Moved \(moved.count) aside, nothing deleted", false)
+        }
+        return moved.map(\.path)
+    }
 }
 
 enum CleanupFormat {
@@ -249,6 +335,7 @@ struct WorktreeCleanupView: View {
     @ObservedObject private var store = WorktreeCleanupStore.shared
     @AppStorage(WorktreeCleanup.showBlockedKey) private var showBlocked = false
     @State private var pending: [CleanupRow]?
+    @State private var pendingMove: [CleanupRow]?
     @State private var find = PanelFindModel(scope: "worktree.cleanup", title: "the worktrees")
 
     /// The main checkout of every repository the Worktrees mode lists.
@@ -261,6 +348,9 @@ struct WorktreeCleanupView: View {
         let shown = store.rows.filter { showBlocked || $0.removable }
         VStack(spacing: 0) {
             header
+            if !store.lastMoved.isEmpty {
+                movedBar
+            }
             PanelFindBar(find: find)
             if store.rows.isEmpty {
                 Text(store.loading ? "Checking every worktree: merge state, changes, stashes, running processes…" : "No linked worktrees.")
@@ -292,6 +382,10 @@ struct WorktreeCleanupView: View {
         .panelFind(find, revision: shown) { groups(shown).flatMap(\.rows).map(Self.searchable) }
         .onAppear { HubMainBusy.measure("worktrees.cleanup.open") }
         .task(id: repos) { store.load(repos: repos) }
+        .onChange(of: store.olderThanDays) {
+            HubMainBusy.measure("worktrees.cleanup.olderThan")
+            store.load(repos: repos, force: true)
+        }
         .task(id: "\(showBlocked) \(store.rows.count)") {
             if showBlocked {
                 store.queueSizes(store.rows.filter { !$0.removable && !$0.blockers.contains { $0.kind == "missing" } }.map(\.path))
@@ -316,6 +410,69 @@ struct WorktreeCleanupView: View {
         } message: { rows in
             Text(confirmMessage(rows))
         }
+        .confirmationDialog(
+            moveTitle,
+            isPresented: Binding(get: { pendingMove != nil }, set: { if !$0 { pendingMove = nil } }),
+            titleVisibility: .visible,
+            presenting: pendingMove
+        ) { rows in
+            Button("Move \(rows.count == 1 ? "it" : "all \(rows.count)") aside") {
+                let paths = rows.map(\.path)
+                pendingMove = nil
+                Task { @MainActor in
+                    let moved = await store.moveAside(paths)
+                    let gone = Set(moved)
+                    model.worktrees.removeAll { gone.contains($0.path) }
+                }
+            }
+            Button("Cancel", role: .cancel) { pendingMove = nil }
+        } message: { rows in
+            Text(moveMessage(rows))
+        }
+    }
+
+    private var moveTitle: String {
+        guard let rows = pendingMove else { return "" }
+        return rows.count == 1 ? "Move the worktree \(rows[0].name) aside?" : "Move \(rows.count) worktrees aside?"
+    }
+
+    private func moveMessage(_ rows: [CleanupRow]) -> String {
+        var lines = rows.prefix(12).map { row -> String in
+            var line = "• \(row.title)  \(row.path)"
+            if let size = store.sizes[row.path] {
+                line += "  (\(CleanupFormat.bytes(size.bytes)))"
+            }
+            return line
+        }
+        if rows.count > 12 {
+            lines.append("… and \(rows.count - 12) more")
+        }
+        lines.append("")
+        lines.append("Each one is checked again first, then `git worktree move`d into /tmp/<today>-agents-removals/hub-worktrees/. Nothing is deleted: each stays a working worktree there, with a restore command, until /tmp is cleared at reboot. That is when the space comes back.")
+        return lines.joined(separator: "\n")
+    }
+
+    /// After a move: where the worktrees went and their restore commands, until dismissed.
+    private var movedBar: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "archivebox").foregroundColor(ReviewPalette.dim)
+            Text(verbatim: "Moved aside: \(store.lastMoved.count) worktree\(store.lastMoved.count == 1 ? "" : "s") in \(((store.lastMoved.first?.to ?? "") as NSString).deletingLastPathComponent)")
+                .font(.system(size: 11.5))
+                .lineLimit(1)
+                .truncationMode(.middle)
+            Spacer()
+            Button("Copy restore commands") {
+                PathOpener.copy(WorktreeCleanup.restoreScript(store.lastMoved))
+            }
+            .buttonStyle(.genHoverPlain())
+            .font(.system(size: 11.5))
+            .instantTooltip(WorktreeCleanup.restoreScript(store.lastMoved))
+            IconButton(systemName: "xmark", tooltip: "Dismiss", size: 9) { store.lastMoved = [] }
+        }
+        .padding(.horizontal, 18)
+        .padding(.vertical, 6)
+        .hubSurface(.bar)
+        .overlay(Rectangle().fill(ReviewPalette.hairline).frame(height: 1), alignment: .bottom)
     }
 
     private var confirmTitle: String {
@@ -374,8 +531,15 @@ struct WorktreeCleanupView: View {
                 } label: {
                     Label("Remove selected (\(chosen.count))", systemImage: "trash")
                 }
-                .disabled(chosen.isEmpty || store.removing != nil)
+                .disabled(chosen.isEmpty || store.removing != nil || store.moving != nil)
                 .instantTooltip("Asks first, listing every folder that goes")
+                Button {
+                    pendingMove = chosen
+                } label: {
+                    Label("Move aside (\(chosen.count))", systemImage: "archivebox")
+                }
+                .disabled(chosen.isEmpty || store.removing != nil || store.moving != nil)
+                .instantTooltip("Deletes nothing: `git worktree move` into today's /tmp folder, with a restore command (asks first)")
                 IconButton(systemName: "arrow.clockwise", tooltip: "Check every worktree again") {
                     store.load(repos: repos, force: true)
                 }
@@ -395,6 +559,17 @@ struct WorktreeCleanupView: View {
                     .foregroundColor(ReviewPalette.dim)
                     .lineLimit(1)
                 Spacer()
+                if let progress = store.moving {
+                    ProgressView().controlSize(.small)
+                    Text(verbatim: "Moving \(progress.done) of \(progress.total)…").font(.system(size: 11.5)).foregroundColor(ReviewPalette.dim)
+                }
+                Stepper(value: $store.olderThanDays, in: 0...90) {
+                    Text(verbatim: store.olderThanDays == 0 ? "any age" : "idle ≥ \(store.olderThanDays) d")
+                        .font(.system(size: 11.5, design: .monospaced))
+                }
+                .fixedSize()
+                .disabled(store.loading)
+                .instantTooltip("Only worktrees idle at least this many days count as removable (0: any age)")
                 if !removable.isEmpty {
                     Button(store.selected.count == removable.count ? "Select none" : "Select all removable") {
                         store.selected = store.selected.count == removable.count ? [] : Set(removable.map(\.path))
@@ -403,7 +578,7 @@ struct WorktreeCleanupView: View {
                     .font(.system(size: 11.5))
                 }
             }
-            Text("Removable: the branch is in the base (merged, rebased or squashed, or it has no commits), nothing is uncommitted or untracked, no stash names it, nothing runs in it and no agent session wrote in it in the last 30 minutes.")
+            Text("Removable: the branch is in the base (merged, rebased or squashed, or it has no commits), nothing is uncommitted or untracked, no stash names it, nothing runs in it, no agent session wrote in it in the last 30 minutes, and it is idle for the chosen number of days. Move aside deletes nothing; Remove runs `git worktree remove`.")
                 .font(.system(size: 11))
                 .foregroundColor(ReviewPalette.dim)
                 .fixedSize(horizontal: false, vertical: true)
@@ -486,6 +661,18 @@ struct WorktreeCleanupView: View {
                         .padding(.vertical, 1)
                         .background(Capsule().fill(Color.white.opacity(0.06)))
                         .instantTooltip("tools git merged: \(row.verdict ?? "no verdict") by \(row.how ?? "-") against \(row.base ?? "no base")")
+                    if row.dirtyCount > 0 {
+                        Text(verbatim: "\(row.dirtyCount) dirty")
+                            .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+                            .foregroundColor(ReviewPalette.modified)
+                            .instantTooltip("\(row.changedCount ?? 0) uncommitted, \(row.untrackedCount ?? 0) untracked")
+                    }
+                    if let commit = row.lastCommit {
+                        LiveAgo(date: commit, format: { "commit \($0)" })
+                            .font(.system(size: 10.5))
+                            .foregroundColor(ReviewPalette.dim)
+                            .lineLimit(1)
+                    }
                 }
                 PathLabel(path: row.path, font: .system(size: 10.5, design: .monospaced))
                 ForEach(row.blockers, id: \.self) { blocker in
@@ -503,12 +690,16 @@ struct WorktreeCleanupView: View {
                 .frame(width: 90, alignment: .trailing)
                 .instantTooltip("Last activity: the newest of its HEAD commit, reflog and index")
             if row.removable {
+                IconButton(systemName: "archivebox", tooltip: "Move this worktree aside into today's /tmp folder: nothing is deleted (asks first)") {
+                    pendingMove = [row]
+                }
+                .disabled(store.removing != nil || store.moving != nil)
                 IconButton(systemName: "trash", tooltip: "Remove this worktree (asks first; the branch stays)") {
                     pending = [row]
                 }
-                .disabled(store.removing != nil)
+                .disabled(store.removing != nil || store.moving != nil)
             } else {
-                Color.clear.frame(width: 18, height: 1)
+                Color.clear.frame(width: 40, height: 1)
             }
         }
         .padding(.horizontal, 12)

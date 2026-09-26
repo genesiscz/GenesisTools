@@ -609,7 +609,8 @@ final class HubModel: ObservableObject {
         let name: String
         switch entry.mode {
         case .sessions:
-            name = "session " + (sessions.first { $0.id == id }?.displayTitle ?? String(id.suffix(8)))
+            name = id == AgentProcs.selectionID ? "agent processes"
+                : "session " + (sessions.first { $0.id == id }?.displayTitle ?? String(id.suffix(8)))
         case .worktrees:
             name = id == WorktreeCleanup.selectionID ? "worktree cleanup"
                 : "worktree " + (worktrees.first { $0.path == id }.map { "\($0.repo) \($0.branch)" } ?? (id as NSString).lastPathComponent)
@@ -1201,6 +1202,8 @@ struct HubRootView: View {
                         .foregroundColor(ReviewPalette.dim)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
+            } else if model.selectedID == AgentProcs.selectionID {
+                AgentProcsView(model: model)
             } else if let session = model.selected {
                 SessionDetailView(model: model, session: session)
             } else {
@@ -1281,6 +1284,8 @@ struct HubRootView: View {
         }
         // ⌥⌘F transcript search over every session, ⌥⌘D Today digest with forecast and rules (Hub/HubDaily.swift).
         .hubDaily(model: model)
+        // ⌘⇧P prompt library: saved prompts with {{variables}}, sent to the selected session (Hub/HubPrompts.swift).
+        .hubPrompts(model: model)
     }
 }
 
@@ -1484,6 +1489,8 @@ private struct SessionListView: View {
             } else {
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 2, pinnedViews: [.sectionHeaders]) {
+                        // Hub/HubAgentProcs.swift: every agent session's process tree, orphans first.
+                        AgentProcsEntry(model: model)
                         ForEach(sections, id: \.title) { section in
                             Section {
                                 if !(section.managed && prefs.collapsed.contains(section.title)) {

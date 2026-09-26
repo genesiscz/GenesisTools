@@ -380,6 +380,41 @@ export async function listPsRows(options?: { timeoutMs?: number }): Promise<PsLi
     }
 }
 
+/** Parse the stdout of `ps -axo` with {@link PS_COLUMNS_SPEC}. Unparseable lines are skipped. */
+export function parsePsTable(stdout: string): PsRow[] {
+    const rows: PsRow[] = [];
+
+    for (const line of stdout.split("\n")) {
+        const row = parsePsLine(line);
+
+        if (row) {
+            rows.push(row);
+        }
+    }
+
+    return rows;
+}
+
+/**
+ * Every process on the machine with its parent, owner, state and start time ({@link PS_COLUMNS_SPEC}),
+ * in ONE `ps` call: what a process-tree view needs, where {@link listPsRows} has no parent pid.
+ * Empty when `ps` cannot be reached (logged), like {@link listPsRows}.
+ */
+export async function listPsTable(options?: { timeoutMs?: number }): Promise<PsRow[]> {
+    try {
+        const result = await capture("ps", ["-axo", PS_COLUMNS_SPEC], options);
+
+        if (result.status !== 0) {
+            log.warn({ status: result.status, stderr: result.stderr.trim() }, "ps -axo (table) did not exit cleanly");
+        }
+
+        return parsePsTable(result.stdout);
+    } catch (err) {
+        log.warn({ err }, "ps -axo (table) could not be spawned");
+        return [];
+    }
+}
+
 /**
  * Parse `lsof -Fpf` field output into a per-pid count of open file entries.
  *

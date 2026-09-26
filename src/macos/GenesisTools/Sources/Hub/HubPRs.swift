@@ -251,6 +251,8 @@ final class PRsModel: ObservableObject {
                 span.end("\(list.prs.count) prs")
                 HubMainBusy.measure("prs.list.render")
                 prs = list.prs.sorted { ($0.updatedAt ?? "") > ($1.updatedAt ?? "") }
+                // Once per list load, never on a timer (Hub/HubPRReadiness.swift).
+                PRReadinessStore.shared.refresh(prs)
                 errors = list.repos.compactMap { repo in repo.error.map { "\(repo.repo): \($0)" } }
                 if let wanted {
                     self.wanted = nil
@@ -524,6 +526,7 @@ struct PRListView: View {
     @ObservedObject var model: HubModel
     @ObservedObject var prs: PRsModel
     @StateObject private var prefs = GroupPrefs(key: "prs.repos")
+    @ObservedObject private var readiness = PRReadinessStore.shared
 
     private var statePicker: some View {
         Picker("", selection: Binding(get: { prs.state }, set: { prs.state = $0; prs.reload() })) {
@@ -644,6 +647,7 @@ struct PRListView: View {
                 Spacer(minLength: 4)
                 VStack(alignment: .trailing, spacing: 3) {
                     CIBadge(ci: pr.ci)
+                    PRReadinessBadge(readiness: readiness.readiness(for: pr))
                     if let proposal = pr.proposal {
                         Label("\(proposal.pending)", systemImage: "text.bubble")
                             .font(.system(size: 10.5, weight: .semibold))
@@ -838,6 +842,7 @@ struct PRDetailView: View {
                 ExternalLink(text: pr.label, url: URL(string: pr.url), font: .system(size: 13, weight: .semibold), color: Color(red: 0.62, green: 0.78, blue: 1))
                 statePill
                 CIBadge(ci: pr.ci, url: detail?.webUrls?.checks.flatMap(URL.init(string:)))
+                PRReadinessHeaderChip(pr: pr)
                 Spacer()
                 if let notice = model.notice {
                     NoticePill(text: notice, isError: notice.contains("failed") || notice.hasPrefix("cmux:")) { model.notice = nil }

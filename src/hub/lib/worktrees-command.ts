@@ -7,6 +7,9 @@ import { type Command, InvalidArgumentError } from "commander";
 import pc from "picocolors";
 import {
     DEFAULT_LIVE_MINUTES,
+    moveAsideJournalPath,
+    moveAsideRoot,
+    moveAsideWorktrees,
     removeWorktrees,
     scanWorktrees,
     unresolvedBase,
@@ -17,6 +20,7 @@ import {
 interface ScanFlags {
     liveMinutes: number;
     base?: string;
+    olderThan?: number;
     json?: boolean;
 }
 
@@ -28,6 +32,16 @@ function liveMinutesArg(value: string): number {
         throw new InvalidArgumentError(err instanceof Error ? err.message : String(err));
     }
 }
+
+function olderThanArg(value: string): number {
+    try {
+        return parseNonNegativeInt(value, "--older-than");
+    } catch (err) {
+        throw new InvalidArgumentError(err instanceof Error ? err.message : String(err));
+    }
+}
+
+const OLDER_THAN_HELP = "only worktrees idle at least this many days are removable (0: no age rule)";
 
 function ago(epochMs: number | null): string {
     if (epochMs === null) {
@@ -86,12 +100,14 @@ export function registerWorktreesCommand(program: Command): void {
             DEFAULT_LIVE_MINUTES
         )
         .option("--base <ref>", "judge every branch against this ref instead of the detected base")
+        .option("--older-than <days>", OLDER_THAN_HELP, olderThanArg)
         .option("--json", "machine-readable output")
         .action(async (repos: string[], opts: ScanFlags) => {
             const report = await scanWorktrees({
                 repos: repos.length > 0 ? repos : [process.cwd()],
                 liveMinutes: opts.liveMinutes,
                 base: opts.base,
+                olderThanDays: opts.olderThan,
             });
             const baseProblem = unresolvedBase(report, opts.base);
 
@@ -150,6 +166,7 @@ export function registerWorktreesCommand(program: Command): void {
             DEFAULT_LIVE_MINUTES
         )
         .option("--base <ref>", "judge every branch against this ref instead of the detected base")
+        .option("--older-than <days>", OLDER_THAN_HELP, olderThanArg)
         .option("--json", "machine-readable output")
         .action(async (paths: string[], opts: ScanFlags & { yes?: boolean }) => {
             if (!opts.yes) {
@@ -181,6 +198,7 @@ export function registerWorktreesCommand(program: Command): void {
                 paths,
                 liveMinutes: opts.liveMinutes,
                 base: opts.base,
+                olderThanDays: opts.olderThan,
             });
 
             if (outcomes.some((o) => !o.removed)) {
@@ -200,6 +218,82 @@ export function registerWorktreesCommand(program: Command): void {
                 } else {
                     out.log.error(`kept ${outcome.path}: ${outcome.reasons.join("; ")}`);
                 }
+            }
+        });
+
+    worktrees
+        .command("move-aside")
+        .description(
+            `Re-check each worktree and \`git worktree move\` the ones still removable into ${moveAsideRoot()} (deletes nothing; /tmp clears at reboot); prints the restore command`
+        )
+        .argument("<paths...>", "worktree folders")
+        .option("--yes", "skip the confirmation (the hub asks its own first)")
+        .option(
+            "--live-minutes <n>",
+            "an agent session written this recently still uses its folder",
+            liveMinutesArg,
+            DEFAULT_LIVE_MINUTES
+        )
+        .option("--base <ref>", "judge every branch against this ref instead of the detected base")
+        .option("--older-than <days>", OLDER_THAN_HELP, olderThanArg)
+        .option("--json", "machine-readable output")
+        .action(async (paths: string[], opts: ScanFlags & { yes?: boolean }) => {
+            if (!opts.yes) {
+                if (!isInteractive()) {
+                    out.log.error("Non-interactive: pass --yes once you have read `tools hub worktrees list`.");
+                    out.log.info(
+                        suggestCommand("tools hub", {
+                            replaceCommand: ["worktrees", "move-aside", ...paths],
+                            add: ["--yes"],
+                        })
+                    );
+                    process.exitCode = 2;
+                    return;
+                }
+
+                const ok = await p.confirm({
+                    message: `Move ${paths.length} worktree folder(s) into ${moveAsideRoot()}? They stay working worktrees there until /tmp is cleared at reboot.`,
+                    initialValue: false,
+                });
+
+                if (p.isCancel(ok) || !ok) {
+                    out.log.info("Cancelled. Nothing moved.");
+                    process.exitCode = 1;
+                    return;
+                }
+            }
+
+            const outcomes = await moveAsideWorktrees({
+                paths,
+                liveMinutes: opts.liveMinutes,
+                base: opts.base,
+                olderThanDays: opts.olderThan,
+            });
+
+            if (outcomes.some((o) => !o.moved)) {
+                process.exitCode = 1;
+            }
+
+            if (opts.json) {
+                out.result(outcomes);
+                return;
+            }
+
+            for (const outcome of outcomes) {
+                if (outcome.moved) {
+                    out.log.success(`moved ${outcome.path} to ${outcome.to}`);
+                    out.println(pc.dim(`  restore: ${outcome.restore}`));
+                } else {
+                    out.log.error(`kept ${outcome.path}: ${outcome.reasons.join("; ")}`);
+                }
+            }
+
+            if (outcomes.some((o) => o.moved)) {
+                out.println(
+                    pc.dim(
+                        `Moved, not deleted. /tmp clears at reboot, and the space comes back then. Every move is in ${moveAsideJournalPath()}.`
+                    )
+                );
             }
         });
 }
