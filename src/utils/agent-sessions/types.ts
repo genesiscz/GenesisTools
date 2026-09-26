@@ -248,6 +248,8 @@ export interface NativeSessionReader<Kind extends string = AgentKind> {
     parserVersion: string;
     /** Native title/summary metadata may contain searchable text absent from original conversation records. */
     searchMetadata?: boolean;
+    /** Each scanned record's searchable text comes only from its own source line. */
+    lineLocalRecords?: boolean;
     /** Compact operations are enabled as provider extraction completes. */
     readMetadata?(source: NativeSessionSource<Kind>, options?: HistoryReadOptions): Promise<HistoryMetadataRead>;
     scan?(source: NativeSessionSource<Kind>, options?: HistoryReadOptions): AsyncIterable<HistorySourceRecord>;

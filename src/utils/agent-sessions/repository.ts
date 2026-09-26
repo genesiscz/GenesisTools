@@ -251,7 +251,14 @@ export class HistoryRepository {
             return [];
         }
 
-        const clauses = ["m.provider = ?"];
+        // One file path is the most selective thing a caller can ask for, but without statistics
+        // SQLite plans `provider = ? AND file_path = ?` on the provider+mtime index because it also
+        // serves the ORDER BY, and then walks every row of the provider: 8.5 ms per lookup over
+        // 12,820 Claude rows, 2.3 s of a content search that looks up ~300 candidates one by one.
+        // The unary `+` keeps the provider term off the index choice, so the file_path index wins
+        // (0.013 ms). Only for ONE path: a long IN list is faster on the provider scan it has now.
+        const onePath = options.filePath !== undefined || options.filePaths?.length === 1;
+        const clauses = [onePath ? "+m.provider = ?" : "m.provider = ?"];
         const params: Array<string | number> = [options.providerId];
 
         if (options.sourceKeys?.length === 1) {

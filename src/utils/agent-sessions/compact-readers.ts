@@ -28,6 +28,9 @@ export const claudeHistoryReader = createCompactHistoryReader({
     kind: "claude",
     roots: () => nativeSessionRoots("claude"),
     discover: discoverClaudeHistorySources,
+    // One JSONL row per record, and a record's text reads only that row (a tool result's name,
+    // which comes from an earlier row, never enters the searched text).
+    lineLocalRecords: true,
     ...createClaudeHistoryOperations(),
     readStatistics: readClaudeStatistics,
 });
