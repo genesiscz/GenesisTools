@@ -1,5 +1,6 @@
 import { logger } from "@genesiscz/utils/logger";
 import { batchPsInfo } from "@genesiscz/utils/process/ps";
+import { isProcessAlive } from "@genesiscz/utils/process-alive";
 import { type ProcsSources, readProcsReport, realProcsSources } from "./sources";
 import type { ProcGroup, ProcsReport } from "./tree";
 
@@ -34,25 +35,13 @@ export interface SignalOps {
     now(): number;
 }
 
-function errnoCode(err: unknown): string | undefined {
-    return typeof err === "object" && err !== null && "code" in err && typeof err.code === "string"
-        ? err.code
-        : undefined;
-}
-
 export const realSignalOps: SignalOps = {
     signal: (pid, signal) => {
+        // pid-verified: stopTree compares each pid's start time and command (ops.identity) right before every signal
         process.kill(pid, signal);
     },
-    alive: (pid) => {
-        try {
-            process.kill(pid, 0);
-            return true;
-        } catch (err) {
-            // EPERM: it exists but belongs to someone else; still alive.
-            return errnoCode(err) === "EPERM";
-        }
-    },
+    // EPERM counts as alive: the process exists but belongs to someone else.
+    alive: (pid) => isProcessAlive(pid),
     identity: (pids) => {
         const found = new Map<number, { startedAt: string | null; command: string }>();
 
