@@ -16,9 +16,12 @@ type RenderToString = (tex: string, options?: KatexOptions) => string;
 const TEX_ATTR = "data-dd-tex";
 const OPTIONS_ATTR = "data-dd-tex-options";
 const LATE_COMMIT_WINDOW_MS = 10_000;
+/** A failed chunk load is retried this many times, 2 s, 4 s and 8 s apart, while math waits on the page. */
+const MAX_LOAD_RETRIES = 3;
 
 let realRenderToString: RenderToString | null = null;
 let loading = false;
+let failedLoads = 0;
 
 function fillPlaceholders(): void {
     const render = realRenderToString;
@@ -61,7 +64,13 @@ function loadKatex(): void {
         })
         .catch((error) => {
             loading = false;
-            console.debug("katex-lazy: KaTeX failed to load", error);
+            failedLoads++;
+            console.debug("katex-lazy: KaTeX failed to load", { attempt: failedLoads, error });
+
+            // Math already on the page stays raw TeX until a load succeeds; no later render may come to ask again.
+            if (failedLoads <= MAX_LOAD_RETRIES && document.querySelector(`[${TEX_ATTR}]`)) {
+                setTimeout(loadKatex, 1000 * 2 ** failedLoads);
+            }
         });
 }
 
