@@ -40,6 +40,8 @@ export const codexHistoryReader = createCompactHistoryReader({
     roots: () => nativeSessionRootsWithLegacyHomes("codex"),
     discover: discoverCodexHistorySources,
     searchMetadata: true,
+    // Metadata comes from the first header plus the state sidecars; a record never replays a header.
+    scanKeepsMetadata: true,
     ...createCodexHistoryOperations(),
     readStatistics: readCodexStatistics,
     importSession: importNativeCodexSession,

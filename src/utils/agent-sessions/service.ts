@@ -570,19 +570,25 @@ export class HistoryService {
      *
      * A project or date scope used to be applied only after ripgrep had read every transcript of
      * every project, so `claude history <query>` inside one project read 12.6 GB to keep 5 GB.
-     * A source is dropped only when the index proves the later `metadataFor` gate would drop it:
-     * no row for its file passes that same scope test, and its fingerprint still equals the
-     * revision the sync compares, so the sync would not rewrite those rows first. A source that is
-     * unindexed, changed, or shares its file with another stays.
+     * A source is dropped only when the index proves a later gate would drop it: no row for its
+     * file passes `scope`, and its fingerprint still equals the revision the sync compares, so the
+     * sync would not rewrite those rows first. A source that is unindexed, changed, or shares its
+     * file with another stays.
      */
     private indexScopedSources(options: {
         sources: NativeSessionSource<string>[];
-        rowScope: AgentSearchFilters;
+        scope: AgentSearchFilters;
     }): NativeSessionSource<string>[] {
-        const { sources, rowScope } = options;
+        const { sources, scope } = options;
         const { reader, repository, providerId } = this.options;
 
-        if (!(rowScope.project && !rowScope.all) && !rowScope.since && !rowScope.until) {
+        if (
+            !(scope.project && !scope.all) &&
+            !(scope.cwd && !scope.all) &&
+            !scope.since &&
+            !scope.until &&
+            !scope.excludeSessions?.length
+        ) {
             return sources;
         }
 
@@ -592,7 +598,7 @@ export class HistoryService {
         for (const metadata of repository.metadata.listMetadata({ providerId, withUserText: false })) {
             indexed.add(metadata.filePath);
 
-            if (metadataInScope(metadata, rowScope)) {
+            if (metadataInScope(metadata, scope)) {
                 inScope.add(metadata.filePath);
             }
         }
@@ -770,10 +776,14 @@ export class HistoryService {
         // What a metadata row is tested against before any scan; cwd and exclusions wait for the
         // record metadata the scan produces.
         const rowScope = { ...scoped, cwd: undefined, excludeSessions: undefined };
+        // When the scan cannot move a session's cwd or id, the whole scope can prune before
+        // ripgrep. Only in time order: a relevance search sets its parse cap over every row-scope
+        // candidate, so dropping one there would let another into the capped set.
+        const pruneScope = reader.scanKeepsMetadata && !ranksByRelevance(filters) ? scoped : rowScope;
         const searchable = metadataOnly
             ? discovery.sources
             : prof.measure("search.index-scope", () =>
-                  this.indexScopedSources({ sources: discovery.sources, rowScope })
+                  this.indexScopedSources({ sources: discovery.sources, scope: pruneScope })
               );
         // Every hit here needs a matching record, unless the reader may match on metadata, a commit
         // message decides alone, or the candidates ARE the results; only then may ripgrep demand
@@ -1027,7 +1037,10 @@ export class HistoryService {
                 candidates.find((candidate) => candidate.nativeId === source.metadata?.sessionId) ??
                 (candidates.length === 1 ? candidates[0] : undefined);
 
-            if (!metadata) {
+            // The scope test below runs on the scanned metadata, which is this row when the reader's
+            // records never change it. Then the test can run first: a Codex search in its default
+            // cwd scope read 405 transcripts (1.7 GB) in full to keep 2 sessions.
+            if (!metadata || (reader.scanKeepsMetadata && !metadataInScope(metadata, scoped))) {
                 return;
             }
 
