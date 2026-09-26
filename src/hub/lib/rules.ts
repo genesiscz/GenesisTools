@@ -367,6 +367,8 @@ function formatMinutes(minutes: number): string {
 interface Match {
     key: string;
     firing: Omit<RuleFiring, "ruleId" | "kind" | "key">;
+    /** Recorded as seen but not posted: another notifier already told the user about it. */
+    silent?: boolean;
 }
 
 function sessionName(session: RuleSession): string {
@@ -417,15 +419,14 @@ function matchesFor(rule: HubRule, inputs: RuleInputs, now: number): { matches: 
             return { matches, note: null };
         }
         case "ciFailed": {
+            // A failure the PR poller just posted stays a match, silent: dropped instead, its head was
+            // never recorded and the same failure notified again once the suppression window ran out.
             const matches = inputs.prs
                 .filter((pr) => pr.ci === "failed" && contains([pr.ref], rule.match))
-                .filter(
-                    (pr) =>
-                        !inputs.postedCi.some(
-                            (posted) => posted.key === pr.key && now - posted.atMs < RULE_LIMITS.ciSuppressMs
-                        )
-                )
                 .map((pr) => ({
+                    silent: inputs.postedCi.some(
+                        (posted) => posted.key === pr.key && now - posted.atMs < RULE_LIMITS.ciSuppressMs
+                    ),
                     key: `${pr.key}@${pr.sha}`,
                     firing: {
                         title: `${label} · ${pr.ref}`,
@@ -521,14 +522,15 @@ export function evaluateRules({
         for (const match of fresh) {
             fired[match.key] = at;
 
-            if (!seeding) {
+            if (!seeding && !match.silent) {
                 firings.push({ ruleId: rule.id, kind: rule.kind, key: match.key, ...match.firing });
             }
         }
 
         next.fired[rule.id] = prune(fired, nowMs, current);
         next.seeded[rule.id] = true;
-        reports.push({ ...base, matches: matches.length, fired: seeding ? 0 : fresh.length, seeded: seeding, note });
+        const posted = fresh.filter((match) => !match.silent).length;
+        reports.push({ ...base, matches: matches.length, fired: seeding ? 0 : posted, seeded: seeding, note });
     }
 
     // A deleted rule's memory goes with it.
