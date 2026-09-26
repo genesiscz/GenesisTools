@@ -2,7 +2,7 @@ import AppKit
 import Combine
 import SwiftUI
 
-// GenesisTools --hub [--mode sessions|worktrees|prs] [--session <provider:id or id prefix>] [--pr <n>]
+// GenesisTools --hub [--mode sessions|worktrees|prs] [--session <provider:id or id prefix>|::procs] [--pr <n>]
 //                    [--tab transcript|changes|files|decisions] [--no-activate] [--snapshot <png>]
 //                    [--bench <json>] [--panes transcript,changes,…] [--width <pt>] [--glass on|off]
 //                    [--file <repo-relative path>] [--height <pt>] [--style split|unified]
@@ -809,6 +809,11 @@ final class HubModel: ObservableObject {
                         if initialMode == .inbox { inbox.onLoaded = settle } else { timeline.onLoaded = settle }
                     }
                     setMode(initialMode)
+                } else if wantedSession == AgentProcs.selectionID {
+                    // `--session ::procs` opens the Agent processes pane, which has no transcript to settle on.
+                    select(AgentProcs.selectionID)
+                    onSettled?()
+                    onSettled = nil
                 } else if let first = wanted ?? sessions.first {
                     select(first.id)
                 } else {
@@ -964,7 +969,10 @@ final class HubModel: ObservableObject {
         if let tab = request.tab {
             self.tab = tab
         }
-        if let wanted = request.session, let match = sessions.first(where: { $0.id == wanted || $0.sessionId.hasPrefix(wanted) }) {
+        if request.session == AgentProcs.selectionID {
+            setMode(.sessions)
+            select(AgentProcs.selectionID)
+        } else if let wanted = request.session, let match = sessions.first(where: { $0.id == wanted || $0.sessionId.hasPrefix(wanted) }) {
             setMode(.sessions)
             select(match.id)
         } else if let mode = request.mode {

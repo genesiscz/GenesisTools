@@ -65,6 +65,8 @@ export interface ProcGroup {
     launchdLabel: string | null;
     idle: boolean;
     idleReason: string | null;
+    /** Its root process is stopped (`ps` state T): suspended with Ctrl+Z in its shell, not stuck. */
+    suspended: boolean;
     session: ProcSessionMatch | null;
     /** The tree holds the process that asked (the hub's own `tools` call, or the agent session running it). */
     own: boolean;
@@ -285,7 +287,10 @@ export function buildProcsReport(input: BuildInput): Omit<ProcsReport, "elapsedM
         const cpu = round(entries.reduce((sum, entry) => sum + entry.cpu, 0));
         const startedAt = node.row.startTime;
         const ageMs = startedAt ? input.now - startedAt.getTime() : null;
-        const idle = idleOf({ kind, cpu, ageMs, session, now: input.now });
+        const suspended = node.row.stat.startsWith("T");
+        const idle = suspended
+            ? "suspended in its shell (state T, Ctrl+Z): `fg` in that terminal resumes it"
+            : idleOf({ kind, cpu, ageMs, session, now: input.now });
         const ownTree = input.own.has(pid) || entries.some((entry) => input.own.has(entry.pid));
 
         groups.push({
@@ -312,6 +317,7 @@ export function buildProcsReport(input: BuildInput): Omit<ProcsReport, "elapsedM
             launchdLabel,
             idle: idle !== null,
             idleReason: idle,
+            suspended,
             session,
             own: ownTree,
             totals: {
