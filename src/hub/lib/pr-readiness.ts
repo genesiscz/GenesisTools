@@ -316,12 +316,10 @@ export function githubFacts(raw: RawReadiness, extraThreads: RawThreadPage["node
     }
 
     const head = pr.commits.nodes[0]?.commit;
-    const forced = pr.timelineItems.nodes[0]?.createdAt ?? null;
-    const lastPushAt =
-        [head?.committedDate ?? null, forced]
-            .filter((value) => value !== null)
-            .sort()
-            .pop() ?? null;
+    // Only a push event's own time says when the head arrived. A commit's date is when it was made:
+    // a cherry-pick pushed hours later made a review in between read as a review of the head. With no
+    // such event, a review that names no commit stays "unknown" instead of guessing.
+    const lastPushAt = pr.timelineItems.nodes[0]?.createdAt ?? null;
 
     return {
         url: pr.url,

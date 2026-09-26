@@ -18,6 +18,8 @@ const log = logger.child({ component: "hub/pr-lookup-cache" });
 export const DEFAULT_PR_LOOKUP_CACHE_SECONDS = 60;
 export const PR_LOOKUP_CACHE_CONFIG_KEY = "prLookupCacheSeconds";
 const CACHE_FILE_NAME = "pr-lookup-cache.json";
+/** A "no PR" answer lives at most this long, so a PR opened for the current head shows up quickly. */
+const NO_PR_TTL_MS = 15_000;
 /** One shared file, not one per key: bounded here so it can never grow without limit. */
 const MAX_ENTRIES = 500;
 
@@ -148,8 +150,10 @@ export async function cachedPrForHead({
     if (!fresh) {
         const { entries } = readCacheFile(path);
         const hit = entries[key];
+        // "No PR" goes stale when someone opens one for this very head, which changes no part of the key.
+        const hitTtlMs = hit?.pr ? ttlMs : Math.min(ttlMs, NO_PR_TTL_MS);
 
-        if (hit && now() - hit.cachedAt <= ttlMs) {
+        if (hit && now() - hit.cachedAt <= hitTtlMs) {
             log.debug({ branch, head: head.slice(0, 8) }, "pr lookup cache hit");
             return { pr: hit.pr, error: null };
         }

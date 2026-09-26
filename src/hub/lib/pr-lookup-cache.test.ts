@@ -86,6 +86,29 @@ describe("cachedPrForHead", () => {
         expect(second).toEqual({ pr: null, error: null });
     });
 
+    test("a 'no PR' answer expires after 15 s, so a PR opened for the same head shows up", async () => {
+        const storage = scratchStorage();
+        const { driver, calls } = fakeDriver([
+            { pr: null, error: null },
+            { pr: pr(7), error: null },
+        ]);
+        let clock = 1_000_000;
+        const now = () => clock;
+        const ask = (d: OriginDriver) =>
+            cachedPrForHead({ driver: d, originUrl: "o", branch: "b", head: "h", storage, ttlSeconds: 60, now });
+
+        await ask(driver);
+        clock += 10_000;
+        expect((await ask(unreachableDriver())).pr).toBeNull();
+
+        clock += 6_000; // 16 s: past the "no PR" limit, well inside the 60 s TTL
+        expect((await ask(driver)).pr?.number).toBe(7);
+        expect(calls).toEqual(["b", "b"]);
+
+        clock += 40_000; // a found PR keeps the full TTL
+        expect((await ask(unreachableDriver())).pr?.number).toBe(7);
+    });
+
     test("a head change is a miss by construction", async () => {
         const storage = scratchStorage();
         const { driver, calls } = fakeDriver([
