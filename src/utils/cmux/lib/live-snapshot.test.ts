@@ -207,4 +207,99 @@ describe("fetchCmuxLiveSnapshot", () => {
         expect(pane.surfaces.find((surface) => surface.id === "surface-hidden")?.preview).toBeUndefined();
         expect(pane.surfaces.find((surface) => surface.id === "surface-visible")?.preview).toBe("visible");
     });
+
+    test("the first state command is bounded and doubles as the probe: a healthy cmux spawns no preflight", async () => {
+        const firstOpts: unknown[] = [];
+        let probes = 0;
+        const runJson = async <T>(args: string[], opts?: unknown): Promise<T> => {
+            if (args[0] === "list-workspaces") {
+                firstOpts.push(opts);
+                return { workspaces: [] } as T;
+            }
+
+            return {} as T;
+        };
+        const snapshot = await fetchCmuxLiveSnapshot({
+            runJson,
+            run: async () => ({ code: 0, stdout: "", stderr: "" }),
+            probe: async () => {
+                probes++;
+            },
+        });
+
+        expect(snapshot.available).toBe(true);
+        expect(firstOpts).toEqual([{ timeoutMs: 3_500 }]);
+        expect(probes).toBe(0);
+    });
+
+    test("a failed first call runs the probe, and its diagnosis is the snapshot's error", async () => {
+        const runJson = async <T>(): Promise<T> => {
+            throw new Error("cmux list-workspaces failed (1): timed out");
+        };
+        const run = async () => ({ code: 0, stdout: "", stderr: "" });
+        const starved = await fetchCmuxLiveSnapshot({
+            runJson,
+            run,
+            probe: async () => {
+                throw new Error("cmux live snapshot: cmux's UI thread is not responding");
+            },
+        });
+
+        expect(starved.available).toBe(false);
+        expect(starved.error).toBe("cmux live snapshot: cmux's UI thread is not responding");
+
+        // A probe that finds cmux healthy leaves the command's own error standing.
+        const healthy = await fetchCmuxLiveSnapshot({ runJson, run, probe: async () => undefined });
+
+        expect(healthy.error).toBe("cmux list-workspaces failed (1): timed out");
+    });
+
+    test("surfaces come from one tree call, projected to what list-pane-surfaces reports; an unknown pane still asks", async () => {
+        const calls: string[][] = [];
+        const runJson = async <T>(args: string[]): Promise<T> => {
+            calls.push(args);
+
+            if (args[0] === "list-workspaces") {
+                return { workspaces: [{ ref: "workspace:1" }] } as T;
+            }
+
+            if (args[0] === "list-panes") {
+                return { panes: [{ ref: "pane:1" }, { ref: "pane:2" }] } as T;
+            }
+
+            if (args[0] === "tree") {
+                const surfaces = [
+                    { ref: "surface:1", index: 0, index_in_pane: 0, title: "one", type: "terminal", selected: true },
+                    { ref: "surface:2", index: 1, title: "two", type: "terminal", active: true, url: null },
+                ];
+                return {
+                    windows: [{ workspaces: [{ ref: "workspace:1", panes: [{ ref: "pane:1", surfaces }] }] }],
+                } as T;
+            }
+
+            if (args[0] === "list-pane-surfaces") {
+                return {
+                    surfaces: [{ ref: "surface:3", index: 0, title: "three", type: "terminal", selected: true }],
+                } as T;
+            }
+
+            return {} as T;
+        };
+        const snapshot = await fetchCmuxLiveSnapshot({
+            runJson,
+            run: async () => ({ code: 0, stdout: "", stderr: "" }),
+            previews: "none",
+        });
+
+        expect(calls.filter((args) => args[0] === "tree")).toEqual([["tree", "--all"]]);
+        expect(calls.filter((args) => args[0] === "list-pane-surfaces")).toEqual([
+            ["list-pane-surfaces", "--workspace", "workspace:1", "--pane", "pane:2"],
+        ]);
+        const [first, second] = snapshot.panes;
+        expect(first.surfaces.map((surface) => [surface.id, surface.selected, surface.active, surface.url])).toEqual([
+            ["surface:1", true, false, undefined],
+            ["surface:2", false, false, undefined],
+        ]);
+        expect(second.surfaces.map((surface) => surface.id)).toEqual(["surface:3"]);
+    });
 });
