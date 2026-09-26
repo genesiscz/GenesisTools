@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 import { concurrentMap } from "@genesiscz/utils/async";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { profiler } from "@genesiscz/utils/profile";
 import { sourceFingerprint } from "./fingerprint";
 import type { ListingFreshness } from "./listing-freshness";
 import { haystackMatch } from "./match";
@@ -39,6 +40,8 @@ import type {
     NativeSessionSource,
     NativeSourceIssue,
 } from "./types";
+
+const prof = profiler.scope("agent-sessions");
 
 export interface HistorySearchResult {
     session: AgentSession<string>;
@@ -562,6 +565,77 @@ export class HistoryService {
         };
     }
 
+    /**
+     * The discovered sources a content search still has to read, judged from the index.
+     *
+     * A project or date scope used to be applied only after ripgrep had read every transcript of
+     * every project, so `claude history <query>` inside one project read 12.6 GB to keep 5 GB.
+     * A source is dropped only when the index proves the later `metadataFor` gate would drop it:
+     * no row for its file passes that same scope test, and its fingerprint still equals the
+     * revision the sync compares, so the sync would not rewrite those rows first. A source that is
+     * unindexed, changed, or shares its file with another stays.
+     */
+    private indexScopedSources(options: {
+        sources: NativeSessionSource<string>[];
+        rowScope: AgentSearchFilters;
+    }): NativeSessionSource<string>[] {
+        const { sources, rowScope } = options;
+        const { reader, repository, providerId } = this.options;
+
+        if (!(rowScope.project && !rowScope.all) && !rowScope.since && !rowScope.until) {
+            return sources;
+        }
+
+        const indexed = new Set<string>();
+        const inScope = new Set<string>();
+
+        for (const metadata of repository.metadata.listMetadata({ providerId, withUserText: false })) {
+            indexed.add(metadata.filePath);
+
+            if (metadataInScope(metadata, rowScope)) {
+                inScope.add(metadata.filePath);
+            }
+        }
+
+        const revisions = new Map<string, Array<string | null>>();
+
+        for (const snapshot of repository.sources(providerId)) {
+            const group = revisions.get(snapshot.filePath) ?? [];
+            group.push(snapshot.metadataRevision);
+            revisions.set(snapshot.filePath, group);
+        }
+
+        const multiplicity = new Map<string, number>();
+
+        for (const source of sources) {
+            multiplicity.set(source.filePath, (multiplicity.get(source.filePath) ?? 0) + 1);
+        }
+
+        const kept = sources.filter((source) => {
+            const revision = revisions.get(source.filePath);
+
+            if (
+                inScope.has(source.filePath) ||
+                !indexed.has(source.filePath) ||
+                source.kind !== reader.kind ||
+                revision?.length !== 1 ||
+                multiplicity.get(source.filePath) !== 1
+            ) {
+                return true;
+            }
+
+            try {
+                return revision[0] !== sourceFingerprint({ source, parserVersion: reader.parserVersion });
+            } catch (error) {
+                logger.debug({ error, path: source.filePath }, "Scope pre-check could not fingerprint a source");
+                return true;
+            }
+        });
+
+        logger.debug({ providerId, discovered: sources.length, kept: kept.length }, "History search scope pre-check");
+        return kept;
+    }
+
     private async searchSummaries(options: {
         filters: AgentSearchFilters;
         sources: NativeSessionSource<string>[];
@@ -691,25 +765,48 @@ export class HistoryService {
         const scope = { agentsOnly: filters.agentsOnly, excludeAgents: filters.excludeAgents, signal: filters.signal };
         // Read BEFORE the walk; see `refreshListing`.
         const discoveryGeneration = this.options.repository.generation(this.options.providerId);
-        const discovery = await reader.discover(this.options.roots, scope);
+        const discovery = await prof.measureAsync("search.discover", () => reader.discover(this.options.roots, scope));
+        const scoped = { ...filters, sourceRoots: (filters.sourceRoots ?? this.options.roots).map(canonicalRoot) };
+        // What a metadata row is tested against before any scan; cwd and exclusions wait for the
+        // record metadata the scan produces.
+        const rowScope = { ...scoped, cwd: undefined, excludeSessions: undefined };
+        const searchable = metadataOnly
+            ? discovery.sources
+            : prof.measure("search.index-scope", () =>
+                  this.indexScopedSources({ sources: discovery.sources, rowScope })
+              );
+        // Every hit here needs a matching record, unless the reader may match on metadata, a commit
+        // message decides alone, or the candidates ARE the results; only then may ripgrep demand
+        // one line that can hold the query words together.
+        const sameLine =
+            Boolean(reader.lineLocalRecords) &&
+            !filters.candidatesOnly &&
+            !filters.commitMessage &&
+            !(reader.searchMetadata && !restricted);
         const rawCandidates = metadataOnly
             ? undefined
-            : await historyCandidates({ sources: discovery.sources, filters });
+            : await prof.measureAsync("search.candidates", () =>
+                  historyCandidates({ sources: searchable, filters, sameLine })
+              );
         const rawSources = new Set(rawCandidates?.map((candidate) => candidate.source.filePath));
         const contentCandidates =
             !metadataOnly && reader.searchMetadata && !restricted
-                ? await historyCandidates({ sources: discovery.sources, filters: { signal: filters.signal } })
+                ? await prof.measureAsync("search.candidates-content", () =>
+                      historyCandidates({ sources: searchable, filters: { signal: filters.signal } })
+                  )
                 : rawCandidates;
-        const synchronized = await synchronizeHistory({
-            ...this.options,
-            signal: filters.signal,
-            scope,
-            discovery,
-            discoveryGeneration,
-            metadataSources: contentCandidates
-                ? new Set(contentCandidates.map((candidate) => candidate.source.filePath))
-                : undefined,
-        });
+        const synchronized = await prof.measureAsync("search.sync", () =>
+            synchronizeHistory({
+                ...this.options,
+                signal: filters.signal,
+                scope,
+                discovery,
+                discoveryGeneration,
+                metadataSources: contentCandidates
+                    ? new Set(contentCandidates.map((candidate) => candidate.source.filePath))
+                    : undefined,
+            })
+        );
         const issues = [...synchronized.report.issues];
         const freshSources = new Map<string, NativeSessionSource<string>[]>();
 
@@ -739,18 +836,23 @@ export class HistoryService {
             return this.searchSummaries({ filters, sources: synchronized.sources, issues });
         }
 
-        const scoped = { ...filters, sourceRoots: (filters.sourceRoots ?? this.options.roots).map(canonicalRoot) };
         const byPath = new Map<string, CachedHistoryMetadata[]>();
         const lazyMetadata =
             !ranksByRelevance(filters) &&
             !reader.searchMetadata &&
             refreshedCandidates?.every((candidate) => candidate.source.metadata?.isSubagent !== undefined);
 
-        for (const metadata of repository.metadata.listMetadata({
-            providerId,
-            filePaths: lazyMetadata ? [] : (refreshedCandidates?.map((candidate) => candidate.source.filePath) ?? []),
-        })) {
-            if (!metadataInScope(metadata, { ...scoped, cwd: undefined, excludeSessions: undefined })) {
+        const listed = prof.measure("search.metadata", () =>
+            repository.metadata.listMetadata({
+                providerId,
+                filePaths: lazyMetadata
+                    ? []
+                    : (refreshedCandidates?.map((candidate) => candidate.source.filePath) ?? []),
+            })
+        );
+
+        for (const metadata of listed) {
+            if (!metadataInScope(metadata, rowScope)) {
                 continue;
             }
 
@@ -764,7 +866,7 @@ export class HistoryService {
             if (metadata === undefined && lazyMetadata) {
                 metadata = repository.metadata
                     .listMetadata({ providerId, filePath: source.filePath })
-                    .filter((row) => metadataInScope(row, { ...scoped, cwd: undefined, excludeSessions: undefined }));
+                    .filter((row) => metadataInScope(row, rowScope));
                 byPath.set(source.filePath, metadata);
             }
             return metadata ?? [];
@@ -813,10 +915,14 @@ export class HistoryService {
         };
 
         if (candidates.length > 0 && lazyMetadata) {
-            for (const metadata of repository.metadata.listMetadata({
-                providerId,
-                filePaths: candidates.map((candidate) => candidate.source.filePath),
-            })) {
+            const ordered = prof.measure("search.order-metadata", () =>
+                repository.metadata.listMetadata({
+                    providerId,
+                    filePaths: candidates.map((candidate) => candidate.source.filePath),
+                })
+            );
+
+            for (const metadata of ordered) {
                 recordOrderTime(metadata);
             }
         } else {
@@ -881,11 +987,14 @@ export class HistoryService {
 
             // The snippet the picker shows, from one ripgrep pass over the chosen files.
             if (filters.query && results.length > 0) {
-                const snippets = await matchSnippets({
-                    files: results.map((result) => result.metadata.filePath),
-                    query: filters.query,
-                    signal: filters.signal,
-                });
+                const query = filters.query;
+                const snippets = await prof.measureAsync("search.snippets", () =>
+                    matchSnippets({
+                        files: results.map((result) => result.metadata.filePath),
+                        query,
+                        signal: filters.signal,
+                    })
+                );
                 const identifierOnly = new Set<string>();
 
                 for (const result of results) {
@@ -911,9 +1020,7 @@ export class HistoryService {
             return { results, issues };
         }
 
-        const scanCandidate = async ({
-            source,
-        }: (typeof planned)[number]): Promise<MatchedHistorySource | undefined> => {
+        const scanSource = async ({ source }: (typeof planned)[number]): Promise<MatchedHistorySource | undefined> => {
             filters.signal?.throwIfAborted();
             const candidates = metadataFor(source);
             const metadata =
@@ -955,6 +1062,11 @@ export class HistoryService {
                 });
             }
         };
+        const scanCandidate = (candidate: (typeof planned)[number]) =>
+            profiler.detail === "all"
+                ? prof.measureAsync("search.scan-source", () => scanSource(candidate))
+                : scanSource(candidate);
+        const stopScan = prof.start("search.scan");
 
         for (let offset = 0; offset < planned.length; ) {
             filters.signal?.throwIfAborted();
@@ -988,6 +1100,7 @@ export class HistoryService {
             offset += batch.length;
         }
 
+        stopScan();
         const ranked = mergeSearchWaves(
             matches
                 .filter((candidate) => !candidate.match.metadata.isSubagent)
@@ -1005,6 +1118,8 @@ export class HistoryService {
                 })),
             { sortByRelevance: ranksByRelevance(filters) }
         );
+        // Relevance hydration only: a time-ordered search hydrates inside the scan loop above.
+        const stopHydrate = prof.start("search.hydrate");
 
         for (const candidate of ranked) {
             const hydrated = await this.hydrateMatch({ candidate, filters, issues });
@@ -1018,6 +1133,7 @@ export class HistoryService {
             }
         }
 
+        stopHydrate();
         return {
             results: mergeSearchWaves(
                 results.filter((result) => !result.session.isSubagent),
