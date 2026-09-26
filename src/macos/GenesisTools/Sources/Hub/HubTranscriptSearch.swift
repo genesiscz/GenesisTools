@@ -276,7 +276,7 @@ private struct HubSearchHitRow: View {
                     Text(verbatim: AIProviders.meta(for: hit.provider).displayName)
                         .font(.system(size: 10, weight: .semibold))
                         .foregroundColor(Color.jarvisTeal)
-                    Text(verbatim: hit.title.isEmpty ? String(hit.sessionId.prefix(8)) : hit.title)
+                    Text(verbatim: TitleFormatter.cleanSessionTitle(hit.title) ?? String(hit.sessionId.prefix(8)))
                         .font(.system(size: 12.5, weight: .medium))
                         .foregroundColor(Color.white.opacity(0.9))
                         .lineLimit(1)

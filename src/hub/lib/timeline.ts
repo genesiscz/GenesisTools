@@ -8,6 +8,7 @@ import {
 } from "@app/ai/lib/sessions/agent-session-rows";
 import { decisionFiles } from "@app/question/lib/decisions/read";
 import { type DecisionRecord, readDecisions } from "@app/question/lib/decisions/store";
+import { cleanSessionTitle } from "@genesiscz/utils/agent-sessions/user-text";
 import { concurrentMap } from "@genesiscz/utils/async";
 import { type CommandRunner, spawnRunner } from "@genesiscz/utils/git/origins";
 import { LOG_FORMAT, parseLogZ } from "@genesiscz/utils/git/porcelain";
@@ -381,7 +382,7 @@ function sessionEvents(rows: readonly AgentSessionRow[], window: TimelineWindow,
             mine: true,
             ...(row.gitBranch ? { branch: row.gitBranch } : {}),
         };
-        const title = row.title ?? row.sessionId.slice(0, 8);
+        const title = cleanSessionTitle(row.title) ?? row.sessionId.slice(0, 8);
         const born = deps.birth(row.filePath);
 
         if (born !== null && inWindow(born, window)) {
