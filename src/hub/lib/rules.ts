@@ -689,7 +689,17 @@ export async function runRules({
 
         if (!dryRun) {
             for (const firing of evaluation.firings) {
-                posted += (await post(firing)) ? 1 : 0;
+                if (await post(firing)) {
+                    posted++;
+                    continue;
+                }
+
+                // Not delivered: forget it, so the next tick tries again instead of treating it as sent.
+                delete evaluation.state.fired[firing.ruleId]?.[firing.key];
+                log.warn(
+                    { rule: firing.ruleId, key: firing.key },
+                    "hub rules: a notification did not post; retrying next run"
+                );
             }
 
             writeJson(statePath, evaluation.state);
