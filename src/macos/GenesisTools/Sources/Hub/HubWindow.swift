@@ -372,7 +372,13 @@ final class HubModel: ObservableObject {
     }
     /// The panes shown side by side (transcript, changes, decisions), saved between launches.
     @Published var panes: [HubTab] = (HubDefaults.store.stringArray(forKey: "hub.panes") ?? ["transcript"]).compactMap(HubTab.init(rawValue:)) {
-        didSet { HubDefaults.store.set(panes.map(\.rawValue), forKey: "hub.panes") }
+        didSet {
+            HubDefaults.store.set(panes.map(\.rawValue), forKey: "hub.panes")
+            // The header's totals chip shows once the transcript pane closes; `select` skipped its list.
+            if !panes.contains(.transcript), transcript.isEmpty, !loadingTranscript, selected != nil {
+                loadTranscript(older: false)
+            }
+        }
     }
     /// Display order of the pane-toggle buttons; drag one onto another to reorder (`paneToggles`
     /// in `SessionDetailView`). Independent of `HubTab.allCases`' declaration order once the
@@ -458,6 +464,9 @@ final class HubModel: ObservableObject {
     var initialMode = HubMode.sessions
     private let wantedSession: String?
     private var transcriptGeneration = 0
+    /// The session `select` last set up (review, decisions, folders).
+    private var selectedSetUp: String?
+    private var firstPageObserver: NSObjectProtocol?
 
     /// PRs mode state (`tools hub pr list/show`). Main-actor: created on the main thread in `runHub`.
     let prs: PRsModel
@@ -484,6 +493,13 @@ final class HubModel: ObservableObject {
             panes = HubTab.allCases.filter { panes.contains($0) || $0 == tab }
         }
         MainActor.assumeIsolated { startNavRecorder() }
+        // A scripted run with the transcript pane settles on that pane's first page (see `select`).
+        firstPageObserver = NotificationCenter.default.addObserver(forName: HubSessionDetailHost.firstPageDone, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.onSettled?()
+                self?.onSettled = nil
+            }
+        }
     }
 
     // MARK: Back and forward
@@ -723,6 +739,11 @@ final class HubModel: ObservableObject {
 
     @MainActor
     func exportSession(_ session: HubSession) async -> String {
+        // With the transcript pane open, `select` fetched no list: the export reads its recent turns now.
+        if transcript.isEmpty, session.id == selectedID, let envelope = try? await HubSource.transcript(session, limit: Self.pageSize) {
+            transcript = TranscriptTimeline.build(envelope.turns)
+            transcriptTotals = envelope.totals?.summary
+        }
         var turns: [[String: Any]] = []
         for item in transcript.suffix(12) {
             switch item {
@@ -947,7 +968,10 @@ final class HubModel: ObservableObject {
     }
 
     func select(_ id: String) {
-        guard id != selectedID || transcript.isEmpty else { return }
+        // Again for the same session only after a failed load: the transcript list stays empty while the
+        // transcript pane is open, so it can no longer tell whether this session was set up.
+        guard id != selectedSetUp || transcriptError != nil else { return }
+        selectedSetUp = id
         selectedID = id
         transcript = []
         transcriptLimit = Self.pageSize
@@ -969,7 +993,13 @@ final class HubModel: ObservableObject {
             review = nil
         }
         restoreFolders(for: session.sessionId)
-        loadTranscript(older: false)
+        // The transcript pane loads its own window (HubSessionDetailHost), and its first page settles a
+        // scripted run. This older list only feeds the header's totals chip, which shows while that pane
+        // is closed: fetching it beside the pane's first page was a second `tools ai sessions tail` per
+        // click (0.5 to 3.5 s of CPU on a large session, `hub.transcript.fetch`).
+        if !panes.contains(.transcript) {
+            loadTranscript(older: false)
+        }
     }
 
     // MARK: Added folders (Files → Add folder)

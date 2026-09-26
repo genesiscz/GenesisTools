@@ -296,18 +296,12 @@ struct SessionTranscriptList: View {
         TranscriptVerbosity(rawValue: verbosityRaw) ?? .inputs
     }
 
+    // GenesisTools adaptation: a drawn `MenuButton` (Hub/HubMenuButton.swift), not a `Menu`. The toolbar is a
+    // ViewThatFits, which builds a new NSPopUpButton for every measurement of each of its three layouts.
     private var verbosityMenu: some View {
-        Menu {
-            ForEach(TranscriptVerbosity.allCases) { level in
-                Button {
-                    verbosityRaw = level.rawValue
-                } label: {
-                    if level == verbosity {
-                        Label(level.title, systemImage: "checkmark")
-                    } else {
-                        Text(level.title)
-                    }
-                }
+        MenuButton(style: .genHoverPlain(brighten: 0.12)) {
+            TranscriptVerbosity.allCases.map { level in
+                .action(level.title, checked: level == verbosity) { verbosityRaw = level.rawValue }
             }
         } label: {
             HStack(spacing: 5) {
@@ -324,8 +318,6 @@ struct SessionTranscriptList: View {
             .overlay(Capsule().strokeBorder(SessionPalette.cardBorder))
             .contentShape(Capsule())
         }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
         .fixedSize()
         .instantTooltip("Transcript detail: \(verbosity.detail)")
         .accessibilityIdentifier("session-transcript-verbosity")
