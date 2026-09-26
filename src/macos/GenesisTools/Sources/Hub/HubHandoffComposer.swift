@@ -6,6 +6,20 @@ import SwiftUI
 // it into a folder, or post it to the handoff store (`--post --owner`, the handoff_post store the
 // dev-dashboard and agents read). Every write goes through the CLI, so a terminal can do the same.
 
+/// A composer asked for from outside the sidebar (`tools hub --handoff`): "" means the selected
+/// session, anything else a session id prefix. The sidebar that shows that session opens it and clears it.
+@MainActor
+final class HubHandoffRequests: ObservableObject {
+    static let shared = HubHandoffRequests()
+    @Published var pending: String?
+
+    func claim(_ sessionId: String) -> Bool {
+        guard let pending, pending.isEmpty || sessionId.hasPrefix(pending) else { return false }
+        self.pending = nil
+        return true
+    }
+}
+
 struct HandoffComposerRequest: Identifiable {
     let id = UUID()
     let session: HubSession

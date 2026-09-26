@@ -9,6 +9,7 @@ import SwiftUI
 //                    [--worktree <path>|cleanup|cleanup-blocked] [--set <key>=true|false]
 //                    [--panel-find <scope>:<text>] [--panel-find-next <n>] (Hub/HubPanelFind.swift)
 //                    [--timeline-open <event id>] [--timeline-action <action id>] (Hub/HubTimeline.swift)
+//                    [--session-search [text]] [--digest] (Hub/HubDaily.swift) [--prompts] [--handoff]
 // (`tools hub` builds the app when needed and runs this; a second launch goes to the running hub.)
 // `--snapshot` and `--bench` run off screen on a scratch copy of the hub's settings (HubDefaults).
 //
@@ -45,6 +46,10 @@ struct HubRequest {
     /// the Today digest (`--digest`), Hub/HubDaily.swift.
     var sessionSearch: String?
     var digest = false
+    /// Opens the ⌘⇧P prompt picker (`--prompts`, Hub/HubPrompts.swift) and the handoff composer for
+    /// the `--session` session (`--handoff`, Hub/HubHandoffComposer.swift).
+    var prompts = false
+    var handoff = false
     /// Selects this worktree path in the Worktrees mode, or the cleanup panel (`--worktree cleanup`).
     var worktree: String?
     /// Inbox mode: opens the resume dialog (`--inbox-resume <id>`) or the session info popover
@@ -97,6 +102,8 @@ struct HubRequest {
                 sessionSearch = Self.optionalText(value) ?? ""
                 index += Self.optionalText(value) == nil ? 0 : 1
             case "--digest": digest = true
+            case "--prompts": prompts = true
+            case "--handoff": handoff = true
             case "--worktree": worktree = value; index += 1
             case "--inbox-resume": inboxResume = value; index += 1
             case "--inbox-info": inboxInfo = value; index += 1
@@ -944,6 +951,13 @@ final class HubModel: ObservableObject {
             MainActor.assumeIsolated {
                 if let text = request.sessionSearch { HubDailyModel.shared.searchQuery = text }
                 if request.digest { HubDailyModel.shared.digestOpen = true }
+            }
+        }
+        if request.prompts || request.handoff {
+            MainActor.assumeIsolated {
+                if request.prompts { PromptLibraryStore.shared.pickerOpen = true }
+                // "" asks for the selected session's composer; a prefix waits for that session.
+                if request.handoff { HubHandoffRequests.shared.pending = request.session ?? "" }
             }
         }
         // The inbox model is main-actor bound; overlays are applied on the main thread.

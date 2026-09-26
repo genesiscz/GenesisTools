@@ -125,6 +125,8 @@ program
     .option("--find [text]", "open find in files (⌘⇧F), optionally with this query")
     .option("--session-search [text]", "open the transcript search over every session (⌥⌘F), optionally with this text")
     .option("--digest", "open the Today digest (⌥⌘D): sessions, commits, files, PRs, decisions, usage forecast")
+    .option("--prompts", "open the prompt library picker (⌘⇧P)")
+    .option("--handoff", "open the handoff composer for --session (or the selected session)")
     .option("--no-activate", "open behind the window in front, without taking focus")
     .option("--no-build", "never build; fail when GenesisTools.app is missing or stale")
     .action(
@@ -138,6 +140,8 @@ program
             find?: string | true;
             sessionSearch?: string | true;
             digest?: boolean;
+            prompts?: boolean;
+            handoff?: boolean;
             activate: boolean;
             build: boolean;
         }) => {
@@ -166,6 +170,8 @@ program
                     find: opts.find === true ? "" : opts.find,
                     sessionSearch: opts.sessionSearch === true ? "" : opts.sessionSearch,
                     digest: opts.digest,
+                    prompts: opts.prompts,
+                    handoff: opts.handoff,
                     activate: opts.activate,
                     build: opts.build,
                     onStep: (message) => out.log.step(message),

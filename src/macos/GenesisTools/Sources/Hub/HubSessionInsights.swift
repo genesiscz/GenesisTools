@@ -421,6 +421,12 @@ struct SessionInsightsSection: View {
         .sheet(item: $composer) { request in
             HandoffComposerSheet(request: request) { composer = nil }
         }
+        // `tools hub --handoff`: the publisher replays its current value, so a request made before
+        // this sidebar appeared still opens the composer.
+        .onReceive(HubHandoffRequests.shared.$pending) { pending in
+            guard pending != nil, HubHandoffRequests.shared.claim(session.sessionId) else { return }
+            composer = HandoffComposerRequest(session: session, prompts: model.payload?.prompts ?? [], from: nil)
+        }
     }
 
     private func jump(_ turn: InsightTurn) {

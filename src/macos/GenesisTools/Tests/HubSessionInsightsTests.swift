@@ -186,4 +186,23 @@ final class HubSessionInsightsTests: XCTestCase {
         XCTAssertEqual(InsightFormat.compactDuration(ms: 259_200_000), "3d")
         XCTAssertEqual(InsightFormat.compactDuration(ms: nil), "—")
     }
+
+    func testPromptsAndHandoffFlagsParse() {
+        let request = HubRequest(["--session", "5be5e59c", "--prompts", "--handoff"])
+        XCTAssertTrue(request.prompts)
+        XCTAssertTrue(request.handoff)
+        XCTAssertFalse(HubRequest(["--digest"]).handoff)
+    }
+
+    @MainActor
+    func testAHandoffRequestIsClaimedOnceByTheMatchingSession() {
+        let requests = HubHandoffRequests.shared
+        requests.pending = "5be5e59c"
+        XCTAssertFalse(requests.claim("7399934a-6a92"))
+        XCTAssertTrue(requests.claim("5be5e59c-15d1"))
+        XCTAssertNil(requests.pending)
+        requests.pending = ""
+        XCTAssertTrue(requests.claim("any-selected-session"))
+        XCTAssertFalse(requests.claim("any-selected-session"))
+    }
 }
