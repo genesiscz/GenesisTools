@@ -338,7 +338,12 @@ enum HubBench {
         /// content's end (0: the latest turn in view); a reader at the latest turn should see it stay 0
         /// through the fill, and every flip after the first settle is a jump on screen.
         private func addTranscriptOpen() {
-            let sessions = Array(model.sessions.filter { $0.id != model.selectedID }.prefix(3))
+            // GENESIS_HUB_BENCH_OPEN=<id prefix>,… opens those sessions, so repeated runs compare the same work
+            // while the recent list reorders around live sessions.
+            let wanted = (ProcessInfo.processInfo.environment["GENESIS_HUB_BENCH_OPEN"] ?? "").split(separator: ",").map(String.init)
+            let sessions = wanted.isEmpty
+                ? Array(model.sessions.filter { $0.id != model.selectedID }.prefix(3))
+                : wanted.compactMap { prefix in model.sessions.first { $0.sessionId.hasPrefix(prefix) } }
             order.append("open")
             PerfLog.mark("hub.bench open: \(sessions.map { $0.sessionId.prefix(8) }.joined(separator: " "))")
             for (n, session) in sessions.enumerated() {
@@ -437,6 +442,9 @@ enum HubBench {
                         "p99": round1(pct(0.99)), "max": round1(sorted.last ?? 0),
                         "mean": round1(samples.reduce(0, +) / Double(samples.count)),
                     ],
+                    // The whole cost of a scenario that loads while it runs (`open`): per-step values are
+                    // mostly idle, and the sum is what a reader waits through.
+                    "sumMs": round1(samples.reduce(0, +)),
                     "framesOver16ms": samples.filter { $0 > 16.7 }.count,
                     "framesOver33ms": samples.filter { $0 > 33.3 }.count,
                     "wallMsMean": round1((wall[name] ?? []).reduce(0, +) / Double(max(1, wall[name]?.count ?? 0))),

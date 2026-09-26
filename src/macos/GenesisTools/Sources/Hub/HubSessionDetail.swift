@@ -21,6 +21,8 @@ struct HubSessionDetailHost: View {
     static let firstPage = ProcessInfo.processInfo.environment["GENESIS_HUB_FIRST_PAGE"].flatMap(Int.init) ?? 12
     /// The rest of the window arrives in chunks of this many turns while the reader is idle.
     static let fillChunk = 24
+    /// Posted when a window's first page has loaded or failed: a `--snapshot` or `--bench` run starts then.
+    static let firstPageDone = Notification.Name("hub.transcript.firstPageDone")
 
     @State private var nativeLog: SessionNativeLog?
     @State private var services = TranscriptServices.none
@@ -297,6 +299,7 @@ struct HubSessionDetailHost: View {
             await rebuild()
             HubMainBusy.measure("transcript.page.render")
             loadState = .loaded
+            NotificationCenter.default.post(name: Self.firstPageDone, object: session.id)
             if tail == nil, FileManager.default.fileExists(atPath: fetched.filePath) {
                 tail = HubTranscriptTail(path: fetched.filePath) {
                     Task { @MainActor in await followTail() }
@@ -335,6 +338,7 @@ struct HubSessionDetailHost: View {
             } else {
                 banner = error.localizedDescription
             }
+            NotificationCenter.default.post(name: Self.firstPageDone, object: session.id)
         }
     }
 

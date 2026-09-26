@@ -62,9 +62,34 @@ enum HubFormat {
         return relative.localizedString(for: date, relativeTo: Date())
     }
 
+    /// Parsed once per string. The Activity feed groups every event by day and hour on each body pass
+    /// and its rows print each event's time, and the two parsers per call (fractional seconds, then
+    /// plain) were 196 ms of main thread in a 35 s bench run over 70 events (2026-09-26 `sample`).
     static func date(_ iso: String?) -> Date? {
-        iso.flatMap { Self.iso.date(from: $0) ?? isoPlain.date(from: $0) }
+        guard let iso else { return nil }
+        let key = iso as NSString
+        if let hit = parsed.object(forKey: key) {
+            return hit.date
+        }
+
+        let date = Self.iso.date(from: iso) ?? isoPlain.date(from: iso)
+        parsed.setObject(ParsedDate(date), forKey: key)
+        return date
     }
+
+    private final class ParsedDate {
+        let date: Date?
+
+        init(_ date: Date?) {
+            self.date = date
+        }
+    }
+
+    private static let parsed: NSCache<NSString, ParsedDate> = {
+        let cache = NSCache<NSString, ParsedDate>()
+        cache.countLimit = 20_000
+        return cache
+    }()
 }
 
 // The session's Decisions pane draws `InboxItem` (Hub/HubInbox.swift) through the same card as the

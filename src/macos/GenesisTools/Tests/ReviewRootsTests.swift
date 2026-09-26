@@ -190,8 +190,8 @@ final class ReviewRootsTests: XCTestCase {
     }
 }
 
-/// A renderer that draws nothing, for models built in tests.
-private final class NullRenderer: DiffRenderer {
+/// A renderer that draws nothing, for models built in tests (here and in HubMenuButtonTests).
+final class NullRenderer: DiffRenderer {
     let view = NSView()
     var onEvent: ((DiffRendererEvent) -> Void)?
     func show(_ files: [DiffFile], fresh: Bool) {}
