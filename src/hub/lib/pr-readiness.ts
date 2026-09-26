@@ -48,6 +48,8 @@ export interface ReadinessFacts {
     mergeable: "mergeable" | "conflicting" | "unknown" | null;
     /** The provider has no per-review head (GitLab): the "older than the push" check is skipped. */
     reviewsKnown: boolean;
+    /** The thread pages stopped at the cap with more left: unresolved threads may be missing. */
+    threadsTruncated?: boolean;
 }
 
 export interface PrReadiness {
@@ -170,6 +172,11 @@ export function judgeReadiness(facts: ReadinessFacts, now: Date): Omit<PrReadine
 
     if (facts.reviewDecision === "REVIEW_REQUIRED") {
         waiting.push("a required review is missing");
+    }
+
+    if (facts.threadsTruncated) {
+        // Never "ready" from a partial list: an unresolved thread may sit on a page that was not read.
+        waiting.push(`only the first ${facts.threads.length} review threads were read; check the rest on the forge`);
     }
 
     const verdict: ReadinessVerdict =
@@ -442,6 +449,11 @@ async function fetchFacts(ref: string, deps: ReadinessDeps): Promise<ReadinessFa
 
     if (!facts) {
         throw new Error(`${ref}: the PR was not found`);
+    }
+
+    if (page?.hasNextPage) {
+        log.warn({ ref, threads: facts.threads.length }, "pr readiness: thread pages stopped at the cap");
+        return { ...facts, threadsTruncated: true };
     }
 
     return facts;

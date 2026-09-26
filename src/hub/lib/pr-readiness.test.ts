@@ -46,6 +46,13 @@ describe("judgeReadiness", () => {
         expect(result.summary).toBe("ready to merge: CI green, no open threads, the head is reviewed");
     });
 
+    test("a thread list cut at the page cap is never ready: the rest may hold an unresolved thread", () => {
+        const result = judgeReadiness(facts({ threadsTruncated: true }), NOW);
+
+        expect(result.verdict).toBe("waiting");
+        expect(result.reasons.join(" ")).toContain("review threads were read");
+    });
+
     test("every reviewer's unresolved threads count, outdated and resolved ones do not", () => {
         const result = judgeReadiness(
             facts({
