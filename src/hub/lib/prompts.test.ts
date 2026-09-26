@@ -217,6 +217,26 @@ describe("sendPrompt", () => {
         expect(result.typed).not.toContain("\n");
     });
 
+    test("a taken file name is never overwritten: the prompt goes to the next free name and the pointer names it", async () => {
+        const path = scratch();
+        await addPrompt({ name: "plan", text: "Plan:\n1. read", path });
+        const taken = new Set(["/tmp/hub-prompts-sent/2026-09-26T18-30-00-000Z-plan.md"]);
+        const deps = fakeDeps();
+        const write = deps.write;
+        deps.write = async (file, text) => {
+            if (taken.has(file)) {
+                throw Object.assign(new Error("exists"), { code: "EEXIST" });
+            }
+
+            await write(file, text);
+        };
+        const result = await sendPrompt({ name: "plan", session: SESSION, path, deps });
+
+        expect(result.file).toBe("/tmp/hub-prompts-sent/2026-09-26T18-30-00-000Z-plan-2.md");
+        expect(result.typed).toContain("-plan-2.md");
+        expect(deps.sent).toEqual([`${SESSION} ${result.typed}`]);
+    });
+
     test("a failed send throws send-failed and does not count a use; a dry run sends nothing", async () => {
         const path = scratch();
         const failing = fakeDeps({ send: async () => "no cmux pane runs this session" });
