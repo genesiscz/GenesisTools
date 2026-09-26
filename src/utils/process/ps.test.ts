@@ -7,6 +7,7 @@ import {
     parseOpenFileCounts,
     parsePsLine,
     parsePsList,
+    parsePsTable,
     processBasename,
 } from "@genesiscz/utils/process/ps";
 
@@ -50,6 +51,22 @@ describe("parsePsLine", () => {
     test("returns null for a line that is not a ps row", () => {
         expect(parsePsLine("  PID  PPID USER")).toBeNull();
         expect(parsePsLine("")).toBeNull();
+    });
+});
+
+describe("parsePsTable", () => {
+    test("reads every row of a whole-table dump and skips the lines that are not rows", () => {
+        const stdout = [
+            "    1     0 root     Ss     0.9  28624 Mon Sep 14 08:00:01 2026 /sbin/launchd",
+            PS_INFO_LINE,
+            "garbage",
+            "",
+        ].join("\n");
+        const rows = parsePsTable(stdout);
+
+        expect(rows.map((row) => row.pid)).toEqual([1, 17512]);
+        expect(rows[1]?.ppid).toBe(40508);
+        expect(rows[0]?.command).toBe("/sbin/launchd");
     });
 });
 

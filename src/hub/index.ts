@@ -15,6 +15,9 @@ import { registerDigestCommand } from "./commands/digest";
 import { registerForecastCommand } from "./commands/forecast";
 import { registerInsightsCommands } from "./commands/insights";
 import { registerNotifyCommands } from "./commands/notify";
+import { registerProcsCommand } from "./commands/procs";
+import { registerPromptsCommand } from "./commands/prompts";
+import { registerReadinessCommand } from "./commands/readiness";
 import { registerRulesCommand } from "./commands/rules";
 import { registerSearchCommand } from "./commands/search";
 import { fixThreads, realFixThreadsDeps } from "./lib/fix-threads";
@@ -1064,6 +1067,7 @@ pr.command("publish")
 
 registerWorktreesCommand(program);
 registerCheckLogCommand(pr);
+registerReadinessCommand(pr);
 registerNotifyCommands(program);
 registerConfigCommands(program);
 registerSearchCommand(program);
@@ -1071,5 +1075,7 @@ registerDigestCommand(program);
 registerForecastCommand(program);
 registerRulesCommand(program);
 registerInsightsCommands(program);
+registerProcsCommand(program);
+registerPromptsCommand(program);
 
 await runTool(program, { tool: "hub" });
