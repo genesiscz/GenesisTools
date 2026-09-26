@@ -15,6 +15,7 @@ import { resolveTemplateDir } from "./templates";
 
 let dir: string;
 let outside: string;
+let cache: string;
 let server: ViteDevServer;
 let base: string;
 
@@ -27,6 +28,9 @@ async function get(path: string): Promise<{ status: number; body: string }> {
 beforeAll(async () => {
     dir = realpathSync(mkdtempSync(join(tmpdir(), "artifact-serve-")));
     outside = realpathSync(mkdtempSync(join(tmpdir(), "artifact-serve-outside-")));
+    // `dir` is new on every run, so the default cache (keyed on it, in the repo's
+    // node_modules) would leave one more folder there per run.
+    cache = realpathSync(mkdtempSync(join(tmpdir(), "artifact-serve-cache-")));
 
     writeFileSync(join(dir, "widget.tsx"), "export default () => null;\n");
     // Imports the two repo-backed aliases, so the transform only succeeds if the
@@ -54,6 +58,7 @@ beforeAll(async () => {
         port: 0,
         host: "127.0.0.1",
         templateDir: resolveTemplateDir(undefined),
+        cacheDir: cache,
         plugins: [
             {
                 name: "test:api-extension",
@@ -72,6 +77,7 @@ afterAll(async () => {
     await server?.close();
     rmSync(dir, { recursive: true, force: true });
     rmSync(outside, { recursive: true, force: true });
+    rmSync(cache, { recursive: true, force: true });
 });
 
 describe("serveArtifacts middleware", () => {
@@ -79,6 +85,10 @@ describe("serveArtifacts middleware", () => {
         const result = await get("/api/custom");
         expect(result.status).toBe(200);
         expect(result.body).toBe("custom response");
+    });
+
+    test("keeps its Vite cache in the folder it was given, not in the repo's node_modules", () => {
+        expect(server.config.cacheDir).toBe(cache);
     });
 
     test("the root serves the catalog with clean hrefs for every artifact kind", async () => {

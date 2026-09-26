@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, spyOn, test } from "bun:test";
 import {
     mkdirSync,
     mkdtempSync,
@@ -10,8 +10,9 @@ import {
     writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { logger } from "@genesiscz/utils/logger";
 import { setupStorageSandbox } from "@genesiscz/utils/storage/test-sandbox";
 import {
     buildSingleFile,
@@ -42,7 +43,7 @@ import { addEntry, loadRegistry, removeEntry, resolveTarget } from "./registry";
 import { findRunning, holdServer, isSignalable, listRunning, recordRunning, removeRunning } from "./running";
 import { runningPath } from "./storage";
 import { listShippedTemplates, renderTemplate, resolveTemplateDir } from "./templates";
-import { fsAllowRoots } from "./vite";
+import { cacheDirFor, fsAllowRoots } from "./vite";
 
 setupStorageSandbox();
 
@@ -172,6 +173,82 @@ describe("running tracker", () => {
         }
 
         await removeRunning(process.pid);
+    });
+
+    /**
+     * Vite 8.2.2's close() could hang for good (vitejs/vite#22934), and a Ctrl+C then left
+     * the process running with its record on disk. The signal path waits for close only
+     * until a deadline, then warns, drops the record and exits anyway.
+     */
+    async function signalHeldServer(input: { name: string; close: () => Promise<void>; closeDeadlineMs: number }) {
+        const exits: number[] = [];
+        const exitSpy = spyOn(process, "exit").mockImplementation(((code?: number) => {
+            exits.push(code ?? 0);
+        }) as typeof process.exit);
+        const warnSpy = spyOn(logger, "warn");
+        const known = { SIGINT: new Set(process.listeners("SIGINT")), SIGTERM: new Set(process.listeners("SIGTERM")) };
+        // Two of these fit inside bun's 5 s test timeout, so a missing exit fails on the
+        // assertions below instead of on the timeout.
+        const waitFor = async (done: () => boolean): Promise<void> => {
+            const deadline = Date.now() + 2_000;
+            while (!done() && Date.now() < deadline) {
+                await Bun.sleep(20);
+            }
+        };
+
+        try {
+            void holdServer({ port: 3994, dir, ...input });
+            await waitFor(() => listRunning().some((s) => s.name === input.name));
+
+            const started = Date.now();
+            process.listeners("SIGTERM").find((listener) => !known.SIGTERM.has(listener))?.("SIGTERM");
+            await waitFor(() => exits.length > 0);
+
+            return {
+                exits,
+                elapsedMs: Date.now() - started,
+                warnings: warnSpy.mock.calls.map((call) => String(call.at(-1))),
+                stillRecorded: listRunning().some((s) => s.name === input.name),
+            };
+        } finally {
+            for (const signal of ["SIGINT", "SIGTERM"] as const) {
+                for (const listener of process.listeners(signal)) {
+                    if (!known[signal].has(listener)) {
+                        process.off(signal, listener);
+                    }
+                }
+            }
+
+            exitSpy.mockRestore();
+            warnSpy.mockRestore();
+            await removeRunning(process.pid);
+        }
+    }
+
+    test("a close that never resolves still warns, drops the record and exits after the deadline", async () => {
+        const result = await signalHeldServer({
+            name: "stuck",
+            close: () => new Promise<void>(() => {}),
+            closeDeadlineMs: 100,
+        });
+
+        expect(result.exits).toEqual([0]);
+        expect(result.elapsedMs).toBeGreaterThanOrEqual(100);
+        expect(result.warnings.some((message) => message.includes("did not close"))).toBe(true);
+        expect(result.stillRecorded).toBe(false);
+    });
+
+    test("NEGATIVE CONTROL: a close that resolves exits at once, with no warning", async () => {
+        const result = await signalHeldServer({
+            name: "prompt",
+            close: () => Promise.resolve(),
+            closeDeadlineMs: 1_500,
+        });
+
+        expect(result.exits).toEqual([0]);
+        expect(result.elapsedMs).toBeLessThan(1_500);
+        expect(result.warnings.some((message) => message.includes("did not close"))).toBe(false);
+        expect(result.stillRecorded).toBe(false);
     });
 
     /**
@@ -519,6 +596,20 @@ describe("dev-server filesystem exposure", () => {
         expect(librarySource).toContain("fs: { allow: fsAllowRoots(");
         expect(serveSource).not.toContain("REPO_ROOT");
         expect(librarySource).not.toContain("REPO_ROOT");
+    });
+});
+
+describe("vite cache location", () => {
+    // Tests serve a new temp folder on every run; without a root of their own, each run
+    // left one more folder in the repo's node_modules/.vite-cache.
+    test("the cache folder goes under a given root, keyed the same way as the default", () => {
+        const repo = resolve(import.meta.dir, "../../..");
+        const inRepo = cacheDirFor("/tmp/served");
+        const inRoot = cacheDirFor("/tmp/served", "/tmp/cache-root");
+
+        expect(dirname(inRepo)).toBe(join(repo, "node_modules", ".vite-cache"));
+        expect(dirname(inRoot)).toBe("/tmp/cache-root");
+        expect(basename(inRoot)).toBe(basename(inRepo));
     });
 });
 

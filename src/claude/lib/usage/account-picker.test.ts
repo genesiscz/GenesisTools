@@ -396,6 +396,25 @@ describe("grouped urgency", () => {
         expect(scored.group).not.toBe("expired");
     });
 
+    test("a 429 whose refresh failed is not expired, even when the text names invalid_grant", () => {
+        const reason =
+            "RetryableApiError: Usage API 429: rate limited (token refresh failed: Token expired (invalid_grant). Run: tools claude login side)";
+        const [scored] = scoreAccounts(
+            [
+                {
+                    accountName: "side",
+                    usage: usage({ seven_day: { utilization: 10, resets_at: hoursFromNow(50) } }),
+                    error: reason,
+                    stale: { lastSuccessAt: NOW.getTime() - 60_000, reason },
+                },
+            ],
+            { now: NOW }
+        );
+
+        expect(scored.group).not.toBe("expired");
+        expect(scored.limits).toBeDefined();
+    });
+
     test("scoreAccounts itself still returns tier order", () => {
         const ranked = scoreAccounts(
             [

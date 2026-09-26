@@ -232,7 +232,7 @@ struct PRChecksSection: View {
     private func logBody(_ render: CheckLogRender) -> some View {
         let log = render.log
         if let error = log.error {
-            Text(verbatim: error).font(.system(size: 11.5)).foregroundColor(ReviewPalette.dim)
+            Text(verbatim: error).font(.system(size: 11.5)).foregroundColor(ReviewPalette.dim).textSelection(.enabled)
         }
         if !log.errors.isEmpty {
             VStack(alignment: .leading, spacing: 2) {
@@ -249,6 +249,7 @@ struct PRChecksSection: View {
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 6) {
                     Text(verbatim: section.name).font(.system(size: 11.5, weight: .semibold)).lineLimit(1).truncationMode(.middle)
+                        .instantTooltip(section.name)
                     Text(verbatim: section.totalLines > section.lines.count ? "last \(section.lines.count) of \(section.totalLines) lines" : "\(section.lines.count) lines")
                         .font(.system(size: 10.5, design: .monospaced))
                         .foregroundColor(ReviewPalette.dim)

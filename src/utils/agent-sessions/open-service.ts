@@ -1,5 +1,6 @@
 import type { Database } from "bun:sqlite";
 import { HistoryDatabase, openHistoryReadOnly } from "./database";
+import { fileListingFreshness } from "./listing-freshness";
 import { initializeCompactHistorySchema } from "./migrations";
 import { type HistoryProvider, resolveHistoryProvider } from "./provider";
 import { HistoryService } from "./service";
@@ -14,6 +15,7 @@ function buildHistoryService(provider: HistoryProvider, db: Database, roots?: st
         repository: new HistorySyncRepository(db),
         statistics: new HistoryStatisticsRepository(db),
         roots: roots ?? provider.reader.roots(),
+        freshness: fileListingFreshness(),
     });
 }
 

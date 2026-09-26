@@ -99,8 +99,18 @@ struct SessionTranscriptList: View {
     // GenesisTools adaptation: whether the reader is at the latest row (the last section's end marker is
     // on screen); a live transcript follows new rows only then, never pulling a reader who scrolled up.
     @State private var atLatest = true
+    // GenesisTools adaptation: holds the rows on screen still while earlier turns are prepended
+    // (Hub/HubTranscriptAnchor.swift).
+    @StateObject private var anchor = TranscriptScrollAnchor()
     @StateObject private var expansion = TranscriptExpansion()
     @FocusState private var searchFocused: Bool
+    // GenesisTools adaptation: the sidebar's tool analytics filter this list to one tool, and its
+    // cost timeline asks for a turn (Hub/HubSessionInsights.swift, `HubTranscriptBus`). A reveal for
+    // a row the document does not hold yet waits here until the host's window load brings it.
+    @ObservedObject private var hubFilters = HubTranscriptFilters.shared
+    @State private var pendingReveal: String?
+
+    private var toolFilter: String? { hubFilters.tool(for: services.sessionId) }
 
     private struct ScrollRequest: Equatable {
         let id: String
@@ -133,8 +143,22 @@ struct SessionTranscriptList: View {
             }
             recompute(.preserve)
         }
-        .onChange(of: document) { recompute(.preserve) }
+        .onChange(of: document) {
+            recompute(.preserve)
+            // GenesisTools adaptation: a reveal that waited for this document.
+            if let pending = pendingReveal, HubTranscriptBus.contains(pending, in: document.sections) {
+                pendingReveal = nil
+                reveal(pending)
+            }
+        }
         .onChange(of: chips) { recompute(.firstHit) }
+        // GenesisTools adaptation: see `hubFilters`.
+        .onChange(of: toolFilter) { recompute(.firstHit) }
+        .onReceive(NotificationCenter.default.publisher(for: HubTranscriptBus.list)) { note in
+            if case .reveal(let rowId)? = HubTranscriptBus.message(note, for: HubTranscriptBus.list, sessionId: services.sessionId) {
+                reveal(rowId)
+            }
+        }
         .onChange(of: verbosityRaw) {
             // A new level resets what the reader opened or closed by hand.
             expansion.setAll(nil)
@@ -277,6 +301,14 @@ struct SessionTranscriptList: View {
                 .instantTooltip(chipTooltip(chip))
                 .accessibilityIdentifier("session-transcript-chip-\(chip.rawValue)")
             }
+            // GenesisTools adaptation: the sidebar's tool filter, cleared from here.
+            if let toolFilter {
+                FilterChip(title: "\(TranscriptDocument.displayName(toolFilter)) ✕", isOn: true, tint: SessionPalette.orange) {
+                    hubFilters.setTool(nil, for: services.sessionId)
+                }
+                .instantTooltip("Only \(toolFilter) calls in the loaded turns (set in the sidebar's Tools). Click to show every row")
+                .accessibilityIdentifier("session-transcript-chip-tool")
+            }
         }
         .fixedSize()
     }
@@ -293,18 +325,12 @@ struct SessionTranscriptList: View {
         TranscriptVerbosity(rawValue: verbosityRaw) ?? .inputs
     }
 
+    // GenesisTools adaptation: a drawn `MenuButton` (Hub/HubMenuButton.swift), not a `Menu`. The toolbar is a
+    // ViewThatFits, which builds a new NSPopUpButton for every measurement of each of its three layouts.
     private var verbosityMenu: some View {
-        Menu {
-            ForEach(TranscriptVerbosity.allCases) { level in
-                Button {
-                    verbosityRaw = level.rawValue
-                } label: {
-                    if level == verbosity {
-                        Label(level.title, systemImage: "checkmark")
-                    } else {
-                        Text(level.title)
-                    }
-                }
+        MenuButton(style: .genHoverPlain(brighten: 0.12)) {
+            TranscriptVerbosity.allCases.map { level in
+                .action(level.title, checked: level == verbosity) { verbosityRaw = level.rawValue }
             }
         } label: {
             HStack(spacing: 5) {
@@ -321,8 +347,6 @@ struct SessionTranscriptList: View {
             .overlay(Capsule().strokeBorder(SessionPalette.cardBorder))
             .contentShape(Capsule())
         }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
         .fixedSize()
         .instantTooltip("Transcript detail: \(verbosity.detail)")
         .accessibilityIdentifier("session-transcript-verbosity")
@@ -433,7 +457,16 @@ struct SessionTranscriptList: View {
                     Text("Nothing matches this filter.")
                 }
             } else {
-                list
+                // The List is the overlay of a flexible spacer, not a child of the stack, so its own
+                // layout never reaches the views around it. Every row it realised, loaded or measured
+                // while scrolling changed the List's layout, and as a direct child that re-laid out
+                // the whole window each frame: the toolbar's ViewThatFits measured its three layouts
+                // again, the header and the sidebar with it. Measured 2026-09-25 on a live session:
+                // p95 175 ms of main thread per scrolled frame as a child, 17.7 ms as an overlay
+                // (`SessionTranscriptScrollTests`). A separate NSHostingView was 200 ms and worse.
+                Color.clear
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .overlay { list }
             }
         }
     }
@@ -497,6 +530,8 @@ struct SessionTranscriptList: View {
             }
             .listStyle(.plain)
             .scrollContentBackground(.hidden)
+            // GenesisTools adaptation: where the list is, for `anchor`.
+            .background(TranscriptScrollAnchorProbe(anchor: anchor))
             .environment(\.defaultMinListRowHeight, 1)            .accessibilityIdentifier("session-transcript-list")
             .onChange(of: scrollTarget) { _, request in
                 guard let request else { return }
@@ -504,7 +539,7 @@ struct SessionTranscriptList: View {
             }
             // GenesisTools adaptation: a live session appended rows while the reader was at the latest one.
             .onChange(of: visible.last?.rows.last?.id) { _, newLast in
-                guard didInitialScroll, atLatest, appliedQuery.isEmpty, chips.isEmpty, let newLast else { return }
+                guard didInitialScroll, atLatest, appliedQuery.isEmpty, chips.isEmpty, toolFilter == nil, let newLast else { return }
                 Self.scroll(proxy, to: newLast, anchor: .bottom)
             }
             .onAppear {
@@ -594,7 +629,7 @@ struct SessionTranscriptList: View {
 
     private enum ScrollIntent {
         /// New data: keep the reader where they are. Earlier turns prepended above the first
-        /// row would otherwise push the view; scroll back to that row.
+        /// row would otherwise push the view; hold it (GenesisTools adaptation: `anchor`).
         case preserve
         /// A new filter or query: start at the first hit.
         case firstHit
@@ -618,7 +653,8 @@ struct SessionTranscriptList: View {
 
     private func recompute(_ intent: ScrollIntent) {
         let previousFirst = visible.first?.rows.first?.id
-        let filtered = document.filtered(chips, query: appliedQuery)
+        // GenesisTools adaptation: the sidebar's tool filter narrows the chips' result (`hubFilters`).
+        let filtered = HubTranscriptBus.onlyTool(toolFilter, in: document.filtered(chips, query: appliedQuery))
         let sections = verbosity == .minimal ? TranscriptDocument.folded(filtered) : filtered
         visible = sections
         let ids = sections.flatMap { $0.rows.filter(\.isPrompt).map(\.id) }
@@ -630,7 +666,7 @@ struct SessionTranscriptList: View {
         switch intent {
         case .firstHit:
             promptCursor = nil
-            if appliedQuery.isEmpty, chips.isEmpty, let last = sections.last?.rows.last?.id {
+            if appliedQuery.isEmpty, chips.isEmpty, toolFilter == nil, let last = sections.last?.rows.last?.id {
                 request(last, anchor: .bottom)
             } else if !sections.isEmpty {
                 request("top", anchor: .top)
@@ -639,7 +675,11 @@ struct SessionTranscriptList: View {
             guard didInitialScroll, let previousFirst, sections.first?.rows.first?.id != previousFirst,
                   sections.contains(where: { $0.rows.contains { $0.id == previousFirst } })
             else { return }
-            request(previousFirst, anchor: .top)
+            // GenesisTools adaptation: the scroll back to the previous first row came a pass after the
+            // insert and put that row at the top, not where the reader was; a transcript opened at its
+            // latest turn ended thousands of points above it after the fill. The anchor holds the
+            // viewport inside the insert's own layout pass instead.
+            anchor.holdForPrepend()
         }
     }
 
@@ -663,7 +703,38 @@ struct SessionTranscriptList: View {
         return endMarker(sections[index - 1].id)
     }
 
+    // GenesisTools adaptation: shows one row the sidebar asked for (a prompt, a tool call). A filter that
+    // hides it is cleared first; the scroll goes out on the next pass, after the filters' own scroll to
+    // the first hit, so it is the one that lands.
+    private func reveal(_ rowId: String) {
+        if rowId == "top" {
+            request("top", anchor: .top)
+            return
+        }
+
+        guard HubTranscriptBus.contains(rowId, in: document.sections) else {
+            pendingReveal = rowId
+            return
+        }
+
+        if !HubTranscriptBus.contains(rowId, in: visible) {
+            chips = []
+            query = ""
+            appliedQuery = ""
+            hubFilters.setTool(nil, for: services.sessionId)
+            recompute(.preserve)
+        }
+        guard let shown = HubTranscriptBus.visibleRow(rowId, in: visible) else { return }
+        if rowId.hasPrefix("t-") {
+            expansion.expand([rowId, shown])
+        }
+        let target = rowId.hasPrefix("p-") ? Self.jumpTarget(promptId: rowId, in: visible) : shown
+        DispatchQueue.main.async { request(target, anchor: .top) }
+    }
+
     private func request(_ id: String, anchor: UnitPoint) {
+        // GenesisTools adaptation: a jump the list asks for is not undone by a prepend's hold.
+        self.anchor.releaseHold()
         scrollTarget = ScrollRequest(id: id, anchor: anchor, serial: (scrollTarget?.serial ?? 0) + 1)
     }
 }
@@ -674,38 +745,48 @@ struct TranscriptSectionHeader: View {
     let section: TranscriptSection
 
     var body: some View {
+        // GenesisTools adaptation: the short labels are drawn whole and the usage text is the one
+        // that truncates (behind the hairline, which gives way first). In a 650 pt transcript pane
+        // the fixed-size usage once squeezed the rest to "Pr… #3… 00… 5m…" (snapshot 2026-09-25).
         HStack(spacing: 10) {
             Text(verbatim: section.number > 0 ? "Prompt" : "Earlier")
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(SessionPalette.secondary)
+                .fixedSize()
             if section.number > 0 {
                 Text(verbatim: "#\(section.number)")
                     .font(SessionPalette.mono(10.5))
                     .foregroundStyle(SessionPalette.faint)
+                    .fixedSize()
                     .instantTooltip("Turn \(section.number) of the session file")
             }
             if let startedAt = section.startedAt {
                 Text(verbatim: SessionFormat.moment(startedAt))
                     .font(SessionPalette.mono(11))
                     .foregroundStyle(SessionPalette.dim)
+                    .fixedSize()
             }
             if let duration = section.duration {
                 Text(verbatim: SessionFormat.duration(duration))
                     .font(SessionPalette.mono(11))
                     .foregroundStyle(SessionPalette.faint)
+                    .fixedSize()
             }
-            Rectangle().fill(SessionPalette.hairline).frame(height: 1)
+            Rectangle().fill(SessionPalette.hairline).frame(height: 1).layoutPriority(-2)
             if let usage = section.usage, !usage.compact.isEmpty {
                 Text(verbatim: usage.compact)
                     .font(SessionPalette.mono(10.5))
                     .foregroundStyle(SessionPalette.dim)
-                    .fixedSize()
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .layoutPriority(-1)
                     .instantTooltip(usage.detailed)
             }
             if section.toolCount > 0 {
                 Text(verbatim: "\(section.toolCount) tool\(section.toolCount == 1 ? "" : "s")")
                     .font(SessionPalette.mono(10.5))
                     .foregroundStyle(SessionPalette.dim)
+                    .fixedSize()
             }
             if section.errorCount > 0 {
                 HStack(spacing: 4) {
@@ -716,7 +797,8 @@ struct TranscriptSectionHeader: View {
                 .foregroundStyle(SessionPalette.red)
             }
         }
-        .padding(.horizontal, 20)
+        // GenesisTools adaptation: tighter insets, so more of a session fits (2026-09-25).
+        .padding(.horizontal, 12)
         .frame(height: 28)
         .frame(maxWidth: .infinity)
         // Opaque, and past its own frame: AppKit gives a section header row 36 pt with 4 pt of
@@ -827,7 +909,7 @@ private struct PromptCard: View {
         let isLong = lines.count > Self.collapsedLines || text.utf8.count > 1600
         let shown = isLong && !expanded ? collapsed(lines) : text
 
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 8) {
                 Avatar(glyph: "Y", color: SessionPalette.orange, solid: true)
                 Text("You")
@@ -863,14 +945,15 @@ private struct PromptCard: View {
                     }
                 }
             }
-            .padding(.leading, 30)
+            .padding(.leading, 12)
         }
-        .padding(12)
+        // GenesisTools adaptation: tighter insets, so more of a session fits (2026-09-25).
+        .padding(10)
         .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(SessionPalette.card))
         .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(SessionPalette.cardBorder))
-        .padding(.horizontal, 16)
-        .padding(.top, 10)
-        .padding(.bottom, 6)
+        .padding(.horizontal, 12)
+        .padding(.top, 6)
+        .padding(.bottom, 2)
     }
 
     private func collapsed(_ lines: [Substring]) -> String {
@@ -889,7 +972,7 @@ private struct ReplyBlock: View {
     let showsAuthor: Bool
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 4) {
             if showsAuthor {
                 authorRow
             } else if let usage {
@@ -902,12 +985,13 @@ private struct ReplyBlock: View {
                         .lineLimit(1)
                 }
             }
+            // GenesisTools adaptation: tighter insets, so more of a session fits (2026-09-25).
             TranscriptMarkdown(text: text)
-                .padding(.leading, 30)
+                .padding(.leading, 12)
         }
-        .padding(.horizontal, 20)
-        .padding(.top, showsAuthor ? 10 : 6)
-        .padding(.bottom, 6)
+        .padding(.horizontal, 12)
+        .padding(.top, showsAuthor ? 6 : 2)
+        .padding(.bottom, 2)
     }
 
     private var authorRow: some View {
@@ -982,7 +1066,7 @@ private struct ThinkingLine: View {
                     Chevron(expanded: expanded)
                 }
                 .padding(.horizontal, 8)
-                .frame(height: 26)
+                .frame(height: 24)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.genHoverRow(accent: .white, cornerRadius: 7))
@@ -1003,9 +1087,10 @@ private struct ThinkingLine: View {
                     .padding(.bottom, 6)
             }
         }
-        .padding(.leading, 42)
-        .padding(.trailing, 16)
-        .padding(.vertical, 1)
+        // GenesisTools adaptation: tighter insets, so more of a session fits (2026-09-25).
+        .padding(.leading, 24)
+        .padding(.trailing, 12)
+        .padding(.vertical, 0)
     }
 }
 
@@ -1030,7 +1115,8 @@ private struct TranscriptThumbnail: View {
     var body: some View {
         if let path = image.path {
             Button {
-                NSWorkspace.shared.open(URL(fileURLWithPath: path))
+                // GenesisTools adaptation: one opener for every path; a missing image says so (Hub/HubPathActions.swift).
+                PathOpener.open(path)
             } label: {
                 ZStack {
                     RoundedRectangle(cornerRadius: 8, style: .continuous).fill(SessionPalette.fill)
@@ -1132,12 +1218,13 @@ private struct ToolGroupRow: View {
                         .frame(width: 12)
                 }
                 .padding(.horizontal, 8)
-                .frame(height: 26)
+                .frame(height: 24)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.genHoverRow(accent: .white, cornerRadius: 7))
-            .padding(.leading, 42)
-            .padding(.trailing, 16)
+            // GenesisTools adaptation: tighter insets, so more of a session fits (2026-09-25).
+            .padding(.leading, 24)
+            .padding(.trailing, 12)
             .accessibilityIdentifier("transcript-tool-group")
 
             if open {
@@ -1158,6 +1245,6 @@ private struct ToolGroupRow: View {
                 }
             }
         }
-        .padding(.vertical, 1)
+        .padding(.vertical, 0)
     }
 }

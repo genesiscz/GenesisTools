@@ -1,8 +1,12 @@
 import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
 import { createHash } from "node:crypto";
+import { appendFileSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { basename, join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { claudeHistoryReader } from "./compact-readers";
 import { initializeCompactHistorySchema } from "./migrations";
 import { createClaudeHistoryOperations } from "./readers/claude";
 import { discoverClaudeHistorySources } from "./readers/claude-discovery";
@@ -12,7 +16,7 @@ import { type BaselineOracle, createBaselineOracle } from "./testing/baseline-or
 import { generateHistoryCorpus } from "./testing/corpus";
 import { createFixtureWorld } from "./testing/fixture-world";
 import { withBaseline } from "./testing/with-baseline";
-import type { NativeSessionReader, NativeSessionSource } from "./types";
+import type { AgentSearchFilters, NativeSessionReader, NativeSessionSource } from "./types";
 
 function sourceHashes(paths: string[]): Promise<string[]> {
     return Promise.all(
@@ -222,4 +226,117 @@ test("an untitled row falls back to a name a human can read, never to a whole pa
     expect(fallbackTitle({ summary: "refund rounding", nativeId: "x/y" })).toBe("refund rounding");
     expect(fallbackTitle({ firstPrompt: "fix the refund", nativeId: "x/y" })).toBe("fix the refund");
     expect(fallbackTitle({})).toBe("");
+});
+
+function claudeRow(options: { id: string; text: string; timestamp: string }): string {
+    return `${SafeJSON.stringify({
+        type: "user",
+        sessionId: options.id,
+        cwd: "/projects/fixture",
+        timestamp: options.timestamp,
+        message: { content: options.text },
+    })}\n`;
+}
+
+function scanRecorder(options: { lineLocalRecords: boolean }): {
+    reader: NativeSessionReader<string>;
+    scanned: string[];
+} {
+    const scanned: string[] = [];
+    const scan = claudeHistoryReader.scan!;
+    return {
+        scanned,
+        reader: {
+            ...claudeHistoryReader,
+            lineLocalRecords: options.lineLocalRecords,
+            scan(source, readOptions) {
+                scanned.push(source.filePath);
+                return scan(
+                    {
+                        ...source,
+                        kind: "claude",
+                        metadata: source.metadata ? { ...source.metadata, kind: "claude" } : undefined,
+                    },
+                    readOptions
+                );
+            },
+        },
+    };
+}
+
+test("a Claude content search never scans a transcript where no line holds every query word", async () => {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), "history-same-line-")));
+    const project = join(root, "-projects-fixture");
+    const apartId = "11111111-2222-4333-8444-000000000001";
+    const togetherId = "11111111-2222-4333-8444-000000000002";
+    mkdirSync(project, { recursive: true });
+    writeFileSync(
+        join(project, `${apartId}.jsonl`),
+        claudeRow({ id: apartId, text: "alpha only", timestamp: "2026-09-01T00:00:00Z" }) +
+            claudeRow({ id: apartId, text: "bravo only", timestamp: "2026-09-01T00:01:00Z" })
+    );
+    writeFileSync(
+        join(project, `${togetherId}.jsonl`),
+        claudeRow({ id: togetherId, text: "alpha and bravo", timestamp: "2026-09-02T00:00:00Z" })
+    );
+
+    try {
+        for (const lineLocalRecords of [true, false]) {
+            const { reader, scanned } = scanRecorder({ lineLocalRecords });
+            const { database, service } = createService({ providerId: "anthropic-sub", reader, roots: [root] });
+
+            try {
+                const found = await service.search({ query: "alpha bravo", limit: 10 });
+
+                expect(found.results.map((result) => result.session.sessionId)).toEqual([togetherId]);
+                // The negative control: a reader that cannot promise line-local records still
+                // pays for the transcript that only holds each word apart.
+                expect(scanned.map((path) => basename(path)).sort()).toEqual(
+                    lineLocalRecords ? [`${togetherId}.jsonl`] : [`${apartId}.jsonl`, `${togetherId}.jsonl`]
+                );
+            } finally {
+                database.close();
+            }
+        }
+    } finally {
+        rmSync(root, { recursive: true, force: true });
+    }
+});
+
+test("a scoped content search still reads a source the index places out of scope once it changes", async () => {
+    // The scope pre-check drops an indexed source that is out of scope only while its fingerprint
+    // still matches the index. Appending a newer record must bring it back for a --since search.
+    const root = realpathSync(mkdtempSync(join(tmpdir(), "history-index-scope-")));
+    const project = join(root, "-projects-fixture");
+    const staleId = "11111111-2222-4333-8444-000000000003";
+    const grownId = "11111111-2222-4333-8444-000000000004";
+    const grown = join(project, `${grownId}.jsonl`);
+    mkdirSync(project, { recursive: true });
+    writeFileSync(
+        join(project, `${staleId}.jsonl`),
+        claudeRow({ id: staleId, text: "scopeword early", timestamp: "2026-01-10T00:00:00Z" })
+    );
+    writeFileSync(grown, claudeRow({ id: grownId, text: "scopeword early", timestamp: "2026-01-11T00:00:00Z" }));
+    const { database, service } = createService({
+        providerId: "anthropic-sub",
+        reader: claudeHistoryReader,
+        roots: [root],
+    });
+    const since = new Date("2026-06-01T00:00:00Z");
+    const ids = async (filters: AgentSearchFilters) =>
+        (await service.search(filters)).results.map((result) => result.session.sessionId).sort();
+
+    try {
+        await service.sync();
+
+        expect(await ids({ query: "scopeword" })).toEqual([staleId, grownId]);
+        expect(await ids({ query: "scopeword", since })).toEqual([]);
+
+        appendFileSync(grown, claudeRow({ id: grownId, text: "scopeword later", timestamp: "2026-09-01T00:00:00Z" }));
+
+        expect(await ids({ query: "scopeword", since })).toEqual([grownId]);
+    } finally {
+        database.close();
+        rmSync(root, { recursive: true, force: true });
+    }
 });

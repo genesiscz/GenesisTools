@@ -123,6 +123,8 @@ test("the first native header owns child identity and native metadata lookup", a
     });
     expect(result.metadata?.customTitle).not.toContain("Parent");
     const records = await Array.fromAsync(scanCodexRecords(source));
+    // `scanKeepsMetadata` on the Codex reader rests on this: a content search tests a session's
+    // cwd before reading it, because no record, not even a second header, can move that cwd.
     expect(records.filter((record) => record.metadataChanges)).toEqual([]);
     expect(records[0]?.role).toBe("system");
     expect(records[1]?.role).toBe("system");
@@ -406,6 +408,7 @@ test("paginated scans stay thread-scoped, ordered, source-backed, and read-only"
         "assistant",
         "tool",
     ]);
+    expect(records.filter((record) => record.metadataChanges)).toEqual([]);
     expect(records[0]?.timestamp).toBe(new Date(1_788_257_400_001).toISOString());
     expect(records.flatMap((record) => record.entries).map((entry) => [entry.line, entry.role, entry.tool])).toEqual([
         [1, "user", undefined],

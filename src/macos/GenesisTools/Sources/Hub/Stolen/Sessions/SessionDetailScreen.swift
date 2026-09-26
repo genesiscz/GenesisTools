@@ -45,6 +45,10 @@ struct SessionDetailInfo: Equatable {
     var errorCount = 0
     /// Explains why the session is missing from the recent list, when it is.
     var note: String?
+    // GenesisTools adaptation: a warning line under the header (the hub's stuck-agent verdict,
+    // Hub/HubStuck.swift); `alertIsSevere` draws it red instead of orange.
+    var alert: String?
+    var alertIsSevere = false
 
     var shortId: String { String(sessionId.prefix(8)) }
 
@@ -76,6 +80,8 @@ struct SessionDetailActions {
     /// "Open the Changes view at this file (and line)". nil hides every "Open diff" button.
     /// Genesis leaves it nil; the GenesisTools hub wires it to its diff window.
     var showChange: ((String, Int?) -> Void)?
+    // GenesisTools adaptation: a click on the header's alert line (the hub opens the stuck call).
+    var alertAction: (() -> Void)?
 }
 
 /// Window chrome the screen is drawn for: no title text, a transparent unified-compact titlebar
@@ -121,6 +127,8 @@ struct SessionDetailScreen<SidebarExtra: View>: View {
     let sidebarExtra: SidebarExtra
 
     @State private var showSidebar = true
+    // GenesisTools adaptation: the sidebar covers the transcript in a narrow pane (`SessionSidebarSplit`).
+    @State private var sidebarCovers = false
 
     init(
         info: SessionDetailInfo,
@@ -165,7 +173,11 @@ struct SessionDetailScreen<SidebarExtra: View>: View {
             if let banner, !banner.isEmpty {
                 SessionBanner(text: banner, onDismiss: onDismissBanner)
             }
-            HStack(spacing: 0) {
+            // GenesisTools adaptation: the hub hosts this screen in panes narrower than the transcript's
+            // 460 pt plus the sidebar. The HStack then grew past its frame and the pane clipped the
+            // sidebar and the header's sidebar toggle; `SessionSidebarSplit` (Hub/HubSessionDetail.swift)
+            // lets the sidebar cover the transcript's edge instead, with a shadow to set it apart.
+            SessionSidebarSplit(mainMinWidth: 460) {
                 SessionTranscriptList(
                     document: document,
                     provider: info.provider,
@@ -178,13 +190,17 @@ struct SessionDetailScreen<SidebarExtra: View>: View {
                     preset: preset,
                     services: services
                 )
-                .frame(minWidth: 460, maxWidth: .infinity)
+                .frame(maxWidth: .infinity)
                 if showSidebar {
-                    Rectangle().fill(SessionPalette.hairline).frame(width: 1)
-                    SessionDetailSidebar(info: info, digest: digest, actions: actions, extra: sidebarExtra)
-                        .frame(width: 300)
+                    HStack(spacing: 0) {
+                        Rectangle().fill(SessionPalette.hairline).frame(width: 1)
+                        SessionDetailSidebar(info: info, digest: digest, actions: actions, extra: sidebarExtra)
+                            .frame(width: 300)
+                    }
+                    .shadow(color: .black.opacity(sidebarCovers ? 0.45 : 0), radius: 14, x: -4)
                 }
             }
+            .onGeometryChange(for: Bool.self, of: { SessionSidebarSplit.overlays(width: $0.size.width, sidebar: 301, mainMinWidth: 460) }) { sidebarCovers = $0 }
         }
         .background(SessionPalette.background)
         // The header's first row IS the titlebar row: it draws under the traffic lights.
@@ -212,6 +228,14 @@ struct SessionDetailHeader: View {
                     .truncationMode(.tail)
                     .layoutPriority(1)
                     .instantTooltip(info.title)
+                    // GenesisTools adaptation: the title and the ids behind it can be copied.
+                    .contextMenu {
+                        Button("Copy title") { actions.copy(info.title) }
+                        Button("Copy session id") { actions.copy(info.sessionId) }
+                        if !actions.resumeCommand.isEmpty {
+                            Button("Copy the resume command") { actions.copy(actions.resumeCommand) }
+                        }
+                    }
                 Button { (actions.openTerminal ?? actions.focus)?() } label: {
                     HStack(spacing: 5) {
                         SessionStatusDot(color: info.livenessColor, size: 7)
@@ -269,6 +293,10 @@ struct SessionDetailHeader: View {
             }
             .padding(.horizontal, 16)
             .frame(height: 28)
+            // GenesisTools adaptation: the alert line (see `SessionDetailInfo.alert`).
+            if let alert = info.alert {
+                alertRow(alert)
+            }
         }
         .overlay(alignment: .bottom) {
             Rectangle().fill(SessionPalette.hairline).frame(height: 1)
@@ -276,11 +304,46 @@ struct SessionDetailHeader: View {
         .accessibilityIdentifier("session-details-header")
     }
 
+    // GenesisTools adaptation: one line, the whole row a button when the host gave an action.
+    private func alertRow(_ text: String) -> some View {
+        let color = info.alertIsSevere ? SessionPalette.red : SessionPalette.orange
+        return Button { actions.alertAction?() } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: 10))
+                Text(verbatim: text)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                Spacer(minLength: 0)
+            }
+            .font(.system(size: 11.5, weight: .medium))
+            .foregroundStyle(color)
+            .padding(.horizontal, 16)
+            .frame(height: 24)
+            .background(color.opacity(0.10))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.genHoverPlain())
+        .disabled(actions.alertAction == nil)
+        .instantTooltip(text + (actions.alertAction == nil ? "" : "\nClick to open the call in the transcript"))
+        .accessibilityIdentifier("session-details-alert")
+    }
+
     private func metaRow(showStarted: Bool) -> some View {
         HStack(spacing: 14) {
             if let cwd = info.cwd, !cwd.isEmpty {
                 metaItem("folder", (cwd as NSString).abbreviatingWithTildeInPath, tip: "\(cwd) · click to show it in Finder", action: info.cwdExists ? actions.openInFinder : nil)
                     .layoutPriority(1)
+                    // GenesisTools adaptation: the folder's other actions, as in the sidebar's folder row.
+                    .contextMenu {
+                        Button("Copy path") { actions.copy(cwd) }
+                        if let open = actions.openInFinder, info.cwdExists {
+                            Button("Show in Finder", action: open)
+                        }
+                        if let open = actions.openInCursor, info.cwdExists {
+                            Button("Open in Cursor", action: open)
+                        }
+                    }
             }
             if let branch = info.branch {
                 metaItem("arrow.triangle.branch", branch, tip: actions.openBranch == nil ? "Git branch of the session folder · click to copy" : "Git branch of the session folder · click to open its web page", action: actions.openBranch ?? { actions.copy(branch) })
@@ -291,18 +354,17 @@ struct SessionDetailHeader: View {
                     .fixedSize()
             }
             if let last = info.lastActivityAt {
-                // Its own 15 s clock, so the rest of the header never re-renders for it.
-                TimelineView(.periodic(from: .now, by: 15)) { context in
-                    HStack(spacing: 5) {
-                        Image(systemName: "waveform.path")
-                            .font(.system(size: 10))
-                        Text(verbatim: "active \(SessionFormat.ago(context.date.timeIntervalSince(last)))")
-                    }
-                    .font(.system(size: 11.5))
-                    .foregroundStyle(SessionPalette.dim)
-                    .lineLimit(1)
-                    .fixedSize()
+                HStack(spacing: 5) {
+                    Image(systemName: "waveform.path")
+                        .font(.system(size: 10))
+                    // Its own clock: each second while it reads in seconds, then each minute, and
+                    // the rest of the header never re-renders for it.
+                    LiveTime(date: last) { "active \($0)" }
                 }
+                .font(.system(size: 11.5))
+                .foregroundStyle(SessionPalette.dim)
+                .lineLimit(1)
+                .fixedSize()
                 .instantTooltip("Last transcript entry or file write, \(SessionFormat.moment(last))")
             }
             Spacer(minLength: 8)
@@ -478,8 +540,10 @@ struct SessionDetailSidebar<Extra: View>: View {
 
     @State private var showAllFiles = false
     @State private var showReads = false
+    @State private var showAllSubagents = false
 
     private static var fileLimit: Int { 10 }
+    private static var subagentLimit: Int { 6 }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -585,7 +649,8 @@ struct SessionDetailSidebar<Extra: View>: View {
                 .instantTooltip((cwd as NSString).abbreviatingWithTildeInPath)
             }
             if let branch = info.branch {
-                row(symbol: "arrow.triangle.branch", dot: nil, tip: actions.openBranch == nil ? "Copy the branch name" : "Open the branch's web page", action: actions.openBranch ?? { actions.copy(branch) }) {
+                // GenesisTools adaptation: the tooltip carries the whole branch name, which truncates here.
+                row(symbol: "arrow.triangle.branch", dot: nil, tip: "\(branch)\n\(actions.openBranch == nil ? "Copy the branch name" : "Open the branch's web page")", action: actions.openBranch ?? { actions.copy(branch) }) {
                     Text(verbatim: branch)
                         .font(SessionPalette.mono(11.5))
                         .foregroundStyle(SessionPalette.secondary)
@@ -602,7 +667,8 @@ struct SessionDetailSidebar<Extra: View>: View {
                 }
             }
             if let file = info.filePath, !file.isEmpty {
-                row(symbol: "doc", dot: nil, action: { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: file)]) }) {
+                // GenesisTools adaptation: one opener for every path (a missing file says so, Hub/HubPathActions.swift).
+                row(symbol: "doc", dot: nil, action: { PathOpener.reveal(file) }) {
                     Text(verbatim: URL(fileURLWithPath: file).lastPathComponent)
                         .font(SessionPalette.mono(11))
                         .foregroundStyle(SessionPalette.dim)
@@ -615,6 +681,8 @@ struct SessionDetailSidebar<Extra: View>: View {
                 Text(verbatim: note)
                     .font(.system(size: 11))
                     .foregroundStyle(SessionPalette.faint)
+                    // GenesisTools adaptation: the note can be copied.
+                    .textSelection(.enabled)
                     .padding(.top, 4)
             }
         }
@@ -761,11 +829,18 @@ struct SessionDetailSidebar<Extra: View>: View {
         .accessibilityIdentifier("session-details-commits")
     }
 
+    // GenesisTools adaptation: a long run's sub-agents (89 in one session) pushed the hub's insight
+    // sections out of reach, so the list shows the live and failed ones first and caps the rest.
     private var subagents: some View {
-        VStack(alignment: .leading, spacing: 1) {
-            SessionSectionTitle(title: "Sub-agents", count: digest.subagents.count)
+        let all = digest.subagents
+        let open = all.filter { $0.state != .done }
+        let ordered = open + all.filter { $0.state == .done }
+        let limit = max(Self.subagentLimit, open.count)
+        let shown = showAllSubagents ? ordered : Array(ordered.prefix(limit))
+        return VStack(alignment: .leading, spacing: 1) {
+            SessionSectionTitle(title: "Sub-agents", count: all.count)
                 .padding(.bottom, 5)
-            ForEach(digest.subagents) { agent in
+            ForEach(shown) { agent in
                 HStack(spacing: 8) {
                     SessionStatusDot(color: color(agent.state))
                         .frame(width: 14)
@@ -781,6 +856,9 @@ struct SessionDetailSidebar<Extra: View>: View {
                 }
                 .frame(height: 26)
                 .instantTooltip(agent.summary)
+            }
+            if ordered.count > limit {
+                moreButton(showAllSubagents ? "Show fewer" : "Show \(ordered.count - limit) more") { showAllSubagents.toggle() }
             }
         }
         .accessibilityIdentifier("session-details-subagents")
@@ -862,6 +940,12 @@ private struct FileTouchRow: View {
         }
         .frame(height: 24)
         .instantTooltip(file.path)
+        // GenesisTools adaptation: the row's path can be copied, revealed and opened.
+        .contextMenu {
+            Button("Copy path") { PathOpener.copy(file.path, what: "path") }
+            Button("Reveal in Finder") { PathOpener.reveal(file.path) }
+            Button("Open in Cursor") { PathOpener.cursor(file.path) }
+        }
     }
 
     private var dotColor: Color {

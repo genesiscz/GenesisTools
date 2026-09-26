@@ -58,6 +58,12 @@ export interface EditAccountPatch {
      */
     authFile?: string;
     dataDir?: string;
+    /**
+     * Same story for an API key: an account added without one (the seeded
+     * env-only accounts) had no command that could give it one, and
+     * `secret set` writes the vault entry without linking it to the account.
+     */
+    apiKey?: string;
 }
 
 export class AccountNotFoundError extends Error {
@@ -483,6 +489,12 @@ function applyAccountFields(account: AccountEntry, fields: LoginOutcome["account
 }
 
 export async function editAccount(idOrName: string, patch: EditAccountPatch): Promise<AccountEntry> {
+    // Before the lock and before any other field: a half-applied edit that
+    // renamed the account but stored no key is worse than a refused one.
+    if (patch.apiKey !== undefined && patch.apiKey.trim().length === 0) {
+        throw new Error("The API key is empty; nothing was changed.");
+    }
+
     const store = await AiConfigStore.load();
 
     return store.withLock(async (config) => {
@@ -523,6 +535,11 @@ export async function editAccount(idOrName: string, patch: EditAccountPatch): Pr
 
         if (patch.dataDir !== undefined) {
             account.credentials.dataDir = patch.dataDir.length > 0 ? patch.dataDir : undefined;
+        }
+
+        if (patch.apiKey !== undefined) {
+            const vault = await secrets();
+            account.credentials.apiKey = await vault.set(vaultPathFor(account.id, "apiKey"), patch.apiKey);
         }
 
         logger.info({ id: account.id }, "edited AI account");

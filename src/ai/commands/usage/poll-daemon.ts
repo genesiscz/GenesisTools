@@ -1,6 +1,7 @@
 import { processExtraUsageNotifications } from "@app/claude/lib/usage/extra-usage-notify";
 import { snapshotToAccountUsage } from "@genesiscz/utils/ai/providers/plugins/anthropic-sub/usage";
 import { releaseCodexUsageHomes } from "@genesiscz/utils/ai/providers/plugins/openai-sub/usage";
+import { touchUsageDaemonHeartbeat } from "@genesiscz/utils/ai/usage-poll/daemon-heartbeat";
 import { loadDashboardConfig } from "@genesiscz/utils/ai/usage-poll/dashboard-config";
 import { UsageLimitsDb } from "@genesiscz/utils/ai/usage-poll/limits-db";
 import { NotificationManager } from "@genesiscz/utils/ai/usage-poll/notifications";
@@ -85,6 +86,9 @@ async function main(): Promise<void> {
             out.error("No accounts configured. Run: tools claude login");
             process.exit(1);
         }
+
+        // Tells every reader the daemon is refreshing the cache, so they stop refetching themselves.
+        touchUsageDaemonHeartbeat();
 
         for (const window of notifiableWindows(snapshots)) {
             try {

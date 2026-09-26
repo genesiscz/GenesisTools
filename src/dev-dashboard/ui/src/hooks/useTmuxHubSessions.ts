@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useMemo } from "react";
 import type { TmuxHubSession } from "@/lib/api";
 import { tmuxApi } from "@/lib/api";
+import { backoffRefetchInterval } from "@/lib/poll-backoff";
 
 interface UseTmuxHubSessionsOptions {
     enabled?: boolean;
@@ -36,6 +37,9 @@ interface UseTmuxHubSessionsResult {
  * Why split: the cmux layout fetch is ~150ms (N+1 RPC over workspaces×panes×surfaces),
  * vs ~5ms for the raw list. Polling cmux on every 3s tick was wasting wall-clock on
  * cosmetic data (badge + button styling).
+ *
+ * Both polls back off (up to 4x their cadence) while the answer stays the same: the session
+ * list rarely changes while the hub is open, and an action invalidates `["tmux"]` anyway.
  */
 export function useTmuxHubSessions(opts: UseTmuxHubSessionsOptions = {}): UseTmuxHubSessionsResult {
     const enabled = opts.enabled !== false;
@@ -46,14 +50,14 @@ export function useTmuxHubSessions(opts: UseTmuxHubSessionsOptions = {}): UseTmu
         queryKey: ["tmux", "sessions"],
         queryFn: () => tmuxApi.sessions().then((r) => r.sessions),
         enabled,
-        refetchInterval: enabled ? listInterval : false,
+        refetchInterval: enabled && listInterval ? backoffRefetchInterval(listInterval, listInterval * 4) : false,
     });
 
     const cmux = useQuery({
         queryKey: ["tmux", "sessions", "cmux"],
         queryFn: () => tmuxApi.sessions({ includeCmux: true }).then((r) => r.sessions),
         enabled,
-        refetchInterval: enabled ? cmuxInterval : false,
+        refetchInterval: enabled && cmuxInterval ? backoffRefetchInterval(cmuxInterval, cmuxInterval * 4) : false,
     });
 
     const cmuxByName = useMemo(() => {

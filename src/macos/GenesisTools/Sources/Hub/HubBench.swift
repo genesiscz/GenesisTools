@@ -38,7 +38,13 @@ enum HubDefaults {
 /// - `window`: the window itself, down to 900 pt and back;
 /// - `split`: the divider between two panes;
 /// - `fold`: PRs mode only, the largest PR group folded and unfolded, 0.7 s apart (`busy` is the
-///   main thread's whole awake time in that window, the SwiftUI update and every layout after it).
+///   main thread's whole awake time in that window, the SwiftUI update and every layout after it);
+/// - `activity`: Activity mode (`--mode timeline`) only, the rail's kind and project filters clicked;
+/// - `inbox`, `inbox.back`: the mode switch to the Inbox and back (by default in Activity mode only);
+/// - `open` (opt-in): sessions opened one after another, with how far the transcript sits from its latest turn.
+///
+/// `GENESIS_HUB_BENCH_AX=1` adds an accessibility client (`HubBenchAccessibilityClient`), which the
+/// live hub always has; the click scenarios measured 2 to 18 times higher with it (2026-09-25).
 ///
 /// Every drag step carries ±3 pt of jitter, as a hand does. Steps are spaced so the run loop
 /// sleeps in between; `busy` is the step interval minus that spacing, so it holds SwiftUI's update,
@@ -78,6 +84,28 @@ enum HubBench {
     }
 
     @MainActor private static var current: Runner?
+
+    /// The table with the most rows under `view`: the transcript's List when a session is open.
+    static func largestTable(in view: NSView?) -> NSTableView? {
+        guard let view else { return nil }
+        var best = view as? NSTableView
+        for child in view.subviews {
+            if let found = largestTable(in: child), found.numberOfRows > (best?.numberOfRows ?? -1) {
+                best = found
+            }
+        }
+        return best
+    }
+
+    /// For a snapshot's log: the transcript's rows on screen (`drawn` leaves out its 1 pt markers)
+    /// and in the list, so a padding change can be judged by how much of a session fits.
+    @MainActor
+    static func transcriptRowsLine(in window: NSWindow) -> String? {
+        guard let table = largestTable(in: window.contentView), table.numberOfRows > 0 else { return nil }
+        let range = table.rows(in: table.visibleRect)
+        let drawn = (range.location..<range.location + range.length).filter { table.rect(ofRow: $0).height > 2 }.count
+        return "transcript rows on screen \(range.length) (\(drawn) drawn) of \(table.numberOfRows), \(Int(table.visibleRect.height)) pt"
+    }
 
     @MainActor
     static func run(window: NSWindow, model: HubModel, output: String) {
@@ -138,10 +166,56 @@ enum HubBench {
             if wants("window") { addWindowSweep() }
             if wants("split") { addSplitSweep() }
             if wants("fold"), model.mode == .prs { addFoldSweep() }
+            if wants("activity"), model.mode == .timeline { addActivitySweep() }
+            // From another mode (a session's transcript open), opt-in: GENESIS_HUB_BENCH_ONLY=inbox.
+            if model.mode == .timeline ? wants("inbox") : model.mode != .inbox && only.contains("inbox") { addInboxSwitch() }
             // Opt-in only (not in the default run): it scrolls the transcript, which loads rows.
             if only.contains("scroll"), model.panes.contains(.transcript) { addTranscriptScroll() }
+            if only.contains("open"), model.mode == .sessions, model.panes.contains(.transcript) { addTranscriptOpen() }
             PerfLog.mark("hub.bench start: \(steps.count) steps, panes \(model.panes.map(\.rawValue).joined(separator: ","))")
+            guard ProcessInfo.processInfo.environment["GENESIS_HUB_BENCH_AX"] == "1" else {
+                tick()
+                return
+            }
+            let count = HubBenchAccessibilityClient.start()
+            PerfLog.mark("hub.bench accessibility client: read \(count) elements, trusted=\(AXIsProcessTrusted())")
             tick()
+        }
+
+        /// `activity`: Activity mode's rail, clicked the way a reader does, 0.7 s apart: a kind hidden and
+        /// shown again, then the busiest project picked and every project again (`busy` is the main
+        /// thread's whole awake time after the click: the state change, the list's update and every
+        /// layout after it). `GENESIS_HUB_BENCH_ACTIVITY_ROUNDS` sets the rounds (default 3).
+        private func addActivitySweep() {
+            let timeline = model.timeline
+            order.append("activity")
+            PerfLog.mark("hub.bench activity: \(timeline.events.count) events, \(timeline.projects.count) projects")
+            let rounds = ProcessInfo.processInfo.environment["GENESIS_HUB_BENCH_ACTIVITY_ROUNDS"].flatMap(Int.init) ?? 3
+            let kinds = TimelineKind.allCases.map(\.rawValue)
+            for round in 0..<rounds {
+                let kind = kinds[round % kinds.count]
+                let clicks: [() -> Void] = [
+                    { timeline.hidden.insert(kind) },
+                    { timeline.hidden.remove(kind) },
+                    { timeline.project = timeline.projects.first?.name },
+                    { timeline.project = nil },
+                ]
+                for click in clicks {
+                    steps.append(Step(scenario: "activity", action: click, delay: 0.7))
+                }
+            }
+        }
+
+        /// `inbox`: the mode switch to the Inbox and back to the starting mode, 1.5 s apart; the first switch
+        /// also waits for the Inbox's own load, which lands inside that window.
+        private func addInboxSwitch() {
+            order += ["inbox", "inbox.back"]
+            let model = model
+            let from = model.mode
+            for _ in 0..<3 {
+                steps.append(Step(scenario: "inbox", action: { model.setMode(.inbox) }, delay: 1.5))
+                steps.append(Step(scenario: "inbox.back", action: { model.setMode(from) }, delay: 1.5))
+            }
         }
 
         private func jitter() -> CGFloat {
@@ -235,7 +309,7 @@ enum HubBench {
             var row: Int?
             for _ in 0..<steps {
                 self.steps.append(Step(scenario: "scroll", action: { [weak self] in
-                    guard let self, let table = Self.largestTable(in: self.window.contentView), table.numberOfRows > 0 else { return }
+                    guard let self, let table = HubBench.largestTable(in: self.window.contentView), table.numberOfRows > 0 else { return }
                     let next = max(0, (row ?? table.numberOfRows - 1) - 15)
                     row = next
                     table.scrollRowToVisible(next)
@@ -243,16 +317,49 @@ enum HubBench {
             }
         }
 
-        private static func largestTable(in view: NSView?) -> NSTableView? {
-            guard let view else { return nil }
-            var best = view as? NSTableView
-            for child in view.subviews {
-                if let found = largestTable(in: child), found.numberOfRows > (best?.numberOfRows ?? -1) {
-                    best = found
+        /// The window's AppKit views by class at the end of the run, the 12 most common. Every NSView under
+        /// SwiftUI is a platform responder, which SwiftUI walks on each accessibility focus update.
+        private static func viewCensus(_ root: NSView?) -> [String: Any] {
+            var counts: [String: Int] = [:]
+            var total = 0
+            func visit(_ view: NSView) {
+                total += 1
+                counts[String(describing: type(of: view)), default: 0] += 1
+                view.subviews.forEach(visit)
+            }
+            if let root { visit(root) }
+            let top = counts.sorted { $0.value > $1.value }.prefix(12).map { "\($0.value) \($0.key)" }
+            return ["total": total, "top": top]
+        }
+
+        /// `open` (opt-in, sessions mode): up to three other recent sessions opened one after another, 5 s
+        /// each. A transcript opens on its latest turns and fills the earlier ones in behind them. Every
+        /// 50 ms the probe `transcript.fromBottom.<n>` records how far the viewport's end sits from the
+        /// content's end (0: the latest turn in view); a reader at the latest turn should see it stay 0
+        /// through the fill, and every flip after the first settle is a jump on screen.
+        private func addTranscriptOpen() {
+            // GENESIS_HUB_BENCH_OPEN=<id prefix>,… opens those sessions, so repeated runs compare the same work
+            // while the recent list reorders around live sessions.
+            let wanted = (ProcessInfo.processInfo.environment["GENESIS_HUB_BENCH_OPEN"] ?? "").split(separator: ",").map(String.init)
+            let sessions = wanted.isEmpty
+                ? Array(model.sessions.filter { $0.id != model.selectedID }.prefix(3))
+                : wanted.compactMap { prefix in model.sessions.first { $0.sessionId.hasPrefix(prefix) } }
+            order.append("open")
+            PerfLog.mark("hub.bench open: \(sessions.map { $0.sessionId.prefix(8) }.joined(separator: " "))")
+            for (n, session) in sessions.enumerated() {
+                steps.append(Step(scenario: "open", action: { [weak self] in self?.model.select(session.id) }, delay: 0.05))
+                for _ in 0..<100 {
+                    steps.append(Step(scenario: "open", action: { [weak self] in
+                        guard let self, let table = HubBench.largestTable(in: self.window.contentView), let clip = table.enclosingScrollView?.contentView else {
+                            return
+                        }
+                        HubBench.note("transcript.fromBottom.\(n)", Int((table.frame.height - clip.bounds.maxY).rounded()))
+                        HubBench.note("transcript.rows.\(n)", table.numberOfRows)
+                    }, delay: 0.05))
                 }
             }
-            return best
         }
+
 
         private static func splitView(in view: NSView?) -> NSSplitView? {
             guard let view else { return nil }
@@ -335,9 +442,14 @@ enum HubBench {
                         "p99": round1(pct(0.99)), "max": round1(sorted.last ?? 0),
                         "mean": round1(samples.reduce(0, +) / Double(samples.count)),
                     ],
+                    // The whole cost of a scenario that loads while it runs (`open`): per-step values are
+                    // mostly idle, and the sum is what a reader waits through.
+                    "sumMs": round1(samples.reduce(0, +)),
                     "framesOver16ms": samples.filter { $0 > 16.7 }.count,
                     "framesOver33ms": samples.filter { $0 > 33.3 }.count,
                     "wallMsMean": round1((wall[name] ?? []).reduce(0, +) / Double(max(1, wall[name]?.count ?? 0))),
+                    // Click scenarios have a few steps; each one is worth reading, the first in particular.
+                    "samplesMs": samples.count <= 24 ? samples.map(round1) : [],
                 ])
             }
             var probeReport: [String: Any] = [:]
@@ -354,6 +466,7 @@ enum HubBench {
                 "window": ["width": Int(window.frame.width), "height": Int(window.frame.height)],
                 "scenarios": scenarios,
                 "probes": probeReport,
+                "views": Self.viewCensus(window.contentView),
             ]
             if let data = try? JSONSerialization.data(withJSONObject: report, options: [.prettyPrinted, .sortedKeys]) {
                 FileManager.default.createFile(atPath: output, contents: data)
@@ -364,6 +477,42 @@ enum HubBench {
     }
 }
 
+
+/// `GENESIS_HUB_BENCH_AX=1`: the bench is its own assistive client, the way dictation, a window manager
+/// or `tools control` is one in a live session. It reads the whole accessibility tree through the AX
+/// API (the path an outside app takes), then asks for the focused element every 0.5 s. From the first
+/// read on, SwiftUI keeps accessibility nodes for the window and updates their focus after every
+/// change, which a bench with no client never pays: the Activity filter click cost 90 ms of main
+/// thread in a bench and about a second in the live hub, whose stall stacks were that focus update.
+/// A call on the app's own pid is answered in the calling thread, and SwiftUI answers only on the
+/// main thread, so the client runs there. Needs the Accessibility grant (a process started from a
+/// trusted terminal has it).
+@MainActor
+enum HubBenchAccessibilityClient {
+    private static var poll: Timer?
+
+    /// Reads the tree and starts the focus poll; returns how many elements the read visited.
+    static func start() -> Int {
+        let app = AXUIElementCreateApplication(getpid())
+        var count = 0
+        func walk(_ element: AXUIElement, depth: Int) {
+            guard depth > 0, count < 50_000 else { return }
+            count += 1
+            var value: CFTypeRef?
+            guard AXUIElementCopyAttributeValue(element, kAXChildrenAttribute as CFString, &value) == .success,
+                  let children = value as? [AXUIElement] else { return }
+            for child in children {
+                walk(child, depth: depth - 1)
+            }
+        }
+        walk(app, depth: 40)
+        poll = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { _ in
+            var focused: CFTypeRef?
+            _ = AXUIElementCopyAttributeValue(app, kAXFocusedUIElementAttribute as CFString, &focused)
+        }
+        return count
+    }
+}
 
 // MARK: - Snapshot focus
 

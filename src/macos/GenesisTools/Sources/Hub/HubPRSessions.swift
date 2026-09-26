@@ -105,7 +105,7 @@ struct PRSessionRow: View {
                 .background(RoundedRectangle(cornerRadius: 4).fill(Color.white.opacity(0.1)))
                 .instantTooltip(session.provider.capitalized)
             FindText(session.displayTitle, field: "title").font(.system(size: 12)).lineLimit(1).truncationMode(.tail)
-            Text(verbatim: HubFormat.ago(session.lastActivity))
+            LiveAgo(date: session.lastActivity)
                 .font(.system(size: 11))
                 .foregroundColor(ReviewPalette.dim)
                 .fixedSize()

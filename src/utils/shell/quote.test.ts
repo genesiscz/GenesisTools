@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { shellCommandLine, shellQuote } from "./quote";
+import { shellCommandLine, shellQuote, shellWord } from "./quote";
 
 /**
  * The assertions run the quoted string through a REAL `sh -c`, because that is
@@ -116,5 +116,15 @@ describe("shellQuote survives a real shell", () => {
 
     test("every quote in a value is escaped, not just the first", () => {
         expect(shellQuote("'a'b'")).toBe(`''\\''a'\\''b'\\'''`);
+    });
+});
+
+describe("shellWord", () => {
+    test("a plain name stays bare; spaces and substitutions become one quoted word", async () => {
+        expect(shellWord("work")).toBe("work");
+        expect(shellWord("alice@example.com")).toBe("alice@example.com");
+        expect(
+            await argvFrom([shellWord("work"), shellWord("my account"), shellWord("$(echo pwned)")].join(" "))
+        ).toEqual(["work", "my account", "$(echo pwned)"]);
     });
 });

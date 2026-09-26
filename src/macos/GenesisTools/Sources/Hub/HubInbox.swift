@@ -403,7 +403,11 @@ final class HubInboxModel: ObservableObject {
                     }
                     switch result {
                     case .success(let envelope):
-                        self.sessions = envelope.sessions
+                        // An unchanged Inbox (the usual reload on a mode switch) redraws nothing.
+                        if self.sessions != envelope.sessions {
+                            HubMainBusy.measure("inbox.render")
+                            self.sessions = envelope.sessions
+                        }
                         self.error = nil
                         self.loadedAt = Date()
                         self.applyReveal()
@@ -702,6 +706,7 @@ struct InboxListView: View {
                 Menu {
                     ForEach(InboxSort.allCases, id: \.self) { option in
                         Button {
+                            HubMainBusy.measure("inbox.sort")
                             sortKey = option.rawValue
                         } label: {
                             if option == sort { Label(option.title, systemImage: "checkmark") } else { Text(option.title) }
@@ -717,9 +722,13 @@ struct InboxListView: View {
                 .fixedSize()
                 .instantTooltip("Order the waiting sessions")
                 Spacer()
-                if inbox.loading {
-                    ProgressView().controlSize(.small)
+                // A fixed slot, so the controls before it stay put while the list loads.
+                ZStack {
+                    if inbox.loading {
+                        ProgressView().controlSize(.small)
+                    }
                 }
+                .frame(width: 16, height: 16)
                 IconButton(systemName: "arrow.clockwise", tooltip: "Look for waiting sessions again") { inbox.load() }
             }
             .padding(.horizontal, 14)
@@ -755,13 +764,12 @@ private struct InboxSessionRow: View {
                 Text(session.displayTitle)
                     .font(.system(size: 12.5, weight: selected ? .semibold : .regular))
                     .lineLimit(2)
+                // Project and age only: the meta line is about 150 pt wide, and a branch beside them
+                // read "fe…nts", then "f" (snapshots 2026-09-25). The card header names the branch.
                 HStack(spacing: 6) {
-                    Text(session.projectName)
-                    if let branch = session.branch {
-                        Text(branch).lineLimit(1).truncationMode(.middle)
-                    }
+                    Text(session.projectName).lineLimit(1)
                     Spacer(minLength: 0)
-                    Text(HubFormat.ago(session.date))
+                    LiveAgo(date: session.date).fixedSize()
                 }
                 .font(.system(size: 10.5))
                 .foregroundColor(ReviewPalette.dim)
@@ -891,7 +899,7 @@ struct InboxMain: View {
                 NoticePill(text: notice) { model.notice = nil }
             }
             if let loadedAt = inbox.loadedAt {
-                Text("checked \(HubFormat.ago(loadedAt))")
+                LiveAgo(date: loadedAt) { "checked \($0)" }
                     .font(.system(size: 11))
                     .foregroundColor(ReviewPalette.dim)
             }
@@ -934,6 +942,8 @@ private struct InboxSessionSection: View {
             FindText(session.displayTitle, field: "title")
                 .font(.system(size: 13.5, weight: .semibold))
                 .lineLimit(1)
+                .textSelection(.enabled)
+                .instantTooltip(session.displayTitle)
             FindText(session.projectName, field: "project")
                 .font(.system(size: 11.5))
                 .foregroundColor(ReviewPalette.dim)
@@ -943,6 +953,8 @@ private struct InboxSessionSection: View {
                     .foregroundColor(ReviewPalette.dim)
                     .lineLimit(1)
                     .truncationMode(.middle)
+                    .textSelection(.enabled)
+                    .instantTooltip(branch)
             }
             Spacer(minLength: 8)
             if let sessionId = session.sessionId {
@@ -1202,7 +1214,7 @@ struct InboxDecisionCard: View {
             }
             Spacer(minLength: 8)
             if item.isOpen {
-                Label(HubFormat.ago(item.date), systemImage: "clock")
+                Label { LiveAgo(date: item.date) } icon: { Image(systemName: "clock") }
                     .font(.system(size: 11))
                     .foregroundColor(ReviewPalette.dim)
             } else {
@@ -1445,7 +1457,7 @@ private struct InboxExcerptCard: View {
             }
             if let excerpt = ref.excerpt, !excerpt.isEmpty {
                 CodeBlockText(
-                    block: CodeBlockBuilder.numbered(excerpt, start: ref.startLine ?? ref.line ?? 1, language: SyntaxLanguage.forPath(ref.path)),
+                    block: CodeBlockBuilder.numbered(excerpt, start: ref.startLine ?? ref.line ?? 1, language: SyntaxLanguage.forPath(ref.path), focus: ref.line),
                     limit: nil,
                     cacheKey: "inbox-\(ref.path):\(ref.line ?? 0)"
                 )
@@ -1717,7 +1729,7 @@ private struct InboxFormCard: View {
                 }
                 Spacer()
                 CopyChip(label: String(item.id.suffix(8)), value: item.id, tooltip: "Copy the form id")
-                Label(HubFormat.ago(item.date), systemImage: "clock")
+                Label { LiveAgo(date: item.date) } icon: { Image(systemName: "clock") }
                     .font(.system(size: 11))
                     .foregroundColor(ReviewPalette.dim)
             }

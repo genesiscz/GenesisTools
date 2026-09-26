@@ -83,7 +83,17 @@ type Listener = (ev: unknown) => void;
 
 class FakeWebSocket {
     private listeners: Record<string, Listener[]> = {};
+    private markListening: () => void = () => {};
     sent: string[] = [];
+
+    /**
+     * Resolves once the provider has attached its "message" listener, its last.
+     * The socket is opened after an async key lookup, so an event emitted before
+     * this would reach no listener at all.
+     */
+    readonly listening = new Promise<void>((resolve) => {
+        this.markListening = resolve;
+    });
 
     addEventListener(name: string, fn: Listener): void {
         if (!this.listeners[name]) {
@@ -91,6 +101,10 @@ class FakeWebSocket {
         }
 
         this.listeners[name].push(fn);
+
+        if (name === "message") {
+            this.markListening();
+        }
     }
 
     send(payload: string): void {
@@ -110,8 +124,8 @@ class FakeWebSocket {
 
 function withFakeWs(provider: AIXAITextToSpeechProvider): FakeWebSocket {
     const fake = new FakeWebSocket();
-    const client = (provider as unknown as { client: { openWebSocket: () => FakeWebSocket } }).client;
-    client.openWebSocket = () => fake;
+    const client = (provider as unknown as { client: { openWebSocket: () => Promise<FakeWebSocket> } }).client;
+    client.openWebSocket = async () => fake;
     return fake;
 }
 
@@ -130,6 +144,7 @@ describe("AIXAITextToSpeechProvider.synthesizeStream", () => {
             }
         })();
 
+        await fake.listening;
         fake.emit("open", {});
         fake.emit("message", {
             data: SafeJSON.stringify({ type: "audio.delta", delta: Buffer.from("AAAA").toString("base64") }),
@@ -161,6 +176,7 @@ describe("AIXAITextToSpeechProvider.synthesizeStream", () => {
             }
         })();
 
+        await fake.listening;
         fake.emit("open", {});
         fake.emit("message", { data: SafeJSON.stringify({ type: "audio.done" }) });
         await consumer;
@@ -190,6 +206,7 @@ describe("AIXAITextToSpeechProvider.synthesizeStream", () => {
             }
         })();
 
+        await fake.listening;
         fake.emit("open", {});
         fake.emit("message", { data: SafeJSON.stringify({ type: "error", message: "voice not found" }) });
 
@@ -208,6 +225,7 @@ describe("AIXAITextToSpeechProvider.synthesizeStream", () => {
             }
         })();
 
+        await fake.listening;
         fake.emit("open", {});
         fake.emit("close", { code: 1006 });
 

@@ -14,12 +14,14 @@ install, reap stale faces). Swift UI you have not seen rendered is not done.
 | Repo / branch web URLs, the branch's PR/MR | `RepoFactsStore.shared.facts(for: path, pr:)` (fed by `tools hub repo --json`) + `PullRequestLink` | parsing `git remote` in Swift, or any `Process` in a view body |
 | A file or folder path | `PathLabel(path:)` (menu: Finder, Cursor, cmux, copy; plus copy / reveal / Cursor icons) | a bare `Text(path)` |
 | Open a file at a line | `PathOpener.cursor(path, line:)` | `open -a` without the line |
-| A side panel | `ResizableSidePanel(key:edge:title:minWidth:maxWidth:autoCollapse:)` (Hub/HubPanels.swift: grip on hover, release below the minimum collapses to a rail, width saved on release only; during a drag the layout keeps the start width and the panel draws over its neighbour, one reflow on release; the parent passes the room it has as `maxWidth` and `autoCollapse` when there is none, which shows the rail and opens the panel as a drawer) | a fixed `.frame(width:)` sidebar, a width written to `@AppStorage` on every drag step, or moving the neighbouring panes per step (each move of a focusable list makes SwiftUI rebuild the key view loop over every transcript row: 82 ms/step) |
+| A side panel | `ResizableSidePanel(key:edge:title:minWidth:maxWidth:autoCollapse:fitWidth:)` (Hub/HubPanels.swift: grip on hover, release below the minimum collapses to a rail, width saved on release only; during a drag the layout keeps the start width and the panel draws over its neighbour, one reflow on release; the parent passes the room it has as `maxWidth` and `autoCollapse` when there is none, which shows the rail and opens the panel as a drawer; `fitWidth` opens it at its content's width, as the Files list does with `FileListFit`, until the reader drags it in that window) | a fixed `.frame(width:)` sidebar, a width written to `@AppStorage` on every drag step, or moving the neighbouring panes per step (each move of a focusable list makes SwiftUI rebuild the key view loop over every transcript row: 82 ms/step) |
 | A heavy pane (transcript, diff) | `.freezesWidthWhileResizing()`: keeps its size while `HubLiveResize` is active (panel drag, window live resize, pane divider) and reflows once at the end. `heavy: false` for a pane that should follow a pane-divider drag live (everything but the transcript list; frozen, it left a dark gap beside the divider) | letting a `List` re-measure every row per resize step (395 ms/step measured), or ending a divider drag on a local mouse-up monitor (NSSplitView's tracking loop swallows it; `HubLiveResize` polls the button instead) |
+| A pull-down menu in a header or toolbar | `MenuButton(items:label:)` (Hub/HubMenuButton.swift): a drawn label, the NSMenu is built at the click | a SwiftUI `Menu` (an NSPopUpButton) or any other AppKit control inside a `ViewThatFits`: it builds each option's platform views again for every measurement, a dozen pop-up buttons per step of a divider drag in the review header (bench `split` busy p50 46.7 → 23.5 ms, 2026-09-26) |
 | A list row that acts as a button | `.rowButton(cornerRadius:)` → `HubRowButtonStyle`: soft fill in the row's own frame; keep gaps and insets OUTSIDE the button so hover box = selection box | `genHoverRow(accent: .white)` (45 % white outline) or padding inside the button |
 | A background | `.hubSurface(.chrome / .content / .bar)`: opaque normally, translucent in glass mode (`HubGlass`, ⌘⇧G) | `ReviewPalette.sidebar` / `.background` directly |
 | A sidebar group header | `GroupHeader` + `GroupPrefs` (collapse, pin, move up/down, persisted) | an uppercase static label |
 | A status message | `NoticePill` (fades, error stays) | a raw colored `Text` line |
+| A relative time on screen ("5 min. ago", "active 20s ago") | `LiveAgo(date:)` (HubComponents.swift) or `LiveTime(date:style:)` (Hub/Stolen/UI/LiveTime.swift, shared with Genesis): the label keeps its own clock, nothing above it re-renders per tick | `HubFormat.ago` in a body (formats once and goes stale), or a `Timer` / `TimelineView` above the label (re-renders the whole row or list per tick) |
 | Find inside a panel (⌘F) | Hub/HubPanelFind.swift: `@State` `PanelFindModel`, `PanelFindBar` under the header as its own row above the scroll view, `.panelFind(find, revision:rows:)` on the root, `.findRow(id)` per row, `FindText(text, field:)` for shown text (`MarkdownContentView` + `.findField(key)` for markdown). A pane with its own find registers with `.panelFindNative(scope)`, an overlay that owns the keyboard with `.panelFindModal()` | a bar in `.safeAreaInset(edge: .top)` (selectable text draws through it), a SwiftUI `.keyboardShortcut("f")` button or a local key monitor per view: `PanelFindRouter` is the one ⌘F / ⌘G / ⇧⌘G / Esc owner and sends the key to the panel of the last click |
 | A PR/MR's review threads or any write to them | `ReviewModel.attachPR` → `PRThreadsStore` + `PRCommand` argv (Review/PRThreads.swift, fed by `tools hub pr`). The diff's thread cards carry Reply / Resolve / Edit / Delete (web/diff-viewer/main.ts, `renderLiveThread`): the page only posts `thread.action`, and Swift confirms, runs `tools`, then answers `threadDone`. The PR bar and threads list are in Review/PRThreadsPanel.swift. 🛑 `PRCommand.publish` has one caller, the Submit review confirmation (a test scans Sources for it) | `tools github …` / `tools gitlab …` calls from a view, or a second path to `publish` |
 
@@ -46,11 +48,18 @@ Every load that can be slow runs in a span: `HubPerf.begin("area.what", detail)`
 `span.end()`, or `HubPerf.measure(...)`. Spans, stalls and hang samples go to
 `~/.genesis-tools/logs/app-perf.log` (stolen `PerfLog`; `.main` suffix = ran on the main
 thread; `SLOW` marks at 100 ms). `HangWatch` samples the main thread into
-`~/.genesis-tools/logs/hangs/` after 1 s. Summary: `bun scripts/perf-report.ts --tail 5000`.
-Watch it while you click: `tail -f ~/.genesis-tools/logs/app-perf.log | rg 'SLOW|stall|main '`.
+`~/.genesis-tools/logs/hangs/` after 1 s. Summary: `bun scripts/perf-report.ts --tail 5000` (run in
+this folder). Watch it while you click: `tail -f ~/.genesis-tools/logs/app-perf.log | rg 'SLOW|stall|main '`.
 A span times work, not the SwiftUI layout it causes: after a state change the renderer runs in the
 next run-loop passes. `HubMainBusy.measure("area.what")` (HubPerf.swift) logs the main thread's busy
 time over the next 600 ms, which is what an append or a reload really costs on screen.
+
+🛑 The live hub always has an accessibility client, and then SwiftUI walks every responder of the
+window once per accessibility node an update touches: a click's cost grows with rows × controls per
+row × rows (stall stacks: `AccessibilityNode.updateFocusResponder`). Rows of a dense list take values,
+not the hub's models (`TimelineRowView`), and carry buttons, hover sensors and tooltips only while the
+pointer is on them (its `live`, `ExternalLink(interactive:)`). A list that inserts rows above the
+viewport holds it with `TranscriptScrollAnchor` (Hub/HubTranscriptAnchor.swift).
 
 ## Look
 
@@ -73,8 +82,12 @@ marked adaptation (`// GenesisTools adaptation: …`). Missing Genesis types go 
 - Resize performance: `GenesisTools --hub --session <id> --panes transcript,changes --bench /tmp/b.json`
   (sidebar drag, file-list drag, window and pane-divider sweeps with jitter; main-thread busy ms per step from run-loop
   observers, plus layout-flip probes; `GENESIS_HUB_BENCH_ONLY=sidebar` for one sweep, e.g. under `sample`). Scripted
-  runs use a scratch copy of the hub's settings (`HubDefaults`), never the live layout.
-- Logic tests: `swift test` in this folder (Tests/, no windows).
+  runs use a scratch copy of the hub's settings (`HubDefaults`), never the live layout. `--mode timeline` adds
+  `activity` (the Activity rail's filters clicked) and `inbox` (the mode switch). 🛑 Measure clicks with
+  `GENESIS_HUB_BENCH_AX=1`: the live hub always has an accessibility client (dictation, `tools control`), and with
+  one SwiftUI walks every responder per changed accessibility node; a click that costs 90 ms without it costs 1.6 s.
+- Logic tests: `swift test` in this folder (Tests/). Only LiveTimeTests and SessionTranscriptScrollTests open a window, alpha 0
+  below the desktop and never activated; `SESSION_SCROLL_PERF=1` adds the transcript's scroll and idle cost lines.
 - Read the PNG. The web diff is composited from WKWebView's own snapshot, so it needs no Screen Recording grant.
 - A `--snapshot` run uses the `.prohibited` activation policy and an alpha-0 window (`orderInForSnapshot`): it never
   shows on screen and never takes the keyboard. Martin's typing once landed in the hub search field because a

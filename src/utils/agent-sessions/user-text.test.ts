@@ -1,5 +1,15 @@
 import { expect, test } from "bun:test";
-import { isWrapperUserText } from "./user-text";
+import { cleanSessionTitle, isWrapperUserText } from "./user-text";
+
+test("a session title drops harness tags and image marks but keeps the words", () => {
+    expect(cleanSessionTitle('<pasted_content id="b643"> 3) Restock · Add all')).toBe("3) Restock · Add all");
+    expect(cleanSessionTitle("<system-reminder>hidden</system-reminder> fix the [Image #2] badge")).toBe(
+        "fix the badge"
+    );
+    expect(cleanSessionTitle("<command-name>/clear</command-name>")).toBeNull();
+    expect(cleanSessionTitle(null)).toBeNull();
+    expect(cleanSessionTitle("plain title")).toBe("plain title");
+});
 
 test("machine-generated wrappers are not mistaken for the user's own words", () => {
     // Measured on this machine before the shared filter existed: of 111 Codex sessions, 60 opened
@@ -13,6 +23,10 @@ test("machine-generated wrappers are not mistaken for the user's own words", () 
         "<git_status>\nbranch main\n</git_status>",
         "<turn_aborted>The user interrupted the turn</turn_aborted>",
         "   <environment_context>leading whitespace still counts</environment_context>",
+        'Another Claude session sent a message:\n<teammate-message teammate_id="peer">done</teammate-message>',
+        "<task-notification>\n<task-id>b1</task-id>\n</task-notification>",
+        "[SYSTEM NOTIFICATION - NOT USER INPUT]\nA background task finished.",
+        "[Request interrupted by user for tool use]",
     ]) {
         expect(isWrapperUserText(wrapper)).toBe(true);
     }

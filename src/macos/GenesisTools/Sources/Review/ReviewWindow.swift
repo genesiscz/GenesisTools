@@ -30,6 +30,7 @@ func runReview(_ args: [String]) -> Never {
         case "--step-threads": demo.steps = Int(value ?? "") ?? 1; index += 1
         case "--reply": demo.reply = true
         case "--toggle": demo.toggle = true
+        case "--loading": demo.loading = true
         case "--fix-form": demo.fixForm = true
         case "--blame": demo.blame = ReviewSnapshotDemo.blameTarget(value); index += 1
         case "--session": session = value; index += 1
@@ -48,6 +49,7 @@ func runReview(_ args: [String]) -> Never {
     let delegate = ReviewAppDelegate()
     app.delegate = delegate
     installBrowserURLForwarder()
+    MainActor.assumeIsolated { AppMainMenu.install() }
 
     var proposal: ProposalDocument?
     if let proposalPath {
@@ -164,7 +166,14 @@ final class ReviewModel: ObservableObject {
     /// into `repo`): this repository's files open on the host at that head (Review/ReviewRemoteHead.swift).
     var remoteHead: ReviewRemoteHead?
     @Published var files: [DiffFile] = []
-    @Published var filter = ""
+    /// The file list's filter text; the list's rows are rebuilt from it in the view.
+    @Published var filter = "" {
+        didSet {
+            if filter != oldValue {
+                MainActor.assumeIsolated { HubMainBusy.measure("review.files.filter") }
+            }
+        }
+    }
     @Published var selectedID: String?
     @Published var options: DiffViewOptions
     @Published var error: String?
@@ -173,7 +182,9 @@ final class ReviewModel: ObservableObject {
     @Published var commentCount = 0
     @Published var unsentCount = 0
     @Published var notice: String?
-    @Published var treeMode = true
+    @Published var treeMode = true {
+        didSet { MainActor.assumeIsolated { HubMainBusy.measure("review.files.tree") } }
+    }
     @Published var collapsed: Set<String> = []
     /// Set only when the diff moves to a file on its own (a find match), so a click in the list never scrolls the list.
     @Published var sidebarScrollTarget: String?
@@ -735,8 +746,7 @@ final class ReviewModel: ObservableObject {
             return
         }
 
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(message, forType: .string)
+        PathOpener.copy(message, what: "\(ids.count) comments")
 
         guard let session, session.range(of: "^[A-Za-z0-9-]+$", options: .regularExpression) != nil else {
             markSent()
@@ -851,7 +861,49 @@ final class ReviewModel: ObservableObject {
             if let source = blame.source(at: index) {
                 AgentBlame.open(source)
             }
+        case .headerMenu(let fileID, let selection):
+            // After the page's message returns: the menu runs its own tracking loop.
+            DispatchQueue.main.async { [weak self] in
+                self?.showHeaderMenu(fileID: fileID, selection: selection)
+            }
         }
+    }
+
+    /// A file's path actions: the file list's context menu and the diff header's right-click menu.
+    func pathActions(of file: DiffFile) -> [ReviewPathAction] {
+        var actions: [ReviewPathAction] = []
+        if let url = hostURL(of: file.id), let head = remoteHead {
+            actions.append(ReviewPathAction("Open on the host at \(head.sha.prefix(8))") { ExternalOpener.open(url) })
+            actions.append(ReviewPathAction("Copy the host URL") { PathOpener.copy(url.absoluteString, what: "URL") })
+        }
+        if let path = absolutePath(of: file) {
+            actions.append(ReviewPathAction("Open in Cursor") { PathOpener.cursor(path) })
+            actions.append(ReviewPathAction("Reveal in Finder") { PathOpener.reveal(path) })
+            actions.append(ReviewPathAction("Copy path") { PathOpener.copy(path, what: "path") })
+        }
+        if let relative = repoPath(of: file.id) {
+            actions.append(ReviewPathAction("Copy repo-relative path") { PathOpener.copy(relative, what: "path") })
+        }
+        return actions
+    }
+
+    /// The page sends the file and any text selected there; the menu opens at the pointer.
+    private func showHeaderMenu(fileID: String, selection: String) {
+        guard let file = files.first(where: { $0.id == fileID }) else {
+            HubPerf.log("review.headerMenu unknown file \(fileID)")
+            return
+        }
+
+        let menu = NSMenu()
+        if !selection.isEmpty {
+            menu.addItem(ClosureMenuItem("Copy") { PathOpener.copy(selection) })
+            menu.addItem(.separator())
+        }
+        for action in pathActions(of: file) {
+            menu.addItem(ClosureMenuItem(action.title, action.run))
+        }
+        HubPerf.log("review.headerMenu \(file.path) (\(menu.items.count) items)")
+        menu.popUp(positioning: nil, at: NSEvent.mouseLocation, in: nil)
     }
 
     /// A new local comment, kept in the store of the repository its file is in.
@@ -1330,6 +1382,9 @@ struct ReviewRootView: View {
     /// at 260 pt the file name still lost six letters.
     private static let listFraction: CGFloat = 0.4
     private static let listMinWidth: CGFloat = 300
+    /// The file list opens as wide as its widest row (`FileListFit`), measured once per review; a
+    /// saved width from an earlier session opened it at 560 pt for rows that needed about 260.
+    @State private var listFit: CGFloat?
 
     var body: some View {
         let room = width * Self.listFraction
@@ -1339,7 +1394,7 @@ struct ReviewRootView: View {
             if showsFileList {
                 ResizableSidePanel(key: "review.files", edge: .trailing, title: "Files", defaultWidth: 320,
                                    minWidth: Self.listMinWidth, maxWidth: max(Self.listMinWidth, room),
-                                   autoCollapse: width > 0 && room < Self.listMinWidth) {
+                                   autoCollapse: width > 0 && room < Self.listMinWidth, fitWidth: listFit) {
                     FileSidebar(model: model)
                 }
             }
@@ -1350,6 +1405,12 @@ struct ReviewRootView: View {
         .onGeometryChange(for: CGFloat.self, of: \.size.height) { height = $0 }
         .onAppear { model.start() }
         .onDisappear { model.stop() }
+        // Once, when the first files arrive: a refresh that adds a longer name never moves the diff.
+        .onChange(of: model.files.isEmpty, initial: true) { _, empty in
+            guard listFit == nil, !empty else { return }
+            listFit = HubPerf.measure("review.files.fit", "\(model.files.count) files") { FileListFit.width(model: model) }
+            HubPerf.log("review.files.fit \(Int(listFit ?? 0)) pt for \(model.files.count) files")
+        }
         // Back from the browser or another app: the PR threads may have moved (the store skips a load
         // younger than the CLI's 30 s cache).
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
@@ -1383,6 +1444,7 @@ struct ReviewRootView: View {
                     Text(error)
                         .font(.system(size: 12, design: .monospaced))
                         .foregroundColor(ReviewPalette.removed)
+                        .textSelection(.enabled)
                         .padding(8)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
@@ -1483,6 +1545,14 @@ private struct ReviewHeader: View {
             if case .lastTurns(let count) = model.scope {
                 TurnCountStepper(count: count) { model.setScope(.lastTurns($0)) }
             }
+            // Left of the totals, in a slot that is there while idle too: a spinner that came and went
+            // among the controls changed the row's width and moved the totals with every load.
+            ZStack {
+                if model.loading {
+                    ProgressView().controlSize(.small)
+                }
+            }
+            .frame(width: 16, height: 16)
             if level <= .totals {
                 Text(verbatim: "+\(totals.additions)")
                     .font(.system(size: 12, weight: .semibold, design: .monospaced))
@@ -1503,9 +1573,6 @@ private struct ReviewHeader: View {
 
     @ViewBuilder
     private func controls(styleWidth: CGFloat) -> some View {
-            if model.loading {
-                ProgressView().controlSize(.small)
-            }
             if model.commentCount > 0 {
                 Label {
                     Text(verbatim: "\(model.commentCount)")
@@ -1563,9 +1630,6 @@ private struct ReviewHeader: View {
     /// Icons instead of labels, and the text size behind a menu.
     @ViewBuilder
     private var compactControls: some View {
-        if model.loading {
-            ProgressView().controlSize(.small)
-        }
         sendButton
         IconButton(systemName: model.options.diffStyle == .split ? "rectangle.split.2x1" : "rectangle",
                    tooltip: model.options.diffStyle == .split ? "Side by side (click for one column)" : "One column (click for side by side)") {
@@ -1587,26 +1651,30 @@ private struct ReviewHeader: View {
         viewMenu
     }
 
+    /// A drawn `MenuButton`: the compact and minimal controls are options of a ViewThatFits, which built a
+    /// new NSPopUpButton for a `Menu` on every measurement (each step of a divider drag).
     private var viewMenu: some View {
-        Menu {
-            Picker("Layout", selection: Binding(get: { model.options.diffStyle }, set: { model.setStyle($0) })) {
-                Text("Side by side").tag(DiffViewOptions.Style.split)
-                Text("One column").tag(DiffViewOptions.Style.unified)
-            }
-            Toggle("Wrap long lines", isOn: Binding(get: { model.options.wrap }, set: { _ in model.toggleWrap() }))
-            Divider()
-            Button("Larger text") { model.stepFont(1) }
-            Button("Smaller text") { model.stepFont(-1) }
-            Divider()
-            Button("Find in the Diff…") { model.find() }
-            Button("Reload") { model.reload() }
+        let model = model
+        return MenuButton(style: .genHoverIcon()) {
+            [
+                .action("Side by side", checked: model.options.diffStyle == .split) { model.setStyle(.split) },
+                .action("One column", checked: model.options.diffStyle == .unified) { model.setStyle(.unified) },
+                .action("Wrap long lines", checked: model.options.wrap) { model.toggleWrap() },
+                .divider,
+                .action("Larger text") { model.stepFont(1) },
+                .action("Smaller text") { model.stepFont(-1) },
+                .divider,
+                .action("Find in the Diff…") { model.find() },
+                .action("Reload") { model.reload() },
+            ]
         } label: {
             Image(systemName: "ellipsis.circle")
+                .font(.system(size: 12))
+                .frame(width: 16, height: 16)
         }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
         .fixedSize()
         .instantTooltip("Layout, wrap, text size, find, reload")
+        .accessibilityLabel(Text("Layout, wrap, text size, find, reload"))
     }
 }
 
@@ -1670,45 +1738,55 @@ private struct ScopeLink: View {
 }
 
 /// Codex's review source menu: what the diff compares.
-private struct ScopeMenu: View {
+struct ScopeMenu: View {
     @ObservedObject var model: ReviewModel
 
     var body: some View {
-        Menu {
-            // Always offered with a session: a turn without changes is an empty panel that the next
-            // turn fills, not a greyed-out item.
-            scopeButton(.lastTurns(1))
-                .disabled(model.session == nil || model.remoteHead != nil)
-            Button("Last Turns…") { model.setScope(.lastTurns(3)) }
-                .disabled(model.session == nil || model.remoteHead != nil)
-            Divider()
-            scopeButton(.uncommitted)
-            scopeButton(.unstaged)
-            scopeButton(.staged)
-            Divider()
-            Menu("Committed") {
-                if model.commits.isEmpty {
-                    Text("No commits ahead of the base")
-                }
-                ForEach(model.commits) { commit in
-                    Button("\(commit.short)  \(commit.subject)  ·  \(commit.when)") {
-                        model.setScope(.commit(sha: commit.sha, title: commit.subject))
-                    }
-                }
-            }
-            scopeButton(.branch)
-        } label: {
-            Text(label)
-                .font(.system(size: 12, weight: .medium))
-                .lineLimit(1)
-                .truncationMode(.middle)
-        }
-        .menuStyle(.borderlessButton)
-        // Shrinks in a narrow pane instead of pushing the header past both edges: a PR range label
+        // Its own width when that fits, so the totals sit beside it; it shrinks in a narrow pane instead
+        // of pushing the header past both edges: a PR range label
         // ("feature/next…chore/col-302921-repo-cleanup") is wider than the whole diff pane at 1000 pt.
-        .frame(minWidth: 80, maxWidth: 380, alignment: .leading)
+        // A drawn `MenuButton` shrinks like the text in it. The `Menu` it replaces needed a ViewThatFits of
+        // its own for that, and both ViewThatFits built new pop-up buttons on every measurement of the header.
+        MenuButton(items: { ScopeMenu.items(model: model) }) {
+            HStack(spacing: 4) {
+                Text(label)
+                    .font(.system(size: 12, weight: .medium))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 8, weight: .bold))
+                    .foregroundColor(ReviewPalette.dim)
+            }
+        }
+        .frame(minWidth: 80, alignment: .leading)
         .fixedSize(horizontal: false, vertical: true)
         .instantTooltip("What this diff compares: \(label)")
+    }
+
+    /// The scope choices at the moment of the click.
+    @MainActor
+    static func items(model: ReviewModel) -> [MenuButtonItem] {
+        // Always offered with a session: a turn without changes is an empty panel that the next turn
+        // fills, not a greyed-out item.
+        let turns = model.session != nil && model.remoteHead == nil
+        let committed: [MenuButtonItem] = model.commits.isEmpty
+            ? [.note("No commits ahead of the base")]
+            : model.commits.map { commit in
+                .action("\(commit.short)  \(commit.subject)  ·  \(commit.when)") {
+                    model.setScope(.commit(sha: commit.sha, title: commit.subject))
+                }
+            }
+        return [
+            scopeItem(.lastTurns(1), model: model, enabled: turns),
+            .action("Last Turns…", enabled: turns) { model.setScope(.lastTurns(3)) },
+            .divider,
+            scopeItem(.uncommitted, model: model),
+            scopeItem(.unstaged, model: model),
+            scopeItem(.staged, model: model),
+            .divider,
+            .submenu("Committed", committed),
+            scopeItem(.branch, model: model),
+        ]
     }
 
     private var label: String {
@@ -1719,18 +1797,11 @@ private struct ScopeMenu: View {
         }
     }
 
-    private func scopeButton(_ scope: DiffScope) -> some View {
-        Button {
-            model.setScope(scope)
-        } label: {
-            if model.scope == scope {
-                Label(scope.title, systemImage: "checkmark")
-            } else {
-                Text(scope.title)
-            }
-        }
+    @MainActor
+    private static func scopeItem(_ scope: DiffScope, model: ReviewModel, enabled: Bool = true) -> MenuButtonItem {
         // No checkout holds the head: the working tree on disk belongs to another branch.
-        .disabled(model.remoteHead != nil && scope.readsTheCheckout)
+        let readable = !(model.remoteHead != nil && scope.readsTheCheckout)
+        return .action(scope.title, checked: model.scope == scope, enabled: enabled && readable) { model.setScope(scope) }
     }
 }
 
@@ -2057,23 +2128,76 @@ struct FileSidebar: View {
     }
 
     /// Open, copy or reveal the file in its own repository (with several roots, not `model.repo`).
+    /// The same list as the diff header's right-click menu (`ReviewModel.pathActions`).
     @ViewBuilder
     private func fileMenu(_ file: DiffFile) -> some View {
-        if let url = model.hostURL(of: file.id), let head = model.remoteHead {
-            Button("Open on the host at \(head.sha.prefix(8))") { ExternalOpener.open(url) }
-            Button("Copy the host URL") { PathOpener.copy(url.absoluteString) }
-            if let relative = model.repoPath(of: file.id) {
-                Button("Copy repo-relative path") { PathOpener.copy(relative) }
-            }
+        ForEach(model.pathActions(of: file)) { action in
+            Button(action.title, action: action.run)
         }
-        if let path = model.absolutePath(of: file) {
-            Button("Open in Cursor") { PathOpener.cursor(path) }
-            Button("Reveal in Finder") { PathOpener.finder(path) }
-            Button("Copy path") { PathOpener.copy(path) }
-            if let relative = model.repoPath(of: file.id), relative != path {
-                Button("Copy repo-relative path") { PathOpener.copy(relative) }
-            }
+    }
+}
+
+/// The file list's width that shows every visible row whole: the widest of its rows as they draw
+/// (`FileRow`, `DirectoryRow`, `RootFolderRow`: indent, chevron or status dot, name, the +N −M
+/// counts, their paddings and HStack spacings), plus a legacy scroller when the system shows one.
+enum FileListFit {
+    private static let fileName = NSFont.systemFont(ofSize: 12.5)
+    private static let folderName = NSFont.systemFont(ofSize: 11.5, weight: .medium)
+    private static let rootName = NSFont.systemFont(ofSize: 12, weight: .semibold)
+    private static let counts = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
+    /// The row's hover box sits 6 pt inside the list on each side.
+    private static let rowInset: CGFloat = 12
+    /// Rounding and the text's own side bearings.
+    private static let slack: CGFloat = 6
+
+    @MainActor
+    static func width(model: ReviewModel) -> CGFloat {
+        let tree = model.treeMode && model.filter.isEmpty
+        let rows = sidebarRows(model.filteredFiles, tree: tree, collapsed: model.collapsed, roots: model.roots)
+        let widest = rows.map { rowWidth($0, tree: tree, roots: model.roots, hasRootActions: model.rootActions != nil) }.max() ?? 0
+        let scroller = NSScroller.preferredScrollerStyle == .legacy ? NSScroller.scrollerWidth(for: .regular, scrollerStyle: .legacy) : 0
+        return (widest + rowInset + slack + scroller).rounded(.up)
+    }
+
+    private static func text(_ string: String, _ font: NSFont) -> CGFloat {
+        ceil((string as NSString).size(withAttributes: [.font: font]).width)
+    }
+
+    /// "+N" and "−M" with `spacing` before each one that shows.
+    private static func totals(_ additions: Int, _ deletions: Int, spacing: CGFloat) -> CGFloat {
+        (additions > 0 ? spacing + text("+\(additions)", counts) : 0) + (deletions > 0 ? spacing + text("−\(deletions)", counts) : 0)
+    }
+
+    private static func rowWidth(_ row: SidebarRow, tree: Bool, roots: [ReviewRoot], hasRootActions: Bool) -> CGFloat {
+        let indent = 6 + CGFloat(row.depth) * 14
+        switch row.kind {
+        case .file(let file):
+            // dot 6, name, a 4 pt spacer, the counts; 8 pt apart; 6 pt trailing.
+            let skipped: CGFloat = file.skipped == nil ? 0 : 8 + 16
+            return indent + 6 + 8 + text(file.name, fileName) + 8 + 4 + skipped + totals(file.additions, file.deletions, spacing: 8) + 6
+        case .directory(let name, let additions, let deletions):
+            // Counts show only on a folded folder of the tree.
+            let chevron: CGFloat = tree ? 10 + 6 : 0
+            return indent + chevron + text(name, folderName) + 6 + 4 + totals(additions, deletions, spacing: 6) + 6
+        case .root(let index, let additions, let deletions):
+            let root = roots.indices.contains(index) ? roots[index] : nil
+            // chevron 10, folder icon 12, the name; the checkbox and the remove button beside the row.
+            let actions: CGFloat = hasRootActions ? 6 + 18 + ((root?.removable ?? false) ? 6 + 22 : 0) : 0
+            return 6 + 10 + 6 + 12 + 6 + text("\(root?.prefix ?? "")/", rootName) + 6 + 4 + totals(additions, deletions, spacing: 6) + 6 + actions
         }
+    }
+}
+
+/// One entry of a file's path menu (`ReviewModel.pathActions`).
+struct ReviewPathAction: Identifiable {
+    let title: String
+    let run: () -> Void
+
+    var id: String { title }
+
+    init(_ title: String, _ run: @escaping () -> Void) {
+        self.title = title
+        self.run = run
     }
 }
 
@@ -2166,9 +2290,9 @@ private struct RootFolderRow: View {
                 Divider()
             }
             Button("Open in Cursor") { PathOpener.cursor(root.folder) }
-            Button("Reveal in Finder") { PathOpener.finder(root.folder) }
+            Button("Open in Finder") { PathOpener.finder(root.folder) }
             Button("Open in cmux") { PathOpener.cmux(root.folder) }
-            Button("Copy path") { PathOpener.copy(root.folder) }
+            Button("Copy path") { PathOpener.copy(root.folder, what: "path") }
         }
     }
 }
@@ -2195,6 +2319,7 @@ private struct DirectoryRow: View {
                 .foregroundColor(ReviewPalette.dim)
                 .lineLimit(1)
                 .truncationMode(.head)
+                .instantTooltip(name)
             Spacer(minLength: 4)
             if tree && collapsed {
                 if additions > 0 {

@@ -396,12 +396,19 @@ export async function pollAccount(args: PollAccountArgs): Promise<AccountUsage> 
             }));
         } catch (refreshErr) {
             // A dead refresh token (invalid_grant / cooldown) must not
-            // upgrade a routine 429 into a hard auth error — the access
-            // token can still land requests once another consumer rotates
-            // it. Keep the original status as the account error and carry
-            // the refresh failure as context.
+            // upgrade a routine 429 into a hard auth error. The access
+            // token still answers once the limit clears — appending the
+            // refresh failure put `invalid_grant` in the row, and the
+            // ranker then marked a live account login-expired until the
+            // next 200. A 401 is already an auth failure; only that one
+            // keeps the refresh detail.
             const detail = refreshErr instanceof Error ? refreshErr.message : String(refreshErr);
             logger.debug(`${tag} token refresh after ${err.statusCode} failed: ${detail}`);
+
+            if (err.statusCode === 429) {
+                throw err;
+            }
+
             throw new RetryableApiError(err.statusCode, `${err.message} (token refresh failed: ${detail})`);
         }
 

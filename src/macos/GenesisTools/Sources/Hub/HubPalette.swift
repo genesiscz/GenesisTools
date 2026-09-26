@@ -226,6 +226,11 @@ enum HubPaletteEngine {
                     HubPaletteSuggestion(id: "pr-\(pr.id)", title: "\(pr.label) \(pr.title)", subtitle: "\(pr.repo) · \(pr.headBranch)", symbol: command.symbol,
                                          completion: "\(prefix)pr \(pr.number)", action: .openPR(HubPRRef(project: project?.name ?? pr.repo, number: pr.number)))
                 }
+            if rows.isEmpty, listed.isEmpty {
+                // "gt pr" before the PRs mode ever loaded its list drew an empty box (snapshot 2026-09-25).
+                let why = context.prs.isEmpty ? "The list fills once the PRs mode has loaded" : "No PR matches “\(argument)”"
+                return [HubPaletteSuggestion(id: "pr-none", title: "Type a PR number to open it\(where_)", subtitle: why, symbol: "questionmark.circle")]
+            }
             return rows + listed
         case "session":
             let matches = context.sessions.filter { session in
@@ -368,7 +373,10 @@ struct HubPaletteView: View {
             refresh()
             focused = true
         }
-        .onChange(of: query) { refresh(resetSelection: true) }
+        .onChange(of: query) {
+            HubMainBusy.measure("palette.query")
+            refresh(resetSelection: true)
+        }
         // The session list and PRs can land after the palette opened (a launch with --palette).
         .onChange(of: context.signature) { refresh() }
         .onExitCommand { close() }

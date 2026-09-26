@@ -63,8 +63,15 @@ afterEach(async () => {
 
 describe("record-session-cmux tty gate", () => {
     test("a headless claude (tty '??') is not recorded", async () => {
-        // A plain spawned sleep has no controlling tty, same as `claude -p`.
-        const headless = Bun.spawn(["sleep", "30"], { env: process.env, stdout: "ignore", stderr: "ignore" });
+        // A detached sleep (its own session) has no controlling tty, same as `claude -p`.
+        // A plain child would inherit the terminal of a `bun test` run from a shell.
+        const headless = Bun.spawn(["sleep", "30"], {
+            env: process.env,
+            stdin: "ignore",
+            stdout: "ignore",
+            stderr: "ignore",
+            detached: true,
+        });
 
         try {
             await runHook(PAYLOAD, { CLAUDE_PID: String(headless.pid) });

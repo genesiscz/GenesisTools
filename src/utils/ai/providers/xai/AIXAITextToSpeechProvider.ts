@@ -146,7 +146,7 @@ export class AIXAITextToSpeechProvider implements AITextToSpeechProvider {
             let done = false;
             let error: Error | null = null;
 
-            const ws = client.openWebSocket("/tts", params);
+            const ws = await client.openWebSocket("/tts", params);
 
             const push = (chunk: Uint8Array): void => {
                 if (resolveNext) {

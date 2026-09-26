@@ -17,6 +17,8 @@ interface ResolveCall {
 
 const resolveCalls: ResolveCall[] = [];
 let tokenCounter = 0;
+/** When set, the force-refresh call throws this instead of rotating. */
+let forceRefreshError: Error | undefined;
 
 mock.module("@genesiscz/utils/claude/subscription-auth", () => ({
     resolveAccountToken: async (name: string, options?: { forceRefresh?: boolean; noRefresh?: boolean }) => {
@@ -25,6 +27,11 @@ mock.module("@genesiscz/utils/claude/subscription-auth", () => ({
             ...(options?.forceRefresh === undefined ? {} : { forceRefresh: options.forceRefresh }),
             ...(options?.noRefresh === undefined ? {} : { noRefresh: options.noRefresh }),
         });
+
+        if (options?.forceRefresh && forceRefreshError) {
+            throw forceRefreshError;
+        }
+
         tokenCounter += 1;
 
         return { token: `token-${tokenCounter}`, account: { name }, refreshed: options?.forceRefresh === true };
@@ -125,6 +132,7 @@ afterEach(() => {
     resolveCalls.length = 0;
     legacyAccounts = [];
     tokenCounter = 0;
+    forceRefreshError = undefined;
 });
 
 describe("anthropic-sub usage.poll", () => {
@@ -173,6 +181,23 @@ describe("anthropic-sub usage.poll", () => {
         expect(fetches.calls()).toBe(2);
         expect(resolveCalls).toEqual([{ name: "personal" }, { name: "personal", forceRefresh: true }]);
         expect(snapshot.limits.length).toBe(3);
+    });
+
+    it("a 429 whose refresh fails stays a rate limit and does not report invalid_grant", async () => {
+        useAccount("personal");
+        forceRefreshError = new Error("Token expired (invalid_grant). Run: tools claude login personal");
+        const fetches = stubFetch(1);
+
+        const err = await pollAnthropicAccount(entry("personal"), { probe: false }).then(
+            () => undefined,
+            (caught: unknown) => caught
+        );
+
+        expect(fetches.calls()).toBe(1);
+        expect(resolveCalls).toEqual([{ name: "personal" }, { name: "personal", forceRefresh: true }]);
+        expect(err).toBeInstanceOf(Error);
+        expect(String(err)).toContain("Usage API 429");
+        expect(String(err)).not.toContain("invalid_grant");
     });
 
     it("a probe never asks for a refresh, and a 429 is reported instead of unlocked", async () => {

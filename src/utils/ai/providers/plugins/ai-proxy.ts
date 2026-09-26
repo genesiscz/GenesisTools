@@ -1,4 +1,3 @@
-import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import { WEB_SERVICES } from "@genesiscz/utils/ui/dashboards";
 import { resolveCredential } from "../credentials";
 import type { BindContext, ProviderBinding, ProviderPlugin } from "../plugin-types";
@@ -32,6 +31,8 @@ export const aiProxyPlugin: ProviderPlugin = {
             throw new Error("ai-proxy client key missing");
         }
 
+        // lazy: saves 24.0 ms cold import (tools ts imports lazy, 2026-09-26) — the plugin registry loads with every usage poll and history listing, and only bind() needs the SDK
+        const { createOpenAICompatible } = await import("@ai-sdk/openai-compatible");
         const proxy = createOpenAICompatible({
             name: "ai-proxy",
             baseURL: ctx.account.endpoint ?? DEFAULT_BASE_URL,

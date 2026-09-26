@@ -158,7 +158,9 @@ export async function sendNewSessionCommand({
     await sendShellCommand(
         workspaceRef,
         surfaceRef,
-        `exec tmux new-session -A -s ${shellQuote(tmuxSessionName)} -c ${shellQuote(cwd)}`
+        // `cd ~` first: if this client starts the tmux server, the server keeps its folder for
+        // life, and a worktree that is removed later poisons every new pane (tmuxServerBootstrapCwd).
+        `cd ~ && exec tmux new-session -A -s ${shellQuote(tmuxSessionName)} -c ${shellQuote(cwd)}`
     );
 }
 

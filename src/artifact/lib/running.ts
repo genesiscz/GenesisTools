@@ -1,4 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
+import { withTimeout } from "@genesiscz/utils/async";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { classifyPid, type PidIdentity, readProcessCommand } from "@genesiscz/utils/process-identity";
@@ -140,7 +141,11 @@ export interface HoldServerOptions {
     close: () => Promise<void>;
     /** Opened with `open` on darwin when set. */
     openUrl?: string;
+    /** How long a signal waits for `close` before the process exits anyway. */
+    closeDeadlineMs?: number;
 }
+
+const CLOSE_DEADLINE_MS = 5_000;
 
 /**
  * Own the lifetime of a foreground server, the one way for every start path.
@@ -150,6 +155,10 @@ export interface HoldServerOptions {
  * and closing first lets them unwind instead of being torn down by exit()),
  * drops the record, then blocks forever. NEVER resolves: the process leaves
  * through the signal path.
+ *
+ * The close has a deadline. Vite 8.2.2's close() could hang for good
+ * (vitejs/vite#22934), and Ctrl+C then left the server running with its record
+ * on disk. On expiry it warns, drops the record and exits all the same.
  *
  * `serve --detach` needs nothing extra — it re-spawns itself without `--detach`,
  * so the detached child comes back through this same function.
@@ -164,9 +173,16 @@ export async function holdServer(options: HoldServerOptions): Promise<never> {
     });
 
     const cleanup = (): void => {
-        void options
-            .close()
+        const deadlineMs = options.closeDeadlineMs ?? CLOSE_DEADLINE_MS;
+        const expired = new Error(`the server did not close within ${deadlineMs} ms`);
+
+        void withTimeout(options.close(), deadlineMs, expired)
             .catch((err: unknown) => {
+                if (err === expired) {
+                    logger.warn({ name: options.name, deadlineMs }, `[artifact] ${expired.message}; exiting anyway`);
+                    return;
+                }
+
                 logger.debug({ err, name: options.name }, "[artifact] closing the server failed on shutdown");
             })
             .then(() => removeRunning(process.pid))

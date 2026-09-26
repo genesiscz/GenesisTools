@@ -1,6 +1,37 @@
 import { buildObsidianNoteHref } from "@app/dev-dashboard/lib/obsidian/note-href";
 import { escapeHtml } from "@genesiscz/utils/string";
-import hljs from "highlight.js";
+import hljs from "highlight.js/lib/core";
+import apache from "highlight.js/lib/languages/apache";
+import applescript from "highlight.js/lib/languages/applescript";
+import bash from "highlight.js/lib/languages/bash";
+import c from "highlight.js/lib/languages/c";
+import cpp from "highlight.js/lib/languages/cpp";
+import css from "highlight.js/lib/languages/css";
+import diff from "highlight.js/lib/languages/diff";
+import dockerfile from "highlight.js/lib/languages/dockerfile";
+import go from "highlight.js/lib/languages/go";
+import groovy from "highlight.js/lib/languages/groovy";
+import http from "highlight.js/lib/languages/http";
+import ini from "highlight.js/lib/languages/ini";
+import java from "highlight.js/lib/languages/java";
+import javascript from "highlight.js/lib/languages/javascript";
+import json from "highlight.js/lib/languages/json";
+import kotlin from "highlight.js/lib/languages/kotlin";
+import markdown from "highlight.js/lib/languages/markdown";
+import objectivec from "highlight.js/lib/languages/objectivec";
+import php from "highlight.js/lib/languages/php";
+import plaintext from "highlight.js/lib/languages/plaintext";
+import powershell from "highlight.js/lib/languages/powershell";
+import properties from "highlight.js/lib/languages/properties";
+import python from "highlight.js/lib/languages/python";
+import ruby from "highlight.js/lib/languages/ruby";
+import rust from "highlight.js/lib/languages/rust";
+import shell from "highlight.js/lib/languages/shell";
+import sql from "highlight.js/lib/languages/sql";
+import swift from "highlight.js/lib/languages/swift";
+import typescript from "highlight.js/lib/languages/typescript";
+import xml from "highlight.js/lib/languages/xml";
+import yaml from "highlight.js/lib/languages/yaml";
 import type { MarkedExtension, Tokens } from "marked";
 import { Marked } from "marked";
 import { markedHighlight } from "marked-highlight";
@@ -422,6 +453,47 @@ function obsidianCalloutExtension(): MarkedExtension {
             },
         ],
     };
+}
+
+// Core plus the languages that occur. Full highlight.js registers about 190 languages and made the
+// QA page chunk 800 KB heavier. This list is every fence language highlight.js supports that
+// appears in the QA log, the handoff logs and the vault (measured 2026-09-26); rendering 3637 of
+// those texts gives the same HTML as full highlight.js. Any other language renders as a plain
+// escaped block (`highlightCode` checks `getLanguage`), a styling loss only.
+for (const [name, language] of Object.entries({
+    apache,
+    applescript,
+    bash,
+    c,
+    cpp,
+    css,
+    diff,
+    dockerfile,
+    go,
+    groovy,
+    http,
+    ini,
+    java,
+    javascript,
+    json,
+    kotlin,
+    markdown,
+    objectivec,
+    php,
+    plaintext,
+    powershell,
+    properties,
+    python,
+    ruby,
+    rust,
+    shell,
+    sql,
+    swift,
+    typescript,
+    xml,
+    yaml,
+})) {
+    hljs.registerLanguage(name, language);
 }
 
 const KNOWN_HLJS_ALIASES: Record<string, string> = {

@@ -67,6 +67,10 @@ describe("createBoxTable", () => {
      * colour whenever $CI is set, so this assertion used to pass locally and fail on
      * every GitHub Actions run. Any escape sequence surviving NO_COLOR came from
      * something that consults neither it nor the TTY check.
+     *
+     * FORCE_COLOR is dropped from the child: `bun test --parallel` sets it on every worker
+     * when the run itself prints to a terminal, and the child then warns on stderr that
+     * NO_COLOR is ignored.
      */
     it("emits no escape sequences when the output is not a terminal", () => {
         const script =
@@ -75,8 +79,9 @@ describe("createBoxTable", () => {
             `table.push(["alice", "ok"]);\n` +
             `process.stdout.write(table.toString());\n`;
 
+        const { FORCE_COLOR: _forceColor, ...env } = process.env;
         const proc = Bun.spawnSync(["bun", "-e", script], {
-            env: { ...process.env, NO_COLOR: "1" },
+            env: { ...env, NO_COLOR: "1" },
             stdout: "pipe",
             stderr: "pipe",
         });

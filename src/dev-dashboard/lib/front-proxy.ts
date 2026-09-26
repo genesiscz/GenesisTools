@@ -92,6 +92,19 @@ const SCAN_UPSTREAM_PATHS = new Set([
     "/api/claude/usage/totals",
 ]);
 
+/**
+ * The Cache-Control for a proxied UI response, or undefined to keep the upstream's.
+ *
+ * Vite names every `/assets/*` file by its content hash, so a 200 there never changes and the
+ * browser may keep it for a year. Vite preview sent `no-cache`, so each of the 10 to 20 route
+ * chunks cost a 304 round trip over the tunnel on every page load. `private`, not `public`: the
+ * dashboard sits behind auth, and `public` lets the tunnel's shared cache hand these bundles to
+ * anyone. `index.html` and the SPA fallbacks keep the upstream's `no-cache`.
+ */
+export function assetCacheControl(pathname: string, status: number): string | undefined {
+    return status === 200 && pathname.startsWith("/assets/") ? "private, max-age=31536000, immutable" : undefined;
+}
+
 /** Upstream fetch deadline for a path. `undefined` means no deadline (a stream). */
 export function upstreamTimeoutMs(pathname: string): number | undefined {
     if (isLongLivedProxiedStream(pathname)) {
@@ -606,6 +619,12 @@ export function startFrontProxy(opts: {
             headers.delete("content-encoding");
             headers.delete("content-length");
             headers.delete("transfer-encoding");
+
+            const cacheControl = ttyd ? undefined : assetCacheControl(url.pathname, upstream.status);
+
+            if (cacheControl) {
+                headers.set("cache-control", cacheControl);
+            }
 
             // new Headers() can fold multiple Set-Cookie into one; re-apply each
             // so the session cookie the Vite middleware issues survives the relay.

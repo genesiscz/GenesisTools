@@ -1,3 +1,4 @@
+import { homedir } from "node:os";
 import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
 import { argvWithChildDeadline as wrapArgvWithChildDeadline } from "@genesiscz/utils/process/child-deadline";
@@ -155,6 +156,18 @@ async function runTmux(cmd: string[], opts?: { cwd?: string }): Promise<TmuxSpaw
 function tmuxErrorDetail(stderr?: string): string {
     const trimmed = stderr?.trim();
     return trimmed ? `: ${trimmed}` : "";
+}
+
+/**
+ * The folder a `new-session` client runs in. When no server is running, that client STARTS the
+ * shared server, and the server keeps the client's folder for its whole life. On tmux 3.7c a
+ * server whose folder was later deleted starts every new pane there and ignores `-c`: measured
+ * 2026-09-26, a server bootstrapped from a since-removed agent worktree left every new
+ * dev-dashboard terminal in "getcwd: cannot access parent directories", and `tools` died with
+ * `uv_cwd ENOENT`. The home folder never disappears; `-c` still sets each pane's own folder.
+ */
+export function tmuxServerBootstrapCwd(): string {
+    return homedir();
 }
 
 export function setTmuxSpawnSyncForTests(impl: TmuxSpawnSync | null): void {
@@ -386,7 +399,7 @@ export async function createTmuxSession(sessionName: string, cwd: string, comman
     const tmuxBin = resolveTmuxBin();
     const result = await runTmux(
         [tmuxBin, "new-session", "-d", "-s", sessionName, "-c", cwd, "--", ...tmuxLoginShellArgv(command)],
-        { cwd }
+        { cwd: tmuxServerBootstrapCwd() }
     );
 
     if (result.exitCode !== 0) {
@@ -426,7 +439,7 @@ export async function createTmuxSessionRunning(
     const tmuxBin = resolveTmuxBin();
     const result = await runTmux(
         [tmuxBin, "new-session", "-d", "-s", sessionName, "-c", cwd, "--", ...envArgv, ...argv],
-        { cwd }
+        { cwd: tmuxServerBootstrapCwd() }
     );
 
     if (result.exitCode !== 0) {

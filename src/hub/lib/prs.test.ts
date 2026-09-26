@@ -46,6 +46,9 @@ describe("parsePrRef", () => {
         expect(parsePrRef("https://github.com/o/r/pull/7")).toEqual({ url: "https://github.com/o/r/pull/7" });
         expect(parsePrRef("/work/r#12")).toEqual({ path: "/work/r", number: 12 });
         expect(parsePrRef("/work/r")).toBeNull();
+        // A bare number names a PR of the repo in the current folder, as `tools hub --pr <n>` does.
+        expect(parsePrRef("424")).toEqual({ path: process.cwd(), number: 424 });
+        expect(parsePrRef("#424")).toEqual({ path: process.cwd(), number: 424 });
     });
 });
 

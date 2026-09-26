@@ -137,7 +137,12 @@ describe("resolveCredential", () => {
             throw new Error("expected a CredentialUnavailableError");
         } catch (err) {
             const message = (err as Error).message;
-            expect(message).toContain("tools ai config secret set ai/acc_xai/apiKey");
+            // `secret set` writes the vault entry without linking it to the
+            // account, so it can never repair one; `account edit` does both.
+            expect(message).toContain(
+                `printf '%s' "$XAI_API_KEY" | tools ai config account edit xai-api --api-key-stdin`
+            );
+            expect(message).not.toContain("secret set");
             // Comma-joined, because `--use-env A or B` is prose a user cannot paste.
             expect(message).toContain("--use-env XAI_API_KEY,X_AI_API_KEY");
             expect(message).not.toContain("XAI_API_KEY or ");
@@ -164,14 +169,16 @@ describe("resolveCredential", () => {
         }
     });
 
-    test("a missing access token is repaired at its own vault path", async () => {
+    test("a missing access token is repaired by logging that account in again", async () => {
         const spec: CredentialSpec = { fields: ["accessToken"], envKeys: [], required: ["accessToken"] };
 
         try {
             await resolveCredential(account({ provider: "anthropic-sub" }), spec);
             throw new Error("expected a CredentialUnavailableError");
         } catch (err) {
-            expect((err as Error).message).toContain("tools ai config secret set ai/acc_xai/accessToken");
+            const message = (err as Error).message;
+            expect(message).toContain("tools ai accounts login xai-api --provider anthropic-sub");
+            expect(message).not.toContain("secret set");
         }
     });
 

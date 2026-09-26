@@ -209,6 +209,9 @@ enum DiffRendererEvent: Equatable {
     case blameNeed(fileID: String)
     /// "Open the turn" on a line's agent blame tip: the source at this index of the last `setBlame`.
     case blameOpen(index: Int)
+    /// A right-click on a file's header: Swift shows the file's path menu, with Copy for any text
+    /// selected on the page.
+    case headerMenu(fileID: String, selection: String)
 
     /// A page message (web/diff-viewer/main.ts `post`) as the event it stands for. `ready`, `rendered`
     /// and `log` stay with the renderer, which owns the state they need; nil for those and for a
@@ -260,6 +263,9 @@ enum DiffRendererEvent: Equatable {
         case "blame.open":
             guard let index = body["index"] as? Int else { return nil }
             self = .blameOpen(index: index)
+        case "header.menu":
+            guard let fileID = body["fileId"] as? String else { return nil }
+            self = .headerMenu(fileID: fileID, selection: body["selection"] as? String ?? "")
         case "link":
             // Only web pages leave the viewer; anything else in a comment stays text.
             guard let raw = body["url"] as? String, let url = URL(string: raw), url.scheme == "https" || url.scheme == "http" else { return nil }

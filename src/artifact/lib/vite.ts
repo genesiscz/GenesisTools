@@ -122,9 +122,13 @@ export function fsAllowRoots(dir: string): string[] {
  * Per-served-dir Vite cache under the REPO's node_modules, never under the
  * served directory: the served dir is user content (often a vault folder) and
  * must not grow a node_modules/.vite of its own.
+ *
+ * `root` replaces that shared location. A test serves a fresh temp folder on
+ * every run, so under the default each run left one more cache folder in the
+ * repo's node_modules.
  */
-export function cacheDirFor(dir: string): string {
+export function cacheDirFor(dir: string, root = join(REPO_ROOT, "node_modules", ".vite-cache")): string {
     const slug = createHash("sha1").update(dir).digest("hex").slice(0, 12);
 
-    return join(REPO_ROOT, "node_modules", ".vite-cache", `artifact-${slug}`);
+    return join(root, `artifact-${slug}`);
 }

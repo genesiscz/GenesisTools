@@ -17,7 +17,8 @@ enum ReviewKey: String {
 }
 
 /// What a `--snapshot` run does before it captures, so the keys and the Fix selection can be checked
-/// without a screen: `--select-open <n>`, `--step-threads <n>` (j), `--reply` (r), `--keys` (?), `--fix-form`.
+/// without a screen: `--select-open <n>`, `--step-threads <n>` (j), `--reply` (r), `--keys` (?), `--fix-form`,
+/// `--loading`.
 struct ReviewSnapshotDemo {
     var keys = false
     var selectOpen = 0
@@ -28,6 +29,8 @@ struct ReviewSnapshotDemo {
     var fixForm = false
     /// `--blame <path>:<line>`: that line's agent blame tip, as a hover would show it.
     var blame: (path: String, line: Int)?
+    /// `--loading`: the header as it looks while the diff loads (the spinner beside the totals).
+    var loading = false
 
     private var needsPR: Bool { keys || selectOpen > 0 || steps > 0 || reply || toggle || fixForm }
 
@@ -75,6 +78,9 @@ struct ReviewSnapshotDemo {
 
     /// Asks for the file's blame as a hover does, then shows the line's tip (20 s at most).
     private func applyBlame(to model: ReviewModel, waited: Double = 0, done: @escaping () -> Void) {
+        if loading {
+            model.loading = true
+        }
         guard let blame else { return done() }
         if !model.requestBlame(path: blame.path), waited < 20 {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {

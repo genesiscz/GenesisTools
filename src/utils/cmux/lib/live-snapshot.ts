@@ -1,4 +1,4 @@
-import { type CmuxRunResult, runCmux, runCmuxJSON } from "@genesiscz/utils/cmux/lib/cli";
+import { type CmuxRunResult, type CmuxTimeoutOpt, runCmux, runCmuxJSON } from "@genesiscz/utils/cmux/lib/cli";
 import { ensureCmuxResponsive } from "@genesiscz/utils/cmux/lib/health";
 import { logger } from "@genesiscz/utils/logger";
 import { profiler } from "@genesiscz/utils/profile";
@@ -75,7 +75,10 @@ export interface CmuxLiveSnapshot {
     panes: CmuxLivePane[];
 }
 
-type CmuxJsonRunner = <T>(args: string[]) => Promise<T>;
+/** The old preflight's `identify` timeout, now the first state command's (see fetchCmuxLiveSnapshot). */
+const FIRST_CALL_TIMEOUT_MS = 3_500;
+
+type CmuxJsonRunner = <T>(args: string[], opts?: CmuxTimeoutOpt) => Promise<T>;
 type CmuxRunner = (args: string[]) => Promise<CmuxRunResult>;
 
 interface WorkspaceListRpc {
@@ -138,11 +141,20 @@ interface SurfaceRpc {
     url?: string;
 }
 
+interface TreeRpc {
+    windows?: Array<{ workspaces?: Array<WorkspaceRpc & { panes?: Array<PaneRpc & { surfaces?: SurfaceRpc[] }> }> }>;
+}
+
+/** A pane's surfaces from the one `tree --all` read, or undefined when the tree does not know the pane. */
+type SurfaceLookup = (workspace: string, pane: string) => SurfaceRpc[] | undefined;
+
 export type SnapshotPreviewMode = "all" | "selected" | "none";
 
 interface SnapshotDeps {
     runJson?: CmuxJsonRunner;
     run?: CmuxRunner;
+    /** Names the fault when the first state command fails; throws when cmux is unhealthy. */
+    probe?: (context: string) => Promise<unknown>;
     /** `all` (default) captures every surface. `selected` is the focus-command fast path. */
     previews?: SnapshotPreviewMode;
     /**
@@ -245,6 +257,7 @@ async function fetchOnePane({
     runJson,
     run,
     previews,
+    surfaces: surfacesFor,
 }: {
     pane: PaneRpc;
     workspaceId: string;
@@ -254,16 +267,13 @@ async function fetchOnePane({
     runJson: CmuxJsonRunner;
     run: CmuxRunner;
     previews: SnapshotPreviewMode;
+    surfaces: Promise<SurfaceLookup>;
 }): Promise<CmuxLivePane> {
     const selectedSurfaceRef = pane.selected_surface_ref;
-    const surfaceResponse = await runJson<SurfaceListRpc>([
-        "list-pane-surfaces",
-        "--workspace",
-        id,
-        "--pane",
-        paneId(pane),
-    ]);
-    const rawSurfaces = surfaceResponse.surfaces ?? [];
+    const rawSurfaces =
+        (await surfacesFor)(id, paneId(pane)) ??
+        (await runJson<SurfaceListRpc>(["list-pane-surfaces", "--workspace", id, "--pane", paneId(pane)])).surfaces ??
+        [];
     const anyMarkedSelected = rawSurfaces.some(
         (surface) => surface.selected_in_pane === true || surface.selected === true
     );
@@ -310,7 +320,8 @@ async function fetchWorkspacePanes(
     rawWorkspace: WorkspaceRpc,
     runJson: CmuxJsonRunner,
     run: CmuxRunner,
-    previews: SnapshotPreviewMode
+    previews: SnapshotPreviewMode,
+    surfaces: Promise<SurfaceLookup>
 ): Promise<CmuxLivePane[]> {
     const id = workspaceId(rawWorkspace);
     const paneResponse = await runJson<PaneListRpc>(["list-panes", "--workspace", id]);
@@ -328,9 +339,51 @@ async function fetchWorkspacePanes(
                 runJson,
                 run,
                 previews,
+                surfaces,
             })
         )
     );
+}
+
+/**
+ * Every pane's surfaces from one `tree --all`, keyed by workspace and pane ref. It replaced one
+ * `list-pane-surfaces` spawn per pane (four of a ten-spawn snapshot on 2026-09-26). A pane the
+ * tree does not know (opened in between, or a cmux without `tree`) still gets its own call.
+ */
+async function treeSurfaces(runJson: CmuxJsonRunner): Promise<SurfaceLookup> {
+    const byPane = new Map<string, SurfaceRpc[]>();
+
+    try {
+        const tree = await runJson<TreeRpc>(["tree", "--all"]);
+
+        for (const window of tree.windows ?? []) {
+            for (const workspace of window.workspaces ?? []) {
+                for (const pane of workspace.panes ?? []) {
+                    if (!pane.surfaces) {
+                        continue;
+                    }
+
+                    // Only the fields `list-pane-surfaces` reports, so the snapshot stays the same:
+                    // the tree's `active` marks every pane's selected surface (that call has no focus
+                    // field, so `active` was always false), and its `url` is null for a terminal.
+                    const surfaces = pane.surfaces.map((surface) => ({
+                        id: surface.id,
+                        ref: surface.ref,
+                        index: surface.index_in_pane ?? surface.index,
+                        title: surface.title,
+                        type: surface.type,
+                        selected: surface.selected_in_pane ?? surface.selected,
+                        ...(typeof surface.url === "string" ? { url: surface.url } : {}),
+                    }));
+                    byPane.set(`${workspaceId(workspace)}\n${paneId(pane)}`, surfaces);
+                }
+            }
+        }
+    } catch (error) {
+        logger.debug({ error }, "[cmux] tree --all failed; surfaces fall back to one call per pane");
+    }
+
+    return (workspace, pane) => byPane.get(`${workspace}\n${pane}`);
 }
 
 /** Test hook: parallel workspace fan-out with an injectable per-workspace runner. */
@@ -348,19 +401,33 @@ export async function fetchCmuxLiveSnapshot(deps: SnapshotDeps = {}): Promise<Cm
     const fetchedAt = new Date().toISOString();
 
     const prof = profiler.scope("cmux");
-    try {
-        // Fail fast on a starved UI thread: with a livelocked cmux every state command
-        // below would hang for its full per-request timeout. Injected runners (tests)
-        // skip the probe.
-        if (!deps.runJson) {
-            await prof.measureAsync("preflight", () => ensureCmuxResponsive("cmux live snapshot"));
+    // Fail fast on a starved UI thread: with a livelocked cmux every state command below would
+    // hang for its full per-request timeout. The first one is bounded like the old preflight's
+    // `identify` and doubles as the probe; that preflight (a ps scan, `ping` and `identify`, three
+    // spawns) was p50 97 ms and avg 323 ms of a 391 ms snapshot. Only a failure pays for the
+    // probe that names the fault. Injected runners (tests) skip it unless they inject a probe.
+    const probe =
+        deps.probe ??
+        (deps.runJson ? undefined : (context: string) => ensureCmuxResponsive(context, { identifyTimeoutMs: 1_000 }));
+    const firstCall = async <T>(args: string[]): Promise<T> => {
+        if (!probe) {
+            return runJson<T>(args);
         }
 
+        try {
+            return await runJson<T>(args, { timeoutMs: FIRST_CALL_TIMEOUT_MS });
+        } catch (error) {
+            await probe("cmux live snapshot");
+            throw error;
+        }
+    };
+
+    try {
         let windows: CmuxLiveWindow[] | undefined;
         let workspaceLists: WorkspaceListRpc[];
 
         if (deps.allWindows) {
-            const rawWindows = await prof.measureAsync("list-windows", () => runJson<WindowRpc[]>(["list-windows"]));
+            const rawWindows = await prof.measureAsync("list-windows", () => firstCall<WindowRpc[]>(["list-windows"]));
             workspaceLists = await prof.measureAsync("list-workspaces", () =>
                 Promise.all(
                     rawWindows.map((w) =>
@@ -377,7 +444,7 @@ export async function fetchCmuxLiveSnapshot(deps: SnapshotDeps = {}): Promise<Cm
             }));
         } else {
             workspaceLists = [
-                await prof.measureAsync("list-workspaces", () => runJson<WorkspaceListRpc>(["list-workspaces"])),
+                await prof.measureAsync("list-workspaces", () => firstCall<WorkspaceListRpc>(["list-workspaces"])),
             ];
         }
 
@@ -390,8 +457,12 @@ export async function fetchCmuxLiveSnapshot(deps: SnapshotDeps = {}): Promise<Cm
             windowRef,
         }));
 
+        // Runs beside the `list-panes` calls; each pane waits for it only after its own listing.
+        const surfaces = treeSurfaces(runJson);
         const paneGroups = await prof.measureAsync("list-panes+surfaces", () =>
-            Promise.all(rawWorkspaces.map(({ workspace }) => fetchWorkspacePanes(workspace, runJson, run, previews)))
+            Promise.all(
+                rawWorkspaces.map(({ workspace }) => fetchWorkspacePanes(workspace, runJson, run, previews, surfaces))
+            )
         );
         const panes = paneGroups.flat();
         prof.summary(`snapshot previews=${previews}`);

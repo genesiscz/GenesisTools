@@ -1,9 +1,9 @@
 import type { AITask, AITextToSpeechProvider, TTSOptions, TTSResult, TTSVoice } from "@genesiscz/utils/ai/types";
 import { rateLimitAwareDelay, retry } from "@genesiscz/utils/async";
 import type { AIProviderType } from "@genesiscz/utils/config/ai.types";
-import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { providerApiKey } from "../resolve";
 import { shouldRetrySynthesize } from "../synthesize-retry";
 
 const BASE_URL = "https://api.openai.com/v1";
@@ -38,14 +38,14 @@ function pickContentType(format?: TTSOptions["format"]): string {
     return "audio/mpeg";
 }
 
-function readApiKey(): string {
-    const key = env.ai.openai.getKey();
-
-    if (!key) {
-        throw new Error("OPENAI_API_KEY environment variable is not set.");
-    }
-
-    return key;
+/**
+ * The openai accounts first (a vault key, or the variable an account opted into),
+ * then OPENAI_API_KEY with a warning. Reading the environment alone left a
+ * process started without the shell's exports (Genesis.app, a launchd job) with
+ * no key even when an account held one.
+ */
+function readApiKey(): Promise<string> {
+    return providerApiKey("openai");
 }
 
 function resolveModel(modelOpt?: string): string {
@@ -56,7 +56,13 @@ export class AIOpenAITextToSpeechProvider implements AITextToSpeechProvider {
     readonly type: AIProviderType = "openai";
 
     async isAvailable(): Promise<boolean> {
-        return env.ai.openai.hasKey();
+        try {
+            await readApiKey();
+            return true;
+        } catch (err) {
+            logger.debug({ err }, "openai has no usable credential");
+            return false;
+        }
     }
 
     supports(task: AITask): boolean {
@@ -78,7 +84,7 @@ export class AIOpenAITextToSpeechProvider implements AITextToSpeechProvider {
     }
 
     private async synthesizeOnce(text: string, options?: TTSOptions & { model?: string }): Promise<TTSResult> {
-        const apiKey = readApiKey();
+        const apiKey = await readApiKey();
         const format = options?.format ?? "mp3";
         const body = {
             model: resolveModel(options?.model),
@@ -117,7 +123,6 @@ export class AIOpenAITextToSpeechProvider implements AITextToSpeechProvider {
             );
         }
 
-        const apiKey = readApiKey();
         const format = options?.format ?? "mp3";
         const body = {
             model: resolveModel(options?.model),
@@ -127,6 +132,7 @@ export class AIOpenAITextToSpeechProvider implements AITextToSpeechProvider {
         };
 
         const audio = (async function* iter(): AsyncIterable<Uint8Array> {
+            const apiKey = await readApiKey();
             const response = await fetch(`${BASE_URL}/audio/speech`, {
                 method: "POST",
                 headers: {

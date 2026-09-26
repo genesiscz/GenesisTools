@@ -59,6 +59,7 @@ interface EditFlags {
     useEnv?: string;
     authFile?: string;
     dataDir?: string;
+    apiKeyStdin?: boolean;
 }
 
 /** `--use-env A,B` names variables; `true`/`false` switch the provider defaults on and off. */
@@ -376,6 +377,13 @@ export async function cmdAccountEdit(idOrName: string, flags: EditFlags): Promis
         throw new Error("--enable and --disable are mutually exclusive.");
     }
 
+    const apiKey = flags.apiKeyStdin ? await readStdinValue() : undefined;
+
+    // Refused before editAccount, so the other flags of this call are not applied either.
+    if (flags.apiKeyStdin && !apiKey) {
+        throw new Error("--api-key-stdin was passed but stdin was empty; nothing was changed.");
+    }
+
     const account = await editAccount(idOrName, {
         ...(flags.enable ? { enabled: true } : {}),
         ...(flags.disable ? { enabled: false } : {}),
@@ -386,6 +394,7 @@ export async function cmdAccountEdit(idOrName: string, flags: EditFlags): Promis
         ...(flags.useEnv !== undefined ? { useEnvApiKey: parseUseEnv(flags.useEnv) } : {}),
         ...(flags.authFile !== undefined ? { authFile: flags.authFile } : {}),
         ...(flags.dataDir !== undefined ? { dataDir: flags.dataDir } : {}),
+        ...(apiKey ? { apiKey } : {}),
     });
 
     out.log.success(`Updated ${pc.bold(account.name)} (${account.id}).`);
@@ -505,7 +514,7 @@ export function registerAccountCommands(config: Command): void {
 
     account
         .command("edit")
-        .description("Change an account's metadata or env-fallback policy")
+        .description("Change an account's metadata, API key or env-fallback policy")
         .argument("<idOrName>", "Account id or name")
         .option("--enable", "Enable the account")
         .option("--disable", "Disable the account")
@@ -520,6 +529,7 @@ export function registerAccountCommands(config: Command): void {
         .option("--use-env <vars>", "Comma-separated env vars to allow, or true/false")
         .option("--auth-file <path>", "Path to a subscription CLI's auth file")
         .option("--data-dir <path>", "Path to a provider data directory")
+        .option("--api-key-stdin", "Read an API key from stdin and store it in the vault (never from argv)")
         .action(async (idOrName: string, flags: EditFlags) => {
             await cmdAccountEdit(idOrName, flags);
         });

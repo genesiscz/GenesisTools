@@ -85,6 +85,14 @@ final class TranscriptServices: @unchecked Sendable {
     // session (`tools ai sessions grep`) and not only the loaded window. Never set on `.none`.
     var onQuery: ((String) -> Void)?
 
+    /// Details of finished calls already loaded, by tool id. The List recycles rows and a recycled
+    /// row loses its `@State`, so a row scrolled back into view used to draw the short result, load
+    /// again and grow: two bodies, a plain render on the main thread and a height change per row, on
+    /// every scroll (measured 2026-09-25). A running call is not kept: its detail still changes (the
+    /// chat holds one services object for its whole life and fills a call in as it ends).
+    private let loadedLock = NSLock()
+    private var loadedById: [String: ToolLoaded] = [:]
+
     init(sessionId: String, cwd: String?, nativeLog: SessionNativeLog?, changes: ToolChangeSource?, showChange: ((String, Int?) -> Void)?) {
         self.sessionId = sessionId
         self.cwd = cwd
@@ -95,10 +103,21 @@ final class TranscriptServices: @unchecked Sendable {
 
     static let none = TranscriptServices(sessionId: "", cwd: nil, nativeLog: nil, changes: nil, showChange: nil)
 
+    /// What `load` returned for this finished call before, if anything.
+    func loaded(toolId: String) -> ToolLoaded? {
+        loadedLock.lock()
+        defer { loadedLock.unlock() }
+        return loadedById[toolId]
+    }
+
     /// Detail of one call, plus the file's current lines and the edit's line when it is an Edit.
-    func load(toolId: String) async -> ToolLoaded? {
+    /// A `finished` call's detail is kept for `loaded(toolId:)`.
+    func load(toolId: String, finished: Bool) async -> ToolLoaded? {
+        if finished, let known = loaded(toolId: toolId) {
+            return known
+        }
         guard let log = nativeLog else { return nil }
-        return await Task.detached(priority: .utility) {
+        let loaded = await Task.detached(priority: .utility) { () -> ToolLoaded? in
             guard let detail = log.detail(for: toolId) else { return nil }
             var loaded = ToolLoaded(detail: detail)
             if let path = detail.filePath, let first = detail.edits.first, !first.new.isEmpty,
@@ -111,6 +130,14 @@ final class TranscriptServices: @unchecked Sendable {
             }
             return loaded
         }.value
+        if finished, let loaded {
+            loadedLock.lock()
+            // The same bound as the session file's own detail cache.
+            if loadedById.count > 400 { loadedById.removeAll() }
+            loadedById[toolId] = loaded
+            loadedLock.unlock()
+        }
+        return loaded
     }
 }
 
@@ -309,12 +336,16 @@ struct ToolCallRowView: View, Equatable {
             && lhs.showAll == rhs.showAll && lhs.services === rhs.services
     }
 
+    private var finished: Bool { line.status != .pending }
+
     private var editsFiles: Bool {
         TranscriptToolKind.of(line.name) == .command && ToolChangeHeuristics.mayEditFiles(line.input)
     }
 
     var body: some View {
-        let presentation = ToolPresentation.make(line: line, loaded: loaded, context: context, cwd: services.cwd)
+        // A recycled row starts from what was loaded before (see `TranscriptServices.loaded`).
+        let current = loaded ?? (open && finished ? services.loaded(toolId: toolId) : nil)
+        let presentation = ToolPresentation.make(line: line, loaded: current, context: context, cwd: services.cwd)
         VStack(alignment: .leading, spacing: 2) {
             Button { onToggle(rowId) } label: { header(presentation) }
                 .buttonStyle(.genHoverRow(accent: .white, cornerRadius: 7))
@@ -326,7 +357,7 @@ struct ToolCallRowView: View, Equatable {
                     rowId: rowId,
                     presentation: presentation,
                     limit: showAll ? nil : verbosity.bodyLimit,
-                    canAddContext: loaded?.fileLines != nil && (loaded?.detail.edits.count ?? 0) == 1,
+                    canAddContext: current?.fileLines != nil && (current?.detail.edits.count ?? 0) == 1,
                     onShowAll: { onToggle(rowId + "#all") },
                     onMoreContext: { context += 10 },
                     onCollapse: { onToggle(rowId) },
@@ -340,12 +371,14 @@ struct ToolCallRowView: View, Equatable {
                 ToolChangesView(sessionId: services.sessionId, toolId: toolId, source: source, cwd: services.cwd, showChange: services.showChange, startOpen: verbosity.opensTools)
             }
         }
-        .padding(.leading, 42)
-        .padding(.trailing, 16)
-        .padding(.vertical, 1)
+        // GenesisTools adaptation: tighter insets, so more of a session fits (2026-09-25).
+        .padding(.leading, 24)
+        .padding(.trailing, 12)
+        .padding(.vertical, 0)
         .task(id: open ? toolId : "") {
-            guard open, loaded == nil else { return }
-            loaded = await services.load(toolId: toolId)
+            // A finished call loaded before is drawn from `services.loaded` already (see body).
+            guard open, loaded == nil, !finished || services.loaded(toolId: toolId) == nil else { return }
+            loaded = await services.load(toolId: toolId, finished: finished)
         }
     }
 
@@ -385,8 +418,9 @@ struct ToolCallRowView: View, Equatable {
                 .frame(width: 12)
         }
         .padding(.horizontal, 8)
-        .padding(.vertical, 4)
-        .frame(minHeight: 26)
+        // GenesisTools adaptation: tighter insets, so more of a session fits (2026-09-25).
+        .padding(.vertical, 3)
+        .frame(minHeight: 24)
         .contentShape(Rectangle())
     }
 

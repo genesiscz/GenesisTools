@@ -1,5 +1,10 @@
 import { statSync } from "node:fs";
-import { type AgentSessionRow, listAgentSessionRows } from "@app/ai/lib/sessions/agent-session-rows";
+import {
+    type AgentSessionRow,
+    listAgentSessionRows,
+    POLLED_LISTING_REUSE_MS,
+} from "@app/ai/lib/sessions/agent-session-rows";
+import { readCachedSessionCwd } from "@genesiscz/utils/agent-sessions/cached-title";
 import { transcriptEnvelope } from "@genesiscz/utils/ai/transcripts/load";
 import { type ResolvedTranscript, resolveTranscript } from "@genesiscz/utils/ai/transcripts/resolve";
 import type { TranscriptTurn } from "@genesiscz/utils/ai/transcripts/types";
@@ -52,7 +57,7 @@ function storage(): Storage {
 }
 
 export const realInboxDeps: InboxDeps = {
-    sessions: (hours) => listAgentSessionRows({ hours }),
+    sessions: (hours) => listAgentSessionRows({ hours, withUsage: false, maxDiscoveryAgeMs: POLLED_LISTING_REUSE_MS }),
     tail: async (row) => {
         const resolved: ResolvedTranscript = {
             provider: row.provider,
@@ -105,10 +110,40 @@ export async function waitingBlock(
     return found?.blocks.find((block) => block.number === number) ?? null;
 }
 
+/**
+ * The folder of a session that has no stored row. The history index answers first: a hub session
+ * click used to list every provider's sessions, twice for one older than 72 h (0.7 to 1.2 s), to
+ * read one folder the index holds. The refreshed listing stays as the fallback for a session too
+ * new to be indexed yet.
+ */
+async function lookupSessionCwd(session: string): Promise<string | null> {
+    const cached = readCachedSessionCwd({ sessionId: session });
+
+    if (cached) {
+        return cached;
+    }
+
+    for (const hours of [72, 24 * 90]) {
+        const row = (
+            await listAgentSessionRows({ hours, withUsage: false, maxDiscoveryAgeMs: POLLED_LISTING_REUSE_MS })
+        ).find((candidate) => candidate.sessionId === session || candidate.sessionId.startsWith(session));
+
+        if (row) {
+            return row.cwd || null;
+        }
+    }
+
+    return null;
+}
+
 /** Every decision of one session (the hub's Decisions pane). A transcript that cannot be read leaves the stored rows. */
 export async function loadSessionDecisions(
     session: string,
-    { rows = realInboxDeps.rows, scan = scanSession }: { rows?: () => DecisionRecord[]; scan?: typeof scanSession } = {}
+    {
+        rows = realInboxDeps.rows,
+        scan = scanSession,
+        sessionCwd = lookupSessionCwd,
+    }: { rows?: () => DecisionRecord[]; scan?: typeof scanSession; sessionCwd?: typeof lookupSessionCwd } = {}
 ): Promise<InboxDecision[]> {
     let found: TranscriptScan | null = null;
 
@@ -118,7 +153,9 @@ export async function loadSessionDecisions(
         log.debug({ error, session }, "session decisions: transcript not readable, stored rows only");
     }
 
-    const cwd = rows().find((row) => row.sessionId === session)?.cwd;
+    // A decision harvested from the transcript has no stored row to carry the folder; without it
+    // every `file:line` of the Decisions pane read "file not found" while the Inbox showed the lines.
+    const cwd = rows().find((row) => row.sessionId === session)?.cwd ?? (await sessionCwd(session)) ?? undefined;
     return withExcerpts(sessionDecisions({ sessionId: session, rows: rows(), scan: found }), cwd);
 }
 

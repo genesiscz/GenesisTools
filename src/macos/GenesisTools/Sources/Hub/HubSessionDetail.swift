@@ -21,6 +21,8 @@ struct HubSessionDetailHost: View {
     static let firstPage = ProcessInfo.processInfo.environment["GENESIS_HUB_FIRST_PAGE"].flatMap(Int.init) ?? 12
     /// The rest of the window arrives in chunks of this many turns while the reader is idle.
     static let fillChunk = 24
+    /// Posted when a window's first page has loaded or failed: a `--snapshot` or `--bench` run starts then.
+    static let firstPageDone = Notification.Name("hub.transcript.firstPageDone")
 
     @State private var nativeLog: SessionNativeLog?
     @State private var services = TranscriptServices.none
@@ -29,6 +31,8 @@ struct HubSessionDetailHost: View {
     @State private var branch: String?
     /// The branch web page arrives from `tools hub repo` after the first draw.
     @ObservedObject private var repos = RepoFactsStore.shared
+    /// The stuck-agent verdict for the header's alert line (Hub/HubStuck.swift).
+    @ObservedObject private var stuck = HubStuckStore.shared
 
     @State private var envelope: TranscriptEnvelope?
     @State private var turns: [TranscriptTurn] = []
@@ -70,13 +74,22 @@ struct HubSessionDetailHost: View {
             preset: TranscriptPreset(query: transcriptQuery ?? ""),
             leadingInset: 16,
             services: services,
-            showsSidebar: showsSidebar,
+            // `--set hub.session.sidebarFolded=true`: a snapshot of the folded sidebar in a single pane.
+            showsSidebar: showsSidebar && !HubDefaults.store.bool(forKey: "hub.session.sidebarFolded"),
             actions: actions
         ) {
             SessionTerminalSection(session: session)
+            // Cost per prompt, tool analytics, handoff composer (Hub/HubSessionInsights.swift).
+            SessionInsightsSection(session: session, turnCount: envelope?.nextOffset ?? 0)
         }
         // A click in the transcript keeps ⌘F on its own search (Hub/HubPanelFind.swift).
         .panelFindNative("transcript")
+        // The sidebar asks for a turn: load the window holding it when it is earlier, then reveal it.
+        .onReceive(NotificationCenter.default.publisher(for: HubTranscriptBus.request)) { note in
+            if case .jump(let index, let rowId)? = HubTranscriptBus.message(note, for: HubTranscriptBus.request, sessionId: session.sessionId) {
+                Task { await jump(toTurn: index, rowId: rowId) }
+            }
+        }
         .task(id: session.id) {
             tail?.stop()
             tail = nil
@@ -192,11 +205,20 @@ struct HubSessionDetailHost: View {
         info.turnCount = envelope.map(\.nextOffset) ?? document.turnCount
         info.toolCount = document.toolCount
         info.errorCount = document.errorCount
+        if let verdict = stuck.verdicts[session.sessionId] {
+            info.alert = verdict.line
+            info.alertIsSevere = verdict.isLoop
+        }
         return info
     }
 
     static func branch(of cwd: String) -> String? {
         SessionGitBranch.read(cwd: cwd)
+    }
+
+    /// One shell word: single quotes, and a `'` inside written as `'\''`.
+    nonisolated static func shellQuoted(_ text: String) -> String {
+        "'" + text.replacingOccurrences(of: "'", with: "'\\''") + "'"
     }
 
     /// The branch the session ran on: the folder's branch while it runs there now, else the branch its
@@ -230,19 +252,18 @@ struct HubSessionDetailHost: View {
         actions.refresh = {
             Task { await load(offset: windowStart > 0 ? windowStart : nil, limit: max(Self.pageSize, turns.count + Self.pageSize)) }
         }
-        actions.copy = { text in
-            NSPasteboard.general.clearContents()
-            NSPasteboard.general.setString(text, forType: .string)
+        actions.copy = { text in PathOpener.copy(text) }
+        // The header's "Copy the resume command" copied an empty string (it cleared the clipboard):
+        // nothing set the command. It runs in the session's folder, where the agent finds the session.
+        if let command = AgentLauncher.resumeCommand(for: session) {
+            let line = command.joined(separator: " ")
+            actions.resumeCommand = session.cwd.isEmpty ? line : "cd \(Self.shellQuoted(session.cwd)) && \(line)"
         }
         if !session.cwd.isEmpty {
             let cwd = session.cwd
-            actions.openInFinder = { NSWorkspace.shared.open(URL(fileURLWithPath: cwd)) }
-            actions.openInCursor = {
-                let process = Process()
-                process.executableURL = URL(fileURLWithPath: "/usr/bin/open")
-                process.arguments = ["-a", "Cursor", cwd]
-                try? process.run()
-            }
+            // Finder by name: `NSWorkspace.open` on the folder handed it to QuickTime (Hub/HubPathActions.swift).
+            actions.openInFinder = { PathOpener.finder(cwd) }
+            actions.openInCursor = { PathOpener.cursor(cwd) }
         }
         if session.cmux != nil, session.provider == "claude" {
             let id = session.sessionId
@@ -258,7 +279,21 @@ struct HubSessionDetailHost: View {
         if let branch, let url = Self.branchURL(branch, facts: RepoFactsStore.shared.facts(for: session.cwd)) {
             actions.openBranch = { ExternalOpener.open(url) }
         }
+        if let verdict = stuck.verdicts[session.sessionId] {
+            actions.alertAction = { Task { await jump(toTurn: verdict.turnIndex, rowId: "t-\(verdict.toolId)") } }
+        }
         return actions
+    }
+
+    /// Shows one turn's row: a turn before the loaded window loads a window around it first (the live
+    /// tail then follows from its end, as after any earlier page), then the list reveals the row.
+    private func jump(toTurn index: Int, rowId: String) async {
+        HubPerf.log("transcript.jump turn=\(index) row=\(rowId.prefix(12)) window=\(windowStart)")
+        if index < windowStart {
+            await load(offset: max(0, index - 2), limit: Self.pageSize)
+        }
+        // The list knows its session by the transcript's own id (`services.sessionId`).
+        HubTranscriptBus.post(HubTranscriptBus.list, sessionId: services.sessionId, .reveal(rowId: rowId))
     }
 
     /// Types one line into the session's cmux pane, off the main thread; a failure shows in the banner.
@@ -290,7 +325,9 @@ struct HubSessionDetailHost: View {
             turns = fetched.turns
             windowStart = fetched.windowStart
             await rebuild()
+            HubMainBusy.measure("transcript.page.render")
             loadState = .loaded
+            NotificationCenter.default.post(name: Self.firstPageDone, object: session.id)
             if tail == nil, FileManager.default.fileExists(atPath: fetched.filePath) {
                 tail = HubTranscriptTail(path: fetched.filePath) {
                     Task { @MainActor in await followTail() }
@@ -329,6 +366,7 @@ struct HubSessionDetailHost: View {
             } else {
                 banner = error.localizedDescription
             }
+            NotificationCenter.default.post(name: Self.firstPageDone, object: session.id)
         }
     }
 
@@ -378,6 +416,8 @@ struct HubSessionDetailHost: View {
             turns = page.turns.filter { !known.contains($0.id) } + turns
             windowStart = page.windowStart
             await rebuild()
+            // The list inserting the earlier rows above the viewport (Hub/HubTranscriptAnchor.swift).
+            HubMainBusy.measure("transcript.earlier.render")
             return true
         } catch {
             guard owner == session.id, generation == loadID else { return false }
@@ -587,5 +627,40 @@ enum HubSessionSearch {
         let list = indices.map(String.init).joined(separator: ",")
         let data = try ToolsCLIRunner.run(["ai", "sessions", "tail", sessionId, "--json", "--turns", list])
         return try SessionTranscriptClient.decode(data).turns
+    }
+}
+
+/// The session screen's transcript and its details sidebar (Hub/Stolen/Sessions/SessionDetailScreen.swift).
+/// Wide enough for both, they sit side by side; narrower, the sidebar covers the transcript's trailing
+/// edge. The screen never grows past its frame: as an HStack of the transcript (`minWidth: 460`) and the
+/// 301 pt sidebar it grew to 761 pt in a narrower pane, the parent clipped both edges, and the sidebar
+/// and the header's sidebar toggle went off screen (2026-09-25).
+struct SessionSidebarSplit: Layout {
+    var mainMinWidth: CGFloat = 460
+
+    /// True when the sidebar has to cover the transcript at this width.
+    static func overlays(width: CGFloat, sidebar: CGFloat, mainMinWidth: CGFloat) -> Bool {
+        width - sidebar < mainMinWidth
+    }
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        proposal.replacingUnspecifiedDimensions()
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        guard let main = subviews.first else {
+            return
+        }
+
+        guard subviews.count > 1, let sidebar = subviews.last else {
+            main.place(at: bounds.origin, proposal: ProposedViewSize(bounds.size))
+            return
+        }
+
+        let sidebarWidth = min(sidebar.sizeThatFits(ProposedViewSize(width: nil, height: bounds.height)).width, bounds.width)
+        let covers = Self.overlays(width: bounds.width, sidebar: sidebarWidth, mainMinWidth: mainMinWidth)
+        let mainWidth = covers ? bounds.width : bounds.width - sidebarWidth
+        main.place(at: bounds.origin, proposal: ProposedViewSize(width: mainWidth, height: bounds.height))
+        sidebar.place(at: CGPoint(x: bounds.maxX - sidebarWidth, y: bounds.minY), proposal: ProposedViewSize(width: sidebarWidth, height: bounds.height))
     }
 }

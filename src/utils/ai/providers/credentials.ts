@@ -1,6 +1,7 @@
 import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
 import { resolveSecret } from "@genesiscz/utils/security";
+import { shellWord } from "@genesiscz/utils/shell/quote";
 import type { AccountEntry } from "../config/schema";
 import { envKeyNames } from "../config/selectors";
 import type { CredentialSpec } from "./plugin-types";
@@ -31,21 +32,49 @@ export class CredentialUnavailableError extends Error {
 }
 
 /**
+ * The key a pasted command pipes in: the variable the account or plugin names,
+ * so the line runs as written in a shell that exports it, else a placeholder.
+ */
+function keySource(envKey: string | undefined): string {
+    return envKey ? `printf '%s' "$${envKey}"` : "<command that prints the key>";
+}
+
+/** Gives an EXISTING account an API key. A keyless account needs this, not a second account. */
+export function storeApiKeyCommand(args: { accountName: string; envKey?: string }): string {
+    return `${keySource(args.envKey)} | tools ai config account edit ${shellWord(args.accountName)} --api-key-stdin`;
+}
+
+/** Creates an account holding an API key, for a provider that has no account at all. */
+export function addApiKeyAccountCommand(args: { providerId: string; envKey?: string }): string {
+    return `${keySource(args.envKey)} | tools ai config account add --provider ${shellWord(args.providerId)} --name ${shellWord(args.providerId)} --api-key-stdin`;
+}
+
+/**
  * Repair instructions for the fields that are ACTUALLY missing.
  *
  * A plugin may require `accessToken`, `authFile` or `dataDir` instead of an API
  * key, and telling the user to store an `apiKey` in those cases is a command
  * that cannot help and, for a subscription account, points at the wrong
  * credential entirely.
+ *
+ * It used to name `tools ai config secret set ai/<id>/<field>`, which writes the
+ * vault entry but never links it to the account (`resolveCredential` reads
+ * `account.credentials` only), so a user who followed it still had no key.
  */
 function fixHint(account: AccountEntry, spec: CredentialSpec, missing: readonly string[]): string {
     const hints = missing.map((field) => {
         if (field === "authFile" || field === "dataDir") {
             const flag = field === "authFile" ? "--auth-file" : "--data-dir";
-            return `Set it with: tools ai config account edit ${account.name} ${flag} <path>`;
+            return `Set it with: tools ai config account edit ${shellWord(account.name)} ${flag} <path>`;
         }
 
-        return `Store it with: tools ai config secret set ai/${account.id}/${field}`;
+        if (field === "apiKey") {
+            const envKey = envKeyNames(account, spec.envKeys)[0] ?? spec.envKeys[0];
+            return `Store it with: ${storeApiKeyCommand({ accountName: account.name, envKey })}`;
+        }
+
+        // A token is minted by a login, and a login by name updates that account.
+        return `Log in again with: tools ai accounts login ${shellWord(account.name)} --provider ${shellWord(account.provider)}`;
     });
 
     // Only an API key can come from the environment (`resolveCredential` consults
@@ -54,7 +83,7 @@ function fixHint(account: AccountEntry, spec: CredentialSpec, missing: readonly 
     // into a shell, and `--use-env A or B` is not a command anyone can run.
     if (missing.includes("apiKey") && spec.envKeys.length > 0) {
         hints.push(
-            `or allow the environment: tools ai config account edit ${account.name} --use-env ${spec.envKeys.join(",")}`
+            `or allow the environment: tools ai config account edit ${shellWord(account.name)} --use-env ${spec.envKeys.join(",")}`
         );
     }
 
