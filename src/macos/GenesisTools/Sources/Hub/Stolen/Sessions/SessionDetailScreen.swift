@@ -540,8 +540,10 @@ struct SessionDetailSidebar<Extra: View>: View {
 
     @State private var showAllFiles = false
     @State private var showReads = false
+    @State private var showAllSubagents = false
 
     private static var fileLimit: Int { 10 }
+    private static var subagentLimit: Int { 6 }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -827,11 +829,18 @@ struct SessionDetailSidebar<Extra: View>: View {
         .accessibilityIdentifier("session-details-commits")
     }
 
+    // GenesisTools adaptation: a long run's sub-agents (89 in one session) pushed the hub's insight
+    // sections out of reach, so the list shows the live and failed ones first and caps the rest.
     private var subagents: some View {
-        VStack(alignment: .leading, spacing: 1) {
-            SessionSectionTitle(title: "Sub-agents", count: digest.subagents.count)
+        let all = digest.subagents
+        let open = all.filter { $0.state != .done }
+        let ordered = open + all.filter { $0.state == .done }
+        let limit = max(Self.subagentLimit, open.count)
+        let shown = showAllSubagents ? ordered : Array(ordered.prefix(limit))
+        return VStack(alignment: .leading, spacing: 1) {
+            SessionSectionTitle(title: "Sub-agents", count: all.count)
                 .padding(.bottom, 5)
-            ForEach(digest.subagents) { agent in
+            ForEach(shown) { agent in
                 HStack(spacing: 8) {
                     SessionStatusDot(color: color(agent.state))
                         .frame(width: 14)
@@ -847,6 +856,9 @@ struct SessionDetailSidebar<Extra: View>: View {
                 }
                 .frame(height: 26)
                 .instantTooltip(agent.summary)
+            }
+            if ordered.count > limit {
+                moreButton(showAllSubagents ? "Show fewer" : "Show \(ordered.count - limit) more") { showAllSubagents.toggle() }
             }
         }
         .accessibilityIdentifier("session-details-subagents")
