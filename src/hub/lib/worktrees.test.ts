@@ -370,17 +370,22 @@ describe("move aside on a scratch repository", () => {
         expect(kept[0]?.reasons.join(" ")).toContain("newer than the 3-day threshold");
         expect(existsSync(wt.fresh)).toBe(true);
 
+        // A file where the journal's folder belongs: the move still happens, and says it is not journaled.
+        const blocker = join(mkdtempSync(join(tmpdir(), "gt-hub-wt-journal-")), "not-a-folder");
+        writeFileSync(blocker, "");
         const later = new Date(Date.now() + 5 * 86_400_000);
         const moved = await moveAsideWorktrees({
             paths: [wt.fresh],
             base: "master",
             live,
             destRoot,
-            journal,
+            journal: join(blocker, "moved-aside.jsonl"),
             olderThanDays: 3,
             now: later,
         });
         expect(moved[0]?.moved).toBe(true);
+        expect(moved[0]?.journalError).toBeTruthy();
+        expect(moved[0]?.restore).toContain("worktree move");
     });
 });
 

@@ -797,6 +797,8 @@ export interface MoveAsideOutcome {
     /** Why it stayed; empty when moved. */
     reasons: string[];
     branch: string | null;
+    /** Set when the move worked but its journal line did not: `restore` is then the only record. */
+    journalError?: string;
 }
 
 /** One line of `moved-aside.jsonl`: what went where, and how to put it back. */
@@ -944,17 +946,28 @@ export async function moveAsideWorktrees({
             at: now.toISOString(),
         };
 
+        let journalError: string | undefined;
+
         try {
             mkdirSync(dirname(journal), { recursive: true });
             appendFileSync(journal, `${SafeJSON.stringify(record)}\n`);
         } catch (err) {
+            journalError = err instanceof Error ? err.message : String(err);
             log.warn(
                 { err, journal },
                 "move-aside journal write failed; the outcome still carries the restore command"
             );
         }
 
-        outcomes.push({ path, moved: true, to, restore, reasons: [], branch: row.branch });
+        outcomes.push({
+            path,
+            moved: true,
+            to,
+            restore,
+            reasons: [],
+            branch: row.branch,
+            ...(journalError ? { journalError } : {}),
+        });
     }
 
     return outcomes;

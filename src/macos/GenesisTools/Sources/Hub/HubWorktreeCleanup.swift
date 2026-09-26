@@ -117,6 +117,8 @@ struct MoveAsideOutcome: Decodable, Hashable {
     let restore: String?
     let reasons: [String]
     let branch: String?
+    /// The move worked but its journal line did not: the restore command is the only record.
+    let journalError: String?
 }
 
 @MainActor
@@ -460,6 +462,12 @@ struct WorktreeCleanupView: View {
                 .font(.system(size: 11.5))
                 .lineLimit(1)
                 .truncationMode(.middle)
+            if store.lastMoved.contains(where: { $0.journalError != nil }) {
+                Text("Not in the journal: copy these now")
+                    .font(.system(size: 11.5, weight: .semibold))
+                    .foregroundColor(ReviewPalette.modified)
+                    .instantTooltip(store.lastMoved.compactMap(\.journalError).joined(separator: "\n"))
+            }
             Spacer()
             Button("Copy restore commands") {
                 PathOpener.copy(WorktreeCleanup.restoreScript(store.lastMoved))
