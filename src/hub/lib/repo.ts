@@ -11,6 +11,7 @@ import {
     type PrInfo,
 } from "@genesiscz/utils/git/origins";
 import { logger } from "@genesiscz/utils/logger";
+import { cachedPrForHead } from "./pr-lookup-cache";
 
 /** What the hub shows about a folder: its checkout, branch and the web pages for them. */
 export interface RepoFacts {
@@ -32,7 +33,16 @@ export interface RepoFacts {
 
 const log = logger.child({ component: "review/repo" });
 
-export async function repoFacts({ path, withPr = false }: { path: string; withPr?: boolean }): Promise<RepoFacts> {
+export async function repoFacts({
+    path,
+    withPr = false,
+    fresh = false,
+}: {
+    path: string;
+    withPr?: boolean;
+    /** Bypass the PR lookup cache (src/hub/lib/pr-lookup-cache.ts); still refreshes it on success. */
+    fresh?: boolean;
+}): Promise<RepoFacts> {
     const empty: RepoFacts = {
         path,
         root: null,
@@ -99,8 +109,14 @@ export async function repoFacts({ path, withPr = false }: { path: string; withPr
         if (!driver || !branch) {
             facts.pr = null;
             facts.prError = branch ? "no gh/glab driver for this origin" : "detached HEAD";
-        } else {
+        } else if (!head || !origin) {
+            // No commit or no origin to key the cache on: ask directly rather than caching under
+            // a key that would collide with every other headless or origin-less branch.
             const lookup = await driver.prForHead(branch);
+            facts.pr = lookup.pr;
+            facts.prError = lookup.error;
+        } else {
+            const lookup = await cachedPrForHead({ driver, originUrl: origin.url, branch, head, fresh });
             facts.pr = lookup.pr;
             facts.prError = lookup.error;
         }
@@ -114,14 +130,16 @@ export async function repoFacts({ path, withPr = false }: { path: string; withPr
 export async function repoFactsMany({
     paths,
     withPr = false,
+    fresh = false,
 }: {
     paths: string[];
     withPr?: boolean;
+    fresh?: boolean;
 }): Promise<RepoFacts[]> {
     const unique = [...new Set(paths)];
     const results = await concurrentMap({
         items: unique,
-        fn: (path) => repoFacts({ path, withPr }),
+        fn: (path) => repoFacts({ path, withPr, fresh }),
         concurrency: 4,
     });
 
