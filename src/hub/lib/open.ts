@@ -21,6 +21,10 @@ export interface OpenHubOptions {
     palette?: string;
     /** Opens find in files with this query. */
     find?: string;
+    /** Opens the transcript search over every session (⌥⌘F) with this text. */
+    sessionSearch?: string;
+    /** Opens the Today digest (⌥⌘D). */
+    digest?: boolean;
     /** false keeps the window behind whatever is in front (`--no-activate`). */
     activate?: boolean;
     /** false never builds; a missing or stale app is then an error. */
@@ -58,10 +62,15 @@ export function hubArgs(options: OpenHubOptions): string[] {
         ["--filter", options.filter],
         ["--palette", options.palette],
         ["--find", options.find],
+        ["--session-search", options.sessionSearch],
     ] as const) {
         if (value !== undefined) {
             args.push(flag, value);
         }
+    }
+
+    if (options.digest) {
+        args.push("--digest");
     }
 
     if (options.activate === false) {
