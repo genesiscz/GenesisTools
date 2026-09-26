@@ -705,7 +705,14 @@ export async function runRules({
 
         if (!dryRun) {
             for (const firing of evaluation.firings) {
-                if (await post(firing)) {
+                // A throw counts as not delivered too: escaping here skipped the save, so the firings
+                // already posted in this batch were posted again on the next tick.
+                const delivered = await post(firing).catch((error: unknown) => {
+                    log.warn({ error, rule: firing.ruleId, key: firing.key }, "hub rules: posting threw");
+                    return false;
+                });
+
+                if (delivered) {
                     posted++;
                     continue;
                 }

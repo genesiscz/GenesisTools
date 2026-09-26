@@ -36,7 +36,8 @@ struct HubForecastWindow: Decodable, Equatable, Identifiable, Sendable {
             return "\(used) · \(HubFormat.ago(sampled))"
         }
         if let exhaustAt = HubFormat.date(exhaustAt), beforeReset {
-            return "\(used) · out \(clock(exhaustAt))"
+            // Projected from the last sample, so the time can already have passed.
+            return exhaustAt <= Date() ? "\(used) · at limit" : "\(used) · out \(clock(exhaustAt))"
         }
         if exhaustAt != nil {
             return "\(used) · lasts"
@@ -54,7 +55,8 @@ struct HubForecastWindow: Decodable, Equatable, Identifiable, Sendable {
             parts.append("resets \(clock(reset))")
         }
         if let exhaust = HubFormat.date(exhaustAt) {
-            parts.append(beforeReset ? "runs out \(clock(exhaust)), before the reset" : "lasts to the reset (\(Int((projectedAtReset ?? 0).rounded()))% then)")
+            let outlook = exhaust <= Date() ? "projected at its limit now, before the reset" : "runs out \(clock(exhaust)), before the reset"
+            parts.append(beforeReset ? outlook : "lasts to the reset (\(Int((projectedAtReset ?? 0).rounded()))% then)")
         } else if isCurrent {
             parts.append("no burn in this window")
         }
