@@ -268,8 +268,9 @@ describe("buildProcsReport", () => {
         });
         const wrapper = stopped.groups.find((entry) => entry.rootPid === 400);
 
-        expect(wrapper).toMatchObject({ kind: "wrapper", idle: true, suspended: true });
-        expect(wrapper?.idleReason).toContain("suspended in its shell");
+        expect(wrapper).toMatchObject({ kind: "wrapper", idle: false, idleReason: null, suspended: true });
+        expect(wrapper?.suspendedReason).toContain("suspended in its shell");
+        expect(stopped.totals).toMatchObject({ suspended: 1, idle: report.totals.idle - 1 });
     });
 
     test("idle agents: the folder's newest session wrote nothing for hours and the tree is quiet", () => {
@@ -411,7 +412,23 @@ describe("stopTree", () => {
 
         expect(ops.sent).toEqual([]);
         expect(outcome).toMatchObject({ stopped: false, signal: null });
-        expect(outcome.reason).toContain("already exited or now belongs to another process");
+        expect(outcome.reason).toContain("now belongs to another process");
+    });
+
+    test("a root whose pid was reused stops nothing, even where its old children still match", async () => {
+        const rows = table();
+        const ops = fakeOps(rows, {});
+        const identity = ops.identity;
+        ops.identity = (pids) => {
+            const found = identity(pids);
+            found.set(300, { startedAt: new Date(NOW).toISOString(), command: "/usr/bin/vim notes.md" });
+            return found;
+        };
+        const outcome = await stopTree({ pid: 300, sources: fakeSources(rows), ops });
+
+        expect(ops.sent).toEqual([]);
+        expect(outcome).toMatchObject({ stopped: false, signal: null });
+        expect(outcome.reason).toContain("root process exited");
     });
 
     test("a member pid stops only its own subtree", async () => {

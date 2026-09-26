@@ -44,6 +44,10 @@ function status(group: ProcGroup): string {
         return formatDotStatus("err", "orphan");
     }
 
+    if (group.suspended) {
+        return formatDotStatus("dim", "suspended");
+    }
+
     if (group.idle) {
         return formatDotStatus("warn", "idle");
     }
@@ -64,7 +68,10 @@ function ageText(ms: number): string {
 }
 
 function renderReport(report: ProcsReport, groups: ProcGroup[]): void {
-    renderCliHeader("Agent processes", `${report.totals.orphans} orphans · ${report.totals.idle} idle`);
+    renderCliHeader(
+        "Agent processes",
+        `${report.totals.orphans} orphans · ${report.totals.idle} idle · ${report.totals.suspended} suspended`
+    );
     out.println(
         pc.dim(
             `  ${report.totals.groups} trees · ${report.totals.processes} processes · ${report.totals.cpu.toFixed(1)} % CPU · ${formatBytes(report.totals.rssKb * 1024)}`
@@ -108,8 +115,9 @@ function renderReport(report: ProcsReport, groups: ProcGroup[]): void {
 
     out.println(table.toString());
 
-    for (const group of groups.filter((entry) => entry.orphan || entry.idle)) {
-        out.println(pc.dim(`  ${group.rootPid} ${group.label}: ${group.orphanReason ?? group.idleReason ?? ""}`));
+    for (const group of groups.filter((entry) => entry.orphan || entry.suspended || entry.idle)) {
+        const reason = group.orphanReason ?? group.suspendedReason ?? group.idleReason ?? "";
+        out.println(pc.dim(`  ${group.rootPid} ${group.label}: ${reason}`));
     }
 
     out.println(

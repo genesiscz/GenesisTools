@@ -74,8 +74,9 @@ struct ProcGroup: Decodable, Hashable, Identifiable {
     let launchdLabel: String?
     let idle: Bool
     let idleReason: String?
-    /// Stopped (`ps` state T) in its shell; optional so an older CLI's report still decodes.
+    /// Stopped (`ps` state T) in its shell, apart from idle; optional so an older CLI's report still decodes.
     let suspended: Bool?
+    let suspendedReason: String?
     let session: ProcSessionMatch?
     let own: Bool
     let totals: Totals
@@ -84,6 +85,8 @@ struct ProcGroup: Decodable, Hashable, Identifiable {
     var started: Date? { HubFormat.date(startedAt) }
     /// A launchd job and the tree of the asking process cannot be stopped from here (the CLI refuses both).
     var stoppable: Bool { !own && launchdLabel == nil }
+    /// Why it is flagged: orphan first, then suspended, then idle.
+    var reason: String? { orphanReason ?? suspendedReason ?? idleReason }
     var title: String { session?.title.flatMap { $0.isEmpty ? nil : $0 } ?? label }
 }
 
@@ -92,6 +95,7 @@ struct ProcsReport: Decodable {
         let groups: Int
         let orphans: Int
         let idle: Int
+        let suspended: Int?
         let processes: Int
         let cpu: Double
         let rssKb: Double
@@ -134,6 +138,7 @@ enum ProcsFormat {
         var text = "\(totals.groups) trees · \(totals.processes) processes · \(String(format: "%.1f", totals.cpu)) % CPU · \(memory(totals.rssKb))"
         if totals.orphans > 0 { text += " · \(totals.orphans) orphan\(totals.orphans == 1 ? "" : "s")" }
         if totals.idle > 0 { text += " · \(totals.idle) idle" }
+        if let suspended = totals.suspended, suspended > 0 { text += " · \(suspended) suspended" }
         return text
     }
 }
@@ -390,7 +395,7 @@ struct AgentProcsView: View {
         PanelFindRow(id: group.id, fields: [
             PanelFindField("title", group.title),
             PanelFindField("label", group.label),
-            PanelFindField("reason", group.orphanReason ?? group.idleReason ?? ""),
+            PanelFindField("reason", group.reason ?? ""),
         ])
     }
 }
@@ -408,6 +413,7 @@ struct AgentProcsRow: View {
 
     private var tone: Color {
         if group.orphan { return ReviewPalette.removed }
+        if group.suspended == true { return ReviewPalette.dim }
         if group.idle { return ReviewPalette.modified }
         return ReviewPalette.added
     }
@@ -423,7 +429,7 @@ struct AgentProcsRow: View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(alignment: .top, spacing: 10) {
                 Circle().fill(tone).frame(width: 8, height: 8).padding(.top, 5)
-                    .instantTooltip(group.orphanReason ?? group.idleReason ?? "running")
+                    .instantTooltip(group.reason ?? "running")
                 VStack(alignment: .leading, spacing: 3) {
                     HStack(spacing: 8) {
                         if let provider = group.provider, group.kind == "agent" {
@@ -457,7 +463,7 @@ struct AgentProcsRow: View {
                     }
                     .font(.system(size: 10.5, design: .monospaced))
                     .foregroundColor(ReviewPalette.dim)
-                    if let reason = group.orphanReason ?? group.idleReason {
+                    if let reason = group.reason {
                         FindText(reason, field: "reason")
                             .font(.system(size: 11))
                             .foregroundColor(group.orphan ? ReviewPalette.removed : ReviewPalette.modified)
