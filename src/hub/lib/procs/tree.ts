@@ -12,6 +12,8 @@ import { type AgentProvider, classifyCommand, type ProcClass, type ProcKind } fr
 export const IDLE_AFTER_MS = 2 * 60 * 60_000;
 /** A wrapper with no agent below it for this long is left over (an agent that exited, a picker nobody answered). */
 export const WRAPPER_LEFTOVER_MS = 10 * 60_000;
+
+export const SUSPENDED_REASON = "suspended in its shell (state T, Ctrl+Z): `fg` in that terminal resumes it";
 const IDLE_CPU = 1;
 
 export interface ProcEntry {
@@ -65,8 +67,9 @@ export interface ProcGroup {
     launchdLabel: string | null;
     idle: boolean;
     idleReason: string | null;
-    /** Its root process is stopped (`ps` state T): suspended with Ctrl+Z in its shell, not stuck. */
+    /** Its root process is stopped (`ps` state T): suspended with Ctrl+Z in its shell, not stuck and not idle. */
     suspended: boolean;
+    suspendedReason: string | null;
     session: ProcSessionMatch | null;
     /** The tree holds the process that asked (the hub's own `tools` call, or the agent session running it). */
     own: boolean;
@@ -76,7 +79,15 @@ export interface ProcGroup {
 
 export interface ProcsReport {
     groups: ProcGroup[];
-    totals: { groups: number; orphans: number; idle: number; processes: number; cpu: number; rssKb: number };
+    totals: {
+        groups: number;
+        orphans: number;
+        idle: number;
+        suspended: number;
+        processes: number;
+        cpu: number;
+        rssKb: number;
+    };
     energy: boolean;
     takenAt: string;
     elapsedMs: number;
@@ -288,9 +299,7 @@ export function buildProcsReport(input: BuildInput): Omit<ProcsReport, "elapsedM
         const startedAt = node.row.startTime;
         const ageMs = startedAt ? input.now - startedAt.getTime() : null;
         const suspended = node.row.stat.startsWith("T");
-        const idle = suspended
-            ? "suspended in its shell (state T, Ctrl+Z): `fg` in that terminal resumes it"
-            : idleOf({ kind, cpu, ageMs, session, now: input.now });
+        const idle = suspended ? null : idleOf({ kind, cpu, ageMs, session, now: input.now });
         const ownTree = input.own.has(pid) || entries.some((entry) => input.own.has(entry.pid));
 
         groups.push({
@@ -318,6 +327,7 @@ export function buildProcsReport(input: BuildInput): Omit<ProcsReport, "elapsedM
             idle: idle !== null,
             idleReason: idle,
             suspended,
+            suspendedReason: suspended ? SUSPENDED_REASON : null,
             session,
             own: ownTree,
             totals: {
@@ -338,6 +348,7 @@ export function buildProcsReport(input: BuildInput): Omit<ProcsReport, "elapsedM
             groups: groups.length,
             orphans: groups.filter((group) => group.orphan).length,
             idle: groups.filter((group) => group.idle).length,
+            suspended: groups.filter((group) => group.suspended).length,
             processes: groups.reduce((sum, group) => sum + group.totals.processes, 0),
             cpu: round(groups.reduce((sum, group) => sum + group.totals.cpu, 0)),
             rssKb: groups.reduce((sum, group) => sum + group.totals.rssKb, 0),

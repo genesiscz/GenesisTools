@@ -166,6 +166,22 @@ export async function stopTree({
 
     // Re-check identity right before the first signal: the report may be seconds old.
     const before = ops.identity(found.pids);
+
+    // A root that exited (its pid possibly reissued) leaves its old children under another parent:
+    // they are no longer the tree that was chosen, so none of them is signalled.
+    if (!same(before, pid)) {
+        log.info({ pid, label }, "procs stop refused: the root is no longer the process that was listed");
+        return {
+            pid,
+            label,
+            pids: found.pids,
+            stopped: false,
+            signal: null,
+            survivors: [],
+            reason: "the root process exited or its pid now belongs to another process",
+        };
+    }
+
     const targets = found.pids.filter((member) => same(before, member));
     log.info(
         { pid, label, pids: targets, skipped: found.pids.filter((m) => !targets.includes(m)) },
