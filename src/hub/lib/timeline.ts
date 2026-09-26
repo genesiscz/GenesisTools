@@ -1,7 +1,11 @@
 import { createHash } from "node:crypto";
 import { closeSync, existsSync, openSync, readdirSync, readFileSync, readSync, statSync } from "node:fs";
 import { basename, dirname, join, relative } from "node:path";
-import { type AgentSessionRow, listAgentSessionRows } from "@app/ai/lib/sessions/agent-session-rows";
+import {
+    type AgentSessionRow,
+    listAgentSessionRows,
+    POLLED_LISTING_REUSE_MS,
+} from "@app/ai/lib/sessions/agent-session-rows";
 import { decisionFiles } from "@app/question/lib/decisions/read";
 import { type DecisionRecord, readDecisions } from "@app/question/lib/decisions/store";
 import { concurrentMap } from "@genesiscz/utils/async";
@@ -988,7 +992,7 @@ export async function cachedPrs(
 }
 
 export const realTimelineDeps: TimelineDeps = {
-    sessions: (hours) => listAgentSessionRows({ hours }),
+    sessions: (hours) => listAgentSessionRows({ hours, withUsage: false, maxDiscoveryAgeMs: POLLED_LISTING_REUSE_MS }),
     birth: (path) => {
         try {
             const info = statSync(path);

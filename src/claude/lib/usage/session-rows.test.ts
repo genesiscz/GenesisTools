@@ -6,6 +6,7 @@ import { Command } from "commander";
 const MIN = 60 * 1000;
 const listing: { sessions: SessionMetadataRecord[] } = { sessions: [] };
 const tails = new Map<string, string[]>();
+const tailReads: string[] = [];
 
 mock.module("@app/claude/lib/history/search", () => ({
     getSessionListing: async () => ({
@@ -21,7 +22,10 @@ mock.module("@app/claude/lib/history/search", () => ({
 }));
 
 mock.module("@genesiscz/utils/claude/session.utils", () => ({
-    readTailBytes: async (filePath: string) => tails.get(filePath) ?? [],
+    readTailBytes: async (filePath: string) => {
+        tailReads.push(filePath);
+        return tails.get(filePath) ?? [];
+    },
 }));
 
 const pins = new Map<string, { account: string | null }>();
@@ -121,6 +125,40 @@ describe("listSessionRows", () => {
         tails.clear();
         pins.clear();
         cmuxRefs.clear();
+        tailReads.length = 0;
+    });
+
+    test("withUsage false reads no transcript tail and keeps who and where", async () => {
+        const path = "/tmp/who.jsonl";
+        listing.sessions = [
+            record({
+                filePath: path,
+                sessionId: "who-id",
+                customTitle: "who title",
+                mtime: NOW - 5 * MIN,
+                cwd: "/tmp/project",
+                project: "GenesisTools",
+            }),
+        ];
+        tails.set(path, [OPUS_LINE]);
+        pins.set("who-id", { account: "work" });
+
+        const [row] = await listSessionRows({ hours: 6, now: NOW, withUsage: false });
+
+        expect(tailReads).toEqual([]);
+        expect([row?.sessionId, row?.title, row?.cwd, row?.project, row?.account, row?.filePath]).toEqual([
+            "who-id",
+            "who title",
+            "/tmp/project",
+            "GenesisTools",
+            "work",
+            path,
+        ]);
+        expect([row?.model, row?.totalTokens]).toEqual([null, 0]);
+
+        // The default still reads it.
+        await listSessionRows({ hours: 6, now: NOW });
+        expect(tailReads.length).toBeGreaterThan(0);
     });
 
     test("filters mtime by hours, includes COLD, and serializes a full SessionRow", async () => {

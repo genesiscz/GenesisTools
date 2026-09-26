@@ -94,6 +94,14 @@ export interface ListSessionRowsOptions {
     minRows?: number;
     excludeSubagents?: boolean;
     now?: number;
+    /**
+     * `false` skips the transcript tail reads, and every token, model and cache field then
+     * reads as empty. For listings that show who and where, not what a session costs (the
+     * inbox, the timeline): the tails were 68 ms of a 300 ms inbox refresh.
+     */
+    withUsage?: boolean;
+    /** Passed to `getSessionListing`: reuse another process's refresh of the same scope. */
+    maxDiscoveryAgeMs?: number;
 }
 
 export function computeCacheStatus(
@@ -377,6 +385,7 @@ export async function listSessionRowsWithTimings(
             // The window and the top-up go down to the refresh and the SQL read; the filters
             // below then keep exactly what they kept before.
             ...(opts.hours === undefined ? {} : { mtimeFrom: now - opts.hours * 60 * 60 * 1000, newest: opts.minRows }),
+            ...(opts.maxDiscoveryAgeMs === undefined ? {} : { maxDiscoveryAgeMs: opts.maxDiscoveryAgeMs }),
         })
     );
     const listingMs = performance.now() - started;
@@ -395,6 +404,11 @@ export async function listSessionRowsWithTimings(
     const tailStarted = performance.now();
 
     await prof.measureAsync("tail", async () => {
+        if (opts.withUsage === false) {
+            usages.push(...records.map(() => emptyTailUsage()));
+            return;
+        }
+
         for (let i = 0; i < records.length; i += TAIL_BATCH_SIZE) {
             const batch = records.slice(i, i + TAIL_BATCH_SIZE);
             const batchUsages = await Promise.all(batch.map((r) => extractTailUsage(r.filePath)));

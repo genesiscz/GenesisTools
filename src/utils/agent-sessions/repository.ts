@@ -77,6 +77,21 @@ interface SourceRow {
     generation: number;
 }
 
+function snapshotFromRow(row: SourceRow): HistorySourceSnapshot {
+    return {
+        sourceKey: row.source_key,
+        providerId: row.provider,
+        filePath: row.file_path,
+        root: row.root,
+        metadataRevision: row.metadata_revision,
+        metadataParserVersion: row.metadata_parser_version,
+        statsRevision: row.stats_revision,
+        statsInputsRevision: row.stats_inputs_revision,
+        statisticsStatus: row.statistics_status,
+        generation: row.generation,
+    };
+}
+
 function decodeMetadata(row: MetadataRow): CachedHistoryMetadata {
     return {
         providerId: row.provider,
@@ -147,18 +162,7 @@ export class HistoryRepository {
         const row = this.db.query<SourceRow, [string]>("SELECT * FROM file_index WHERE source_key = ?").get(sourceKey);
 
         if (row) {
-            return {
-                sourceKey: row.source_key,
-                providerId: row.provider,
-                filePath: row.file_path,
-                root: row.root,
-                metadataRevision: row.metadata_revision,
-                metadataParserVersion: row.metadata_parser_version,
-                statsRevision: row.stats_revision,
-                statsInputsRevision: row.stats_inputs_revision,
-                statisticsStatus: row.statistics_status,
-                generation: row.generation,
-            };
+            return snapshotFromRow(row);
         }
 
         const metadata = this.db
@@ -194,18 +198,34 @@ export class HistoryRepository {
                 )
         `)
             .all(providerId, providerId);
-        return rows.map((row) => ({
-            sourceKey: row.source_key,
-            providerId: row.provider,
-            filePath: row.file_path,
-            root: row.root,
-            metadataRevision: row.metadata_revision,
-            metadataParserVersion: row.metadata_parser_version,
-            statsRevision: row.stats_revision,
-            statsInputsRevision: row.stats_inputs_revision,
-            statisticsStatus: row.statistics_status,
-            generation: row.generation,
-        }));
+        return rows.map(snapshotFromRow);
+    }
+
+    /**
+     * `listSources` limited to these file paths, through the file_path indexes.
+     *
+     * A windowed listing refreshes a handful of sources, and reading all 12,811 provider rows to
+     * look up four of them cost about 60 ms per read on this machine. The unary `+` keeps the
+     * planner off the provider index, which scans every provider row (15 ms for four paths).
+     */
+    listSourcesForPaths(options: { providerId: string; filePaths: string[] }): HistorySourceSnapshot[] {
+        if (options.filePaths.length === 0) {
+            return [];
+        }
+
+        const paths = SafeJSON.stringify(options.filePaths);
+        const rows = this.db
+            .query<SourceRow, [string, string, string, string]>(`
+            SELECT source_key,provider,file_path,root,metadata_revision,metadata_parser_version,
+                stats_revision,stats_inputs_revision,statistics_status,generation FROM file_index
+                WHERE +provider=? AND file_path IN (SELECT value FROM json_each(?))
+            UNION ALL
+            SELECT m.source_key,m.provider,m.file_path,NULL,NULL,NULL,NULL,NULL,'unavailable',0
+                FROM session_metadata m WHERE +m.provider=? AND m.file_path IN (SELECT value FROM json_each(?))
+                AND NOT EXISTS (SELECT 1 FROM file_index f WHERE f.source_key=m.source_key)
+        `)
+            .all(options.providerId, paths, options.providerId, paths);
+        return rows.map(snapshotFromRow);
     }
 
     listMetadata(options: {

@@ -85,9 +85,20 @@ export interface AgentSessionRowsOptions {
     minRows?: number;
     limit?: number;
     now?: number;
+    /** `false` leaves Claude rows without token, model and cache data (see `ListSessionRowsOptions`). */
+    withUsage?: boolean;
+    /** Reuse another process's refresh of the same provider scope when it is this recent. */
+    maxDiscoveryAgeMs?: number;
 }
 
 const ALL: readonly AccountProviderAlias[] = ["claude", "codex", "grok"];
+
+/**
+ * How stale a polled who/where listing may be (the inbox, the hub timeline and worktrees). They
+ * poll every 20 to 30 s beside the Genesis session list, so within this window one refresh by any
+ * of them serves the rest, and a new session shows up at most this late.
+ */
+export const POLLED_LISTING_REUSE_MS = 30_000;
 
 function titleOf(record: {
     customTitle: string | null;
@@ -161,11 +172,14 @@ async function nativeRows(
     const service = openHistoryService({ provider: PROVIDER_ALIASES[alias] });
     const now = options.now ?? Date.now();
     const cutoff = options.hours === undefined ? undefined : now - options.hours * 3_600_000;
-    const { metadata } = await service.catalog({
-        excludeAgents: true,
-        ...(options.limit === undefined ? {} : { limit: options.limit }),
-        ...(cutoff === undefined ? {} : { mtimeFrom: cutoff }),
-    });
+    const { metadata } = await service.catalog(
+        {
+            excludeAgents: true,
+            ...(options.limit === undefined ? {} : { limit: options.limit }),
+            ...(cutoff === undefined ? {} : { mtimeFrom: cutoff }),
+        },
+        options.maxDiscoveryAgeMs === undefined ? {} : { maxDiscoveryAgeMs: options.maxDiscoveryAgeMs }
+    );
     // One config read for the whole listing, not one per grok row.
     const grokLookup = alias === "grok" ? await grokAccountNameLookup() : () => undefined;
     const rows: AgentSessionRow[] = [];
@@ -224,27 +238,35 @@ async function nativeRows(
 /** Every provider's sessions in one list, newest first. */
 export async function listAgentSessionRows(options: AgentSessionRowsOptions = {}): Promise<AgentSessionRow[]> {
     const wanted = options.providers ?? ALL;
-    const rows: AgentSessionRow[] = [];
+    // Side by side, not one after another: each provider walks its own tree, so a caller paid the
+    // sum of three walks. Their SQLite writes are synchronous transactions on one connection, so
+    // they cannot interleave. Rows are joined in `wanted` order, so the sort sees the same input.
+    const perProvider = await Promise.all(
+        wanted.map(async (alias): Promise<AgentSessionRow[]> => {
+            try {
+                if (alias === "claude") {
+                    const claude = await listSessionRows({
+                        ...(options.hours === undefined ? {} : { hours: options.hours }),
+                        ...(options.minRows === undefined ? {} : { minRows: options.minRows }),
+                        ...(options.now === undefined ? {} : { now: options.now }),
+                        ...(options.withUsage === undefined ? {} : { withUsage: options.withUsage }),
+                        ...(options.maxDiscoveryAgeMs === undefined
+                            ? {}
+                            : { maxDiscoveryAgeMs: options.maxDiscoveryAgeMs }),
+                    });
 
-    for (const alias of wanted) {
-        try {
-            if (alias === "claude") {
-                const claude = await listSessionRows({
-                    ...(options.hours === undefined ? {} : { hours: options.hours }),
-                    ...(options.minRows === undefined ? {} : { minRows: options.minRows }),
-                    ...(options.now === undefined ? {} : { now: options.now }),
-                });
+                    return claude.map((row) => ({ ...row, provider: "claude" as const }));
+                }
 
-                rows.push(...claude.map((row) => ({ ...row, provider: "claude" as const })));
-                continue;
+                return await nativeRows(alias, options);
+            } catch (error) {
+                // One provider's index being unreadable must not blank the other two.
+                logger.warn({ error, provider: alias }, "[ai] could not list this provider's sessions");
+                return [];
             }
-
-            rows.push(...(await nativeRows(alias, options)));
-        } catch (error) {
-            // One provider's index being unreadable must not blank the other two.
-            logger.warn({ error, provider: alias }, "[ai] could not list this provider's sessions");
-        }
-    }
+        })
+    );
+    const rows = perProvider.flat();
 
     rows.sort((a, b) => b.mtime - a.mtime);
 

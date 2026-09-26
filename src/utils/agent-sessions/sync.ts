@@ -95,7 +95,17 @@ export async function synchronizeHistory(options: {
     const observed =
         options.discovery ??
         (await prof.measureAsync("sync.discover-observed", () => reader.discover(roots, { ...options.scope, signal })));
-    const cached = repository.sources(providerId);
+    // A listing names the few sources it refreshes, and a filtered scope never prunes, so every
+    // other provider row is dead weight: about 60 ms per full read over 12,811 rows, read three
+    // times by a listing whose live session grew. The missing-root checks below ask SQL instead:
+    // a Claude root that does not exist (`~/.config/claude/projects` here) asks on every listing.
+    const narrowed = filtered && options.metadataSources !== undefined;
+    const readSources = () =>
+        narrowed
+            ? repository.sourcesForPaths({ providerId, filePaths: options.metadataSources! })
+            : repository.sources(providerId);
+    const sourcesUnder = (root: string) => repository.hasSourcesUnder({ providerId, root });
+    const cached = readSources();
     const observedRoots = repository.observedRoots(providerId);
     const observedPaths = new Set(observed.sources.map((source) => source.filePath));
     const selected = options.metadataSources
@@ -127,10 +137,7 @@ export async function synchronizeHistory(options: {
         (issue) =>
             issue.code !== "root-missing" ||
             observedRoots.has(canonicalRoot(issue.path)) ||
-            cached.some(
-                (source) =>
-                    source.root === resolve(issue.path) || historyPathUnderRoot(source.filePath, resolve(issue.path))
-            )
+            sourcesUnder(resolve(issue.path))
     );
     const status = repository.status(providerId);
     const unchangedSnapshot =
@@ -185,16 +192,13 @@ export async function synchronizeHistory(options: {
     const discovery = callerWalkIsCurrent
         ? observed
         : await prof.measureAsync("sync.discover-full", () => reader.discover(roots, { ...options.scope, signal }));
-    const previousSources = repository.sources(providerId);
+    const previousSources = readSources();
     const issues: NativeSourceIssue[] = discovery.issues.filter(
         (issue) =>
             issue.code !== "root-missing" ||
             observedRoots.has(canonicalRoot(issue.path)) ||
             observed.completeRoots.includes(canonicalRoot(issue.path)) ||
-            previousSources.some(
-                (source) =>
-                    source.root === resolve(issue.path) || historyPathUnderRoot(source.filePath, resolve(issue.path))
-            )
+            sourcesUnder(resolve(issue.path))
     );
     const sourcesByPath = new Map<string, HistorySourceSnapshot[]>();
 
@@ -418,7 +422,9 @@ export async function synchronizeHistory(options: {
     signal?.throwIfAborted();
     const completeRoots = filtered ? [] : discovery.completeRoots;
     repository.transaction(() => {
-        for (const source of repository.sources(providerId)) {
+        // With no complete root every row skips below, so a filtered sync reads none of them
+        // (the full read cost about 60 ms inside this write transaction).
+        for (const source of completeRoots.length === 0 ? [] : repository.sources(providerId)) {
             const root =
                 source.root ?? completeRoots.find((candidate) => historyPathUnderRoot(source.filePath, candidate));
 
@@ -454,8 +460,8 @@ export async function synchronizeHistory(options: {
         const displacedPaths = new Set(discovery.displaced ?? []);
 
         if (displacedPaths.size > 0) {
-            for (const source of repository.sources(providerId)) {
-                if (!displacedPaths.has(source.filePath) || currentPaths.has(source.filePath)) {
+            for (const source of repository.sourcesForPaths({ providerId, filePaths: displacedPaths })) {
+                if (currentPaths.has(source.filePath)) {
                     continue;
                 }
 
