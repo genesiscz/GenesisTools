@@ -12,11 +12,14 @@ import SwiftUI
 @MainActor
 final class HubHandoffRequests: ObservableObject {
     static let shared = HubHandoffRequests()
+    /// A request made before the first session list loaded (a fresh `tools hub --handoff`): it goes to
+    /// the session that load selects, or is dropped when the load selects none.
+    static let firstSelection = "::first-selection"
     @Published var pending: String?
 
     /// The session `pending` names, or nil while the list does not have it yet.
     func resolve(in sessions: [HubSession]) -> HubSession? {
-        guard let pending, !pending.isEmpty else { return nil }
+        guard let pending, !pending.isEmpty, pending != Self.firstSelection else { return nil }
         return sessions.first { $0.id == pending || $0.sessionId.hasPrefix(pending) }
     }
 }
@@ -31,6 +34,7 @@ private struct HubHandoffModifier: ViewModifier {
         content
             .onChange(of: requests.pending) { present() }
             .onChange(of: model.sessions.count) { present() }
+            .onChange(of: model.selectedID) { present() }
             .onAppear { present() }
             .sheet(item: $composer) { request in
                 HandoffComposerSheet(request: request) { composer = nil }
@@ -38,7 +42,24 @@ private struct HubHandoffModifier: ViewModifier {
     }
 
     private func present() {
-        guard let session = requests.resolve(in: model.sessions) else { return }
+        guard let pending = requests.pending else { return }
+        let session: HubSession?
+
+        if pending == HubHandoffRequests.firstSelection {
+            // Waits for the first list; then the session it selected, or nothing (a PRs-mode launch).
+            guard !model.sessions.isEmpty else { return }
+            session = model.selected
+
+            if session == nil {
+                requests.pending = nil
+                model.notice = "No session to hand off: select one, or pass --session."
+                return
+            }
+        } else {
+            session = requests.resolve(in: model.sessions)
+        }
+
+        guard let session else { return }
         requests.pending = nil
         composer = HandoffComposerRequest(session: session, prompts: [], from: nil)
     }

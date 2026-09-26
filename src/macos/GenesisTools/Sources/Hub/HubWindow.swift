@@ -961,6 +961,9 @@ final class HubModel: ObservableObject {
                 if request.handoff {
                     if let target = request.session ?? selectedID {
                         HubHandoffRequests.shared.pending = target
+                    } else if sessions.isEmpty {
+                        // A fresh launch applies its flags before the first list loads.
+                        HubHandoffRequests.shared.pending = HubHandoffRequests.firstSelection
                     } else {
                         notice = "No session to hand off: select one, or pass --session."
                     }

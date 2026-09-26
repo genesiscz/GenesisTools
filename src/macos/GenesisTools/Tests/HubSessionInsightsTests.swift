@@ -204,6 +204,8 @@ final class HubSessionInsightsTests: XCTestCase {
         XCTAssertEqual(requests.resolve(in: sessions)?.sessionId, "5be5e59c-15d1")
         requests.pending = ""
         XCTAssertNil(requests.resolve(in: sessions), "an empty request never matches whatever session is shown")
+        requests.pending = HubHandoffRequests.firstSelection
+        XCTAssertNil(requests.resolve(in: sessions), "the first-selection marker is not an id prefix")
         requests.pending = nil
     }
 }
