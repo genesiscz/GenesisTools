@@ -346,6 +346,30 @@ export interface SendPromptDeps {
 
 const CONTEXT_VARIABLES = new Set(["branch", "pr", "cwd", "project", "session"]);
 
+function pointerTo(file: string): string {
+    return `Read ${file} and do what it says; it is a prompt I saved in the hub.`;
+}
+
+/** Writes `text` under `file`, or under `<name>-2.md`, `-3`, … when that name is taken (EEXIST). */
+async function writeFresh(deps: SendPromptDeps, file: string, text: string): Promise<string> {
+    for (let attempt = 1; attempt <= 50; attempt++) {
+        const candidate = attempt === 1 ? file : file.replace(/\.md$/, `-${attempt}.md`);
+
+        try {
+            await deps.write(candidate, text);
+            return candidate;
+        } catch (error) {
+            if (!(error instanceof Error && "code" in error && error.code === "EEXIST")) {
+                throw error;
+            }
+
+            log.debug({ candidate }, "prompt file name taken; trying the next");
+        }
+    }
+
+    throw new HubPromptError("send-failed", `no free file name next to ${file}`);
+}
+
 export const realSendPromptDeps: SendPromptDeps = {
     cwdOf: (session) => readCachedSessionCwd({ sessionId: session }),
     facts: async (cwd, withPr) => {
@@ -367,7 +391,8 @@ export const realSendPromptDeps: SendPromptDeps = {
     },
     write: async (file, text) => {
         await mkdir(dirname(file), { recursive: true });
-        await writeFile(file, text);
+        // Exclusive: two sends in one millisecond share a name, and the second must not replace the first.
+        await writeFile(file, text, { flag: "wx" });
     },
     dir: join(new Storage("hub").getBaseDir(), "prompts-sent"),
     now: () => new Date(),
@@ -441,7 +466,7 @@ export async function sendPrompt({
     const mode = deliveryMode(rendered.text);
     const stamp = deps.now().toISOString().replace(/[:.]/g, "-");
     const file = mode === "file" ? join(deps.dir, `${stamp}-${prompt.name.replace(/[^\w.-]+/g, "_")}.md`) : null;
-    const typed = file ? `Read ${file} and do what it says; it is a prompt I saved in the hub.` : rendered.text;
+    const typed = file ? pointerTo(file) : rendered.text;
     const result: SendPromptResult = {
         name: prompt.name,
         session,
@@ -459,11 +484,19 @@ export async function sendPrompt({
         return result;
     }
 
+    let sentTyped = typed;
+
     if (file) {
-        await deps.write(file, `${rendered.text}\n`);
+        const written = await writeFresh(deps, file, `${rendered.text}\n`);
+
+        if (written !== file) {
+            result.file = written;
+            sentTyped = pointerTo(written);
+            result.typed = sentTyped;
+        }
     }
 
-    const error = await deps.send(session, typed);
+    const error = await deps.send(session, sentTyped);
     log.info({ name: prompt.name, session, mode, filled, error }, "prompt send");
 
     if (error) {
