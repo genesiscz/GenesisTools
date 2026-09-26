@@ -12,6 +12,7 @@ import type { ProviderPlugin } from "@genesiscz/utils/ai/providers/plugin-types"
 import { registerBuiltInPlugins } from "@genesiscz/utils/ai/providers/plugins";
 import { pluginsWithUsage } from "@genesiscz/utils/ai/providers/registry";
 import { logger } from "@genesiscz/utils/logger";
+import { readerMaxStaleMs, usageDaemonAgeMs } from "./daemon-heartbeat";
 import type { SnapshotsCacheProvider } from "./legacy-cache";
 import { projectRoundIntoLegacyCache, writeSnapshotsCache } from "./legacy-cache";
 import {
@@ -27,7 +28,7 @@ import {
 } from "./poll-gate";
 import { recordSnapshots } from "./record";
 import type { Cached } from "./shared-cache";
-import { __makeSharedUsage, API_MIN_INTERVAL_MS, SNAPSHOT_OPS } from "./shared-cache";
+import { __makeSharedUsage, SNAPSHOT_OPS } from "./shared-cache";
 import { snapshotsCacheKey, USAGE_CACHE_TTL, usageCacheFilePath, usagePollStorage } from "./storage";
 import type { AccountUsageSnapshot } from "./types";
 
@@ -181,7 +182,13 @@ async function pollProvider(
         // The RESOLVED names, not the caller's raw list: a filter may name accounts of
         // another provider, and the cache's coverage check counts what it was asked for.
         ...(opts.accountFilter === undefined ? {} : { accountFilter: accounts.map((a) => a.name) }),
-        maxStaleMs: opts.maxStaleMs ?? Math.max(API_MIN_INTERVAL_MS, entry.usage.minIntervalMs ?? 0),
+        // A reader leaves the refetching to a live daemon (see `readerMaxStaleMs`); `force` ignores it.
+        maxStaleMs:
+            opts.maxStaleMs ??
+            readerMaxStaleMs({
+                floorMs: entry.usage.minIntervalMs ?? 0,
+                daemonAgeMs: opts.force ? null : usageDaemonAgeMs(),
+            }),
         // Survives `force`: a codex poll spawns an app-server and a grok poll costs a
         // vendor request, so the every-30s daemon must not drive either on every tick.
         floorMs: entry.usage.minIntervalMs ?? 0,

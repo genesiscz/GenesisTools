@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, statSync, utimesSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
@@ -249,6 +249,26 @@ describe("writeSnapshotsCache", () => {
             prominent: ["monthly"],
         });
         expect(cache?.providers["grok-sub"].accounts[0].accountName).toBe("work");
+    });
+
+    test("a round that changes nothing does not rewrite the file; one that does, does", async () => {
+        useTempHome();
+        const round = slice("grok-sub", "grok", "work");
+        const stamp = new Date("2026-09-04T12:00:00.000Z");
+
+        await writeSnapshotsCache(round, stamp);
+        const written = statSync(snapshotsCachePath()).mtimeMs;
+        // Push the file's clock back so a rewrite, however quick, moves it.
+        utimesSync(snapshotsCachePath(), new Date(written - 60_000), new Date(written - 60_000));
+        const before = statSync(snapshotsCachePath()).mtimeMs;
+
+        const same = await writeSnapshotsCache(round, stamp);
+        expect(statSync(snapshotsCachePath()).mtimeMs).toBe(before);
+        expect(same.providers["grok-sub"].accounts[0].accountName).toBe("work");
+
+        await writeSnapshotsCache(slice("grok-sub", "grok", "shop"), stamp);
+        expect(statSync(snapshotsCachePath()).mtimeMs).not.toBe(before);
+        expect((await readSnapshotsCache())?.providers["grok-sub"].accounts[0].accountName).toBe("shop");
     });
 
     test("a write for one provider keeps the slices the file already holds", async () => {
