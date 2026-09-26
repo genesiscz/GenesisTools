@@ -203,7 +203,7 @@ export function forecastWindow(samples: readonly UsageSample[], now: Date = new 
     };
 }
 
-function warningOf(windows: readonly WindowForecast[]): string | null {
+function warningOf(windows: readonly WindowForecast[], nowMs: number): string | null {
     const early = windows
         .filter((window) => window.beforeReset && window.exhaustAt)
         .sort((left, right) => (left.exhaustAt ?? "").localeCompare(right.exhaustAt ?? ""))[0];
@@ -213,6 +213,12 @@ function warningOf(windows: readonly WindowForecast[]): string | null {
     }
 
     const at = new Date(early.exhaustAt);
+
+    // The projection starts at the last sample; by now its run-out time can already be behind us.
+    if (at.getTime() <= nowMs) {
+        return `${early.label} is projected at its limit now, before its reset`;
+    }
+
     return `${early.label} runs out at ${at.toTimeString().slice(0, 5)}, before its reset`;
 }
 
@@ -250,7 +256,7 @@ export function forecastFromSamples(samples: readonly UsageSample[], now: Date =
             const windows = entry.windows.sort(
                 (left, right) => order[left.kind] - order[right.kind] || left.bucket.localeCompare(right.bucket)
             );
-            return { ...entry, windows, warning: warningOf(windows) };
+            return { ...entry, windows, warning: warningOf(windows, now.getTime()) };
         })
         .sort(
             (left, right) => left.provider.localeCompare(right.provider) || left.account.localeCompare(right.account)

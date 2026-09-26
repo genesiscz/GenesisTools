@@ -411,6 +411,18 @@ describe("forecast", () => {
         expect(window).toMatchObject({ resetSinceSample: true, exhaustAt: null, stale: true });
     });
 
+    test("a projected run-out time already behind now is worded as at the limit, not in the future tense", () => {
+        const resetsAt = new Date(NOW.getTime() + 2 * 24 * 3_600_000).toISOString();
+        // 99 % five hours ago, five days into the week: the average reaches 100 % about 73 min after that sample.
+        const [account] = forecastFromSamples(
+            [sample({ bucket: "seven_day", kind: "weekly", utilization: 99, timestamp: isoAgo(5 * 60), resetsAt })],
+            NOW
+        );
+
+        expect(account?.windows[0]).toMatchObject({ beforeReset: true, minutesToExhaust: 0, stale: false });
+        expect(account?.warning).toBe("Weekly is projected at its limit now, before its reset");
+    });
+
     test("groups by account and names the earliest window that runs out first", () => {
         const resetsAt = new Date(NOW.getTime() + 3 * 3_600_000).toISOString();
         const accounts = forecastFromSamples(
@@ -760,5 +772,37 @@ describe("rules", () => {
         expect(attempts).toEqual(["d2", "d2"]);
         // Delivered once, it stays sent.
         expect((await runRules(shared)).posted).toBe(0);
+    });
+
+    test("a post that throws is retried, and the ones delivered before it in the batch stay sent", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "hub-rules-"));
+        const statePath = join(dir, "rules-state.json");
+        let failKey: string | null = "d3";
+        const attempts: string[] = [];
+        const shared = {
+            now: NOW,
+            statePath,
+            readConfig: async () => ({ rules: [rule({ kind: "decision" })] }),
+            inputs: async () => inputs({ decisions: ["d1", "d2", "d3"].map((id) => decision({ id })) }),
+            post: async (firing: { key: string }) => {
+                attempts.push(firing.key);
+
+                if (firing.key === failKey) {
+                    throw new Error("notification center unavailable");
+                }
+
+                return true;
+            },
+        };
+
+        await runRules({ ...shared, inputs: async () => inputs({ decisions: [decision({ id: "d1" })] }) });
+        const batch = await runRules(shared);
+        expect(batch.posted).toBe(1);
+
+        failKey = null;
+        const next = await runRules(shared);
+        // d2 went out in the first batch and is not posted again; only the one that threw is retried.
+        expect(next.posted).toBe(1);
+        expect(attempts).toEqual(["d2", "d3", "d3"]);
     });
 });
