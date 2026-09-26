@@ -52,6 +52,10 @@ export function PulseGraph({ title, points, unit }: PulseGraphProps) {
                             stroke="#34d399"
                             strokeWidth={2}
                             fill={`url(#${gradientId})`}
+                            // The history refetches every 10 s and each answer replayed the
+                            // draw-in animation: about 190 React commits per refetch, 16 per
+                            // second on an idle home page.
+                            isAnimationActive={false}
                         />
                     </AreaChart>
                 </ResponsiveContainer>

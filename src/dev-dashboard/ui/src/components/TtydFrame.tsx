@@ -16,6 +16,9 @@ const MAX_ATTEMPTS = 30; // ~18s — covers spawn→bind + a dashboard restart
  * ("Bad Gateway: upstream unavailable") until it's up. Poll readiness first
  * and only mount the iframe once /ttyd/<id>/ returns 200 — the user never
  * sees the gateway page and never has to refresh.
+ *
+ * The probe is a HEAD: the answer's status is all it reads, and a GET downloaded the whole
+ * ttyd page (about 720 KB) once for the probe and again for the iframe, per terminal.
  */
 export function TtydFrame({ id, title, className, iframeRef }: TtydFrameProps) {
     const src = `/ttyd/${encodeURIComponent(id)}/`;
@@ -33,7 +36,7 @@ export function TtydFrame({ id, title, className, iframeRef }: TtydFrameProps) {
         const probe = async () => {
             attempts += 1;
             try {
-                const res = await fetch(src, { method: "GET", cache: "no-store" });
+                const res = await fetch(src, { method: "HEAD", cache: "no-store" });
                 if (!cancelled && res.ok) {
                     setReady(true);
                     return;

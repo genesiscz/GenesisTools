@@ -4,6 +4,7 @@ import type { PortInfo, PortsResult } from "@app/dev-dashboard/lib/ports/types";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { usePageVisible } from "@/hooks/usePageVisible";
 
 function portKey(p: PortInfo): string {
     return `${p.pid}:${p.port}:${p.proto}`;
@@ -48,6 +49,12 @@ export function channelsFromKey(key: string): LiveChannel[] {
 /**
  * Single multiplexed EventSource to `/api/live`. Merges frames into React Query.
  * Mid-session channel changes: POST /api/live/subscribe (SSE cannot receive).
+ *
+ * The stream is open only while the page is visible and at least one channel is asked for.
+ * The server runs a channel's producer (the ports `lsof` scan and its HTTP classify probes,
+ * the pulse sampler, the AI usage poller) for as long as anyone subscribes, so a background
+ * tab used to keep them all running. On return the stream reopens and the next producer tick
+ * brings fresh data (at once when this tab is the only subscriber, since that restarts it).
  */
 export function useLive(channels: LiveChannel[]): {
     connId: string | null;
@@ -59,8 +66,13 @@ export function useLive(channels: LiveChannel[]): {
     const [lastError, setLastError] = useState<string | null>(null);
     const connIdRef = useRef<string | null>(null);
     const channelsKey = liveChannelsKey(channels);
+    const visible = usePageVisible();
 
     useEffect(() => {
+        if (!visible || channelsKey === "") {
+            return;
+        }
+
         const es = new EventSource(paths.live(channelsFromKey(channelsKey)));
 
         es.onmessage = (ev) => {
@@ -144,7 +156,7 @@ export function useLive(channels: LiveChannel[]): {
         // `channels` is deliberately absent: the array identity changes every
         // render, and depending on it reopened the stream about eight times a
         // second. `channelsKey` carries the same information and is stable.
-    }, [channelsKey, qc]);
+    }, [channelsKey, qc, visible]);
 
     const setChannels = useCallback(async (ch: LiveChannel[]) => {
         const id = connIdRef.current;
