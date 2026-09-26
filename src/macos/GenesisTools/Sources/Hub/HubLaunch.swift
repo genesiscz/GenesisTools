@@ -779,8 +779,10 @@ struct LaunchPicker: View {
                     .fixedSize(horizontal: false, vertical: true)
                 HStack(spacing: 8) {
                     CopyChip(label: String(session.sessionId.prefix(8)), value: session.sessionId, tooltip: "Copy the full session id: \(session.sessionId)")
-                    Text(verbatim: [AIProviders.meta(for: session.provider).displayName, session.account, HubFormat.ago(session.lastActivity)]
-                        .compactMap { $0 }.joined(separator: " · "))
+                    LiveAgo(date: session.lastActivity) { ago in
+                        [AIProviders.meta(for: session.provider).displayName, session.account, ago.isEmpty ? nil : ago]
+                            .compactMap { $0 }.joined(separator: " · ")
+                    }
                         .font(.system(size: 11))
                         .foregroundColor(ReviewPalette.dim)
                         .lineLimit(1)

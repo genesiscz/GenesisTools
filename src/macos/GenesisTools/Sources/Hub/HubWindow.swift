@@ -1536,7 +1536,7 @@ private struct SessionRowView: View {
                             .background(Capsule().stroke(Color.white.opacity(0.15)))
                     }
                     Spacer(minLength: 0)
-                    Text(HubFormat.ago(session.lastActivity))
+                    LiveAgo(date: session.lastActivity)
                 }
                 .font(.system(size: 10.5))
                 .foregroundColor(ReviewPalette.dim)
@@ -1691,7 +1691,13 @@ private struct SessionDetailView: View {
                     Circle()
                         .fill(session.isLive ? ReviewPalette.added : Color.white.opacity(0.25))
                         .frame(width: 7, height: 7)
-                    Text(session.isLive ? "live" : "idle · \(HubFormat.ago(session.lastActivity))")
+                    Group {
+                        if session.isLive {
+                            Text("live")
+                        } else {
+                            LiveAgo(date: session.lastActivity) { "idle · \($0)" }
+                        }
+                    }
                         .font(.system(size: 11.5))
                         .foregroundColor(ReviewPalette.dim)
                 }

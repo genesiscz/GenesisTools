@@ -319,18 +319,17 @@ struct SessionDetailHeader: View {
                     .fixedSize()
             }
             if let last = info.lastActivityAt {
-                // Its own 15 s clock, so the rest of the header never re-renders for it.
-                TimelineView(.periodic(from: .now, by: 15)) { context in
-                    HStack(spacing: 5) {
-                        Image(systemName: "waveform.path")
-                            .font(.system(size: 10))
-                        Text(verbatim: "active \(SessionFormat.ago(context.date.timeIntervalSince(last)))")
-                    }
-                    .font(.system(size: 11.5))
-                    .foregroundStyle(SessionPalette.dim)
-                    .lineLimit(1)
-                    .fixedSize()
+                HStack(spacing: 5) {
+                    Image(systemName: "waveform.path")
+                        .font(.system(size: 10))
+                    // Its own clock: each second while it reads in seconds, then each minute, and
+                    // the rest of the header never re-renders for it.
+                    LiveTime(date: last) { "active \($0)" }
                 }
+                .font(.system(size: 11.5))
+                .foregroundStyle(SessionPalette.dim)
+                .lineLimit(1)
+                .fixedSize()
                 .instantTooltip("Last transcript entry or file write, \(SessionFormat.moment(last))")
             }
             Spacer(minLength: 8)

@@ -635,7 +635,7 @@ struct PRListView: View {
                         Text(verbatim: pr.author ?? "")
                         Text(verbatim: "·").fixedSize()
                         // Whole, so the author truncates and the age never reads "4 hr. a…".
-                        Text(verbatim: HubFormat.ago(pr.updated)).fixedSize()
+                        LiveAgo(date: pr.updated).fixedSize()
                     }
                     .font(.system(size: 11))
                     .foregroundColor(ReviewPalette.dim)
@@ -1270,7 +1270,7 @@ struct PRCommitRow: View {
                 if let author = commit.author {
                     FindText(author, field: "author").font(.system(size: 11)).foregroundColor(ReviewPalette.dim).lineLimit(1)
                 }
-                Text(verbatim: HubFormat.ago(commit.when))
+                LiveAgo(date: commit.when)
                     .font(.system(size: 11))
                     .foregroundColor(ReviewPalette.dim)
                     .fixedSize()

@@ -39,6 +39,26 @@ extension View {
     }
 }
 
+// MARK: - Relative times
+
+/// `HubFormat.ago` that stays current on screen: a `LiveTime` (Hub/Stolen/UI/LiveTime.swift) in the
+/// system's short words ("20 sec. ago", "5 min. ago"). The label keeps its own clock (each second
+/// under a minute, then on the minute), so nothing above it re-renders per tick. `format` builds the
+/// whole text around the time ("read \($0)"); without a date it gets `fallback`.
+struct LiveAgo: View {
+    let date: Date?
+    var fallback = ""
+    var format: (String) -> String = { $0 }
+
+    var body: some View {
+        if let date {
+            LiveTime(date: date, style: .short, format: format)
+        } else {
+            Text(verbatim: format(fallback))
+        }
+    }
+}
+
 // MARK: - External links
 
 enum ExternalOpener {

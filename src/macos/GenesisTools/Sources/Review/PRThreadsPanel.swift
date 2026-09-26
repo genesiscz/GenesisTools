@@ -420,7 +420,7 @@ private struct PRThreadRow: View {
                 if comment.author.name != comment.author.username {
                     Text(verbatim: "@\(comment.author.username)").foregroundColor(ReviewPalette.dim)
                 }
-                Text(verbatim: PRThreadRendering.ago(comment.createdAt))
+                LiveAgo(date: HubFormat.date(comment.createdAt), fallback: comment.createdAt)
                     .foregroundColor(ReviewPalette.dim)
                     .instantTooltip(comment.createdAt)
                 if comment.editedAt != nil {

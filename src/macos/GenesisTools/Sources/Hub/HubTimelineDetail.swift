@@ -792,7 +792,7 @@ struct TimelineThreadDetailView: View {
                             tooltip: detail.viewer == comment.author.username ? "\(comment.author.username) (you)" : "\(comment.author.username)'s profile",
                             findField: "comment-author.\(comment.id)"
                         )
-                        Text(verbatim: PRThreadRendering.ago(comment.createdAt))
+                        LiveAgo(date: HubFormat.date(comment.createdAt), fallback: comment.createdAt)
                             .font(.system(size: 10)).foregroundColor(ReviewPalette.dim)
                     }
                     .frame(width: 110, alignment: .trailing)

@@ -769,7 +769,7 @@ private struct InboxSessionRow: View {
                 HStack(spacing: 6) {
                     Text(session.projectName).lineLimit(1)
                     Spacer(minLength: 0)
-                    Text(HubFormat.ago(session.date)).fixedSize()
+                    LiveAgo(date: session.date).fixedSize()
                 }
                 .font(.system(size: 10.5))
                 .foregroundColor(ReviewPalette.dim)
@@ -899,7 +899,7 @@ struct InboxMain: View {
                 NoticePill(text: notice) { model.notice = nil }
             }
             if let loadedAt = inbox.loadedAt {
-                Text("checked \(HubFormat.ago(loadedAt))")
+                LiveAgo(date: loadedAt) { "checked \($0)" }
                     .font(.system(size: 11))
                     .foregroundColor(ReviewPalette.dim)
             }
@@ -1214,7 +1214,7 @@ struct InboxDecisionCard: View {
             }
             Spacer(minLength: 8)
             if item.isOpen {
-                Label(HubFormat.ago(item.date), systemImage: "clock")
+                Label { LiveAgo(date: item.date) } icon: { Image(systemName: "clock") }
                     .font(.system(size: 11))
                     .foregroundColor(ReviewPalette.dim)
             } else {
@@ -1729,7 +1729,7 @@ private struct InboxFormCard: View {
                 }
                 Spacer()
                 CopyChip(label: String(item.id.suffix(8)), value: item.id, tooltip: "Copy the form id")
-                Label(HubFormat.ago(item.date), systemImage: "clock")
+                Label { LiveAgo(date: item.date) } icon: { Image(systemName: "clock") }
                     .font(.system(size: 11))
                     .foregroundColor(ReviewPalette.dim)
             }

@@ -20,6 +20,7 @@ install, reap stale faces). Swift UI you have not seen rendered is not done.
 | A background | `.hubSurface(.chrome / .content / .bar)`: opaque normally, translucent in glass mode (`HubGlass`, ⌘⇧G) | `ReviewPalette.sidebar` / `.background` directly |
 | A sidebar group header | `GroupHeader` + `GroupPrefs` (collapse, pin, move up/down, persisted) | an uppercase static label |
 | A status message | `NoticePill` (fades, error stays) | a raw colored `Text` line |
+| A relative time on screen ("5 min. ago", "active 20s ago") | `LiveAgo(date:)` (HubComponents.swift) or `LiveTime(date:style:)` (Hub/Stolen/UI/LiveTime.swift, shared with Genesis): the label keeps its own clock, nothing above it re-renders per tick | `HubFormat.ago` in a body (formats once and goes stale), or a `Timer` / `TimelineView` above the label (re-renders the whole row or list per tick) |
 | Find inside a panel (⌘F) | Hub/HubPanelFind.swift: `@State` `PanelFindModel`, `PanelFindBar` under the header as its own row above the scroll view, `.panelFind(find, revision:rows:)` on the root, `.findRow(id)` per row, `FindText(text, field:)` for shown text (`MarkdownContentView` + `.findField(key)` for markdown). A pane with its own find registers with `.panelFindNative(scope)`, an overlay that owns the keyboard with `.panelFindModal()` | a bar in `.safeAreaInset(edge: .top)` (selectable text draws through it), a SwiftUI `.keyboardShortcut("f")` button or a local key monitor per view: `PanelFindRouter` is the one ⌘F / ⌘G / ⇧⌘G / Esc owner and sends the key to the panel of the last click |
 | A PR/MR's review threads or any write to them | `ReviewModel.attachPR` → `PRThreadsStore` + `PRCommand` argv (Review/PRThreads.swift, fed by `tools hub pr`). The diff's thread cards carry Reply / Resolve / Edit / Delete (web/diff-viewer/main.ts, `renderLiveThread`): the page only posts `thread.action`, and Swift confirms, runs `tools`, then answers `threadDone`. The PR bar and threads list are in Review/PRThreadsPanel.swift. 🛑 `PRCommand.publish` has one caller, the Submit review confirmation (a test scans Sources for it) | `tools github …` / `tools gitlab …` calls from a view, or a second path to `publish` |
 
@@ -84,7 +85,8 @@ marked adaptation (`// GenesisTools adaptation: …`). Missing Genesis types go 
   `activity` (the Activity rail's filters clicked) and `inbox` (the mode switch). 🛑 Measure clicks with
   `GENESIS_HUB_BENCH_AX=1`: the live hub always has an accessibility client (dictation, `tools control`), and with
   one SwiftUI walks every responder per changed accessibility node; a click that costs 90 ms without it costs 1.6 s.
-- Logic tests: `swift test` in this folder (Tests/, no windows).
+- Logic tests: `swift test` in this folder (Tests/). Only LiveTimeTests and SessionTranscriptScrollTests open a window, alpha 0
+  below the desktop and never activated; `SESSION_SCROLL_PERF=1` adds the transcript's scroll and idle cost lines.
 - Read the PNG. The web diff is composited from WKWebView's own snapshot, so it needs no Screen Recording grant.
 - A `--snapshot` run uses the `.prohibited` activation policy and an alpha-0 window (`orderInForSnapshot`): it never
   shows on screen and never takes the keyboard. Martin's typing once landed in the hub search field because a

@@ -436,7 +436,16 @@ struct SessionTranscriptList: View {
                     Text("Nothing matches this filter.")
                 }
             } else {
-                list
+                // The List is the overlay of a flexible spacer, not a child of the stack, so its own
+                // layout never reaches the views around it. Every row it realised, loaded or measured
+                // while scrolling changed the List's layout, and as a direct child that re-laid out
+                // the whole window each frame: the toolbar's ViewThatFits measured its three layouts
+                // again, the header and the sidebar with it. Measured 2026-09-25 on a live session:
+                // p95 175 ms of main thread per scrolled frame as a child, 17.7 ms as an overlay
+                // (`SessionTranscriptScrollTests`). A separate NSHostingView was 200 ms and worse.
+                Color.clear
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .overlay { list }
             }
         }
     }

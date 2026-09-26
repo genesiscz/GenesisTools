@@ -260,6 +260,8 @@ enum CodeBlockRenderer {
         let width = String(lines.compactMap(\.number).max() ?? 0).count
         // GenesisTools adaptation: a focus line is banded like a diff line.
         let band = min(bandWidth, lines.filter { $0.mark == .added || $0.mark == .removed || $0.mark == .focus }.map { $0.text.count }.max() ?? 0)
+        // Once per block: `isDiff` walks every line, and it used to run for every line drawn.
+        let isDiff = block.isDiff
         var highlighter = SyntaxHighlighter(language: highlight ? block.language : .plain)
         var gutter = AttributedString()
         var out = AttributedString()
@@ -271,7 +273,7 @@ enum CodeBlockRenderer {
             }
 
             if line.mark == .gap {
-                var dots = AttributedString(String(repeating: " ", count: max(width - 1, 0)) + "⋯" + (block.isDiff ? "  " : ""))
+                var dots = AttributedString(String(repeating: " ", count: max(width - 1, 0)) + "⋯" + (isDiff ? "  " : ""))
                 dots.foregroundColor = SessionPalette.faint
                 gutter.append(dots)
                 var gap = AttributedString(line.text)
@@ -296,7 +298,7 @@ enum CodeBlockRenderer {
             case .focus: background = SessionPalette.blue.opacity(0.16)
             default: background = nil
             }
-            if block.isDiff {
+            if isDiff {
                 var mark = AttributedString(line.mark == .added ? " +" : line.mark == .removed ? " -" : "  ")
                 mark.foregroundColor = line.mark == .added ? SessionPalette.green : line.mark == .removed ? SessionPalette.red : SessionPalette.faint
                 gutter.append(mark)
@@ -326,7 +328,7 @@ enum CodeBlockRenderer {
             }
             out.append(body)
         }
-        return CodeBlockAttributed(gutter: gutter, body: out, hasGutter: width > 0 || block.isDiff)
+        return CodeBlockAttributed(gutter: gutter, body: out, hasGutter: width > 0 || isDiff)
     }
 }
 
@@ -337,7 +339,9 @@ struct CodeBlockAttributed: Equatable, Sendable {
     var hasGutter: Bool
 }
 
-/// Memoised highlighted bodies, so a recycled row redraws without re-highlighting.
+/// Memoised highlighted bodies, so a recycled row redraws without re-highlighting. Sized for a long
+/// session at "Inputs + output": 300 entries was fewer than the outputs and inputs of 150 turns, so
+/// scrolling back evicted what the way down had just highlighted.
 final class CodeBlockCache: @unchecked Sendable {
     static let shared = CodeBlockCache()
 
@@ -348,7 +352,7 @@ final class CodeBlockCache: @unchecked Sendable {
 
     private let cache: NSCache<NSString, Box> = {
         let cache = NSCache<NSString, Box>()
-        cache.countLimit = 300
+        cache.countLimit = 1500
         return cache
     }()
 
@@ -361,6 +365,11 @@ final class CodeBlockCache: @unchecked Sendable {
 /// would start under the gutter and push every later number off its line); long lines scroll
 /// sideways. Drawn plain at once, then replaced by the highlighted version computed off the main
 /// thread.
+///
+/// Sideways scrolling is an offset that `SidewaysWheel` moves, not a nested horizontal `ScrollView`.
+/// On macOS that scroll view took every wheel event over it, vertical ones included, so the
+/// transcript stopped scrolling under the pointer (2026-09-25), and each row that came into view had
+/// to build a scroll view, a clip view and a document view for it.
 struct CodeBlockText: View {
     let block: CodeBlock
     /// Lines to show; nil shows all.
@@ -372,11 +381,22 @@ struct CodeBlockText: View {
     // keeps its id when the clipped result is replaced by the full one, often with the same line
     // count, and the old highlighted body used to stay on screen.
     @State private var highlighted: (key: String, value: CodeBlockAttributed)?
+    /// How far the code is scrolled sideways.
+    @State private var sideways: CGFloat = 0
+    /// How wide the code is. A box, not a value: measuring it must not draw the block again.
+    @State private var codeWidth = SidewaysWheel.Width()
 
-    // GenesisTools adaptation: the key hashes the content (see `highlighted`).
+    // GenesisTools adaptation: the key hashes the content (see `highlighted`): the shown lines only,
+    // because nothing past `limit` is drawn, and hashing a whole long output on every body was the
+    // bigger part of it.
     private var key: String {
         var hasher = Hasher()
-        hasher.combine(block)
+        hasher.combine(block.language)
+        hasher.combine(block.failed)
+        hasher.combine(block.isDiff)
+        for line in limit.map({ block.lines.prefix($0) }) ?? block.lines[...] {
+            hasher.combine(line)
+        }
         return "\(cacheKey)|\(limit.map(String.init) ?? "all")|\(block.lines.count)|\(hasher.finalize())"
     }
 
@@ -394,17 +414,19 @@ struct CodeBlockText: View {
                     .padding(.trailing, 7)
                     .accessibilityHidden(true)
             }
-            ScrollView(.horizontal, showsIndicators: false) {
-                Text(rendered.body)
-                    .font(CodeBlockRenderer.font)
-                    .lineSpacing(1.5)
-                    .textSelection(.enabled)
-                    .fixedSize()
-            }
+            Text(rendered.body)
+                .font(CodeBlockRenderer.font)
+                .lineSpacing(1.5)
+                .textSelection(.enabled)
+                .fixedSize()
+                .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { codeWidth.value = $0 }
+                .offset(x: -sideways)
+                // `minWidth: 0` makes the frame as wide as the row gives, not as wide as the code.
+                .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
+                .clipped()
+                .overlay(SidewaysWheel(offset: $sideways, contentWidth: codeWidth))
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        // GenesisTools adaptation: vertical wheel events over the block go to the list (upstream 9b6a354a).
-        .background(VerticalWheelToEnclosingScroll())
             .task(id: key) {
                 if let cached = CodeBlockCache.shared.get(key) {
                     // GenesisTools adaptation: `highlighted` remembers its key (see its declaration).
@@ -424,57 +446,68 @@ struct CodeBlockText: View {
     }
 }
 
-// GenesisTools adaptation: taken from upstream 9b6a354a (Genesis), where the scroll bug was reported.
-/// Hands vertical wheel scrolls over a code block to the list around it.
+/// Takes the scroll wheel over a code block, and only the wheel. A mostly sideways gesture moves the
+/// code (`offset`); anything else goes up the responder chain to the transcript's own scroll view,
+/// which scrolls exactly as it does over any other row (momentum, responsive scrolling). No event
+/// monitor: the previous fix watched every wheel event of the app from every code block on screen
+/// and re-sent them to the list by hand, which split each gesture between two scroll views.
 ///
-/// Each code block scrolls its long lines sideways in a horizontal `ScrollView`. On macOS that nested
-/// scroll view takes EVERY wheel event while the pointer is over it, vertical ones included, so the
-/// transcript stopped scrolling whenever the pointer rested on a tool output (Martin, 2026-09-25). This
-/// view sits behind the block, watches the app's wheel events (a local monitor that returns the others
-/// unchanged), and sends a mostly vertical one that lands inside its bounds to the nearest enclosing
-/// scroll view, which is the transcript list: the horizontal scroller is a sibling, not an ancestor.
-/// A mostly horizontal scroll still reaches the block.
-struct VerticalWheelToEnclosingScroll: NSViewRepresentable {
-    func makeNSView(context: Context) -> RouterView {
-        RouterView()
+/// Clicks, drags and hovers fall through to the text, because `hitTest` answers only while a wheel
+/// event is being delivered. The axis is chosen once per gesture, from its first event that moves.
+struct SidewaysWheel: NSViewRepresentable {
+    /// The width of the code, written by its layout and read on each wheel event.
+    final class Width {
+        var value: CGFloat = 0
     }
 
-    func updateNSView(_ view: RouterView, context: Context) {}
+    @Binding var offset: CGFloat
+    let contentWidth: Width
 
-    final class RouterView: NSView {
-        private var monitor: Any?
+    func makeNSView(context: Context) -> WheelView {
+        let view = WheelView()
+        updateNSView(view, context: context)
+        return view
+    }
 
-        override func viewDidMoveToWindow() {
-            super.viewDidMoveToWindow()
-            if let monitor {
-                NSEvent.removeMonitor(monitor)
-                self.monitor = nil
-            }
-            guard window != nil else { return }
-            monitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { [weak self] event in
-                guard let self else { return event }
-                return self.route(event) ? nil : event
-            }
+    func updateNSView(_ view: WheelView, context: Context) {
+        view.width = contentWidth
+        view.offset = offset
+        let binding = $offset
+        view.onScroll = { binding.wrappedValue = $0 }
+    }
+
+    final class WheelView: NSView {
+        var width: Width?
+        var offset: CGFloat = 0
+        var onScroll: ((CGFloat) -> Void)?
+        /// The current gesture's axis; nil until one of its events moves.
+        private var sideways: Bool?
+
+        var contentWidth: CGFloat { width?.value ?? 0 }
+
+        override func hitTest(_ point: NSPoint) -> NSView? {
+            guard NSApp.currentEvent?.type == .scrollWheel else { return nil }
+            return super.hitTest(point)
         }
 
-        deinit {
-            if let monitor {
-                NSEvent.removeMonitor(monitor)
+        override func scrollWheel(with event: NSEvent) {
+            if event.phase.contains(.began) || event.phase.contains(.mayBegin) {
+                sideways = nil
             }
+            // A mouse wheel has no gestures: each notch decides for itself.
+            let notch = event.phase.isEmpty && event.momentumPhase.isEmpty
+            if notch || sideways == nil, event.scrollingDeltaX != 0 || event.scrollingDeltaY != 0 {
+                sideways = abs(event.scrollingDeltaX) > abs(event.scrollingDeltaY) && contentWidth > bounds.width
+            }
+            guard sideways == true else {
+                super.scrollWheel(with: event)
+                return
+            }
+            let delta = event.hasPreciseScrollingDeltas ? event.scrollingDeltaX : event.scrollingDeltaX * 12
+            let next = min(max(offset - delta, 0), max(contentWidth - bounds.width, 0))
+            guard next != offset else { return }
+            offset = next
+            onScroll?(next)
         }
-
-        /// True when the event went to the enclosing scroll view instead.
-        private func route(_ event: NSEvent) -> Bool {
-            guard event.window === window, !isHiddenOrHasHiddenAncestor,
-                  abs(event.scrollingDeltaY) > abs(event.scrollingDeltaX),
-                  bounds.contains(convert(event.locationInWindow, from: nil)),
-                  let outer = enclosingScrollView
-            else { return false }
-            outer.scrollWheel(with: event)
-            return true
-        }
-
-        /// Never takes a click or a hover meant for the text above it.
-        override func hitTest(_ point: NSPoint) -> NSView? { nil }
     }
 }

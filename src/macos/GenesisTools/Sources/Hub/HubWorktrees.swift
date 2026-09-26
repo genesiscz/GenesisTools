@@ -364,7 +364,7 @@ struct WorktreeDetailView: View {
                 .frame(width: 15, height: 15)
                 .background(RoundedRectangle(cornerRadius: 4).fill(Color.white.opacity(0.6)))
             Text(session.displayTitle).lineLimit(1).frame(maxWidth: 220, alignment: .leading)
-            Text(HubFormat.ago(session.lastActivity)).foregroundColor(ReviewPalette.dim)
+            LiveAgo(date: session.lastActivity).foregroundColor(ReviewPalette.dim)
             Button("Open") { model.openSession(session) }
                 .instantTooltip("Show this session's transcript, changes and decisions")
             Button("Resume") { resuming = session }

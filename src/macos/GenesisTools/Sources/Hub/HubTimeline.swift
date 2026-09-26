@@ -1180,7 +1180,7 @@ struct TimelineMain: View {
             if timeline.loading {
                 ProgressView().controlSize(.small)
             } else if let loadedAt = timeline.loadedAt {
-                Text("read \(HubFormat.ago(loadedAt))")
+                LiveAgo(date: loadedAt) { "read \($0)" }
                     .font(.system(size: 11))
                     .foregroundColor(ReviewPalette.dim)
             }
@@ -1317,7 +1317,7 @@ struct TimelineRowView: View {
                 if let author = event.author, kind != .session, kind != .sessionStart {
                     authorLabel(author, live: live)
                 }
-                Text(verbatim: HubFormat.ago(event.date))
+                LiveAgo(date: event.date)
                     .font(.system(size: 10.5))
                     .foregroundColor(ReviewPalette.dim)
                     .lineLimit(1)

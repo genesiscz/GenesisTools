@@ -55,6 +55,8 @@ enum HubFormat {
         return formatter
     }()
 
+    /// Formats against the moment it runs, so it goes stale on screen: a label is a `LiveAgo`
+    /// (Hub/HubComponents.swift). This is for text that leaves the screen (an export, a copy).
     static func ago(_ date: Date?) -> String {
         guard let date else { return "" }
         return relative.localizedString(for: date, relativeTo: Date())

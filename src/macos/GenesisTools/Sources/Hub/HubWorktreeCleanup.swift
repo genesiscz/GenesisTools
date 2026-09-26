@@ -497,7 +497,7 @@ struct WorktreeCleanupView: View {
             }
             Spacer(minLength: 8)
             sizeCell(row)
-            Text(verbatim: HubFormat.ago(row.lastActivity))
+            LiveAgo(date: row.lastActivity)
                 .font(.system(size: 11))
                 .foregroundColor(ReviewPalette.dim)
                 .frame(width: 90, alignment: .trailing)
