@@ -6,6 +6,9 @@ const WS_BASE_URL = "wss://api.x.ai/v1";
 
 export const XAI_PROVIDER_ID = "xai";
 
+/** How long a resolved key is reused before the account is read again. */
+const KEY_TTL_MS = 60_000;
+
 /**
  * Transport for every xAI speech call.
  *
@@ -18,6 +21,7 @@ export const XAI_PROVIDER_ID = "xai";
 export class XAIClient {
     private readonly explicitKey?: string;
     private pending?: Promise<string>;
+    private pendingAt = 0;
 
     constructor(apiKey?: string) {
         const trimmed = apiKey?.trim();
@@ -36,16 +40,19 @@ export class XAIClient {
     }
 
     /**
-     * The lookup is memoised, but a REJECTED lookup is not: a caller that adds an
-     * account mid-process would otherwise keep being told there is no key by a
-     * promise that failed once.
+     * The lookup is shared by concurrent callers and kept for KEY_TTL_MS, but a
+     * REJECTED lookup is not kept: a caller that adds an account mid-process would
+     * otherwise keep being told there is no key by a promise that failed once. The
+     * lifetime matters the other way too: a long-running `say` kept sending a key
+     * that had since been rotated.
      */
     async requireKey(): Promise<string> {
         if (this.explicitKey) {
             return this.explicitKey;
         }
 
-        if (!this.pending) {
+        if (!this.pending || Date.now() - this.pendingAt > KEY_TTL_MS) {
+            this.pendingAt = Date.now();
             this.pending = providerApiKey(XAI_PROVIDER_ID).catch((err: unknown) => {
                 this.pending = undefined;
                 throw err;
