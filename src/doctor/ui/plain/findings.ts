@@ -1,5 +1,6 @@
 import { formatBytes } from "@app/doctor/lib/size";
 import type { Action, Finding } from "@app/doctor/lib/types";
+import { isInteractive } from "@genesiscz/utils/cli";
 import * as p from "@genesiscz/utils/prompts/p";
 import pc from "picocolors";
 
@@ -63,6 +64,16 @@ export async function selectFindings(findings: Finding[]): Promise<Finding[]> {
             p.log.warn(`${finding.title} - blocked: ${finding.blacklistReason ?? "no reason recorded"}`);
         }
 
+        return [];
+    }
+
+    if (!isInteractive()) {
+        // Plain mode is also the no-terminal mode: a picker there drew itself into a pipe and read nothing.
+        for (const finding of pickableFindings) {
+            p.log.info(labelFor(finding));
+        }
+
+        p.log.info("No terminal, so nothing is acted on. Run it in a terminal to choose, or add --json for the data.");
         return [];
     }
 
