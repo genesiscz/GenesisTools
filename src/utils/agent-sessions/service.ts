@@ -1,8 +1,10 @@
 import { realpathSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 import { concurrentMap } from "@genesiscz/utils/async";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { sourceFingerprint } from "./fingerprint";
+import type { ListingFreshness } from "./listing-freshness";
 import { haystackMatch } from "./match";
 import { validateHistoryFilters } from "./native-match";
 import { historyPathUnderRoot, historyProjectMatches } from "./project-scope";
@@ -32,6 +34,7 @@ import type {
     AgentSession,
     HistorySourceRecord,
     NativeHistoryEntry,
+    NativeIndexSyncResult,
     NativeSessionReader,
     NativeSessionSource,
     NativeSourceIssue,
@@ -205,6 +208,8 @@ export class HistoryService {
             statistics?: HistoryStatisticsRepository;
             roots: string[];
             now?: () => Date;
+            /** Lets `catalog({ maxDiscoveryAgeMs })` reuse another process's recent refresh. */
+            freshness?: ListingFreshness;
         }
     ) {}
 
@@ -388,9 +393,45 @@ export class HistoryService {
         });
     }
 
-    /** The listing catalog: refresh the metadata a listing will read, then read it. */
-    async catalog(filters: AgentSearchFilters = {}) {
-        const synchronized = await this.refreshListing(filters);
+    /**
+     * The listing catalog: refresh the metadata a listing will read, then read it.
+     *
+     * `maxDiscoveryAgeMs` skips the refresh when the same scope was refreshed that recently by any
+     * process, and reads the index as it is. A source that changed since can then lag by up to that
+     * long; a brand-new session appears once the next refresh runs.
+     */
+    async catalog(filters: AgentSearchFilters = {}, options: { maxDiscoveryAgeMs?: number } = {}) {
+        const { freshness } = this.options;
+        const freshnessKey = SafeJSON.stringify([
+            this.options.providerId,
+            Boolean(filters.excludeAgents),
+            Boolean(filters.agentsOnly),
+            filters.project ?? null,
+            this.options.roots,
+        ]);
+        const age = options.maxDiscoveryAgeMs === undefined ? null : (freshness?.age(freshnessKey) ?? null);
+        const reuse = age !== null && options.maxDiscoveryAgeMs !== undefined && age < options.maxDiscoveryAgeMs;
+        let synchronized: { report: NativeIndexSyncResult; reindexed: boolean };
+
+        if (reuse) {
+            logger.debug(
+                { provider: this.options.providerId, ageMs: Math.round(age) },
+                "[history] listing reuses a recent refresh"
+            );
+            synchronized = {
+                report: {
+                    ...this.options.repository.status(this.options.providerId),
+                    parsed: 0,
+                    unchanged: 0,
+                    removed: 0,
+                },
+                reindexed: false,
+            };
+        } else {
+            synchronized = await this.refreshListing(filters);
+            freshness?.touch(freshnessKey);
+        }
+
         const scoped = {
             ...filters,
             sourceRoots: (filters.sourceRoots ?? this.options.roots).map(canonicalRoot),

@@ -1,7 +1,7 @@
 import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { availableParallelism } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
-import { listAgentSessionRows } from "@app/ai/lib/sessions/agent-session-rows";
+import { listAgentSessionRows, POLLED_LISTING_REUSE_MS } from "@app/ai/lib/sessions/agent-session-rows";
 import { scanWithCFfi } from "@app/du/lib/engine";
 import { detectWorktreeExcludes } from "@app/du/lib/worktrees";
 import { type CollectContext, collectRefReport } from "@app/git/lib/merged/collect";
@@ -281,7 +281,7 @@ export async function readLiveUsers({ liveMinutes }: { liveMinutes: number }): P
     let sessionsError: string | null = null;
 
     try {
-        sessions = (await listAgentSessionRows({ hours }))
+        sessions = (await listAgentSessionRows({ hours, withUsage: false, maxDiscoveryAgeMs: POLLED_LISTING_REUSE_MS }))
             .filter((row) => row.mtime >= cutoff && row.cwd)
             .map((row) => ({
                 provider: row.provider,

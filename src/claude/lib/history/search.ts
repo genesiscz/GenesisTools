@@ -89,6 +89,8 @@ export interface SessionListingOptions {
     mtimeFrom?: number;
     /** With `mtimeFrom`: also the N newest sessions by mtime, whatever their age. */
     newest?: number;
+    /** Read the index as it is when this scope was refreshed that recently (see `HistoryService.catalog`). */
+    maxDiscoveryAgeMs?: number;
     /** Progress callback: (processed, total, currentFile) */
     onProgress?: (processed: number, total: number, currentFile: string) => void;
 }
@@ -125,14 +127,17 @@ export async function getSessionListing(options: SessionListingOptions = {}): Pr
         report,
         reindexed,
     } = await p.measureAsync("listing.catalog", () =>
-        openHistoryService({ provider: "claude" }).catalog({
-            project,
-            excludeAgents: !subagentsOnly && excludeSubagents,
-            agentsOnly: subagentsOnly,
-            limit,
-            mtimeFrom: options.mtimeFrom,
-            newest: options.newest,
-        })
+        openHistoryService({ provider: "claude" }).catalog(
+            {
+                project,
+                excludeAgents: !subagentsOnly && excludeSubagents,
+                agentsOnly: subagentsOnly,
+                limit,
+                mtimeFrom: options.mtimeFrom,
+                newest: options.newest,
+            },
+            { maxDiscoveryAgeMs: options.maxDiscoveryAgeMs }
+        )
     );
     const subagentCount = all.filter((metadata) => metadata.isSubagent).length;
     const selected = subagentsOnly

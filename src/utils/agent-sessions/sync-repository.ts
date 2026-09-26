@@ -71,6 +71,35 @@ export class HistorySyncRepository {
         return this.metadata.listSources(providerId);
     }
 
+    sourcesForPaths(options: { providerId: string; filePaths: Iterable<string> }): HistorySourceSnapshot[] {
+        return this.metadata.listSourcesForPaths({ providerId: options.providerId, filePaths: [...options.filePaths] });
+    }
+
+    /**
+     * Whether any row of `sources()` has this root or `historyPathUnderRoot(filePath, root)`,
+     * answered in SQL: the root itself, or a path from `root + sep` up to the next character.
+     * The unary `+` keeps the planner off the provider index, which walks every row of the
+     * provider (15 ms for a missing root) instead of seeking the file_path range (0.03 ms).
+     */
+    hasSourcesUnder(options: { providerId: string; root: string }): boolean {
+        const low = `${options.root}${sep}`;
+        const high = `${options.root}${String.fromCharCode(sep.charCodeAt(0) + 1)}`;
+        const row = this.db
+            .query<{ found: number }, [string, string, string, string]>(`
+            SELECT EXISTS(SELECT 1 FROM file_index WHERE provider=?1 AND root=?2)
+            OR EXISTS(SELECT 1 FROM file_index WHERE +provider=?1 AND file_path>=?2 AND file_path<?4
+                AND (file_path=?2 OR file_path>=?3))
+            OR EXISTS(
+                SELECT 1 FROM session_metadata m WHERE +m.provider=?1 AND m.file_path>=?2 AND m.file_path<?4
+                    AND (m.file_path=?2 OR m.file_path>=?3)
+                    AND NOT EXISTS (SELECT 1 FROM file_index f WHERE f.source_key=m.source_key)
+            ) AS found
+        `)
+            .get(options.providerId, options.root, low, high);
+
+        return row?.found === 1;
+    }
+
     observedRoots(providerId: string): Set<string> {
         return new Set(
             this.db

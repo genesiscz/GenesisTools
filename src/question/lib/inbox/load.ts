@@ -1,5 +1,9 @@
 import { statSync } from "node:fs";
-import { type AgentSessionRow, listAgentSessionRows } from "@app/ai/lib/sessions/agent-session-rows";
+import {
+    type AgentSessionRow,
+    listAgentSessionRows,
+    POLLED_LISTING_REUSE_MS,
+} from "@app/ai/lib/sessions/agent-session-rows";
 import { transcriptEnvelope } from "@genesiscz/utils/ai/transcripts/load";
 import { type ResolvedTranscript, resolveTranscript } from "@genesiscz/utils/ai/transcripts/resolve";
 import type { TranscriptTurn } from "@genesiscz/utils/ai/transcripts/types";
@@ -52,7 +56,7 @@ function storage(): Storage {
 }
 
 export const realInboxDeps: InboxDeps = {
-    sessions: (hours) => listAgentSessionRows({ hours }),
+    sessions: (hours) => listAgentSessionRows({ hours, withUsage: false, maxDiscoveryAgeMs: POLLED_LISTING_REUSE_MS }),
     tail: async (row) => {
         const resolved: ResolvedTranscript = {
             provider: row.provider,
@@ -108,7 +112,7 @@ export async function waitingBlock(
 /** The folder of a session that has no stored row: the agent session list (the Inbox's own source), recent first. */
 async function lookupSessionCwd(session: string): Promise<string | null> {
     for (const hours of [72, 24 * 90]) {
-        const row = (await listAgentSessionRows({ hours })).find(
+        const row = (await listAgentSessionRows({ hours, withUsage: false })).find(
             (candidate) => candidate.sessionId === session || candidate.sessionId.startsWith(session)
         );
 
