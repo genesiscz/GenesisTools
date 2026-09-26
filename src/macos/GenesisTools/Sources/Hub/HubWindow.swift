@@ -1592,9 +1592,16 @@ private struct SessionRowView: View {
             }
             .padding(.top, 1)
             VStack(alignment: .leading, spacing: 3) {
-                Text(session.displayTitle)
-                    .font(.system(size: 12.5, weight: selected ? .semibold : .regular))
-                    .lineLimit(2)
+                // The stuck badge sits by the title: on the meta line it squeezed the project and account to "Gene…".
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Text(session.displayTitle)
+                        .font(.system(size: 12.5, weight: selected ? .semibold : .regular))
+                        .lineLimit(2)
+                    if let stuck {
+                        Spacer(minLength: 0)
+                        StuckBadge(verdict: stuck)
+                    }
+                }
                 HStack(spacing: 6) {
                     if let project = session.project {
                         Text(project)
@@ -1606,9 +1613,6 @@ private struct SessionRowView: View {
                             .background(Capsule().stroke(Color.white.opacity(0.15)))
                     }
                     Spacer(minLength: 0)
-                    if let stuck {
-                        StuckBadge(verdict: stuck)
-                    }
                     LiveAgo(date: session.lastActivity)
                 }
                 .font(.system(size: 10.5))
