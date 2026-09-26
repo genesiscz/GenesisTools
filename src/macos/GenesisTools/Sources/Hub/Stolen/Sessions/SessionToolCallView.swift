@@ -371,9 +371,10 @@ struct ToolCallRowView: View, Equatable {
                 ToolChangesView(sessionId: services.sessionId, toolId: toolId, source: source, cwd: services.cwd, showChange: services.showChange, startOpen: verbosity.opensTools)
             }
         }
-        .padding(.leading, 42)
-        .padding(.trailing, 16)
-        .padding(.vertical, 1)
+        // GenesisTools adaptation: tighter insets, so more of a session fits (2026-09-25).
+        .padding(.leading, 24)
+        .padding(.trailing, 12)
+        .padding(.vertical, 0)
         .task(id: open ? toolId : "") {
             // A finished call loaded before is drawn from `services.loaded` already (see body).
             guard open, loaded == nil, !finished || services.loaded(toolId: toolId) == nil else { return }
@@ -417,8 +418,9 @@ struct ToolCallRowView: View, Equatable {
                 .frame(width: 12)
         }
         .padding(.horizontal, 8)
-        .padding(.vertical, 4)
-        .frame(minHeight: 26)
+        // GenesisTools adaptation: tighter insets, so more of a session fits (2026-09-25).
+        .padding(.vertical, 3)
+        .frame(minHeight: 24)
         .contentShape(Rectangle())
     }
 

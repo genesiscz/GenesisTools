@@ -746,7 +746,8 @@ struct TranscriptSectionHeader: View {
                 .foregroundStyle(SessionPalette.red)
             }
         }
-        .padding(.horizontal, 20)
+        // GenesisTools adaptation: tighter insets, so more of a session fits (2026-09-25).
+        .padding(.horizontal, 12)
         .frame(height: 28)
         .frame(maxWidth: .infinity)
         // Opaque, and past its own frame: AppKit gives a section header row 36 pt with 4 pt of
@@ -857,7 +858,7 @@ private struct PromptCard: View {
         let isLong = lines.count > Self.collapsedLines || text.utf8.count > 1600
         let shown = isLong && !expanded ? collapsed(lines) : text
 
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 8) {
                 Avatar(glyph: "Y", color: SessionPalette.orange, solid: true)
                 Text("You")
@@ -893,14 +894,15 @@ private struct PromptCard: View {
                     }
                 }
             }
-            .padding(.leading, 30)
+            .padding(.leading, 12)
         }
-        .padding(12)
+        // GenesisTools adaptation: tighter insets, so more of a session fits (2026-09-25).
+        .padding(10)
         .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(SessionPalette.card))
         .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(SessionPalette.cardBorder))
-        .padding(.horizontal, 16)
-        .padding(.top, 10)
-        .padding(.bottom, 6)
+        .padding(.horizontal, 12)
+        .padding(.top, 6)
+        .padding(.bottom, 2)
     }
 
     private func collapsed(_ lines: [Substring]) -> String {
@@ -919,7 +921,7 @@ private struct ReplyBlock: View {
     let showsAuthor: Bool
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 4) {
             if showsAuthor {
                 authorRow
             } else if let usage {
@@ -932,12 +934,13 @@ private struct ReplyBlock: View {
                         .lineLimit(1)
                 }
             }
+            // GenesisTools adaptation: tighter insets, so more of a session fits (2026-09-25).
             TranscriptMarkdown(text: text)
-                .padding(.leading, 30)
+                .padding(.leading, 12)
         }
-        .padding(.horizontal, 20)
-        .padding(.top, showsAuthor ? 10 : 6)
-        .padding(.bottom, 6)
+        .padding(.horizontal, 12)
+        .padding(.top, showsAuthor ? 6 : 2)
+        .padding(.bottom, 2)
     }
 
     private var authorRow: some View {
@@ -1012,7 +1015,7 @@ private struct ThinkingLine: View {
                     Chevron(expanded: expanded)
                 }
                 .padding(.horizontal, 8)
-                .frame(height: 26)
+                .frame(height: 24)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.genHoverRow(accent: .white, cornerRadius: 7))
@@ -1033,9 +1036,10 @@ private struct ThinkingLine: View {
                     .padding(.bottom, 6)
             }
         }
-        .padding(.leading, 42)
-        .padding(.trailing, 16)
-        .padding(.vertical, 1)
+        // GenesisTools adaptation: tighter insets, so more of a session fits (2026-09-25).
+        .padding(.leading, 24)
+        .padding(.trailing, 12)
+        .padding(.vertical, 0)
     }
 }
 
@@ -1163,12 +1167,13 @@ private struct ToolGroupRow: View {
                         .frame(width: 12)
                 }
                 .padding(.horizontal, 8)
-                .frame(height: 26)
+                .frame(height: 24)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.genHoverRow(accent: .white, cornerRadius: 7))
-            .padding(.leading, 42)
-            .padding(.trailing, 16)
+            // GenesisTools adaptation: tighter insets, so more of a session fits (2026-09-25).
+            .padding(.leading, 24)
+            .padding(.trailing, 12)
             .accessibilityIdentifier("transcript-tool-group")
 
             if open {
@@ -1189,6 +1194,6 @@ private struct ToolGroupRow: View {
                 }
             }
         }
-        .padding(.vertical, 1)
+        .padding(.vertical, 0)
     }
 }

@@ -214,6 +214,10 @@ func runHub(_ args: [String]) -> Never {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
                         let web = (review()?.renderer as? PierreWebDiffRenderer)?.webView
                         let showsDiff = model.mode == .prs || model.panes.contains(.changes)
+                        if let rows = HubBench.transcriptRowsLine(in: window) {
+                            PerfLog.mark("hub.snapshot \(rows)")
+                            FileHandle.standardError.write(Data("hub snapshot: \(rows)\n".utf8))
+                        }
                         ReviewSnapshot.write(window: window, webView: showsDiff ? web : nil, to: snapshotPath) {
                             exit(0)
                         }

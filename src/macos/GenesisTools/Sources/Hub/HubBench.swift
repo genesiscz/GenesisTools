@@ -85,6 +85,28 @@ enum HubBench {
 
     @MainActor private static var current: Runner?
 
+    /// The table with the most rows under `view`: the transcript's List when a session is open.
+    static func largestTable(in view: NSView?) -> NSTableView? {
+        guard let view else { return nil }
+        var best = view as? NSTableView
+        for child in view.subviews {
+            if let found = largestTable(in: child), found.numberOfRows > (best?.numberOfRows ?? -1) {
+                best = found
+            }
+        }
+        return best
+    }
+
+    /// For a snapshot's log: the transcript's rows on screen (`drawn` leaves out its 1 pt markers)
+    /// and in the list, so a padding change can be judged by how much of a session fits.
+    @MainActor
+    static func transcriptRowsLine(in window: NSWindow) -> String? {
+        guard let table = largestTable(in: window.contentView), table.numberOfRows > 0 else { return nil }
+        let range = table.rows(in: table.visibleRect)
+        let drawn = (range.location..<range.location + range.length).filter { table.rect(ofRow: $0).height > 2 }.count
+        return "transcript rows on screen \(range.length) (\(drawn) drawn) of \(table.numberOfRows), \(Int(table.visibleRect.height)) pt"
+    }
+
     @MainActor
     static func run(window: NSWindow, model: HubModel, output: String) {
         active = true
@@ -287,7 +309,7 @@ enum HubBench {
             var row: Int?
             for _ in 0..<steps {
                 self.steps.append(Step(scenario: "scroll", action: { [weak self] in
-                    guard let self, let table = Self.largestTable(in: self.window.contentView), table.numberOfRows > 0 else { return }
+                    guard let self, let table = HubBench.largestTable(in: self.window.contentView), table.numberOfRows > 0 else { return }
                     let next = max(0, (row ?? table.numberOfRows - 1) - 15)
                     row = next
                     table.scrollRowToVisible(next)
@@ -323,7 +345,7 @@ enum HubBench {
                 steps.append(Step(scenario: "open", action: { [weak self] in self?.model.select(session.id) }, delay: 0.05))
                 for _ in 0..<100 {
                     steps.append(Step(scenario: "open", action: { [weak self] in
-                        guard let self, let table = Self.largestTable(in: self.window.contentView), let clip = table.enclosingScrollView?.contentView else {
+                        guard let self, let table = HubBench.largestTable(in: self.window.contentView), let clip = table.enclosingScrollView?.contentView else {
                             return
                         }
                         HubBench.note("transcript.fromBottom.\(n)", Int((table.frame.height - clip.bounds.maxY).rounded()))
@@ -333,16 +355,6 @@ enum HubBench {
             }
         }
 
-        private static func largestTable(in view: NSView?) -> NSTableView? {
-            guard let view else { return nil }
-            var best = view as? NSTableView
-            for child in view.subviews {
-                if let found = largestTable(in: child), found.numberOfRows > (best?.numberOfRows ?? -1) {
-                    best = found
-                }
-            }
-            return best
-        }
 
         private static func splitView(in view: NSView?) -> NSSplitView? {
             guard let view else { return nil }
