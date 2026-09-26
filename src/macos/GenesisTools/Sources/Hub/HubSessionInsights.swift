@@ -289,6 +289,17 @@ enum InsightFormat {
         return SessionFormat.duration(ms / 1000)
     }
 
+    /// One unit, for the sidebar's narrow table: "42s", "7m", "1.5h", "3d". Tooltips keep `duration`.
+    static func compactDuration(ms: Double?) -> String {
+        guard let ms else { return "—" }
+        let seconds = ms / 1000
+        if seconds < 1 { return "<1s" }
+        if seconds < 60 { return "\(Int(seconds))s" }
+        if seconds < 3600 { return "\(Int(seconds / 60))m" }
+        if seconds < 86_400 { return String(format: seconds < 36_000 ? "%.1fh" : "%.0fh", seconds / 3600) }
+        return "\(Int(seconds / 86_400))d"
+    }
+
     static func usd(_ value: Double?) -> String {
         guard let value else { return "—" }
         return value < 0.01 && value > 0 ? "<$0.01" : SessionFormat.usd(value)
@@ -438,6 +449,8 @@ struct TurnCostTimelineSection: View {
     static let maxBars = 90
 
     private var showsCost: Bool { payload.priced && metricRaw == "cost" }
+    /// A file with no per-call usage (Grok) has nothing to chart or to switch between.
+    private var hasUsage: Bool { payload.turns.contains { $0.billableTokens + $0.cacheReadTokens > 0 } }
 
     var body: some View {
         let bars = InsightBar.bucket(payload.turns, maxBars: Self.maxBars, priced: payload.priced)
@@ -445,7 +458,7 @@ struct TurnCostTimelineSection: View {
             HStack(spacing: 6) {
                 SessionSectionTitle(title: "Cost per prompt", count: payload.turns.count)
                 Spacer(minLength: 4)
-                if payload.priced {
+                if payload.priced && hasUsage {
                     MenuButton {
                         [
                             .action("Cost (list price)", checked: showsCost) { metricRaw = "cost" },
@@ -464,8 +477,8 @@ struct TurnCostTimelineSection: View {
                 }
             }
             .padding(.bottom, 2)
-            if bars.isEmpty {
-                Text("No model call recorded usage.")
+            if bars.isEmpty || !hasUsage {
+                Text("This session's file records no token counts per prompt, so there is nothing to chart.")
                     .font(.system(size: 11.5))
                     .foregroundStyle(SessionPalette.faint)
             } else {
@@ -655,15 +668,18 @@ struct ToolAnalyticsSection: View {
             Spacer(minLength: 4)
             Text(verbatim: "\(tool.count)")
                 .foregroundStyle(SessionPalette.secondary)
+                .fixedSize()
             Text(verbatim: InsightFormat.percent(tool.failureRate))
                 .foregroundStyle(tool.failures > 0 ? SessionPalette.red : SessionPalette.faint)
                 .frame(minWidth: 30, alignment: .trailing)
-            Text(verbatim: bound + InsightFormat.duration(ms: tool.totalMs > 0 ? tool.totalMs : nil))
+            Text(verbatim: bound + InsightFormat.compactDuration(ms: tool.totalMs > 0 ? tool.totalMs : nil))
                 .foregroundStyle(SessionPalette.dim)
-                .frame(minWidth: 44, alignment: .trailing)
-            Text(verbatim: bound + InsightFormat.duration(ms: tool.slowestMs))
-                .foregroundStyle(SessionPalette.dim)
+                .fixedSize()
                 .frame(minWidth: 40, alignment: .trailing)
+            Text(verbatim: bound + InsightFormat.compactDuration(ms: tool.slowestMs))
+                .foregroundStyle(SessionPalette.dim)
+                .fixedSize()
+                .frame(minWidth: 36, alignment: .trailing)
         }
         .font(SessionPalette.mono(10.5))
         .padding(.horizontal, 4)
@@ -685,6 +701,8 @@ struct ToolAnalyticsSection: View {
         let failed = tool.failures > 0 ? "\(tool.failures) failed (\(InsightFormat.percent(tool.failureRate)))" : "none failed"
         let timing = tool.timing == "exact" ? "exact times from the session file" : "times are upper bounds"
         let action = on ? "Click to show every row again" : "Click to show only these calls (in the loaded turns)"
-        return "\(tool.name): \(tool.count) calls, \(failed), \(timing)\n\(action)"
+        let bound = tool.timing == "exact" ? "" : "≤"
+        let times = "total \(bound)\(InsightFormat.duration(ms: tool.totalMs > 0 ? tool.totalMs : nil)), slowest \(bound)\(InsightFormat.duration(ms: tool.slowestMs))"
+        return "\(tool.name): \(tool.count) calls, \(failed), \(times), \(timing)\n\(action)"
     }
 }
