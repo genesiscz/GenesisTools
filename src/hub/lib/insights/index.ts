@@ -14,6 +14,7 @@ import {
     type TranscriptTurn,
     transcriptEnvelope,
 } from "@genesiscz/utils/ai/transcripts";
+import { concurrentMap } from "@genesiscz/utils/async";
 import { logger } from "@genesiscz/utils/logger";
 import { Storage } from "@genesiscz/utils/storage";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/storage";
@@ -35,6 +36,9 @@ export {
 export type * from "./types";
 
 const log = logger.child({ component: "hub/insights" });
+
+/** Transcripts the stuck scan reads at once. */
+const STUCK_SCAN_CONCURRENCY = 4;
 
 /** Bump when the cached JSON's shape changes. */
 const CACHE_VERSION = 1;
@@ -264,8 +268,12 @@ export async function stuckSessions(options: StuckOptions = {}): Promise<Session
         }
     }
 
-    return Promise.all(
-        targets.map(async (target): Promise<SessionStuck> => {
+    // Bounded: each target opens its transcript and reads a tail of up to 2 MB, and the list is every
+    // recently active session on the machine.
+    const results = await concurrentMap({
+        items: targets,
+        concurrency: STUCK_SCAN_CONCURRENCY,
+        fn: async (target): Promise<SessionStuck> => {
             try {
                 const resolved = await target.resolved();
                 return {
@@ -284,8 +292,10 @@ export async function stuckSessions(options: StuckOptions = {}): Promise<Session
                     error: err instanceof Error ? err.message : String(err),
                 };
             }
-        })
-    );
+        },
+    });
+
+    return targets.map((target) => results.get(target)).filter((entry): entry is SessionStuck => entry !== undefined);
 }
 
 export interface HandoffOptions {
