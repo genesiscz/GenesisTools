@@ -7,6 +7,7 @@ import type { AccountFeatures, AccountUsageFeature } from "@genesiscz/utils/ai/p
 import { _resetBuiltInPluginsForTest } from "@genesiscz/utils/ai/providers/plugins";
 import { _resetPluginsForTest } from "@genesiscz/utils/ai/providers/registry";
 import { env } from "@genesiscz/utils/env";
+import { DAEMON_ALIVE_MS, readerMaxStaleMs, touchUsageDaemonHeartbeat, usageDaemonAgeMs } from "./daemon-heartbeat";
 import { formatBlockedNotice, formatNeedsLoginNotice } from "./format-blocked";
 import { mergeAccountSlice } from "./legacy-cache";
 import { __fetchProviderSnapshots, latestFetchedAt, type UsagePlugin, usagePlugins } from "./poll";
@@ -554,5 +555,40 @@ describe("__fetchProviderSnapshots and a repaired credential", () => {
 
         expect(polled).toEqual([]);
         expect(snapshots[0].error).toBe("session expired");
+    });
+});
+
+describe("readerMaxStaleMs", () => {
+    afterEach(() => {
+        env.testing.unset("GENESIS_TOOLS_HOME");
+        __resetUsagePollStorage();
+    });
+
+    test("a live daemon's cycle is trusted: floor, one tick and the fetch", () => {
+        expect(readerMaxStaleMs({ floorMs: 60_000, daemonAgeMs: 5_000 })).toBe(150_000);
+        // A provider floor above the API minimum grows the window with it.
+        expect(readerMaxStaleMs({ floorMs: 300_000, daemonAgeMs: 5_000 })).toBe(390_000);
+    });
+
+    test("no heartbeat, or a stale one, leaves the reader on its own floor", () => {
+        expect(readerMaxStaleMs({ floorMs: 60_000, daemonAgeMs: null })).toBe(60_000);
+        expect(readerMaxStaleMs({ floorMs: 60_000, daemonAgeMs: DAEMON_ALIVE_MS })).toBe(60_000);
+        expect(readerMaxStaleMs({ floorMs: 0, daemonAgeMs: null })).toBe(45_000);
+    });
+
+    test("the daemon's heartbeat is what readers see", () => {
+        const home = mkdtempSync(join(tmpdir(), "ai-usage-heartbeat-"));
+        env.testing.set("GENESIS_TOOLS_HOME", home);
+        __resetUsagePollStorage();
+
+        try {
+            expect(usageDaemonAgeMs()).toBeNull();
+            touchUsageDaemonHeartbeat();
+            const age = usageDaemonAgeMs();
+            expect(age).not.toBeNull();
+            expect(age ?? Number.POSITIVE_INFINITY).toBeLessThan(DAEMON_ALIVE_MS);
+        } finally {
+            rmSync(home, { recursive: true, force: true });
+        }
     });
 });
