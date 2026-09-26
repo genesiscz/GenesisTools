@@ -141,6 +141,18 @@ describe("renderMarkdown", () => {
         expect(html).toContain("hljs-keyword");
     });
 
+    // Only the languages that occur are registered. Any other one must stay a styling loss on
+    // every path (QA, Obsidian render, share): escaped text, never a throw or raw HTML.
+    test("renders an unregistered fence language as a plain escaped block", () => {
+        const md = '```haskell\nmain = putStrLn "<script>alert(1)</script>"\n```';
+        const { html } = renderMarkdown(md, noop);
+
+        expect(html).toContain("<pre><code");
+        expect(html).toContain("&lt;script&gt;alert(1)&lt;/script&gt;");
+        expect(html).not.toContain("<script>");
+        expect(html).not.toContain("hljs-");
+    });
+
     test("passes mermaid blocks through and sets hasMermaid", () => {
         const md = "```mermaid\ngraph TD; A-->B;\n```";
         const result = renderMarkdown(md, noop);
