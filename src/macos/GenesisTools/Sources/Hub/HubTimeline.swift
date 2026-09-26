@@ -1298,7 +1298,8 @@ struct TimelineRowView: View {
                             .fixedSize()
                     }
                 }
-                LiveButton(live: live, tooltip: openTooltip) {
+                // The title may be cut: its tooltip carries it whole, then what a click does.
+                LiveButton(live: live, tooltip: "\(event.title)\n\(openTooltip)") {
                     model.openTimelineEvent(event)
                 } label: {
                     FindText(event.title, field: "title")
@@ -1359,8 +1360,9 @@ struct TimelineRowView: View {
                 }
                 Divider()
                 Button(expanded ? "Fold the details" : "Show the details") { timeline.toggle(event) }
+                Button("Copy title") { PathOpener.copy(event.title, what: "title") }
                 if let url = event.url {
-                    Button("Copy the link") { PathOpener.copy(url) }
+                    Button("Copy the link") { PathOpener.copy(url, what: "link") }
                 }
             }
             .popover(item: $popover, arrowEdge: .bottom) { item in
@@ -1405,7 +1407,8 @@ struct TimelineRowView: View {
                 text
             }
         } else {
-            text
+            // A cut detail can be read whole.
+            text.liveTooltip(live, detail)
         }
     }
 
