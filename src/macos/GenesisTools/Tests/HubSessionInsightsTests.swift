@@ -195,14 +195,15 @@ final class HubSessionInsightsTests: XCTestCase {
     }
 
     @MainActor
-    func testAHandoffRequestIsClaimedOnceByTheMatchingSession() {
+    func testAHandoffRequestResolvesOnlyToTheSessionItNames() {
         let requests = HubHandoffRequests.shared
+        let sessions = [HubSession(sessionId: "5be5e59c-15d1", cwd: "/tmp")]
+        requests.pending = "7399934a"
+        XCTAssertNil(requests.resolve(in: sessions))
         requests.pending = "5be5e59c"
-        XCTAssertFalse(requests.claim("7399934a-6a92"))
-        XCTAssertTrue(requests.claim("5be5e59c-15d1"))
-        XCTAssertNil(requests.pending)
+        XCTAssertEqual(requests.resolve(in: sessions)?.sessionId, "5be5e59c-15d1")
         requests.pending = ""
-        XCTAssertTrue(requests.claim("any-selected-session"))
-        XCTAssertFalse(requests.claim("any-selected-session"))
+        XCTAssertNil(requests.resolve(in: sessions), "an empty request never matches whatever session is shown")
+        requests.pending = nil
     }
 }

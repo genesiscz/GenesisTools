@@ -6,17 +6,47 @@ import SwiftUI
 // it into a folder, or post it to the handoff store (`--post --owner`, the handoff_post store the
 // dev-dashboard and agents read). Every write goes through the CLI, so a terminal can do the same.
 
-/// A composer asked for from outside the sidebar (`tools hub --handoff`): "" means the selected
-/// session, anything else a session id prefix. The sidebar that shows that session opens it and clears it.
+/// A composer asked for from outside the sidebar (`tools hub --handoff`): the hub root presents it
+/// (`.hubHandoff(model:)`), so a hidden transcript pane or sidebar cannot swallow the request.
+/// `pending` is a session id or id prefix, resolved once the session list has it.
 @MainActor
 final class HubHandoffRequests: ObservableObject {
     static let shared = HubHandoffRequests()
     @Published var pending: String?
 
-    func claim(_ sessionId: String) -> Bool {
-        guard let pending, pending.isEmpty || sessionId.hasPrefix(pending) else { return false }
-        self.pending = nil
-        return true
+    /// The session `pending` names, or nil while the list does not have it yet.
+    func resolve(in sessions: [HubSession]) -> HubSession? {
+        guard let pending, !pending.isEmpty else { return nil }
+        return sessions.first { $0.id == pending || $0.sessionId.hasPrefix(pending) }
+    }
+}
+
+/// Hosts the composer that `tools hub --handoff` asks for, above every pane.
+private struct HubHandoffModifier: ViewModifier {
+    @ObservedObject var model: HubModel
+    @ObservedObject private var requests = HubHandoffRequests.shared
+    @State private var composer: HandoffComposerRequest?
+
+    func body(content: Content) -> some View {
+        content
+            .onChange(of: requests.pending) { present() }
+            .onChange(of: model.sessions.count) { present() }
+            .onAppear { present() }
+            .sheet(item: $composer) { request in
+                HandoffComposerSheet(request: request) { composer = nil }
+            }
+    }
+
+    private func present() {
+        guard let session = requests.resolve(in: model.sessions) else { return }
+        requests.pending = nil
+        composer = HandoffComposerRequest(session: session, prompts: [], from: nil)
+    }
+}
+
+extension View {
+    func hubHandoff(model: HubModel) -> some View {
+        modifier(HubHandoffModifier(model: model))
     }
 }
 
