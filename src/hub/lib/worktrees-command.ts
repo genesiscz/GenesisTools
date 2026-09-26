@@ -283,16 +283,22 @@ export function registerWorktreesCommand(program: Command): void {
                 if (outcome.moved) {
                     out.log.success(`moved ${outcome.path} to ${outcome.to}`);
                     out.println(pc.dim(`  restore: ${outcome.restore}`));
+
+                    if (outcome.journalError) {
+                        out.log.warn(`  not in the journal (${outcome.journalError}): keep the restore line above`);
+                    }
                 } else {
                     out.log.error(`kept ${outcome.path}: ${outcome.reasons.join("; ")}`);
                 }
             }
 
             if (outcomes.some((o) => o.moved)) {
+                const journaled = outcomes.every((o) => !o.moved || !o.journalError);
+                const where = journaled
+                    ? `Every move is in ${moveAsideJournalPath()}.`
+                    : `Not every move reached ${moveAsideJournalPath()}: copy the restore lines above.`;
                 out.println(
-                    pc.dim(
-                        `Moved, not deleted. /tmp clears at reboot, and the space comes back then. Every move is in ${moveAsideJournalPath()}.`
-                    )
+                    pc.dim(`Moved, not deleted. /tmp clears at reboot, and the space comes back then. ${where}`)
                 );
             }
         });
