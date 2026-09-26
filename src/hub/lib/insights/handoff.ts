@@ -1,3 +1,4 @@
+import { isWrapperUserText } from "@genesiscz/utils/agent-sessions/user-text";
 import type { TranscriptProvider, TranscriptTool, TranscriptTurn } from "@genesiscz/utils/ai/transcripts";
 import { promptLabel, sectionsOf } from "./timeline";
 import { isFailedTool, keyArgument, summarizeTools, toolDisplayName, toolKind } from "./tool-kind";
@@ -247,10 +248,16 @@ function fileLine(file: HandoffFile): string {
 
 const CONTINUATION = "This session is being continued from a previous conversation";
 
-/** A prompt that states work: not a slash command, not a compaction's summary. */
+/** A prompt that states work: not a slash command, a compaction's summary, or a harness delivery. */
 function isWorkPrompt(turn: TranscriptTurn): boolean {
     const text = turn.text.trim();
-    return turn.role === "user" && text.length > 0 && !text.startsWith("/") && !text.startsWith(CONTINUATION);
+    return (
+        turn.role === "user" &&
+        text.length > 0 &&
+        !text.startsWith("/") &&
+        !text.startsWith(CONTINUATION) &&
+        !isWrapperUserText(text)
+    );
 }
 
 /**
