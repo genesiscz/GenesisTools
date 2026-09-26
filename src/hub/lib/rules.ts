@@ -294,7 +294,8 @@ export interface RuleInputs {
     decisions: DecisionRecord[];
     prs: RulePr[];
     /** `${prKey}` of ciFailed banners the PR poller posted, with their time (ms). */
-    postedCi: Array<{ key: string; atMs: number }>;
+    /** CI failures the PR poller posted; `sha` is the head it named, null when an older entry did not say. */
+    postedCi: Array<{ key: string; atMs: number; sha: string | null }>;
 }
 
 export interface RuleTarget {
@@ -364,6 +365,11 @@ function formatMinutes(minutes: number): string {
     return rest === 0 ? `${hours} h` : `${hours} h ${rest} min`;
 }
 
+/** Two spellings of one commit: a full sha and its 7-character short form match either way. */
+function samePrefix(a: string, b: string): boolean {
+    return a.length > 0 && b.length > 0 && (a.startsWith(b) || b.startsWith(a));
+}
+
 interface Match {
     key: string;
     firing: Omit<RuleFiring, "ruleId" | "kind" | "key">;
@@ -425,7 +431,10 @@ function matchesFor(rule: HubRule, inputs: RuleInputs, now: number): { matches: 
                 .filter((pr) => pr.ci === "failed" && contains([pr.ref], rule.match))
                 .map((pr) => ({
                     silent: inputs.postedCi.some(
-                        (posted) => posted.key === pr.key && now - posted.atMs < RULE_LIMITS.ciSuppressMs
+                        (posted) =>
+                            posted.key === pr.key &&
+                            now - posted.atMs < RULE_LIMITS.ciSuppressMs &&
+                            (posted.sha === null || samePrefix(posted.sha, pr.sha))
                     ),
                     key: `${pr.key}@${pr.sha}`,
                     firing: {
@@ -584,7 +593,12 @@ export function rulePrsFromNotifyState(state: NotifyState): { prs: RulePr[]; pos
 
     const postedCi = state.recent
         .filter((item) => item.type === "ciFailed" && item.posted)
-        .map((item) => ({ key: item.key, atMs: Date.parse(item.at) }));
+        .map((item) => ({
+            key: item.key,
+            atMs: Date.parse(item.at),
+            // Entries written before `sha` existed name the head at the end of their message.
+            sha: item.sha ?? item.message.match(/ at ([0-9a-f]{7,40})$/)?.[1] ?? null,
+        }));
     return { prs, postedCi };
 }
 

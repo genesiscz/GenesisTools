@@ -62,6 +62,8 @@ export interface NotifyItem {
     url: string;
     title: string;
     message: string;
+    /** CI events: the head commit the result is about. */
+    sha?: string;
 }
 
 /** Ids kept per PR; a PR with more threads than this only forgets its oldest, which never come back. */
@@ -178,6 +180,7 @@ export function diffPr({
                 ...base,
                 type,
                 message: `CI ${pr.ci === "failed" ? "failed" : "passed"} on ${tag} at ${pr.headSha?.slice(0, 7)}`,
+                ...(pr.headSha ? { sha: pr.headSha } : {}),
             });
         }
     }

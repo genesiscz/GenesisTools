@@ -633,6 +633,33 @@ describe("rules", () => {
         expect(later.firings).toEqual([]);
     });
 
+    test("ciFailed: the poller's recent post mutes only the head it named; a new failing head still notifies", () => {
+        const side = {
+            key: "github.com/work/side#6",
+            ref: "work/side#6",
+            title: "Side PR",
+            url: null,
+            sha: "fff000",
+            ci: "failed" as const,
+        };
+        const run = (postedSha: string | null) =>
+            evaluateRules({
+                config: { rules: [rule({ id: "r_side", kind: "ciFailed" })] },
+                state: { ...emptyRulesState(), seeded: { r_side: true } },
+                inputs: {
+                    ...inputs({}),
+                    prs: [side],
+                    postedCi: [{ key: side.key, atMs: minutesAgo(10), sha: postedSha }],
+                },
+                now: NOW,
+            });
+
+        expect(run("aaa1111").firings.map((firing) => firing.key)).toEqual(["github.com/work/side#6@fff000"]);
+        expect(run("fff000").firings).toEqual([]);
+        // An older poller entry that did not record its head keeps muting, as before.
+        expect(run(null).firings).toEqual([]);
+    });
+
     test("an invalid or disabled rule does not evaluate, and a deleted rule's memory is dropped", () => {
         const state = { seeded: { gone: true }, fired: { gone: { k: isoAgo(1) } }, lastRunAt: null };
         const result = evaluateRules({
