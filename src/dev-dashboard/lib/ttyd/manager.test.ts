@@ -157,6 +157,13 @@ describe.skipIf(!hasTtydDeps)("spawnTtyd persist-failure cleanup", () => {
         // list — the dashboard's own ttyd terminals may legitimately be running
         // alongside this test.
         const before = new Set(pgrepTtyd());
+        const tmuxSessions = (): string[] =>
+            new TextDecoder()
+                .decode(Bun.spawnSync(["tmux", "ls", "-F", "#{session_name}"], { env: process.env }).stdout)
+                .trim()
+                .split("\n")
+                .filter(Boolean);
+        const tmuxBefore = new Set(tmuxSessions());
 
         __setPersistRegistryForTest(async () => {
             throw new Error("disk full");
@@ -168,6 +175,8 @@ describe.skipIf(!hasTtydDeps)("spawnTtyd persist-failure cleanup", () => {
 
         const survivors = pgrepTtyd().filter((pid) => !before.has(pid));
         expect(survivors).toEqual([]);
+        // The tmux session the failed spawn created must go too, or every failure leaks one.
+        expect(tmuxSessions().filter((name) => !tmuxBefore.has(name))).toEqual([]);
     });
 });
 
