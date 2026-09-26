@@ -74,6 +74,8 @@ struct ProcGroup: Decodable, Hashable, Identifiable {
     let launchdLabel: String?
     let idle: Bool
     let idleReason: String?
+    /// Stopped (`ps` state T) in its shell; optional so an older CLI's report still decodes.
+    let suspended: Bool?
     let session: ProcSessionMatch?
     let own: Bool
     let totals: Totals
@@ -412,6 +414,7 @@ struct AgentProcsRow: View {
 
     private var status: String {
         if group.orphan { return "orphan" }
+        if group.suspended == true { return "suspended" }
         if group.idle { return "idle" }
         return group.kind == "wrapper" ? "wrapper" : "live"
     }

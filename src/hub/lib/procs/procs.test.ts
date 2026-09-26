@@ -256,7 +256,20 @@ describe("buildProcsReport", () => {
             provider: "claude",
             idle: true,
             idleReason: "no agent process runs below it",
+            suspended: false,
         });
+    });
+
+    test("a stopped root (ps state T) is suspended in its shell, not left over", () => {
+        const base = input();
+        const stopped = buildProcsReport({
+            ...base,
+            table: base.table.map((entry) => (entry.pid === 400 ? { ...entry, stat: "T" } : entry)),
+        });
+        const wrapper = stopped.groups.find((entry) => entry.rootPid === 400);
+
+        expect(wrapper).toMatchObject({ kind: "wrapper", idle: true, suspended: true });
+        expect(wrapper?.idleReason).toContain("suspended in its shell");
     });
 
     test("idle agents: the folder's newest session wrote nothing for hours and the tree is quiet", () => {
