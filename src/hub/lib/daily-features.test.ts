@@ -620,6 +620,17 @@ describe("rules", () => {
             ["r_ciFailed", "github.com/work/shop#4@abc123"],
         ]);
         expect(result.firings[0].target).toEqual({ pr: "work/shop#4" });
+
+        // The failure the poller posted is recorded as seen, so it cannot notify later once the
+        // suppression window has passed; only a new head would.
+        expect(result.state.fired.r_narrow).toHaveProperty(["github.com/work/side#6@fff000"]);
+        const later = evaluateRules({
+            config: { rules: [rule({ id: "r_narrow", kind: "ciFailed", match: "side" })] },
+            state: result.state,
+            inputs: { ...inputs(pr), postedCi: [] },
+            now: new Date(NOW.getTime() + 3 * 3_600_000),
+        });
+        expect(later.firings).toEqual([]);
     });
 
     test("an invalid or disabled rule does not evaluate, and a deleted rule's memory is dropped", () => {
