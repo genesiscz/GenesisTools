@@ -11,7 +11,11 @@ import { genesisAppBundlePath } from "@genesiscz/utils/macos/genesis-app";
 import { Command } from "commander";
 import { registerCheckLogCommand } from "./commands/checks";
 import { registerConfigCommands } from "./commands/config";
+import { registerDigestCommand } from "./commands/digest";
+import { registerForecastCommand } from "./commands/forecast";
 import { registerNotifyCommands } from "./commands/notify";
+import { registerRulesCommand } from "./commands/rules";
+import { registerSearchCommand } from "./commands/search";
 import { fixThreads, realFixThreadsDeps } from "./lib/fix-threads";
 import { HUB_MODES, HUB_TABS, openHub } from "./lib/open";
 import {
@@ -115,6 +119,8 @@ program
     .option("--filter <text>", "filter the session list (also searches every project's history)")
     .option("--palette [text]", "open the command palette (⌘K), optionally with this text: 'gt pr 424'")
     .option("--find [text]", "open find in files (⌘⇧F), optionally with this query")
+    .option("--session-search [text]", "open the transcript search over every session (⌥⌘F), optionally with this text")
+    .option("--digest", "open the Today digest (⌥⌘D): sessions, commits, files, PRs, decisions, usage forecast")
     .option("--no-activate", "open behind the window in front, without taking focus")
     .option("--no-build", "never build; fail when GenesisTools.app is missing or stale")
     .action(
@@ -126,6 +132,8 @@ program
             filter?: string;
             palette?: string | true;
             find?: string | true;
+            sessionSearch?: string | true;
+            digest?: boolean;
             activate: boolean;
             build: boolean;
         }) => {
@@ -152,6 +160,8 @@ program
                     filter: opts.filter,
                     palette: opts.palette === true ? "" : opts.palette,
                     find: opts.find === true ? "" : opts.find,
+                    sessionSearch: opts.sessionSearch === true ? "" : opts.sessionSearch,
+                    digest: opts.digest,
                     activate: opts.activate,
                     build: opts.build,
                     onStep: (message) => out.log.step(message),
@@ -1055,5 +1065,9 @@ registerWorktreesCommand(program);
 registerCheckLogCommand(pr);
 registerNotifyCommands(program);
 registerConfigCommands(program);
+registerSearchCommand(program);
+registerDigestCommand(program);
+registerForecastCommand(program);
+registerRulesCommand(program);
 
 await runTool(program, { tool: "hub" });

@@ -41,6 +41,10 @@ struct HubRequest {
     var find: String?
     /// Opens the session's transcript with this search applied (whole session), `--transcript-query`.
     var transcriptQuery: String?
+    /// Opens the transcript search over every session with this text (`--session-search [text]`) and
+    /// the Today digest (`--digest`), Hub/HubDaily.swift.
+    var sessionSearch: String?
+    var digest = false
     /// Selects this worktree path in the Worktrees mode, or the cleanup panel (`--worktree cleanup`).
     var worktree: String?
     /// Inbox mode: opens the resume dialog (`--inbox-resume <id>`) or the session info popover
@@ -89,6 +93,10 @@ struct HubRequest {
                 find = Self.optionalText(value) ?? ""
                 index += Self.optionalText(value) == nil ? 0 : 1
             case "--transcript-query": transcriptQuery = value; index += 1
+            case "--session-search":
+                sessionSearch = Self.optionalText(value) ?? ""
+                index += Self.optionalText(value) == nil ? 0 : 1
+            case "--digest": digest = true
             case "--worktree": worktree = value; index += 1
             case "--inbox-resume": inboxResume = value; index += 1
             case "--inbox-info": inboxInfo = value; index += 1
@@ -926,6 +934,12 @@ final class HubModel: ObservableObject {
         if let text = request.transcriptQuery {
             transcriptQuery = text
         }
+        if request.sessionSearch != nil || request.digest {
+            MainActor.assumeIsolated {
+                if let text = request.sessionSearch { HubDailyModel.shared.searchQuery = text }
+                if request.digest { HubDailyModel.shared.digestOpen = true }
+            }
+        }
         // The inbox model is main-actor bound; overlays are applied on the main thread.
         if let id = request.inboxResume {
             MainActor.assumeIsolated {
@@ -1265,6 +1279,8 @@ struct HubRootView: View {
             paletteOpen = true
             model.paletteRequest = nil
         }
+        // ⌥⌘F transcript search over every session, ⌥⌘D Today digest with forecast and rules (Hub/HubDaily.swift).
+        .hubDaily(model: model)
     }
 }
 
@@ -1736,6 +1752,10 @@ private struct SessionDetailView: View {
                         .foregroundColor(ReviewPalette.dim)
                 }
                 Spacer()
+                if model.panes.contains(.transcript) {
+                    // The account row below hides with the transcript open; the forecast stays in sight.
+                    HubForecastChip(account: session.account)
+                }
                 if let notice = model.notice {
                     NoticePill(text: notice, isError: notice.hasPrefix("cmux:") || notice.contains("failed")) { model.notice = nil }
                 }
@@ -1747,6 +1767,7 @@ private struct SessionDetailView: View {
             if !model.panes.contains(.transcript) {
                 HStack(spacing: 8) {
                     chip("person.crop.circle", session.account ?? "no pin")
+                    HubForecastChip(account: session.account)
                     if let sessionModel = session.model {
                         chip("cpu", sessionModel)
                     }
