@@ -45,6 +45,10 @@ struct SessionDetailInfo: Equatable {
     var errorCount = 0
     /// Explains why the session is missing from the recent list, when it is.
     var note: String?
+    // GenesisTools adaptation: a warning line under the header (the hub's stuck-agent verdict,
+    // Hub/HubStuck.swift); `alertIsSevere` draws it red instead of orange.
+    var alert: String?
+    var alertIsSevere = false
 
     var shortId: String { String(sessionId.prefix(8)) }
 
@@ -76,6 +80,8 @@ struct SessionDetailActions {
     /// "Open the Changes view at this file (and line)". nil hides every "Open diff" button.
     /// Genesis leaves it nil; the GenesisTools hub wires it to its diff window.
     var showChange: ((String, Int?) -> Void)?
+    // GenesisTools adaptation: a click on the header's alert line (the hub opens the stuck call).
+    var alertAction: (() -> Void)?
 }
 
 /// Window chrome the screen is drawn for: no title text, a transparent unified-compact titlebar
@@ -287,11 +293,40 @@ struct SessionDetailHeader: View {
             }
             .padding(.horizontal, 16)
             .frame(height: 28)
+            // GenesisTools adaptation: the alert line (see `SessionDetailInfo.alert`).
+            if let alert = info.alert {
+                alertRow(alert)
+            }
         }
         .overlay(alignment: .bottom) {
             Rectangle().fill(SessionPalette.hairline).frame(height: 1)
         }
         .accessibilityIdentifier("session-details-header")
+    }
+
+    // GenesisTools adaptation: one line, the whole row a button when the host gave an action.
+    private func alertRow(_ text: String) -> some View {
+        let color = info.alertIsSevere ? SessionPalette.red : SessionPalette.orange
+        return Button { actions.alertAction?() } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: 10))
+                Text(verbatim: text)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                Spacer(minLength: 0)
+            }
+            .font(.system(size: 11.5, weight: .medium))
+            .foregroundStyle(color)
+            .padding(.horizontal, 16)
+            .frame(height: 24)
+            .background(color.opacity(0.10))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.genHoverPlain())
+        .disabled(actions.alertAction == nil)
+        .instantTooltip(text + (actions.alertAction == nil ? "" : "\nClick to open the call in the transcript"))
+        .accessibilityIdentifier("session-details-alert")
     }
 
     private func metaRow(showStarted: Bool) -> some View {

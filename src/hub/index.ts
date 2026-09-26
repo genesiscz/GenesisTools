@@ -13,6 +13,7 @@ import { registerCheckLogCommand } from "./commands/checks";
 import { registerConfigCommands } from "./commands/config";
 import { registerDigestCommand } from "./commands/digest";
 import { registerForecastCommand } from "./commands/forecast";
+import { registerInsightsCommands } from "./commands/insights";
 import { registerNotifyCommands } from "./commands/notify";
 import { registerRulesCommand } from "./commands/rules";
 import { registerSearchCommand } from "./commands/search";
@@ -1069,5 +1070,6 @@ registerSearchCommand(program);
 registerDigestCommand(program);
 registerForecastCommand(program);
 registerRulesCommand(program);
+registerInsightsCommands(program);
 
 await runTool(program, { tool: "hub" });
