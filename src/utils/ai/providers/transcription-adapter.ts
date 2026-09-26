@@ -1,6 +1,5 @@
 import type { AIProviderType } from "@genesiscz/utils/config/ai.types";
 import type { TranscriptionModel } from "ai";
-import { transcribe as sdkTranscribe } from "ai";
 import type { ResolvedBinding } from "../core/types";
 import { buildTranscriptionProviderOptions, mapSdkTranscription } from "../transcription/sdk-result";
 import type { AITask, AITranscriptionProvider, TranscribeOptions, TranscriptionResult } from "../types";
@@ -103,6 +102,8 @@ export function fromTranscriptionModel(resolved: ResolvedBinding): AITranscripti
                 speakers: options?.speakers,
             });
 
+            // lazy: saves 36.1 ms cold import (tools ts imports lazy, 2026-09-26) — the only value import of `ai` under the plugin registry, which every usage poll and history listing loads
+            const { transcribe: sdkTranscribe } = await import("ai");
             const raw = await sdkTranscribe({
                 model,
                 audio,

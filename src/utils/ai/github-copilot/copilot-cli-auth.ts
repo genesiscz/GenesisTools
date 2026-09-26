@@ -5,7 +5,6 @@ import { copilotGhoTokenAuthKey, githubTokenPath } from "@genesiscz/utils/ai/git
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
-import { dispatchNotification } from "@genesiscz/utils/notifications";
 import { readTokenFile } from "@genesiscz/utils/oauth/storage";
 import { getAuthSecret, migrateFileToAuthStorage } from "@genesiscz/utils/storage";
 
@@ -82,6 +81,8 @@ async function notifyBeforeKeychainAccess(login?: string): Promise<void> {
     out.log.info(message);
 
     try {
+        // lazy: saves 21.5 ms cold import (tools ts imports lazy, 2026-09-26) — notifications load with the plugin registry and fire once, here
+        const { dispatchNotification } = await import("@genesiscz/utils/notifications");
         await dispatchNotification({
             app: "ai-proxy",
             title: "GitHub Copilot keychain access",
