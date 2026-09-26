@@ -188,3 +188,43 @@ export function listRecentCachedSessions(options: {
         db.close();
     }
 }
+
+/**
+ * The working folder of a session named by its id or a leading part of it, from the history index
+ * (no schema work, no file walk). An exact id wins, then a main session over a subagent, then the
+ * newest. Null when the index cannot answer, so the caller can fall back to a refreshed listing.
+ */
+export function readCachedSessionCwd(options: { sessionId: string; path?: string }): string | null {
+    const db = openHistoryReadOnly({ path: options.path });
+
+    if (!db) {
+        return null;
+    }
+
+    try {
+        const columns = new Set(
+            db
+                .query<{ name: string }, []>("PRAGMA table_info(session_metadata)")
+                .all()
+                .map((column) => column.name)
+        );
+
+        if (!hasColumns(columns, ["session_id", "cwd", "mtime", "is_subagent"])) {
+            return null;
+        }
+
+        // A range on session_id uses its index; LIKE would not (it folds case).
+        const row = db
+            .query<{ cwd: string }, [string, string, string]>(`
+                SELECT cwd FROM session_metadata
+                WHERE session_id >= ? AND session_id < ? AND cwd IS NOT NULL AND cwd <> ''
+                ORDER BY (session_id = ?3) DESC, COALESCE(is_subagent, 0) ASC, mtime DESC
+                LIMIT 1
+            `)
+            .get(options.sessionId, `${options.sessionId}￿`, options.sessionId);
+
+        return row?.cwd ?? null;
+    } finally {
+        db.close();
+    }
+}
