@@ -16,6 +16,15 @@ export function shellQuote(value: string): string {
     return `'${value.replace(/'/g, "'\\''")}'`;
 }
 
+/**
+ * A value as one shell word in a command a person copies: bare when no character in it means
+ * anything to the shell (`work`, `alice@example.com`), `shellQuote`d otherwise. An account named
+ * `my account` split into two arguments, and one with `$(...)` in it ran that when pasted.
+ */
+export function shellWord(value: string): string {
+    return /^[A-Za-z0-9_@%+=:,./-]+$/.test(value) ? value : shellQuote(value);
+}
+
 /** `shellQuote` for a whole argv, joined into one `sh -c` command line. */
 export function shellCommandLine(argv: readonly string[]): string {
     return argv.map(shellQuote).join(" ");
