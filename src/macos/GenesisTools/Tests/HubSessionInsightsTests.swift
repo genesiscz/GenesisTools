@@ -177,4 +177,13 @@ final class HubSessionInsightsTests: XCTestCase {
         XCTAssertNil(draft.savedTo)
         XCTAssertEqual(draft.posted?.id, "h_1")
     }
+
+    func testCompactDurationKeepsOneUnitForTheNarrowTable() {
+        XCTAssertEqual(InsightFormat.compactDuration(ms: 500), "<1s")
+        XCTAssertEqual(InsightFormat.compactDuration(ms: 42_000), "42s")
+        XCTAssertEqual(InsightFormat.compactDuration(ms: 462_000), "7m")
+        XCTAssertEqual(InsightFormat.compactDuration(ms: 5_400_000), "1.5h")
+        XCTAssertEqual(InsightFormat.compactDuration(ms: 259_200_000), "3d")
+        XCTAssertEqual(InsightFormat.compactDuration(ms: nil), "—")
+    }
 }
