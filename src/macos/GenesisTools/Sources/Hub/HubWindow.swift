@@ -1380,6 +1380,8 @@ private struct SessionListView: View {
     @StateObject private var history = HubHistoryModel()
     @AppStorage("hub.sessions.grouping") private var grouping = SessionGrouping.time.rawValue
     @StateObject private var prefs = GroupPrefs(key: "sessions.groups")
+    /// Stuck verdicts of the live sessions (Hub/HubStuck.swift); rows take the value, not the store.
+    @ObservedObject private var stuck = HubStuckStore.shared
 
     private var mode: SessionGrouping { SessionGrouping(rawValue: grouping) ?? .time }
 
@@ -1486,7 +1488,7 @@ private struct SessionListView: View {
                             Section {
                                 if !(section.managed && prefs.collapsed.contains(section.title)) {
                                     ForEach(section.rows) { session in
-                                        SessionRowView(session: session, selected: session.id == model.selectedID)
+                                        SessionRowView(session: session, selected: session.id == model.selectedID, stuck: stuck.verdicts[session.sessionId])
                                             .rowButton { model.select(session.id) }
                                     }
                                 }
@@ -1517,6 +1519,8 @@ private struct SessionListView: View {
                     }
                     .padding(.bottom, 12)
                 }
+                // Polls `tools hub stuck` (every 2 min) for the live sessions while this list shows; a new live set restarts it.
+                .task(id: HubStuck.watched(model.sessions)) { await stuck.watch(HubStuck.watched(model.sessions)) }
             }
         }
         .hubSurface(.chrome)
@@ -1557,6 +1561,7 @@ struct ProviderBadge: View {
 private struct SessionRowView: View {
     let session: HubSession
     let selected: Bool
+    var stuck: StuckVerdict?
 
     var body: some View {
         HStack(alignment: .top, spacing: 9) {
@@ -1586,6 +1591,9 @@ private struct SessionRowView: View {
                             .background(Capsule().stroke(Color.white.opacity(0.15)))
                     }
                     Spacer(minLength: 0)
+                    if let stuck {
+                        StuckBadge(verdict: stuck)
+                    }
                     LiveAgo(date: session.lastActivity)
                 }
                 .font(.system(size: 10.5))
@@ -1608,6 +1616,7 @@ private struct SessionRowView: View {
 private struct SessionDetailView: View {
     @ObservedObject var model: HubModel
     @ObservedObject private var repos = RepoFactsStore.shared
+    @ObservedObject private var stuck = HubStuckStore.shared
     let session: HubSession
     /// How many of the open panes fit side by side; nil until measured (then all are shown).
     @State private var fitting: Int?
@@ -1750,6 +1759,9 @@ private struct SessionDetailView: View {
                     }
                         .font(.system(size: 11.5))
                         .foregroundColor(ReviewPalette.dim)
+                    if let verdict = stuck.verdicts[session.sessionId] {
+                        StuckBadge(verdict: verdict)
+                    }
                 }
                 Spacer()
                 if model.panes.contains(.transcript) {
