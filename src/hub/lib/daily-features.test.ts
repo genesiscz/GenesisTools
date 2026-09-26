@@ -380,6 +380,32 @@ describe("forecast", () => {
         expect(window?.label).toBe("Weekly");
     });
 
+    test("a weekly window a few hours after its reset averages over a full day, not over its busy hours", () => {
+        const resetsAt = new Date(NOW.getTime() + (7 * 24 - 3) * 3_600_000).toISOString();
+        const window = forecastWindow(
+            [sample({ bucket: "seven_day", kind: "weekly", utilization: 3, timestamp: isoAgo(0), resetsAt })],
+            NOW
+        );
+        // 3 % over 3 h is 1 %/h and "runs out in 4 days"; over a day it is 0.125 %/h and lasts the week.
+        expect(window?.ratePctPerHour).toBe(0.13);
+        expect(window?.beforeReset).toBe(false);
+    });
+
+    test("a stale weekly window projects nothing: the account may have been idle since its last sample", () => {
+        const resetsAt = new Date(NOW.getTime() + 3 * 24 * 3_600_000).toISOString();
+        const window = forecastWindow(
+            [
+                sample({ bucket: "seven_day", kind: "weekly", utilization: 40, timestamp: isoAgo(72 * 60), resetsAt }),
+                sample({ bucket: "seven_day", kind: "weekly", utilization: 55, timestamp: isoAgo(48 * 60), resetsAt }),
+            ],
+            NOW
+        );
+        expect(window).toMatchObject({ stale: true, exhaustAt: null, beforeReset: false, utilization: 55 });
+        expect(
+            forecastFromSamples([sample({ utilization: 90, timestamp: isoAgo(24 * 60) })], NOW)[0]?.warning
+        ).toBeNull();
+    });
+
     test("a window whose reset passed after the last sample forecasts nothing", () => {
         const window = forecastWindow([sample({ utilization: 90, timestamp: isoAgo(400), resetsAt: isoAgo(60) })], NOW);
         expect(window).toMatchObject({ resetSinceSample: true, exhaustAt: null, stale: true });
