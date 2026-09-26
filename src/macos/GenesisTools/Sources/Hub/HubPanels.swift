@@ -116,6 +116,10 @@ enum SidePanelEdge { case leading, trailing }
 /// renders wider. `autoCollapse` is the parent saying there is no room at all (a narrow window):
 /// the panel shows its rail without forgetting that it was open, and the rail opens it as a drawer
 /// over the content instead.
+///
+/// `fitWidth` is the width the content asks to open at (the file list's widest row). The panel uses
+/// it, never narrower than `minWidth`, until the reader drags this panel in this window; from then on
+/// the dragged width stays, as for any other panel.
 struct ResizableSidePanel<Content: View>: View {
     typealias Edge = SidePanelEdge
 
@@ -126,6 +130,7 @@ struct ResizableSidePanel<Content: View>: View {
     var minWidth: CGFloat = 180
     var maxWidth: CGFloat = 900
     var autoCollapse = false
+    var fitWidth: CGFloat?
     @ViewBuilder let content: () -> Content
 
     @AppStorage private var width: Double
@@ -139,7 +144,7 @@ struct ResizableSidePanel<Content: View>: View {
     static var railWidth: CGFloat { 28 }
 
     init(key: String, edge: Edge, title: String = "panel", defaultWidth: CGFloat = 300, minWidth: CGFloat = 180,
-         maxWidth: CGFloat = 900, autoCollapse: Bool = false, @ViewBuilder content: @escaping () -> Content) {
+         maxWidth: CGFloat = 900, autoCollapse: Bool = false, fitWidth: CGFloat? = nil, @ViewBuilder content: @escaping () -> Content) {
         self.key = key
         self.edge = edge
         self.title = title
@@ -147,19 +152,25 @@ struct ResizableSidePanel<Content: View>: View {
         self.minWidth = minWidth
         self.maxWidth = maxWidth
         self.autoCollapse = autoCollapse
+        self.fitWidth = fitWidth
         self.content = content
         _width = AppStorage(wrappedValue: Double(defaultWidth), "panel.\(key).width")
         _collapsed = AppStorage(wrappedValue: false, "panel.\(key).collapsed")
     }
 
-    /// The width being drawn: the drag's live value, else the saved one, never more than the room.
-    private var shownWidth: CGFloat { min(CGFloat(liveWidth ?? width), max(minWidth, maxWidth)) }
+    /// The fitted width until the reader drags this panel in this window, then the saved one.
+    private var baseWidth: Double {
+        guard let fitWidth, !SidePanelSizing.resized.contains(key) else { return width }
+        return Double(max(minWidth, fitWidth))
+    }
+    /// The width being drawn: the drag's live value, else the base one, never more than the room.
+    private var shownWidth: CGFloat { min(CGFloat(liveWidth ?? baseWidth), max(minWidth, maxWidth)) }
     private var willCollapse: Bool { liveWidth.map { $0 < Double(minWidth) } ?? false }
     /// While a drag runs, the layout keeps the width the drag began with and the panel draws over its
     /// neighbour (or leaves a gap); everything reflows once, on release. Moving the neighbour made
     /// SwiftUI rebuild the window's key view loop on every step, which walks every transcript row:
     /// 82 ms of main thread per step, 23 ms with the layout held (`--bench`, 2026-09-24).
-    private var slotWidth: CGFloat { min(CGFloat(dragStart ?? width), max(minWidth, maxWidth)) }
+    private var slotWidth: CGFloat { min(CGFloat(dragStart ?? baseWidth), max(minWidth, maxWidth)) }
     private var dragShift: CGFloat {
         guard dragStart != nil else { return 0 }
         return (edge == .leading ? 1 : -1) * (shownWidth - slotWidth)
@@ -250,7 +261,7 @@ struct ResizableSidePanel<Content: View>: View {
 
     private var drawer: some View {
         content()
-            .frame(width: max(minWidth, CGFloat(width)))
+            .frame(width: max(minWidth, CGFloat(baseWidth)))
             .frame(maxHeight: .infinity)
             .hubSurface(.chrome)
             .background(Color(nsColor: ReviewPalette.background))
@@ -321,10 +332,11 @@ struct ResizableSidePanel<Content: View>: View {
         // (a synthetic drag in a background window never reaches a SwiftUI DragGesture).
         .accessibilityElement()
         .accessibilityLabel(Text("Resize \(title)"))
-        .accessibilityValue(Text(verbatim: "\(Int(width)) points"))
+        .accessibilityValue(Text(verbatim: "\(Int(baseWidth)) points"))
         .accessibilityAdjustableAction { direction in
             let step = direction == .increment ? 20.0 : -20.0
-            width = max(Double(minWidth), min(Double(maxWidth), width + step))
+            width = max(Double(minWidth), min(Double(maxWidth), baseWidth + step))
+            SidePanelSizing.resized.insert(key)
         }
         .accessibilityAction(named: Text("Collapse \(title)")) {
             collapsed = true
@@ -333,25 +345,26 @@ struct ResizableSidePanel<Content: View>: View {
 
     private func dragChanged(_ translation: CGFloat) {
         if dragStart == nil {
-            dragStart = min(width, Double(maxWidth))
+            dragStart = min(baseWidth, Double(maxWidth))
             HubLiveResize.shared.begin("panel.\(key)")
         }
         let delta = edge == .leading ? translation : -translation
         // Past the room the parent has, the panel would clip the content next to it.
-        liveWidth = max(0, min(Double(maxWidth), (dragStart ?? width) + delta))
+        liveWidth = max(0, min(Double(maxWidth), (dragStart ?? baseWidth) + delta))
     }
 
     private func dragEnded() {
         // Both onEnded and the gesture-state reset call this; only the first one counts.
         guard dragStart != nil else { return }
-        let final = liveWidth ?? width
+        let final = liveWidth ?? baseWidth
         HubPerf.log("panel.\(key) resized to \(Int(final))")
+        SidePanelSizing.resized.insert(key)
         var transaction = Transaction()
         transaction.disablesAnimations = true
         withTransaction(transaction) {
             if final < Double(minWidth) {
                 // Collapsed panels reopen at the width they had before this drag.
-                width = max(Double(minWidth), dragStart ?? width)
+                width = max(Double(minWidth), dragStart ?? baseWidth)
                 collapsed = true
             } else {
                 width = final
@@ -361,6 +374,13 @@ struct ResizableSidePanel<Content: View>: View {
         }
         HubLiveResize.shared.end("panel.\(key)")
     }
+}
+
+/// Side panels the reader resized in this process (one hub or review window each): they keep their
+/// dragged width instead of their content's fitted one (`ResizableSidePanel.fitWidth`).
+@MainActor
+enum SidePanelSizing {
+    static var resized = Set<String>()
 }
 
 // MARK: - Pane rail

@@ -1382,6 +1382,9 @@ struct ReviewRootView: View {
     /// at 260 pt the file name still lost six letters.
     private static let listFraction: CGFloat = 0.4
     private static let listMinWidth: CGFloat = 300
+    /// The file list opens as wide as its widest row (`FileListFit`), measured once per review; a
+    /// saved width from an earlier session opened it at 560 pt for rows that needed about 260.
+    @State private var listFit: CGFloat?
 
     var body: some View {
         let room = width * Self.listFraction
@@ -1391,7 +1394,7 @@ struct ReviewRootView: View {
             if showsFileList {
                 ResizableSidePanel(key: "review.files", edge: .trailing, title: "Files", defaultWidth: 320,
                                    minWidth: Self.listMinWidth, maxWidth: max(Self.listMinWidth, room),
-                                   autoCollapse: width > 0 && room < Self.listMinWidth) {
+                                   autoCollapse: width > 0 && room < Self.listMinWidth, fitWidth: listFit) {
                     FileSidebar(model: model)
                 }
             }
@@ -1402,6 +1405,12 @@ struct ReviewRootView: View {
         .onGeometryChange(for: CGFloat.self, of: \.size.height) { height = $0 }
         .onAppear { model.start() }
         .onDisappear { model.stop() }
+        // Once, when the first files arrive: a refresh that adds a longer name never moves the diff.
+        .onChange(of: model.files.isEmpty, initial: true) { _, empty in
+            guard listFit == nil, !empty else { return }
+            listFit = HubPerf.measure("review.files.fit", "\(model.files.count) files") { FileListFit.width(model: model) }
+            HubPerf.log("review.files.fit \(Int(listFit ?? 0)) pt for \(model.files.count) files")
+        }
         // Back from the browser or another app: the PR threads may have moved (the store skips a load
         // younger than the CLI's 30 s cache).
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
@@ -2125,6 +2134,57 @@ struct FileSidebar: View {
     private func fileMenu(_ file: DiffFile) -> some View {
         ForEach(model.pathActions(of: file)) { action in
             Button(action.title, action: action.run)
+        }
+    }
+}
+
+/// The file list's width that shows every visible row whole: the widest of its rows as they draw
+/// (`FileRow`, `DirectoryRow`, `RootFolderRow`: indent, chevron or status dot, name, the +N −M
+/// counts, their paddings and HStack spacings), plus a legacy scroller when the system shows one.
+enum FileListFit {
+    private static let fileName = NSFont.systemFont(ofSize: 12.5)
+    private static let folderName = NSFont.systemFont(ofSize: 11.5, weight: .medium)
+    private static let rootName = NSFont.systemFont(ofSize: 12, weight: .semibold)
+    private static let counts = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
+    /// The row's hover box sits 6 pt inside the list on each side.
+    private static let rowInset: CGFloat = 12
+    /// Rounding and the text's own side bearings.
+    private static let slack: CGFloat = 6
+
+    @MainActor
+    static func width(model: ReviewModel) -> CGFloat {
+        let tree = model.treeMode && model.filter.isEmpty
+        let rows = sidebarRows(model.filteredFiles, tree: tree, collapsed: model.collapsed, roots: model.roots)
+        let widest = rows.map { rowWidth($0, tree: tree, roots: model.roots, hasRootActions: model.rootActions != nil) }.max() ?? 0
+        let scroller = NSScroller.preferredScrollerStyle == .legacy ? NSScroller.scrollerWidth(for: .regular, scrollerStyle: .legacy) : 0
+        return (widest + rowInset + slack + scroller).rounded(.up)
+    }
+
+    private static func text(_ string: String, _ font: NSFont) -> CGFloat {
+        ceil((string as NSString).size(withAttributes: [.font: font]).width)
+    }
+
+    /// "+N" and "−M" with `spacing` before each one that shows.
+    private static func totals(_ additions: Int, _ deletions: Int, spacing: CGFloat) -> CGFloat {
+        (additions > 0 ? spacing + text("+\(additions)", counts) : 0) + (deletions > 0 ? spacing + text("−\(deletions)", counts) : 0)
+    }
+
+    private static func rowWidth(_ row: SidebarRow, tree: Bool, roots: [ReviewRoot], hasRootActions: Bool) -> CGFloat {
+        let indent = 6 + CGFloat(row.depth) * 14
+        switch row.kind {
+        case .file(let file):
+            // dot 6, name, a 4 pt spacer, the counts; 8 pt apart; 6 pt trailing.
+            let skipped: CGFloat = file.skipped == nil ? 0 : 8 + 16
+            return indent + 6 + 8 + text(file.name, fileName) + 8 + 4 + skipped + totals(file.additions, file.deletions, spacing: 8) + 6
+        case .directory(let name, let additions, let deletions):
+            // Counts show only on a folded folder of the tree.
+            let chevron: CGFloat = tree ? 10 + 6 : 0
+            return indent + chevron + text(name, folderName) + 6 + 4 + totals(additions, deletions, spacing: 6) + 6
+        case .root(let index, let additions, let deletions):
+            let root = roots.indices.contains(index) ? roots[index] : nil
+            // chevron 10, folder icon 12, the name; the checkbox and the remove button beside the row.
+            let actions: CGFloat = hasRootActions ? 6 + 18 + ((root?.removable ?? false) ? 6 + 22 : 0) : 0
+            return 6 + 10 + 6 + 12 + 6 + text("\(root?.prefix ?? "")/", rootName) + 6 + 4 + totals(additions, deletions, spacing: 6) + 6 + actions
         }
     }
 }
