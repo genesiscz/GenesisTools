@@ -121,6 +121,8 @@ final class PromptLibraryStore: ObservableObject {
     static let shared = PromptLibraryStore()
 
     @Published private(set) var prompts: [HubPrompt] = []
+    /// The ⌘⇧P picker is showing; shared so `tools hub --prompts` can open it too.
+    @Published var pickerOpen = false
     @Published private(set) var loading = false
     @Published private(set) var busy = false
 
@@ -200,19 +202,19 @@ final class PromptLibraryStore: ObservableObject {
 /// ⌘⇧P on the hub's root: a hidden button that opens the picker over the window.
 private struct HubPromptsModifier: ViewModifier {
     @ObservedObject var model: HubModel
-    @State private var open = false
+    @ObservedObject private var store = PromptLibraryStore.shared
 
     func body(content: Content) -> some View {
         content
             .background(
-                Button("") { open.toggle() }
+                Button("") { store.pickerOpen.toggle() }
                     .keyboardShortcut("p", modifiers: [.command, .shift])
                     .opacity(0)
                     .accessibilityHidden(true)
             )
             .overlay {
-                if open {
-                    PromptPickerView(isPresented: $open, context: model.promptContext)
+                if store.pickerOpen {
+                    PromptPickerView(isPresented: $store.pickerOpen, context: model.promptContext)
                 }
             }
     }
