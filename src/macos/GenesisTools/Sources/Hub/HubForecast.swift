@@ -32,6 +32,9 @@ struct HubForecastWindow: Decodable, Equatable, Identifiable, Sendable {
     /// "42% · out 16:20" / "42% · lasts" / "42%": the chip's words.
     func summary(clock: (Date) -> String = HubForecastFormat.clock) -> String {
         let used = "\(Int(utilization.rounded()))%"
+        if stale, let sampled = HubFormat.date(lastSampleAt) {
+            return "\(used) · \(HubFormat.ago(sampled))"
+        }
         if let exhaustAt = HubFormat.date(exhaustAt), beforeReset {
             return "\(used) · out \(clock(exhaustAt))"
         }

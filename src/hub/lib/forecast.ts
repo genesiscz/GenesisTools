@@ -70,6 +70,8 @@ const PERIOD_MS: Record<ForecastWindowKind, number> = {
     scoped: 7 * 24 * HOUR,
 };
 const STALE_MS: Record<ForecastWindowKind, number> = { session: 30 * 60_000, weekly: 6 * HOUR, scoped: 6 * HOUR };
+/** A weekly average spreads its use over at least a day, so the night after a reset counts. */
+const MIN_AVERAGE_SPAN_MIN = 24 * 60;
 export const FORECAST_LOOKBACK_MS = 8 * 24 * HOUR;
 
 export function windowKind(sample: Pick<UsageSample, "kind" | "bucket">): ForecastWindowKind {
@@ -137,7 +139,9 @@ export function forecastWindow(samples: readonly UsageSample[], now: Date = new 
         stale: nowMs - lastMs > STALE_MS[kind],
     };
 
-    if (resetSinceSample) {
+    // No sample for hours: the account may have been idle since, so a burn carried forward from the
+    // last sample is a guess. It named "out 19:00" at 21:45 for an account last sampled two days earlier.
+    if (resetSinceSample || base.stale) {
         return base;
     }
 
@@ -162,7 +166,9 @@ export function forecastWindow(samples: readonly UsageSample[], now: Date = new 
         const elapsedMin = (lastMs - windowStart) / 60_000;
 
         if (hasReset && elapsedMin > 30 && last.utilization > 0) {
-            ratePerMinute = last.utilization / elapsedMin;
+            // Three busy hours after a reset, averaged over those hours alone, read as a 24/7 burn:
+            // 3 % used showed "out Wed" for a window that resets on Saturday.
+            ratePerMinute = last.utilization / Math.max(elapsedMin, MIN_AVERAGE_SPAN_MIN);
             basis = "window";
         } else if (values.length >= 2) {
             const first = values[0];
