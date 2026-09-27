@@ -189,6 +189,8 @@ struct HandoffComposerSheet: View {
     }
 
     @State private var mode: Mode
+    /// The session's prompts: the sidebar passes them; `tools hub --handoff` opens without, and they load here.
+    @State private var prompts: [InsightTurn]
     @State private var lastCount = 5
     @State private var from: Int
     @State private var to: Int
@@ -203,6 +205,7 @@ struct HandoffComposerSheet: View {
     init(request: HandoffComposerRequest, onClose: @escaping () -> Void) {
         self.request = request
         self.onClose = onClose
+        _prompts = State(initialValue: request.prompts)
         let numbers = request.prompts.map(\.number)
         let last = numbers.last ?? 1
         _mode = State(initialValue: request.from == nil || numbers.isEmpty ? .last : .range)
@@ -227,6 +230,7 @@ struct HandoffComposerSheet: View {
         .frame(width: 680, height: 580)
         .background(SessionPalette.background)
         .environment(\.colorScheme, .dark)
+        .task { await loadPromptsIfMissing() }
         .task(id: range) {
             // One read per pause in the stepper, not per click.
             try? await Task.sleep(for: .milliseconds(300))
@@ -239,6 +243,23 @@ struct HandoffComposerSheet: View {
         } message: {
             Text("It goes to the handoff store (handoff_post) as \"\(draft?.title ?? "")\", with \(max(1, draft?.openItems.count ?? 0)) task(s). Agents and the dev-dashboard can see and claim it.")
         }
+    }
+
+    /// Opened from outside the sidebar, the composer has no prompts, so the Range picker stayed disabled.
+    private func loadPromptsIfMissing() async {
+        guard prompts.isEmpty else { return }
+        let id = request.session.sessionId
+        let span = HubPerf.begin("handoff.prompts", String(id.prefix(8)), awaits: true)
+        let loaded = await Task.detached(priority: .utility) { try? HubInsights.load(sessionId: id).prompts }.value
+        guard let loaded, let first = loaded.first, let last = loaded.last else {
+            span.end("none")
+            return
+        }
+
+        span.end("\(loaded.count) prompts")
+        prompts = loaded
+        from = first.number
+        to = last.number
     }
 
     private var header: some View {
@@ -272,10 +293,10 @@ struct HandoffComposerSheet: View {
             .pickerStyle(.segmented)
             .labelsHidden()
             .fixedSize()
-            .disabled(request.prompts.isEmpty && mode == .last)
-            .instantTooltip(request.prompts.isEmpty ? "The range needs the session's prompts, which have not loaded" : "The last N prompts, or a range of them")
+            .disabled(prompts.isEmpty && mode == .last)
+            .instantTooltip(prompts.isEmpty ? "The range needs the session's prompts, which have not loaded" : "The last N prompts, or a range of them")
             if mode == .last {
-                Stepper(value: $lastCount, in: 1...max(1, request.prompts.isEmpty ? 50 : request.prompts.count)) {
+                Stepper(value: $lastCount, in: 1...max(1, prompts.isEmpty ? 50 : prompts.count)) {
                     Text(verbatim: "\(lastCount) prompt\(lastCount == 1 ? "" : "s")")
                         .font(SessionPalette.mono(11.5))
                         .foregroundStyle(SessionPalette.secondary)
@@ -301,9 +322,9 @@ struct HandoffComposerSheet: View {
     }
 
     private func promptMenu(title: String, value: Int, set: @escaping (Int) -> Void) -> some View {
-        let label = request.prompts.first { $0.number == value }.map(\.title) ?? "#\(value)"
+        let label = prompts.first { $0.number == value }.map(\.title) ?? "#\(value)"
         return MenuButton {
-            request.prompts.reversed().map { turn in
+            prompts.reversed().map { turn in
                 .action(turn.title, checked: turn.number == value) { set(turn.number) }
             }
         } label: {

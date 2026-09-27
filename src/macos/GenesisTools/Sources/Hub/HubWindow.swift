@@ -46,6 +46,8 @@ struct HubRequest {
     /// the Today digest (`--digest`), Hub/HubDaily.swift.
     var sessionSearch: String?
     var digest = false
+    /// Opens the notification rules panel (`--rules`, Hub/HubRules.swift).
+    var rules = false
     /// Opens the ⌘⇧P prompt picker (`--prompts`, Hub/HubPrompts.swift) and the handoff composer for
     /// the `--session` session (`--handoff`, Hub/HubHandoffComposer.swift).
     var prompts = false
@@ -102,6 +104,7 @@ struct HubRequest {
                 sessionSearch = Self.optionalText(value) ?? ""
                 index += Self.optionalText(value) == nil ? 0 : 1
             case "--digest": digest = true
+            case "--rules": rules = true
             case "--prompts": prompts = true
             case "--handoff": handoff = true
             case "--worktree": worktree = value; index += 1
@@ -229,11 +232,14 @@ func runHub(_ args: [String]) -> Never {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
                         let web = (review()?.renderer as? PierreWebDiffRenderer)?.webView
                         let showsDiff = model.mode == .prs || model.panes.contains(.changes)
+                        // A modal panel covers the diff: the web view's own image, drawn last, showed through it.
+                        let covered = request.digest || request.rules || request.prompts || request.handoff
+                            || request.sessionSearch != nil || request.palette != nil || request.find != nil
                         if let rows = HubBench.transcriptRowsLine(in: window) {
                             PerfLog.mark("hub.snapshot \(rows)")
                             FileHandle.standardError.write(Data("hub snapshot: \(rows)\n".utf8))
                         }
-                        ReviewSnapshot.write(window: window, webView: showsDiff ? web : nil, to: snapshotPath) {
+                        ReviewSnapshot.write(window: window, webView: showsDiff && !covered ? web : nil, to: snapshotPath) {
                             exit(0)
                         }
                     }
@@ -947,10 +953,11 @@ final class HubModel: ObservableObject {
         if let text = request.transcriptQuery {
             transcriptQuery = text
         }
-        if request.sessionSearch != nil || request.digest {
+        if request.sessionSearch != nil || request.digest || request.rules {
             MainActor.assumeIsolated {
                 if let text = request.sessionSearch { HubDailyModel.shared.searchQuery = text }
                 if request.digest { HubDailyModel.shared.digestOpen = true }
+                if request.rules { HubDailyModel.shared.rulesOpen = true }
             }
         }
         if request.prompts || request.handoff {

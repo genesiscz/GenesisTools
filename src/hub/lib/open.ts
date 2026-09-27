@@ -25,6 +25,8 @@ export interface OpenHubOptions {
     sessionSearch?: string;
     /** Opens the Today digest (⌥⌘D). */
     digest?: boolean;
+    /** Opens the notification rules panel. */
+    rules?: boolean;
     /** Opens the ⌘⇧P prompt picker. */
     prompts?: boolean;
     /** Opens the handoff composer for `session` (or the selected session). */
@@ -75,6 +77,10 @@ export function hubArgs(options: OpenHubOptions): string[] {
 
     if (options.digest) {
         args.push("--digest");
+    }
+
+    if (options.rules) {
+        args.push("--rules");
     }
 
     if (options.prompts) {

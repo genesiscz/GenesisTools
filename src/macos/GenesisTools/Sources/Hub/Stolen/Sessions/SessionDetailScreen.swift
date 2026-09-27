@@ -551,11 +551,13 @@ struct SessionDetailSidebar<Extra: View>: View {
                 VStack(alignment: .leading, spacing: 20) {
                     overview
                     usageGrid
+                    // Local change (GenesisTools hub): the extra slot holds cost per prompt and tool analytics,
+                    // which sat below every sub-agent row, out of sight in any session that had some.
+                    extra
                     status
                     files
                     if !digest.commits.isEmpty { commits }
                     if !digest.subagents.isEmpty { subagents }
-                    extra
                 }
                 .padding(.horizontal, 14)
                 .padding(.vertical, 14)

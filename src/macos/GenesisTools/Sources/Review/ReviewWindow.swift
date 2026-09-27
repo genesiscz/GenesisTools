@@ -2515,7 +2515,7 @@ enum ReviewSnapshot {
         image.addRepresentation(rep)
 
         guard let webView else {
-            save(image, to: path)
+            save(withSheet(image, window: window), to: path)
             done()
             return
         }
@@ -2531,12 +2531,51 @@ enum ReviewSnapshot {
                 image.draw(in: bounds)
                 webImage.draw(in: frame)
                 composed.unlockFocus()
-                save(composed, to: path)
+                save(withSheet(composed, window: window), to: path)
             } else {
-                save(image, to: path)
+                save(withSheet(image, window: window), to: path)
             }
             done()
         }
+    }
+
+    /// A sheet (the handoff composer) is its own window, so `cacheDisplay` of the main one left it out.
+    /// It is drawn where it sits over the window; both frames are in screen points, origin bottom left.
+    private static func withSheet(_ image: NSImage, window: NSWindow) -> NSImage {
+        // An off-screen parent (a scripted run) gets SwiftUI's sheet as a window of its own, not attached.
+        let attached = window.attachedSheet ?? window.sheets.first
+        // Measured 2026-09-27: SwiftUI's sheet there is a `SheetPresentationWindow`, with isSheet false and no parent.
+        let sheet = attached ?? NSApp.windows.first {
+            $0 !== window && ($0.sheetParent === window || $0.isSheet || String(describing: type(of: $0)).contains("SheetPresentation"))
+        }
+        FileHandle.standardError.write(Data("hub snapshot: sheet \(attached != nil ? "attached" : sheet != nil ? "unattached" : "none")\n".utf8))
+        guard let sheet, let content = sheet.contentView,
+              let rep = content.bitmapImageRepForCachingDisplay(in: content.bounds)
+        else { return image }
+
+        content.cacheDisplay(in: content.bounds, to: rep)
+        let sheetImage = NSImage(size: content.bounds.size)
+        sheetImage.addRepresentation(rep)
+        // Attached: where it sits. Unattached: where a sheet appears, centred under the title bar.
+        let frame = attached != nil
+            ? NSRect(
+                x: sheet.frame.minX - window.frame.minX,
+                y: sheet.frame.minY - window.frame.minY,
+                width: sheet.frame.width,
+                height: sheet.frame.height
+            )
+            : NSRect(
+                x: (image.size.width - sheet.frame.width) / 2,
+                y: image.size.height - sheet.frame.height - 28,
+                width: sheet.frame.width,
+                height: sheet.frame.height
+            )
+        let composed = NSImage(size: image.size)
+        composed.lockFocus()
+        image.draw(in: NSRect(origin: .zero, size: image.size))
+        sheetImage.draw(in: frame)
+        composed.unlockFocus()
+        return composed
     }
 
     private static func save(_ image: NSImage, to path: String) {
