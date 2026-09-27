@@ -14,6 +14,7 @@ export const IDLE_AFTER_MS = 2 * 60 * 60_000;
 export const WRAPPER_LEFTOVER_MS = 10 * 60_000;
 
 export const SUSPENDED_REASON = "suspended in its shell (state T, Ctrl+Z): `fg` in that terminal resumes it";
+export const LAUNCHD_UNKNOWN_REASON = "launchd jobs could not be read, so no PPID-1 process counts as an orphan";
 const IDLE_CPU = 1;
 
 export interface ProcEntry {
@@ -89,6 +90,8 @@ export interface ProcsReport {
         rssKb: number;
     };
     energy: boolean;
+    /** `launchctl list` failed: no launchd job is known, so no PPID-1 process was called an orphan. */
+    launchdUnknown: boolean;
     takenAt: string;
     elapsedMs: number;
     warnings: string[];
@@ -111,8 +114,8 @@ export interface BuildInput {
     /** Real path of a pid's cwd, or null. Called for group roots only. */
     cwdOf: (pid: number) => string | null;
     sessions: SessionLike[];
-    /** Running launchd jobs: pid -> label. */
-    launchd: Map<number, string>;
+    /** Running launchd jobs: pid -> label; null when they could not be read (then nothing adopted is an orphan). */
+    launchd: Map<number, string> | null;
     /** pid -> `top` POWER; null when energy was not asked for. */
     energy: Map<number, number> | null;
     /** Resolve a folder the way `cwdOf` does, so session folders compare equal. */
@@ -233,6 +236,7 @@ export function buildProcsReport(input: BuildInput): Omit<ProcsReport, "elapsedM
 
     const groups: ProcGroup[] = [];
     const takenSessions = new Set<string>();
+    const sessionIndex = indexSessions(input);
 
     // Newest first, so the greedy folder match gives the newest session to the newest process.
     const ordered = [...roots.keys()].sort((a, b) => {
@@ -285,11 +289,10 @@ export function buildProcsReport(input: BuildInput): Omit<ProcsReport, "elapsedM
 
         const chain = ancestors(pid);
         const parentNode = nodes.get(node.row.ppid);
-        const launchdLabel = input.launchd.get(pid) ?? null;
-        const adopted = node.row.ppid === 1;
-        const orphanReason = orphanWhy({ pid, kind, chain, nodes, launchd: input.launchd });
+        const launchdLabel = input.launchd?.get(pid) ?? null;
+        const verdict = orphanWhy({ pid, kind, chain, nodes, launchd: input.launchd });
         const cwd = input.cwdOf(pid);
-        const session = matchSession({ node, entries, nodes, cwd, input, takenSessions });
+        const session = matchSession({ node, entries, nodes, cwd, sessions: sessionIndex, takenSessions });
 
         if (session) {
             takenSessions.add(session.sessionId);
@@ -320,9 +323,8 @@ export function buildProcsReport(input: BuildInput): Omit<ProcsReport, "elapsedM
             wrapperPid: kind === "agent" ? (chain.find((ancestor) => kindOf(ancestor) === "wrapper") ?? null) : null,
             parentAgentPid:
                 kind === "agent" ? (chain.find((ancestor) => roots.get(ancestor) === "agent") ?? null) : null,
-            orphan: orphanReason !== null,
-            orphanReason:
-                orphanReason ?? (adopted && launchdLabel ? `a launchd job (${launchdLabel}), not an orphan` : null),
+            orphan: verdict.orphan,
+            orphanReason: verdict.reason,
             launchdLabel,
             idle: idle !== null,
             idleReason: idle,
@@ -354,13 +356,15 @@ export function buildProcsReport(input: BuildInput): Omit<ProcsReport, "elapsedM
             rssKb: groups.reduce((sum, group) => sum + group.totals.rssKb, 0),
         },
         energy: input.energy !== null,
+        launchdUnknown: input.launchd === null,
         takenAt: new Date(input.now).toISOString(),
     };
 }
 
 /**
- * Why a group root counts as an orphan: launchd adopted it (PPID 1) and it is not a launchd job, or
- * launchd adopted the wrapper or agent that started it (a `tools claude run` whose terminal is gone).
+ * Whether a group root counts as an orphan, and why (or why a PPID-1 root does not): launchd adopted
+ * it (PPID 1) and it is not a launchd job, or launchd adopted the wrapper or agent that started it (a
+ * `tools claude run` whose terminal is gone). With the launchd jobs unknown, nothing adopted is one.
  */
 function orphanWhy({
     pid,
@@ -373,12 +377,19 @@ function orphanWhy({
     kind: GroupKind;
     chain: number[];
     nodes: Map<number, Node>;
-    launchd: Map<number, string>;
-}): string | null {
+    launchd: Map<number, string> | null;
+}): { orphan: boolean; reason: string | null } {
     const self = nodes.get(pid);
 
     if (self?.row.ppid === 1) {
-        return launchd.has(pid) ? null : "its parent is gone (PPID 1)";
+        if (launchd === null) {
+            return { orphan: false, reason: LAUNCHD_UNKNOWN_REASON };
+        }
+
+        const label = launchd.get(pid);
+        return label
+            ? { orphan: false, reason: `a launchd job (${label}), not an orphan` }
+            : { orphan: true, reason: "its parent is gone (PPID 1)" };
     }
 
     const top = chain[chain.length - 1];
@@ -388,13 +399,21 @@ function orphanWhy({
         kind === "agent" &&
         top !== undefined &&
         topNode?.row.ppid === 1 &&
-        (topNode.cls.kind === "wrapper" || topNode.cls.kind === "agent") &&
-        !launchd.has(top)
+        (topNode.cls.kind === "wrapper" || topNode.cls.kind === "agent")
     ) {
-        return `the ${topNode.cls.label} that started it (${top}) lost its parent (PPID 1)`;
+        if (launchd === null) {
+            return { orphan: false, reason: LAUNCHD_UNKNOWN_REASON };
+        }
+
+        if (!launchd.has(top)) {
+            return {
+                orphan: true,
+                reason: `the ${topNode.cls.label} that started it (${top}) lost its parent (PPID 1)`,
+            };
+        }
     }
 
-    return null;
+    return { orphan: false, reason: null };
 }
 
 /** Orphans first, then by memory: the order someone hunting a hog reads in. */
@@ -444,25 +463,94 @@ function hours(ms: number): string {
     return value >= 48 ? `${Math.round(value / 24)} days` : `${Math.round(value)} h`;
 }
 
+/** The session listing, indexed once per report; each half is built on its first use. */
+interface SessionIndex {
+    byId(id: string): SessionLike | undefined;
+    /** The provider's sessions whose folder resolves to `folder`, newest first. */
+    inFolder(provider: string, folder: string): SessionLike[];
+}
+
+function folderKey(provider: string, folder: string): string {
+    return `${provider}\0${folder}`;
+}
+
+/** Resolves each distinct session folder once: the listing holds hundreds of sessions in a few folders. */
+function indexSessions(input: BuildInput): SessionIndex {
+    let ids: Map<string, SessionLike> | null = null;
+    let folders: Map<string, SessionLike[]> | null = null;
+
+    const buildIds = (): Map<string, SessionLike> => {
+        const map = new Map<string, SessionLike>();
+
+        for (const session of input.sessions) {
+            if (!map.has(session.sessionId)) {
+                map.set(session.sessionId, session);
+            }
+        }
+
+        return map;
+    };
+
+    const buildFolders = (): Map<string, SessionLike[]> => {
+        const map = new Map<string, SessionLike[]>();
+        const resolved = new Map<string, string>();
+
+        for (const session of input.sessions) {
+            if (session.cwd === "") {
+                continue;
+            }
+
+            let folder = resolved.get(session.cwd);
+
+            if (folder === undefined) {
+                folder = input.realpath(session.cwd);
+                resolved.set(session.cwd, folder);
+            }
+
+            const key = folderKey(session.provider, folder);
+            const list = map.get(key) ?? [];
+            list.push(session);
+            map.set(key, list);
+        }
+
+        // A stable sort: sessions written in the same millisecond keep the listing's order.
+        for (const list of map.values()) {
+            list.sort((a, b) => b.mtime - a.mtime);
+        }
+
+        return map;
+    };
+
+    return {
+        byId: (id) => {
+            ids ??= buildIds();
+            return ids.get(id);
+        },
+        inFolder: (provider, folder) => {
+            folders ??= buildFolders();
+            return folders.get(folderKey(provider, folder)) ?? [];
+        },
+    };
+}
+
 function matchSession({
     node,
     entries,
     nodes,
     cwd,
-    input,
+    sessions,
     takenSessions,
 }: {
     node: Node;
     entries: ProcEntry[];
     nodes: Map<number, Node>;
     cwd: string | null;
-    input: BuildInput;
+    sessions: SessionIndex;
     takenSessions: Set<string>;
 }): ProcSessionMatch | null {
     const provider = node.cls.provider;
-    const listed = (id: string) => input.sessions.find((session) => session.sessionId === id);
     const named = (id: string, match: ProcSessionMatch["match"]): ProcSessionMatch => {
-        const hit = listed(id);
+        const hit = sessions.byId(id);
         return {
             provider: hit?.provider ?? provider ?? "claude",
             sessionId: id,
@@ -490,16 +578,9 @@ function matchSession({
     }
 
     const started = node.row.startTime?.getTime() ?? 0;
-    const candidate = input.sessions
-        .filter(
-            (session) =>
-                session.provider === provider &&
-                !takenSessions.has(session.sessionId) &&
-                session.cwd !== "" &&
-                input.realpath(session.cwd) === cwd &&
-                session.mtime >= started - 60_000
-        )
-        .sort((a, b) => b.mtime - a.mtime)[0];
+    const candidate = sessions
+        .inFolder(provider, cwd)
+        .find((session) => !takenSessions.has(session.sessionId) && session.mtime >= started - 60_000);
 
     return candidate
         ? {

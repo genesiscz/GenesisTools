@@ -209,6 +209,13 @@ export function registerProcsCommand(program: Command): void {
                 const report = await readProcsReport();
                 const orphans = report.groups.filter((group) => group.orphan);
 
+                // Says why nothing adopted is offered when the launchd jobs could not be read.
+                if (!opts.json) {
+                    for (const warning of report.warnings) {
+                        out.log.warn(warning);
+                    }
+                }
+
                 if (orphans.length === 0) {
                     if (opts.json) {
                         out.result([]);

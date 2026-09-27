@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { listAgentSessionRows, POLLED_LISTING_REUSE_MS } from "@app/ai/lib/sessions/agent-session-rows";
@@ -40,8 +41,8 @@ const log = logger.child({ component: "hub/insights" });
 /** Transcripts the stuck scan reads at once. */
 const STUCK_SCAN_CONCURRENCY = 4;
 
-/** Bump when the cached JSON's shape changes. */
-const CACHE_VERSION = 1;
+/** Bump when the cached JSON's shape or the cache key changes. */
+const CACHE_VERSION = 2;
 const CACHE_TTL = "7 days";
 /** The stuck detector reads this much of the file's end for full tool inputs. */
 const TAIL_BYTES = 2 * 1024 * 1024;
@@ -86,14 +87,31 @@ function readText(path: string): string | null {
     }
 }
 
-function fileStamp(resolved: ResolvedTranscript): string {
-    const files = [...(resolved.extraFiles ?? []), resolved.filePath];
-    return files
+/**
+ * The cache file for one transcript: its provider, a hash of its file paths, and each file's inode, size
+ * and mtime. Another provider's transcript with the same session id, a moved file, or a same-sized file
+ * put in its place therefore never answers from this transcript's entry.
+ */
+export function insightsCacheKey(resolved: ResolvedTranscript): string {
+    const files = [...(resolved.extraFiles ?? []), resolved.filePath].map((file) => resolve(file));
+    const where = createHash("sha256").update(files.join("\n")).digest("hex").slice(0, 16);
+    const stamp = files
         .map((file) => {
             const stat = statSync(file);
-            return `${stat.size}-${Math.round(stat.mtimeMs)}`;
+            return `${stat.ino}-${stat.size}-${Math.round(stat.mtimeMs)}`;
         })
         .join("_");
+    return `insights/${resolved.provider}-${resolved.sessionId}-${where}-${stamp}-v${CACHE_VERSION}.json`;
+}
+
+/** A cached entry serves only the transcript it was computed from (a check beside the key, not instead of it). */
+export function cachedInsightsFit(
+    hit: Pick<SessionInsights, "provider" | "sessionId" | "filePath">,
+    resolved: ResolvedTranscript
+): boolean {
+    return (
+        hit.provider === resolved.provider && hit.sessionId === resolved.sessionId && hit.filePath === resolved.filePath
+    );
 }
 
 interface Loaded {
@@ -171,12 +189,17 @@ export async function sessionInsights(options: InsightsOptions): Promise<Session
     const storage = options.storage ?? new Storage("hub");
     const resolved = await resolveTranscript(options.sessionId);
     const thresholds = readStuckThresholds();
-    const key = `insights/${resolved.sessionId}-${fileStamp(resolved)}-v${CACHE_VERSION}.json`;
+    const key = insightsCacheKey(resolved);
 
     if (!options.fresh) {
         const hit = await storage.getCacheFile<SessionInsights>(key, CACHE_TTL);
 
-        if (hit) {
+        if (hit && !cachedInsightsFit(hit, resolved)) {
+            log.warn(
+                { key, cached: { provider: hit.provider, filePath: hit.filePath }, filePath: resolved.filePath },
+                "insights cache entry belongs to another transcript; recomputing"
+            );
+        } else if (hit) {
             log.debug({ key }, "insights cache hit");
             return {
                 ...hit,

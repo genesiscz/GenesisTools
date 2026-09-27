@@ -20,7 +20,8 @@ export interface ProcsSources {
     table(): Promise<PsRow[]>;
     cwdOf(pid: number): string | null;
     sessions(): Promise<SessionLike[]>;
-    launchd(): Promise<Map<number, string>>;
+    /** Running launchd jobs (pid -> label), or null when `launchctl list` failed and no job is known. */
+    launchd(): Promise<Map<number, string> | null>;
     energy(): Promise<Map<number, number>>;
     own(): Set<number>;
     realpath(path: string): string;
@@ -103,17 +104,24 @@ export const realProcsSources: ProcsSources = {
             return [];
         }
     },
+    // A failed or partial listing is not an empty one: null keeps every PPID-1 process out of the orphans.
     launchd: async () => {
-        const result = await capture("launchctl", ["list"], { timeoutMs: LAUNCHCTL_TIMEOUT_MS });
+        try {
+            const result = await capture("launchctl", ["list"], { timeoutMs: LAUNCHCTL_TIMEOUT_MS });
 
-        if (result.status !== 0) {
-            log.warn(
-                { status: result.status, stderr: result.stderr.trim() },
-                "launchctl list failed; no launchd job is recognised"
-            );
+            if (result.status !== 0) {
+                log.warn(
+                    { status: result.status, stderr: result.stderr.trim() },
+                    "launchctl list failed; launchd jobs are unknown, so no PPID-1 process counts as an orphan"
+                );
+                return null;
+            }
+
+            return parseLaunchctlList(result.stdout);
+        } catch (err) {
+            log.warn({ err }, "launchctl list could not run; launchd jobs are unknown");
+            return null;
         }
-
-        return parseLaunchctlList(result.stdout);
     },
     energy: async () => {
         const result = await capture(
@@ -164,6 +172,13 @@ export async function readProcsReport({
         sources.sessions(),
         adopted ? sources.launchd() : Promise.resolve(new Map<number, string>()),
     ]);
+
+    if (launchd === null) {
+        warnings.push(
+            "launchctl list failed, so launchd jobs are unknown: no PPID-1 process counts as an orphan, and none is stopped as one"
+        );
+    }
+
     const report = buildProcsReport({
         table,
         now: sources.now(),
@@ -182,7 +197,7 @@ export async function readProcsReport({
             orphans: report.totals.orphans,
             idle: report.totals.idle,
             sessions: sessions.length,
-            launchdJobs: launchd.size,
+            launchdJobs: launchd?.size ?? null,
             energy,
             elapsedMs,
         },

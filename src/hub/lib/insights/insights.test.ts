@@ -1,11 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, renameSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { TranscriptTool, TranscriptTurn } from "@genesiscz/utils/ai/transcripts";
+import type { ResolvedTranscript, TranscriptTool, TranscriptTurn } from "@genesiscz/utils/ai/transcripts";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { composeHandoff, HandoffRangeError, selectRange } from "./handoff";
-import { catalogPricer, postSessionHandoff, saveHandoff } from "./index";
+import { cachedInsightsFit, catalogPricer, insightsCacheKey, postSessionHandoff, saveHandoff } from "./index";
 import { codexModelOf, scanClaudeNative, toolInputKeys } from "./native";
 import {
     defaultStuckThresholds,
@@ -497,6 +497,62 @@ describe("saveHandoff", () => {
         expect(first).toEndWith("handoff-sess-1234-abcd-p1-1.md");
         expect(second).toEndWith("handoff-sess-1234-abcd-p1-1-2.md");
         expect(readFileSync(first, "utf8")).toBe(draft.markdown);
+    });
+});
+
+describe("insights cache identity", () => {
+    const STAMP = new Date("2026-09-20T12:00:00.000Z");
+
+    function transcript(dir: string, name: string, text: string): string {
+        const path = join(dir, name);
+        writeFileSync(path, text);
+        utimesSync(path, STAMP, STAMP);
+        return path;
+    }
+
+    function resolved(provider: ResolvedTranscript["provider"], filePath: string): ResolvedTranscript {
+        return { provider, source: "native", sessionId: "sess-1", filePath };
+    }
+
+    test("another provider's transcript with the same session id, size and mtime gets its own entry", () => {
+        const dir = mkdtempSync(join(tmpdir(), "hub-insights-"));
+        const claude = transcript(dir, "claude.jsonl", "aaaa\n");
+        const codex = transcript(dir, "codex.jsonl", "bbbb\n");
+
+        expect(statSync(claude).size).toBe(statSync(codex).size);
+        expect(statSync(claude).mtimeMs).toBe(statSync(codex).mtimeMs);
+        expect(insightsCacheKey(resolved("claude", claude))).not.toBe(insightsCacheKey(resolved("codex", codex)));
+        expect(insightsCacheKey(resolved("codex", claude))).not.toBe(insightsCacheKey(resolved("claude", claude)));
+        expect(insightsCacheKey(resolved("claude", claude))).toBe(insightsCacheKey(resolved("claude", claude)));
+    });
+
+    test("a moved file, or a same-sized file put in its place with the same mtime, misses the old entry", () => {
+        const dir = mkdtempSync(join(tmpdir(), "hub-insights-"));
+        const path = transcript(dir, "session.jsonl", "aaaa\n");
+        const before = insightsCacheKey(resolved("claude", path));
+        const moved = join(dir, "moved.jsonl");
+        renameSync(path, moved);
+
+        expect(insightsCacheKey(resolved("claude", moved))).not.toBe(before);
+
+        renameSync(transcript(dir, "next.jsonl", "bbbb\n"), path);
+        utimesSync(path, STAMP, STAMP);
+
+        expect(insightsCacheKey(resolved("claude", path))).not.toBe(before);
+    });
+
+    test("a cached entry serves only the provider and file it was computed from", () => {
+        const current = resolved("claude", "/t/claude.jsonl");
+
+        expect(
+            cachedInsightsFit({ provider: "claude", sessionId: "sess-1", filePath: "/t/claude.jsonl" }, current)
+        ).toBe(true);
+        expect(
+            cachedInsightsFit({ provider: "codex", sessionId: "sess-1", filePath: "/t/claude.jsonl" }, current)
+        ).toBe(false);
+        expect(cachedInsightsFit({ provider: "claude", sessionId: "sess-1", filePath: "/t/old.jsonl" }, current)).toBe(
+            false
+        );
     });
 });
 describe("postSessionHandoff", () => {

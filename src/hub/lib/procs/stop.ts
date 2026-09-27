@@ -112,6 +112,11 @@ export function refusal(report: ProcsReport, pid: number, own: Set<number>): str
         return `${pid} is the launchd job ${found.group.launchdLabel}; stop it with launchctl`;
     }
 
+    // Fail closed: an adopted root may be a launchd job that `launchctl list` could not name.
+    if (report.launchdUnknown && found.group.parent.pid === 1 && found.pids[0] === found.group.rootPid) {
+        return `${pid} was adopted by launchd (PPID 1) and the launchd jobs could not be read, so it may be one; try again, or stop it with launchctl`;
+    }
+
     return null;
 }
 

@@ -3,7 +3,7 @@ import type { PsRow } from "@genesiscz/utils/process/ps";
 import { argvSessionId, classifyCommand } from "./classify";
 import { type ProcsSources, parseLaunchctlList, parseTopPower, readProcsReport } from "./sources";
 import { refusal, type SignalOps, stopOrphans, stopTree } from "./stop";
-import { type BuildInput, buildProcsReport, type SessionLike } from "./tree";
+import { type BuildInput, buildProcsReport, LAUNCHD_UNKNOWN_REASON, type SessionLike } from "./tree";
 
 // Invented pids, paths and session ids; the process shapes are copied from a real `ps -axo` dump.
 const NOW = Date.parse("2026-09-26T18:00:00Z");
@@ -311,6 +311,98 @@ describe("buildProcsReport", () => {
 
         expect(matched.groups.find((entry) => entry.rootPid === 700)?.session).toBeNull();
     });
+
+    test("with the launchd jobs unknown, no PPID-1 process and no agent under an adopted wrapper is an orphan", () => {
+        const rows = table().map((entry) => (entry.pid === 200 ? { ...entry, ppid: 1 } : entry));
+        const unknown = buildProcsReport(input({ table: rows, launchd: null }));
+        const find = (pid: number) => unknown.groups.find((entry) => entry.rootPid === pid);
+
+        expect(unknown.launchdUnknown).toBe(true);
+        expect(unknown.totals.orphans).toBe(0);
+
+        for (const pid of [300, 310, 320, 330, 210]) {
+            expect(find(pid)).toMatchObject({ orphan: false, orphanReason: LAUNCHD_UNKNOWN_REASON });
+        }
+    });
+
+    test("an empty launchd listing that succeeded still makes an adopted process an orphan", () => {
+        const empty = buildProcsReport(input({ launchd: new Map() }));
+
+        expect(empty.launchdUnknown).toBe(false);
+        expect(empty.groups.find((entry) => entry.rootPid === 310)).toMatchObject({
+            orphan: true,
+            orphanReason: "its parent is gone (PPID 1)",
+        });
+        expect(report.launchdUnknown).toBe(false);
+    });
+
+    test("the folder match resolves each distinct session folder once and keeps the newest-first greedy pick", () => {
+        const agent = (pid: number, age: number) => row(pid, 110, `${HOME}/.bun/bin/claude`, { age });
+        const rows = [
+            row(1, 0, "/sbin/launchd", { user: "root", age: 10 * DAY }),
+            row(110, 1, "/bin/zsh -l", { age: DAY }),
+            agent(801, 10 * MIN),
+            agent(802, 20 * MIN),
+            agent(803, 30 * MIN),
+            agent(804, 40 * MIN),
+            agent(805, 50 * MIN),
+            agent(806, 15 * MIN),
+            agent(807, 5 * MIN),
+        ];
+        const folderOf: Record<number, string> = { 806: "/real/B", 807: "/real/C" };
+        const session = (sessionId: string, cwd: string, mtime: number, provider = "claude"): SessionLike => ({
+            provider,
+            sessionId,
+            title: sessionId,
+            cwd,
+            mtime,
+        });
+        // Too old for every agent above, spread over the same folders (and some without one).
+        const noise = Array.from({ length: 300 }, (_, at) =>
+            session(
+                `noise-${at}`,
+                ["/link/A", "/real/A", "/real/B", "/other/D", ""][at % 5] ?? "",
+                NOW - 2 * DAY - at * MIN
+            )
+        );
+        const sessions = [
+            ...noise.slice(0, 150),
+            session("A-new", "/link/A", NOW - MIN),
+            session("A-codex", "/real/A", NOW, "codex"),
+            session("A-mid", "/real/A", NOW - 3 * MIN),
+            session("A-tie1", "/real/A", NOW - 5 * MIN),
+            session("A-tie2", "/link/A", NOW - 5 * MIN),
+            session("B-1", "/real/B", NOW - 2 * MIN),
+            ...noise.slice(150),
+        ];
+        const resolved = new Map<string, number>();
+        const matched = buildProcsReport(
+            input({
+                table: rows,
+                own: new Set(),
+                launchd: new Map(),
+                sessions,
+                cwdOf: (pid) => folderOf[pid] ?? "/real/A",
+                realpath: (path) => {
+                    resolved.set(path, (resolved.get(path) ?? 0) + 1);
+                    return path === "/link/A" ? "/real/A" : path;
+                },
+            })
+        );
+        const sessionOf = (pid: number) =>
+            matched.groups.find((entry) => entry.rootPid === pid)?.session?.sessionId ?? null;
+
+        expect(Object.fromEntries(resolved)).toEqual({ "/link/A": 1, "/real/A": 1, "/real/B": 1, "/other/D": 1 });
+        expect([801, 802, 803, 804, 805, 806, 807].map(sessionOf)).toEqual([
+            "A-new",
+            "A-mid",
+            "A-tie1",
+            "A-tie2",
+            null,
+            "B-1",
+            null,
+        ]);
+    });
 });
 
 function fakeSources(rows: PsRow[], own = new Set<number>([9999])): ProcsSources {
@@ -507,6 +599,35 @@ describe("stopTree", () => {
 
         expect(outcomes.map((outcome) => outcome.pid).sort()).toEqual([310, 320]);
         expect(ops.sent.sort()).toEqual(["SIGTERM 310", "SIGTERM 320"]);
+    });
+
+    test("a failed launchctl list stops no adopted process: the report says so and nothing is signalled", async () => {
+        const rows = table();
+        const ops = fakeOps(rows, {});
+        const sources: ProcsSources = { ...fakeSources(rows), launchd: async () => null };
+        const report = await readProcsReport({ sources });
+
+        expect(report.launchdUnknown).toBe(true);
+        expect(report.warnings.join("\n")).toContain("launchd jobs are unknown");
+        expect(report.groups.filter((group) => group.orphan)).toEqual([]);
+        expect(await stopOrphans({ sources, ops })).toEqual([]);
+        expect(await stopOrphans({ only: [300, 310, 320], sources, ops })).toEqual([]);
+
+        const outcome = await stopTree({ pid: 310, sources, ops });
+
+        expect(outcome).toMatchObject({ stopped: false, signal: null });
+        expect(outcome.reason).toContain("launchd jobs could not be read");
+        expect(ops.sent).toEqual([]);
+    });
+
+    test("an empty launchd listing that succeeded still lets stopOrphans stop a confirmed orphan", async () => {
+        const rows = table();
+        const ops = fakeOps(rows, {});
+        const sources: ProcsSources = { ...fakeSources(rows), launchd: async () => new Map() };
+        const outcomes = await stopOrphans({ only: [310], sources, ops });
+
+        expect(outcomes.map((outcome) => outcome.pid)).toEqual([310]);
+        expect(ops.sent).toEqual(["SIGTERM 310"]);
     });
 });
 
