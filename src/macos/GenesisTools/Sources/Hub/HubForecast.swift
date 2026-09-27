@@ -30,14 +30,15 @@ struct HubForecastWindow: Decodable, Equatable, Identifiable, Sendable {
     var isCurrent: Bool { !resetSinceSample }
 
     /// "42% · out 16:20" / "42% · lasts" / "42%": the chip's words.
-    func summary(clock: (Date) -> String = HubForecastFormat.clock) -> String {
+    /// `now` is injectable: against the real clock a fixture's run-out time passed and the test flipped.
+    func summary(now: Date = Date(), clock: (Date) -> String = HubForecastFormat.clock) -> String {
         let used = "\(Int(utilization.rounded()))%"
         if stale, let sampled = HubFormat.date(lastSampleAt) {
             return "\(used) · \(HubFormat.ago(sampled))"
         }
         if let exhaustAt = HubFormat.date(exhaustAt), beforeReset {
             // Projected from the last sample, so the time can already have passed.
-            return exhaustAt <= Date() ? "\(used) · at limit" : "\(used) · out \(clock(exhaustAt))"
+            return exhaustAt <= now ? "\(used) · at limit" : "\(used) · out \(clock(exhaustAt))"
         }
         if exhaustAt != nil {
             return "\(used) · lasts"

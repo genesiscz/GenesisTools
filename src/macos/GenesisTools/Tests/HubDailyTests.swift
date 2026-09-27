@@ -68,7 +68,10 @@ final class HubDailyTests: XCTestCase {
         let result = try decode(HubForecastResult.self, forecastJSON)
         let work = try XCTUnwrap(result.accounts.first)
         XCTAssertEqual(work.headline?.bucket, "five_hour")
-        XCTAssertEqual(work.headline?.summary(clock: { _ in "16:00" }), "70% · out 16:00")
+        let generated = try XCTUnwrap(HubFormat.date("2026-03-02T15:00:00.000Z"))
+        XCTAssertEqual(work.headline?.summary(now: generated, clock: { _ in "16:00" }), "70% · out 16:00")
+        // Projected from the last sample: an hour past the run-out time it reads as at the limit.
+        XCTAssertEqual(work.headline?.summary(now: generated.addingTimeInterval(2 * 3600), clock: { _ in "16:00" }), "70% · at limit")
         XCTAssertEqual(work.windows[1].summary(clock: { _ in "x" }), "30% · lasts")
         XCTAssertTrue(work.windows[1].detail(clock: { _ in "Fri 15:00" }).contains("lasts to the reset (70% then)"))
     }

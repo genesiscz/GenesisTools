@@ -177,7 +177,8 @@ struct HubFindPanel: View {
                         }
                     }
                     .frame(width: 40, alignment: .trailing)
-                    Text(verbatim: find.truncated ? "\(find.hits.count)+ hits" : "\(find.hits.count) hits")
+                    // "0 hits" while rg still ran read as an answer.
+                    Text(verbatim: find.running && find.hits.isEmpty ? "searching…" : find.truncated ? "\(find.hits.count)+ hits" : "\(find.hits.count) hits")
                         .font(.system(size: 11, design: .monospaced))
                         .foregroundColor(.settingsTextMuted)
                 }

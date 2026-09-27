@@ -661,13 +661,7 @@ final class HubModel: ObservableObject {
             MainActor.assumeIsolated { timeline.loadIfStale() }
         }
         if next == .prs {
-            // One path per project; worktrees and clones of one origin collapse server-side.
-            let roots = Array(Set(sessions.map(\.cwd).filter { !$0.isEmpty && FileManager.default.fileExists(atPath: $0) }.map(projectRoot(of:)))).sorted()
-            MainActor.assumeIsolated {
-                if prs.prs.isEmpty {
-                    prs.load(paths: roots)
-                }
-            }
+            MainActor.assumeIsolated { loadPRsIfNeeded() }
         }
         if next == .worktrees && worktrees.isEmpty && !loadingWorktrees {
             loadingWorktrees = true
@@ -838,6 +832,15 @@ final class HubModel: ObservableObject {
                 onSettled?()
             }
         }
+    }
+
+    /// The PR list of every session project, once: the PRs mode and the palette's "pr" both read it.
+    @MainActor
+    func loadPRsIfNeeded() {
+        guard prs.prs.isEmpty, !prs.loading else { return }
+        // One path per project; worktrees and clones of one origin collapse server-side.
+        let roots = Array(Set(sessions.map(\.cwd).filter { !$0.isEmpty && FileManager.default.fileExists(atPath: $0) }.map(projectRoot(of:)))).sorted()
+        prs.load(paths: roots)
     }
 
     /// What the command palette can name: projects, sessions, PRs and worktrees the hub already knows.
@@ -1188,6 +1191,22 @@ final class HubModel: ObservableObject {
 
 // MARK: - Views
 
+/// The palette re-reads the PR list when it lands: in a fresh window "gt pr" said to open the PRs mode first.
+private struct HubPaletteHost: View {
+    @ObservedObject var model: HubModel
+    @ObservedObject var prs: PRsModel
+    @Binding var isPresented: Bool
+    let seed: String
+    let toggleGlass: () -> Void
+
+    var body: some View {
+        HubPaletteView(isPresented: $isPresented, context: model.paletteContext, initialQuery: seed) { action in
+            model.runPalette(action) { toggleGlass() }
+        }
+        .onAppear { model.loadPRsIfNeeded() }
+    }
+}
+
 struct HubRootView: View {
     @ObservedObject var model: HubModel
     @AppStorage(HubGlass.key) private var glass = false
@@ -1310,9 +1329,7 @@ struct HubRootView: View {
                 HubFindPanel(hub: model, roots: model.findRoots)
             }
             if paletteOpen {
-                HubPaletteView(isPresented: $paletteOpen, context: model.paletteContext, initialQuery: paletteSeed) { action in
-                    model.runPalette(action) { glass.toggle() }
-                }
+                HubPaletteHost(model: model, prs: model.prs, isPresented: $paletteOpen, seed: paletteSeed) { glass.toggle() }
             }
         }
         .onChange(of: model.paletteRequest, initial: true) { _, request in
@@ -1637,16 +1654,18 @@ private struct SessionRowView: View {
                 }
                 HStack(spacing: 6) {
                     if let project = session.project {
-                        Text(project)
+                        Text(project).layoutPriority(-2)
                     }
                     if let account = session.account {
                         Text(account)
                             .padding(.horizontal, 5)
                             .padding(.vertical, 1)
                             .background(Capsule().stroke(Color.white.opacity(0.15)))
+                            .layoutPriority(-1)
                     }
                     Spacer(minLength: 0)
-                    LiveAgo(date: session.lastActivity)
+                    // Whole: the project and account truncate first, the age read "21 sec. a…" before.
+                    LiveAgo(date: session.lastActivity, style: .brief).fixedSize()
                 }
                 .font(.system(size: 10.5))
                 .foregroundColor(ReviewPalette.dim)

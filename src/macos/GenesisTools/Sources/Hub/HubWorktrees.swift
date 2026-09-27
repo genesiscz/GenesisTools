@@ -350,8 +350,22 @@ struct WorktreeDetailView: View {
             .padding(.bottom, 10)
             .overlay(Rectangle().fill(ReviewPalette.hairline).frame(height: 1), alignment: .bottom)
 
-            if let review = model.review {
+            if let review = model.review, review.repo.path == worktree.path {
                 ReviewRootView(model: review)
+            } else {
+                Text("Loading the worktree's changes…")
+                    .font(.system(size: 12))
+                    .foregroundColor(ReviewPalette.dim)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+        }
+        // Without a diff under it the header floated to the middle of the window.
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        // `--worktree <path>` and a forwarded request set the selection without a click, so nothing made
+        // the review: the page showed its header and nothing else.
+        .task(id: worktree.path) {
+            if model.review?.repo.path != worktree.path {
+                model.selectWorktree(worktree)
             }
         }
     }

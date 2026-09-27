@@ -112,8 +112,10 @@ marked adaptation (`// GenesisTools adaptation: …`). Missing Genesis types go 
 - The open transcript follows its session file (Hub/HubTranscriptTail.swift, a file event source, no timer) and
   appends turns from the last known one; ⌘F searches the whole session (`tools ai sessions grep` + `tail --turns`).
 - To SEE the live window (not a snapshot), `tools control screenshot --app GenesisTools --path /tmp/x.png`: a window
-  capture with no accessibility walk, so it works while a transcript streams. A snapshot run paints the web diff on
-  top of every overlay, so an overlay that looks covered in a snapshot can be fine on screen: check it live.
+  capture with no accessibility walk, so it works while a transcript streams. Since 2026-09-27 (24a236c41) a
+  snapshot skips the web diff's own image under a modal panel (digest, rules, search, prompts, handoff, palette,
+  find) and draws a SwiftUI sheet, which an off-screen parent gets as an unattached `SheetPresentationWindow`.
+  A snapshot taken before a search or load finished shows its empty state: read `app-perf.log` for the span.
   One hub runs at a time: a second `GenesisTools --hub …` hands its flags to the running hub and exits
   (Hub/HubSingleInstance.swift: the hub holds a `flock` on `~/.genesis-tools/hub/hub.lock`, dropped by the kernel on exit).
 - A rebuild never deletes the replaced bundle: it moves to `~/.genesis-tools/app/retired/<ms>/` and is pruned once
@@ -122,5 +124,6 @@ marked adaptation (`// GenesisTools adaptation: …`). Missing Genesis types go 
   `tools` re-enters the current launcher when it differs (`genesisAppLauncher()`). A build that finds no signing
   identity while the installed app is Developer ID signed refuses to install ad-hoc (a sandboxed shell cannot read
   the keychain). Worktree builds install the same way and keep the grants.
-- After a rebuild, restart a running hub without stealing focus: `pkill -f 'MacOS/GenesisTools --hub'` then
-  `tools hub --no-activate`.
+- After a rebuild, restart a running hub without stealing focus, by its pid only (a `pkill -f` pattern also
+  killed other agents' snapshot runs, 2026-09-24): `kill <pid of MacOS/GenesisTools --hub>` if the build did not
+  reap it, then `tools hub open --no-activate` with the flags it had.

@@ -135,7 +135,8 @@ struct PRReadinessHeaderChip: View {
     var body: some View {
         if let readiness = store.readiness(for: pr), readiness.verdict != "closed" {
             HStack(spacing: 6) {
-                PRReadinessBadge(readiness: readiness)
+                // The verdict word: the reason beside it already says "4 unresolved threads".
+                PRReadinessBadge(readiness: readiness, verdictWord: true)
                 Text(verbatim: readiness.reasons.first ?? readiness.summary)
                     .font(.system(size: 11))
                     .foregroundColor(ReviewPalette.dim)
@@ -150,10 +151,12 @@ struct PRReadinessHeaderChip: View {
 /// A PR row's readiness chip: a value, drawn with a tooltip that holds every reason.
 struct PRReadinessBadge: View {
     let readiness: PRReadiness?
+    /// "blocked" instead of "4 open", where the reason is shown beside it.
+    var verdictWord = false
 
     var body: some View {
         if let readiness, readiness.verdict != "closed" {
-            let (symbol, color, text) = Self.look(readiness)
+            let (symbol, color, text) = Self.look(readiness, verdictWord: verdictWord)
             Label(text, systemImage: symbol)
                 .labelStyle(.titleAndIcon)
                 .font(.system(size: 10.5, weight: .semibold))
@@ -164,12 +167,12 @@ struct PRReadinessBadge: View {
         }
     }
 
-    static func look(_ readiness: PRReadiness) -> (String, Color, String) {
+    static func look(_ readiness: PRReadiness, verdictWord: Bool = false) -> (String, Color, String) {
         switch readiness.verdict {
         case "ready":
             return ("checkmark.seal.fill", ReviewPalette.added, "ready")
         case "blocked":
-            let text = readiness.unresolved > 0 ? "\(readiness.unresolved) open" : readiness.ci == "failed" ? "CI" : "blocked"
+            let text = verdictWord ? "blocked" : readiness.unresolved > 0 ? "\(readiness.unresolved) open" : readiness.ci == "failed" ? "CI" : "blocked"
             return ("xmark.octagon.fill", ReviewPalette.removed, text)
         default:
             return ("clock", ReviewPalette.modified, readiness.reviewedHead == false ? "re-review" : "waiting")
