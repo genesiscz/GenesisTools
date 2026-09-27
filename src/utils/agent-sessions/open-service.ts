@@ -1,12 +1,15 @@
 import { Database } from "bun:sqlite";
+import { logger } from "@genesiscz/utils/logger";
 import { HistoryDatabase, openHistoryReadOnly } from "./database";
 import { fileListingFreshness } from "./listing-freshness";
-import { initializeCompactHistorySchema } from "./migrations";
+import { historySchemaCurrent, initializeCompactHistorySchema } from "./migrations";
 import { type HistoryProvider, resolveHistoryProvider } from "./provider";
 import { HistoryService } from "./service";
 import { HistoryStatisticsRepository } from "./statistics-repository";
 import { HistorySyncRepository } from "./sync-repository";
 import type { AgentSearchFilters } from "./types";
+
+const log = logger.child({ component: "history/open-service" });
 
 /** Writable history operations share the canonical connection and provider registry. */
 function buildHistoryService(provider: HistoryProvider, db: Database, roots?: string[]): HistoryService {
@@ -68,10 +71,11 @@ export function openHistoryCached(options: {
 }
 
 /**
- * The listing catalog of one provider. `refresh: false` lists through `openHistoryCached`: no schema
- * initialization, no migration, no discovery and no database creation. With nothing indexed yet it lists
- * an empty in-memory index, so the answer has the usual shape and nothing is written. A diagnostic
- * (`tools hub rules test`) lists this way; every other caller refreshes as before.
+ * The listing catalog of one provider. `refresh: false` lists through a read-only connection: no schema
+ * initialization, no migration, no discovery and no database creation. With nothing indexed yet, or an index
+ * that still needs a migration, it lists an empty in-memory index (the second with a warning), so the answer
+ * has the usual shape and nothing is written. A diagnostic (`tools hub rules test`) lists this way; every
+ * other caller refreshes as before.
  */
 export async function catalogHistory(options: {
     provider: string;
@@ -86,12 +90,26 @@ export async function catalogHistory(options: {
         return openHistoryService({ provider, roots }).catalog(filters, { maxDiscoveryAgeMs });
     }
 
-    const opened = openHistoryCached({ provider, roots }) ?? emptyHistory(provider, roots);
+    const db = openHistoryReadOnly();
+    const readable = db !== undefined && historySchemaCurrent(db);
+
+    if (db && !readable) {
+        log.warn(
+            { provider },
+            "[history] a read-only listing found an index that still needs a migration; it lists nothing and leaves the index alone (an ordinary listing, such as tools claude history, migrates it)"
+        );
+        db.close();
+    }
+
+    const listing =
+        db && readable
+            ? { service: buildHistoryService(resolveHistoryProvider(provider), db, roots), close: () => db.close() }
+            : emptyHistory(provider, roots);
 
     try {
-        return await opened.service.catalog(filters, { refresh: false });
+        return await listing.service.catalog(filters, { refresh: false });
     } finally {
-        opened.close();
+        listing.close();
     }
 }
 

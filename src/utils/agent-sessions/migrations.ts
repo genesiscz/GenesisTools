@@ -407,6 +407,28 @@ const COMPACT_REWRITE_MIGRATION_IDS = new Set([
 ]);
 
 /** Used by the compact repository only after its compatibility and size gates pass. */
+/**
+ * Every history migration is recorded as applied. Reads only, so a read-only connection can ask before it
+ * lists: an index that still needs a migration lacks the compact columns, and a diagnostic must not migrate it.
+ */
+export function historySchemaCurrent(db: Database): boolean {
+    const table = db.query("SELECT name FROM sqlite_master WHERE type = 'table' AND name = '_migrations'").get();
+
+    if (!table) {
+        return false;
+    }
+
+    const applied = new Set(
+        db
+            .query<{ id: string }, []>("SELECT id FROM _migrations")
+            .all()
+            .map((row) => row.id)
+    );
+    return [...HISTORY_MIGRATIONS, ...COMPACT_HISTORY_MIGRATIONS].every((migration) =>
+        applied.has(`provider_history:${migration.id}`)
+    );
+}
+
 export function initializeCompactHistorySchema(db: Database): void {
     initializeHistorySchema(db);
     const pendingRewrite = COMPACT_HISTORY_MIGRATIONS.some(

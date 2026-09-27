@@ -1,13 +1,22 @@
 import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import {
+    existsSync,
+    mkdirSync,
+    mkdtempSync,
+    readFileSync,
+    realpathSync,
+    rmSync,
+    utimesSync,
+    writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { claudeHistoryReader } from "./compact-readers";
 import { HistoryDatabase, historyDatabasePath } from "./database";
-import { initializeCompactHistorySchema } from "./migrations";
+import { initializeCompactHistorySchema, initializeHistorySchema } from "./migrations";
 import { catalogHistory, openHistoryService } from "./open-service";
 import { HistoryService } from "./service";
 import { HistorySyncRepository } from "./sync-repository";
@@ -271,6 +280,27 @@ test("catalogHistory with refresh: false creates no index when none exists, and 
         HistoryDatabase.closeInstance();
         env.testing.unset("GENESIS_TOOLS_HOME");
         rmSync(root, { recursive: true, force: true });
+        rmSync(home, { recursive: true, force: true });
+    }
+});
+
+test("catalogHistory with refresh: false lists nothing from an index that still needs a migration, and does not migrate it", async () => {
+    const home = mkdtempSync(join(tmpdir(), "history-catalog-premigration-home-"));
+    env.testing.set("GENESIS_TOOLS_HOME", home);
+
+    try {
+        // An index written before the compact migrations: the old schema, none of the compact columns.
+        mkdirSync(dirname(historyDatabasePath()), { recursive: true });
+        const old = new Database(historyDatabasePath());
+        initializeHistorySchema(old);
+        old.close();
+        const before = readFileSync(historyDatabasePath());
+
+        const listed = await catalogHistory({ provider: "claude", filters: {}, refresh: false });
+        expect(listed.metadata).toEqual([]);
+        expect(readFileSync(historyDatabasePath()).equals(before)).toBe(true);
+    } finally {
+        env.testing.unset("GENESIS_TOOLS_HOME");
         rmSync(home, { recursive: true, force: true });
     }
 });
