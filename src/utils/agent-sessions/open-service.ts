@@ -2,7 +2,7 @@ import { Database } from "bun:sqlite";
 import { logger } from "@genesiscz/utils/logger";
 import { HistoryDatabase, openHistoryReadOnly } from "./database";
 import { fileListingFreshness } from "./listing-freshness";
-import { historySchemaCurrent, initializeCompactHistorySchema } from "./migrations";
+import { initializeCompactHistorySchema } from "./migrations";
 import { type HistoryProvider, resolveHistoryProvider } from "./provider";
 import { HistoryService } from "./service";
 import { HistoryStatisticsRepository } from "./statistics-repository";
@@ -73,8 +73,8 @@ export function openHistoryCached(options: {
 /**
  * The listing catalog of one provider. `refresh: false` lists through a read-only connection: no schema
  * initialization, no migration, no discovery and no database creation. With nothing indexed yet, or an index
- * that still needs a migration, it lists an empty in-memory index (the second with a warning), so the answer
- * has the usual shape and nothing is written. A diagnostic (`tools hub rules test`) lists this way; every
+ * it cannot read (one that still needs a migration lacks columns the listing reads), it lists an empty
+ * in-memory index (the second with a warning), so the answer has the usual shape and nothing is written. A diagnostic (`tools hub rules test`) lists this way; every
  * other caller refreshes as before.
  */
 export async function catalogHistory(options: {
@@ -91,25 +91,27 @@ export async function catalogHistory(options: {
     }
 
     const db = openHistoryReadOnly();
-    const readable = db !== undefined && historySchemaCurrent(db);
 
-    if (db && !readable) {
-        log.warn(
-            { provider },
-            "[history] a read-only listing found an index that still needs a migration; it lists nothing and leaves the index alone (an ordinary listing, such as tools claude history, migrates it)"
-        );
-        db.close();
+    if (db) {
+        try {
+            const service = buildHistoryService(resolveHistoryProvider(provider), db, roots);
+            return await service.catalog(filters, { refresh: false });
+        } catch (error) {
+            log.warn(
+                { error, provider },
+                "[history] a read-only listing could not read the index (it may still need a migration); it lists nothing and leaves the index alone (an ordinary listing, such as tools claude history, migrates it)"
+            );
+        } finally {
+            db.close();
+        }
     }
 
-    const listing =
-        db && readable
-            ? { service: buildHistoryService(resolveHistoryProvider(provider), db, roots), close: () => db.close() }
-            : emptyHistory(provider, roots);
+    const empty = emptyHistory(provider, roots);
 
     try {
-        return await listing.service.catalog(filters, { refresh: false });
+        return await empty.service.catalog(filters, { refresh: false });
     } finally {
-        listing.close();
+        empty.close();
     }
 }
 

@@ -304,3 +304,30 @@ test("catalogHistory with refresh: false lists nothing from an index that still 
         rmSync(home, { recursive: true, force: true });
     }
 });
+
+test("catalogHistory with refresh: false still lists an index whose only pending migration adds an index", async () => {
+    const home = mkdtempSync(join(tmpdir(), "history-catalog-indexonly-home-"));
+    const root = mkdtempSync(join(tmpdir(), "history-catalog-indexonly-"));
+    const id = "11111111-2222-4333-8444-000000000051";
+    session(root, id, HOUR);
+    env.testing.set("GENESIS_TOOLS_HOME", home);
+
+    try {
+        await openHistoryService({ provider: "claude", roots: [root] }).catalog({});
+        HistoryDatabase.closeInstance();
+        const db = new Database(historyDatabasePath());
+        db.exec("DROP INDEX idx_session_metadata_provider_mtime");
+        db.run("DELETE FROM _migrations WHERE id = ?", ["provider_history:2026-09-history-metadata-mtime-index"]);
+        db.close();
+        const before = readFileSync(historyDatabasePath());
+
+        const listed = await catalogHistory({ provider: "claude", roots: [root], filters: {}, refresh: false });
+        expect(listed.metadata.map((entry) => entry.nativeId)).toEqual([id]);
+        expect(readFileSync(historyDatabasePath()).equals(before)).toBe(true);
+    } finally {
+        HistoryDatabase.closeInstance();
+        env.testing.unset("GENESIS_TOOLS_HOME");
+        rmSync(root, { recursive: true, force: true });
+        rmSync(home, { recursive: true, force: true });
+    }
+});
