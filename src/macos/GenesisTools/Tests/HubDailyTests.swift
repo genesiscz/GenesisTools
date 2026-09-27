@@ -4,6 +4,21 @@ import XCTest
 /// The hub's daily overlays read `tools hub search|digest|forecast|rules … --json` (src/hub/lib/search.ts,
 /// digest.ts, forecast.ts, rules.ts). The samples follow those shapes with invented names and values.
 final class HubDailyTests: XCTestCase {
+    func testSearchSummaryCountsTheSessionsShownPerProvider() throws {
+        // claude found 3 hits in 2 sessions, grok 1, codex failed: the parts must add up to the total.
+        let hit = { (provider: String, id: String) in
+            "{\"provider\":\"\(provider)\",\"sessionId\":\"\(id)\",\"title\":\"t\",\"project\":null,\"cwd\":\"/w\",\"gitBranch\":null,\"mtime\":\"2026-09-27T10:00:00Z\",\"account\":null,\"matchCount\":1,\"snippets\":[]}"
+        }
+        let json = """
+        {"query":"q","results":[\(hit("claude", "a")),\(hit("claude", "b")),\(hit("grok", "c"))],
+         "providers":{"claude":{"hits":3,"ms":1,"error":null},"codex":{"hits":0,"ms":1,"error":"down"},"grok":{"hits":1,"ms":1,"error":null}},
+         "elapsedMs":1500}
+        """
+        let result = try JSONDecoder().decode(HubSearchResult.self, from: Data(json.utf8))
+
+        XCTAssertEqual(result.summary, "3 sessions · claude 2, codex failed, grok 1 · 1.5 s")
+    }
+
     private func decode<T: Decodable>(_ type: T.Type, _ json: String) throws -> T {
         try JSONDecoder().decode(T.self, from: Data(json.utf8))
     }

@@ -146,14 +146,20 @@ final class HubTranscriptSearchModel: ObservableObject {
         }
     }
 
+    var summary: String { result?.summary ?? "" }
+}
+
+extension HubSearchResult {
     /// "12 sessions · claude 8, codex 3, grok 1 · 4.2 s", with a failed provider named.
     var summary: String {
-        guard let result else { return "" }
         let parts = HubSearchArgs.providers.compactMap { name -> String? in
-            guard let report = result.providers[name] else { return nil }
-            return report.error == nil ? "\(name) \(report.hits)" : "\(name) failed"
+            guard let report = providers[name] else { return nil }
+            // The sessions shown per provider, so the parts add up to the total; `hits` counted raw hits
+            // before grouping and the cap ("27 sessions · claude 12, codex 10, grok 8").
+            let shown = results.filter { $0.provider == name }.count
+            return report.error == nil ? "\(name) \(shown)" : "\(name) failed"
         }
-        return "\(result.results.count) sessions · \(parts.joined(separator: ", ")) · \(String(format: "%.1f", Double(result.elapsedMs) / 1000)) s"
+        return "\(results.count) sessions · \(parts.joined(separator: ", ")) · \(String(format: "%.1f", Double(elapsedMs) / 1000)) s"
     }
 }
 
