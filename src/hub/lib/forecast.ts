@@ -95,8 +95,14 @@ export function windowLabel(bucket: string, kind: ForecastWindowKind): string {
         return "Weekly";
     }
 
-    const scope = bucket.replace(/^seven_day_/, "7d ").replace(/^product:/, "");
-    return scope;
+    // `seven_day_fable` read "7d fable" beside "5h" and "Weekly"; it is the weekly window of one model.
+    const model = /^seven_day_(.+)$/.exec(bucket)?.[1];
+
+    if (model) {
+        return `Weekly ${model.charAt(0).toUpperCase()}${model.slice(1).replace(/_/g, " ")}`;
+    }
+
+    return bucket.replace(/^product:/, "");
 }
 
 function iso(ms: number): string {

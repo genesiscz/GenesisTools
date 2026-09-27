@@ -13,7 +13,7 @@ import {
     digestMarkdown,
     parseNumstat,
 } from "./digest";
-import { forecastClock, forecastFromSamples, forecastWindow, type UsageSample } from "./forecast";
+import { forecastClock, forecastFromSamples, forecastWindow, type UsageSample, windowLabel } from "./forecast";
 import type { NotifyState } from "./notify-poll";
 import {
     addRule,
@@ -422,6 +422,12 @@ describe("forecast", () => {
 
         expect(account?.windows[0]).toMatchObject({ beforeReset: true, minutesToExhaust: 0, stale: false });
         expect(account?.warning).toBe("Weekly is projected at its limit now, before its reset");
+    });
+
+    test("a model's weekly window is labelled like the others", () => {
+        expect(windowLabel("seven_day_fable", "scoped")).toBe("Weekly Fable");
+        expect(windowLabel("seven_day_oauth_apps", "scoped")).toBe("Weekly Oauth apps");
+        expect(windowLabel("product:grokbuild", "scoped")).toBe("grokbuild");
     });
 
     test("a run-out on a later day names the day, not only the clock", () => {
