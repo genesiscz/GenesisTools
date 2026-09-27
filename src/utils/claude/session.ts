@@ -261,7 +261,8 @@ export class ClaudeSession {
                         if (typeof obj.sessionId === "string" && !sessionId) {
                             sessionId = obj.sessionId;
                         }
-                        if (typeof obj.gitBranch === "string" && !gitBranch) {
+                        // The newest branch wins (the tail lines come last): the session's branch now.
+                        if (typeof obj.gitBranch === "string" && obj.gitBranch) {
                             gitBranch = obj.gitBranch;
                         }
                         if (typeof obj.timestamp === "string") {

@@ -99,6 +99,31 @@ test("metadata bounds Unicode fields without retaining large tool output", async
     expect(SafeJSON.stringify(full.metadata)).not.toContain("TOOL_OUTPUT_MUST_STAY_SOURCE_ONLY");
 });
 
+test("metadata names the branch the session is on now, not the one it started on", async () => {
+    const { path, source } = fixture();
+    writeFileSync(
+        path,
+        jsonl(
+            {
+                type: "user",
+                sessionId: MAIN_ID,
+                gitBranch: "feature/old",
+                timestamp: "2026-09-01T10:00:00.000Z",
+                message: { content: "start" },
+            },
+            {
+                type: "user",
+                sessionId: MAIN_ID,
+                gitBranch: "feature/new",
+                timestamp: "2026-09-02T10:00:00.000Z",
+                message: { content: "later" },
+            }
+        )
+    );
+
+    expect((await readClaudeMetadata(source)).metadata?.gitBranch).toBe("feature/new");
+});
+
 test("scan preserves original record boundaries and Claude searchable fields", async () => {
     const { path, source } = fixture();
     const rows = [
