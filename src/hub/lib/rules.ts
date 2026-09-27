@@ -608,7 +608,11 @@ export function rulePrsFromNotifyState(state: NotifyState): { prs: RulePr[]; pos
     return { prs, postedCi };
 }
 
-export async function readRuleInputs(config: RulesConfig): Promise<RuleInputs> {
+/** `refresh: false` (a dry run) reads the session index as it is, since `tools hub rules test` must not write it. */
+export async function readRuleInputs(
+    config: RulesConfig,
+    { refresh = true }: { refresh?: boolean } = {}
+): Promise<RuleInputs> {
     const kinds = new Set(config.rules.filter((rule) => rule.enabled).map((rule) => rule.kind));
     const needsSessions = kinds.has("idle") || kinds.has("context");
     const sessions = needsSessions
@@ -620,6 +624,7 @@ export async function readRuleInputs(config: RulesConfig): Promise<RuleInputs> {
               // Token and model data (the context size) only when a context rule needs it.
               withUsage: kinds.has("context"),
               maxDiscoveryAgeMs: POLLED_LISTING_REUSE_MS,
+              refresh,
           })
         : [];
     const decisions = kinds.has("decision") ? readDecisions(decisionFiles().file) : [];
@@ -690,7 +695,7 @@ export async function runRules({
     post?: (firing: RuleFiring) => Promise<boolean>;
 } = {}): Promise<RulesRunResult> {
     const config = await readConfig();
-    const readInputs = inputs ?? readRuleInputs;
+    const readInputs = inputs ?? ((rules: RulesConfig) => readRuleInputs(rules, { refresh: !dryRun }));
     const empty: RulesRunResult = {
         ranAt: now.toISOString(),
         dryRun,

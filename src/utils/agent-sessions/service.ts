@@ -401,9 +401,10 @@ export class HistoryService {
      *
      * `maxDiscoveryAgeMs` skips the refresh when the same scope was refreshed that recently by any
      * process, and reads the index as it is. A source that changed since can then lag by up to that
-     * long; a brand-new session appears once the next refresh runs.
+     * long; a brand-new session appears once the next refresh runs. `refresh: false` never refreshes,
+     * for a diagnostic, which must not write the index.
      */
-    async catalog(filters: AgentSearchFilters = {}, options: { maxDiscoveryAgeMs?: number } = {}) {
+    async catalog(filters: AgentSearchFilters = {}, options: { maxDiscoveryAgeMs?: number; refresh?: boolean } = {}) {
         const { freshness } = this.options;
         const freshnessKey = SafeJSON.stringify([
             this.options.providerId,
@@ -413,13 +414,13 @@ export class HistoryService {
             this.options.roots,
         ]);
         const age = options.maxDiscoveryAgeMs === undefined ? null : (freshness?.age(freshnessKey) ?? null);
-        const reuse = age !== null && options.maxDiscoveryAgeMs !== undefined && age < options.maxDiscoveryAgeMs;
+        const recent = age !== null && options.maxDiscoveryAgeMs !== undefined && age < options.maxDiscoveryAgeMs;
         let synchronized: { report: NativeIndexSyncResult; reindexed: boolean };
 
-        if (reuse) {
+        if (recent || options.refresh === false) {
             logger.debug(
-                { provider: this.options.providerId, ageMs: Math.round(age) },
-                "[history] listing reuses a recent refresh"
+                { provider: this.options.providerId, ageMs: age === null ? null : Math.round(age) },
+                recent ? "[history] listing reuses a recent refresh" : "[history] listing reads the index unrefreshed"
             );
             synchronized = {
                 report: {

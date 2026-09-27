@@ -102,6 +102,8 @@ export interface ListSessionRowsOptions {
     withUsage?: boolean;
     /** Passed to `getSessionListing`: reuse another process's refresh of the same scope. */
     maxDiscoveryAgeMs?: number;
+    /** Passed to `getSessionListing`: `false` reads the index with no refresh. */
+    refresh?: boolean;
 }
 
 export function computeCacheStatus(
@@ -386,6 +388,7 @@ export async function listSessionRowsWithTimings(
             // below then keep exactly what they kept before.
             ...(opts.hours === undefined ? {} : { mtimeFrom: now - opts.hours * 60 * 60 * 1000, newest: opts.minRows }),
             ...(opts.maxDiscoveryAgeMs === undefined ? {} : { maxDiscoveryAgeMs: opts.maxDiscoveryAgeMs }),
+            ...(opts.refresh === undefined ? {} : { refresh: opts.refresh }),
         })
     );
     const listingMs = performance.now() - started;

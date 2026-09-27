@@ -5,7 +5,14 @@ import { join } from "node:path";
 import type { ResolvedTranscript, TranscriptTool, TranscriptTurn } from "@genesiscz/utils/ai/transcripts";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { composeHandoff, HandoffRangeError, selectRange } from "./handoff";
-import { cachedInsightsFit, catalogPricer, insightsCacheKey, postSessionHandoff, saveHandoff } from "./index";
+import {
+    cachedInsightsFit,
+    catalogPricer,
+    insightsCacheKey,
+    postSessionHandoff,
+    reserveHandoffPath,
+    saveHandoff,
+} from "./index";
 import { codexModelOf, scanClaudeNative, toolInputKeys } from "./native";
 import {
     defaultStuckThresholds,
@@ -497,6 +504,15 @@ describe("saveHandoff", () => {
         expect(first).toEndWith("handoff-sess-1234-abcd-p1-1.md");
         expect(second).toEndWith("handoff-sess-1234-abcd-p1-1-2.md");
         expect(readFileSync(first, "utf8")).toBe(draft.markdown);
+    });
+
+    test("two composers that both pick a name before either writes get different names", () => {
+        const dir = mkdtempSync(join(tmpdir(), "hub-handoff-"));
+        const first = reserveHandoffPath(dir, "handoff-sess-1-p1-2");
+        const second = reserveHandoffPath(dir, "handoff-sess-1-p1-2");
+
+        expect(first).toEndWith("handoff-sess-1-p1-2.md");
+        expect(second).toEndWith("handoff-sess-1-p1-2-2.md");
     });
 });
 

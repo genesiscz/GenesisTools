@@ -186,3 +186,59 @@ test("a catalog with maxDiscoveryAgeMs reuses a recent refresh of the same scope
         rmSync(root, { recursive: true, force: true });
     }
 });
+
+test("a catalog with refresh: false reads the index as it is and never walks, while an ordinary catalog still does", async () => {
+    const root = mkdtempSync(join(tmpdir(), "history-catalog-unrefreshed-"));
+    const id = "11111111-2222-4333-8444-000000000031";
+    session(root, id, HOUR);
+    const database = new Database(":memory:");
+    initializeCompactHistorySchema(database);
+    let forbidden = true;
+    let walks = 0;
+    const stamps: string[] = [];
+    const service = new HistoryService({
+        providerId: "anthropic-sub",
+        roots: [root],
+        repository: new HistorySyncRepository(database),
+        reader: {
+            ...claudeHistoryReader,
+            discover: (roots, options) => {
+                walks++;
+
+                if (forbidden) {
+                    throw new Error("a refresh: false catalog walked the sources");
+                }
+
+                return claudeHistoryReader.discover(roots, options);
+            },
+        },
+        now: () => new Date(NOW),
+        freshness: {
+            age: () => null,
+            touch: (key) => {
+                stamps.push(key);
+            },
+        },
+    });
+
+    try {
+        // Never refreshed, and no recent refresh to reuse: it still reads the (empty) index as it is.
+        const empty = await service.catalog({ excludeAgents: true }, { refresh: false });
+        expect(walks).toBe(0);
+        expect(stamps).toEqual([]);
+        expect(empty.metadata).toEqual([]);
+
+        forbidden = false;
+        const refreshed = await service.catalog({ excludeAgents: true });
+        expect(walks).toBe(1);
+        expect(refreshed.metadata.map((entry) => entry.nativeId)).toEqual([id]);
+
+        forbidden = true;
+        const read = await service.catalog({ excludeAgents: true }, { refresh: false });
+        expect(walks).toBe(1);
+        expect(read.metadata.map((entry) => entry.nativeId)).toEqual([id]);
+    } finally {
+        database.close();
+        rmSync(root, { recursive: true, force: true });
+    }
+});

@@ -91,6 +91,8 @@ export interface SessionListingOptions {
     newest?: number;
     /** Read the index as it is when this scope was refreshed that recently (see `HistoryService.catalog`). */
     maxDiscoveryAgeMs?: number;
+    /** `false` reads the index as it is, with no refresh (see `HistoryService.catalog`). */
+    refresh?: boolean;
     /** Progress callback: (processed, total, currentFile) */
     onProgress?: (processed: number, total: number, currentFile: string) => void;
 }
@@ -136,7 +138,7 @@ export async function getSessionListing(options: SessionListingOptions = {}): Pr
                 mtimeFrom: options.mtimeFrom,
                 newest: options.newest,
             },
-            { maxDiscoveryAgeMs: options.maxDiscoveryAgeMs }
+            { maxDiscoveryAgeMs: options.maxDiscoveryAgeMs, refresh: options.refresh }
         )
     );
     const subagentCount = all.filter((metadata) => metadata.isSubagent).length;

@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
+import { closeSync, mkdirSync, openSync, readFileSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { listAgentSessionRows, POLLED_LISTING_REUSE_MS } from "@app/ai/lib/sessions/agent-session-rows";
 import { costOf, DEFAULT_PRICING, priceFor, resolvePrice } from "@app/ai-spend/lib/pricing";
@@ -385,16 +385,29 @@ export async function sessionHandoff(options: HandoffOptions): Promise<HandoffRe
 export function saveHandoff(draft: HandoffResult, dir: string): string {
     const folder = resolve(dir);
     mkdirSync(folder, { recursive: true });
-    const stem = `handoff-${draft.sessionId}-p${draft.fromNumber}-${draft.toNumber}`;
-    let path = join(folder, `${stem}.md`);
-
-    for (let copy = 2; existsSync(path); copy++) {
-        path = join(folder, `${stem}-${copy}.md`);
-    }
-
+    const path = reserveHandoffPath(folder, `handoff-${draft.sessionId}-p${draft.fromNumber}-${draft.toNumber}`);
     atomicWriteFileSync(path, draft.markdown);
     log.debug({ path }, "handoff saved");
     return path;
+}
+
+/**
+ * Claims the first free `<stem>.md`, `<stem>-2.md`… by exclusive creation. Checking for the name and then
+ * writing let two composers of the same range pick one name, and the second write replaced the first draft.
+ */
+export function reserveHandoffPath(folder: string, stem: string): string {
+    for (let copy = 1; ; copy++) {
+        const path = join(folder, copy === 1 ? `${stem}.md` : `${stem}-${copy}.md`);
+
+        try {
+            closeSync(openSync(path, "wx"));
+            return path;
+        } catch (error) {
+            if (!(error instanceof Error && "code" in error && error.code === "EEXIST")) {
+                throw error;
+            }
+        }
+    }
 }
 
 /**

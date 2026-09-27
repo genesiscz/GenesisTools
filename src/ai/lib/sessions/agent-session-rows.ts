@@ -89,6 +89,8 @@ export interface AgentSessionRowsOptions {
     withUsage?: boolean;
     /** Reuse another process's refresh of the same provider scope when it is this recent. */
     maxDiscoveryAgeMs?: number;
+    /** `false` reads each index as it is, with no refresh: for a diagnostic, which must not write it. */
+    refresh?: boolean;
 }
 
 const ALL: readonly AccountProviderAlias[] = ["claude", "codex", "grok"];
@@ -178,7 +180,10 @@ async function nativeRows(
             ...(options.limit === undefined ? {} : { limit: options.limit }),
             ...(cutoff === undefined ? {} : { mtimeFrom: cutoff }),
         },
-        options.maxDiscoveryAgeMs === undefined ? {} : { maxDiscoveryAgeMs: options.maxDiscoveryAgeMs }
+        {
+            ...(options.maxDiscoveryAgeMs === undefined ? {} : { maxDiscoveryAgeMs: options.maxDiscoveryAgeMs }),
+            ...(options.refresh === undefined ? {} : { refresh: options.refresh }),
+        }
     );
     // One config read for the whole listing, not one per grok row.
     const grokLookup = alias === "grok" ? await grokAccountNameLookup() : () => undefined;
@@ -253,6 +258,7 @@ export async function listAgentSessionRows(options: AgentSessionRowsOptions = {}
                         ...(options.maxDiscoveryAgeMs === undefined
                             ? {}
                             : { maxDiscoveryAgeMs: options.maxDiscoveryAgeMs }),
+                        ...(options.refresh === undefined ? {} : { refresh: options.refresh }),
                     });
 
                     return claude.map((row) => ({ ...row, provider: "claude" as const }));
