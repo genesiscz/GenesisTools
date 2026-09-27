@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { listAgentSessionRows, POLLED_LISTING_REUSE_MS } from "@app/ai/lib/sessions/agent-session-rows";
 import { costOf, DEFAULT_PRICING, priceFor, resolvePrice } from "@app/ai-spend/lib/pricing";
@@ -48,8 +48,9 @@ const TAIL_BYTES = 2 * 1024 * 1024;
 /** Turns the stuck detector reads: enough for a long loop inside one prompt. */
 const STUCK_TURNS = 120;
 
+// The header's cost (tools ai-spend session) adds the sub-agents: for one session it read $1862 beside $548 here.
 export const INSIGHTS_PRICING_NOTE =
-    "List prices from the model catalog (the rates tools ai-spend uses), per model call; an estimate, not a bill";
+    "List prices from the model catalog (the rates tools ai-spend uses), per model call of this transcript; sub-agent transcripts are not included (the header's cost includes them); an estimate, not a bill";
 
 /** List price per call from the catalog, with its dated and context-banded rules applied. */
 export function catalogPricer(): CallPricer {
@@ -354,11 +355,20 @@ export async function sessionHandoff(options: HandoffOptions): Promise<HandoffRe
     return { ...draft, sessionId: resolved.sessionId, provider: resolved.provider };
 }
 
-/** `handoff-<id8>-p<from>-<to>.md` inside `dir`, written atomically. Returns the absolute path. */
+/**
+ * `handoff-<session id>-p<from>-<to>.md` inside `dir`, written atomically; `-2`, `-3`… when that name is
+ * taken, so a revised draft never replaces an earlier one. Returns the absolute path.
+ */
 export function saveHandoff(draft: HandoffResult, dir: string): string {
     const folder = resolve(dir);
     mkdirSync(folder, { recursive: true });
-    const path = join(folder, `handoff-${draft.sessionId.slice(0, 8)}-p${draft.fromNumber}-${draft.toNumber}.md`);
+    const stem = `handoff-${draft.sessionId}-p${draft.fromNumber}-${draft.toNumber}`;
+    let path = join(folder, `${stem}.md`);
+
+    for (let copy = 2; existsSync(path); copy++) {
+        path = join(folder, `${stem}-${copy}.md`);
+    }
+
     atomicWriteFileSync(path, draft.markdown);
     log.debug({ path }, "handoff saved");
     return path;

@@ -271,7 +271,7 @@ describe("refs", () => {
 });
 
 /** In-memory cache and a GraphQL fake that counts calls: nothing reaches GitHub or the disk. */
-function fakeDeps(start = NOW): ReadinessDeps & { calls: number; clock: { now: Date } } {
+function fakeDeps(start = NOW): ReadinessDeps & { calls: number; located: string[]; clock: { now: Date } } {
     const cache = new Map<string, unknown>();
     const clock = { now: start };
     const deps = {
@@ -280,6 +280,11 @@ function fakeDeps(start = NOW): ReadinessDeps & { calls: number; clock: { now: D
         graphql: async <T>(): Promise<T> => {
             deps.calls++;
             return raw() as T;
+        },
+        located: [] as string[],
+        locate: async (ref: string) => {
+            deps.located.push(ref);
+            return URL;
         },
         other: async () => facts({ provider: "gitlab", reviewsKnown: false }),
         storage: {
@@ -292,6 +297,77 @@ function fakeDeps(start = NOW): ReadinessDeps & { calls: number; clock: { now: D
     };
     return deps;
 }
+
+describe("prReadiness ref", () => {
+    test("a bare number is located first and judged through GraphQL, so the review-vs-push facts are there", async () => {
+        const deps = fakeDeps();
+        const result = await prReadiness({ input: "12", deps });
+
+        expect(deps.located).toEqual(["12"]);
+        expect(deps.calls).toBe(1);
+        expect(result.url).toBe(URL);
+    });
+
+    test("a URL is never located", async () => {
+        const deps = fakeDeps();
+        await prReadiness({ input: URL, deps });
+
+        expect(deps.located).toEqual([]);
+    });
+});
+
+describe("prReadiness bare calls and thread pages", () => {
+    const withThreads = (nodes: number, pageInfo = { hasNextPage: false, endCursor: null as string | null }) => {
+        const answer = raw();
+        const threads = answer.repository?.pullRequest?.reviewThreads;
+        const commit = answer.repository?.pullRequest?.commits.nodes[0]?.commit;
+
+        // Green CI, so the verdict turns only on the threads and the cache.
+        if (commit) {
+            commit.statusCheckRollup = { state: "SUCCESS" };
+        }
+
+        if (threads) {
+            threads.nodes = threads.nodes.slice(0, nodes);
+            threads.pageInfo = pageInfo;
+        }
+
+        return answer;
+    };
+
+    test("a bare call serves a cached blocked verdict, but asks again rather than serve a cached ready one", async () => {
+        const blocked = fakeDeps();
+        await prReadiness({ input: URL, deps: blocked });
+        expect((await prReadiness({ input: URL, deps: blocked })).cached).toBe(true);
+
+        const ready = fakeDeps();
+        ready.graphql = async <T>(): Promise<T> => {
+            ready.calls++;
+            return withThreads(0) as T;
+        };
+        const first = await prReadiness({ input: URL, deps: ready });
+        const again = await prReadiness({ input: URL, deps: ready });
+
+        expect(first.verdict).toBe("ready");
+        expect(again.cached).toBe(false);
+        expect(ready.calls).toBe(2);
+    });
+
+    test("a follow-up thread page that comes back empty is threads not read, so never ready", async () => {
+        const deps = fakeDeps();
+        deps.graphql = async <T>(): Promise<T> => {
+            deps.calls++;
+            return (
+                deps.calls > 1 ? { repository: null } : withThreads(0, { hasNextPage: true, endCursor: "c1" })
+            ) as T;
+        };
+        const result = await prReadiness({ input: URL, deps });
+
+        expect(deps.calls).toBe(2);
+        expect(result.verdict).toBe("waiting");
+        expect(result.reasons.join(" ")).toContain("review threads were read");
+    });
+});
 
 describe("prReadiness cache", () => {
     test("the same head within 10 minutes is served from the cache; a new head or --fresh asks again", async () => {

@@ -3,7 +3,7 @@ import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
 import { formatBytes } from "@genesiscz/utils/format";
 import { out } from "@genesiscz/utils/logger";
 import { createBoxTable, formatDotStatus, renderCliHeader, truncateDisplay } from "@genesiscz/utils/table";
-import { type Command, InvalidArgumentError } from "commander";
+import { type Command, InvalidArgumentError, Option } from "commander";
 import pc from "picocolors";
 import { readProcsReport } from "../lib/procs/sources";
 import { DEFAULT_GRACE_MS, type StopOutcome, stopOrphans, stopTree } from "../lib/procs/stop";
@@ -172,7 +172,12 @@ export function registerProcsCommand(program: Command): void {
         .option("--energy", "add macOS energy impact (one `top` sample, about 1 s)")
         .option("--stop <pid>", "SIGTERM that process and its tree, then SIGKILL after the grace period", pidArg)
         .option("--stop-orphans", "stop every orphan tree (asks first; --yes in scripts)")
-        .option("--grace <seconds>", "how long SIGTERM gets before SIGKILL", secondsArg, DEFAULT_GRACE_MS)
+        // The value is milliseconds once parsed; the help shows the default in the unit the flag takes.
+        .addOption(
+            new Option("--grace <seconds>", "how long SIGTERM gets before SIGKILL")
+                .argParser(secondsArg)
+                .default(DEFAULT_GRACE_MS, String(DEFAULT_GRACE_MS / 1000))
+        )
         .option("--yes", "skip the confirmation (the hub asks its own first)")
         .option("--json", "machine-readable output")
         .action(async (opts: ProcsFlags) => {

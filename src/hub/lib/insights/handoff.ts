@@ -1,4 +1,4 @@
-import { isWrapperUserText } from "@genesiscz/utils/agent-sessions/user-text";
+import { isHarnessDeliveryText, isWrapperUserText } from "@genesiscz/utils/agent-sessions/user-text";
 import type { TranscriptProvider, TranscriptTool, TranscriptTurn } from "@genesiscz/utils/ai/transcripts";
 import { promptLabel, sectionsOf } from "./timeline";
 import { isFailedTool, keyArgument, summarizeTools, toolDisplayName, toolKind } from "./tool-kind";
@@ -70,7 +70,10 @@ export function selectRange(
     turns: readonly TranscriptTurn[],
     range: HandoffRange
 ): { start: number; end: number; prompts: number[] } {
-    const prompts = turns.flatMap((turn, index) => (turn.role === "user" ? [index] : []));
+    // What the user typed: an Esc marker or a delivered peer message is not one of "the last N prompts".
+    const prompts = turns.flatMap((turn, index) =>
+        turn.role === "user" && !isHarnessDeliveryText(turn.text) ? [index] : []
+    );
 
     if (prompts.length === 0) {
         return { start: 0, end: turns.length, prompts: [] };
@@ -191,8 +194,11 @@ function openItemsOf(turns: readonly TranscriptTurn[], isRangeEnd: boolean): str
     const items: string[] = [];
     const last = turns.at(-1);
 
-    if (last?.role === "user") {
-        items.push(`Answer the last prompt, which has no reply yet: "${clip(last.text, 200)}"`);
+    // A task result or peer message after the prompt is not its reply.
+    const lastOwn = turns.findLast((turn) => !(turn.role === "user" && isHarnessDeliveryText(turn.text)));
+
+    if (lastOwn?.role === "user") {
+        items.push(`Answer the last prompt, which has no reply yet: "${clip(lastOwn.text, 200)}"`);
     }
 
     const tools = turns.flatMap((turn) => turn.tools);

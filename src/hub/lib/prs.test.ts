@@ -49,6 +49,9 @@ describe("parsePrRef", () => {
         // A bare number names a PR of the repo in the current folder, as `tools hub --pr <n>` does.
         expect(parsePrRef("424")).toEqual({ path: process.cwd(), number: 424 });
         expect(parsePrRef("#424")).toEqual({ path: process.cwd(), number: 424 });
+        // `owner/repo#n` is a GitHub PR unless a folder by that relative path exists.
+        expect(parsePrRef("acme/shop#12")).toEqual({ url: "https://github.com/acme/shop/pull/12" });
+        expect(parsePrRef("src/hub#12")).toEqual({ path: "src/hub", number: 12 });
     });
 });
 

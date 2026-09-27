@@ -5,7 +5,7 @@ import { join } from "node:path";
 import type { TranscriptTool, TranscriptTurn } from "@genesiscz/utils/ai/transcripts";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { composeHandoff, HandoffRangeError, selectRange } from "./handoff";
-import { catalogPricer, postSessionHandoff } from "./index";
+import { catalogPricer, postSessionHandoff, saveHandoff } from "./index";
 import { codexModelOf, scanClaudeNative, toolInputKeys } from "./native";
 import {
     defaultStuckThresholds,
@@ -443,6 +443,22 @@ describe("composeHandoff", () => {
         expect(draft.markdown).toContain("Ran 4 commands · Read 1 file · Changed 1 file · 2 failed");
     });
 
+    test("an Esc marker or a task result is not one of the last N prompts", () => {
+        const turns = [
+            ...session(),
+            user("p4", "[Request interrupted by user]", 90),
+            user("p5", "and deploy it", 91),
+            user("p6", "[SYSTEM NOTIFICATION - NOT USER INPUT]\n<task-notification>x</task-notification>", 95),
+        ];
+        const range = selectRange(turns, { last: 2 });
+
+        expect(range.prompts).toEqual([3, 6]);
+        expect(range.end).toBe(turns.length);
+        expect(composeHandoff({ turns, meta, range: { last: 1 } }).openItems[0]).toBe(
+            'Answer the last prompt, which has no reply yet: "and deploy it"'
+        );
+    });
+
     test("a teammate message or task notification is never the goal: the user's last own prompt is", () => {
         const turns = [
             ...session(),
@@ -465,6 +481,22 @@ describe("composeHandoff", () => {
         expect(draft.commits).toEqual([{ sha: "1a2b3c4d", branch: "feat/export", subject: "add export" }]);
         expect(draft.markdown).toContain("`1a2b3c4d` add export (feat/export)");
         expect(draft.openItems[0]).toBe('Answer the last prompt, which has no reply yet: "and deploy it"');
+    });
+});
+describe("saveHandoff", () => {
+    test("names the file with the full session id and never replaces an earlier draft of the same range", () => {
+        const dir = mkdtempSync(join(tmpdir(), "hub-handoff-"));
+        const draft = composeHandoff({
+            turns: [user("p1", "Ship the report", 0), assistant("r1", 5, { text: "Started." })],
+            meta: { sessionId: "sess-1234-abcd", provider: "claude" as const },
+            range: { last: 1 },
+        });
+        const first = saveHandoff({ ...draft, sessionId: "sess-1234-abcd", provider: "claude" }, dir);
+        const second = saveHandoff({ ...draft, sessionId: "sess-1234-abcd", provider: "claude" }, dir);
+
+        expect(first).toEndWith("handoff-sess-1234-abcd-p1-1.md");
+        expect(second).toEndWith("handoff-sess-1234-abcd-p1-1-2.md");
+        expect(readFileSync(first, "utf8")).toBe(draft.markdown);
     });
 });
 describe("postSessionHandoff", () => {

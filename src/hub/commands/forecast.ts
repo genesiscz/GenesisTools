@@ -2,18 +2,10 @@ import { out } from "@genesiscz/utils/logger";
 import { createBoxTable, formatDotStatus, renderCliHeader } from "@genesiscz/utils/table";
 import type { Command } from "commander";
 import pc from "picocolors";
-import { buildForecast, type WindowForecast } from "../lib/forecast";
+import { buildForecast, forecastClock, type WindowForecast } from "../lib/forecast";
 
 function clock(iso: string | null): string {
-    if (!iso) {
-        return "";
-    }
-
-    const date = new Date(iso);
-    const sameDay = date.toDateString() === new Date().toDateString();
-    return sameDay
-        ? date.toTimeString().slice(0, 5)
-        : `${date.toDateString().slice(0, 10)} ${date.toTimeString().slice(0, 5)}`;
+    return iso ? forecastClock(new Date(iso)) : "";
 }
 
 function outlook(window: WindowForecast): string {

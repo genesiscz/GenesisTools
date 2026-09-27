@@ -182,7 +182,35 @@ export async function stopTree({
         };
     }
 
-    const targets = found.pids.filter((member) => same(before, member));
+    // Each member's parent inside the chosen tree (depth-first order: the nearest earlier member one level up).
+    // A member whose ancestor was replaced has been reparented out of that tree, as the root rule says.
+    const parentOf = new Map<number, number>();
+    const stack: Array<{ pid: number; depth: number }> = [];
+
+    for (const entry of found.group.processes.filter((process) => found.pids.includes(process.pid))) {
+        while ((stack.at(-1)?.depth ?? -1) >= entry.depth) {
+            stack.pop();
+        }
+
+        const parent = stack.at(-1);
+
+        if (parent) {
+            parentOf.set(entry.pid, parent.pid);
+        }
+
+        stack.push({ pid: entry.pid, depth: entry.depth });
+    }
+
+    const lineageIntact = (member: number): boolean => {
+        for (let at: number | undefined = member; at !== undefined; at = parentOf.get(at)) {
+            if (!same(before, at)) {
+                return false;
+            }
+        }
+
+        return true;
+    };
+    const targets = found.pids.filter(lineageIntact);
     log.info(
         { pid, label, pids: targets, skipped: found.pids.filter((m) => !targets.includes(m)) },
         "procs stop: SIGTERM"
@@ -194,10 +222,13 @@ export async function stopTree({
 
     let alive = await waitGone(ops, targets, graceMs);
     let signal: StopOutcome["signal"] = targets.length > 0 ? "TERM" : null;
+    // Alive, but `ps` could not read them: not known to be gone, and not known to be ours.
+    let unverified: number[] = [];
 
     if (alive.length > 0) {
         const live = ops.identity(alive);
         const killable = alive.filter((member) => same(live, member));
+        unverified = alive.filter((member) => !live.has(member));
         log.info(
             { pid, killable, changed: alive.filter((m) => !killable.includes(m)) },
             "procs stop: SIGKILL after grace"
@@ -208,8 +239,10 @@ export async function stopTree({
         }
 
         signal = killable.length > 0 ? "KILL" : signal;
-        alive = await waitGone(ops, killable, KILL_WAIT_MS);
+        alive = [...(await waitGone(ops, killable, KILL_WAIT_MS)), ...unverified.filter((member) => ops.alive(member))];
     }
+
+    const leftAlone = unverified.filter((member) => alive.includes(member));
 
     const outcome: StopOutcome = {
         pid,
@@ -221,9 +254,11 @@ export async function stopTree({
         reason:
             targets.length === 0
                 ? "every pid had already exited or now belongs to another process"
-                : alive.length > 0
-                  ? `still running after SIGKILL: ${alive.join(", ")}`
-                  : null,
+                : leftAlone.length > 0
+                  ? `still running: ${alive.join(", ")} (${leftAlone.join(", ")} could not be verified, so no SIGKILL was sent)`
+                  : alive.length > 0
+                    ? `still running after SIGKILL: ${alive.join(", ")}`
+                    : null,
     };
     log.info(outcome, "procs stop done");
     return outcome;

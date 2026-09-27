@@ -203,6 +203,12 @@ export function forecastWindow(samples: readonly UsageSample[], now: Date = new 
     };
 }
 
+/** A run-out time as a reader takes it: the clock for today, else the day with it ("Tue Sep 29 22:32"). */
+export function forecastClock(date: Date, now: Date = new Date()): string {
+    const time = date.toTimeString().slice(0, 5);
+    return date.toDateString() === now.toDateString() ? time : `${date.toDateString().slice(0, 10)} ${time}`;
+}
+
 function warningOf(windows: readonly WindowForecast[], nowMs: number): string | null {
     const early = windows
         .filter((window) => window.beforeReset && window.exhaustAt)
@@ -219,7 +225,8 @@ function warningOf(windows: readonly WindowForecast[], nowMs: number): string | 
         return `${early.label} is projected at its limit now, before its reset`;
     }
 
-    return `${early.label} runs out at ${at.toTimeString().slice(0, 5)}, before its reset`;
+    // The clock alone read as today for a run-out two days away ("Weekly runs out at 22:32").
+    return `${early.label} runs out at ${forecastClock(at, new Date(nowMs))}, before its reset`;
 }
 
 /** Groups samples (any order) by provider/account/bucket and forecasts each window. */

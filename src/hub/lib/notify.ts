@@ -49,6 +49,9 @@ export interface PrMemory {
     botReviewIds: string[];
     /** `<sha>:<ci>` of the last CI result that was notified, or recorded as the baseline. */
     ciSeen: string | null;
+    /** The head and CI state of the last poll, which may be newer than `ciSeen`; absent in older state files. */
+    headSha?: string | null;
+    ci?: PrCi;
     notes: number | null;
     seenAt: string;
 }
@@ -99,6 +102,8 @@ export function memoryOf(pr: PrSnapshot, previous: PrMemory | undefined, now: st
             pr.botReviews.map((r) => r.id)
         ),
         ciSeen: ciKey(pr) ?? previous?.ciSeen ?? null,
+        headSha: pr.headSha,
+        ci: pr.ci,
         notes: pr.notes ?? previous?.notes ?? null,
         seenAt: now,
     };

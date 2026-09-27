@@ -1,3 +1,4 @@
+import { isHarnessDeliveryText } from "@genesiscz/utils/agent-sessions/user-text";
 import type { TranscriptTurn } from "@genesiscz/utils/ai/transcripts";
 import { shortModel } from "./native";
 import { isFailedTool } from "./tool-kind";
@@ -89,7 +90,8 @@ export function sectionsOf(turns: readonly TranscriptTurn[]): Section[] {
     for (const [index, turn] of turns.entries()) {
         const current = sections.at(-1);
 
-        if (turn.role === "user") {
+        // A delivered peer message, task result or Esc marker stays inside the prompt it arrived during.
+        if (turn.role === "user" && !isHarnessDeliveryText(turn.text)) {
             sections.push({ number: index + 1, index, turnId: turn.id, label: promptLabel(turn.text), turns: [turn] });
             continue;
         }

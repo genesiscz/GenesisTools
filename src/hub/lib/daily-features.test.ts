@@ -13,7 +13,7 @@ import {
     digestMarkdown,
     parseNumstat,
 } from "./digest";
-import { forecastFromSamples, forecastWindow, type UsageSample } from "./forecast";
+import { forecastClock, forecastFromSamples, forecastWindow, type UsageSample } from "./forecast";
 import type { NotifyState } from "./notify-poll";
 import {
     addRule,
@@ -23,6 +23,7 @@ import {
     type HubRule,
     normalizeRulesConfig,
     prRefFromKey,
+    RULE_LIMITS,
     type RuleInputs,
     type RuleSession,
     ruleClickCommand,
@@ -423,6 +424,20 @@ describe("forecast", () => {
         expect(account?.warning).toBe("Weekly is projected at its limit now, before its reset");
     });
 
+    test("a run-out on a later day names the day, not only the clock", () => {
+        const resetsAt = new Date(NOW.getTime() + 4 * 24 * 3_600_000).toISOString();
+        // 60 % three days into the week: 20 %/day, so 100 % two days from now, two days before the reset.
+        const [account] = forecastFromSamples(
+            [sample({ bucket: "seven_day", kind: "weekly", utilization: 60, timestamp: isoAgo(0), resetsAt })],
+            NOW
+        );
+        const at = new Date(NOW.getTime() + 2 * 24 * 3_600_000);
+
+        expect(account?.warning).toBe(`Weekly runs out at ${forecastClock(at, NOW)}, before its reset`);
+        expect(forecastClock(at, NOW)).toMatch(/^\w{3} \w{3} \d{2} \d{2}:\d{2}$/);
+        expect(forecastClock(NOW, NOW)).toMatch(/^\d{2}:\d{2}$/);
+    });
+
     test("groups by account and names the earliest window that runs out first", () => {
         const resetsAt = new Date(NOW.getTime() + 3 * 3_600_000).toISOString();
         const accounts = forecastFromSamples(
@@ -621,6 +636,15 @@ describe("rules", () => {
         const pr = rulePrsFromNotifyState(state);
         expect(pr.prs.map((entry) => entry.ref).sort()).toEqual(["work/shop#4", "work/shop#5", "work/side#6"]);
 
+        // After a new push the last notified result still says failed; the poll's own state says running.
+        const pushed = rulePrsFromNotifyState({
+            ...state,
+            prs: {
+                "github.com/work/shop#4": { ...state.prs["github.com/work/shop#4"], headSha: "new999", ci: "running" },
+            },
+        });
+        expect(pushed.prs[0]).toMatchObject({ sha: "new999", ci: "running" });
+
         const seeded = { ...emptyRulesState(), seeded: { r_ciFailed: true, r_narrow: true } };
         const result = evaluateRules({
             config: { rules: [rule({ kind: "ciFailed" }), rule({ id: "r_narrow", kind: "ciFailed", match: "side" })] },
@@ -804,5 +828,54 @@ describe("rules", () => {
         // d2 went out in the first batch and is not posted again; only the one that threw is retried.
         expect(next.posted).toBe(1);
         expect(attempts).toEqual(["d2", "d3", "d3"]);
+    });
+
+    test("each delivered notification is on disk before the next one posts", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "hub-rules-"));
+        const statePath = join(dir, "rules-state.json");
+        const d2OnDisk: boolean[] = [];
+        const shared = {
+            now: NOW,
+            statePath,
+            readConfig: async () => ({ rules: [rule({ kind: "decision" })] }),
+            inputs: async () => inputs({ decisions: [decision({ id: "d1" })] }),
+            post: async () => true,
+        };
+
+        await runRules(shared);
+        await runRules({
+            ...shared,
+            inputs: async () => inputs({ decisions: ["d1", "d2", "d3"].map((id) => decision({ id })) }),
+            post: async (firing: { key: string }) => {
+                if (firing.key === "d3") {
+                    const saved = (await Bun.file(statePath).json()) as {
+                        fired: Record<string, Record<string, string>>;
+                    };
+                    d2OnDisk.push(Boolean(saved.fired.r_decision?.d2));
+                }
+
+                return true;
+            },
+        });
+
+        expect(d2OnDisk).toEqual([true]);
+    });
+
+    test("more matches than the history cap never evicts one that still matches", () => {
+        const ids = Array.from({ length: RULE_LIMITS.firedPerRule + 100 }, (_, index) => `d${index}`);
+        const state = {
+            ...emptyRulesState(),
+            seeded: { r_decision: true },
+            fired: { r_decision: Object.fromEntries(ids.map((id) => [id, isoAgo(10)])) },
+        };
+        const result = evaluateRules({
+            config: { rules: [rule({ kind: "decision" })] },
+            state,
+            inputs: inputs({ decisions: ids.map((id) => decision({ id })) }),
+            now: NOW,
+        });
+
+        expect(result.firings).toEqual([]);
+        expect(Object.keys(result.state.fired.r_decision ?? {})).toHaveLength(ids.length);
     });
 });

@@ -503,6 +503,10 @@ export async function sendPrompt({
         throw new HubPromptError("send-failed", error);
     }
 
-    await recordUse({ name: prompt.name, path, now: deps.now() });
+    // The text is already in the pane: a use count that fails to save must not read as a failed send,
+    // or a retry types the same instruction twice.
+    await recordUse({ name: prompt.name, path, now: deps.now() }).catch((err: unknown) => {
+        log.warn({ err, name: prompt.name }, "prompt sent; its use count was not saved");
+    });
     return { ...result, sent: true };
 }

@@ -1,6 +1,19 @@
 import { isBareSlashCommandText } from "@genesiscz/utils/ai/transcripts/clean-text";
 
 /**
+ * What the harness delivers into a running session as a user turn, never typed by the user: a peer's
+ * message, a background task's result, and the marker Claude Code stores for an Esc. A handoff quoted a
+ * whole teammate report as the session's goal, and "the last 2 prompts" spent one on an Esc marker.
+ */
+const HARNESS_DELIVERY_PREFIXES = [
+    "Another Claude session sent a message",
+    "<teammate-message",
+    "<task-notification>",
+    "[SYSTEM NOTIFICATION",
+    "[Request interrupted by user",
+] as const;
+
+/**
  * Codex and Grok wrap machine-generated context in a leading tag and send it as a user-role
  * message. Treating one as the session's own first prompt made 48 of 111 Codex sessions on this
  * machine list `<environment_context> <cwd>/Users/…` where the user's words belong. Three readers
@@ -17,16 +30,9 @@ const WRAPPER_PREFIXES = [
     // prompt: 97 open with the caveat block, 32 with a teammate message, 9 with a session-naming
     // reminder and 9 with a compaction header. That is 147 listings showing machinery.
     "<local-command-caveat>",
-    "<teammate-message",
     "<system-reminder>",
     "## Context Usage",
-    // What the harness delivers into a running session as a user turn: a peer's message and a
-    // background task's result. A handoff quoted a whole teammate report as the session's goal.
-    "Another Claude session sent a message",
-    "<task-notification>",
-    "[SYSTEM NOTIFICATION",
-    // Claude Code's marker for an Esc, stored as a user turn.
-    "[Request interrupted by user",
+    ...HARNESS_DELIVERY_PREFIXES,
 ] as const;
 
 // A slash command WITH arguments is kept: `/rename board-polish` is the user's own text, and the
@@ -57,6 +63,12 @@ export function cleanSessionTitle(raw: string | null | undefined): string | null
         .replace(/\s+/g, " ")
         .trim();
     return text || null;
+}
+
+/** A user-role turn the harness delivered (a peer's message, a task result, an Esc marker), not a prompt. */
+export function isHarnessDeliveryText(text: string): boolean {
+    const trimmed = text.trimStart();
+    return HARNESS_DELIVERY_PREFIXES.some((prefix) => trimmed.startsWith(prefix));
 }
 
 export function isWrapperUserText(text: string): boolean {

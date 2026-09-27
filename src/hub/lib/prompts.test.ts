@@ -171,6 +171,15 @@ describe("sendPrompt", () => {
         });
     });
 
+    test("a send whose use count cannot be saved still reports sent, so it is never retried", async () => {
+        const deps = fakeDeps();
+        // A file under /dev/null can never be written: the count fails after the text was typed.
+        const result = await sendPrompt({ name: "fix-review", session: SESSION, path: "/dev/null/prompts.json", deps });
+
+        expect(result.sent).toBe(true);
+        expect(deps.sent).toHaveLength(1);
+    });
+
     test("an explicit --var wins over the session's value, and the PR is not looked up when given", async () => {
         const path = scratch();
         let askedForPr = false;

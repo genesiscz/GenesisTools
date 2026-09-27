@@ -431,6 +431,48 @@ describe("stopTree", () => {
         expect(outcome.reason).toContain("root process exited");
     });
 
+    test("a member whose parent inside the tree was replaced is left alone, as the root rule says", async () => {
+        const rows = table();
+        const ops = fakeOps(rows, {});
+        const identity = ops.identity;
+        ops.identity = (pids) => {
+            const found = identity(pids);
+
+            if (found.has(213)) {
+                found.set(213, { startedAt: new Date(NOW).toISOString(), command: "/usr/bin/vim notes.md" });
+            }
+
+            return found;
+        };
+        await stopTree({ pid: 210, sources: fakeSources(rows), ops });
+
+        expect(ops.sent).toContain("SIGTERM 210");
+        expect(ops.sent).not.toContain("SIGTERM 213");
+        expect(ops.sent).not.toContain("SIGTERM 214");
+    });
+
+    test("a survivor ps cannot read is still running, gets no SIGKILL, and the tree is not stopped", async () => {
+        const rows = table();
+        const ops = fakeOps(rows, { 301: "never" });
+        const identity = ops.identity;
+        let calls = 0;
+        ops.identity = (pids) => {
+            calls++;
+            const found = identity(pids);
+
+            if (calls > 1) {
+                found.delete(301);
+            }
+
+            return found;
+        };
+        const outcome = await stopTree({ pid: 300, graceMs: 1_000, sources: fakeSources(rows), ops });
+
+        expect(ops.sent).toEqual(["SIGTERM 300", "SIGTERM 301"]);
+        expect(outcome).toMatchObject({ stopped: false, survivors: [301] });
+        expect(outcome.reason).toContain("could not be verified");
+    });
+
     test("a member pid stops only its own subtree", async () => {
         const rows = table();
         const ops = fakeOps(rows, {});

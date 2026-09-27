@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { basename } from "node:path";
 import { concurrentMap } from "@genesiscz/utils/async";
 import {
@@ -77,7 +78,10 @@ export function worktreeByBranch(worktrees: WorktreeInfo[]): Map<string, string>
     return byBranch;
 }
 
-/** `<url>`, `<repoPath>#<number>`, or `<number>` / `#<number>` for the current folder's repo; null otherwise. */
+/**
+ * `<url>`, `<repoPath>#<number>`, `<owner>/<repo>#<number>` for a GitHub repo when no such folder exists, or
+ * `<number>` / `#<number>` for the current folder's repo; null otherwise.
+ */
 export function parsePrRef(ref: string): { url: string } | { path: string; number: number } | null {
     const trimmed = ref.trim();
 
@@ -92,7 +96,17 @@ export function parsePrRef(ref: string): { url: string } | { path: string; numbe
     }
 
     const match = /^(.+)#(\d+)$/.exec(trimmed);
-    return match ? { path: match[1], number: Number(match[2]) } : null;
+
+    if (!match) {
+        return null;
+    }
+
+    // The hub's own `--pr genesiscz/GenesisTools#424`: read as a folder, it failed with a bare `posix_spawn 'git'`.
+    if (/^[\w.-]+\/[\w.-]+$/.test(match[1]) && !existsSync(match[1])) {
+        return { url: `https://github.com/${match[1]}/pull/${match[2]}` };
+    }
+
+    return { path: match[1], number: Number(match[2]) };
 }
 
 function toHubPr({

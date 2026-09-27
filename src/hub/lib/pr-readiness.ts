@@ -370,14 +370,16 @@ export function parseGithubPrUrl(url: string): { owner: string; repo: string; nu
 
 export interface ReadinessDeps {
     graphql<T>(query: string, variables: Record<string, unknown>): Promise<T>;
-    /** A PR/MR that is not a github.com URL: resolved and judged through the hub's own readers. */
-    other(ref: string): Promise<ReadinessFacts>;
+    /** The PR/MR URL of a `<repoPath>#<n>` or `<n>` ref, through the hub's own finder. */
+    locate(ref: string): Promise<string>;
+    /** A PR/MR that is not on github.com: judged through the hub's own readers. */
+    other(url: string): Promise<ReadinessFacts>;
     storage: Pick<Storage, "getCacheFile" | "putCacheFile">;
     now(): Date;
 }
 
-async function otherFacts(ref: string): Promise<ReadinessFacts> {
-    const found = await findPrByRef({ ref });
+async function otherFacts(url: string): Promise<ReadinessFacts> {
+    const found = await findPrByRef({ ref: url });
     const [detail, threads] = await Promise.all([
         hubPr({ ref: found.url }),
         backendFor(found).then((backend) => prThreads({ pr: found, backend })),
@@ -409,6 +411,7 @@ async function otherFacts(ref: string): Promise<ReadinessFacts> {
 
 export const realReadinessDeps: ReadinessDeps = {
     graphql: (query, variables) => defaultReviewCommentClient().graphql(query, variables),
+    locate: async (ref) => (await findPrByRef({ ref })).url,
     other: otherFacts,
     storage: new Storage("hub"),
     now: () => new Date(),
@@ -435,14 +438,22 @@ async function fetchFacts(ref: string, deps: ReadinessDeps): Promise<ReadinessFa
     const raw = await deps.graphql<RawReadiness>(READINESS_QUERY, vars);
     const extra: RawThreadPage["nodes"] = [];
     let page = raw.repository?.pullRequest?.reviewThreads.pageInfo;
+    // A follow-up page that comes back empty is threads not read, never the end of the list.
+    let pageMissing = false;
 
     for (let count = 1; page?.hasNextPage && page.endCursor && count < MAX_THREAD_PAGES; count++) {
         const next = await deps.graphql<{
             repository: { pullRequest: { reviewThreads: RawThreadPage } | null } | null;
         }>(THREADS_PAGE_QUERY, { ...vars, cursor: page.endCursor });
         const threads = next.repository?.pullRequest?.reviewThreads;
-        extra.push(...(threads?.nodes ?? []));
-        page = threads?.pageInfo;
+
+        if (!threads) {
+            pageMissing = true;
+            break;
+        }
+
+        extra.push(...threads.nodes);
+        page = threads.pageInfo;
     }
 
     const facts = githubFacts(raw, extra);
@@ -451,8 +462,8 @@ async function fetchFacts(ref: string, deps: ReadinessDeps): Promise<ReadinessFa
         throw new Error(`${ref}: the PR was not found`);
     }
 
-    if (page?.hasNextPage) {
-        log.warn({ ref, threads: facts.threads.length }, "pr readiness: thread pages stopped at the cap");
+    if (page?.hasNextPage || pageMissing) {
+        log.warn({ ref, threads: facts.threads.length, pageMissing }, "pr readiness: thread pages stopped early");
         return { ...facts, threadsTruncated: true };
     }
 
@@ -472,7 +483,11 @@ export async function prReadiness({
     fresh?: boolean;
     deps?: ReadinessDeps;
 }): Promise<PrReadiness> {
-    const { ref, head } = splitKnownHead(input.trim());
+    const known = splitKnownHead(input.trim());
+    // A number or `<repoPath>#<n>` becomes its URL first: a github.com PR then gets the review-vs-push
+    // facts only GraphQL has (the finder's path left them null), and the cache key names the repo.
+    const ref = /^https?:\/\//i.test(known.ref) ? known.ref : await deps.locate(known.ref);
+    const head = known.head;
     const key = cacheKey(ref);
     const now = deps.now();
 
@@ -483,7 +498,8 @@ export async function prReadiness({
             hit &&
             (head
                 ? hit.headSha?.toLowerCase().startsWith(head) && age < READINESS_HEAD_TTL_MS
-                : age < READINESS_BARE_TTL_MS);
+                : // Without a head nothing proves the PR did not move since: a cached "ready" is asked again.
+                  age < READINESS_BARE_TTL_MS && hit.verdict !== "ready");
 
         if (hit && valid) {
             log.debug({ ref, head, ageMs: age }, "pr readiness: cache hit");

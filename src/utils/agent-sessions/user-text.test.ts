@@ -1,5 +1,21 @@
 import { expect, test } from "bun:test";
-import { cleanSessionTitle, isWrapperUserText } from "./user-text";
+import { cleanSessionTitle, isHarnessDeliveryText, isWrapperUserText } from "./user-text";
+
+test("a harness delivery is an Esc marker, a peer's message or a task result, never a typed prompt", () => {
+    expect(isHarnessDeliveryText("[Request interrupted by user]")).toBe(true);
+    expect(isHarnessDeliveryText("[Request interrupted by user for tool use]")).toBe(true);
+    expect(
+        isHarnessDeliveryText(
+            'Another Claude session sent a message:\n<teammate-message teammate_id="p">x</teammate-message>'
+        )
+    ).toBe(true);
+    expect(
+        isHarnessDeliveryText("[SYSTEM NOTIFICATION - NOT USER INPUT]\n<task-notification>x</task-notification>")
+    ).toBe(true);
+    // A slash command and a real prompt are the user's own.
+    expect(isHarnessDeliveryText("/compact")).toBe(false);
+    expect(isHarnessDeliveryText("fix the interrupted build")).toBe(false);
+});
 
 test("a session title drops harness tags and image marks but keeps the words", () => {
     expect(cleanSessionTitle('<pasted_content id="b643"> 3) Restock · Add all')).toBe("3) Restock · Add all");

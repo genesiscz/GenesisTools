@@ -479,10 +479,13 @@ function matchesFor(rule: HubRule, inputs: RuleInputs, now: number): { matches: 
 }
 
 function prune(fired: Record<string, string>, now: number, keep: Set<string>): Record<string, string> {
-    const entries = Object.entries(fired)
-        .filter(([key, at]) => keep.has(key) || now - Date.parse(at) < RULE_LIMITS.firedKeepMs)
+    // Every key that still matches stays whatever the cap: an evicted one fired again on the next tick.
+    const active = Object.entries(fired).filter(([key]) => keep.has(key));
+    const history = Object.entries(fired)
+        .filter(([key, at]) => !keep.has(key) && now - Date.parse(at) < RULE_LIMITS.firedKeepMs)
         .sort((left, right) => left[1].localeCompare(right[1]));
-    return Object.fromEntries(entries.slice(-RULE_LIMITS.firedPerRule));
+    const room = Math.max(0, RULE_LIMITS.firedPerRule - active.length);
+    return Object.fromEntries([...history.slice(Math.max(0, history.length - room)), ...active]);
 }
 
 /**
@@ -585,8 +588,11 @@ export function rulePrsFromNotifyState(state: NotifyState): { prs: RulePr[]; pos
         }
 
         const split = seen.lastIndexOf(":");
-        const sha = split > 0 ? seen.slice(0, split) : seen;
-        const ci = split > 0 ? seen.slice(split + 1) : "";
+        // `ciSeen` is the last result notified: after a new push it still says the old head failed while
+        // the new one runs. The poll's own head and CI state win when the state file has them.
+        const current = memory.ci !== undefined;
+        const sha = current ? (memory.headSha ?? "") : split > 0 ? seen.slice(0, split) : seen;
+        const ci = current ? (memory.ci ?? "") : split > 0 ? seen.slice(split + 1) : "";
         const last = [...state.recent].reverse().find((item) => item.key === key);
         prs.push({ key, ref: prRefFromKey(key), title: last?.title ?? null, url: last?.url ?? null, sha, ci });
     }
@@ -704,7 +710,17 @@ export async function runRules({
         let posted = 0;
 
         if (!dryRun) {
+            // Each delivered firing is saved before the next one posts, so a crash mid-batch never posts the
+            // delivered ones again. The baselines and prunes go first, with no undelivered firing marked.
+            const marks = evaluation.firings.map((firing) => evaluation.state.fired[firing.ruleId]?.[firing.key]);
+
             for (const firing of evaluation.firings) {
+                delete evaluation.state.fired[firing.ruleId]?.[firing.key];
+            }
+
+            writeJson(statePath, evaluation.state);
+
+            for (const [index, firing] of evaluation.firings.entries()) {
                 // A throw counts as not delivered too: escaping here skipped the save, so the firings
                 // already posted in this batch were posted again on the next tick.
                 const delivered = await post(firing).catch((error: unknown) => {
@@ -714,18 +730,18 @@ export async function runRules({
 
                 if (delivered) {
                     posted++;
+                    evaluation.state.fired[firing.ruleId] ??= {};
+                    evaluation.state.fired[firing.ruleId][firing.key] = marks[index] ?? now.toISOString();
+                    writeJson(statePath, evaluation.state);
                     continue;
                 }
 
-                // Not delivered: forget it, so the next tick tries again instead of treating it as sent.
-                delete evaluation.state.fired[firing.ruleId]?.[firing.key];
+                // Not delivered: left unmarked, so the next tick tries again instead of treating it as sent.
                 log.warn(
                     { rule: firing.ruleId, key: firing.key },
                     "hub rules: a notification did not post; retrying next run"
                 );
             }
-
-            writeJson(statePath, evaluation.state);
         }
 
         log.info(
