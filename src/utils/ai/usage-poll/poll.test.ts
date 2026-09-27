@@ -186,10 +186,12 @@ describe("__fetchProviderSnapshots", () => {
     function fakePlugin(args: {
         poll: AccountUsageFeature["poll"];
         credentialStamp?: AccountUsageFeature["credentialStamp"];
+        pollsWhileGated?: AccountUsageFeature["pollsWhileGated"];
     }): UsagePlugin {
         const usage: AccountUsageFeature = {
             poll: args.poll,
             ...(args.credentialStamp === undefined ? {} : { credentialStamp: args.credentialStamp }),
+            ...(args.pollsWhileGated === undefined ? {} : { pollsWhileGated: args.pollsWhileGated }),
         };
         const features: AccountFeatures = {
             presentation: { displayName: "Fake", alias: "fake", limitOrder: [], prominentLimits: [] },
@@ -255,6 +257,49 @@ describe("__fetchProviderSnapshots", () => {
 
         expect(snapshots[0].error).toBeUndefined();
         expect((await loadPollGate(PROVIDER)).work).toBeUndefined();
+    });
+
+    // Anthropic's long-lived token reads the rate-limit headers while the refresh path backs off.
+    test("a gated account the plugin can read without a refresh is polled, and the gate stays", async () => {
+        useTempHome();
+        const work = account("work");
+        const now = Date.now();
+        await savePollGate(
+            PROVIDER,
+            recordFailure(recordFailure({}, "work", "invalid_grant", now), "work", "invalid_grant", now)
+        );
+        const seen: Array<boolean | undefined> = [];
+        const reasons: string[] = [];
+
+        const entry = fakePlugin({
+            poll: (target, opts) => {
+                seen.push(opts.gated);
+                return Promise.resolve(ok(target));
+            },
+            pollsWhileGated: (_account, gate) => {
+                reasons.push(gate.reason);
+                return true;
+            },
+        });
+        const snapshots = await __fetchProviderSnapshots(entry, [work], {}, new Set());
+
+        expect(seen).toEqual([true]);
+        // The plugin sees the failure that blocked the account, so it can refuse to poll past it.
+        expect(reasons).toEqual(["invalid_grant"]);
+        expect(snapshots[0].error).toBeUndefined();
+        expect((await loadPollGate(PROVIDER)).work.failures).toBe(2);
+    });
+
+    test("a reading that reports a refresh-path failure is kept and still earns the failure", async () => {
+        useTempHome();
+        const work = account("work");
+        const entry = fakePlugin({
+            poll: (target) => Promise.resolve({ ...ok(target), auth: { oauthFailure: "invalid_grant" } }),
+        });
+        const snapshots = await __fetchProviderSnapshots(entry, [work], {}, new Set());
+
+        expect(snapshots[0].limits).toHaveLength(1);
+        expect((await loadPollGate(PROVIDER)).work.failures).toBe(1);
     });
 
     test("a thrown failure is still recorded as one", async () => {

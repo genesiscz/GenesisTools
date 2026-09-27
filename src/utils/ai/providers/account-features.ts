@@ -169,7 +169,17 @@ export interface AccountUsageSnapshot {
         renewsAt?: string;
     };
     /** Login health, provider-neutral. */
-    auth?: { refreshExpiresAt?: string; longLivedExpiresAt?: string; orgBlocked?: boolean; reason?: string };
+    auth?: {
+        refreshExpiresAt?: string;
+        longLivedExpiresAt?: string;
+        orgBlocked?: boolean;
+        reason?: string;
+        /**
+         * The refresh path failed although the reading came through another credential (anthropic's
+         * long-lived token). The poll core keeps the reading and still backs the refresh path off.
+         */
+        oauthFailure?: string;
+    };
     stale?: { lastSuccessAt: string; reason: string };
     error?: string;
     /**
@@ -207,6 +217,16 @@ export interface UsagePollOptions {
      * a single-use grant on a request that cannot succeed.
      */
     orgBlocked?: ReadonlySet<string>;
+    /**
+     * This account's snapshot from the PREVIOUS round, when one is cached. Anthropic reads its
+     * 5-hour window from it before a header reading, which may start a window on an idle account.
+     */
+    previous?: AccountUsageSnapshot;
+    /**
+     * The poll gate blocks this account's refresh path. Set only for a plugin whose
+     * `pollsWhileGated` said yes: read with what spends no refresh grant, or not at all.
+     */
+    gated?: boolean;
 }
 
 /** Where this account's coding-agent transcripts live, for the transcript spend. */
@@ -300,6 +320,14 @@ export interface AccountUsageFeature {
      * carried as text alone, which is all a provider without an org-level refusal needs.
      */
     classifyFailure?(err: unknown): UsageFailureClass | undefined;
+    /**
+     * The account can still be read while the poll gate blocks it, through a credential the gate
+     * does not guard (anthropic's long-lived token reads the rate-limit headers). Such a poll gets
+     * `gated: true`, and its reading never clears the gate. `gate.reason` is the failure that
+     * blocked it: when that failure came from the ungated credential itself, answer no, so the
+     * backoff paces it like any other failing account instead of one request every round.
+     */
+    pollsWhileGated?(account: AccountEntry, gate: { reason: string }): boolean;
     /**
      * Epoch ms of the last write to the credential this plugin reads, or undefined when
      * there is nothing to stat.

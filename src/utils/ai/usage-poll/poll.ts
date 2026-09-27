@@ -164,7 +164,7 @@ async function pollProvider(
     const getShared = __makeSharedUsage<AccountUsageSnapshot>({
         provider: providerId,
         ops: SNAPSHOT_OPS,
-        fetchAll: ({ orgBlocked }) => __fetchProviderSnapshots(entry, accounts, opts, orgBlocked),
+        fetchAll: ({ orgBlocked, previous }) => __fetchProviderSnapshots(entry, accounts, opts, orgBlocked, previous),
         getCache: async (key) =>
             (await storage.getCacheFile<Cached<AccountUsageSnapshot>>(key, USAGE_CACHE_TTL)) ?? null,
         putCache: (key, value) => storage.putCacheFile(key, value, USAGE_CACHE_TTL),
@@ -277,7 +277,8 @@ export async function __fetchProviderSnapshots(
     entry: UsagePlugin,
     accounts: readonly AccountEntry[],
     opts: PollAccountsOptions,
-    orgBlocked: ReadonlySet<string>
+    orgBlocked: ReadonlySet<string>,
+    previous: readonly AccountUsageSnapshot[] = []
 ): Promise<AccountUsageSnapshot[]> {
     const providerId = entry.plugin.id;
     const now = Date.now();
@@ -303,6 +304,9 @@ export async function __fetchProviderSnapshots(
     // Accounts that hold no credential at all. Not polled, not counted, not blocked: the
     // fix is a login, and the snapshot names it.
     const needsLogin = new Map<string, MissingCredential>();
+    // Polled although the gate blocks them: the plugin reads them without the guarded refresh path.
+    // Their reading never clears the gate, which still keeps the dead grant from being retried.
+    const gatedPolls = new Set<string>();
 
     // ASYNC on purpose: everything below belongs to ONE account, and `Promise.allSettled`
     // is already written to turn a rejection into that account's error row. A plain
@@ -340,13 +344,30 @@ export async function __fetchProviderSnapshots(
             }
 
             const blocked = blockedEntry(gate, account.name, now, stamp);
+            const last = previous.find((snapshot) => snapshot.accountName === account.name);
+
+            if (blocked && entry.usage.pollsWhileGated?.(account, blocked)) {
+                gatedPolls.add(account.name);
+                return entry.usage.poll(account, {
+                    probe: opts.probe,
+                    force: opts.force,
+                    orgBlocked,
+                    gated: true,
+                    ...(last ? { previous: last } : {}),
+                });
+            }
 
             if (blocked) {
                 blockedBy.set(account.name, blocked);
                 return Promise.reject(new PollSuppressed(blocked.reason));
             }
 
-            return entry.usage.poll(account, { probe: opts.probe, force: opts.force, orgBlocked });
+            return entry.usage.poll(account, {
+                probe: opts.probe,
+                force: opts.force,
+                orgBlocked,
+                ...(last ? { previous: last } : {}),
+            });
         })
     );
 
@@ -374,7 +395,21 @@ export async function __fetchProviderSnapshots(
                 return result.value;
             }
 
-            if (gate[account.name]) {
+            // The reading came through another credential while the refresh path failed: keep it,
+            // and let that failure back the refresh path off as any other failure would.
+            const oauthFailure = result.value.auth?.oauthFailure;
+
+            if (oauthFailure !== undefined) {
+                failures.push({
+                    account: account.name,
+                    reason: oauthFailure,
+                    transport: isTransportFailure(oauthFailure),
+                });
+                gateDirty = true;
+                return result.value;
+            }
+
+            if (gate[account.name] && !gatedPolls.has(account.name)) {
                 successes.push(account.name);
                 gateDirty = true;
             }

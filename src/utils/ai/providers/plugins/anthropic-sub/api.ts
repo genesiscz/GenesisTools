@@ -11,8 +11,10 @@ import {
     pruneGate,
 } from "@genesiscz/utils/ai/usage-poll/poll-gate";
 import { resolveAccountToken } from "@genesiscz/utils/claude/subscription-auth";
+import { longLivedTokenUsable } from "@genesiscz/utils/claude/token-verify";
 import type { AIAccountEntry } from "@genesiscz/utils/config/ai.types";
 import { logger } from "@genesiscz/utils/logger";
+import { fetchUsageFromHeaders, isHeaderReading, mergeHeaderReading } from "./quota-headers";
 import {
     billingAnchor,
     isAnchorDue,
@@ -136,6 +138,8 @@ export interface UsageResponse {
     seven_day_opus?: UsageBucket | null;
     seven_day_sonnet?: UsageBucket | null;
     seven_day_oauth_apps?: UsageBucket | null;
+    /** The Fable weekly window as the rate-limit headers name it (`7d_oi`); never sent by the usage endpoint. */
+    seven_day_overage_included?: UsageBucket | null;
     extra_usage?: ExtraUsageBucket | null;
     limits?: ApiLimit[];
     spend?: ApiSpend | null;
@@ -174,6 +178,10 @@ export interface AccountUsage {
     refreshExpiresAt?: number;
     usage?: UsageResponse;
     error?: string;
+    /** The OAuth path failed though `usage` came from the long-lived token's rate-limit headers. */
+    oauthFailure?: string;
+    /** Epoch ms the reading was taken, when an earlier header reading is served again. */
+    readAt?: number;
     /**
      * Present when `usage` is served from an older successful fetch because the
      * live fetch failed. Consumers should render the data with a staleness
@@ -298,6 +306,52 @@ export interface PollAccountArgs {
      * the 6-hourly profile re-read, which WRITES the plan fields back to the config.
      */
     probe?: boolean;
+    /** The account's previous reading (the last round), for the header reading's window check. */
+    previousUsage?: UsageResponse;
+    /** Epoch ms of that reading: one older than a 5-hour period says nothing about the current window. */
+    previousFetchedAt?: number;
+    /** The poll gate blocks the refresh path: read the headers only, never resolve or refresh a token. */
+    headersOnly?: boolean;
+}
+
+const FIVE_HOURS_MS = 5 * 3_600_000;
+
+/**
+ * At most one header reading per account in this interval. A header reading is an inference
+ * request, so the two-minute daemon and every interactive round would otherwise send one each.
+ * A round inside the interval serves the last reading again, stamped with the time it was taken.
+ */
+const HEADER_READING_INTERVAL_MS = 5 * 60_000;
+
+/** The long-lived token when a header reading may stand in for the usage endpoint. Never in a probe. */
+function headerReadingToken(account: AIAccountEntry, probe: boolean | undefined): string | undefined {
+    const tokens = account.tokens;
+
+    if (probe || !tokens.longLivedToken || !longLivedTokenUsable(tokens)) {
+        return undefined;
+    }
+
+    return tokens.longLivedToken;
+}
+
+/**
+ * A header reading is an inference request, so it may START the 5-hour window of an idle account
+ * (unproven on 2026-09-27: every live account was in use; assumed, since it bills 8 input tokens).
+ * It runs only while the previous reading shows a window still open, or when there is none yet.
+ */
+export function headerReadingAllowed(
+    previous: UsageResponse | undefined,
+    now: number,
+    previousFetchedAt?: number
+): boolean {
+    // Without a reading, or with one older than a whole 5-hour period, nothing is known about the
+    // current window; waiting would only keep a dead-refresh account stale forever.
+    if (!previous || (previousFetchedAt !== undefined && now - previousFetchedAt >= FIVE_HOURS_MS)) {
+        return true;
+    }
+
+    const resetsAt = previous.five_hour?.resets_at ? Date.parse(previous.five_hour.resets_at) : Number.NaN;
+    return Number.isFinite(resetsAt) && resetsAt > now;
 }
 
 /**
@@ -346,12 +400,75 @@ export async function pollAccount(args: PollAccountArgs): Promise<AccountUsage> 
         throw new PollSuppressedError(planReason(account));
     }
 
+    // The rate-limit headers of a max_tokens:0 request answer the same two windows with the
+    // long-lived token alone (quota-headers.ts). A FALLBACK: only the usage endpoint returns the
+    // Fable and other scoped limits, so the headers answer only when the OAuth path cannot.
+    const longLived = headerReadingToken(account, probe);
+    const headersAllowed = headerReadingAllowed(args.previousUsage, now, args.previousFetchedAt);
+    const viaHeaders = async (why: string, extra: { oauthFailure?: string } = {}): Promise<AccountUsage> => {
+        const readAt = args.previousFetchedAt;
+        const reused =
+            isHeaderReading(args.previousUsage) && readAt !== undefined && now - readAt < HEADER_READING_INTERVAL_MS
+                ? args.previousUsage
+                : undefined;
+        logger.debug(`${tag} usage from the rate-limit headers${reused ? " (the last reading, reused)" : ""}: ${why}`);
+        const usage =
+            reused ??
+            mergeHeaderReading(
+                await fetchUsageFromHeaders(longLived ?? "", { signal, accountHint: account.name }),
+                args.previousUsage,
+                args.previousFetchedAt
+            );
+        return {
+            ...identityOf(account),
+            usage,
+            ...(extra.oauthFailure ? { oauthFailure: extra.oauthFailure } : {}),
+            ...(reused ? { readAt } : {}),
+        } satisfies AccountUsage;
+    };
+
+    // The gate blocks the refresh path (a dead grant): only the headers may answer, never a resolve.
+    if (args.headersOnly) {
+        if (!longLived) {
+            throw new PollSuppressedError("the refresh path is backing off and there is no usable long-lived token");
+        }
+
+        if (!headersAllowed) {
+            throw new PollSuppressedError(
+                "the refresh path is backing off; the last reading shows no open 5-hour window, so the header reading waits rather than start one"
+            );
+        }
+
+        return viaHeaders("the refresh path is backing off");
+    }
+
     // ONE token resolve per account per poll. The profile read used to resolve
     // its own, which doubled every refresh attempt for dead-grant accounts.
-    const { token, refreshed: tokenRefreshed } = await resolveAccountToken(account.name, {
-        staleAccessToken: account.tokens.accessToken,
-        ...(probe ? { noRefresh: true } : {}),
-    });
+    let resolved: Awaited<ReturnType<typeof resolveAccountToken>>;
+
+    try {
+        resolved = await resolveAccountToken(account.name, {
+            staleAccessToken: account.tokens.accessToken,
+            ...(probe ? { noRefresh: true } : {}),
+        });
+    } catch (err) {
+        // No OAuth pair, or its refresh grant died: the long-lived token still reads the windows.
+        if (!longLived) {
+            throw err;
+        }
+
+        const detail = err instanceof Error ? err.message : String(err);
+
+        if (!headersAllowed) {
+            throw new PollSuppressedError(
+                `no usable OAuth token (${detail}); the last reading shows no open 5-hour window, so the header reading waits rather than start one`
+            );
+        }
+
+        return viaHeaders(`no usable OAuth token (${detail})`, { oauthFailure: detail });
+    }
+
+    const { token, refreshed: tokenRefreshed } = resolved;
 
     if (tokenRefreshed) {
         logger.debug(`${tag} token was refreshed before fetch`);
@@ -404,6 +521,14 @@ export async function pollAccount(args: PollAccountArgs): Promise<AccountUsage> 
             // keeps the refresh detail.
             const detail = refreshErr instanceof Error ? refreshErr.message : String(refreshErr);
             logger.debug(`${tag} token refresh after ${err.statusCode} failed: ${detail}`);
+
+            // The OAuth pair is dead; a long-lived token is a separate grant and still reads the two
+            // windows. The failure rides along, so the gate still backs the dead refresh off.
+            if (longLived && headersAllowed) {
+                return viaHeaders(`usage endpoint ${err.statusCode}, then the refresh failed (${detail})`, {
+                    oauthFailure: detail,
+                });
+            }
 
             if (err.statusCode === 429) {
                 throw err;

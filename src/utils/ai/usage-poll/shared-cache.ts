@@ -48,7 +48,12 @@ export interface SharedUsageDeps<T> {
     /** Plugin id. Decides the cache key, the lock file and the gate file. */
     provider: string;
     ops: UsageEntryOps<T>;
-    fetchAll: (opts: { accountFilter?: string | string[]; orgBlocked: ReadonlySet<string> }) => Promise<T[]>;
+    fetchAll: (opts: {
+        accountFilter?: string | string[];
+        orgBlocked: ReadonlySet<string>;
+        /** The previous cached round's entries, for per-account decisions that depend on the last reading. */
+        previous?: readonly T[];
+    }) => Promise<T[]>;
     getCache: (key: string) => (Cached<T> | null) | Promise<Cached<T> | null>;
     putCache: (key: string, value: Cached<T>) => void | Promise<void>;
     withLock: <R>(key: string, fn: () => Promise<R>) => Promise<R>;
@@ -248,7 +253,10 @@ export function __makeSharedUsage<T>(deps: SharedUsageDeps<T>) {
                 const previous = c2 ?? cached;
                 const fresh = backfillFromLastGood(
                     ops,
-                    await deps.fetchAll({ orgBlocked: ops.orgBlocked(previous?.accounts) }),
+                    await deps.fetchAll({
+                        orgBlocked: ops.orgBlocked(previous?.accounts),
+                        ...(previous ? { previous: previous.accounts } : {}),
+                    }),
                     previous
                 );
                 const fetchedAt = Date.now();
