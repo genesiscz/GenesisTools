@@ -7,7 +7,7 @@ import {
     listSessionRows,
     type SessionCmuxLocation,
 } from "@app/claude/lib/usage/session-rows";
-import { openHistoryService } from "@genesiscz/utils/agent-sessions/open-service";
+import { catalogHistory } from "@genesiscz/utils/agent-sessions/open-service";
 import type { SessionPin } from "@genesiscz/utils/agent-sessions/pins";
 import { loadPins } from "@genesiscz/utils/agent-sessions/pins";
 import type { AccountProviderAlias } from "@genesiscz/utils/ai/providers/aliases";
@@ -171,20 +171,18 @@ async function nativeRows(
     // Read-only: a session listing is a diagnostic and must not rewrite the journal, and a
     // provider-filtered load must never compact it (see `loadPins`).
     const pins = await loadPins({ readOnly: true, provider: alias });
-    const service = openHistoryService({ provider: PROVIDER_ALIASES[alias] });
     const now = options.now ?? Date.now();
     const cutoff = options.hours === undefined ? undefined : now - options.hours * 3_600_000;
-    const { metadata } = await service.catalog(
-        {
+    const { metadata } = await catalogHistory({
+        provider: PROVIDER_ALIASES[alias],
+        filters: {
             excludeAgents: true,
             ...(options.limit === undefined ? {} : { limit: options.limit }),
             ...(cutoff === undefined ? {} : { mtimeFrom: cutoff }),
         },
-        {
-            ...(options.maxDiscoveryAgeMs === undefined ? {} : { maxDiscoveryAgeMs: options.maxDiscoveryAgeMs }),
-            ...(options.refresh === undefined ? {} : { refresh: options.refresh }),
-        }
-    );
+        ...(options.maxDiscoveryAgeMs === undefined ? {} : { maxDiscoveryAgeMs: options.maxDiscoveryAgeMs }),
+        ...(options.refresh === undefined ? {} : { refresh: options.refresh }),
+    });
     // One config read for the whole listing, not one per grok row.
     const grokLookup = alias === "grok" ? await grokAccountNameLookup() : () => undefined;
     const rows: AgentSessionRow[] = [];

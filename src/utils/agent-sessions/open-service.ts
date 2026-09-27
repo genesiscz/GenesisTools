@@ -1,4 +1,4 @@
-import type { Database } from "bun:sqlite";
+import { Database } from "bun:sqlite";
 import { HistoryDatabase, openHistoryReadOnly } from "./database";
 import { fileListingFreshness } from "./listing-freshness";
 import { initializeCompactHistorySchema } from "./migrations";
@@ -6,6 +6,7 @@ import { type HistoryProvider, resolveHistoryProvider } from "./provider";
 import { HistoryService } from "./service";
 import { HistoryStatisticsRepository } from "./statistics-repository";
 import { HistorySyncRepository } from "./sync-repository";
+import type { AgentSearchFilters } from "./types";
 
 /** Writable history operations share the canonical connection and provider registry. */
 function buildHistoryService(provider: HistoryProvider, db: Database, roots?: string[]): HistoryService {
@@ -64,4 +65,38 @@ export function openHistoryCached(options: {
             }
         },
     };
+}
+
+/**
+ * The listing catalog of one provider. `refresh: false` lists through `openHistoryCached`: no schema
+ * initialization, no migration, no discovery and no database creation. With nothing indexed yet it lists
+ * an empty in-memory index, so the answer has the usual shape and nothing is written. A diagnostic
+ * (`tools hub rules test`) lists this way; every other caller refreshes as before.
+ */
+export async function catalogHistory(options: {
+    provider: string;
+    roots?: string[];
+    filters?: AgentSearchFilters;
+    maxDiscoveryAgeMs?: number;
+    refresh?: boolean;
+}): ReturnType<HistoryService["catalog"]> {
+    const { provider, roots, filters = {}, maxDiscoveryAgeMs } = options;
+
+    if (options.refresh !== false) {
+        return openHistoryService({ provider, roots }).catalog(filters, { maxDiscoveryAgeMs });
+    }
+
+    const opened = openHistoryCached({ provider, roots }) ?? emptyHistory(provider, roots);
+
+    try {
+        return await opened.service.catalog(filters, { refresh: false });
+    } finally {
+        opened.close();
+    }
+}
+
+function emptyHistory(provider: string, roots?: string[]): { service: HistoryService; close: () => void } {
+    const db = new Database(":memory:");
+    initializeCompactHistorySchema(db);
+    return { service: buildHistoryService(resolveHistoryProvider(provider), db, roots), close: () => db.close() };
 }

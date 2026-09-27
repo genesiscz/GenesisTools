@@ -1,11 +1,14 @@
 import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
-import { mkdtempSync, realpathSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { claudeHistoryReader } from "./compact-readers";
+import { HistoryDatabase, historyDatabasePath } from "./database";
 import { initializeCompactHistorySchema } from "./migrations";
+import { catalogHistory, openHistoryService } from "./open-service";
 import { HistoryService } from "./service";
 import { HistorySyncRepository } from "./sync-repository";
 
@@ -240,5 +243,34 @@ test("a catalog with refresh: false reads the index as it is and never walks, wh
     } finally {
         database.close();
         rmSync(root, { recursive: true, force: true });
+    }
+});
+
+test("catalogHistory with refresh: false creates no index when none exists, and reads an existing one without writing it", async () => {
+    const home = mkdtempSync(join(tmpdir(), "history-catalog-readonly-home-"));
+    const root = mkdtempSync(join(tmpdir(), "history-catalog-readonly-"));
+    const id = "11111111-2222-4333-8444-000000000041";
+    session(root, id, HOUR);
+    env.testing.set("GENESIS_TOOLS_HOME", home);
+
+    try {
+        const nothing = await catalogHistory({ provider: "claude", roots: [root], filters: {}, refresh: false });
+        expect(nothing.metadata).toEqual([]);
+        expect(existsSync(historyDatabasePath())).toBe(false);
+
+        // The ordinary path still creates and fills the index.
+        const built = await openHistoryService({ provider: "claude", roots: [root] }).catalog({});
+        expect(built.metadata.map((entry) => entry.nativeId)).toEqual([id]);
+        HistoryDatabase.closeInstance();
+        const before = readFileSync(historyDatabasePath());
+
+        const read = await catalogHistory({ provider: "claude", roots: [root], filters: {}, refresh: false });
+        expect(read.metadata.map((entry) => entry.nativeId)).toEqual([id]);
+        expect(readFileSync(historyDatabasePath()).equals(before)).toBe(true);
+    } finally {
+        HistoryDatabase.closeInstance();
+        env.testing.unset("GENESIS_TOOLS_HOME");
+        rmSync(root, { recursive: true, force: true });
+        rmSync(home, { recursive: true, force: true });
     }
 });

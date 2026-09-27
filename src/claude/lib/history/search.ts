@@ -7,7 +7,7 @@ import { realpath, stat } from "node:fs/promises";
 import { basename, dirname, sep } from "node:path";
 import { toSessionMetadataRecord } from "@genesiscz/utils/agent-sessions/cache-repository";
 import { parseHistoryDate } from "@genesiscz/utils/agent-sessions/history-date";
-import { openHistoryService } from "@genesiscz/utils/agent-sessions/open-service";
+import { catalogHistory, openHistoryService } from "@genesiscz/utils/agent-sessions/open-service";
 import { resolveHistoryProvider } from "@genesiscz/utils/agent-sessions/provider";
 import { claudeProjectName } from "@genesiscz/utils/agent-sessions/readers/claude-paths";
 import { aggregateHistoryStatistics } from "@genesiscz/utils/agent-sessions/statistics-aggregate";
@@ -129,8 +129,9 @@ export async function getSessionListing(options: SessionListingOptions = {}): Pr
         report,
         reindexed,
     } = await p.measureAsync("listing.catalog", () =>
-        openHistoryService({ provider: "claude" }).catalog(
-            {
+        catalogHistory({
+            provider: "claude",
+            filters: {
                 project,
                 excludeAgents: !subagentsOnly && excludeSubagents,
                 agentsOnly: subagentsOnly,
@@ -138,8 +139,9 @@ export async function getSessionListing(options: SessionListingOptions = {}): Pr
                 mtimeFrom: options.mtimeFrom,
                 newest: options.newest,
             },
-            { maxDiscoveryAgeMs: options.maxDiscoveryAgeMs, refresh: options.refresh }
-        )
+            maxDiscoveryAgeMs: options.maxDiscoveryAgeMs,
+            refresh: options.refresh,
+        })
     );
     const subagentCount = all.filter((metadata) => metadata.isSubagent).length;
     const selected = subagentsOnly
