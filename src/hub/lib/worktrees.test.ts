@@ -20,6 +20,7 @@ import {
     type BlockerKind,
     claimPrivateFolder,
     cleanupBlockers,
+    gitWorktreeMove,
     type LiveUsers,
     moveAsideWorktrees,
     ownerOf,
@@ -503,6 +504,62 @@ describe("move aside rechecks each worktree before its own move", () => {
         const file = join(scratch, "a-file");
         writeFileSync(file, "");
         expect(claimPrivateFolder(join(file, "aside"))).toContain("could not be prepared");
+    });
+
+    test("a destination taken between the check and the move is retried under the next name; another failure is not", async () => {
+        const scratch = mkdtempSync(join(tmpdir(), "gt-hub-wt-retry-"));
+        const later = new Date(Date.now() + 30 * 86_400_000);
+        const live: LiveUsers = { processes: [], sessions: [], sessionsError: null };
+        const racedPath = await repo
+            .branch("feat/raced")
+            .then(() => repo.worktreeAdd({ name: "wt-raced", ref: "feat/raced" }));
+        const raced: string[] = [];
+        const outcomes = await moveAsideWorktrees({
+            paths: [racedPath],
+            base: "master",
+            live,
+            destRoot: join(scratch, "aside"),
+            journal: join(scratch, "moved-aside.jsonl"),
+            now: later,
+            moveWorktree: async (args) => {
+                raced.push(args.to);
+
+                if (raced.length === 1) {
+                    // Another move-aside takes the name first.
+                    mkdirSync(args.to, { recursive: true });
+                    return { success: false, stdout: "", stderr: `fatal: '${args.to}' already exists`, exitCode: 128 };
+                }
+
+                return gitWorktreeMove(args);
+            },
+        });
+
+        expect(raced).toHaveLength(2);
+        expect(raced[1]).toBe(`${raced[0]}-2`);
+        expect(outcomes[0]?.moved).toBe(true);
+        expect(outcomes[0]?.to).toBe(raced[1]);
+
+        const failedPath = await repo
+            .branch("feat/refused")
+            .then(() => repo.worktreeAdd({ name: "wt-refused", ref: "feat/refused" }));
+        const refused: string[] = [];
+        const failed = await moveAsideWorktrees({
+            paths: [failedPath],
+            base: "master",
+            live,
+            destRoot: join(scratch, "aside"),
+            journal: join(scratch, "moved-aside.jsonl"),
+            now: later,
+            moveWorktree: async (args) => {
+                refused.push(args.to);
+                return { success: false, stdout: "", stderr: "fatal: some other failure", exitCode: 128 };
+            },
+        });
+
+        expect(refused).toHaveLength(1);
+        expect(failed[0]?.moved).toBe(false);
+        expect(failed[0]?.reasons.join(" ")).toContain("some other failure");
+        expect(existsSync(failedPath)).toBe(true);
     });
 });
 

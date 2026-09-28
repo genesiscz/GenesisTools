@@ -897,6 +897,14 @@ function repoFolderProblem(root: string, parent: string): string | null {
     }
 }
 
+/** `git worktree move <from> <to>` in the repository; git refuses a destination that exists. */
+export function gitWorktreeMove({ repoRoot, from, to }: { repoRoot: string; from: string; to: string }) {
+    return createGit({ cwd: repoRoot }).executor.exec(["worktree", "move", from, to], {
+        cwd: repoRoot,
+        timeout: WORKTREE_REMOVE_TIMEOUT_MS,
+    });
+}
+
 export function moveAsideJournalPath(): string {
     return join(new Storage("hub").getBaseDir(), "moved-aside.jsonl");
 }
@@ -941,6 +949,7 @@ export async function moveAsideWorktrees({
     destRoot = moveAsideRoot(),
     journal = moveAsideJournalPath(),
     now = new Date(),
+    moveWorktree = gitWorktreeMove,
 }: {
     paths: string[];
     liveMinutes?: number;
@@ -950,6 +959,8 @@ export async function moveAsideWorktrees({
     destRoot?: string;
     journal?: string;
     now?: Date;
+    /** The `git worktree move` step. Tests pass a spy that wraps it. */
+    moveWorktree?: typeof gitWorktreeMove;
 }): Promise<MoveAsideOutcome[]> {
     const wanted = [...new Set(paths.map(realpathOr))];
     const scan = (only: string[]) =>
@@ -1013,11 +1024,7 @@ export async function moveAsideWorktrees({
             continue;
         }
 
-        const move = (destination: string) =>
-            createGit({ cwd: row.repoRoot }).executor.exec(["worktree", "move", path, destination], {
-                cwd: row.repoRoot,
-                timeout: WORKTREE_REMOVE_TIMEOUT_MS,
-            });
+        const move = (destination: string) => moveWorktree({ repoRoot: row.repoRoot, from: path, to: destination });
         let to = freeDestination(join(realpathOr(parent), basename(path)));
         attempted = true;
         let res = await move(to);
