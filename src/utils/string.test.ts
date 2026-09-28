@@ -14,6 +14,7 @@ import {
     stripAnsi,
     truncateText,
 } from "./string";
+import { promptVariables, renderPrompt } from "./template";
 
 describe("slugify", () => {
     it("replaces spaces and special chars with dashes", () => {
@@ -198,6 +199,25 @@ describe("snippetAround", () => {
         expect(cut).toContain("needle here");
         expect(cut.startsWith("…")).toBe(true);
         expect(cut.endsWith("…")).toBe(true);
+    });
+});
+
+describe("template (promptVariables, renderPrompt)", () => {
+    it("each variable once, in the order it first appears, spaces inside the braces allowed", () => {
+        expect(promptVariables("Fix {{pr}} on {{ branch }}, then {{pr}} again and {{file.path}}")).toEqual([
+            "pr",
+            "branch",
+            "file.path",
+        ]);
+        expect(promptVariables("no variables {here}")).toEqual([]);
+    });
+
+    it("render fills what it has and reports the rest, which stays as written", () => {
+        expect(renderPrompt("Rebase {{branch}} onto {{base}}", { branch: "feat/x" })).toEqual({
+            text: "Rebase feat/x onto {{base}}",
+            missing: ["base"],
+        });
+        expect(renderPrompt("{{a}}", { a: "" }).missing).toEqual(["a"]);
     });
 });
 
