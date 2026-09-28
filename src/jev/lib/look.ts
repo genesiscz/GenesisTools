@@ -1,10 +1,11 @@
 import { admittedChoice } from "@app/control/lib/decision/decisions";
-import { runAx } from "@app/control/lib/runner";
+import { runAxAsync } from "@app/control/lib/runner";
 import type { Evaluator } from "@genesiscz/utils/ai/evaluation/service";
 import { z } from "zod";
 
 const MIN_CONFIDENCE = 0.6;
 const MAX_BLOCKS = 80;
+const OCR_TIMEOUT_MS = 30_000;
 
 const blockSchema = z.object({
     text: z.string(),
@@ -45,9 +46,11 @@ export function readOcrBlocks(raw: unknown): OcrBlock[] {
 export async function chooseOcrTarget(options: {
     blocks: OcrBlock[];
     intent: string;
-    evaluate: Evaluator;
+    /** Called only when the text alone cannot decide, so an exact match or an empty image needs no credential. */
+    evaluator: () => Promise<Evaluator>;
     signal?: AbortSignal;
 }) {
+    options.signal?.throwIfAborted();
     const intent = z.string().trim().min(1).max(4000).parse(options.intent);
     const blocks = options.blocks;
     const exact = blocks.filter((block) => block.text.trim().toLocaleLowerCase() === intent.toLocaleLowerCase());
@@ -63,7 +66,9 @@ export async function chooseOcrTarget(options: {
     const descriptions = Object.fromEntries(
         blocks.map((block) => [block.id, { text: block.text, confidence: block.confidence, px: block.px }])
     );
-    const result = await options.evaluate({
+    const evaluate = await options.evaluator();
+    options.signal?.throwIfAborted();
+    const result = await evaluate({
         input: {
             state: { intent, regions: descriptions },
             questions: {
@@ -90,8 +95,19 @@ export async function chooseOcrTarget(options: {
     };
 }
 
-export function ocrImage(path: string): OcrBlock[] {
-    return readOcrBlocks(runAx(["ocr", "--image", path], 30_000));
+/** Asynchronous, so a Ctrl-C stops the native OCR instead of waiting out its 30 s deadline. */
+export async function ocrImage(
+    path: string,
+    options: {
+        signal?: AbortSignal;
+        /** Tests only. */
+        run?: typeof runAxAsync;
+    } = {}
+): Promise<OcrBlock[]> {
+    const run = options.run ?? runAxAsync;
+    const raw = await run({ args: ["ocr", "--image", path], timeoutMs: OCR_TIMEOUT_MS, signal: options.signal });
+    options.signal?.throwIfAborted();
+    return readOcrBlocks(raw);
 }
 
 function ocrFailure(raw: unknown): string {
