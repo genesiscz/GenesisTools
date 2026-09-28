@@ -142,7 +142,8 @@ with both texts, when it no longer holds what the observation showed (the comput
 SHA-256 of the observed value, so a field pinned by its AXIdentifier cannot slip a changed text through): on 2026-09-28 Brave's
 omnibox lost its last character between `set_value` and a prepared Return, and the Return navigated
 to the shortened URL. Read the field again after such a refusal and submit only a text you verified.
-A paste posts only cmd+a and cmd+v, never a submit key.
+A field whose text cannot be read, when observed or now, is refused too: send the key to the window
+instead only if an unchecked submit is acceptable. A paste posts only cmd+a and cmd+v, never a submit key.
 
 ## 3. Handle a blocking sheet before navigation
 

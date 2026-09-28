@@ -25,6 +25,7 @@ final class ClipboardPasteTests: XCTestCase {
         var keySelectionWorks = true
         var selectionUnreadable = false
         var valueUnreadable = false
+        var normalizesLineEndings = false
         var pastes = 0
         var pendingPasteAt: TimeInterval?
         var readFromPasteboard: String?
@@ -38,7 +39,8 @@ final class ClipboardPasteTests: XCTestCase {
             time += seconds
             if let due = pendingPasteAt, time >= due {
                 pendingPasteAt = nil
-                let pasted = board.string(forType: .string) ?? ""
+                let raw = board.string(forType: .string) ?? ""
+                let pasted = normalizesLineEndings ? raw.replacingOccurrences(of: "\r\n", with: "\n") : raw
                 readFromPasteboard = pasted
                 let current = value ?? ""
                 if let selection, selection.location == 0, selection.length == current.utf16.count,
@@ -226,6 +228,28 @@ final class ClipboardPasteTests: XCTestCase {
         let outcome = try paste(field, text: "world", replace: false)
         XCTAssertEqual(outcome.readback, "Hello world")
         XCTAssertNil(outcome.selection)
+        try assertOriginal()
+    }
+
+    /// "Nothing to replace" is still a claim about the caller's field, so it needs that field focused.
+    func testAnIdenticalReplacementStillRequiresTheFocusedTarget() throws {
+        let count = board.changeCount
+        let field = Field(board: board, value: "same")
+        field.focused = false
+        let failure = try pasteFailure(field, text: "same", replace: true)
+        XCTAssertFalse(failure.dispatched)
+        XCTAssertEqual(failure.clipboardRestore, "unchanged")
+        XCTAssertEqual(board.changeCount, count)
+        XCTAssertEqual(field.pastes, 0)
+    }
+
+    /// A text field turns a pasted CRLF into LF; that is a successful replacement, not a mismatch.
+    func testAReplacementWhoseLineEndingsWereNormalizedLanded() throws {
+        let field = Field(board: board, value: "old")
+        field.normalizesLineEndings = true
+        let outcome = try paste(field, text: "line one\r\nline two", replace: true)
+        XCTAssertEqual(outcome.readback, "line one\nline two")
+        XCTAssertLessThan(field.time, 1, "it must not wait out the whole timeout")
         try assertOriginal()
     }
 

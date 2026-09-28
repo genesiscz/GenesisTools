@@ -35,7 +35,14 @@ public func commitRefusal(role: String?, code: CGKeyCode, observed: String?, liv
         return "the field's text changed since it was observed: it now holds \"\(live ?? "unreadable")\"; "
             + "nothing was sent. Read the field again and send the key only if its text is what you want to submit"
     }
-    guard let observed else { return nil }
+    // An unreadable value, then or now, leaves nothing to compare, so what the key would submit is
+    // unknown. Refuse rather than submit blind; a caller that accepts that sends the key to the
+    // window instead of the field.
+    guard let observed, let live else {
+        return "the field's text cannot be read (\(observed == nil ? "when it was observed" : "now")), so what the "
+            + "commit key would submit cannot be checked; nothing was sent. Send the key to the window, not the "
+            + "field, only if an unchecked submit is acceptable"
+    }
     guard live == observed else {
         return "the field's text changed before the commit key: observed \"\(observed)\", now \"\(live ?? "unreadable")\"; "
             + "nothing was sent. Read the field again and send the key only if its text is what you want to submit"

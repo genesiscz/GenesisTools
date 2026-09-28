@@ -66,6 +66,15 @@ func insertedTextVisible(_ value: String?, before: String?, text: String, format
     return textOccurrences(of: needle, in: normalized(value)) > textOccurrences(of: needle, in: normalized(before ?? ""))
 }
 
+/// Whether a replacement left exactly the text in the field. Plain text compares after normalizing
+/// line endings, as the insertion check does, because a text field turns a pasted CRLF into LF; the
+/// markup formats compare exactly.
+func replacementLanded(_ value: String?, text: String, format: String) -> Bool {
+    guard let value else { return false }
+    guard format == "text" else { return value == text }
+    return value.replacingOccurrences(of: "\r\n", with: "\n") == text.replacingOccurrences(of: "\r\n", with: "\n")
+}
+
 /// Wait until the receiver has visibly consumed the paste: the value moved away from `before`
 /// and satisfies `settled`. Returns the last value read and whether any change was seen.
 public func waitForPasteConsumption(before: String?, timeout: TimeInterval, now: () -> TimeInterval,
@@ -123,9 +132,14 @@ public func performClipboardPaste(transaction: ClipboardTransaction, text: Strin
                                   consumeTimeout: TimeInterval = 3,
                                   primitives: ClipboardPastePrimitives) throws -> ClipboardPasteOutcome {
     let before = primitives.readValue()
-    if replace, before == text {
+    if replace, replacementLanded(before, text: text, format: format) {
         // Nothing to replace. Writing the clipboard here would only open a window in which a late
-        // cmd+v pastes whatever is restored.
+        // cmd+v pastes whatever is restored. The field must still be the focused target, or a
+        // "nothing to do" would report success for a field the caller no longer has.
+        guard primitives.focusedOnTarget() else {
+            throw ClipboardPasteError(message: "focus changed before paste; nothing was pasted and the clipboard is unchanged",
+                                      clipboardRestore: "unchanged", dispatched: false)
+        }
         return ClipboardPasteOutcome(readback: before, clipboardRestore: "unchanged", selection: nil, skipped: true)
     }
     if replace, before == nil {
@@ -153,7 +167,10 @@ public func performClipboardPaste(transaction: ClipboardTransaction, text: Strin
         attempt = .success(waitForPasteConsumption(
             before: before, timeout: consumeTimeout, now: primitives.now, wait: primitives.wait,
             read: primitives.readValue,
-            settled: { replace ? $0 == text : insertedTextVisible($0, before: before, text: text, format: format) }))
+            settled: {
+                replace ? replacementLanded($0, text: text, format: format)
+                    : insertedTextVisible($0, before: before, text: text, format: format)
+            }))
     } catch {
         attempt = .failure(error)
     }
@@ -179,7 +196,7 @@ public func performClipboardPaste(transaction: ClipboardTransaction, text: Strin
             message: "the target did not take the paste within \(Int(consumeTimeout)) s; the clipboard was restored, so a paste that lands late inserts the ORIGINAL clipboard. Inspect the field before retrying",
             clipboardRestore: restoration, dispatched: true)
     }
-    if replace, value != text {
+    if replace, !replacementLanded(value, text: text, format: format) {
         throw ClipboardPasteError(message: "paste replacement read-back differs; inspect before retrying",
                                   clipboardRestore: restoration, dispatched: true)
     }
