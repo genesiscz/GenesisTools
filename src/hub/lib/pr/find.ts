@@ -5,16 +5,16 @@ import {
     type PrSummary,
     parseGhPrRows,
     parseGlabMrRows,
+    parsePrRef,
     parsePrUrl,
     projectRefFromRemote,
     spawnRunner,
     viewPr,
 } from "@genesiscz/utils/git/origins";
 import { GH_LIST_FIELDS } from "@genesiscz/utils/git/origins/prs";
+import { type RepoFacts, repoFacts } from "@genesiscz/utils/git/repo-facts";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
-import { parsePrRef } from "../prs";
-import { type RepoFacts, repoFacts } from "../repo";
 import { type FindResult, type FoundPr, HubPrError } from "./types";
 
 const log = logger.child({ component: "hub/pr/find" });

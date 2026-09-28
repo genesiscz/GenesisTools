@@ -1,9 +1,19 @@
 import { createHash } from "node:crypto";
 import { type CommandRunner, spawnRunner } from "@genesiscz/utils/git";
+import {
+    type CheckLogTarget,
+    errorAnnotations,
+    GH_FAILED_CONCLUSIONS,
+    type GithubStep,
+    parseCheckUrl,
+    parseGithubLog,
+    parseGitlabTrace,
+    sliceFailedSteps,
+    tailLines,
+} from "@genesiscz/utils/git/ci-log";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { Storage } from "@genesiscz/utils/storage";
-import { stripAnsi } from "@genesiscz/utils/string";
 
 // The failing part of a CI check's log, for the PR detail's Checks section: a GitHub Actions job
 // (`gh run view --job --log` sliced to the failed steps) or a GitLab job trace. Fetched on demand
@@ -15,13 +25,7 @@ const LOG_TIMEOUT_MS = 90_000;
 const CACHE_TTL = "7 days";
 /** A run or pipeline URL can name dozens of jobs; only the first failed ones are fetched. */
 const MAX_JOBS = 3;
-const MAX_LINE_CHARS = 500;
-const MAX_ERROR_LINES = 20;
 export const DEFAULT_LOG_LINES = 150;
-
-export type CheckLogTarget =
-    | { provider: "github"; host: string; repo: string; runId: number; jobId: number | null }
-    | { provider: "gitlab"; host: string; project: string; pipelineId: number | null; jobId: number | null };
 
 export interface CheckLogSection {
     /** Job name, with the failed step after a slash on GitHub: `test (ubuntu) / Run tests`. */
@@ -48,197 +52,6 @@ export interface CheckLogResult {
     elapsedMs: number;
     /** Why there is no log: a check that is not a CI job, a host error, a job that never started. */
     error: string | null;
-}
-
-/** A GitHub Actions run/job URL or a GitLab pipeline/job URL; null for anything else (a bot's status page). */
-export function parseCheckUrl(url: string): CheckLogTarget | null {
-    let parsed: URL;
-
-    try {
-        parsed = new URL(url);
-    } catch {
-        return null;
-    }
-
-    const path = parsed.pathname.replace(/\/+$/, "");
-    const github = path.match(/^\/([^/]+)\/([^/]+)\/actions\/runs\/(\d+)(?:\/jobs?\/(\d+))?$/);
-
-    if (github) {
-        return {
-            provider: "github",
-            host: parsed.host,
-            repo: `${github[1]}/${github[2]}`,
-            runId: Number(github[3]),
-            jobId: github[4] ? Number(github[4]) : null,
-        };
-    }
-
-    const gitlab = path.match(/^\/(.+?)\/-\/(pipelines|jobs)\/(\d+)$/);
-
-    if (gitlab) {
-        const id = Number(gitlab[3]);
-        return {
-            provider: "gitlab",
-            host: parsed.host,
-            project: gitlab[1],
-            pipelineId: gitlab[2] === "pipelines" ? id : null,
-            jobId: gitlab[2] === "jobs" ? id : null,
-        };
-    }
-
-    return null;
-}
-
-// ---------------------------------------------------------------------------
-// Line cleaning
-// ---------------------------------------------------------------------------
-
-const GH_LINE = /^﻿?(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z) ?(.*)$/;
-
-/** One log line for display: no ANSI, GitHub's group markers as plain text, bounded length. */
-export function cleanLine(raw: string): string | null {
-    // gh prints a log's escape sequences in caret notation (`^[[36;1m`) rather than raw.
-    let line = stripAnsi(raw)
-        .replace(/\^\[\[[0-9;]*[A-Za-z]/g, "")
-        .replace(/﻿/g, "");
-    // A carriage return redraws the line in a terminal (progress bars); only the last draw shows.
-    const cr = line.lastIndexOf("\r");
-
-    if (cr >= 0) {
-        line = line.slice(cr + 1);
-    }
-
-    if (line.startsWith("##[endgroup]")) {
-        return null;
-    }
-
-    line = line.replace(/^##\[group\]/, "▸ ");
-
-    return line.length > MAX_LINE_CHARS ? `${line.slice(0, MAX_LINE_CHARS)}…` : line;
-}
-
-function tail(lines: string[], max: number): string[] {
-    return lines.length > max ? lines.slice(lines.length - max) : lines;
-}
-
-interface TimedLine {
-    at: number | null;
-    text: string;
-}
-
-/**
- * `gh run view --job <id> --log` rows (`job<TAB>step<TAB><timestamp> text`) or the raw API log
- * (`<timestamp> text`) into timed lines. gh names every step `UNKNOWN STEP` for current runners,
- * so the step comes from the job's step timestamps instead of the prefix.
- */
-export function parseGithubLog(text: string): TimedLine[] {
-    const lines: TimedLine[] = [];
-
-    for (const row of text.split("\n")) {
-        const fields = row.split("\t");
-        const body = fields.length >= 3 ? fields.slice(2).join("\t") : row;
-        const match = body.match(GH_LINE);
-        const at = match ? Date.parse(match[1]) : Number.NaN;
-        const cleaned = cleanLine(match ? match[2] : body);
-
-        if (cleaned === null || (cleaned === "" && !match)) {
-            continue;
-        }
-
-        lines.push({ at: Number.isFinite(at) ? at : null, text: cleaned });
-    }
-
-    return lines;
-}
-
-export interface GithubStep {
-    number: number;
-    name: string;
-    conclusion: string | null;
-    startedAt: string | null;
-    completedAt: string | null;
-}
-
-const GH_FAILED = new Set(["failure", "timed_out", "cancelled", "startup_failure"]);
-
-function isRunnerCleanup(text: string): boolean {
-    return text === "Post job cleanup." || text.startsWith("Cleaning up orphan processes");
-}
-
-/**
- * The failed steps' lines, each cut to its last `maxLines`. A step's window runs from its start to
- * one second after its end, because the API reports step times in whole seconds while log lines
- * carry sub-second stamps. With no failed step (a cancelled or timed-out job) the whole log before
- * the runner's cleanup is the section.
- */
-export function sliceFailedSteps({
-    lines,
-    steps,
-    jobName,
-    maxLines,
-}: {
-    lines: TimedLine[];
-    steps: GithubStep[];
-    jobName: string;
-    maxLines: number;
-}): Array<{ name: string; lines: string[]; totalLines: number }> {
-    const failed = steps.filter((step) => step.conclusion && GH_FAILED.has(step.conclusion));
-    const sections: Array<{ name: string; lines: string[]; totalLines: number }> = [];
-
-    for (const step of failed) {
-        const start = step.startedAt ? Date.parse(step.startedAt) : Number.NaN;
-        const end = step.completedAt ? Date.parse(step.completedAt) + 1000 : Number.NaN;
-
-        if (!Number.isFinite(start) || !Number.isFinite(end)) {
-            continue;
-        }
-
-        const window = lines.filter((line) => line.at !== null && line.at >= start && line.at < end).map((l) => l.text);
-        // The runner's post steps often share the failed step's last second; they are never the failure.
-        const post = window.findIndex((text) => isRunnerCleanup(text));
-        const inside = post >= 0 ? window.slice(0, post) : window;
-
-        if (inside.length > 0) {
-            sections.push({
-                name: `${jobName} / ${step.name}`,
-                lines: tail(inside, maxLines),
-                totalLines: inside.length,
-            });
-        }
-    }
-
-    if (sections.length > 0) {
-        return sections;
-    }
-
-    const cleanup = lines.findIndex((line) => isRunnerCleanup(line.text));
-    const body = (cleanup > 0 ? lines.slice(0, cleanup) : lines).map((line) => line.text);
-    return body.length > 0 ? [{ name: jobName, lines: tail(body, maxLines), totalLines: body.length }] : [];
-}
-
-/** GitHub's `##[error]` lines, which name the failure in one sentence. */
-export function errorAnnotations(lines: TimedLine[]): string[] {
-    const found = lines
-        .map((line) => line.text)
-        .filter((text) => text.startsWith("##[error]"))
-        .map((text) => text.slice("##[error]".length).trim());
-    return tail([...new Set(found)], MAX_ERROR_LINES);
-}
-
-/** A GitLab trace: section markers, ANSI and carriage-return redraws removed. */
-export function parseGitlabTrace(text: string): string[] {
-    const lines = text
-        // biome-ignore lint/suspicious/noControlCharactersInRegex: GitLab's section markers end in an ANSI erase
-        .replace(/section_(?:start|end):\d+:[^\r\n]*?\r?\u001b\[0K/g, "")
-        .split("\n")
-        .map(cleanLine)
-        .filter((line): line is string => line !== null);
-
-    while (lines.length > 0 && lines[lines.length - 1].trim() === "") {
-        lines.pop();
-    }
-
-    return lines;
 }
 
 // ---------------------------------------------------------------------------
@@ -341,7 +154,7 @@ async function githubLog(
         ghApi(target.host, `repos/${target.repo}/actions/runs/${target.runId}/jobs?filter=latest&per_page=100`)
     );
     const all = isRecord(jobs) ? records(jobs.jobs) : [];
-    const failed = all.filter((job) => GH_FAILED.has(str(job.conclusion) ?? "")).slice(0, MAX_JOBS);
+    const failed = all.filter((job) => GH_FAILED_CONCLUSIONS.has(str(job.conclusion) ?? "")).slice(0, MAX_JOBS);
     const results = [];
 
     for (const job of failed) {
@@ -394,7 +207,7 @@ async function gitlabLog(
             name: [str(job.stage), str(job.name)].filter(Boolean).join(" / ") || `job ${job.id}`,
             url: str(job.web_url),
             status: str(job.status),
-            lines: tail(lines, maxLines),
+            lines: tailLines(lines, maxLines),
             totalLines: lines.length,
         });
     }

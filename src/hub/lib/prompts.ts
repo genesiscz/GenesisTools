@@ -3,12 +3,12 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { readCachedSessionCwd } from "@genesiscz/utils/agent-sessions/cached-title";
 import { execTool } from "@genesiscz/utils/cli";
+import { repoFacts } from "@genesiscz/utils/git/repo-facts";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { Storage, withFileLock } from "@genesiscz/utils/storage";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/storage";
 import { noPaneMatched } from "./fix-threads";
-import { repoFacts } from "./repo";
 
 // The hub's prompt library: `~/.genesis-tools/hub/prompts.json`. A prompt is a text with named
 // variables (`{{branch}}`, `{{pr}}`, `{{file}}`); sending renders it and types it into a session's

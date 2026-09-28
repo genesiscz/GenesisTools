@@ -1,6 +1,5 @@
 import { describe, expect, it } from "bun:test";
 import type { ChangeEvent } from "@app/agents/lib/changes/log";
-import { branchMentions, branchNamesFromRefs } from "./branches";
 import {
     checkoutOf,
     commitOutputPattern,
@@ -155,29 +154,5 @@ describe("commit output", () => {
     it("finds the deepest checkout of a path", () => {
         expect(checkoutOf(`${MAIN}/wt/x.ts`, [MAIN, `${MAIN}/wt`])).toBe(`${MAIN}/wt`);
         expect(checkoutOf("/work/app-other/x.ts", [MAIN])).toBeNull();
-    });
-});
-
-describe("branch mentions", () => {
-    const known = branchNamesFromRefs([
-        "refs/heads/feat/x",
-        "refs/heads/develop",
-        "refs/remotes/origin/HEAD",
-        "refs/remotes/origin/feat/y",
-    ]);
-
-    it("names local and remote-tracking branches without their prefix", () => {
-        expect([...known].sort()).toEqual(["develop", "feat/x", "feat/y"]);
-    });
-
-    it("takes code spans and slash tokens, never plain words, fences or link targets", () => {
-        const body = [
-            "Stacked on `feat/y` (#12); we develop here. See feat/x.",
-            "`develop` is the base. [compare](https://host/o/r/compare/feat/z)",
-            "```",
-            "git checkout feat/q",
-            "```",
-        ].join("\n");
-        expect(branchMentions(body, new Set([...known, "feat/z", "feat/q"]))).toEqual(["feat/y", "develop", "feat/x"]);
     });
 });

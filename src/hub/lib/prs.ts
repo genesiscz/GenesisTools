@@ -1,4 +1,3 @@
-import { existsSync } from "node:fs";
 import { basename } from "node:path";
 import { concurrentMap } from "@genesiscz/utils/async";
 import {
@@ -10,17 +9,19 @@ import {
     type PrListState,
     type ProjectRef,
     type PrSummary,
+    parsePrRef,
     parsePrUrl,
     projectRefFromRemote,
     spawnRunner,
     viewerLogin,
     viewPr,
     type WorktreeInfo,
+    worktreeByBranch,
 } from "@genesiscz/utils/git";
+import { branchMentions, localBranchNames } from "@genesiscz/utils/git/branch-names";
+import { type RepoFacts, repoFacts, repoFactsMany } from "@genesiscz/utils/git/repo-facts";
 import { logger } from "@genesiscz/utils/logger";
-import { branchMentions, localBranchNames } from "./branches";
 import { type ProposalSummary, proposalFor } from "./proposal";
-import { type RepoFacts, repoFacts, repoFactsMany } from "./repo";
 
 /** The hub's PR row: the host's PR plus where it lives on this machine. */
 export interface HubPr extends PrSummary {
@@ -64,50 +65,6 @@ export interface HubPrsResult {
 }
 
 const log = logger.child({ component: "review/prs" });
-
-/** Branch name to worktree path; the main checkout loses a tie so a dedicated worktree wins. */
-export function worktreeByBranch(worktrees: WorktreeInfo[]): Map<string, string> {
-    const byBranch = new Map<string, string>();
-
-    for (const wt of [...worktrees].sort((a, b) => Number(b.isMain) - Number(a.isMain))) {
-        if (wt.branch && !wt.isBare) {
-            byBranch.set(wt.branch, wt.path);
-        }
-    }
-
-    return byBranch;
-}
-
-/**
- * `<url>`, `<repoPath>#<number>`, `<owner>/<repo>#<number>` for a GitHub repo when no such folder exists, or
- * `<number>` / `#<number>` for the current folder's repo; null otherwise.
- */
-export function parsePrRef(ref: string): { url: string } | { path: string; number: number } | null {
-    const trimmed = ref.trim();
-
-    if (/^https?:\/\//i.test(trimmed)) {
-        return { url: trimmed };
-    }
-
-    const bare = /^#?(\d+)$/.exec(trimmed);
-
-    if (bare) {
-        return { path: process.cwd(), number: Number(bare[1]) };
-    }
-
-    const match = /^(.+)#(\d+)$/.exec(trimmed);
-
-    if (!match) {
-        return null;
-    }
-
-    // The hub's own `--pr genesiscz/GenesisTools#424`: read as a folder, it failed with a bare `posix_spawn 'git'`.
-    if (/^[\w.-]+\/[\w.-]+$/.test(match[1]) && !existsSync(match[1])) {
-        return { url: `https://github.com/${match[1]}/pull/${match[2]}` };
-    }
-
-    return { path: match[1], number: Number(match[2]) };
-}
 
 function toHubPr({
     pr,

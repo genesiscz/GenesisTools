@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from "bun:test";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { repoFacts } from "../repo-facts";
 import { TestRepo } from "../test-repo";
 import { classifyOriginUrl, detectOrigin, originDriver } from "./detector";
 import { ghDriver, parseGhPrList } from "./gh";
@@ -14,6 +15,7 @@ import {
     parseGhUpdatedPrs,
     parseGlabMrRows,
     parseGlabMrView,
+    parsePrRef,
     parsePrUrl,
     projectRefFromRemote,
     rollupCi,
@@ -93,6 +95,26 @@ describe("detectOrigin / originDriver", () => {
         const r = await repoWithOrigin("https://dev.azure.com/org/proj/_git/repo");
         expect(await detectOrigin(r.dir)).toMatchObject({ host: "dev.azure.com", kind: null });
         expect(await originDriver(r.dir)).toBeNull();
+    });
+});
+
+describe("repoFacts", () => {
+    it("reports a checkout whose branch has no commits yet, with its branch and origin", async () => {
+        const repo = await TestRepo.create({ prefix: "gt-review-prs-", branch: "feat/x", seed: false });
+        repos.push(repo);
+        await repo.git(["remote", "add", "origin", "git@github.com:o/r.git"]);
+
+        const facts = await repoFacts({ path: repo.dir });
+
+        expect(facts).toMatchObject({
+            root: repo.dir,
+            repo: "repo",
+            branch: "feat/x",
+            head: null,
+            origin: { kind: "github", web: "https://github.com/o/r" },
+            branchUrl: "https://github.com/o/r/tree/feat/x",
+            headUrl: null,
+        });
     });
 });
 
@@ -268,6 +290,18 @@ describe("project refs and PR URLs", () => {
         });
         expect(parsePrUrl("https://github.com/o/r/issues/12")).toBeNull();
         expect(parsePrUrl("not a url")).toBeNull();
+    });
+
+    it("parsePrRef accepts a URL or <repoPath>#<number>", () => {
+        expect(parsePrRef("https://github.com/o/r/pull/7")).toEqual({ url: "https://github.com/o/r/pull/7" });
+        expect(parsePrRef("/work/r#12")).toEqual({ path: "/work/r", number: 12 });
+        expect(parsePrRef("/work/r")).toBeNull();
+        // A bare number names a PR of the repo in the current folder, as `tools hub --pr <n>` does.
+        expect(parsePrRef("424")).toEqual({ path: process.cwd(), number: 424 });
+        expect(parsePrRef("#424")).toEqual({ path: process.cwd(), number: 424 });
+        // `owner/repo#n` is a GitHub PR unless a folder by that relative path exists.
+        expect(parsePrRef("acme/shop#12")).toEqual({ url: "https://github.com/acme/shop/pull/12" });
+        expect(parsePrRef("src/hub#12")).toEqual({ path: "src/hub", number: 12 });
     });
 });
 

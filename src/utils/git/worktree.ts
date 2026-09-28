@@ -173,6 +173,19 @@ export async function findWorktreeForBranch(branch: string, cwd?: string): Promi
     return worktrees.find((w) => w.branch === branch) ?? null;
 }
 
+/** Branch name to worktree path; the main checkout loses a tie so a dedicated worktree wins. */
+export function worktreeByBranch(worktrees: WorktreeInfo[]): Map<string, string> {
+    const byBranch = new Map<string, string>();
+
+    for (const wt of [...worktrees].sort((a, b) => Number(b.isMain) - Number(a.isMain))) {
+        if (wt.branch && !wt.isBare) {
+            byBranch.set(wt.branch, wt.path);
+        }
+    }
+
+    return byBranch;
+}
+
 /**
  * Get the current branch of a given directory (worktree or main repo).
  */

@@ -1,6 +1,7 @@
 import { basename, dirname } from "node:path";
 import { concurrentMap } from "@genesiscz/utils/async";
 import { Executor } from "@genesiscz/utils/cli";
+import { logger } from "@genesiscz/utils/logger";
 import {
     branchWebUrl,
     commitWebUrl,
@@ -9,9 +10,8 @@ import {
     originDriver,
     originWebBase,
     type PrInfo,
-} from "@genesiscz/utils/git/origins";
-import { logger } from "@genesiscz/utils/logger";
-import { cachedPrForHead } from "./pr-lookup-cache";
+} from "./origins";
+import { cachedPrForHead } from "./origins/lookup-cache";
 
 /** What the hub shows about a folder: its checkout, branch and the web pages for them. */
 export interface RepoFacts {
@@ -40,7 +40,7 @@ export async function repoFacts({
 }: {
     path: string;
     withPr?: boolean;
-    /** Bypass the PR lookup cache (src/hub/lib/pr-lookup-cache.ts); still refreshes it on success. */
+    /** Bypass the PR lookup cache (src/utils/git/origins/lookup-cache.ts); still refreshes it on success. */
     fresh?: boolean;
 }): Promise<RepoFacts> {
     const empty: RepoFacts = {

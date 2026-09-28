@@ -6,6 +6,7 @@ import { join } from "node:path";
 import type { AgentSessionRow } from "@app/ai/lib/sessions/agent-session-rows";
 import type { DecisionRecord } from "@app/question/lib/decisions/store";
 import type { AgentSearchFilters, AgentSearchHit, AgentSessionAdapter } from "@genesiscz/utils/agent-sessions/types";
+import { parsePrRef } from "@genesiscz/utils/git/origins/prs";
 import { Storage } from "@genesiscz/utils/storage";
 import {
     buildDigest,
@@ -27,7 +28,6 @@ import {
     windowLabel,
 } from "./forecast";
 import type { NotifyState } from "./notify-poll";
-import { parsePrRef } from "./prs";
 import {
     addRule,
     contextWindowFor,

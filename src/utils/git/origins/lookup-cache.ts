@@ -1,11 +1,11 @@
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import type { OriginDriver, PrInfo, PrLookup } from "@genesiscz/utils/git/origins";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { Storage, withFileLock } from "@genesiscz/utils/storage";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/storage";
+import type { OriginDriver, PrInfo, PrLookup } from "./types";
 
 // `tools hub repo --pr` runs `driver.prForHead` (gh/glab) on every session click in the hub, and
 // the host round trip is most of that click's cost. Cached keyed by origin URL + branch + head
@@ -15,6 +15,11 @@ import { atomicWriteFileSync } from "@genesiscz/utils/storage/storage";
 
 const log = logger.child({ component: "hub/pr-lookup-cache" });
 
+/**
+ * The cache file and its TTL setting live in the hub's tool folder, where `tools hub repo --pr`
+ * started them, so moving this module did not orphan an existing cache or setting.
+ */
+const PR_LOOKUP_STORAGE = "hub";
 export const DEFAULT_PR_LOOKUP_CACHE_SECONDS = 60;
 export const PR_LOOKUP_CACHE_CONFIG_KEY = "prLookupCacheSeconds";
 const CACHE_FILE_NAME = "pr-lookup-cache.json";
@@ -94,7 +99,7 @@ export function prLookupCacheKey(originUrl: string, branch: string, head: string
 }
 
 /** The configured TTL in seconds; 0 turns the cache off. A missing or invalid value is the default. */
-export async function readPrLookupCacheSeconds(storage = new Storage("hub")): Promise<number> {
+export async function readPrLookupCacheSeconds(storage = new Storage(PR_LOOKUP_STORAGE)): Promise<number> {
     const value = await storage.getConfigValue<number>(PR_LOOKUP_CACHE_CONFIG_KEY);
     return typeof value === "number" && Number.isFinite(value) && value >= 0
         ? Math.floor(value)
@@ -110,7 +115,10 @@ export function parsePrLookupCacheSeconds(text: string): number {
     return Number(text.trim());
 }
 
-export async function writePrLookupCacheSeconds(seconds: number, storage = new Storage("hub")): Promise<number> {
+export async function writePrLookupCacheSeconds(
+    seconds: number,
+    storage = new Storage(PR_LOOKUP_STORAGE)
+): Promise<number> {
     if (!Number.isInteger(seconds) || seconds < 0) {
         throw new Error(`the PR lookup cache TTL takes a whole number of seconds, 0 or more; got ${seconds}`);
     }
@@ -133,7 +141,7 @@ export async function cachedPrForHead({
     head,
     fresh = false,
     ttlSeconds,
-    storage = new Storage("hub"),
+    storage = new Storage(PR_LOOKUP_STORAGE),
     now = () => Date.now(),
 }: {
     driver: OriginDriver;

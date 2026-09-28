@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from "bun:test";
 import { readFileSync, utimesSync } from "node:fs";
 import { join } from "node:path";
+import { branchMentions, branchNamesFromRefs } from "./branch-names";
 import { createGit } from "./core";
 import {
     blobMap,
@@ -473,5 +474,29 @@ describe("createGit typed readers against real git", () => {
         await r.commit({ file: "c.txt", content: "c\n", message: "c" });
         const clean = await git.mergeTree("master", "feat/clean");
         expect(clean).toMatchObject({ clean: true, conflictedFiles: [], messages: [] });
+    });
+});
+
+describe("branch mentions", () => {
+    const known = branchNamesFromRefs([
+        "refs/heads/feat/x",
+        "refs/heads/develop",
+        "refs/remotes/origin/HEAD",
+        "refs/remotes/origin/feat/y",
+    ]);
+
+    it("names local and remote-tracking branches without their prefix", () => {
+        expect([...known].sort()).toEqual(["develop", "feat/x", "feat/y"]);
+    });
+
+    it("takes code spans and slash tokens, never plain words, fences or link targets", () => {
+        const body = [
+            "Stacked on `feat/y` (#12); we develop here. See feat/x.",
+            "`develop` is the base. [compare](https://host/o/r/compare/feat/z)",
+            "```",
+            "git checkout feat/q",
+            "```",
+        ].join("\n");
+        expect(branchMentions(body, new Set([...known, "feat/z", "feat/q"]))).toEqual(["feat/y", "develop", "feat/x"]);
     });
 });

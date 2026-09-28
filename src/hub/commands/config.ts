@@ -1,11 +1,11 @@
-import { out } from "@genesiscz/utils/logger";
-import type { Command } from "commander";
 import {
     DEFAULT_PR_LOOKUP_CACHE_SECONDS,
     parsePrLookupCacheSeconds,
     readPrLookupCacheSeconds,
     writePrLookupCacheSeconds,
-} from "../lib/pr-lookup-cache";
+} from "@genesiscz/utils/git/origins/lookup-cache";
+import { out } from "@genesiscz/utils/logger";
+import type { Command } from "commander";
 
 export function registerConfigCommands(program: Command): void {
     const config = program

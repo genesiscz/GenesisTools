@@ -4,7 +4,9 @@ import { spawn } from "node:child_process";
 import { join, resolve } from "node:path";
 import * as p from "@clack/prompts";
 import { isInteractive, runTool, suggestEnumFlag } from "@genesiscz/utils/cli";
-import { PR_LIST_STATES, type PrListState } from "@genesiscz/utils/git/origins";
+import { PR_LIST_STATES, type PrListState, parsePrRef } from "@genesiscz/utils/git/origins";
+import { fetchPrHead, PR_FETCH_PROVIDERS, PrFetchError } from "@genesiscz/utils/git/origins/pr-fetch";
+import { repoFactsMany } from "@genesiscz/utils/git/repo-facts";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import { genesisAppBundlePath } from "@genesiscz/utils/macos/genesis-app";
@@ -36,7 +38,6 @@ import {
     THREAD_SIDES,
     type ThreadSide,
 } from "./lib/pr";
-import { fetchPrHead, PR_FETCH_PROVIDERS, PrFetchError } from "./lib/pr-fetch";
 import { isHubPrRef } from "./lib/pr-ref";
 import { prSessions } from "./lib/pr-sessions";
 import {
@@ -48,8 +49,7 @@ import {
     proposalMarkdown,
     saveProposal,
 } from "./lib/proposal";
-import { hubPr, hubPrs, PrRefError, parsePrRef } from "./lib/prs";
-import { repoFactsMany } from "./lib/repo";
+import { hubPr, hubPrs, PrRefError } from "./lib/prs";
 import {
     buildTimeline,
     parseSince,
