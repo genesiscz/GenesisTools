@@ -3,6 +3,7 @@ import { formatClock, formatRelativeTime } from "@genesiscz/utils/format";
 import { out } from "@genesiscz/utils/logger";
 import type { TableSelectOptions } from "@genesiscz/utils/prompts/clack/table-select";
 import { accent } from "@genesiscz/utils/prompts/clack/table-select";
+import { sliceWhole } from "@genesiscz/utils/string";
 import { createBoxTable, formatDotStatus, renderCliHeader, truncateDisplay } from "@genesiscz/utils/table";
 import pc from "picocolors";
 import type { AgentSearchHit, AgentSession } from "./types";
@@ -166,7 +167,7 @@ function truncateSession(text: string, max: number): string {
         return flat;
     }
 
-    return `${flat.slice(0, max - 1)}…`;
+    return `${sliceWhole(flat, max - 1)}…`;
 }
 
 function sessionSnippet(s: SessionDisplayItem): string {
@@ -215,7 +216,7 @@ function wrapText(text: string, width: number, maxLines: number): string[] {
 
     if (remaining.length > 0 && lines.length === maxLines) {
         const last = lines[maxLines - 1];
-        lines[maxLines - 1] = `${last.slice(0, last.length - 1)}…`;
+        lines[maxLines - 1] = `${sliceWhole(last, last.length - 1)}…`;
     }
 
     return lines;

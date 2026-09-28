@@ -90,6 +90,25 @@ export function removeDiacritics(str: string): string {
 }
 
 /**
+ * `text.slice(0, end)` that never ends on the first half of a surrogate pair. A cut emoji leaves a lone
+ * high surrogate, which `JSON.stringify` writes as `\\ud83e`: JavaScript reads that back, but Foundation's
+ * `JSONSerialization` rejects the whole document, so one clipped emoji made the hub's Session Details
+ * fail with "Could not load earlier turns".
+ */
+export function sliceWhole(text: string, end: number): string {
+    if (end <= 0) {
+        return "";
+    }
+
+    if (end >= text.length) {
+        return text;
+    }
+
+    const last = text.charCodeAt(end - 1);
+    return last >= 0xd800 && last <= 0xdbff ? text.slice(0, end - 1) : text.slice(0, end);
+}
+
+/**
  * Truncate text to a maximum length, appending "..." if truncated.
  */
 export function truncateText(text: string, maxLength: number = 100): string {
@@ -97,9 +116,9 @@ export function truncateText(text: string, maxLength: number = 100): string {
         return text;
     }
     if (maxLength <= 3) {
-        return text.substring(0, maxLength);
+        return sliceWhole(text, maxLength);
     }
-    return `${text.substring(0, maxLength - 3)}...`;
+    return `${sliceWhole(text, maxLength - 3)}...`;
 }
 
 /**

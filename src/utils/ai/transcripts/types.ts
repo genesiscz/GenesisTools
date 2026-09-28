@@ -1,4 +1,5 @@
 import type { AccountProviderAlias } from "@genesiscz/utils/ai/providers/alias-list";
+import { sliceWhole } from "@genesiscz/utils/string";
 
 export type TranscriptProvider = AccountProviderAlias;
 
@@ -160,7 +161,7 @@ export function clipResult(text: string, max = DEFAULT_RESULT_CHARS): string {
     if (text.length <= max) {
         return text;
     }
-    return `${text.slice(0, max - 1)}…`;
+    return `${sliceWhole(text, max - 1)}…`;
 }
 
 /** The widest epoch a JS Date accepts; beyond it `toISOString()` throws RangeError. */

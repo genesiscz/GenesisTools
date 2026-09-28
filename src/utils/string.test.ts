@@ -8,6 +8,7 @@ import {
     probeCooccurrence,
     removeDiacritics,
     sanitizeOutput,
+    sliceWhole,
     slugify,
     stripAnsi,
     truncateText,
@@ -310,5 +311,22 @@ describe("probeCooccurrence", () => {
         const source = `alpha "cron_fire" ${"x".repeat(3000)} beta "cron_fire"`;
         const r = probeCooccurrence({ source, primary: /"cron_fire"/, secondary: [/alpha/, /beta/] });
         expect(r.matched).toBe(false);
+    });
+});
+
+describe("sliceWhole", () => {
+    it("drops a high surrogate the cut would leave at the end", () => {
+        expect(sliceWhole("ab🧹cd", 3)).toBe("ab");
+        expect(sliceWhole("ab🧹cd", 4)).toBe("ab🧹");
+    });
+
+    it("is plain slice otherwise", () => {
+        expect(sliceWhole("abcdef", 3)).toBe("abc");
+        expect(sliceWhole("abc", 10)).toBe("abc");
+        expect(sliceWhole("abc", 0)).toBe("");
+    });
+
+    it("keeps truncateText from splitting an emoji", () => {
+        expect(truncateText("abcd🧹efgh", 8)).toBe("abcd...");
     });
 });

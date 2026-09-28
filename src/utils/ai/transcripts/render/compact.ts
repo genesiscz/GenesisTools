@@ -1,4 +1,5 @@
 import { formatTokens } from "@genesiscz/utils/format";
+import { sliceWhole } from "@genesiscz/utils/string";
 import type { TranscriptEnvelope, TranscriptTool, TranscriptTurn } from "../types";
 import { type RenderContext, settledTurns, TranscriptRenderer, windowStart } from "./renderer";
 
@@ -8,7 +9,7 @@ const ERROR_CHARS = 400;
 
 export function oneLine(text: string, max: number): string {
     const collapsed = text.replace(/\s+/g, " ").trim();
-    return collapsed.length > max ? `${collapsed.slice(0, max)}…` : collapsed;
+    return collapsed.length > max ? `${sliceWhole(collapsed, max)}…` : collapsed;
 }
 
 function resultSuffix(tool: TranscriptTool, ctx: RenderContext): string {
