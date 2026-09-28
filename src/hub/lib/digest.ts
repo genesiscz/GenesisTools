@@ -106,24 +106,33 @@ export const realDigestDeps: DigestDeps = {
         }),
     numstat: async (repo, window) => {
         const email = (await git(["config", "user.email"], repo).catch(() => "")).trim();
-        const args = [
-            "log",
-            "--all",
-            "--no-merges",
-            `--since=${window.since.toISOString()}`,
-            `--until=${window.until.toISOString()}`,
-            "--numstat",
-            "--format=",
-        ];
-
-        if (email) {
-            args.push(`--author=${email}`);
-        }
-
-        return git(args, repo);
+        return git(numstatArgs(window, email), repo);
     },
     decisions: () => readDecisions(decisionFiles().file),
 };
+
+/**
+ * The `git log --numstat` of the window, by `email` when there is one. The address is matched literally
+ * and whole: as a pattern, `--author` is a regex matched anywhere in "Name <email>", so `me@x.com` also
+ * counted the commits of `some@x.com`.
+ */
+export function numstatArgs(window: DigestWindow, email: string): string[] {
+    const args = [
+        "log",
+        "--all",
+        "--no-merges",
+        `--since=${window.since.toISOString()}`,
+        `--until=${window.until.toISOString()}`,
+        "--numstat",
+        "--format=",
+    ];
+
+    if (email) {
+        args.push("--fixed-strings", `--author=<${email}>`);
+    }
+
+    return args;
+}
 
 /** `today`, `yesterday` or `YYYY-MM-DD` into that local day; null for anything else. */
 export function digestDay(value: string | undefined, now = new Date()): DigestWindow | null {

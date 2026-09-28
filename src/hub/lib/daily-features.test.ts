@@ -14,6 +14,7 @@ import {
     digestFromTimeline,
     digestMarkdown,
     localDate,
+    numstatArgs,
     parseNumstat,
 } from "./digest";
 import { forecastClock, forecastFromSamples, forecastWindow, type UsageSample, windowLabel } from "./forecast";
@@ -179,6 +180,14 @@ function decision(overrides: Partial<DecisionRecord> & { id: string }): Decision
 
 describe("digest", () => {
     const window = { since: new Date("2026-03-02T00:00:00Z"), until: NOW };
+
+    test("the numstat counts the configured author by the whole literal address, and everyone without one", () => {
+        const mine = numstatArgs(window, "me+tag@example.com");
+
+        expect(mine).toContain("--fixed-strings");
+        expect(mine).toContain("--author=<me+tag@example.com>");
+        expect(numstatArgs(window, "").some((arg) => arg.startsWith("--author"))).toBe(false);
+    });
 
     function event(overrides: Partial<TimelineEvent> & Pick<TimelineEvent, "id" | "kind" | "at">): TimelineEvent {
         return { title: "t", detail: null, project: "shop", repo: "/work/shop", ...overrides };
