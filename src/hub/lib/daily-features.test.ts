@@ -1,3 +1,4 @@
+import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -17,7 +18,14 @@ import {
     numstatArgs,
     parseNumstat,
 } from "./digest";
-import { forecastClock, forecastFromSamples, forecastWindow, type UsageSample, windowLabel } from "./forecast";
+import {
+    buildForecast,
+    forecastClock,
+    forecastFromSamples,
+    forecastWindow,
+    type UsageSample,
+    windowLabel,
+} from "./forecast";
 import type { NotifyState } from "./notify-poll";
 import {
     addRule,
@@ -370,6 +378,15 @@ describe("digest", () => {
 });
 
 describe("forecast", () => {
+    test("an index without usage snapshots is no data; any other read failure is an error", async () => {
+        const old = new Database(":memory:");
+        expect((await buildForecast({ now: NOW, open: () => old })).accounts).toEqual([]);
+
+        const broken = new Database(":memory:");
+        broken.close();
+        await expect(buildForecast({ now: NOW, open: () => broken })).rejects.toThrow();
+    });
+
     function sample(overrides: Partial<UsageSample> & Pick<UsageSample, "utilization" | "timestamp">): UsageSample {
         return {
             provider: "anthropic-sub",

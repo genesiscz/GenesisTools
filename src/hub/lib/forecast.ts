@@ -344,6 +344,11 @@ export async function buildForecast({
         return { generatedAt: now.toISOString(), source: db.filename, accounts, elapsedMs };
     } catch (error) {
         // An index older than the usage columns has no `usage_snapshots`: that is "no data", not a crash.
+        // Anything else (a corrupt file, an I/O error) is a failure the command must report.
+        if (!(error instanceof Error && /no such (table|column)/.test(error.message))) {
+            throw error;
+        }
+
         log.warn({ error }, "forecast: usage_snapshots unreadable");
         return { generatedAt: now.toISOString(), source: db.filename, accounts: [], elapsedMs: 0 };
     } finally {
