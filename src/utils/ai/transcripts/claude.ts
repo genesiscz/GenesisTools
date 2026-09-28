@@ -134,5 +134,6 @@ export async function claudeTranscriptEnvelope(
         truncated: sliced.truncated,
         nextOffset: sliced.nextOffset,
         turns: sliced.turns,
+        turnCount: all.length,
     };
 }

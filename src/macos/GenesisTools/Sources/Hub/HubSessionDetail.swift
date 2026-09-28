@@ -335,13 +335,15 @@ struct HubSessionDetailHost: View {
         do {
             var limit = limit
             var fetched = try await SessionTranscriptClient.fetch(using: HubSource.bridge, sessionId: session.sessionId, limit: limit, offset: offset)
-            // A full answer may have stopped short of the latest turn, when more turns arrived than the
-            // limit left room for, so ask again from the same offset with twice the room until one
-            // comes back short.
-            while throughEnd, offset != nil, fetched.turns.count >= limit {
+            // A window that stopped short of the latest turn (more turns arrived than the limit left
+            // room for) is fetched again from the same offset with exactly the room the transcript's
+            // turn count asks for. Bounded: a live session can grow between two fetches.
+            var tries = 0
+            while throughEnd, let start = offset, let count = fetched.turnCount, fetched.nextOffset < count, tries < 3 {
                 guard id == loadID else { return }
-                limit *= 2
-                fetched = try await SessionTranscriptClient.fetch(using: HubSource.bridge, sessionId: session.sessionId, limit: limit, offset: offset)
+                tries += 1
+                limit = count - start
+                fetched = try await SessionTranscriptClient.fetch(using: HubSource.bridge, sessionId: session.sessionId, limit: limit, offset: start)
             }
             guard id == loadID else { return }
             envelope = fetched

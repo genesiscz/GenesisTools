@@ -66,6 +66,11 @@ export interface TranscriptEnvelope {
     totals?: TranscriptTotals;
     /** How the transcript ended, from its last terminal event; null while it is still running. */
     terminated?: "end" | "error" | null;
+    /**
+     * Turns in the whole transcript, so a window can tell whether it reaches the latest turn
+     * (`nextOffset === turnCount`). `truncated` cannot say that: any offset above 0 sets it.
+     */
+    turnCount?: number;
 }
 
 export function totalsOf(turns: readonly TranscriptTurn[]): TranscriptTotals {

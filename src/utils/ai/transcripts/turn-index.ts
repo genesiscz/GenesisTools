@@ -376,6 +376,7 @@ export function indexedClaudeEnvelope(
             turns,
             totals: { ...index.totals },
             terminated: index.terminated,
+            turnCount: total,
         };
     }
 
@@ -417,5 +418,6 @@ export function indexedClaudeEnvelope(
         turns,
         totals: { ...index.totals },
         terminated: index.terminated,
+        turnCount: total,
     };
 }

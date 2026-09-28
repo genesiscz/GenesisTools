@@ -267,6 +267,21 @@ describe("sparse envelopes", () => {
         expect(full.truncated).toBe(true);
     });
 
+    test("a window from an offset carries the transcript's turn count on both paths", async () => {
+        const { resolved, dir } = setup(conversation(6));
+        const indexed = indexedClaudeEnvelope(resolved, { offset: 2, limit: 3 }, { minBytes: 0, dir });
+        const full = await transcriptEnvelope(resolved, { offset: 2, limit: 3 });
+        const everything = await transcriptEnvelope(resolved, { offset: 0, limit: 1000 });
+
+        expect(indexed).toEqual(full);
+        expect(full.nextOffset).toBe(5);
+        expect(full.turnCount).toBe(everything.turns.length);
+        expect(full.nextOffset).toBeLessThan(full.turnCount ?? 0);
+        // truncated alone cannot say whether a window reaches the end: an offset above 0 sets it.
+        expect(everything.truncated).toBe(false);
+        expect(full.truncated).toBe(true);
+    });
+
     test("a default slice carries no index", async () => {
         const { resolved, dir } = setup(conversation(2));
         const indexed = indexedClaudeEnvelope(resolved, {}, { minBytes: 0, dir });
