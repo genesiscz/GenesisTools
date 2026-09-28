@@ -103,9 +103,9 @@ final class SessionTranscriptScrollTests: XCTestCase {
     }
 
     /// The same for a call that arrived while the transcript was on screen, the way a running session's
-    /// turns come in. AppKit drops the height listener of every row on screen at each insert, so such a
-    /// call kept its closed height and drew its output over the rows below
-    /// (`TranscriptScrollAnchor.remeasureVisibleRows`).
+    /// turns come in. The anchor keeps the reader at the latest turn by moving the viewport inside each
+    /// insert, which left the rows on screen without their height listener, so such a call kept its
+    /// closed height and drew its output over the rows below (`TranscriptScrollAnchor.remeasureVisibleRows`).
     func testARowOnScreenWhenTurnsArriveStillOpensToItsOutput() throws {
         let session = try InventedSession.make(sections: 3)
         let rig = Rig(Streaming(session: session), size: NSSize(width: 560, height: 700))

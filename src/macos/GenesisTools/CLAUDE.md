@@ -81,11 +81,12 @@ not the hub's models (`TimelineRowView`), and carry buttons, hover sensors and t
 pointer is on them (its `live`, `ExternalLink(interactive:)`). A list that inserts rows above the
 viewport holds it with `TranscriptScrollAnchor` (Hub/HubTranscriptAnchor.swift).
 
-🛑 A SwiftUI `List` stops re-measuring the rows on screen once rows are inserted or removed: AppKit drops
-their height listener at each insert and `noteHeightOfRows` returns the cached height. A row that grows
-later (an opened tool call) keeps its old height and draws over the rows below; the live tail made every
-row of a running session do it (2026-09-28). `TranscriptScrollAnchor.remeasureVisibleRows` measures the
-rows on screen again after each change of the row count; a new list whose rows change height needs the same.
+🛑 Moving a SwiftUI `List`'s viewport inside the resize of a row insert (a frame-change observer that
+scrolls at once, as `TranscriptScrollAnchor` does to stay still) stops AppKit re-measuring the rows on
+screen: their height listener is gone and `noteHeightOfRows` returns the cached height. A row that grows
+later (an opened tool call) keeps its old height and draws over the rows below; with the live tail every
+row of a running session did it (2026-09-28). An insert without that move is fine (measured). Such a list
+needs `TranscriptScrollAnchor.remeasureVisibleRows` after each change of the row count.
 
 ## Look
 

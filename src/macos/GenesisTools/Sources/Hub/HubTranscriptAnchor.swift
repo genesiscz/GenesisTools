@@ -23,7 +23,7 @@ import SwiftUI
 /// list by the height of its output.
 ///
 /// It also measures the rows on screen again after rows are inserted or removed
-/// (`remeasureVisibleRows`): AppKit stops re-measuring those rows otherwise.
+/// (`remeasureVisibleRows`): its own move inside an insert stops AppKit re-measuring them otherwise.
 @MainActor
 final class TranscriptScrollAnchor: ObservableObject {
     /// A view in the list's frame (`TranscriptScrollAnchorProbe`), to find the list's scroll view by.
@@ -152,15 +152,19 @@ final class TranscriptScrollAnchor: ObservableObject {
         }
     }
 
-    /// Every insert or removal of rows (the live tail appending turns, the idle fill prepending them,
-    /// a filter) makes AppKit drop the automatic-row-height listener of each row view on screen
-    /// (`NSTableRowView._layoutEngineChangeListener`, set up again only for a row that scrolls into view).
-    /// A row without it never reports a new height, and `noteHeightOfRows` returns the cached one: a
-    /// tool call opened after the transcript followed a running session kept its closed height and its
-    /// output drew under the rows below (Martin, 2026-09-28; `SessionTranscriptScrollTests`
-    /// `testARowOnScreenWhenTurnsArriveStillOpensToItsOutput`). Turning automatic row heights off and on
-    /// measures the rows on screen again and gives them their listeners back; rows off screen keep
-    /// their heights. On the next turn of the main queue, after the insert's own layout.
+    /// `keep` moves the viewport inside the resize of a row insert (the live tail appending turns while
+    /// the reader is at the latest one, the idle fill prepending them under a hold). That move leaves
+    /// each row view on screen without its automatic-row-height listener
+    /// (`NSTableRowView._layoutEngineChangeListener`, set up again only for a row that scrolls into
+    /// view). A row without it never reports a new height, and `noteHeightOfRows` returns the cached
+    /// one: a tool call opened after the transcript followed a running session kept its closed height
+    /// and its output drew under the rows below (Martin, 2026-09-28; `SessionTranscriptScrollTests`
+    /// `testARowOnScreenWhenTurnsArriveStillOpensToItsOutput`). Measured with this remeasure off: rows
+    /// streamed in under the move stuck 2 runs of 2, the same rows without the move opened 2 of 2.
+    /// The move cannot wait a turn, or the rows on screen would jump for one frame. So after every
+    /// change of the row count, automatic row heights go off and on: the rows on screen are measured
+    /// again and get their listeners back, rows off screen keep their heights. On the next turn of the
+    /// main queue, after the insert's own layout.
     private func scheduleRemeasure() {
         guard !remeasureScheduled else { return }
         remeasureScheduled = true
