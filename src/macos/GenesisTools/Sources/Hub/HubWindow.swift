@@ -788,9 +788,16 @@ final class HubModel: ObservableObject {
                 let rows = try await HubSource.sessions(hours: Self.recentHours)
                 PerfLog.markOnce("hub.sessions.first-loaded")
                 loadingSessions = false
-                sessions = rows
+                var fresh = rows
                     .filter { !($0.archived ?? false) }
                     .sorted { $0.mtime > $1.mtime }
+                // A session opened from search or the digest (older than the list's window) stays while
+                // it is selected, or the detail pane would go blank on the next load.
+                if let current = selected, !fresh.contains(where: { $0.id == current.id }) {
+                    fresh.append(current)
+                    fresh.sort { $0.mtime > $1.mtime }
+                }
+                sessions = fresh
                 let wanted = wantedSession.flatMap { wanted in
                     sessions.first { $0.id == wanted || $0.sessionId.hasPrefix(wanted) }
                 }
@@ -840,8 +847,15 @@ final class HubModel: ObservableObject {
         guard prs.prs.isEmpty, !prs.loading else { return }
         // One path per project; worktrees and clones of one origin collapse server-side.
         let roots = Array(Set(sessions.map(\.cwd).filter { !$0.isEmpty && FileManager.default.fileExists(atPath: $0) }.map(projectRoot(of:)))).sorted()
+        // An empty list for the same projects is an answer (no open PR), not a reason for another
+        // `tools hub pr list` on every ⌘K; nothing to ask before the sessions arrive.
+        guard !roots.isEmpty, roots != prRootsRequested else { return }
+        prRootsRequested = roots
         prs.load(paths: roots)
     }
+
+    /// The projects the PR list was last asked for by `loadPRsIfNeeded`.
+    private var prRootsRequested: [String]?
 
     /// What the command palette can name: projects, sessions, PRs and worktrees the hub already knows.
     @MainActor
@@ -850,6 +864,7 @@ final class HubModel: ObservableObject {
             projects: HubPaletteEngine.projects(sessions: sessions, worktrees: worktrees),
             sessions: sessions,
             prs: prs.prs,
+            prsLoaded: prRootsRequested != nil && !prs.loading,
             worktrees: worktrees,
             currentPath: selected.map { $0.cwd.isEmpty ? nil : projectRoot(of: $0.cwd) } ?? nil
         )

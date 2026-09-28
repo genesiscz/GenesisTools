@@ -52,13 +52,15 @@ struct HubPaletteContext {
     var projects: [HubPaletteProject] = []
     var sessions: [HubSession] = []
     var prs: [HubPR] = []
+    /// The PR list finished loading: an empty `prs` is then "no open PR", not "still loading".
+    var prsLoaded = false
     var worktrees: [HubWorktree] = []
     /// The folder the palette acts on when no project is typed (the selected session's project).
     var currentPath: String?
 
     /// Changes when anything the rows are built from changes.
     var signature: String {
-        "\(projects.count)|\(sessions.count)|\(prs.count)|\(worktrees.count)|\(currentPath ?? "")"
+        "\(projects.count)|\(sessions.count)|\(prs.count)|\(prsLoaded)|\(worktrees.count)|\(currentPath ?? "")"
     }
 }
 
@@ -228,7 +230,8 @@ enum HubPaletteEngine {
                 }
             if rows.isEmpty, listed.isEmpty {
                 // "gt pr" before the PRs mode ever loaded its list drew an empty box (snapshot 2026-09-25).
-                let why = context.prs.isEmpty ? "Loading the open PRs…" : "No PR matches “\(argument)”"
+                let why = !context.prs.isEmpty ? "No PR matches “\(argument)”"
+                    : context.prsLoaded ? "No open PR in these projects" : "Loading the open PRs…"
                 return [HubPaletteSuggestion(id: "pr-none", title: "Type a PR number to open it\(where_)", subtitle: why, symbol: "questionmark.circle")]
             }
             return rows + listed

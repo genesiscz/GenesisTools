@@ -141,6 +141,14 @@ final class HubDailyTests: XCTestCase {
         XCTAssertEqual(run.firings.first?.message, "No activity for 45 min")
     }
 
+    /// "gt pr" says the list is loading only while it loads; a finished load with no PR says so.
+    func testPalettePRHintFollowsTheLoadState() {
+        var context = HubPaletteContext(projects: [HubPaletteProject(name: "GenesisTools", path: "/tmp/fixture/GenesisTools")])
+        XCTAssertEqual(HubPaletteEngine.suggestions(for: "gt pr", context: context).first?.subtitle, "Loading the open PRs…")
+        context.prsLoaded = true
+        XCTAssertEqual(HubPaletteEngine.suggestions(for: "gt pr", context: context).first?.subtitle, "No open PR in these projects")
+    }
+
     /// Two idle sessions of one project can match in every visible field; the list tells them apart by key.
     func testRuleFiringsWithTheSameTextAreDistinctRows() throws {
         let run = try decode(HubRulesRun.self, """
