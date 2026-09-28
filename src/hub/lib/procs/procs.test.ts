@@ -506,6 +506,14 @@ describe("stopTree", () => {
         expect(ops.sent).toEqual(["SIGTERM 300", "SIGTERM 301", "SIGKILL 301"]);
     });
 
+    test("a pid whose start time cannot be read is never signalled: its identity cannot be checked", async () => {
+        const rows = table().map((entry) => (entry.pid === 301 ? { ...entry, startTime: null } : entry));
+        const ops = fakeOps(rows, {});
+        await stopTree({ pid: 300, graceMs: 1_000, sources: fakeSources(rows), ops });
+
+        expect(ops.sent).toEqual(["SIGTERM 300"]);
+    });
+
     test("a pid that now belongs to another process is never killed", async () => {
         const rows = table();
         const ops = fakeOps(rows, { 301: "never" });

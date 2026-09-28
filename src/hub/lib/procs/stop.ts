@@ -166,7 +166,14 @@ export async function stopTree({
     const same = (live: Map<number, { startedAt: string | null; command: string }>, member: number): boolean => {
         const was = seen.get(member);
         const now = live.get(member);
-        return was !== undefined && now !== undefined && was.startedAt === now.startedAt && was.command === now.command;
+        // An unreadable start time proves nothing: two nulls match any process that reused the pid.
+        return (
+            was !== undefined &&
+            now !== undefined &&
+            was.startedAt !== null &&
+            was.startedAt === now.startedAt &&
+            was.command === now.command
+        );
     };
 
     // Re-check identity right before the first signal: the report may be seconds old.
@@ -183,7 +190,7 @@ export async function stopTree({
             stopped: false,
             signal: null,
             survivors: [],
-            reason: "the root process exited or its pid now belongs to another process",
+            reason: "the root process exited, its pid now belongs to another process, or its start time cannot be read to tell",
         };
     }
 
