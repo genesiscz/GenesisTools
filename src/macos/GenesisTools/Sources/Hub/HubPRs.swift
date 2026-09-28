@@ -859,8 +859,9 @@ struct PRDetailView: View {
         }
     }
 
+    /// The first row sits in the window's title bar (`TitlebarHeader`).
     private var header: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        TitlebarHeader {
             HStack(spacing: 10) {
                 PRStateIcon(pr: pr)
                 Text(pr.title)
@@ -920,6 +921,7 @@ struct PRDetailView: View {
                     }
                 }
             }
+        } details: {
             HStack(spacing: 10) {
                 ExternalLink(
                     text: pr.author ?? "unknown",
@@ -967,11 +969,6 @@ struct PRDetailView: View {
             .font(.system(size: 11.5))
             .foregroundColor(ReviewPalette.dim)
         }
-        .padding(.leading, 18)
-        .padding(.trailing, 14)
-        .padding(.top, 34)
-        .padding(.bottom, 10)
-        .overlay(Rectangle().fill(ReviewPalette.hairline).frame(height: 1), alignment: .bottom)
     }
 
     /// Open / Draft / Merged / Closed in the same color as the state icon.

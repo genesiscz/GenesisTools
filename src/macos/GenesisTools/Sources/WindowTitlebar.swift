@@ -16,7 +16,10 @@ import SwiftUI
 // - `.titlebarBackground(fill)` for any fill that also paints the strip. A plain `.background` that
 //   ignores the top safe area takes the strip's clicks before the zone sees them.
 // - `.titlebarRow()` on a row of controls placed in the strip: the strip's height, and clear of the
-//   traffic lights and the window title.
+//   traffic lights and the window title. `.titlebarLabel()` on plain title text in that row, so a
+//   double-click on it zooms too.
+// - `WindowTitlebar.audit(window, expectsRow:)` for a `--snapshot` check: where a click on the strip
+//   lands, and whether an empty band sits under the strip.
 
 enum WindowTitlebar {
     enum Action: Equatable {
@@ -131,6 +134,71 @@ enum WindowTitlebar {
         var runs: [Run]
         /// The window puts a row of controls in the strip (`.titlebarRow()`), so the strip must hold some.
         var expectsRow = false
+        var width: CGFloat = 0
+        /// The widest flat stretch right under the strip (`Band.widest`), nil when there is none.
+        var band: Band?
+
+        /// Rows under the strip where nothing is drawn across a whole column of the window: a header that
+        /// pads its first row down (every hub mode used 34 pt) leaves one from the column's left edge.
+        /// A row with text on its left and nothing on its right is not a band.
+        struct Band: Equatable {
+            var minX: CGFloat
+            var maxX: CGFloat
+            var height: CGFloat
+
+            /// One `columnWidth` slice of the window under the strip.
+            struct Column: Equatable {
+                /// How far down from the strip the slice stays one colour.
+                var height: CGFloat
+                /// Its colour right under the strip, packed RGBA.
+                var color: UInt32
+                /// A vertical line or an edge crosses the slice right under the strip (its samples differ).
+                var edge = false
+            }
+
+            /// A band counts from this height and this share of the window's width. The sidebar's own
+            /// gaps between its buttons stay under the share.
+            static let minHeight: CGFloat = 12
+            static let minShare: CGFloat = 0.4
+
+            /// The longest run of columns flat for at least `minHeight`, at the run's lowest height,
+            /// among the runs that start a region: at the window's left edge, after a divider, or where
+            /// the colour under the strip changes (the sidebar ends). A run that starts beside drawn text
+            /// is the empty end of a row, not a band.
+            static func widest(columns: [Column], columnWidth: CGFloat) -> Band? {
+                var best: Band?
+                var start: Int?
+                for index in 0...columns.count {
+                    if index < columns.count, columns[index].height >= minHeight {
+                        start = start ?? index
+                        continue
+                    }
+
+                    if let first = start, startsRegion(columns, at: first) {
+                        let run = Band(minX: CGFloat(first) * columnWidth, maxX: CGFloat(index) * columnWidth,
+                                       height: columns[first..<index].map(\.height).min() ?? 0)
+                        if run.maxX - run.minX > (best.map { $0.maxX - $0.minX } ?? 0) {
+                            best = run
+                        }
+                    }
+                    start = nil
+                }
+                return best
+            }
+
+            private static func startsRegion(_ columns: [Column], at index: Int) -> Bool {
+                guard index > 0 else { return true }
+
+                let left = columns[index - 1]
+                return left.edge || left.color != columns[index].color
+            }
+        }
+
+        /// A band across much of the window under a header meant for the title bar.
+        var emptyBand: Band? {
+            guard expectsRow, let band, width > 0, band.maxX - band.minX >= width * Band.minShare else { return nil }
+            return band
+        }
 
         /// Content over the strip with no zone left, content under the traffic lights or the title, or
         /// an expected row that is not in the strip. A strip that is all window is AppKit's own title bar.
@@ -143,6 +211,10 @@ enum WindowTitlebar {
 
             if expectsRow, !content {
                 found.append("nothing in the strip: the row meant for the title bar is not there")
+            }
+
+            if let band = emptyBand {
+                found.append("an empty band \(Int(band.height)) pt tall under the title bar at x \(Int(band.minX))-\(Int(band.maxX)): put the header's first row in the title bar (TitlebarHeader)")
             }
 
             for run in runs where run.kind == .content && run.minX < leadingReserve - Self.reserveSlack {
@@ -166,6 +238,9 @@ enum WindowTitlebar {
                 parts.append("content \(Int(width(of: .content))) pt in \(content.count) runs at \(Int(first.minX))-\(Int(last.maxX))")
             } else {
                 parts.append("no content")
+            }
+            if let band {
+                parts.append("flat under the strip \(Int(band.height)) pt at \(Int(band.minX))-\(Int(band.maxX))")
             }
             let found = problems
             return parts.joined(separator: ", ") + (found.isEmpty ? "; ok" : "; " + found.joined(separator: "; "))
@@ -192,8 +267,9 @@ enum WindowTitlebar {
     static func audit(_ window: NSWindow, expectsRow: Bool = false, step: CGFloat = 2) -> Audit {
         let strip = stripHeight(of: window)
         let reserve = leadingReserve(of: window)
+        let width = window.frame.width
         guard strip > 0, let frameView = window.contentView?.superview else {
-            return Audit(stripHeight: strip, leadingReserve: reserve, runs: [], expectsRow: expectsRow)
+            return Audit(stripHeight: strip, leadingReserve: reserve, runs: [], expectsRow: expectsRow, width: width)
         }
 
         let bar = window.standardWindowButton(.closeButton)?.superview?.superview
@@ -216,7 +292,49 @@ enum WindowTitlebar {
             samples.append((x, kind))
             x += step
         }
-        return Audit(stripHeight: strip, leadingReserve: reserve, runs: Audit.runs(samples, step: step), expectsRow: expectsRow)
+        let columnWidth: CGFloat = 8
+        return Audit(
+            stripHeight: strip, leadingReserve: reserve, runs: Audit.runs(samples, step: step), expectsRow: expectsRow,
+            width: width, band: Audit.Band.widest(columns: flatColumns(under: window, columnWidth: columnWidth), columnWidth: columnWidth)
+        )
+    }
+
+    /// For each `columnWidth` column of the window, how far down from the strip's bottom edge it stays
+    /// one colour (three samples across it, up to `depth` points), and that colour. Draws the content
+    /// view once.
+    @MainActor
+    static func flatColumns(under window: NSWindow, columnWidth: CGFloat, depth: CGFloat = 120) -> [Audit.Band.Column] {
+        guard let view = window.contentView, view.bounds.height > 0,
+              let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return [] }
+        view.cacheDisplay(in: view.bounds, to: rep)
+        let scale = CGFloat(rep.pixelsHigh) / view.bounds.height
+        let top = Int((stripHeight(of: window) * scale).rounded())
+        let bottom = min(rep.pixelsHigh, top + Int(depth * scale))
+        let columnPixels = max(3, Int(columnWidth * scale))
+        guard top < bottom else { return [] }
+
+        var reference = [Int](repeating: 0, count: max(4, rep.samplesPerPixel))
+        var sample = reference
+        var columns: [Audit.Band.Column] = []
+        for left in stride(from: 0, through: rep.pixelsWide - columnPixels, by: columnPixels) {
+            let xs = [left, left + columnPixels / 2, left + columnPixels - 1]
+            rep.getPixel(&reference, atX: xs[1], y: top)
+            var rows = 0
+            scan: for y in top..<bottom {
+                for x in xs {
+                    rep.getPixel(&sample, atX: x, y: y)
+                    // A few levels of slack: antialiasing and dithering, not a drawn line.
+                    if zip(sample, reference).prefix(rep.samplesPerPixel).contains(where: { abs($0 - $1) > 3 }) {
+                        break scan
+                    }
+                }
+                rows += 1
+            }
+            let color = reference.prefix(4).reduce(UInt32(0)) { ($0 << 8) | UInt32(clamping: $1) }
+            // Flat for not even one row: its own samples differ, so a line or an edge crosses it.
+            columns.append(Audit.Band.Column(height: CGFloat(rows) / scale, color: color, edge: rows == 0))
+        }
+        return columns
     }
 }
 
@@ -362,5 +480,12 @@ extension View {
     /// (no strip) it stays in place, `minHeight` tall.
     func titlebarRow(minHeight: CGFloat = 28) -> some View {
         modifier(TitlebarRowModifier(minHeight: minHeight))
+    }
+
+    /// Plain text and icons in a title bar row: a double-click on them zooms and a drag moves the
+    /// window, as on the window's own title. SwiftUI hit-tests text, so without this it took the click.
+    /// Not for text with a tooltip, a link or selection: those need the pointer.
+    func titlebarLabel() -> some View {
+        allowsHitTesting(false)
     }
 }

@@ -428,6 +428,55 @@ struct SideSplit: Layout {
     }
 }
 
+// MARK: - Title bar header
+
+/// A main view's header. Its first row sits in the window's title bar, right of the traffic lights and
+/// the title (`.titlebarRow()`, WindowTitlebar.swift), so the content starts right under the title bar;
+/// the row's empty part zooms and drags the window. `details` are the rows under it. Every hub mode
+/// used a 34 pt top padding here, which left an empty band under the title bar (Martin, 2026-09-28).
+struct TitlebarHeader<Row: View, Details: View>: View {
+    let row: Row
+    let details: Details?
+
+    init(@ViewBuilder row: () -> Row, @ViewBuilder details: () -> Details) {
+        self.row = row()
+        self.details = details()
+    }
+
+    /// `details: nil` for a header that is only the title bar row at the moment.
+    init(details: Details?, @ViewBuilder row: () -> Row) {
+        self.row = row()
+        self.details = details
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            row
+                .padding(.leading, 18)
+                .padding(.trailing, 14)
+                .titlebarRow()
+            if let details {
+                details
+                    .padding(.leading, 18)
+                    .padding(.trailing, 14)
+                    .padding(.top, 2)
+                    .padding(.bottom, 10)
+            }
+            // A row of its own, not an overlay: the title bar row takes no height, and a pane that starts
+            // right at the title bar's edge gets its safe area. The session screen ignores that area and
+            // slid up under the row (snapshot 2026-09-28 21:02).
+            Rectangle().fill(ReviewPalette.hairline).frame(height: 1)
+        }
+    }
+}
+
+extension TitlebarHeader where Details == EmptyView {
+    init(@ViewBuilder row: () -> Row) {
+        self.row = row()
+        self.details = nil
+    }
+}
+
 // MARK: - Notice pill
 
 /// A short status line that fades after a few seconds: icon, message, optional dim detail.

@@ -251,10 +251,11 @@ func runHub(_ args: [String]) -> Never {
                             FileHandle.standardError.write(Data("hub snapshot: \(rows)\n".utf8))
                         }
                         // Where a click on the title bar row lands: the empty strip must reach the zone, no
-                        // control may start under the traffic lights or the title, and an open session has its
-                        // header row up there. A modal panel's dim layer covers the strip on purpose.
-                        let sessionRow = model.mode == .sessions && model.selected != nil && model.selectedID != AgentProcs.selectionID
-                        let titlebar = (covered ? "(a modal panel covers it) " : "") + WindowTitlebar.audit(window, expectsRow: sessionRow).line
+                        // control may start under the traffic lights or the title, and a mode with a header
+                        // has its first row up there with no empty band under it. A modal panel's dim layer
+                        // covers the strip on purpose.
+                        let titlebar = (covered ? "(a modal panel covers it) " : "")
+                            + WindowTitlebar.audit(window, expectsRow: model.showsTitlebarHeader).line
                         PerfLog.mark("hub.snapshot titlebar \(titlebar)")
                         FileHandle.standardError.write(Data("hub snapshot: titlebar \(titlebar)\n".utf8))
                         ReviewSnapshot.write(window: window, webView: showsDiff && !covered ? web : nil, to: snapshotPath) {
@@ -1395,6 +1396,22 @@ struct HubRootView: View {
     }
 }
 
+extension HubModel {
+    /// The main view on screen has a `TitlebarHeader`, so its first row belongs in the title bar; an
+    /// empty state ("Pick a PR or MR") has none. Follows the branches of `HubRootView.body`.
+    @MainActor
+    var showsTitlebarHeader: Bool {
+        switch mode {
+        case .prs: return prs.selected != nil
+        case .inbox, .timeline: return true
+        case .worktrees:
+            return worktrees.contains { $0.path == selectedWorktree }
+                || (selectedWorktree == WorktreeCleanup.selectionID && !loadingWorktrees)
+        case .sessions: return selectedID == AgentProcs.selectionID || selected != nil
+        }
+    }
+}
+
 /// Hands the view's window to `apply` on every update (glass, minimum size). Reading state only.
 struct HubWindowReader: NSViewRepresentable {
     let apply: (NSWindow) -> Void
@@ -1862,12 +1879,11 @@ private struct SessionDetailView: View {
 
     /// The first row sits in the window's title bar, right of the traffic lights and the title, so the
     /// panes start right under the title bar (Martin, 2026-09-28). Its empty part zooms and drags the
-    /// window (`.titlebarZone()` on the root, WindowTitlebar.swift).
+    /// window (`TitlebarHeader`, `.titlebarZone()` on the root, WindowTitlebar.swift).
     private var header: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        TitlebarHeader(details: model.panes.contains(.transcript) ? nil : accountRow) {
             HStack(spacing: 10) {
                 if !model.panes.contains(.transcript) {
-                    // Title text, not controls: a double-click on it zooms, as on the window's own title.
                     Group {
                         ProviderBadge(provider: session.provider)
                         Text(session.displayTitle)
@@ -1886,7 +1902,7 @@ private struct SessionDetailView: View {
                             .font(.system(size: 11.5))
                             .foregroundColor(ReviewPalette.dim)
                     }
-                    .allowsHitTesting(false)
+                    .titlebarLabel()
                     if let verdict = stuck.verdicts[session.sessionId] {
                         StuckBadge(verdict: verdict)
                     }
@@ -1906,50 +1922,41 @@ private struct SessionDetailView: View {
                     Task { @MainActor in model.notice = await model.exportSession(session) }
                 }
             }
-            .padding(.leading, 18)
-            .padding(.trailing, 14)
-            .titlebarRow()
-            if !model.panes.contains(.transcript) {
-                HStack(spacing: 8) {
-                    chip("person.crop.circle", session.account ?? "no pin")
-                    HubForecastChip(account: session.account)
-                    if let sessionModel = session.model {
-                        chip("cpu", sessionModel)
-                    }
-                    if !session.cwd.isEmpty {
-                        PathLabel(path: session.cwd)
-                        if let branch = HubSessionDetailHost.branch(of: session) {
-                            let facts = repos.facts(for: session.cwd, pr: true)
-                            ExternalLink(text: branch, url: HubSessionDetailHost.branchURL(branch, facts: facts), font: .system(size: 11))
-                            // The folder's PR belongs to the branch checked out there now.
-                            if facts?.branch == branch {
-                                CompareLink(facts: facts)
-                                PullRequestLink(facts: facts)
-                            }
-                        }
-                    }
-                    if let totals = model.transcriptTotals {
-                        chip("sum", totals)
-                    }
-                    Button {
-                        PathOpener.copy(session.sessionId)
-                        model.notice = "Session id copied"
-                    } label: {
-                        chip("number", String(session.sessionId.prefix(8)))
-                    }
-                    .buttonStyle(.genHoverPlain())
-                    .instantTooltip("Copy the full session id")
-                    Spacer()
-                }
-                .padding(.leading, 18)
-                .padding(.trailing, 14)
-                .padding(.top, 2)
-                .padding(.bottom, 10)
+        }
+    }
+
+    /// Under the title bar row while the transcript is closed (the transcript shows the same facts).
+    private var accountRow: some View {
+        HStack(spacing: 8) {
+            chip("person.crop.circle", session.account ?? "no pin")
+            HubForecastChip(account: session.account)
+            if let sessionModel = session.model {
+                chip("cpu", sessionModel)
             }
-            // A row of its own, not an overlay: the title bar row above takes no height, and a pane
-            // that starts right at the title bar's edge gets its safe area. The session screen ignores
-            // that area and slid up under the row (snapshot 2026-09-28 21:02).
-            Rectangle().fill(ReviewPalette.hairline).frame(height: 1)
+            if !session.cwd.isEmpty {
+                PathLabel(path: session.cwd)
+                if let branch = HubSessionDetailHost.branch(of: session) {
+                    let facts = repos.facts(for: session.cwd, pr: true)
+                    ExternalLink(text: branch, url: HubSessionDetailHost.branchURL(branch, facts: facts), font: .system(size: 11))
+                    // The folder's PR belongs to the branch checked out there now.
+                    if facts?.branch == branch {
+                        CompareLink(facts: facts)
+                        PullRequestLink(facts: facts)
+                    }
+                }
+            }
+            if let totals = model.transcriptTotals {
+                chip("sum", totals)
+            }
+            Button {
+                PathOpener.copy(session.sessionId)
+                model.notice = "Session id copied"
+            } label: {
+                chip("number", String(session.sessionId.prefix(8)))
+            }
+            .buttonStyle(.genHoverPlain())
+            .instantTooltip("Copy the full session id")
+            Spacer()
         }
     }
 

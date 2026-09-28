@@ -291,7 +291,7 @@ struct WorktreeDetailView: View {
         let touching = model.sessions(for: worktree)
         let facts = repos.facts(for: worktree.path, pr: true)
         VStack(spacing: 0) {
-            VStack(alignment: .leading, spacing: 8) {
+            TitlebarHeader {
                 HStack(spacing: 10) {
                     Image(systemName: "arrow.triangle.branch").foregroundColor(ReviewPalette.dim)
                     ExternalLink(
@@ -324,31 +324,29 @@ struct WorktreeDetailView: View {
                     }
                 }
                 .buttonStyle(.genHoverPlain())
-                PathLabel(path: worktree.path)
-                if !touching.isEmpty {
-                    // The chips scroll sideways with no indicator, so the count says how many there
-                    // are: the row used to end in a cut "Open R" with nothing to say 30 more followed.
-                    HStack(spacing: 8) {
-                        Text(verbatim: "\(touching.count) session\(touching.count == 1 ? "" : "s")")
-                            .font(.system(size: 11))
-                            .foregroundColor(ReviewPalette.dim)
-                            .fixedSize()
-                            .instantTooltip("Agent sessions that worked in this worktree; the row scrolls sideways")
-                        ScrollView(.horizontal, showsIndicators: false) {
-                            HStack(spacing: 6) {
-                                ForEach(touching) { session in
-                                    sessionChip(session)
+            } details: {
+                VStack(alignment: .leading, spacing: 8) {
+                    PathLabel(path: worktree.path)
+                    if !touching.isEmpty {
+                        // The chips scroll sideways with no indicator, so the count says how many there
+                        // are: the row used to end in a cut "Open R" with nothing to say 30 more followed.
+                        HStack(spacing: 8) {
+                            Text(verbatim: "\(touching.count) session\(touching.count == 1 ? "" : "s")")
+                                .font(.system(size: 11))
+                                .foregroundColor(ReviewPalette.dim)
+                                .fixedSize()
+                                .instantTooltip("Agent sessions that worked in this worktree; the row scrolls sideways")
+                            ScrollView(.horizontal, showsIndicators: false) {
+                                HStack(spacing: 6) {
+                                    ForEach(touching) { session in
+                                        sessionChip(session)
+                                    }
                                 }
                             }
                         }
                     }
                 }
             }
-            .padding(.leading, 18)
-            .padding(.trailing, 14)
-            .padding(.top, 34)
-            .padding(.bottom, 10)
-            .overlay(Rectangle().fill(ReviewPalette.hairline).frame(height: 1), alignment: .bottom)
 
             if let review = model.review, review.repo.path == worktree.path {
                 ReviewRootView(model: review)

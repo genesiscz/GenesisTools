@@ -53,6 +53,49 @@ final class WindowTitlebarTests: XCTestCase {
         XCTAssertTrue(missingRow.line.contains("nothing in the strip"), missingRow.line)
     }
 
+    func testTheWidestFlatStretchIsTheBand() {
+        typealias Band = WindowTitlebar.Audit.Band
+        let sidebar: UInt32 = 0x1818_1AFF
+        let content: UInt32 = 0x1313_14FF
+        func column(_ height: CGFloat, _ color: UInt32, edge: Bool = false) -> Band.Column {
+            Band.Column(height: height, color: color, edge: edge)
+        }
+
+        // Sidebar, a divider, then a content column flat for 34 pt: the band starts after the divider.
+        let padded = [column(14, sidebar), column(20, sidebar), column(0, sidebar, edge: true),
+                      column(40, content), column(34, content), column(36, content)]
+        XCTAssertEqual(Band.widest(columns: padded, columnWidth: 8), Band(minX: 24, maxX: 48, height: 34))
+        // Where the colour under the strip changes, a region starts too.
+        let noDivider = [column(4, sidebar), column(30, content), column(30, content)]
+        XCTAssertEqual(Band.widest(columns: noDivider, columnWidth: 8), Band(minX: 8, maxX: 24, height: 30))
+        // Text on a row's left, nothing on its right: the flat right part starts beside the text, no band.
+        let rowWithText = [column(0, content, edge: true), column(5, content), column(5, content),
+                           column(32, content), column(32, content)]
+        XCTAssertEqual(Band.widest(columns: rowWithText, columnWidth: 8), nil)
+        XCTAssertNil(Band.widest(columns: [column(4, content), column(11, content)], columnWidth: 8))
+        // A band counts only under a header meant for the title bar, and only across much of the window.
+        var audit = WindowTitlebar.Audit(stripHeight: 32, leadingReserve: 80, runs: [.init(kind: .zone, minX: 0, maxX: 900)],
+                                         width: 900, band: Band(minX: 300, maxX: 900, height: 34))
+        XCTAssertNil(audit.emptyBand, "an empty state (no header) may leave the area under the strip blank")
+        audit.expectsRow = true
+        XCTAssertEqual(audit.emptyBand?.height, 34)
+        XCTAssertTrue(audit.line.contains("an empty band 34 pt"), audit.line)
+        audit.band = Band(minX: 300, maxX: 500, height: 34)
+        XCTAssertNil(audit.emptyBand, "a gap narrower than 40% of the window is a gap between buttons")
+    }
+
+    /// Every hub mode had its header's first row 34 pt under the title bar: the audit names that band,
+    /// and the same header with its row in the title bar has none.
+    func testAHeaderPaddedUnderTheStripLeavesABandThatTheAuditNames() {
+        let padded = WindowTitlebar.audit(makeWindow(sidebar: 300, padded: true), expectsRow: true)
+        let band = padded.emptyBand
+        XCTAssertNotNil(band, padded.line)
+        XCTAssertGreaterThanOrEqual(band?.height ?? 0, 30, padded.line)
+        let moved = WindowTitlebar.audit(makeWindow(sidebar: 300), expectsRow: true)
+        XCTAssertNil(moved.emptyBand, moved.line)
+        XCTAssertEqual(moved.problems, [], moved.line)
+    }
+
     /// The settings window (App/GenesisToolsApp.swift) has a standard title bar: AppKit's own view takes
     /// the strip's clicks and zooms, so it needs no zone.
     func testAStandardTitleBarIsAppKitsOwn() {
@@ -83,10 +126,23 @@ final class WindowTitlebarTests: XCTestCase {
     }
 
     /// Hub-shaped: a sidebar and a main column whose hub surfaces paint the strip, and a row of controls
-    /// moved up into the strip. `sidebar: 0` puts the row's first control under the traffic lights.
+    /// moved up into the strip. `sidebar: 0` puts the row's first control under the traffic lights;
+    /// `padded` keeps the row under the strip behind a 34 pt padding, as every hub mode had it.
     private struct Root: View {
         let sidebar: CGFloat
         let clicks: Clicks
+        var padded = false
+
+        private var row: some View {
+            HStack(spacing: 8) {
+                Button("Pane") { clicks.count += 1 }
+                    .buttonStyle(.genHoverPlain())
+                    .instantTooltip("A pane")
+                Spacer()
+                IconButton(systemName: "doc.richtext", tooltip: "Copy") {}
+            }
+            .padding(.horizontal, 14)
+        }
 
         var body: some View {
             HStack(spacing: 0) {
@@ -99,15 +155,11 @@ final class WindowTitlebarTests: XCTestCase {
                     .hubSurface(.chrome)
                 }
                 VStack(spacing: 0) {
-                    HStack(spacing: 8) {
-                        Button("Pane") { clicks.count += 1 }
-                            .buttonStyle(.genHoverPlain())
-                            .instantTooltip("A pane")
-                        Spacer()
-                        IconButton(systemName: "doc.richtext", tooltip: "Copy") {}
+                    if padded {
+                        row.frame(height: 28).padding(.top, 34)
+                    } else {
+                        row.titlebarRow()
                     }
-                    .padding(.horizontal, 14)
-                    .titlebarRow()
                     Rectangle().fill(ReviewPalette.hairline).frame(height: 1)
                     Color.clear
                 }
@@ -126,7 +178,7 @@ final class WindowTitlebarTests: XCTestCase {
         super.tearDown()
     }
 
-    private func makeWindow(sidebar: CGFloat, clicks: Clicks = Clicks()) -> NSWindow {
+    private func makeWindow(sidebar: CGFloat, clicks: Clicks = Clicks(), padded: Bool = false) -> NSWindow {
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 900, height: 500),
             styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
@@ -136,7 +188,7 @@ final class WindowTitlebarTests: XCTestCase {
         window.title = "Agents"
         window.titlebarAppearsTransparent = true
         window.isReleasedWhenClosed = false
-        window.contentView = HubGlass.makeContentView(root: Root(sidebar: sidebar, clicks: clicks).titlebarZone())
+        window.contentView = HubGlass.makeContentView(root: Root(sidebar: sidebar, clicks: clicks, padded: padded).titlebarZone())
         window.alphaValue = 0
         window.level = .init(rawValue: Int(CGWindowLevelForKey(.desktopWindow)) - 1)
         window.orderFrontRegardless()

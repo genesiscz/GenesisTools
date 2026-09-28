@@ -1032,7 +1032,6 @@ struct TimelineMain: View {
         let days = TimelineDay.group(events)
         VStack(spacing: 0) {
             header(count: events.count)
-            Rectangle().fill(ReviewPalette.hairline).frame(height: 1)
             PanelFindBar(find: find)
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 0, pinnedViews: [.sectionHeaders]) {
@@ -1156,42 +1155,46 @@ struct TimelineMain: View {
         .padding(.top, 14)
     }
 
+    /// In the window's title bar (`TitlebarHeader`): the feed starts right under it.
     private func header(count: Int) -> some View {
-        HStack(spacing: 10) {
-            Image(systemName: "clock.arrow.circlepath").foregroundColor(ReviewPalette.renamed)
-            Text(timeline.range.title).font(.system(size: 14, weight: .semibold))
-            if let since = timeline.since {
-                Text(verbatim: "\(Self.rangeFormat.string(from: since)) → \(timeline.until.map(Self.rangeFormat.string(from:)) ?? "now")")
-                    .font(.system(size: 11.5))
-                    .foregroundColor(ReviewPalette.dim)
-                    .lineLimit(1)
-            }
-            Text(verbatim: "\(count) events")
-                .font(.system(size: 12))
-                .foregroundColor(ReviewPalette.dim)
-            Spacer()
-            if let notice = model.notice {
-                NoticePill(text: notice, isError: notice.contains("failed") || notice.hasPrefix("No ")) { model.notice = nil }
-            }
-            if !timeline.warnings.isEmpty {
-                Image(systemName: "exclamationmark.triangle.fill")
-                    .foregroundColor(ReviewPalette.modified)
-                    .instantTooltip(timeline.warnings.joined(separator: "\n"))
-            }
-            if timeline.loading {
-                ProgressView().controlSize(.small)
-            } else if let loadedAt = timeline.loadedAt {
-                LiveAgo(date: loadedAt) { "read \($0)" }
-                    .font(.system(size: 11))
-                    .foregroundColor(ReviewPalette.dim)
-            }
-            IconButton(systemName: "arrow.clockwise", tooltip: "Read the activity again (skips the page cache)") {
-                timeline.load(fresh: true)
+        TitlebarHeader {
+            HStack(spacing: 10) {
+                Group {
+                    Image(systemName: "clock.arrow.circlepath").foregroundColor(ReviewPalette.renamed)
+                    Text(timeline.range.title).font(.system(size: 14, weight: .semibold))
+                    if let since = timeline.since {
+                        Text(verbatim: "\(Self.rangeFormat.string(from: since)) → \(timeline.until.map(Self.rangeFormat.string(from:)) ?? "now")")
+                            .font(.system(size: 11.5))
+                            .foregroundColor(ReviewPalette.dim)
+                            .lineLimit(1)
+                    }
+                    Text(verbatim: "\(count) events")
+                        .font(.system(size: 12))
+                        .foregroundColor(ReviewPalette.dim)
+                }
+                .titlebarLabel()
+                Spacer()
+                if let notice = model.notice {
+                    NoticePill(text: notice, isError: notice.contains("failed") || notice.hasPrefix("No ")) { model.notice = nil }
+                }
+                if !timeline.warnings.isEmpty {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundColor(ReviewPalette.modified)
+                        .instantTooltip(timeline.warnings.joined(separator: "\n"))
+                }
+                if timeline.loading {
+                    ProgressView().controlSize(.small)
+                } else if let loadedAt = timeline.loadedAt {
+                    LiveAgo(date: loadedAt) { "read \($0)" }
+                        .font(.system(size: 11))
+                        .foregroundColor(ReviewPalette.dim)
+                        .titlebarLabel()
+                }
+                IconButton(systemName: "arrow.clockwise", tooltip: "Read the activity again (skips the page cache)") {
+                    timeline.load(fresh: true)
+                }
             }
         }
-        .padding(.horizontal, 18)
-        .frame(height: 44)
-        .hubSurface(.bar)
     }
 }
 
