@@ -260,7 +260,9 @@ struct HubSessionDetailHost: View {
     private var actions: SessionDetailActions {
         var actions = SessionDetailActions()
         actions.refresh = {
-            Task { await load(offset: windowStart > 0 ? windowStart : nil, limit: max(Self.pageSize, turns.count + Self.pageSize), throughEnd: true) }
+            // An established window keeps its start, 0 included: a nil offset asks for the latest turns, which
+            // drops the earlier ones on screen once more turns arrived than the limit leaves room for.
+            Task { await load(offset: turns.isEmpty ? nil : windowStart, limit: max(Self.pageSize, turns.count + Self.pageSize), throughEnd: true) }
         }
         actions.copy = { text in PathOpener.copy(text) }
         // The header's "Copy the resume command" copied an empty string (it cleared the clipboard):
@@ -350,6 +352,8 @@ struct HubSessionDetailHost: View {
             turns = fetched.turns
             windowStart = fetched.windowStart
             await rebuild()
+            // A newer load started while this one rebuilt: it owns the state, the notice and the tail.
+            guard id == loadID else { return }
             HubMainBusy.measure("transcript.page.render")
             loadState = .loaded
             NotificationCenter.default.post(name: Self.firstPageDone, object: session.id)
