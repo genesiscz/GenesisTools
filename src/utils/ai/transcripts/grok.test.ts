@@ -74,6 +74,44 @@ describe("grokNativeLinesToTurns", () => {
         expect(turns).toHaveLength(1);
         expect(turns[0]?.text).toBe("ok");
     });
+
+    test("a completed tool whose update has no text part is finished, not pending", () => {
+        // search_replace completes with a diff part and list_dir with rawOutput only.
+        // Neither carries text, so both kept `result: null` and rendered as still running.
+        const update = (fields: Record<string, unknown>): string =>
+            SafeJSON.stringify({ timestamp: 1_700_000_000, params: { update: fields } });
+        const lines = [
+            update({ sessionUpdate: "tool_call", toolCallId: "e1", title: "search_replace", rawInput: {} }),
+            update({ sessionUpdate: "tool_call", toolCallId: "l1", title: "list_dir", rawInput: {} }),
+            update({ sessionUpdate: "tool_call", toolCallId: "r1", title: "search_replace", rawInput: {} }),
+            update({
+                sessionUpdate: "tool_call_update",
+                toolCallId: "e1",
+                status: "completed",
+                content: [{ type: "diff", path: "notes/todo.md", oldText: "old line", newText: "new line" }],
+            }),
+            update({
+                sessionUpdate: "tool_call_update",
+                toolCallId: "l1",
+                status: "completed",
+                rawOutput: { type: "Content", Content: { content: "todo.md" } },
+            }),
+            // No status yet: this edit is still running and must stay pending.
+            update({
+                sessionUpdate: "tool_call_update",
+                toolCallId: "r1",
+                content: [{ type: "diff", path: "notes/done.md", oldText: "", newText: "first line" }],
+            }),
+        ];
+
+        const [turn] = grokNativeLinesToTurns(lines);
+
+        expect(turn?.tools.map((tool) => [tool.id, tool.result])).toEqual([
+            ["e1", ""],
+            ["l1", ""],
+            ["r1", null],
+        ]);
+    });
 });
 
 describe("grokWorkerTextToTurns", () => {
