@@ -70,9 +70,24 @@ const INTERRUPT = /^\[(Request interrupted by user[^\]\n]*)\]/;
 const TEAMMATE_OPEN = /^<teammate-message((?:\s+[\w-]+="[^"]*")*)\s*>/;
 const ATTRIBUTE = /([\w-]+)="([^"]*)"/g;
 const TASK_FIELD = /<(task-id|tool-use-id|output-file|status|summary|note|result)>([\s\S]*?)<\/\1>/g;
-/** A harness segment only starts a line; the same words inside a sentence are the user's own. */
-const SEGMENT_START =
-    /\n[ \t]*(?=<teammate-message[\s>]|<task-notification>|<system-reminder>|\[Request interrupted by user|\[SYSTEM NOTIFICATION|Another Claude session sent a message:|The user sent a new message while you were working:|This came from another Claude session)/g;
+/** Openers `readBlock` knows, besides `<teammate-message`, which must be followed by a space or `>`. */
+const SEGMENT_OPENERS = [
+    "<task-notification>",
+    "<system-reminder>",
+    "[Request interrupted by user",
+    "[SYSTEM NOTIFICATION",
+    DELIVERY_HEADER,
+    MID_TURN,
+    PEER_NOTICE,
+];
+/**
+ * A harness segment only starts a line; the same words inside a sentence are the user's own. Built from
+ * the openers above, so a marker `readBlock` recognises can never be missing here.
+ */
+const SEGMENT_START = new RegExp(
+    `\\n[ \\t]*(?=<teammate-message[\\s>]|${SEGMENT_OPENERS.map((opener) => opener.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|")})`,
+    "g"
+);
 const QUICK_MARKERS = [
     "<teammate-message",
     "<task-notification>",
@@ -262,9 +277,10 @@ function readBlock(raw: string, at: number): Block | null {
     }
 
     if (raw.startsWith(PEER_NOTICE, at)) {
-        // Only its own paragraph: text after a blank line is not part of the notice.
-        const blank = raw.indexOf("\n\n", at);
-        const end = Math.min(nextSegmentStart(raw, at + 1), blank < 0 ? raw.length : blank);
+        // Only its own line: every notice Claude Code wrote is one line (all of them, measured over this
+        // machine's sessions on 2026-09-28), so the next line, blank or not, is someone else's.
+        const lineEnd = raw.indexOf("\n", at);
+        const end = lineEnd < 0 ? raw.length : lineEnd;
         return { part: { kind: "system", text: raw.slice(at, end).trim() }, end };
     }
 

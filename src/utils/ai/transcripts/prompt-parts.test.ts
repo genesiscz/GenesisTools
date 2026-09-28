@@ -66,6 +66,16 @@ describe("parsePromptParts", () => {
         ]);
     });
 
+    test("the peer notice is its own line: the user's words right under it stay the user's", () => {
+        const raw = `${teammate('teammate_id="builder"', "done")}\n\n${PEER_NOTICE}\nalso rebase the branch\nand push it`;
+
+        expect(parsePromptParts(raw)).toEqual([
+            { kind: "teammate", from: "builder", body: "done" },
+            { kind: "system", text: PEER_NOTICE },
+            { kind: "user", text: "also rebase the branch and push it" },
+        ]);
+    });
+
     test("a plain-text peer message keeps its body and takes its title from the summary attribute", () => {
         const raw = teammate(
             'teammate_id="lead" summary="Fix the parser &amp; ship"',
