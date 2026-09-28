@@ -33,11 +33,16 @@ struct HubRuleReport: Decodable, Equatable, Identifiable, Sendable {
     let note: String?
 }
 
-struct HubRuleFiring: Decodable, Equatable, Hashable, Sendable {
+struct HubRuleFiring: Decodable, Equatable, Hashable, Identifiable, Sendable {
     let ruleId: String
+    /// What the rule fired on (a session at its last activity, a decision, a PR head): unique per rule, where
+    /// two idle sessions of one project can share every visible field.
+    let key: String
     let title: String
     let subtitle: String
     let message: String
+
+    var id: String { "\(ruleId)|\(key)" }
 }
 
 /// `tools hub config get --json`: hub-wide settings (src/hub/commands/config.ts).
@@ -260,6 +265,8 @@ struct HubRulesPanel: View {
                 .toggleStyle(.switch)
                 .controlSize(.mini)
                 .labelsHidden()
+                // Each switch and remove is its own read-change-write of the rules; one at a time.
+                .disabled(model.busy)
                 .instantTooltip(rule.enabled ? "Switch this rule off" : "Switch this rule on")
             Text(verbatim: model.list?.labels[rule.id] ?? rule.label ?? rule.kind)
                 .font(.system(size: 12.5))
@@ -271,6 +278,7 @@ struct HubRulesPanel: View {
             Spacer()
             Text(verbatim: rule.id).font(.system(size: 10, design: .monospaced)).foregroundColor(.settingsTextMuted)
             IconButton(systemName: "trash", tooltip: "Remove this rule", size: 10.5) { model.remove(rule) }
+                .disabled(model.busy)
         }
         .frame(minHeight: 26)
     }
@@ -286,7 +294,7 @@ struct HubRulesPanel: View {
                     .font(.system(size: 11))
                     .foregroundColor(report.problem == nil ? ReviewPalette.dim : ReviewPalette.removed)
             }
-            ForEach(run.firings, id: \.self) { firing in
+            ForEach(run.firings) { firing in
                 Text(verbatim: "→ \(firing.title) · \(firing.subtitle) · \(firing.message)")
                     .font(.system(size: 11, design: .monospaced))
                     .foregroundColor(Color.white.opacity(0.75))

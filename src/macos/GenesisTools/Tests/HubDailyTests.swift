@@ -140,4 +140,14 @@ final class HubDailyTests: XCTestCase {
         XCTAssertEqual(run.reports.first?.fired, 1)
         XCTAssertEqual(run.firings.first?.message, "No activity for 45 min")
     }
+
+    /// Two idle sessions of one project can match in every visible field; the list tells them apart by key.
+    func testRuleFiringsWithTheSameTextAreDistinctRows() throws {
+        let run = try decode(HubRulesRun.self, """
+        {"ranAt":"2026-03-02T15:00:00.000Z","dryRun":true,"skipped":null,"posted":0,"reports":[],
+         "firings":[{"ruleId":"r_1","kind":"idle","key":"claude:s1@1","title":"Idle over 30 min · shop","subtitle":"Cart fix","message":"No activity for 45 min","target":{}},
+                    {"ruleId":"r_1","kind":"idle","key":"claude:s2@1","title":"Idle over 30 min · shop","subtitle":"Cart fix","message":"No activity for 45 min","target":{}}]}
+        """)
+        XCTAssertEqual(Set(run.firings.map(\.id)).count, 2)
+    }
 }
