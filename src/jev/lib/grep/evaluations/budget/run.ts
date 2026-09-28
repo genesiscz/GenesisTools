@@ -7,18 +7,17 @@
  *
  * Spends real money: each case is capped at 1.3 x the budget in calls and at `--max-usd` dollars.
  */
-import { mkdirSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { createEvaluator } from "@genesiscz/utils/ai/evaluation/service";
 import { formatCost } from "@genesiscz/utils/format";
-import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import { createBoxTable } from "@genesiscz/utils/table";
 import { GREP_TYPESAFE_MODEL } from "../../evaluator";
 import { packetOrder } from "../../render";
 import { DEFAULT_GREP_BUDGET, searchRepository } from "../../search";
 import type { RetrievalResult } from "../../types";
+import { budgetArg, positiveCap, writeResult } from "../args";
 import { GOLD_CASES, type GoldCase } from "./cases";
 
 const REPO_ROOT = resolve(import.meta.dir, "../../../../../..");
@@ -104,8 +103,8 @@ async function main(): Promise<void> {
             "no-write": { type: "boolean" },
         },
     });
-    const budget = Number(values.budget ?? DEFAULT_GREP_BUDGET);
-    const maxCostUsd = Number(values["max-usd"] ?? 0.1);
+    const budget = budgetArg(values.budget, DEFAULT_GREP_BUDGET);
+    const maxCostUsd = positiveCap("--max-usd", values["max-usd"], 0.1);
     const cases = values.case ? GOLD_CASES.filter((testCase) => testCase.id === values.case) : GOLD_CASES;
     if (!cases.length) {
         throw new Error(
@@ -141,11 +140,7 @@ async function main(): Promise<void> {
         `budget ${budget}; * = returned without source; hits ${reports.filter((report) => report.hit).length}/${reports.length}`
     );
     if (!values["no-write"]) {
-        mkdirSync(RESULTS, { recursive: true });
-        const stamp = new Date().toISOString().slice(0, 16).replace(/[:T]/g, "-");
-        const file = join(RESULTS, `${stamp}-budget${budget}.json`);
-        writeFileSync(file, `${SafeJSON.stringify(reports, null, 2)}\n`);
-        out.println(`written ${file}`);
+        out.println(`written ${writeResult(RESULTS, `budget${budget}`, reports)}`);
     }
 }
 

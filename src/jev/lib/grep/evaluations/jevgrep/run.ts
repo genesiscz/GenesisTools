@@ -8,13 +8,13 @@
  *
  * Spends real money: every case has a request cap and a dollar cap per implementation. See README.md.
  */
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { formatCost } from "@genesiscz/utils/format";
-import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import { createBoxTable } from "@genesiscz/utils/table";
+import { positiveCap, requestCap, writeResult } from "../args";
 import { COMPARISON_CASES, type ComparisonCase } from "./cases";
 import { type RunReport, runComparison } from "./compare";
 
@@ -28,15 +28,14 @@ function selectedCases(values: {
     "max-requests"?: string;
     "max-usd"?: string;
 }): ComparisonCase[] {
-    const cap = (raw: string | undefined, fallback: number) => (raw === undefined ? fallback : Number(raw));
     if (values.query) {
         return [
             {
                 id: "ad-hoc",
                 query: values.query,
                 root: values.root ?? ".",
-                maxRequests: cap(values["max-requests"], 200),
-                maxCostUsd: cap(values["max-usd"], 0.1),
+                maxRequests: requestCap("--max-requests", values["max-requests"], 200),
+                maxCostUsd: positiveCap("--max-usd", values["max-usd"], 0.1),
             },
         ];
     }
@@ -51,10 +50,11 @@ function selectedCases(values: {
         );
     }
 
+    // Upstream's evaluator takes the request cap as given, so an infinite cap must stop here.
     return chosen.map((testCase) => ({
         ...testCase,
-        maxRequests: cap(values["max-requests"], testCase.maxRequests),
-        maxCostUsd: cap(values["max-usd"], testCase.maxCostUsd),
+        maxRequests: requestCap("--max-requests", values["max-requests"], testCase.maxRequests),
+        maxCostUsd: positiveCap("--max-usd", values["max-usd"], testCase.maxCostUsd),
     }));
 }
 
@@ -109,11 +109,7 @@ async function main(): Promise<void> {
             ].join("\n")
         );
         if (!values["no-write"]) {
-            mkdirSync(RESULTS, { recursive: true });
-            const stamp = new Date().toISOString().slice(0, 16).replace(/[:T]/g, "-");
-            const file = join(RESULTS, `${stamp}-${testCase.id}-c${concurrency}.json`);
-            writeFileSync(file, `${SafeJSON.stringify(report, null, 2)}\n`);
-            out.println(`written ${file}`);
+            out.println(`written ${writeResult(RESULTS, `${testCase.id}-c${concurrency}`, report)}`);
         }
     }
 }

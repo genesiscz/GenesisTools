@@ -19,6 +19,7 @@ import type { EvaluationResponse, Evaluator as ServiceEvaluator } from "@genesis
 import { SafeJSON } from "@genesiscz/utils/json";
 import { exitCodeFor, type GrepCliOptions, parseGrepCommand } from "../../commands/grep";
 import { createGrepCache } from "./cache";
+import { budgetArg, positiveCap, requestCap, writeResult } from "./evaluations/args";
 import { createGrepEvaluator, DEFAULT_REQUEST_LIMIT, GREP_TYPESAFE_MODEL } from "./evaluator";
 import { createFilesystem, type FilesystemPolicy } from "./filesystem";
 import { renderResult } from "./render";
@@ -790,6 +791,44 @@ describe("evaluator wrapper", () => {
         state: { query: "q" },
         questions: { q0: { type: "boolean", instructions: "Is it?" } },
     };
+
+    test("an infinite or unreadable cap is refused before any call", () => {
+        const build = (limits: { requestLimit?: number; maxCostUsd?: number }) => () =>
+            createGrepEvaluator({
+                evaluate: serviceFake(() => ({ q0: 0.5 })).evaluate,
+                provider: "vercel",
+                signal: new AbortController().signal,
+                ...limits,
+            });
+        for (const requestLimit of [Number.POSITIVE_INFINITY, Number.NaN, 0, 1.5]) {
+            expect(build({ requestLimit })).toThrow("request limit");
+        }
+
+        for (const maxCostUsd of [Number.POSITIVE_INFINITY, Number.NaN, 0, -1]) {
+            expect(build({ maxCostUsd })).toThrow("cost limit");
+        }
+
+        expect(build({ requestLimit: 5, maxCostUsd: 0.1 })).not.toThrow();
+    });
+
+    test("the evaluation runners refuse infinite caps and never overwrite a result", () => {
+        expect(() => positiveCap("--max-usd", "Infinity", 0.1)).toThrow("--max-usd");
+        expect(() => positiveCap("--max-usd", "abc", 0.1)).toThrow("--max-usd");
+        expect(() => requestCap("--max-requests", "2.5", 200)).toThrow("whole number");
+        expect(() => budgetArg("abc", 100)).toThrow("--budget");
+        expect([positiveCap("--max-usd", undefined, 0.1), requestCap("--max-requests", "50", 200)]).toEqual([0.1, 50]);
+        expect(budgetArg("0", 100)).toBe(0);
+        const directory = scratch("results");
+        const at = new Date("2026-09-29T10:15:30.123Z");
+        const first = writeResult(directory, "case-c1", { run: 1 }, at);
+        const second = writeResult(directory, "case-c1", { run: 2 }, at);
+        expect(first).not.toBe(second);
+        expect(readdirSync(directory).sort()).toEqual([
+            "2026-09-29-10-15-30-123-case-c1-2.json",
+            "2026-09-29-10-15-30-123-case-c1.json",
+        ]);
+        expect(SafeJSON.parse(readFileSync(first, "utf8"))).toEqual({ run: 1 });
+    });
 
     test("the call past the request ceiling never reaches the transport", async () => {
         const fake = serviceFake(() => ({ q0: 0.5 }));

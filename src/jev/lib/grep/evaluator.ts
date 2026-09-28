@@ -151,6 +151,15 @@ export function createGrepEvaluator(options: GrepEvaluatorOptions): GrepEvaluato
         throw new Error("Concurrency must be a positive integer");
     }
 
+    // `Infinity` passes a `>=` cap forever and `NaN` never trips it, so neither may reach a paid run.
+    if (!Number.isSafeInteger(requestLimit) || requestLimit < 1) {
+        throw new Error("The request limit must be a positive integer");
+    }
+
+    if (options.maxCostUsd !== undefined && !(Number.isFinite(options.maxCostUsd) && options.maxCostUsd > 0)) {
+        throw new Error("The cost limit must be a finite number of dollars above 0");
+    }
+
     let requests = 0;
     let cacheHits = 0;
     let cooldownUntil = 0;
