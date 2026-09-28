@@ -325,3 +325,76 @@ final class BulkHierarchySourceTests: XCTestCase {
         XCTAssertEqual(reader.keys.maxDepth, "AXCHMD")
     }
 }
+
+/// A page far over the 4000-row snapshot limit, with one button deep inside it.
+final class QueryTreeTests: XCTestCase {
+    private func bigPage(rows: Int = 5000) -> FakeSource {
+        let fake = FakeSource()
+        let listRows = (0..<rows).map { pid_t(100 + $0) }
+        for pid in listRows {
+            fake.nodes[pid] = FakeNode(role: "AXStaticText", attributes: ["AXValue": "file \(pid)"],
+                                       frame: CGRect(x: 0, y: 0, width: 100, height: 10))
+        }
+        fake.nodes[1] = FakeNode(role: "AXWindow", attributes: ["AXTitle": "PR"], children: [2, 3],
+                                 frame: CGRect(x: 0, y: 0, width: 1000, height: 800))
+        fake.nodes[2] = FakeNode(role: "AXGroup", children: listRows, frame: CGRect(x: 0, y: 0, width: 1000, height: 700))
+        fake.nodes[3] = FakeNode(role: "AXToolbar", children: [4, 5], frame: CGRect(x: 0, y: 700, width: 1000, height: 100))
+        fake.nodes[4] = FakeNode(role: "AXButton", attributes: ["AXTitle": "Review with agent"], actions: ["AXPress"],
+                                 frame: CGRect(x: 10, y: 710, width: 120, height: 30))
+        fake.nodes[5] = FakeNode(role: "AXStaticText", attributes: ["AXValue": "Review with agent"],
+                                 frame: CGRect(x: 140, y: 710, width: 120, height: 30))
+        return fake
+    }
+
+    func testWholeWindowIsRefusedButTheQueryKeepsOnlyMatchesAndAncestors() throws {
+        let fake = bigPage()
+        XCTAssertThrowsError(try buildObservedTree(root: fake.element(1), source: fake, depth: 10, scope: "window"))
+        let result = try buildQueryTree(root: fake.element(1), source: fake, depth: 10,
+                                        query: TreeQuery(text: "review with AGENT", role: "AXButton"))
+        XCTAssertEqual(result.tree.rows.map { $0["role"] as? String }, ["AXWindow", "AXToolbar", "AXButton"])
+        XCTAssertEqual(result.report.matches, 1)
+        XCTAssertEqual(result.report.walked, 5005)
+        XCTAssertEqual(result.report.depthLimitedSubtrees, 0)
+        XCTAssertEqual(result.tree.rows.last?["actions"] as? [String], ["AXPress"])
+    }
+
+    /// `act` re-walks the same query, so the rows, indexes and digest must be the same every time.
+    func testTheSameQueryYieldsTheSameDigest() throws {
+        let fake = bigPage()
+        let query = TreeQuery(text: "Review with agent", role: nil)
+        let first = try buildQueryTree(root: fake.element(1), source: fake, depth: 10, query: query)
+        let second = try buildQueryTree(root: fake.element(1), source: fake, depth: 10, query: query)
+        XCTAssertEqual(first.tree.digest, second.tree.digest)
+        XCTAssertEqual(first.report.matches, 2)
+        XCTAssertEqual(first.tree.rows.count, 4)
+    }
+
+    /// Never silently partial: what the depth limit hid is counted and reported.
+    func testSubtreesBelowTheDepthLimitAreReportedNotHidden() throws {
+        let fake = bigPage(rows: 3)
+        let result = try buildQueryTree(root: fake.element(1), source: fake, depth: 1,
+                                        query: TreeQuery(text: "Review", role: "AXButton"))
+        XCTAssertEqual(result.report.matches, 0)
+        XCTAssertEqual(result.report.depthLimitedSubtrees, 2)
+        XCTAssertEqual(result.tree.rows.count, 1)
+    }
+
+    func testTooManyMatchesAreRefused() {
+        let fake = bigPage(rows: 300)
+        XCTAssertThrowsError(try buildQueryTree(root: fake.element(1), source: fake, depth: 10,
+                                                query: TreeQuery(text: "file", role: nil))) { error in
+            XCTAssertEqual((error as? ObservedTreeError)?.message,
+                           "query matches more than \(queryMatchLimit) elements; narrow it with a role or a longer query")
+        }
+    }
+
+    func testQueryTokensRoundTripAndValidate() throws {
+        let token = SnapshotToken(pid: 7, launch: 1, window: 3, depth: 50, digest: "d", created: 100, scope: "query",
+                                  query: TreeQuery(text: "Review with agent", role: "AXButton"))
+        let decoded = try JSONDecoder().decode(SnapshotToken.self, from: JSONEncoder().encode(token))
+        XCTAssertEqual(decoded.query, TreeQuery(text: "Review with agent", role: "AXButton"))
+        XCTAssertEqual(try decoded.validate(pid: 7, launch: 1, window: 3, digest: "d", element: 0, count: 3, now: 101), 0)
+        let bare = SnapshotToken(pid: 7, launch: 1, window: 3, depth: 50, digest: "d", created: 100, scope: "query")
+        XCTAssertThrowsError(try bare.validate(pid: 7, launch: 1, window: 3, digest: "d", element: 0, count: 3, now: 101))
+    }
+}

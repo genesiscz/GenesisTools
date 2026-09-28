@@ -27,6 +27,27 @@ tree traversal. `get_elements` pages a retained observation; `find` searches its
 Do not pass `text_limit` to `get_app_state`. A closed/offscreen window, oversized native tree
 or cancelled read requires fresh discovery/narrowing, not a claim that the app has no content.
 
+A GitHub pull request or an open panel over ~/Downloads exceeds the 4000-row snapshot limit, so a
+whole-window observation refuses. Target one element with a query instead:
+
+```ts
+const app = "com.brave.Browser";
+const state = await computer.get_app_state({ app, window_id: observedWindowId, query: "Review with agent", role: "AXButton", image: false });
+const matches = state.elements.filter((e) => e.role === "AXButton" && e.label === "Review with agent");
+if (matches.length !== 1) {
+    throw new Error(`Expected one button, found ${matches.length}. ${state.text.split("\n")[1]}`);
+}
+await computer.click({ app, element_ref: matches[0].ref });
+```
+
+The query walks the whole window but keeps only matching elements (title, description,
+identifier or value, case-insensitive; `role` is exact) and their ancestors. Later observations
+of the same app keep the query until you pass `scope`. The second line of `state.text` states
+how many elements were walked and how many subtrees the depth limit left unwalked; a match there
+is not listed, so zero matches with unwalked subtrees is not proof of absence. More than 200
+matches, or more than 60000 walked elements, refuse. The CLI equivalent is
+`control see --app APP --window-id ID --query TEXT --query-role AXButton`.
+
 ## 2. Draft a URL, verify it, restore it
 
 Before running, replace `wantedTitle` with a title observed in the discovery step. This example

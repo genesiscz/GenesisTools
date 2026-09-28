@@ -38,7 +38,7 @@ export const observationSchema = z
         snapshot: z.string().min(1),
         observationRecovery: z.object({ retries: z.number().int().min(1).max(2) }).optional(),
         window: z.object({ id: z.number().int().positive(), title: z.string() }).passthrough(),
-        scope: z.enum(["window", "chrome"]).default("window"),
+        scope: z.enum(["window", "chrome", "query"]).default("window"),
         elements: z.array(rowSchema).max(2000),
     })
     .refine(

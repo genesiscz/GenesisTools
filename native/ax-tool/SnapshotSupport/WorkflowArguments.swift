@@ -20,7 +20,7 @@ public struct WorkflowArguments {
         let flagOptions: Set<String>
         switch command {
         case "see":
-            valueOptions = ["--app", "--window-index", "--window-id", "--depth", "--path", "--scope", "--perception", "--perception-crop", "--perception-width", "--budget-ms"]
+            valueOptions = ["--app", "--window-index", "--window-id", "--depth", "--path", "--scope", "--perception", "--perception-crop", "--perception-width", "--budget-ms", "--query", "--query-role"]
             flagOptions = ["--no-image"]
         case "act":
             valueOptions = [
@@ -83,6 +83,13 @@ public struct WorkflowArguments {
             }
             if parsedFlags.contains("--no-image"), parsedValues["--perception"] != nil {
                 throw WorkflowArgumentError.invalid("OCR perception requires an image")
+            }
+            let queried = parsedValues["--query"] != nil || parsedValues["--query-role"] != nil
+            if (parsedValues["--scope"] == "query") != (parsedValues["--query"] != nil) || (queried && parsedValues["--query"] == nil) {
+                throw WorkflowArgumentError.invalid("--scope query and --query go together; --query-role narrows a --query")
+            }
+            if let query = parsedValues["--query"], query.trimmingCharacters(in: .whitespaces).isEmpty || query.count > 300 {
+                throw WorkflowArgumentError.invalid("--query must be 1 to 300 characters")
             }
         }
         if command == "act" {

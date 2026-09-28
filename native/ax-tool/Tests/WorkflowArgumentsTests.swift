@@ -225,3 +225,15 @@ extension WorkflowArgumentsTests {
         }
     }
 }
+
+extension WorkflowArgumentsTests {
+    func testQueryScopeNeedsItsQuery() throws {
+        let see = try WorkflowArguments(["--app", "Brave", "--scope", "query", "--query", "Review with agent",
+                                         "--query-role", "AXButton"], command: "see")
+        XCTAssertEqual(see.values["--query"], "Review with agent")
+        for invalid in [["--scope", "query"], ["--query", "x"], ["--scope", "query", "--query", " "],
+                        ["--scope", "window", "--query-role", "AXButton"]] {
+            XCTAssertThrowsError(try WorkflowArguments(["--app", "Brave"] + invalid, command: "see"), "\(invalid)")
+        }
+    }
+}

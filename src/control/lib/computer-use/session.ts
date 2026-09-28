@@ -56,6 +56,16 @@ const snapshotSchema = observationSchema.and(
             .object({ capture: z.object({ pngHash: z.string(), id: z.string() }).passthrough().optional() })
             .passthrough()
             .optional(),
+        query: z
+            .object({
+                text: z.string(),
+                role: z.string().optional(),
+                walked: z.number().int(),
+                matches: z.number().int(),
+                depthLimitedSubtrees: z.number().int(),
+                depth: z.number().int(),
+            })
+            .optional(),
     })
 );
 type Snapshot = z.infer<typeof snapshotSchema>;
@@ -129,6 +139,8 @@ interface AppRecord {
     lastAccess: number;
     elementLimit: number;
     observedAt: string;
+    /** The query of a query-scoped observation, reused until the caller picks another scope. */
+    query?: { text: string; role?: string };
 }
 export interface NativeBridge {
     run(options: { args: string[]; timeoutMs?: number; signal?: AbortSignal }): Promise<AxResult>;
@@ -185,6 +197,41 @@ function clipboardProblem(action: string | undefined, result: AxResult): string 
     }
 
     return "CLIPBOARD STATE UNKNOWN: the paste ended without reporting a restore (terminated or timed out), so the pasted text may still be on the system clipboard.";
+}
+
+/** The `see` scope flags, including the query a query-scoped observation re-reads. */
+function observationScopeArgs(scope: string, query: AppRecord["query"]): string[] {
+    if (scope !== "query") {
+        return ["--scope", scope];
+    }
+
+    if (!query) {
+        throw new ComputerUseError(
+            "INVALID_SCOPE",
+            "This query-scoped state lost its query; observe it again with query."
+        );
+    }
+
+    return ["--scope", "query", "--query", query.text, ...(query.role ? ["--query-role", query.role] : [])];
+}
+
+/** The scope a follow-up observation inherits; a query without its text cannot be inherited. */
+function priorScope(prior: AppRecord | undefined): string {
+    const scope = prior?.snapshot.scope ?? "window";
+    return scope === "query" && !prior?.query ? "window" : scope;
+}
+
+/**
+ * The line that says what a query-scoped observation did NOT read. A query walks the whole
+ * window but returns only its matches, so an empty result has to say whether depth hid anything.
+ */
+function describeQueryWalk(query: NonNullable<Snapshot["query"]>): string {
+    const role = query.role ? ` ${query.role}` : "";
+    const hidden =
+        query.depthLimitedSubtrees > 0
+            ? ` ${query.depthLimitedSubtrees} subtrees below depth ${query.depth} were NOT walked; a match there is not listed.`
+            : ` Every element to depth ${query.depth} was walked.`;
+    return `Query "${query.text}"${role}: ${query.matches} matches among ${query.walked} walked elements; rows are the matches and their ancestors only.${hidden}`;
 }
 
 function webActivationKey(rows: Observation["elements"], target: Observation["elements"][number]) {
@@ -271,12 +318,14 @@ export class ComputerUse {
         implicitActionAllowed,
         image,
         elementLimit,
+        query,
     }: {
         app: string;
         snapshot: Snapshot;
         implicitActionAllowed: boolean;
         image?: boolean;
         elementLimit?: number;
+        query?: AppRecord["query"];
     }): AppRecord {
         if (!this.records.has(app) && this.records.size >= 8) {
             throw new ComputerUseError(
@@ -292,6 +341,7 @@ export class ComputerUse {
             lastAccess: Date.now(),
             elementLimit: elementLimit ?? this.records.get(app)?.elementLimit ?? 100,
             observedAt: new Date().toISOString(),
+            query: snapshot.scope === "query" ? (query ?? this.records.get(app)?.query) : undefined,
         };
         const previousImage = this.records.get(app)?.snapshot.screenshot.path;
         if (previousImage && previousImage !== snapshot.screenshot.path) {
@@ -393,6 +443,7 @@ export class ComputerUse {
             );
         const text = [
             `${app} · window ${snapshot.window.id} · revision ${record.revision}`,
+            ...(snapshot.query ? [describeQueryWalk(snapshot.query)] : []),
             changes
                 ? `Changes: +${fullChanges?.added.length} -${fullChanges?.removed.length} ~${fullChanges?.changed.length}; ${changes.unchanged} unchanged. Use current indexes or explicit refs; old refs are invalid.`
                 : `${allElements.length} observed elements.`,
@@ -465,12 +516,29 @@ export class ComputerUse {
                     "Eight apps are already retained. Close an unused session first."
                 );
             }
+            if (options.query !== undefined && options.scope !== undefined) {
+                throw new ComputerUseError(
+                    "INVALID_SCOPE",
+                    "Choose scope or query; a query observes the whole window."
+                );
+            }
+
+            if (options.role !== undefined && options.query === undefined) {
+                throw new ComputerUseError("INVALID_SCOPE", "role narrows a query; pass query as well.");
+            }
+
+            // A query scope persists like any scope; an explicit scope leaves it.
+            const query =
+                options.query !== undefined
+                    ? { text: options.query, role: options.role }
+                    : options.scope === undefined
+                      ? prior?.query
+                      : undefined;
             const args = [
                 "see",
                 "--app",
                 options.app,
-                "--scope",
-                options.scope ?? prior?.snapshot.scope ?? "window",
+                ...observationScopeArgs(query ? "query" : (options.scope ?? priorScope(prior)), query),
                 "--depth",
                 "50",
             ];
@@ -530,6 +598,7 @@ export class ComputerUse {
                     implicitActionAllowed: true,
                     image: options.image,
                     elementLimit: options.element_limit,
+                    query,
                 });
                 return this.state({
                     app: options.app,
@@ -1508,8 +1577,7 @@ export class ComputerUse {
                         options.app,
                         "--window-id",
                         String(record.snapshot.window.id),
-                        "--scope",
-                        record.snapshot.scope,
+                        ...observationScopeArgs(record.snapshot.scope, record.query),
                         "--depth",
                         "50",
                         "--no-image",
@@ -1528,7 +1596,13 @@ export class ComputerUse {
                 if (!sameScope(record.snapshot, fresh)) {
                     throw new ComputerUseError("SCOPE_CHANGED", "Host handoff app/window changed.");
                 }
-                record = this.store({ app: options.app, snapshot: fresh, implicitActionAllowed: true, image: false });
+                record = this.store({
+                    app: options.app,
+                    snapshot: fresh,
+                    implicitActionAllowed: true,
+                    image: false,
+                    query: record.query,
+                });
                 if (rootKey) {
                     const roots = fresh.elements.filter((row) => row.targetKey === rootKey);
                     if (roots.length !== 1) {
@@ -1605,6 +1679,13 @@ export class ComputerUse {
         const { options, signal } = parseCall("await_condition", input);
         return this.exclusive(async () => {
             const previous = this.record(options).snapshot;
+            if (previous.scope === "query") {
+                throw new ComputerUseError(
+                    "INVALID_SCOPE",
+                    'await_condition re-reads a whole window or its browser chrome; observe with scope "window" or "chrome" first.'
+                );
+            }
+
             this.forget(options.app);
             this.menus.close(options.app);
             const nativeDriver = new NativeControlDriver({

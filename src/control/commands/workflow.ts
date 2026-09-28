@@ -41,6 +41,8 @@ interface WorkflowOptions {
     windowId?: string;
     windowTitle?: string;
     menu?: string;
+    query?: string;
+    queryRole?: string;
     depth?: string;
     scope?: string | boolean;
     path?: string;
@@ -276,6 +278,11 @@ export function registerWorkflowCommands(program: Command): void {
             "--menu <title>",
             "with --scope menu: descend into exactly this top-level menu instead of listing the bar"
         )
+        .option(
+            "--query <text>",
+            "observe only the elements whose title, description, identifier or value contains this text, plus their ancestors; the whole window is walked, so it works on pages over the 4000-row snapshot limit, and the result's query block counts what depth left unwalked"
+        )
+        .option("--query-role <role>", "with --query: only elements of this exact AX role, e.g. AXButton")
         .option("--path <png>", "save screenshot here (default: unique temporary PNG)")
         .option("--no-image", "Read AX state without creating a screenshot")
         .option("--perception [mode]", "Native local OCR regions bound to this screenshot: ocr")
@@ -288,6 +295,18 @@ export function registerWorkflowCommands(program: Command): void {
         .action((opts: WorkflowOptions) => {
             if (opts.scope !== undefined && !["window", "chrome", "menu"].includes(String(opts.scope))) {
                 logger.error(suggestEnumFlag("tools control see", "--scope", ["window", "chrome", "menu"]));
+                process.exitCode = 1;
+                return;
+            }
+
+            if (opts.query !== undefined && opts.scope !== undefined) {
+                logger.error("--query observes its own scope; drop --scope");
+                process.exitCode = 1;
+                return;
+            }
+
+            if (opts.queryRole !== undefined && opts.query === undefined) {
+                logger.error("--query-role narrows a --query; pass --query as well");
                 process.exitCode = 1;
                 return;
             }
@@ -324,6 +343,13 @@ export function registerWorkflowCommands(program: Command): void {
             }
             if (typeof opts.scope === "string") {
                 args.push("--scope", opts.scope);
+            }
+
+            if (opts.query !== undefined) {
+                args.push("--scope", "query", "--query", opts.query);
+                if (opts.queryRole !== undefined) {
+                    args.push("--query-role", opts.queryRole);
+                }
             }
 
             // Titles are what an agent knows; indexes reorder whenever a window is

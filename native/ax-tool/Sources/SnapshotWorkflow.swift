@@ -105,6 +105,11 @@ private func workflowExpired() -> Bool {
     (workflowRemaining() ?? 1) <= 0
 }
 
+/// The query of a `query`-scoped observation, from `see --query` or from the token `act` holds.
+private var workflowQuery: TreeQuery?
+/// What the last query walk read and skipped, reported by `see`.
+private var workflowQueryReport: QueryWalkReport?
+
 private func workflowArgument(_ flag: String) -> String? {
     workflowInput?.values[flag]
 }
@@ -227,6 +232,13 @@ private func workflowWindow(_ ax: AXUIElement, pid: pid_t) -> ObservedWindow {
 
 private func observedTree(_ window: AXUIElement, depth: Int, scope: String) throws -> ObservedTreeData {
     workflowBulkUsed = false
+    if scope == "query" {
+        guard let query = workflowQuery else { throw ObservedTreeError("a query scope needs --query") }
+        let result = try buildQueryTree(root: window, source: LiveHierarchySource(root: window), depth: depth,
+                                        query: query, expired: workflowExpired)
+        workflowQueryReport = result.report
+        return result.tree
+    }
     // The bulk read cannot stop at a web area, so under chrome scope it would fetch the whole
     // page only for the builder to discard it; the walk never descends into it. Measured on
     // Brave 2026-09-11: walk 342-461 ms, bulk 544-911 ms for the same 125 rows.
@@ -335,7 +347,8 @@ private func workflowSnapshotOnce(appName: String, pid: pid_t, launch: Double, w
         perceptionResult = result.1
     }
     let token = SnapshotToken(pid: pid, launch: launch, window: Int(window.id), depth: depth,
-                              digest: tree.digest, created: capturedAt, scope: scope, visual: visual)
+                              digest: tree.digest, created: capturedAt, scope: scope, visual: visual,
+                              query: scope == "query" ? workflowQuery : nil)
     let encoded: String
     do {
         encoded = try JSONEncoder().encode(token).base64EncodedString()
@@ -343,7 +356,14 @@ private func workflowSnapshotOnce(appName: String, pid: pid_t, launch: Double, w
         throw ObservedTreeError("cannot encode snapshot token: \(error.localizedDescription)")
     }
     let publicRows = tree.rows.map { row in row.filter { $0.key != "identity" } }
-    return ["ok": true, "app": appName, "pid": pid, "processLaunch": launch,
+    var queryReport: [String: Any] = [:]
+    if scope == "query", let query = workflowQuery, let report = workflowQueryReport {
+        queryReport = report.dictionary
+        queryReport["text"] = query.text
+        if let role = query.role { queryReport["role"] = role }
+        queryReport["depth"] = depth
+    }
+    var output: [String: Any] = ["ok": true, "app": appName, "pid": pid, "processLaunch": launch,
             "window": ["id": window.id, "index": index, "title": axStringAttribute(window.ax, "AXTitle") ?? "",
                        "x": window.bounds.minX, "y": window.bounds.minY,
                        "width": window.bounds.width, "height": window.bounds.height],
@@ -352,6 +372,11 @@ private func workflowSnapshotOnce(appName: String, pid: pid_t, launch: Double, w
             // The count of the tree these elements came from, not of the second read that checked it.
             "vanishedDuringWalk": tree.vanished,
             "elements": publicRows]
+    if !queryReport.isEmpty {
+        output["query"] = queryReport
+    }
+
+    return output
 }
 
 /// Wait until two consecutive reads agree, so a post-action snapshot describes a UI that has
@@ -588,7 +613,10 @@ func cmdSee(appName _: String) {
     }
     let depth = workflowInteger("--depth", defaultValue: 20)
     let scope = workflowArgument("--scope") ?? "window"
-    guard ["window", "chrome"].contains(scope) else { workflowFailure("--scope must be window or chrome") }
+    guard ["window", "chrome", "query"].contains(scope) else { workflowFailure("--scope must be window, chrome or query") }
+    if scope == "query" {
+        workflowQuery = TreeQuery(text: workflowArgument("--query") ?? "", role: workflowArgument("--query-role"))
+    }
     do {
         var perception: VisualPerceptionOptions?
         if workflowArgument("--perception") == "ocr" {
@@ -818,6 +846,7 @@ func cmdAct(appName _: String) {
             workflowFailure("invalid --snapshot token; run see again")
         }
         token = decoded
+        workflowQuery = decoded.query
         elementIndex = workflowArgument("--coords") == nil && workflowArgument("--region") == nil
             ? workflowInteger("--element") : 0
         do {
@@ -851,7 +880,7 @@ func cmdAct(appName _: String) {
                 ? try resolvedTargetIndex(key:key,rows:tree.rows)
                 : try preparedTargetIndex(key:key,rows:tree.rows)
             dispatchToken = SnapshotToken(pid:pid,launch:launch,window:Int(window.id),depth:token.depth,
-                digest:tree.digest,created:token.created,scope:token.effectiveScope)
+                digest:tree.digest,created:token.created,scope:token.effectiveScope,query:token.query)
         } catch { workflowFailure(error) }
     }
     do {
@@ -898,7 +927,7 @@ func cmdAct(appName _: String) {
         do { try validateModalTarget(rows: tree.rows, target: elementIndex) }
         catch { workflowFailure(error) }
         dispatchToken = SnapshotToken(pid:pid,launch:launch,window:Int(window.id),depth:token.depth,
-            digest:tree.digest,created:token.created,scope:token.effectiveScope)
+            digest:tree.digest,created:token.created,scope:token.effectiveScope,query:token.query)
         workflowFrontWindow(window,pid:pid)
         prepared = true
     }

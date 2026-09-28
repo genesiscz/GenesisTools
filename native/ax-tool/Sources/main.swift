@@ -18,6 +18,9 @@ if args.count < 2 || args[1] == "--help" || args[1] == "-h" {
     Usage:
       ax-tool see --app <name> [--window-index N | --window-id ID] [--depth 20] [--scope window|chrome] [--path shot.png]
                       Indexed AX tree + exact-window PNG + 120-second snapshot token; multiple windows require an index.
+                      --scope query --query TEXT [--query-role AXRole]: walk the whole window, keep only matches and their
+                      ancestors (works past the 4000-row limit); the result's query block counts depth-limited subtrees.
+                      --budget-ms N (see and act): the caller's deadline; a walk that runs out says how far it got.
       ax-tool act --app <name> --snapshot TOKEN --element N --action ACTION
                       ACTION: get|press|click|move|drag|set|perform|focus|scroll|type|key|select|paste
                       set: --value TEXT; perform: --ax-action AXName; type: --text TEXT (single line, max 256 UTF-16 units); key: --keys cmd,a

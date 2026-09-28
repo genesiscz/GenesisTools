@@ -835,6 +835,46 @@ test("a dispatched press whose refresh ran out of budget comes back dispatched w
     expect(acts).toEqual(["press"]);
 });
 
+test("a query observation targets one element on a page too big to snapshot, and says what it did not walk", async () => {
+    const f = fixture();
+    const original = f.native.run;
+    f.native.run = async (call) => {
+        if (call.args[0] !== "see" || !call.args.includes("query")) {
+            return original(call);
+        }
+
+        const reply = await original(call);
+        return {
+            ...reply,
+            elements: [f.snapshot.elements[0], f.snapshot.elements[1]],
+            query: { text: "Save", role: "AXButton", walked: 9120, matches: 1, depthLimitedSubtrees: 3, depth: 50 },
+        };
+    };
+    await expect(f.computer.get_app_state({ app: "Fixture", query: "Save", scope: "window" })).rejects.toThrow(
+        "Choose scope or query"
+    );
+    await expect(f.computer.get_app_state({ app: "Fixture", role: "AXButton" })).rejects.toThrow("pass query");
+    const state = await f.computer.get_app_state({ app: "Fixture", query: "Save", role: "AXButton", image: false });
+    const see = f.calls.at(-1) ?? [];
+    expect(see.slice(see.indexOf("--scope"), see.indexOf("--depth"))).toEqual([
+        "--scope",
+        "query",
+        "--query",
+        "Save",
+        "--query-role",
+        "AXButton",
+    ]);
+    expect(state.scope).toBe("query");
+    expect(state.text).toContain('Query "Save" AXButton: 1 matches among 9120 walked elements');
+    expect(state.text).toContain("3 subtrees below depth 50 were NOT walked");
+    const pressed = await f.computer.click({ app: "Fixture", element_ref: state.elements[1].ref });
+    expect(pressed.ok).toBe(true);
+    await f.computer.get_app_state({ app: "Fixture", image: false });
+    expect(f.calls.at(-1)).toContain("--query");
+    await f.computer.get_app_state({ app: "Fixture", scope: "window", image: false });
+    expect(f.calls.at(-1)).not.toContain("--query");
+});
+
 test("Jev target admission excludes controls behind a visible sheet", async () => {
     const f = fixture({
         evaluate: async (call) => {
