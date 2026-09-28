@@ -41,7 +41,7 @@ public struct ClipboardPasteOutcome {
     public let clipboardRestore: String
     /// False when the field's value cannot be read, so nothing proved the paste landed.
     public let verified: Bool
-    /// "ax", "keys", "unverified", "empty" or nil when no replacement was asked for.
+    /// "ax", "keys", "empty" or nil when no replacement was asked for.
     public let selection: String?
     /// True when the field already held the text and nothing was pasted.
     public let skipped: Bool
@@ -99,7 +99,10 @@ private func selectWholeField(length: Int, primitives: ClipboardPastePrimitives)
     while true {
         switch covered() {
         case true?: return "keys"
-        case nil: return "unverified"
+        case nil:
+            // A field that hides its selection cannot prove the cmd+a took, and an unproven
+            // replacement is exactly how a paste turns into an append.
+            throw WindowEventError.unavailable("select-all could not be verified (the field exposes no readable AXSelectedTextRange); paste not dispatched, clipboard restored")
         case false?:
             guard primitives.now() < deadline else {
                 let range = primitives.selectedRange().map { "\($0.location):\($0.length)" } ?? "unreadable"

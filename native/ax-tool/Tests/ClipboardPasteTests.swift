@@ -23,6 +23,7 @@ final class ClipboardPasteTests: XCTestCase {
         var appendsInsteadOfReplacing = false
         var axSelectionWorks = true
         var keySelectionWorks = true
+        var selectionUnreadable = false
         var pastes = 0
         var pendingPasteAt: TimeInterval?
         var readFromPasteboard: String?
@@ -58,7 +59,9 @@ final class ClipboardPasteTests: XCTestCase {
                     self.selection = (0, length)
                     return true
                 },
-                selectedRange: { self.selection ?? (self.value.map { ($0.utf16.count, 0) }) },
+                selectedRange: {
+                    self.selectionUnreadable ? nil : (self.selection ?? (self.value.map { ($0.utf16.count, 0) }))
+                },
                 postSelectAll: {
                     if self.keySelectionWorks { self.selection = (0, (self.value ?? "").utf16.count) }
                 },
@@ -159,6 +162,19 @@ final class ClipboardPasteTests: XCTestCase {
         XCTAssertEqual(field.pastes, 0)
         XCTAssertEqual(field.value, "https://www.youtube.com/@channel/streams")
         XCTAssertTrue(failure.message.contains("select-all did not cover the field"), failure.message)
+        try assertOriginal()
+    }
+
+    /// A field that hides its selection cannot prove the cmd+a took; replacing there used to paste
+    /// anyway ("unverified") and could append to the old text.
+    func testAnUnreadableSelectionRefusesTheReplacement() throws {
+        let field = Field(board: board, value: "https://old.example/page")
+        field.selectionUnreadable = true
+        let failure = try pasteFailure(field, text: "https://new.example/", replace: true)
+        XCTAssertFalse(failure.dispatched)
+        XCTAssertEqual(field.pastes, 0)
+        XCTAssertTrue(failure.message.contains("select-all could not be verified"), failure.message)
+        XCTAssertEqual(failure.clipboardRestore, "restored")
         try assertOriginal()
     }
 
