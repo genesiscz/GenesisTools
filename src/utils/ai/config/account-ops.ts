@@ -205,7 +205,8 @@ export async function addAccount(input: AddAccountInput): Promise<AccountEntry> 
 
         const vault = await secrets();
         for (const field of SECRET_CREDENTIAL_FIELDS) {
-            const value = input.secrets?.[field];
+            // A piped key keeps a CR or trailing spaces, which the provider rejects in its Bearer header.
+            const value = input.secrets?.[field]?.trim();
             if (!value) {
                 continue;
             }
@@ -539,7 +540,7 @@ export async function editAccount(idOrName: string, patch: EditAccountPatch): Pr
 
         if (patch.apiKey !== undefined) {
             const vault = await secrets();
-            account.credentials.apiKey = await vault.set(vaultPathFor(account.id, "apiKey"), patch.apiKey);
+            account.credentials.apiKey = await vault.set(vaultPathFor(account.id, "apiKey"), patch.apiKey.trim());
         }
 
         logger.info({ id: account.id }, "edited AI account");

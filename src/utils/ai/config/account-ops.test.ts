@@ -184,6 +184,15 @@ describe("editAccount", () => {
         expect(readRawConfig().accounts[0].useEnvApiKey).toEqual(["FAKE_API_KEY"]);
     });
 
+    test("a piped key is stored without its line ending or surrounding spaces", async () => {
+        await addAccount({ provider: "fake", name: "keyless", useEnvApiKey: ["FAKE_API_KEY"] });
+        await editAccount("keyless", { apiKey: " sk-fixture-edit \r\n" });
+        expect(await resolveSecret(readRawConfig().accounts[0].credentials.apiKey)).toBe("sk-fixture-edit");
+
+        const added = await addAccount({ provider: "fake", name: "piped", secrets: { apiKey: "sk-fixture-add\r\n" } });
+        expect(await resolveSecret(added.credentials.apiKey)).toBe("sk-fixture-add");
+    });
+
     test("the linked key is what the provider ladder resolves, with no variable set", async () => {
         env.testing.unset("FAKE_API_KEY");
         await addAccount({ provider: "fake", name: "keyless", useEnvApiKey: ["FAKE_API_KEY"] });
