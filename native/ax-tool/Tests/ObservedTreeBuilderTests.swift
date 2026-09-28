@@ -398,3 +398,22 @@ final class QueryTreeTests: XCTestCase {
         XCTAssertThrowsError(try bare.validate(pid: 7, launch: 1, window: 3, digest: "d", element: 0, count: 3, now: 101))
     }
 }
+
+extension QueryTreeTests {
+    /// Without the sheet in the rows, the modal barrier could not see it, and a query result would
+    /// let a click through to a button a file panel covers.
+    func testAModalSheetElsewhereIsKeptSoTheBarrierStillRefuses() throws {
+        let fake = FakeSource()
+        fake.nodes[1] = FakeNode(role: "AXWindow", children: [2, 3], frame: CGRect(x: 0, y: 0, width: 1000, height: 800))
+        fake.nodes[2] = FakeNode(role: "AXSheet", children: [4], frame: CGRect(x: 200, y: 50, width: 600, height: 400))
+        fake.nodes[4] = FakeNode(role: "AXButton", attributes: ["AXTitle": "Open"], actions: ["AXPress"],
+                                 frame: CGRect(x: 600, y: 400, width: 80, height: 30))
+        fake.nodes[3] = FakeNode(role: "AXButton", attributes: ["AXTitle": "Load unpacked"], actions: ["AXPress"],
+                                 frame: CGRect(x: 10, y: 10, width: 120, height: 30))
+        let result = try buildQueryTree(root: fake.element(1), source: fake, depth: 10,
+                                        query: TreeQuery(text: "Load unpacked", role: "AXButton"))
+        XCTAssertEqual(result.tree.rows.map { $0["role"] as? String }, ["AXWindow", "AXSheet", "AXButton"])
+        let target = try XCTUnwrap(result.tree.rows.firstIndex { $0["AXTitle"] as? String == "Load unpacked" })
+        XCTAssertThrowsError(try validateModalTarget(rows: result.tree.rows, target: target))
+    }
+}

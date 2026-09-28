@@ -265,7 +265,7 @@ function describeQueryWalk(query: NonNullable<Snapshot["query"]>): string {
         query.depthLimitedSubtrees > 0
             ? ` ${query.depthLimitedSubtrees} subtrees below depth ${query.depth} were NOT walked; a match there is not listed.`
             : ` Every element to depth ${query.depth} was walked.`;
-    return `Query "${query.text}"${role}: ${query.matches} matches among ${query.walked} walked elements; rows are the matches and their ancestors only.${hidden}`;
+    return `Query "${query.text}"${role}: ${query.matches} matches among ${query.walked} walked elements; rows are the matches, their ancestors and any sheet or modal container only.${hidden}`;
 }
 
 function webActivationKey(rows: Observation["elements"], target: Observation["elements"][number]) {

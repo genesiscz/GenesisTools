@@ -2,7 +2,8 @@ import ApplicationServices
 import Foundation
 
 /// A query-scoped observation: the window is walked in full, but only the elements that match,
-/// their ancestors and the root become rows. A GitHub pull request or an open panel over
+/// their ancestors, any sheet or modal container (so the modal barrier still refuses a target
+/// behind a dialog) and the root become rows. A GitHub pull request or an open panel over
 /// ~/Downloads exceeds the 4000-row snapshot limit, so a whole-window `see` refuses there, while
 /// one button on it is still a small, exact target. The walk is deterministic (no row depends on
 /// timing), so `act` re-walks the same query and gets the same rows, indexes and digest.
@@ -81,6 +82,11 @@ public func buildQueryTree(root: AXUIElement, source: HierarchySource, depth: In
         }
         path.append(element)
         defer { path.removeLast() }
+        let role = source.attribute(element, "AXRole") as? String
+        let modal = role == "AXSheet" || ["1", "true"].contains(source.attribute(element, "AXModal").map { "\($0)" } ?? "")
+        if level > 0, modal {
+            for ancestor in path { _ = kept.insert(ancestor) }
+        }
         if level > 0, queryMatches(element, query: query, source: source) {
             report.matches += 1
             guard report.matches <= queryMatchLimit else {
