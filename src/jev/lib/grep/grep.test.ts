@@ -839,6 +839,29 @@ describe("evaluator wrapper", () => {
         expect(calls).toBe(2);
     });
 
+    test("workers that pass the rate check together wait instead of failing the reservation", async () => {
+        // Four 65_536-token estimates against 250_000 tokens a second: the fourth must wait a second.
+        const large: EvaluationRequest = { ...one, state: { query: "q", filler: "x".repeat(70_000) } };
+        let clock = 0;
+        const sleeps: number[] = [];
+        const evaluator = createGrepEvaluator({
+            evaluate: async () => response({ q0: 0.6 }),
+            provider: "typesafe",
+            signal: new AbortController().signal,
+            now: () => clock,
+            sleep: async (ms) => {
+                sleeps.push(ms);
+                clock += ms;
+            },
+        });
+        const results = await Promise.all(
+            [1, 2, 3, 4].map(() => evaluator.evaluate(large, { navigation: true }).catch((error: unknown) => error))
+        );
+        expect(results).toEqual([{ q0: 0.6 }, { q0: 0.6 }, { q0: 0.6 }, { q0: 0.6 }]);
+        expect(sleeps.length).toBeGreaterThan(0);
+        expect(evaluator.requests).toBe(4);
+    });
+
     test("an abort rejects a queued waiter", async () => {
         const controller = new AbortController();
         let calls = 0;

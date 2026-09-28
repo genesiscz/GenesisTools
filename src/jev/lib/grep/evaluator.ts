@@ -214,8 +214,12 @@ export function createGrepEvaluator(options: GrepEvaluatorOptions): GrepEvaluato
         };
     }
 
-    /** Wait out a 429 cooldown and the rate budget, then validate the donors, then recheck both. */
-    async function waitForSlot(reservedTokens: number, policy?: EvaluationPolicy): Promise<void> {
+    /**
+     * Wait out a 429 cooldown and the rate budget, validate the donors, recheck both, then claim the
+     * request and its tokens in the same synchronous step as the check, so no other worker can spend
+     * them in between.
+     */
+    async function claimSlot(reservedTokens: number, policy?: EvaluationPolicy) {
         for (;;) {
             const wait = Math.max(cooldownUntil - now(), rateBudget?.waitMs(reservedTokens) ?? 0);
             if (wait > 0) {
@@ -232,7 +236,10 @@ export function createGrepEvaluator(options: GrepEvaluatorOptions): GrepEvaluato
             await policy?.beforeAttempt?.();
             assertActive();
             if (cooldownUntil <= now() && (rateBudget?.waitMs(reservedTokens) ?? 0) <= 0) {
-                return;
+                // Another worker may have spent the last request while this one waited.
+                assertBelowLimit();
+                requests++;
+                return rateBudget?.reserve(reservedTokens);
             }
         }
     }
@@ -289,11 +296,7 @@ export function createGrepEvaluator(options: GrepEvaluatorOptions): GrepEvaluato
                 const release = await acquire();
                 try {
                     assertActive();
-                    await waitForSlot(reservedTokens, policy);
-                    // Another worker may have spent the last request while this one waited.
-                    assertBelowLimit();
-                    const reservation = rateBudget?.reserve(reservedTokens);
-                    requests++;
+                    const reservation = await claimSlot(reservedTokens, policy);
                     const stop = prof.start("evaluate");
                     const response = await options
                         .evaluate({ input: request, timeoutMs, signal: stopped })
