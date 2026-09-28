@@ -475,6 +475,25 @@ final class IdenticalTargetTests: XCTestCase {
         }
     }
 
+    /// Three observed, two gone: the one left is a sole match, but not necessarily the pinned one.
+    /// Accepting the lone survivor before checking the ordinal pressed the wrong card's button.
+    func testTwinsShrinkingToOneStillRefuse() throws {
+        let three = extensionsPage(cards: ["GenesisTools", "7TV", "AdBlock"])
+        let observed = try buildObservedTree(root: three.element(1), source: three, depth: 10, scope: "window")
+        let button = reloads(observed)[1]
+        let key = try XCTUnwrap(observed.rows[button]["stableKey"] as? String)
+        let ordinal = try XCTUnwrap(TargetOrdinal.of(button, rows: observed.rows, field: "stableKey"))
+        let one = extensionsPage(cards: ["GenesisTools"])
+        let fresh = try buildObservedTree(root: one.element(1), source: one, depth: 10, scope: "window")
+        XCTAssertEqual(reloads(fresh).count, 1)
+        XCTAssertThrowsError(try resolvedTargetIndex(key: key, rows: fresh.rows, ordinal: ordinal)) { error in
+            XCTAssertTrue(error.localizedDescription.contains("3 identical elements were observed and 1 are present now"),
+                          error.localizedDescription)
+        }
+        XCTAssertEqual(try resolvedTargetIndex(key: key, rows: fresh.rows), reloads(fresh)[0],
+                       "without an ordinal a unique key still resolves")
+    }
+
     func testOrdinalArgumentsAreParsedStrictly() {
         XCTAssertEqual(TargetOrdinal("1/3"), TargetOrdinal(position: 1, count: 3))
         for invalid in ["3/3", "0/1", "-1/3", "a/3", "1/", "01/3", "1/3/4"] {

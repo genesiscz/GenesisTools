@@ -18,6 +18,21 @@ final class FieldCommitTests: XCTestCase {
         XCTAssertNil(commitRefusal(role: "AXTextField", code: try NativeKeyChord("return").code, observed: nil, live: "b"))
     }
 
+    /// A stable-key pin re-resolves a field whose text changed after `see`; the act's own read then
+    /// already holds the new text, so only the caller's observed value can catch it.
+    func testTheCallersObservedValueWinsOverTheActsOwnRead() throws {
+        let observedAtSee = fieldValueDigest("https://genesis.tools/t/D5iPWv28aiBR")
+        let refusal = try XCTUnwrap(commitRefusal(role: "AXTextField", code: NativeKeyChord("return").code,
+                                                  observed: "https://genesis.tools/t/D5iPWv28aiB",
+                                                  live: "https://genesis.tools/t/D5iPWv28aiB", expectedDigest: observedAtSee))
+        XCTAssertTrue(refusal.contains("changed since it was observed"), refusal)
+        XCTAssertNil(commitRefusal(role: "AXTextField", code: try NativeKeyChord("return").code, observed: "same",
+                                   live: "same", expectedDigest: fieldValueDigest("same")))
+        XCTAssertNotNil(commitRefusal(role: "AXTextField", code: try NativeKeyChord("return").code, observed: nil,
+                                      live: nil, expectedDigest: fieldValueDigest("same")))
+        XCTAssertEqual(fieldValueDigest("abc"), "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad")
+    }
+
     /// A paste fills a field; it must never be able to submit it.
     func testPasteKeysAreNeverCommitKeys() throws {
         XCTAssertFalse(commitKeyCodes.contains(ClipboardPasteKeys.selectAll))

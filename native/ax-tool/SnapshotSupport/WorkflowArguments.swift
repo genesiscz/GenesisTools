@@ -28,7 +28,7 @@ public struct WorkflowArguments {
                 "--keys", "--coords", "--button", "--to", "--duration", "--pages", "--pixels", "--range", "--prefix",
                 "--suffix", "--selection", "--format", "--path", "--region", "--target-key", "--dwell",
                 "--revalidate-scope", "--frame", "--by-identifier", "--window-index", "--depth", "--modifiers",
-                "--budget-ms", "--target-ordinal",
+                "--budget-ms", "--target-ordinal", "--expect-value-sha256",
             ]
             flagOptions = ["--background", "--double", "--refresh", "--no-cursor", "--no-image", "--prepare", "--replace", "--hold", "--no-activate"]
         default:
@@ -205,6 +205,10 @@ public struct WorkflowArguments {
         try reject(["--pages", "--pixels", "--direction"], unless: ["scroll"])
         try reject(["--value"], unless: ["set"])
         try reject(["--keys"], unless: ["key"])
+        try reject(["--expect-value-sha256"], unless: ["key"])
+        if let digest = values["--expect-value-sha256"], digest.count != 64 || !digest.allSatisfy({ $0.isHexDigit }) {
+            throw WorkflowArgumentError.invalid("--expect-value-sha256 takes the 64-hex SHA-256 of the observed field value")
+        }
         try reject(["--ax-action"], unless: ["perform"])
         if action == "key" {
             guard let keys = values["--keys"] else { throw WorkflowArgumentError.invalid("key requires --keys") }

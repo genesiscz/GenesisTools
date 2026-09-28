@@ -138,7 +138,8 @@ If cleanup finds changed user text or a different document, stop and report inst
 Submitting a field is guarded twice. `set_value` fails when the app rewrites the value within
 300 ms of the write (an address bar's autocomplete can), naming the written and the current text.
 `press_key` with Return or Enter on a text field reads the field right before posting and refuses,
-with both texts, when it no longer holds what the observation showed: on 2026-09-28 Brave's
+with both texts, when it no longer holds what the observation showed (the computer API sends the
+SHA-256 of the observed value, so a field pinned by its AXIdentifier cannot slip a changed text through): on 2026-09-28 Brave's
 omnibox lost its last character between `set_value` and a prepared Return, and the Return navigated
 to the shortened URL. Read the field again after such a refusal and submit only a text you verified.
 A paste posts only cmd+a and cmd+v, never a submit key.
@@ -325,7 +326,8 @@ Three browser cases that used to refuse an exact, fresh ref:
 - **Identical twins.** chrome://extensions has one "Reload" button per extension card, and every key
   the backend computes is the same for all of them. The computer API passes the observed position
   (`--target-ordinal 1/3`, also on `control act`), so the ref resolves to that button. When the
-  number of twins changed it still refuses, so a removed card never shifts the press to a neighbour.
+  number of twins changed it still refuses, even when only one is left, so a removed card never
+  shifts the press to a neighbour.
 - **Live browser chrome.** Brave's tab labels carry a live memory figure. A page element is checked
   against the page subtree, not the whole window: tab churn is ignored, a changed page or a new
   sheet still refuses. This covers `control act --snapshot --element N` without a target key.

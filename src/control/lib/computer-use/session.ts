@@ -17,6 +17,7 @@ import { type ControlDriver, NativeControlDriver } from "../decision/native";
 import {
     candidatesFor,
     elementLabel,
+    expectedValueArgs,
     hasAncestorRole,
     type Observation,
     observationSchema,
@@ -1297,6 +1298,7 @@ export class ComputerUse {
                     "--element",
                     String(row.index),
                     ...flags,
+                    ...(action === "key" ? expectedValueArgs(row) : []),
                     ...(input.prepare
                         ? preparedPin(row, record.snapshot.elements)
                         : rowPin(row, record.snapshot.elements)),

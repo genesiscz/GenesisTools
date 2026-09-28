@@ -1,4 +1,5 @@
 import CoreGraphics
+import CryptoKit
 import Foundation
 
 /// Return and keypad Enter: the keys that submit a text field (a browser omnibox navigates).
@@ -13,12 +14,28 @@ public enum ClipboardPasteKeys {
 
 private let textInputRoles: Set<String> = ["AXTextField", "AXTextArea", "AXComboBox", "AXSearchField"]
 
+/// SHA-256 of a field value, as `act --expect-value-sha256` carries the value the caller observed.
+/// A digest keeps the text itself off the command line.
+public func fieldValueDigest(_ value: String) -> String {
+    SHA256.hash(data: Data(value.utf8)).map { String(format: "%02x", $0) }.joined()
+}
+
 /// Why a commit key must not be sent, or nil when it may. A text field commits exactly what it holds
 /// when the key lands, so the text must still be what the caller observed. Measured 2026-09-28 on
 /// Brave: the omnibox lost its last character between set_value and a prepared Return, and the
 /// Return navigated to the shortened URL.
-public func commitRefusal(role: String?, code: CGKeyCode, observed: String?, live: String?) -> String? {
-    guard commitKeyCodes.contains(code), textInputRoles.contains(role ?? ""), let observed else { return nil }
+///
+/// `expectedDigest` is the value the caller saw at `see`. `observed` is only this act's own
+/// read, which a stable-key pin (an AXIdentifier, blind to the text) re-resolves after the text
+/// changed, so on its own it would let a value edited since `see` be submitted.
+public func commitRefusal(role: String?, code: CGKeyCode, observed: String?, live: String?,
+                          expectedDigest: String? = nil) -> String? {
+    guard commitKeyCodes.contains(code), textInputRoles.contains(role ?? "") else { return nil }
+    if let expectedDigest, live.map(fieldValueDigest) != expectedDigest {
+        return "the field's text changed since it was observed: it now holds \"\(live ?? "unreadable")\"; "
+            + "nothing was sent. Read the field again and send the key only if its text is what you want to submit"
+    }
+    guard let observed else { return nil }
     guard live == observed else {
         return "the field's text changed before the commit key: observed \"\(observed)\", now \"\(live ?? "unreadable")\"; "
             + "nothing was sent. Read the field again and send the key only if its text is what you want to submit"

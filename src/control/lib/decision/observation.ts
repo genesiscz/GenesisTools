@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { z } from "zod";
 import type { ActionParameters, ControlAction } from "./action";
 
@@ -120,6 +121,23 @@ export function targetOrdinalArgs({
     }
 
     return [];
+}
+
+const TEXT_INPUT_ROLES = new Set(["AXTextField", "AXTextArea", "AXComboBox", "AXSearchField"]);
+
+/**
+ * `--expect-value-sha256` for a key sent to a text input: the digest of the value the caller
+ * observed. The backend refuses Return or Enter when the field no longer holds it. Without it the
+ * check compared only against the act's own read, and a stable-key pin (an AXIdentifier, blind to
+ * the text) re-resolves a field whose text changed after the observation. A digest keeps the text
+ * off the command line, and a secure field sends nothing.
+ */
+export function expectedValueArgs(row: ObservedElement): string[] {
+    if (!TEXT_INPUT_ROLES.has(row.role) || row.AXSubrole === "AXSecureTextField" || typeof row.AXValue !== "string") {
+        return [];
+    }
+
+    return ["--expect-value-sha256", createHash("sha256").update(row.AXValue, "utf8").digest("hex")];
 }
 
 export function hasAncestorRole(elements: ObservedElement[], target: ObservedElement, role: string): boolean {

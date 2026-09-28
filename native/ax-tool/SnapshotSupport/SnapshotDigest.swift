@@ -124,18 +124,20 @@ public func preparedTargetIndex(key: String, rows: [[String:Any]], field: String
                                 ordinal: TargetOrdinal? = nil) throws -> Int {
 
     let matches = rows.indices.filter { rows[$0][field] as? String == key }
+    // Identical twins are told apart only by where the caller saw them, and only while the set of
+    // twins is the same size. The ordinal is checked BEFORE a lone survivor is accepted: with three
+    // observed and two gone, the one left may not be the one the caller pointed at.
+    if let ordinal {
+        guard matches.count == ordinal.count else {
+            throw SnapshotError.refusal(.missingTarget, "observed target changed, disappeared or became ambiguous; "
+                + "\(ordinal.count) identical elements were observed and \(matches.count) are present now")
+        }
+        return matches[ordinal.position]
+    }
     if matches.count == 1, let index = matches.first {
         return index
     }
-    // Identical twins are told apart only by where the caller saw them, and only while the set of
-    // twins is the same size; one added or removed shifts the positions, so that still refuses.
-    if matches.count > 1, let ordinal, ordinal.count == matches.count {
-        return matches[ordinal.position]
-    }
-    let detail = matches.count > 1
-        ? (ordinal.map { "; \($0.count) identical elements were observed and \(matches.count) are present now" }
-            ?? "; \(matches.count) identical elements carry this key")
-        : ""
+    let detail = matches.count > 1 ? "; \(matches.count) identical elements carry this key" : ""
     throw SnapshotError.refusal(.missingTarget, "observed target changed, disappeared or became ambiguous\(detail)")
 }
 

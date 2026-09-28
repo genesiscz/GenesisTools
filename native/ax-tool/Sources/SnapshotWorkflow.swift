@@ -1696,7 +1696,8 @@ func cmdAct(appName _: String) {
         if !CFEqual(element, window.ax),
            let refusal = commitRefusal(role: axStringAttribute(element, "AXRole"), code: chord.code,
                                        observed: tree.rows[elementIndex]["AXValue"] as? String,
-                                       live: axStringAttribute(element, "AXValue")) {
+                                       live: axStringAttribute(element, "AXValue"),
+                                       expectedDigest: workflowArgument("--expect-value-sha256")) {
             workflowFailure(refusal)
         }
         workflowDispatchState = "uncertain"

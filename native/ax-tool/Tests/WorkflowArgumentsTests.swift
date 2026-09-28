@@ -227,6 +227,17 @@ extension WorkflowArgumentsTests {
 }
 
 extension WorkflowArgumentsTests {
+    func testTheObservedValueDigestIsOnlyForKeys() throws {
+        let digest = String(repeating: "a", count: 64)
+        let key = try WorkflowArguments(["--app", "Brave", "--snapshot", "t", "--element", "3", "--action", "key",
+                                         "--keys", "return", "--expect-value-sha256", digest], command: "act")
+        XCTAssertEqual(key.values["--expect-value-sha256"], digest)
+        XCTAssertThrowsError(try WorkflowArguments(["--app", "Brave", "--snapshot", "t", "--element", "3", "--action", "press",
+                                                    "--expect-value-sha256", digest], command: "act"))
+        XCTAssertThrowsError(try WorkflowArguments(["--app", "Brave", "--snapshot", "t", "--element", "3", "--action", "key",
+                                                    "--keys", "return", "--expect-value-sha256", "short"], command: "act"))
+    }
+
     func testQueryScopeNeedsItsQuery() throws {
         let see = try WorkflowArguments(["--app", "Brave", "--scope", "query", "--query", "Review with agent",
                                          "--query-role", "AXButton"], command: "see")

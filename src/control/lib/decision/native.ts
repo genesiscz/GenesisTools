@@ -5,6 +5,7 @@ import { type ActionParameters, nativeActionArguments } from "./action";
 import {
     type Candidate,
     candidatesFor,
+    expectedValueArgs,
     hasAncestorRole,
     type Observation,
     type ObservedElement,
@@ -337,6 +338,9 @@ export class NativeControlDriver implements ControlDriver {
         // rewritten to `perform` cannot take `--prepare`, and `focus` cannot take `--target-key`,
         // and native refuses either with "option is not valid" before anything is dispatched.
         const dispatched = actionArgs[1] ?? call.candidate.action;
+        if (dispatched === "key" && target) {
+            actionArgs.push(...expectedValueArgs(target));
+        }
 
         if (prepare && PREPARABLE_ACTIONS.has(dispatched)) {
             actionArgs.push(

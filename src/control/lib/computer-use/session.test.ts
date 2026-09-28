@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { createHash } from "node:crypto";
 import { evaluationSchema } from "@genesiscz/utils/ai/evaluation/evaluate";
 import type { EvaluationResponse, Evaluator } from "@genesiscz/utils/ai/evaluation/service";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -976,6 +977,25 @@ test("typed text counts as verified only when the backend read it back in the fi
     expect(missing.ok).toBe(false);
     expect(missing.verification.status).toBe("unverified");
     expect(missing.action.effect).toBe("dispatched");
+});
+
+test("a key to a text field carries the digest of the value the caller observed, never the text or a secret", async () => {
+    const f = fixture();
+    const keyArgs = async (index: number) => {
+        const state = await f.computer.get_app_state({ app: "Fixture", image: false });
+        const row = state.elements.find((element) => element.index === index)!;
+        await f.computer.press_key({ app: "Fixture", element_ref: row.ref, key: "Return" });
+        return f.calls.at(-1) ?? [];
+    };
+    const field = await keyArgs(2);
+    expect(field[field.indexOf("--expect-value-sha256") + 1]).toBe(
+        createHash("sha256").update("old", "utf8").digest("hex")
+    );
+    expect(field).not.toContain("old");
+    const secure = await keyArgs(3);
+    expect(secure).not.toContain("--expect-value-sha256");
+    const button = await keyArgs(1);
+    expect(button).not.toContain("--expect-value-sha256");
 });
 
 test("Jev target admission excludes controls behind a visible sheet", async () => {
