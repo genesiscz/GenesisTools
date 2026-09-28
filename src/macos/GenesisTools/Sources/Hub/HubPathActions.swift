@@ -165,9 +165,16 @@ enum PathOpener {
         }
     }
 
+    /// The folder a terminal opens in for `path`: the path itself, or a file's folder.
+    static func terminalFolder(for path: String) -> String {
+        var isFolder: ObjCBool = false
+        let isFile = FileManager.default.fileExists(atPath: path, isDirectory: &isFolder) && !isFolder.boolValue
+        return isFile ? (path as NSString).deletingLastPathComponent : path
+    }
+
     /// Off the main thread: the terminal host's CLI runs synchronously, up to its 60 s timeout.
     static func cmux(_ path: String) {
-        let path = fileURL(path).path
+        let path = terminalFolder(for: fileURL(path).path)
         Task.detached(priority: .userInitiated) {
             let error = AgentLauncher.openInTerminal(name: (path as NSString).lastPathComponent, cwd: path, command: ["zsh"])
             if let error {

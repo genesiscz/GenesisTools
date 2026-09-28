@@ -44,6 +44,12 @@ final class HubPathActionsTests: XCTestCase {
         XCTAssertEqual(spy.calls, ["finder \(folder)", "finder \(folder)"], "a folder never goes to its default app")
     }
 
+    func testATerminalOpensInAFileItsFolder() {
+        let folder = root.appendingPathComponent("Acme app/Ďábel/ČŘ").path
+        XCTAssertEqual(PathOpener.terminalFolder(for: folder), folder)
+        XCTAssertEqual(PathOpener.terminalFolder(for: folder + "/notes #1.md"), folder)
+    }
+
     func testRevealSelectsTheItemInItsFolder() {
         let folder = root.appendingPathComponent("Acme app").path
         let spy = SpyWorkspace()
