@@ -5,13 +5,14 @@ import {
     mkdirSync,
     mkdtempSync,
     readFileSync,
+    realpathSync,
     renameSync,
     statSync,
     symlinkSync,
     writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { TestRepo } from "@genesiscz/utils/git/test-repo";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { Command, CommanderError } from "commander";
@@ -474,6 +475,34 @@ describe("move aside rechecks each worktree before its own move", () => {
         expect(outcomes[0]?.moved).toBe(false);
         expect(outcomes[0]?.reasons.join(" ")).toContain("not a plain folder");
         expect(existsSync(path)).toBe(true);
+    });
+
+    test("a repository folder symlinked out of the private root is refused, and a failed claim is a refusal, not a throw", async () => {
+        const scratch = mkdtempSync(join(tmpdir(), "gt-hub-wt-repolink-"));
+        const root = join(scratch, "aside");
+        const outside = join(scratch, "public");
+        mkdirSync(outside);
+        expect(claimPrivateFolder(root)).toBeNull();
+        symlinkSync(outside, join(root, basename(realpathSync(repo.dir))));
+        const path = await repo
+            .branch("feat/repolink")
+            .then(() => repo.worktreeAdd({ name: "wt-repolink", ref: "feat/repolink" }));
+        const outcomes = await moveAsideWorktrees({
+            paths: [path],
+            base: "master",
+            live: { processes: [], sessions: [], sessionsError: null },
+            destRoot: root,
+            journal: join(scratch, "moved-aside.jsonl"),
+            now: new Date(Date.now() + 30 * 86_400_000),
+        });
+
+        expect(outcomes[0]?.moved).toBe(false);
+        expect(outcomes[0]?.reasons.join(" ")).toContain("not a plain folder inside");
+        expect(existsSync(path)).toBe(true);
+
+        const file = join(scratch, "a-file");
+        writeFileSync(file, "");
+        expect(claimPrivateFolder(join(file, "aside"))).toContain("could not be prepared");
     });
 });
 

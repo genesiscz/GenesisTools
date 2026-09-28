@@ -855,22 +855,46 @@ export function moveAsideRoot(now = new Date()): string {
  * local users out are gone, so this folder has to. Returns why it cannot be used, or null.
  */
 export function claimPrivateFolder(path: string): string | null {
-    mkdirSync(path, { recursive: true, mode: 0o700 });
-    const info = lstatSync(path);
+    try {
+        mkdirSync(path, { recursive: true, mode: 0o700 });
+        const info = lstatSync(path);
 
-    if (!info.isDirectory()) {
-        return `${path} is not a plain folder (a symlink?), so nothing is moved into it`;
+        if (!info.isDirectory()) {
+            return `${path} is not a plain folder (a symlink?), so nothing is moved into it`;
+        }
+
+        if (process.getuid && info.uid !== process.getuid()) {
+            return `${path} belongs to another user, so nothing is moved into it`;
+        }
+
+        if ((info.mode & 0o077) !== 0) {
+            chmodSync(path, 0o700);
+        }
+
+        return null;
+    } catch (error) {
+        log.warn({ error, path }, "move-aside: the private folder could not be prepared");
+        return `${path} could not be prepared as a private folder (${error instanceof Error ? error.message : String(error)}), so nothing is moved into it`;
     }
+}
 
-    if (process.getuid && info.uid !== process.getuid()) {
-        return `${path} belongs to another user, so nothing is moved into it`;
+/**
+ * Why `parent` is not a real folder directly inside the claimed `root`, or null. A symlink planted there
+ * under the repository's name would send the move out of the private folder.
+ */
+function repoFolderProblem(root: string, parent: string): string | null {
+    try {
+        mkdirSync(parent, { recursive: true, mode: 0o700 });
+
+        if (!lstatSync(parent).isDirectory() || dirname(realpathSync(parent)) !== realpathSync(root)) {
+            return `${parent} is not a plain folder inside ${root} (a symlink?), so nothing is moved into it`;
+        }
+
+        return null;
+    } catch (error) {
+        log.warn({ error, parent }, "move-aside: the repository folder could not be prepared");
+        return `${parent} could not be prepared (${error instanceof Error ? error.message : String(error)}), so nothing is moved into it`;
     }
-
-    if ((info.mode & 0o077) !== 0) {
-        chmodSync(path, 0o700);
-    }
-
-    return null;
 }
 
 export function moveAsideJournalPath(): string {
@@ -977,7 +1001,12 @@ export async function moveAsideWorktrees({
         }
 
         const parent = join(destRoot, row.repo);
-        mkdirSync(parent, { recursive: true });
+        const parentProblem = repoFolderProblem(destRoot, parent);
+
+        if (parentProblem) {
+            stay([parentProblem]);
+            continue;
+        }
 
         if (!sameVolume(path, parent)) {
             stay([`${parent} is on another volume: a move there would copy the whole folder, so it stays`]);
