@@ -56,6 +56,15 @@ public struct ClipboardPasteError: Error, LocalizedError {
     public var errorDescription: String? { message }
 }
 
+/// Whether an inserted paste shows up in the field. Only plain text can be compared: an html or md
+/// paste is rendered by the receiver, so its markup never appears in AXValue. Line endings are
+/// compared after normalizing, because text fields turn CRLF into LF.
+func insertedTextVisible(_ value: String?, text: String, format: String) -> Bool {
+    guard format == "text" else { return true }
+    func normalized(_ string: String) -> String { string.replacingOccurrences(of: "\r\n", with: "\n") }
+    return value.map { normalized($0).contains(normalized(text)) } ?? false
+}
+
 /// Wait until the receiver has visibly consumed the paste: the value moved away from `before`
 /// and satisfies `settled`. Returns the last value read and whether any change was seen.
 public func waitForPasteConsumption(before: String?, timeout: TimeInterval, now: () -> TimeInterval,
@@ -141,7 +150,7 @@ public func performClipboardPaste(transaction: ClipboardTransaction, text: Strin
         attempt = .success(waitForPasteConsumption(
             before: before, timeout: consumeTimeout, now: primitives.now, wait: primitives.wait,
             read: primitives.readValue,
-            settled: { replace ? $0 == text : ($0?.contains(text) ?? false) }))
+            settled: { replace ? $0 == text : insertedTextVisible($0, text: text, format: format) }))
     } catch {
         attempt = .failure(error)
     }
@@ -168,7 +177,7 @@ public func performClipboardPaste(transaction: ClipboardTransaction, text: Strin
         throw ClipboardPasteError(message: "paste replacement read-back differs; inspect before retrying",
                                   clipboardRestore: restoration, dispatched: true)
     }
-    if !replace, value?.contains(text) != true {
+    if !replace, !insertedTextVisible(value, text: text, format: format) {
         throw ClipboardPasteError(
             message: "the field changed but does not contain the pasted text (another clipboard or a transformed paste); inspect before retrying",
             clipboardRestore: restoration, dispatched: true)

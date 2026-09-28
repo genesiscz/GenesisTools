@@ -239,3 +239,27 @@ final class ClipboardPasteTests: XCTestCase {
         try assertOriginal()
     }
 }
+
+extension ClipboardPasteTests {
+    /// An html or md paste is rendered by the receiver, so its markup never shows in AXValue.
+    func testRenderedMarkupCountsAsLandedForAnInsertion() throws {
+        let transaction = try ClipboardTransaction(board: board)
+        let field = Field(board: board, value: "Note: ")
+        var primitives = field.primitives(ours: "<b>bold</b>")
+        let post = primitives.postPaste
+        primitives.postPaste = {
+            try post()
+            field.pendingPasteAt = nil
+            field.value = "Note: bold"
+        }
+        let outcome = try performClipboardPaste(transaction: transaction, text: "<b>bold</b>", format: "html",
+                                                replace: false, primitives: primitives)
+        XCTAssertEqual(outcome.readback, "Note: bold")
+        try assertOriginal()
+    }
+
+    func testLineEndingsAreComparedNormalized() {
+        XCTAssertTrue(insertedTextVisible("a\nb", text: "a\r\nb", format: "text"))
+        XCTAssertFalse(insertedTextVisible("ab", text: "a\r\nb", format: "text"))
+    }
+}
