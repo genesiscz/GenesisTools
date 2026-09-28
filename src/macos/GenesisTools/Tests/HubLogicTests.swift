@@ -517,6 +517,23 @@ final class HubLogicTests: XCTestCase {
         XCTAssertNil(CodeBlockRenderer.attributed(plain, limit: nil, highlight: false).spoken, "a block that is not a diff reads its text")
     }
 
+    /// The bounded first draw leaves lines blank, and VoiceOver still hears every shown line of them.
+    func testFirstDrawStillSpeaksEveryShownLine() {
+        let changes = (1...300).map { "+line \($0)" }.joined(separator: "\n")
+        let diff = CodeBlockBuilder.unifiedDiff("@@ -1,0 +1,300 @@\n\(changes)", language: .plain)
+        let spokenDiff = CodeBlockRenderer.attributed(diff, limit: nil, highlight: false, drawn: 200).spoken ?? ""
+        XCTAssertEqual(spokenDiff.split(separator: "\n").count, 300)
+        XCTAssertTrue(spokenDiff.hasSuffix("added: line 300"), "the lines past the first draw are read too")
+
+        let plain = CodeBlockBuilder.numbered((1...300).map { "line \($0)" }.joined(separator: "\n"), language: .plain)
+        let spokenPlain = CodeBlockRenderer.attributed(plain, limit: nil, highlight: false, drawn: 200).spoken ?? ""
+        XCTAssertTrue(spokenPlain.hasSuffix("line 300"), "a cut plain block reads its hidden lines too")
+        XCTAssertEqual(
+            CodeBlockRenderer.attributed(plain, limit: 10, highlight: false, drawn: 200).spoken, nil,
+            "a block the first draw shows whole reads its text"
+        )
+    }
+
     // MARK: Tool-change batches
 
     /// Records what the batcher sends, and answers each call with one file named after it.

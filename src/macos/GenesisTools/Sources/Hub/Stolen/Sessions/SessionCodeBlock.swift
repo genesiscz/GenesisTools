@@ -287,8 +287,6 @@ enum CodeBlockRenderer {
         var highlighter = SyntaxHighlighter(language: highlight ? block.language : .plain)
         var gutter = AttributedString()
         var out = AttributedString()
-        // GenesisTools adaptation: see `CodeBlockAttributed.spoken`.
-        var spoken: [String] = []
 
         for (index, line) in lines.enumerated() {
             // GenesisTools adaptation: see `drawn`.
@@ -310,7 +308,6 @@ enum CodeBlockRenderer {
                 var gap = AttributedString(line.text)
                 gap.foregroundColor = SessionPalette.faint
                 out.append(gap)
-                spoken.append(line.text)
                 continue
             }
 
@@ -334,7 +331,6 @@ enum CodeBlockRenderer {
                 var mark = AttributedString(line.mark == .added ? " +" : line.mark == .removed ? " -" : "  ")
                 mark.foregroundColor = line.mark == .added ? SessionPalette.green : line.mark == .removed ? SessionPalette.red : SessionPalette.faint
                 gutter.append(mark)
-                spoken.append(line.mark == .added ? "added: \(line.text)" : line.mark == .removed ? "removed: \(line.text)" : line.text)
             }
 
             var body = AttributedString()
@@ -361,12 +357,25 @@ enum CodeBlockRenderer {
             }
             out.append(body)
         }
+        // GenesisTools adaptation: see `CodeBlockAttributed.spoken`. It covers every shown line, also the
+        // ones the first draw leaves blank: the text is cheap, only the drawing is bounded.
+        let cut = drawn.map { lines.count > max($0, 1) } ?? false
         return CodeBlockAttributed(
             gutter: gutter,
             body: out,
             hasGutter: width > 0 || isDiff,
-            spoken: isDiff ? spoken.joined(separator: "\n") : nil
+            spoken: isDiff || cut ? lines.map { spokenLine($0, isDiff: isDiff) }.joined(separator: "\n") : nil
         )
+    }
+
+    // GenesisTools adaptation: one line as VoiceOver reads it (see `CodeBlockAttributed.spoken`).
+    private static func spokenLine(_ line: CodeLine, isDiff: Bool) -> String {
+        guard isDiff else { return line.text }
+        switch line.mark {
+        case .added: return "added: \(line.text)"
+        case .removed: return "removed: \(line.text)"
+        default: return line.text
+        }
     }
 }
 
@@ -377,7 +386,8 @@ struct CodeBlockAttributed: Equatable, Sendable {
     var hasGutter: Bool
     // GenesisTools adaptation: a diff's code with "added" / "removed" before its changed lines, for
     // VoiceOver: the gutter holds the only `+` / `-` and is hidden from it, and the bands are colour
-    // only. nil for other blocks.
+    // only. Also every shown line of any block whose first draw left lines blank (`drawn`), so VoiceOver
+    // never reads a cut block while the full pass runs. nil for other blocks: they read their text.
     var spoken: String?
 }
 
