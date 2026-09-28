@@ -363,6 +363,109 @@ final class HubLogicTests: XCTestCase {
         XCTAssertEqual(summary.usage(fromTurn: "u1", untilTurn: nil)?.outputTokens, 2)
     }
 
+    /// An opened tool call shows what the transcript envelope clipped (Martin, 2026-09-28: "show me the
+    /// entire input … the entire output"): the whole command and all 33 output lines of a Bash call
+    /// whose preview kept one line of output, and every argument of an Agent call whose preview is its
+    /// description.
+    func testAnOpenedToolCallCarriesItsWholeInputAndOutput() throws {
+        let command = "cd /tmp/atlas && swift build 2>&1 \\\n  | rg -n 'error:' \\\n  | head -40"
+        let output = (1...33).map { "line \($0)" }.joined(separator: "\n")
+        let prompt = "Read every file under src/parser and list the functions that take more than three parameters."
+        func json(_ object: Any) throws -> String {
+            String(decoding: try JSONSerialization.data(withJSONObject: object), as: UTF8.self)
+        }
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent("native-detail-\(UUID().uuidString).jsonl")
+        try [
+            json(["type": "assistant", "uuid": "a1", "message": ["id": "m1", "role": "assistant", "content": [
+                ["type": "tool_use", "id": "bash1", "name": "Bash", "input": ["command": command, "description": "Build"]],
+                ["type": "tool_use", "id": "short1", "name": "Bash", "input": ["command": "git status --short"]],
+                ["type": "tool_use", "id": "agent1", "name": "Agent", "input": ["description": "List long signatures", "prompt": prompt, "subagent_type": "Explore"]],
+            ]]]),
+            json(["type": "user", "uuid": "u1", "message": ["role": "user", "content": [
+                ["type": "tool_result", "tool_use_id": "bash1", "content": output],
+                ["type": "tool_result", "tool_use_id": "short1", "content": "M a.swift"],
+                ["type": "tool_result", "tool_use_id": "agent1", "content": "Done."],
+            ]]]),
+        ].joined(separator: "\n").write(to: file, atomically: true, encoding: .utf8)
+        let log = try XCTUnwrap(SessionNativeLog.scan(path: file.path))
+        func line(_ id: String, _ name: String, input: String, result: String) -> TranscriptToolLine {
+            TranscriptToolLine(
+                toolId: id, name: name, displayName: name, symbol: "terminal", keyArgument: input, input: input, result: result,
+                status: .ok, exitCode: nil, resultChars: nil, duration: nil
+            )
+        }
+        func present(_ line: TranscriptToolLine) throws -> ToolPresentation {
+            ToolPresentation.make(line: line, loaded: ToolLoaded(detail: try XCTUnwrap(log.detail(for: line.toolId))), context: 0, cwd: nil)
+        }
+
+        let bash = try present(line("bash1", "Bash", input: command, result: "line 1\nline 2…"))
+        XCTAssertEqual(bash.block?.lines.count, 33, "the whole output, not the envelope's clipped one")
+        XCTAssertEqual(bash.block?.lines.last?.text, "line 33")
+        XCTAssertEqual(bash.input?.lines.map(\.text).joined(separator: "\n"), command, "the whole command, line for line")
+
+        let short = try present(line("short1", "Bash", input: "git status --short", result: "M a.swift"))
+        XCTAssertNil(short.input, "a one-line command is shown whole in the header, not repeated below it")
+
+        let agent = try present(line("agent1", "Agent", input: "List long signatures", result: "Done."))
+        let arguments = try XCTUnwrap(agent.input?.lines.map(\.text).joined(separator: "\n"), "an Agent call opens to all of its input")
+        XCTAssertTrue(arguments.contains(prompt), "the prompt the preview left out")
+        XCTAssertTrue(arguments.contains("\"subagent_type\" : \"Explore\""), arguments)
+    }
+
+    /// A call the live tail brought in after the session file was scanned still opens to its whole
+    /// output, and a call that was running at the first look gets its result once it is written.
+    func testACallWrittenAfterTheScanHasItsDetail() throws {
+        func json(_ object: Any) throws -> String {
+            String(decoding: try JSONSerialization.data(withJSONObject: object), as: UTF8.self)
+        }
+        func use(_ id: String, _ command: String) throws -> String {
+            try json(["type": "assistant", "uuid": "a-\(id)", "message": ["id": "m-\(id)", "role": "assistant", "content": [
+                ["type": "tool_use", "id": id, "name": "Bash", "input": ["command": command]],
+            ]]])
+        }
+        func result(_ id: String, _ text: String) throws -> String {
+            try json(["type": "user", "uuid": "r-\(id)", "message": ["role": "user", "content": [
+                ["type": "tool_result", "tool_use_id": id, "content": text],
+            ]]])
+        }
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent("native-appended-\(UUID().uuidString).jsonl")
+        try [use("early", "ls"), result("early", "a.swift")].joined(separator: "\n").write(to: file, atomically: true, encoding: .utf8)
+        let log = try XCTUnwrap(SessionNativeLog.scan(path: file.path))
+        let output = (1...40).map { "compiled module \($0)" }.joined(separator: "\n")
+
+        let handle = try FileHandle(forWritingTo: file)
+        try handle.seekToEnd()
+        try handle.write(contentsOf: Data(("\n" + [use("late", "swift build"), result("late", output), use("running", "sleep 5")].joined(separator: "\n")).utf8))
+        XCTAssertEqual(log.detail(for: "late")?.fullResult, output, "a call written after the scan")
+        XCTAssertEqual(log.detail(for: "late")?.command, "swift build")
+        XCTAssertNil(log.detail(for: "running")?.fullResult)
+
+        try handle.write(contentsOf: Data(("\n" + result("running", "done")).utf8))
+        try handle.close()
+        XCTAssertEqual(log.detail(for: "running")?.fullResult, "done", "a running call is not cached without its result")
+        XCTAssertNil(log.detail(for: "never"), "an unknown id has no detail")
+    }
+
+    /// A tool row the reader opened shows its whole body; one open by its level's default or by Expand
+    /// all stays trimmed, and "… +N lines" / "Show fewer lines" flips either.
+    @MainActor
+    func testARowOpenedByHandShowsItsWholeBody() {
+        let expansion = TranscriptExpansion()
+        XCTAssertFalse(expansion.showsAll("t-closed", byDefault: false))
+
+        expansion.toggle("t-hand")
+        XCTAssertTrue(expansion.showsAll("t-hand", byDefault: false), "opened by a click")
+        expansion.toggle("t-hand#all")
+        XCTAssertFalse(expansion.showsAll("t-hand", byDefault: false), "Show fewer lines")
+
+        XCTAssertFalse(expansion.showsAll("t-default", byDefault: true), "open at Inputs + output: trimmed")
+        expansion.toggle("t-default#all")
+        XCTAssertTrue(expansion.showsAll("t-default", byDefault: true), "… +N lines")
+
+        expansion.setAll(true)
+        XCTAssertFalse(expansion.showsAll("t-hand", byDefault: false), "Expand all does not untrim every output")
+    }
+
     /// A search hit in a reply keeps its section's prompt as context; a section with no hit goes.
     func testASearchKeepsThePromptOfEachHit() throws {
         let json = """

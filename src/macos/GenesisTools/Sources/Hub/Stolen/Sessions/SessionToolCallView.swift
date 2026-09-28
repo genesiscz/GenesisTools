@@ -189,7 +189,11 @@ struct ToolPresentation: Equatable {
         )
         let count = resultBlock?.lines.count ?? 0
         let rawInput = detail?.command ?? line.input
-        if [.command, .search, .web, .agent, .skill, .mcp, .other].contains(kind), rawInput.contains("\n") || rawInput.count > 120 {
+        // GenesisTools adaptation: a call whose header shows one field of its input (an Agent's
+        // description, a Grep's pattern) opens to all of it (`ToolCallDetail.arguments`).
+        if [.search, .web, .agent, .skill, .mcp, .other].contains(kind), let arguments = detail?.arguments {
+            presentation.input = CodeBlockBuilder.numbered(arguments, language: .json)
+        } else if [.command, .search, .web, .agent, .skill, .mcp, .other].contains(kind), rawInput.contains("\n") || rawInput.count > 120 {
             presentation.input = CodeBlockBuilder.numbered(rawInput, language: kind == .command ? .shell : (looksLikeJSON(rawInput) ? .json : .plain))
         }
 
@@ -421,7 +425,10 @@ struct ToolCallRowView: View, Equatable {
                 + Text(verbatim: presentation.argument.isEmpty ? "" : "(\(presentation.argument))")
                 .font(SessionPalette.mono(11.5))
                 .foregroundColor(SessionPalette.dim))
-                .lineLimit(open ? 1 : 3)
+                // GenesisTools adaptation: an open call with no input block below shows its whole
+                // input here; one line only when the block has it (a short command used to stay cut
+                // in a narrow pane).
+                .lineLimit(open ? (presentation.input == nil ? nil : 1) : 3)
                 .truncationMode(.middle)
             Spacer(minLength: 8)
             if let code = line.exitCode, code != 0 {

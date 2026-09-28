@@ -100,6 +100,10 @@ struct ToolCallDetail: Equatable, Sendable {
     var command: String?
     /// The result as the provider stored it, before any clipping.
     var fullResult: String?
+    // GenesisTools adaptation: the whole input as indented JSON (keys sorted), for a call whose
+    // transcript preview is one field of it: an Agent's prompt, a SendMessage body, a Grep's path and
+    // flags. The envelope carries only the preview (Martin, 2026-09-28: "show me the entire input").
+    var arguments: String?
 }
 
 // MARK: - Summary (per-turn model, per-range usage)
@@ -150,12 +154,19 @@ final class SessionNativeLog: @unchecked Sendable {
     private let toolResult: [String: Range<Int>]
     private let lock = NSLock()
     private var cache: [String: ToolCallDetail] = [:]
+    // GenesisTools adaptation: the bytes the scan read. A call written after it (the hub's live tail
+    // appends turns to an open transcript, the scan runs once) is found in the rest of the file on first
+    // use (`appendedRanges`); it used to have no detail at all, so its output stayed clipped.
+    private let scannedBytes: Int
+    private var appendedUse: [String: Range<Int>] = [:]
+    private var appendedResult: [String: Range<Int>] = [:]
 
-    private init(path: String, summary: SessionNativeSummary, toolUse: [String: Range<Int>], toolResult: [String: Range<Int>]) {
+    private init(path: String, summary: SessionNativeSummary, toolUse: [String: Range<Int>], toolResult: [String: Range<Int>], scannedBytes: Int) {
         self.path = path
         self.summary = summary
         self.toolUse = toolUse
         self.toolResult = toolResult
+        self.scannedBytes = scannedBytes
     }
 
     var toolCount: Int { toolUse.count }
@@ -199,7 +210,7 @@ final class SessionNativeLog: @unchecked Sendable {
         for call in summary.calls {
             if let usage = summary.usageByMessage[call.messageId] { summary.total.add(usage) }
         }
-        return SessionNativeLog(path: path, summary: summary, toolUse: toolUse, toolResult: toolResult)
+        return SessionNativeLog(path: path, summary: summary, toolUse: toolUse, toolResult: toolResult, scannedBytes: data.count)
     }
 
     /// The input and full result of one tool call, read from disk on first use and cached.
@@ -211,20 +222,76 @@ final class SessionNativeLog: @unchecked Sendable {
         }
         lock.unlock()
 
-        guard toolUse[toolId] != nil || toolResult[toolId] != nil else { return nil }
+        // GenesisTools adaptation: a call the scan did not see, or saw still running, is looked up in
+        // the bytes written since (`scannedBytes`).
+        var use = toolUse[toolId]
+        var result = toolResult[toolId]
+        if use == nil || result == nil {
+            let found = appendedRanges(toolId)
+            use = use ?? found.use
+            result = result ?? found.result
+        }
+        guard use != nil || result != nil else { return nil }
         var detail = ToolCallDetail()
-        if let range = toolUse[toolId], let object = readLine(range) {
+        if let range = use, let object = readLine(range) {
             Self.fillInput(&detail, from: object, toolId: toolId)
         }
-        if let range = toolResult[toolId], let object = readLine(range) {
+        if let range = result, let object = readLine(range) {
             detail.fullResult = Self.resultText(in: object, toolId: toolId)
         }
+        // GenesisTools adaptation: a call still running is read again once its result is written.
+        guard result != nil else { return detail }
 
         lock.lock()
         if cache.count > 400 { cache.removeAll() }
         cache[toolId] = detail
         lock.unlock()
         return detail
+    }
+
+    /// GenesisTools adaptation: the lines past `scannedBytes` that hold this call's input and result,
+    /// found by the quoted id and classified by the scan's own indexers.
+    private func appendedRanges(_ toolId: String) -> (use: Range<Int>?, result: Range<Int>?) {
+        lock.lock()
+        var use = appendedUse[toolId]
+        var result = appendedResult[toolId]
+        lock.unlock()
+        guard use == nil || result == nil,
+              let data = try? Data(contentsOf: URL(fileURLWithPath: path), options: .alwaysMapped), data.count > scannedBytes
+        else { return (use, result) }
+        let needle = Array("\"\(toolId)\"".utf8)
+        data.withUnsafeBytes { (raw: UnsafeRawBufferPointer) in
+            guard let base = raw.baseAddress else { return }
+            let count = raw.count
+            var from = scannedBytes
+            while from < count, use == nil || result == nil,
+                  let hit = memmem(base + from, count - from, needle, needle.count) {
+                let at = base.distance(to: UnsafeRawPointer(hit))
+                // The scan's last line may have been cut mid-write, so a line can start before `scannedBytes`.
+                var start = at
+                while start > 0, raw[start - 1] != 0x0A { start -= 1 }
+                let end = memchr(base + at, 0x0A, count - at).map { base.distance(to: UnsafeRawPointer($0)) } ?? count
+                from = end + 1
+                let line = UnsafeRawBufferPointer(start: base + start, count: end - start)
+                let kind = LineKind.of(line)
+                guard kind != .other, let object = try? JSONSerialization.jsonObject(with: Data(line)) as? [String: Any] else { continue }
+                var summary = SessionNativeSummary()
+                var uses: [String: Range<Int>] = [:]
+                var results: [String: Range<Int>] = [:]
+                if kind == .claude {
+                    Self.indexClaude(object, range: start..<end, ordinal: 0, summary: &summary, toolUse: &uses, toolResult: &results)
+                } else {
+                    Self.indexCodex(object, range: start..<end, toolUse: &uses, toolResult: &results)
+                }
+                use = use ?? uses[toolId]
+                result = result ?? results[toolId]
+            }
+        }
+        lock.lock()
+        appendedUse[toolId] = use
+        appendedResult[toolId] = result
+        lock.unlock()
+        return (use, result)
     }
 
     // MARK: Scan helpers
@@ -367,6 +434,12 @@ final class SessionNativeLog: @unchecked Sendable {
             }
         }
 
+        // GenesisTools adaptation: see `ToolCallDetail.arguments`. One string field is what the
+        // preview already shows.
+        if input.count > 1 || (input.count == 1 && !(input.values.first is String)), JSONSerialization.isValidJSONObject(input),
+           let data = try? JSONSerialization.data(withJSONObject: input, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]) {
+            detail.arguments = String(decoding: data, as: UTF8.self)
+        }
         detail.filePath = (input["file_path"] ?? input["path"] ?? input["notebook_path"]) as? String
         detail.content = input["content"] as? String
         detail.command = (input["command"] as? String) ?? (input["cmd"] as? String)

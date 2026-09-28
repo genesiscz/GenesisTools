@@ -52,6 +52,15 @@ final class TranscriptExpansion: ObservableObject {
         (all ?? open) != toggled.contains(id)
     }
 
+    // GenesisTools adaptation: a row the reader opened by hand shows its whole input and output
+    // (Martin, 2026-09-28: "show me the entire input … the entire output"); a row open by its level's
+    // default or by Expand all stays trimmed. Its "… +N lines" / "Show fewer lines" (`id#all`) flips
+    // either one.
+    func showsAll(_ id: String, byDefault open: Bool) -> Bool {
+        let openedByHand = toggled.contains(id) && isOpen(id, byDefault: open)
+        return toggled.contains(id + "#all") != openedByHand
+    }
+
     func expand(_ more: Set<String>) {
         toggled.formUnion(more)
     }
@@ -512,10 +521,12 @@ struct SessionTranscriptList: View {
                                     modelName: modelName,
                                     verbosity: verbosity,
                                     expanded: expansion.isOpen(row.id, byDefault: defaultOpen(row)),
-                                    // GenesisTools adaptation: the reader's own "… +N lines" only:
-                                    // Expand all opens rows, it does not untrim every output.
-                                    showAll: expansion.toggled.contains(row.id + "#all"),
+                                    // GenesisTools adaptation: a row opened by hand, or the reader's own
+                                    // "… +N lines" (`TranscriptExpansion.showsAll`): Expand all opens rows,
+                                    // it does not untrim every output.
+                                    showAll: expansion.showsAll(row.id, byDefault: defaultOpen(row)),
                                     openMembers: openMembers(row),
+                                    fullMembers: fullMembers(row),
                                     services: services,
                                     onToggle: { expansion.toggle($0) }
                                 )
@@ -664,6 +675,13 @@ struct SessionTranscriptList: View {
         }
         guard case .toolGroup(let group) = row.kind else { return [] }
         return Set(group.members.map(\.id).filter { expansion.isOpen($0) })
+    }
+
+    // GenesisTools adaptation: the opened calls of a folded group that show their whole body (every
+    // one is opened by hand; see `TranscriptExpansion.showsAll`).
+    private func fullMembers(_ row: TranscriptRow) -> Set<String> {
+        guard case .toolGroup(let group) = row.kind else { return [] }
+        return Set(group.members.map(\.id).filter { expansion.isOpen($0) && expansion.showsAll($0, byDefault: false) })
     }
 
     private func recompute(_ intent: ScrollIntent) {
@@ -845,13 +863,15 @@ struct TranscriptRowView: View, Equatable {
     let expanded: Bool
     let showAll: Bool
     let openMembers: Set<String>
+    // GenesisTools adaptation: see `SessionTranscriptList.fullMembers`.
+    var fullMembers: Set<String> = []
     let services: TranscriptServices
     let onToggle: (String) -> Void
 
     static func == (lhs: Self, rhs: Self) -> Bool {
         lhs.row == rhs.row && lhs.expanded == rhs.expanded && lhs.showAll == rhs.showAll
             && lhs.provider == rhs.provider && lhs.modelName == rhs.modelName && lhs.verbosity == rhs.verbosity
-            && lhs.openMembers == rhs.openMembers && lhs.services === rhs.services
+            && lhs.openMembers == rhs.openMembers && lhs.fullMembers == rhs.fullMembers && lhs.services === rhs.services
     }
 
     var body: some View {
@@ -879,7 +899,7 @@ struct TranscriptRowView: View, Equatable {
                 onToggle: onToggle
             )
         case .toolGroup(let group):
-            ToolGroupRow(id: row.id, group: group, open: expanded, openMembers: openMembers, services: services, onToggle: onToggle)
+            ToolGroupRow(id: row.id, group: group, open: expanded, openMembers: openMembers, fullMembers: fullMembers, services: services, onToggle: onToggle)
         }
     }
 }
@@ -1219,6 +1239,8 @@ private struct ToolGroupRow: View {
     let group: TranscriptToolGroup
     let open: Bool
     let openMembers: Set<String>
+    // GenesisTools adaptation: see `SessionTranscriptList.fullMembers`.
+    let fullMembers: Set<String>
     let services: TranscriptServices
     let onToggle: (String) -> Void
 
@@ -1270,7 +1292,8 @@ private struct ToolGroupRow: View {
                             line: line,
                             verbosity: .inputs,
                             open: openMembers.contains(member.id),
-                            showAll: false,
+                            // GenesisTools adaptation: see `fullMembers`.
+                            showAll: fullMembers.contains(member.id),
                             services: services,
                             onToggle: onToggle
                         )
