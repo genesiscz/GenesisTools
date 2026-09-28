@@ -104,6 +104,10 @@ final class HubTranscriptSearchModel: ObservableObject {
     func search() {
         let text = query.trimmingCharacters(in: .whitespaces)
         guard text.count >= 2 else {
+            // The search still running, and the one waiting, were for the longer text: neither may land now.
+            generation += 1
+            pending = nil
+            running = false
             result = nil
             error = text.isEmpty ? nil : "Type at least two characters."
             return
