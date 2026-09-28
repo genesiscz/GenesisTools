@@ -189,12 +189,12 @@ struct SessionDetailScreen<SidebarExtra: View>: View {
                     HStack(spacing: 0) {
                         Rectangle().fill(SessionPalette.hairline).frame(width: 1)
                         SessionDetailSidebar(info: info, digest: digest, actions: actions, extra: sidebarExtra)
-                            .frame(width: 300)
+                            .frame(width: SessionSidebarSplit.sidebarWidth)
                     }
                     .shadow(color: .black.opacity(sidebarCovers ? 0.45 : 0), radius: 14, x: -4)
                 }
             }
-            .onGeometryChange(for: Bool.self, of: { SessionSidebarSplit.overlays(width: $0.size.width, sidebar: 301, mainMinWidth: 460) }) { sidebarCovers = $0 }
+            .onGeometryChange(for: Bool.self, of: { SessionSidebarSplit.overlays(width: $0.size.width, sidebar: SessionSidebarSplit.sidebarWidth + 1, mainMinWidth: 460) }) { sidebarCovers = $0 }
         }
         .background(SessionPalette.background)
         // The header's first row IS the titlebar row: it draws under the traffic lights.

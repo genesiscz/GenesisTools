@@ -610,6 +610,9 @@ enum HubSessionSearch {
 /// 301 pt sidebar it grew to 761 pt in a narrower pane, the parent clipped both edges, and the sidebar
 /// and the header's sidebar toggle went off screen (2026-09-25).
 struct SessionSidebarSplit: Layout {
+    /// The details sidebar; the screen draws a 1 pt hairline before it.
+    static let sidebarWidth: CGFloat = 300
+
     var mainMinWidth: CGFloat = 460
 
     /// True when the sidebar has to cover the transcript at this width.
