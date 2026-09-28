@@ -37,7 +37,7 @@ export interface SignalOps {
 
 export const realSignalOps: SignalOps = {
     signal: (pid, signal) => {
-        // pid-verified: stopTree compares each pid's start time and command (ops.identity) right before every signal
+        // pid-verified: stopTree reads every pid's start time and command (one batched ops.identity) right before each signal loop, with no await in between
         process.kill(pid, signal);
     },
     // EPERM counts as alive: the process exists but belongs to someone else.
