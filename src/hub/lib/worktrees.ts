@@ -867,6 +867,12 @@ export function claimPrivateFolder(path: string): string | null {
             return `${path} belongs to another user, so nothing is moved into it`;
         }
 
+        const above = foreignAncestor(path);
+
+        if (above) {
+            return above;
+        }
+
         if ((info.mode & 0o077) !== 0) {
             chmodSync(path, 0o700);
         }
@@ -875,6 +881,60 @@ export function claimPrivateFolder(path: string): string | null {
     } catch (error) {
         log.warn({ error, path }, "move-aside: the private folder could not be prepared");
         return `${path} could not be prepared as a private folder (${error instanceof Error ? error.message : String(error)}), so nothing is moved into it`;
+    }
+}
+
+/**
+ * Why another local user could swap `path` for a folder of theirs, or null. The folder is only as
+ * private as everything above it: a /tmp/<date>-agents-removals planted by someone else lets them rename
+ * the claimed folder away and put their own in its place between two moves. So every folder and symlink
+ * on the way must be this user's or root's, and a folder others can write needs the sticky bit (as
+ * /tmp has), which keeps them from renaming what they do not own.
+ */
+function foreignAncestor(path: string): string | null {
+    const uid = process.getuid?.();
+
+    // No POSIX owners or modes to read (Windows).
+    if (uid === undefined) {
+        return null;
+    }
+
+    const problem = (at: string, info: { uid: number; mode: number }, folder: boolean): string | null => {
+        if (info.uid !== uid && info.uid !== 0) {
+            return `${at} belongs to another user, who could swap the folder below it, so nothing is moved into ${path}`;
+        }
+
+        if (folder && (info.mode & 0o022) !== 0 && (info.mode & 0o1000) === 0) {
+            return `${at} can be changed by other users, who could swap the folder below it, so nothing is moved into ${path}`;
+        }
+
+        return null;
+    };
+
+    // The path as written (a symlinked /tmp, a planted date folder), then the real folders it leads to.
+    for (let at = dirname(path); ; at = dirname(at)) {
+        const entry = lstatSync(at);
+        const found = problem(at, entry, entry.isDirectory());
+
+        if (found) {
+            return found;
+        }
+
+        if (at === dirname(at)) {
+            break;
+        }
+    }
+
+    for (let at = dirname(realpathSync(path)); ; at = dirname(at)) {
+        const found = problem(at, statSync(at), true);
+
+        if (found) {
+            return found;
+        }
+
+        if (at === dirname(at)) {
+            return null;
+        }
     }
 }
 
@@ -980,8 +1040,6 @@ export async function moveAsideWorktrees({
     // start using that worktree meanwhile. After the first move, each path is scanned again right before
     // its own move.
     let attempted = false;
-    // Claimed at the first move, so a run that moves nothing creates no folder.
-    let privacy: { refusal: string | null } | undefined;
 
     for (const path of wanted) {
         const row = attempted
@@ -1004,10 +1062,12 @@ export async function moveAsideWorktrees({
             continue;
         }
 
-        privacy ??= { refusal: claimPrivateFolder(destRoot) };
+        // Claimed right before each move, never from an earlier check: a run that moves nothing creates no
+        // folder, and a folder swapped since the last move is caught.
+        const refusal = claimPrivateFolder(destRoot);
 
-        if (privacy.refusal) {
-            stay([privacy.refusal]);
+        if (refusal) {
+            stay([refusal]);
             continue;
         }
 
