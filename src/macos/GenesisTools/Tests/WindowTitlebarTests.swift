@@ -313,6 +313,36 @@ final class WindowTitlebarTests: XCTestCase {
         XCTAssertEqual(received.map(\.standardizedFileURL), [file.standardizedFileURL])
     }
 
+    /// A window that is not opaque (Genesis's companion debug panel: clear background, content only under
+    /// the title bar) hands a click on a fully clear pixel to the window behind it: the window server
+    /// hit-tests by alpha before any view sees the click. So the empty strip must draw something.
+    func testAClearWindowsEmptyStripStaysItsOwnForTheWindowServer() throws {
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 900, height: 500),
+            styleMask: [.titled, .closable, .resizable, .fullSizeContentView],
+            backing: .buffered,
+            defer: false
+        )
+        window.titlebarAppearsTransparent = true
+        window.titleVisibility = .hidden
+        window.isOpaque = false
+        window.backgroundColor = .clear
+        window.isReleasedWhenClosed = false
+        window.contentView = NSHostingView(rootView: Color.black.titlebarZone())
+        window.alphaValue = 0
+        window.level = .init(rawValue: Int(CGWindowLevelForKey(.desktopWindow)) - 1)
+        window.orderFrontRegardless()
+        windows.append(window)
+        RunLoop.main.run(until: Date().addingTimeInterval(0.8))
+
+        let strip = WindowTitlebar.stripHeight(of: window)
+        XCTAssertTrue(hit(window, x: 450, yFromTop: strip / 2) is TitlebarZoneView, "the view hit test")
+        let alpha = try titlebarDrawnAlpha(window, x: 450, yFromTop: strip / 2)
+        XCTAssertGreaterThan(alpha, 0, "a clear pixel sends the click to the window behind")
+        XCTAssertLessThan(alpha, 10, "the fill must not show")
+        XCTAssertEqual(try titlebarDrawnAlpha(window, x: 450, yFromTop: strip + 100), 255, "the content under the strip")
+    }
+
     /// The hub opens no dropped files: its zone takes no drags, so a drop there behaves as before.
     func testAZoneWithoutAnOpenPathTakesNoDrops() throws {
         let window = makeWindow(sidebar: 300)
@@ -393,6 +423,21 @@ final class WindowTitlebarTests: XCTestCase {
         XCTAssertEqual(window.frame, start, "the control took the double-click, the window did not zoom")
         XCTAssertGreaterThan(clicks.count, 0, "the button in the strip got its click")
     }
+}
+
+/// The alpha the window draws at this point (0...255), from the frame view's own drawing: what the
+/// window server reads when it decides whether a click is this window's.
+@MainActor
+func titlebarDrawnAlpha(_ window: NSWindow, x: CGFloat, yFromTop: CGFloat) throws -> Int {
+    let frameView = try XCTUnwrap(window.contentView?.superview)
+    let rep = try XCTUnwrap(frameView.bitmapImageRepForCachingDisplay(in: frameView.bounds))
+    frameView.cacheDisplay(in: frameView.bounds, to: rep)
+    guard rep.hasAlpha else { return 255 }
+
+    let scale = CGFloat(rep.pixelsWide) / frameView.bounds.width
+    var pixel = [Int](repeating: 0, count: max(4, rep.samplesPerPixel))
+    rep.getPixel(&pixel, atX: Int(x * scale), y: Int(yFromTop * scale))
+    return rep.bitmapFormat.contains(.alphaFirst) ? pixel[0] : pixel[rep.samplesPerPixel - 1]
 }
 
 /// Where AppKit delivers a file drag at this point: `-[NSView _hitTest:dragTypes:]`, the lookup it

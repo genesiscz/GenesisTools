@@ -390,6 +390,14 @@ final class TitlebarZoneView: NSView {
     /// The first click on an inactive window's strip already drags it, as on a real title bar.
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
+    /// An almost clear fill. A window that is not opaque (Genesis's companion debug panel) hands a click
+    /// on a fully clear pixel to the window behind it: the window server hit-tests by alpha before any
+    /// view sees the click. At 2% black it does not show.
+    override func draw(_ dirtyRect: NSRect) {
+        NSColor(white: 0, alpha: 0.02).setFill()
+        dirtyRect.fill(using: .sourceOver)
+    }
+
     override func hitTest(_ point: NSPoint) -> NSView? {
         guard let window, let superview, frame.contains(point) else { return nil }
         return WindowTitlebar.contains(superview.convert(point, to: nil), window: window, below: below) ? self : nil
