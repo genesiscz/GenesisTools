@@ -319,7 +319,15 @@ export async function readLiveUsers({ liveMinutes }: { liveMinutes: number }): P
     let sessionsError: string | null = null;
 
     try {
-        sessions = (await listAgentSessionRows({ hours, withUsage: false, maxDiscoveryAgeMs: POLLED_LISTING_REUSE_MS }))
+        // Fail closed: a provider that cannot be listed blocks every move, never reads as "no session".
+        sessions = (
+            await listAgentSessionRows({
+                hours,
+                withUsage: false,
+                maxDiscoveryAgeMs: POLLED_LISTING_REUSE_MS,
+                failClosed: true,
+            })
+        )
             .filter((row) => row.mtime >= cutoff && row.cwd)
             .map((row) => ({
                 provider: row.provider,

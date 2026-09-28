@@ -91,6 +91,12 @@ export interface AgentSessionRowsOptions {
     maxDiscoveryAgeMs?: number;
     /** `false` reads each index as it is, with no refresh: for a diagnostic, which must not write it. */
     refresh?: boolean;
+    /**
+     * A provider that cannot be listed fails the whole listing instead of adding no rows. For a caller
+     * that decides from the list that nothing uses a folder (move-aside): a missing provider must not
+     * read as "no session there".
+     */
+    failClosed?: boolean;
 }
 
 const ALL: readonly AccountProviderAlias[] = ["claude", "codex", "grok"];
@@ -266,6 +272,11 @@ export async function listAgentSessionRows(options: AgentSessionRowsOptions = {}
             } catch (error) {
                 // One provider's index being unreadable must not blank the other two.
                 logger.warn({ error, provider: alias }, "[ai] could not list this provider's sessions");
+
+                if (options.failClosed) {
+                    throw error;
+                }
+
                 return [];
             }
         })
