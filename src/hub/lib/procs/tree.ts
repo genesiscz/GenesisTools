@@ -212,8 +212,21 @@ export function buildProcsReport(input: BuildInput): Omit<ProcsReport, "elapsedM
     }
 
     // Wrappers: the topmost one of a chain. Left over when no agent root sits below it and it is old enough.
-    const agentBelow = (pid: number): boolean =>
-        walk(pid, children, () => false).some((entry) => roots.get(entry.pid) === "agent");
+    // Each subtree answered once: a wrapper below another top-level wrapper (one under an agent) would
+    // otherwise walk the same processes again for every wrapper above it.
+    const below = new Map<number, boolean>();
+    const agentBelow = (pid: number): boolean => {
+        const known = below.get(pid);
+
+        if (known !== undefined) {
+            return known;
+        }
+
+        below.set(pid, false);
+        const found = (children.get(pid) ?? []).some((child) => roots.get(child) === "agent" || agentBelow(child));
+        below.set(pid, found);
+        return found;
+    };
 
     for (const [pid, node] of nodes) {
         if (node.cls.kind !== "wrapper" || kindOf(node.row.ppid) === "wrapper") {
