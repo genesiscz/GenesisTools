@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { TranscriptTool, TranscriptTurn } from "@genesiscz/utils/ai/transcripts";
+import { isTaskReport } from "@genesiscz/utils/ai/transcripts/prompt-parts";
 import { formatDuration } from "@genesiscz/utils/format";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
@@ -160,7 +161,8 @@ function trailingCalls(turns: readonly TranscriptTurn[], offset: number): Call[]
     for (let i = turns.length - 1; i >= 0; i -= 1) {
         const turn = turns[i];
 
-        if (!turn || turn.role === "user") {
+        // A task result is not a prompt: a loop keeps running across it.
+        if (!turn || (turn.role === "user" && !isTaskReport(turn.parts))) {
             break;
         }
 

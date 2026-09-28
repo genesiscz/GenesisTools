@@ -1,17 +1,5 @@
 import { isBareSlashCommandText } from "@genesiscz/utils/ai/transcripts/clean-text";
-
-/**
- * What the harness delivers into a running session as a user turn, never typed by the user: a peer's
- * message, a background task's result, and the marker Claude Code stores for an Esc. A handoff quoted a
- * whole teammate report as the session's goal, and "the last 2 prompts" spent one on an Esc marker.
- */
-const HARNESS_DELIVERY_PREFIXES = [
-    "Another Claude session sent a message",
-    "<teammate-message",
-    "<task-notification>",
-    "[SYSTEM NOTIFICATION",
-    "[Request interrupted by user",
-] as const;
+import { HARNESS_DELIVERY_PREFIXES } from "@genesiscz/utils/ai/transcripts/prompt-parts";
 
 /**
  * Codex and Grok wrap machine-generated context in a leading tag and send it as a user-role

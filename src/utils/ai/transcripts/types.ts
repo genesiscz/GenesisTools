@@ -1,5 +1,6 @@
 import type { AccountProviderAlias } from "@genesiscz/utils/ai/providers/alias-list";
 import { sliceWhole } from "@genesiscz/utils/string";
+import type { PromptPart } from "./prompt-parts";
 
 export type TranscriptProvider = AccountProviderAlias;
 
@@ -47,6 +48,11 @@ export interface TranscriptTurn {
     step?: number;
     /** 0-based position in the whole transcript; set only on the turns of a sparse (`turns`) envelope. */
     index?: number;
+    /**
+     * A user turn that holds more than the user's plain words (a peer's message, a task result, an Esc
+     * marker, a reminder), split in order. Absent on an ordinary prompt; `text` stays as it always was.
+     */
+    parts?: PromptPart[];
 }
 
 export interface TranscriptTotals extends TranscriptUsage {
