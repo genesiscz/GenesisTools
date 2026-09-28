@@ -205,12 +205,14 @@ test("a session's folder comes from the index: exact id first, main over subagen
         insert.run("child", "anthropic-sub", "abc-1-child", "/fixture/c.jsonl", "abc-1", "/projects/child", 9, 1);
         insert.run("newer", "openai-sub", "abc-2", "/fixture/abc-2.jsonl", "abc-2", "/projects/newer", 5, 0);
         insert.run("empty", "grok-sub", "zzz", "/fixture/zzz.jsonl", "zzz", "", 7, 0);
+        insert.run("unique", "anthropic-sub", "uniq-9", "/fixture/uniq-9.jsonl", "uniq-9", "/projects/uniq", 3, 0);
         db.close();
 
         const path = world.databases.candidate;
         expect(readCachedSessionCwd({ path, sessionId: "abc-1" })).toBe("/projects/main");
-        // A prefix takes the newest main session it names.
-        expect(readCachedSessionCwd({ path, sessionId: "abc" })).toBe("/projects/newer");
+        // A prefix names a session only when it names one: "abc" names abc-1 and abc-2.
+        expect(readCachedSessionCwd({ path, sessionId: "abc" })).toBeNull();
+        expect(readCachedSessionCwd({ path, sessionId: "uniq" })).toBe("/projects/uniq");
         expect(readCachedSessionCwd({ path, sessionId: "zzz" })).toBeNull();
         expect(readCachedSessionCwd({ path, sessionId: "nothing" })).toBeNull();
     } finally {
