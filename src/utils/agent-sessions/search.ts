@@ -1,14 +1,9 @@
-import { createCodexAdapter } from "@genesiscz/utils/agent-sessions/codex-sessions";
-import { createGrokAdapter } from "@genesiscz/utils/agent-sessions/grok-sessions";
-import { createClaudeAdapter } from "@genesiscz/utils/agent-sessions/native-adapter";
-import type {
-    AgentSearchFilters,
-    AgentSearchHit,
-    AgentSessionAdapter,
-    NativeHistoryEntry,
-} from "@genesiscz/utils/agent-sessions/types";
 import { logger } from "@genesiscz/utils/logger";
 import { snippetAround } from "@genesiscz/utils/string";
+import { createCodexAdapter } from "./codex-sessions";
+import { createGrokAdapter } from "./grok-sessions";
+import { createClaudeAdapter } from "./native-adapter";
+import type { AgentSearchFilters, AgentSearchHit, AgentSessionAdapter, NativeHistoryEntry } from "./types";
 
 // `tools hub search`: one query over every provider's indexed sessions. There is no second index:
 // each provider's own `AgentSessionAdapter.search` (the one behind `tools <provider> history`) runs

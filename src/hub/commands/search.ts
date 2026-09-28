@@ -1,9 +1,15 @@
 import { parseHistoryDate } from "@genesiscz/utils/agent-sessions/history-date";
+import {
+    isSearchProvider,
+    SEARCH_LIMITS,
+    SEARCH_PROVIDERS,
+    type SearchProvider,
+    searchSessions,
+} from "@genesiscz/utils/agent-sessions/search";
 import { out } from "@genesiscz/utils/logger";
 import { createBoxTable, renderCliHeader } from "@genesiscz/utils/table";
 import type { Command } from "commander";
 import pc from "picocolors";
-import { isSearchProvider, SEARCH_LIMITS, SEARCH_PROVIDERS, type SearchProvider, searchSessions } from "../lib/search";
 
 function parseDay(value: string | undefined, flag: string): Date | undefined {
     if (value === undefined) {
