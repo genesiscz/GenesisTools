@@ -448,7 +448,17 @@ final class HubModel: ObservableObject {
     @Published var loadingDecisions = false
     /// Bumped per decisions load: only the newest one may publish (Hub/HubDecisionsSource.swift).
     var decisionsRequest = 0
-    @Published var review: ReviewModel?
+    @Published var review: ReviewModel? {
+        // A worktree or a timeline commit that replaces the session's review makes the next click on that
+        // session set it up again, or the Changes pane kept the worktree's or the commit's diff.
+        didSet {
+            if review !== sessionReview {
+                selectedSetUp = nil
+            }
+        }
+    }
+    /// The review `select` built for the selected session.
+    private weak var sessionReview: ReviewModel?
     @Published var mode = HubMode.sessions
     @Published var worktrees: [HubWorktree] = [] {
         didSet { worktreeSessions = nil }
@@ -1058,10 +1068,15 @@ final class HubModel: ObservableObject {
         if !cwd.isEmpty, FileManager.default.fileExists(atPath: cwd) {
             // The session too: two agents in one checkout share the folder, and "Send to agent" targets `review.session`.
             if review?.repo.path != cwd || review?.session != session.sessionId {
-                review = ReviewModel(repo: URL(fileURLWithPath: cwd), options: DiffViewOptions(), session: session.sessionId)
-                review?.embedded = true
+                let next = ReviewModel(repo: URL(fileURLWithPath: cwd), options: DiffViewOptions(), session: session.sessionId)
+                next.embedded = true
+                sessionReview = next
+                review = next
+            } else {
+                sessionReview = review
             }
         } else {
+            sessionReview = nil
             review = nil
         }
         restoreFolders(for: session.sessionId)
