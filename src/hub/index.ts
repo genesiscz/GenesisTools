@@ -4,6 +4,7 @@ import { spawn } from "node:child_process";
 import { join, resolve } from "node:path";
 import * as p from "@clack/prompts";
 import { isInteractive, runTool, suggestEnumFlag } from "@genesiscz/utils/cli";
+import { parseSince, parseUntil } from "@genesiscz/utils/date";
 import { PR_LIST_STATES, type PrListState, parsePrRef } from "@genesiscz/utils/git/origins";
 import { fetchPrHead, PR_FETCH_PROVIDERS, PrFetchError } from "@genesiscz/utils/git/origins/pr-fetch";
 import { repoFactsMany } from "@genesiscz/utils/git/repo-facts";
@@ -52,8 +53,6 @@ import {
 import { hubPr, hubPrs, PrRefError } from "./lib/prs";
 import {
     buildTimeline,
-    parseSince,
-    parseUntil,
     resolveRange,
     TIMELINE_AUTHORS,
     TIMELINE_DEFAULT_RANGE,

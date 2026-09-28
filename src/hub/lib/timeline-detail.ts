@@ -10,6 +10,7 @@ import {
     totalsOf,
 } from "@genesiscz/utils/ai/transcripts";
 import { listSubagents, type SessionSubagent } from "@genesiscz/utils/ai/transcripts/subagents";
+import { startOfDay } from "@genesiscz/utils/date";
 import { LOG_FORMAT, parseLogZ, parseNameStatusZ, parseNumstatZ } from "@genesiscz/utils/git/porcelain";
 import { type RepoFacts, repoFacts } from "@genesiscz/utils/git/repo-facts";
 import { logger } from "@genesiscz/utils/logger";
@@ -17,7 +18,7 @@ import { type ComputedSessionChanges, loadSessionChanges, mergeTurnFiles } from 
 import type { Storage } from "@genesiscz/utils/storage";
 import { backendFor, type PrThread, prThreads, resolvePr, type ThreadsResult } from "./pr";
 import { type HubPr, type HubPrDetail, hubPr } from "./prs";
-import { cachedPrs, cachedThreads, commentTitle, git, hubStorage, startOfDay } from "./timeline";
+import { cachedPrs, cachedThreads, commentTitle, git, hubStorage } from "./timeline";
 
 const log = logger.child({ component: "hub/timeline-detail" });
 

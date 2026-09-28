@@ -16,8 +16,6 @@ import {
     lastRecordedBranch,
     pageEvents,
     parsePushes,
-    parseSince,
-    parseUntil,
     prListSince,
     prRangeLimit,
     realTimelineDeps,
@@ -575,32 +573,6 @@ describe("timeline parsers", () => {
         ];
         expect(parsePushes(lines, SINCE).map((push) => push.to[0])).toEqual(["2", "4"]);
         expect(parsePushes(lines, SINCE, new Date(at("12:00:00"))).map((push) => push.to[0])).toEqual(["2"]);
-    });
-
-    test("parseSince reads midnight, a clock time and an ISO time", () => {
-        expect(parseSince(undefined, NOW)?.getTime()).toBe(SINCE.getTime());
-        expect(parseSince("9:30", NOW)?.getTime()).toBe(at("09:30:00"));
-        expect(parseSince("2026-03-01T10:00:00.000Z", NOW)?.toISOString()).toBe("2026-03-01T10:00:00.000Z");
-        expect(parseSince("soon", NOW)).toBeNull();
-    });
-
-    test("parseSince refuses what Date.parse or setHours would silently misread", () => {
-        // Date.parse reads "9" and "Sep 24" as dates in 2001; setHours rolls 25:99 into tomorrow.
-        for (const junk of ["9", "12", "Sep 24", "25:99", "12:60", "2026-13-45", "2026-02-30"]) {
-            expect(parseSince(junk, NOW)).toBeNull();
-        }
-
-        expect(parseSince("23:59", NOW)?.getTime()).toBe(at("23:59:00"));
-        // A bare date is local midnight, like the default, not UTC midnight.
-        expect(parseSince("2026-03-01", NOW)?.getTime()).toBe(new Date("2026-03-01T00:00:00").getTime());
-        expect(parseSince("2026-03-01T10:00:00+02:00", NOW)?.toISOString()).toBe("2026-03-01T08:00:00.000Z");
-    });
-
-    test("parseUntil is now by default and the end of a bare day", () => {
-        expect(parseUntil(undefined, NOW)).toBe(NOW);
-        expect(parseUntil("2026-03-01", NOW)?.getTime()).toBe(new Date("2026-03-02T00:00:00").getTime() - 1);
-        expect(parseUntil("12:00", NOW)?.getTime()).toBe(at("12:00:00"));
-        expect(parseUntil("later", NOW)).toBeNull();
     });
 
     test("resolveRange names the presets the hub offers", () => {
