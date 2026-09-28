@@ -5,6 +5,7 @@ import { join } from "node:path";
 import type { AgentSessionRow } from "@app/ai/lib/sessions/agent-session-rows";
 import type { DecisionRecord } from "@app/question/lib/decisions/store";
 import type { AgentSearchFilters, AgentSearchHit, AgentSessionAdapter } from "@genesiscz/utils/agent-sessions/types";
+import { Storage } from "@genesiscz/utils/storage";
 import {
     buildDigest,
     type DigestDeps,
@@ -28,10 +29,12 @@ import {
     RULE_LIMITS,
     type RuleInputs,
     type RuleSession,
+    readRulesConfig,
     ruleClickCommand,
     rulePrsFromNotifyState,
     ruleSessionFromRow,
     runRules,
+    updateRulesConfig,
 } from "./rules";
 import { searchSessions, snippetAround } from "./search";
 import type { TimelineEvent, TimelineResult } from "./timeline";
@@ -753,6 +756,20 @@ describe("rules", () => {
         const added = addRule(config, { kind: "context", percent: 90, project: "shop" });
         expect(added).toMatchObject({ kind: "context", percent: 90, project: "shop", enabled: true });
         expect(config.rules).toHaveLength(2);
+    });
+
+    test("two rule writes at once both land: each reads the list the other wrote", async () => {
+        const storage = new Storage(`hub-rules-test-${process.pid}`);
+        await updateRulesConfig((config) => {
+            config.rules = [];
+        }, storage);
+
+        await Promise.all([
+            updateRulesConfig((config) => addRule(config, { kind: "decision" }), storage),
+            updateRulesConfig((config) => addRule(config, { kind: "idle", minutes: 30 }), storage),
+        ]);
+
+        expect((await readRulesConfig(storage)).rules.map((rule) => rule.kind).sort()).toEqual(["decision", "idle"]);
     });
 
     test("click commands open the hub at the PR or the session's Decisions pane", () => {

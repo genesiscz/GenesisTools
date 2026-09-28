@@ -14,7 +14,7 @@ import {
     ruleProblem,
     rulesConfigPath,
     runRules,
-    writeRulesConfig,
+    updateRulesConfig,
 } from "../lib/rules";
 
 function isRuleKind(value: string): value is RuleKind {
@@ -164,17 +164,18 @@ export function registerRulesCommand(program: Command): void {
                         throw new Error(`--kind takes ${RULE_KINDS.join(", ")}, got "${opts.kind}"`);
                     }
 
-                    const config = await readRulesConfig();
-                    const rule = addRule(config, {
-                        kind: opts.kind,
-                        minutes: number(opts.minutes, "--minutes"),
-                        percent: number(opts.percent, "--percent"),
-                        project: opts.project,
-                        match: opts.match,
-                        label: opts.label,
-                        enabled: !opts.disabled,
-                    });
-                    await writeRulesConfig(config);
+                    const kind = opts.kind;
+                    const rule = await updateRulesConfig((config) =>
+                        addRule(config, {
+                            kind,
+                            minutes: number(opts.minutes, "--minutes"),
+                            percent: number(opts.percent, "--percent"),
+                            project: opts.project,
+                            match: opts.match,
+                            label: opts.label,
+                            enabled: !opts.disabled,
+                        })
+                    );
 
                     if (opts.json) {
                         out.result(rule);
@@ -212,49 +213,50 @@ export function registerRulesCommand(program: Command): void {
                 }
             ) => {
                 try {
-                    const config = await readRulesConfig();
-                    const rule = config.rules.find((entry) => entry.id === id);
+                    const saved = await updateRulesConfig((config) => {
+                        const rule = config.rules.find((entry) => entry.id === id);
 
-                    if (!rule) {
-                        throw new Error(`no rule ${id} (tools hub rules list)`);
-                    }
+                        if (!rule) {
+                            throw new Error(`no rule ${id} (tools hub rules list)`);
+                        }
 
-                    const next: HubRule = { ...rule };
+                        const next: HubRule = { ...rule };
 
-                    if (opts.enabled !== undefined) {
-                        next.enabled = onOff(opts.enabled);
-                    }
+                        if (opts.enabled !== undefined) {
+                            next.enabled = onOff(opts.enabled);
+                        }
 
-                    next.minutes = number(opts.minutes, "--minutes") ?? next.minutes;
-                    next.percent = number(opts.percent, "--percent") ?? next.percent;
+                        next.minutes = number(opts.minutes, "--minutes") ?? next.minutes;
+                        next.percent = number(opts.percent, "--percent") ?? next.percent;
 
-                    for (const key of ["project", "match", "label"] as const) {
-                        const value = opts[key];
+                        for (const key of ["project", "match", "label"] as const) {
+                            const value = opts[key];
 
-                        if (value !== undefined) {
-                            if (value.trim()) {
-                                next[key] = value.trim();
-                            } else {
-                                delete next[key];
+                            if (value !== undefined) {
+                                if (value.trim()) {
+                                    next[key] = value.trim();
+                                } else {
+                                    delete next[key];
+                                }
                             }
                         }
-                    }
 
-                    const problem = ruleProblem(next);
+                        const problem = ruleProblem(next);
 
-                    if (problem) {
-                        throw new Error(problem);
-                    }
+                        if (problem) {
+                            throw new Error(problem);
+                        }
 
-                    config.rules = config.rules.map((entry) => (entry.id === id ? next : entry));
-                    await writeRulesConfig(config);
+                        config.rules = config.rules.map((entry) => (entry.id === id ? next : entry));
+                        return next;
+                    });
 
                     if (opts.json) {
-                        out.result(next);
+                        out.result(saved);
                         return;
                     }
 
-                    out.log.success(`Saved ${id}: ${ruleLabel(next)}${next.enabled ? "" : " (off)"}`);
+                    out.log.success(`Saved ${id}: ${ruleLabel(saved)}${saved.enabled ? "" : " (off)"}`);
                 } catch (error) {
                     fail(error);
                 }
@@ -265,15 +267,21 @@ export function registerRulesCommand(program: Command): void {
         .command("rm <id>")
         .description("Remove a rule")
         .action(async (id: string) => {
-            const config = await readRulesConfig();
-            const kept = config.rules.filter((rule) => rule.id !== id);
+            try {
+                await updateRulesConfig((config) => {
+                    const kept = config.rules.filter((rule) => rule.id !== id);
 
-            if (kept.length === config.rules.length) {
-                fail(new Error(`no rule ${id} (tools hub rules list)`));
+                    if (kept.length === config.rules.length) {
+                        throw new Error(`no rule ${id} (tools hub rules list)`);
+                    }
+
+                    config.rules = kept;
+                });
+            } catch (error) {
+                fail(error);
                 return;
             }
 
-            await writeRulesConfig({ rules: kept });
             out.log.success(`Removed ${id}`);
         });
 

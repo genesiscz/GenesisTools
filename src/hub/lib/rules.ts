@@ -206,6 +206,26 @@ export async function writeRulesConfig(config: RulesConfig, storage = new Storag
     await storage.setConfigValue(RULES_CONFIG_KEY, normalizeRulesConfig(config).rules);
 }
 
+/**
+ * Read, change and write the rules under one lock, so two writers (a hub toggle and a remove a moment
+ * later, or the hub and a terminal) never both read the old list and drop each other's change. The
+ * lock is the rules' own: `setConfigValue` takes the config file's lock by itself.
+ */
+export async function updateRulesConfig<T>(
+    change: (config: RulesConfig) => T,
+    storage = new Storage("hub")
+): Promise<T> {
+    return storage.withFileLock({
+        file: `${storage.getConfigPath()}.rules`,
+        fn: async () => {
+            const config = await readRulesConfig(storage);
+            const result = change(config);
+            await writeRulesConfig(config, storage);
+            return result;
+        },
+    });
+}
+
 export function emptyRulesState(): RulesState {
     return { seeded: {}, fired: {}, lastRunAt: null };
 }
