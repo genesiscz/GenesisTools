@@ -204,6 +204,16 @@ function raw(): RawReadiness {
                         { author: { login: "carol" }, state: "PENDING", submittedAt: null, commit: null },
                     ],
                 },
+                latestReviews: {
+                    nodes: [
+                        {
+                            author: { login: "review-bot" },
+                            state: "COMMENTED",
+                            submittedAt: "2026-09-26T17:00:00Z",
+                            commit: { oid: HEAD },
+                        },
+                    ],
+                },
                 reviewThreads: {
                     pageInfo: { hasNextPage: false, endCursor: null },
                     nodes: [{ isResolved: false, isOutdated: false, comments: { nodes: [{ author: null }] } }],
@@ -237,6 +247,31 @@ describe("githubFacts", () => {
 
         const mapped = githubFacts({ repository: { pullRequest: { ...pullRequest, timelineItems: { nodes: [] } } } });
         expect(mapped?.lastPushAt).toBeNull();
+    });
+
+    test("a reviewer whose newest review is older than the last 100 still counts, once", () => {
+        const answer = raw();
+        const pullRequest = answer.repository?.pullRequest;
+
+        if (!pullRequest) {
+            throw new Error("the fixture always has a pull request");
+        }
+
+        pullRequest.latestReviews.nodes.push({
+            author: { login: "dave" },
+            state: "CHANGES_REQUESTED",
+            submittedAt: "2026-09-20T09:00:00Z",
+            commit: { oid: OLD },
+        });
+        const mapped = githubFacts(answer);
+
+        expect(mapped?.reviews.map((review) => review.author)).toEqual(["dave", "review-bot"]);
+
+        if (!mapped) {
+            return;
+        }
+
+        expect(judgeReadiness(mapped, NOW).staleReviewers).toEqual(["dave"]);
     });
 
     test("thread pages past the first are appended; a missing PR is null", () => {

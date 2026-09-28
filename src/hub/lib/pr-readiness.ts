@@ -235,6 +235,7 @@ query($owner: String!, $repo: String!, $number: Int!) {
       number title state isDraft url headRefOid mergeable reviewDecision author { login }
       commits(last: 1) { nodes { commit { oid committedDate statusCheckRollup { state } } } }
       reviews(last: 100) { nodes { author { login } state submittedAt commit { oid } } }
+      latestReviews(first: 100) { nodes { author { login } state submittedAt commit { oid } } }
       reviewThreads(first: ${THREAD_PAGE}) {
         pageInfo { hasNextPage endCursor }
         nodes { isResolved isOutdated comments(first: 1) { nodes { author { login } } } }
@@ -267,6 +268,13 @@ interface RawThreadPage {
     }>;
 }
 
+interface RawReview {
+    author: { login: string } | null;
+    state: string;
+    submittedAt: string | null;
+    commit: { oid: string } | null;
+}
+
 export interface RawReadiness {
     repository: {
         pullRequest: {
@@ -284,14 +292,9 @@ export interface RawReadiness {
                     commit: { oid: string; committedDate: string; statusCheckRollup: { state: string } | null };
                 }>;
             };
-            reviews: {
-                nodes: Array<{
-                    author: { login: string } | null;
-                    state: string;
-                    submittedAt: string | null;
-                    commit: { oid: string } | null;
-                }>;
-            };
+            reviews: { nodes: RawReview[] };
+            /** Each reviewer's newest review, however many reviews came after it. */
+            latestReviews: { nodes: RawReview[] };
             reviewThreads: RawThreadPage;
             timelineItems: { nodes: Array<{ createdAt?: string }> };
         } | null;
@@ -313,6 +316,15 @@ export function rollupToCi(state: string | null | undefined): CiStatus | null {
         default:
             return null;
     }
+}
+
+/** The recent reviews plus every reviewer's newest one they lack, oldest first. */
+function withLatest(recent: RawReview[], latest: RawReview[]): RawReview[] {
+    const key = (review: RawReview) => `${review.author?.login ?? "ghost"}\n${review.submittedAt}`;
+    const seen = new Set(recent.map(key));
+    const missing = latest.filter((review) => !seen.has(key(review)));
+
+    return [...missing, ...recent].sort((a, b) => (a.submittedAt ?? "").localeCompare(b.submittedAt ?? ""));
 }
 
 export function githubFacts(raw: RawReadiness, extraThreads: RawThreadPage["nodes"] = []): ReadinessFacts | null {
@@ -342,8 +354,10 @@ export function githubFacts(raw: RawReadiness, extraThreads: RawThreadPage["node
             outdated: thread.isOutdated,
             author: thread.comments.nodes[0]?.author?.login ?? "ghost",
         })),
-        // The author's own replies arrive as COMMENTED reviews; they review nothing.
-        reviews: pr.reviews.nodes
+        // The author's own replies arrive as COMMENTED reviews; they review nothing. The last 100 reviews miss
+        // a reviewer whose newest review is older than those (a busy PR has hundreds), so each reviewer's
+        // newest one is added from latestReviews.
+        reviews: withLatest(pr.reviews.nodes, pr.latestReviews.nodes)
             .filter((review) => review.submittedAt !== null && !(pr.author && review.author?.login === pr.author.login))
             .map((review) => ({
                 author: review.author?.login ?? "ghost",
