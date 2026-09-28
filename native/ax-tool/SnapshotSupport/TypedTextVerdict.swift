@@ -30,3 +30,17 @@ public func typedTextVerdict(element: String?, before: String?, after: String?, 
     }
     return .verified
 }
+
+/// Posts each item only while the target app still holds the front. The legacy `type` and
+/// `hotkey` post to the global keyboard tap, so a focus change after the one activation check
+/// (the user's terminal taking the front back, a cursor glide) sent the rest of the keys to
+/// whatever app was in front. Returns how many items were posted before the front moved.
+public func postWhileFrontmost<Item>(_ items: [Item], isTargetFront: () -> Bool, post: (Item) -> Void) -> Int {
+    var posted = 0
+    for item in items {
+        guard isTargetFront() else { return posted }
+        post(item)
+        posted += 1
+    }
+    return posted
+}

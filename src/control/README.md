@@ -168,7 +168,7 @@ One `preflight` call returns screens with their scale and origins, the frontmost
 
 ⚠️ **`type` inserts at the current cursor.** Use `--end` to jump to the end of the field first, or `--clear` to replace the whole field. Without either, you get text spliced into the middle of whatever was there.
 
-⚠️ **`type` prints "typed" only after a readback.** With `--app` alone it reads the app's focused element before and after typing. A value that did not change fails (exit 1) and names the focused element and where the keys were posted; an element with no readable value prints `UNVERIFIED` and exits 2. An open or save panel runs out of process and can drop typed text (measured 2026-09-28 on Brave's "Load unpacked" panel); put the text on the clipboard and send `hotkey --keys cmd,v` instead.
+⚠️ **`type` prints "typed" only after a readback.** With `--app` alone it reads the app's focused element before and after typing. A value that did not change fails (exit 1) and names the focused element and where the keys were posted; an element with no readable value prints `UNVERIFIED` and exits 2. An open or save panel runs out of process and can drop typed text (measured 2026-09-28 on Brave's "Load unpacked" panel); put the text on the clipboard and send `hotkey --keys cmd,v` instead. `type` and `hotkey` post to the global keyboard tap, so with `--app` both check the front again at the moment of posting and stop (exit 1, naming the app that took it) instead of sending the rest of the keys to whatever is in front.
 
 ⚠️ **`hotkey --app` activates the target first and refuses if it cannot become frontmost.** That refusal is a feature: a key combo delivered to the wrong app is worse than a failure.
 

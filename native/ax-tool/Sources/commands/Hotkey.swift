@@ -35,11 +35,13 @@ let KEY_MAP: [String: UInt16] = [
 func cmdHotkey(keys: String) {
     // Optional --app: activate the target first so the combo lands there
     // instead of whatever happens to have OS keyboard focus.
+    var targetPid: pid_t?
     if let appTarget = argValue("--app") {
         let pid = resolveApp(appTarget)
         if !bringFrontmost(pid) {
             errorExit("could not bring \(appTarget) frontmost — refusing to send keys to the wrong app")
         }
+        targetPid = pid
     }
     let parts = keys.lowercased().split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
     var flags: CGEventFlags = []
@@ -77,7 +79,14 @@ func cmdHotkey(keys: String) {
     }
     down.flags = flags
     up.flags = flags
-    down.postRouted()
+    // The cursor feedback above can take a glide; check the front again at the moment of posting,
+    // because a global-tap combo lands in whatever app holds the front by then.
+    let routedToPid = argValue("--to-pid") != nil
+    let posted = postWhileFrontmost([down], isTargetFront: { routedToPid || targetPid.map { frontmostPid() == $0 } ?? true },
+                                    post: { $0.postRouted() })
+    guard posted == 1 else {
+        errorExit("\(frontmostDescription()) took the front before the combo was sent; nothing was posted")
+    }
     Thread.sleep(forTimeInterval: holdMs / 1000)
     up.postRouted()
 

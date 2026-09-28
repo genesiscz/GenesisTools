@@ -32,3 +32,22 @@ final class TypedTextVerdictTests: XCTestCase {
                                         replace: true), .verified)
     }
 }
+
+extension TypedTextVerdictTests {
+    func testKeysStopTheMomentAnotherAppTakesTheFront() {
+        var front = true
+        var posted: [Character] = []
+        let count = postWhileFrontmost(Array("abcdef"), isTargetFront: { front }, post: { character in
+            posted.append(character)
+            if character == "c" { front = false }
+        })
+        XCTAssertEqual(count, 3)
+        XCTAssertEqual(String(posted), "abc")
+    }
+
+    func testNothingIsPostedWhenTheTargetIsNotInFront() {
+        var posted = 0
+        XCTAssertEqual(postWhileFrontmost([1, 2], isTargetFront: { false }, post: { _ in posted += 1 }), 0)
+        XCTAssertEqual(posted, 0)
+    }
+}

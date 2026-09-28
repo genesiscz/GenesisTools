@@ -141,12 +141,17 @@ func cmdClick(appName: String) {
     jsonOutput(result)
 }
 
-func typeString(_ text: String, delayMs: Double) {
+/// Types while `pid` holds the front (always, when the keys are routed with --to-pid) and stops
+/// the moment another app takes it, so the rest of the text cannot land there. Returns how many
+/// characters were posted.
+@discardableResult
+func typeString(_ text: String, delayMs: Double, pid: pid_t? = nil) -> Int {
     let src = CGEventSource(stateID: .hidSystemState)
-    for char in text {
+    let routedToPid = argValue("--to-pid") != nil
+    return postWhileFrontmost(Array(text), isTargetFront: { routedToPid || pid.map { frontmostPid() == $0 } ?? true }) { char in
         var chars = Array(String(char).utf16)
         guard let down = CGEvent(keyboardEventSource: src, virtualKey: 0, keyDown: true),
-              let up = CGEvent(keyboardEventSource: src, virtualKey: 0, keyDown: false) else { continue }
+              let up = CGEvent(keyboardEventSource: src, virtualKey: 0, keyDown: false) else { return }
         down.keyboardSetUnicodeString(stringLength: chars.count, unicodeString: &chars)
         up.keyboardSetUnicodeString(stringLength: chars.count, unicodeString: &chars)
         down.postRouted()
@@ -248,7 +253,12 @@ func cmdTypeText(appName: String, text: String) {
             tapKey(51)  // Delete/Backspace
             Thread.sleep(forTimeInterval: 0.1)
         }
-        typeString(text, delayMs: delayMs)
+        let posted = typeString(text, delayMs: delayMs, pid: pid)
+        if posted < text.count {
+            jsonOutput(["ok": false, "dispatched": posted > 0, "posted": posted, "length": text.count,
+                        "error": "\(frontmostDescription()) took the front after \(posted) of \(text.count) characters; typing stopped so the rest could not land there. Inspect both apps before typing again"])
+            exit(1)
+        }
     }
 
     if let targetEl { ActionCursor.element("type", targetEl) }
