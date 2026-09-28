@@ -90,6 +90,38 @@ export function primaryWebArea(elements: ObservedElement[]): ObservedElement | u
     const shallowest = documents.filter((element) => element.depth === minimumDepth);
     return shallowest.length === 1 ? shallowest[0] : undefined;
 }
+/**
+ * `--target-ordinal position/count` when several observed rows carry the key a dispatch pins.
+ * chrome://extensions shows one identical "Reload" button per extension card, and every key the
+ * backend computes is the same for all of them, so without the caller's position among the twins
+ * an exact ref from the newest observation was refused as ambiguous. `fields` is the order the
+ * backend tries: the prepared path matches targetKey only, element revalidation targetKey, then
+ * stableKey.
+ */
+export function targetOrdinalArgs({
+    rows,
+    row,
+    key,
+    fields,
+}: {
+    rows: ObservedElement[];
+    row: ObservedElement;
+    key: string;
+    fields: Array<"targetKey" | "stableKey">;
+}): string[] {
+    for (const field of fields) {
+        const matches = rows.filter((candidate) => candidate[field] === key);
+        if (matches.length === 0) {
+            continue;
+        }
+
+        const position = matches.findIndex((candidate) => candidate.index === row.index);
+        return matches.length > 1 && position >= 0 ? ["--target-ordinal", `${position}/${matches.length}`] : [];
+    }
+
+    return [];
+}
+
 export function hasAncestorRole(elements: ObservedElement[], target: ObservedElement, role: string): boolean {
     let depth = target.depth;
     const position = elements.findIndex((row) => row.index === target.index);

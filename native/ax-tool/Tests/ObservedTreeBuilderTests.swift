@@ -417,3 +417,122 @@ extension QueryTreeTests {
         XCTAssertThrowsError(try validateModalTarget(rows: result.tree.rows, target: target))
     }
 }
+
+/// chrome://extensions: one card per extension, each with a heading and an identical "Reload"
+/// button whose parent holds no text, so every key the builder computes is the same for all.
+final class IdenticalTargetTests: XCTestCase {
+    private func extensionsPage(cards: [String]) -> FakeSource {
+        let fake = FakeSource()
+        var cardPids: [pid_t] = []
+        for (offset, name) in cards.enumerated() {
+            let base = pid_t(10 + offset * 10)
+            fake.nodes[base] = FakeNode(role: "AXGroup", children: [base + 1, base + 2],
+                                        frame: CGRect(x: 0, y: Double(offset) * 200, width: 400, height: 190))
+            fake.nodes[base + 1] = FakeNode(role: "AXHeading", attributes: ["AXTitle": name],
+                                            frame: CGRect(x: 10, y: Double(offset) * 200 + 5, width: 200, height: 20))
+            fake.nodes[base + 2] = FakeNode(role: "AXGroup", children: [base + 3],
+                                            frame: CGRect(x: 0, y: Double(offset) * 200 + 150, width: 400, height: 40))
+            fake.nodes[base + 3] = FakeNode(role: "AXButton", attributes: ["AXDescription": "Reload"],
+                                            actions: ["AXScrollToVisible", "AXShowMenu"],
+                                            frame: CGRect(x: 300, y: Double(offset) * 200 + 155, width: 30, height: 30))
+            cardPids.append(base)
+        }
+        fake.nodes[1] = FakeNode(role: "AXWindow", children: [2], frame: CGRect(x: 0, y: 0, width: 400, height: 900))
+        fake.nodes[2] = FakeNode(role: "AXWebArea", attributes: ["AXURL": URL(string: "chrome://extensions/")!],
+                                 children: cardPids, frame: CGRect(x: 0, y: 0, width: 400, height: 900))
+        return fake
+    }
+
+    private func reloads(_ tree: ObservedTreeData) -> [Int] {
+        tree.rows.indices.filter { tree.rows[$0]["AXDescription"] as? String == "Reload" }
+    }
+
+    func testAnExactRefToOneOfSeveralIdenticalButtonsResolvesToThatButton() throws {
+        let fake = extensionsPage(cards: ["GenesisTools", "7TV", "AdBlock"])
+        let tree = try buildObservedTree(root: fake.element(1), source: fake, depth: 10, scope: "window")
+        let buttons = reloads(tree)
+        let key = try XCTUnwrap(tree.rows[buttons[1]]["stableKey"] as? String)
+        XCTAssertEqual(Set(buttons.map { tree.rows[$0]["stableKey"] as? String }).count, 1, "the fixture must reproduce the shared key")
+        XCTAssertThrowsError(try resolvedTargetIndex(key: key, rows: tree.rows))
+        let ordinal = try XCTUnwrap(TargetOrdinal.of(buttons[1], rows: tree.rows, field: "stableKey"))
+        XCTAssertEqual(ordinal, TargetOrdinal(position: 1, count: 3))
+        let fresh = try buildObservedTree(root: fake.element(1), source: fake, depth: 10, scope: "window")
+        XCTAssertEqual(try resolvedTargetIndex(key: key, rows: fresh.rows, ordinal: ordinal), buttons[1])
+    }
+
+    /// One card fewer shifts which button is "second"; that must refuse, not press a neighbour.
+    func testAChangedNumberOfTwinsStillRefuses() throws {
+        let observed = try buildObservedTree(root: extensionsPage(cards: ["GenesisTools", "7TV", "AdBlock"]).element(1),
+                                             source: extensionsPage(cards: ["GenesisTools", "7TV", "AdBlock"]), depth: 10, scope: "window")
+        let button = reloads(observed)[2]
+        let key = try XCTUnwrap(observed.rows[button]["stableKey"] as? String)
+        let ordinal = try XCTUnwrap(TargetOrdinal.of(button, rows: observed.rows, field: "stableKey"))
+        let smaller = extensionsPage(cards: ["GenesisTools", "7TV"])
+        let fresh = try buildObservedTree(root: smaller.element(1), source: smaller, depth: 10, scope: "window")
+        XCTAssertThrowsError(try resolvedTargetIndex(key: key, rows: fresh.rows, ordinal: ordinal)) { error in
+            XCTAssertTrue(error.localizedDescription.contains("3 identical elements were observed and 2 are present now"),
+                          error.localizedDescription)
+        }
+    }
+
+    func testOrdinalArgumentsAreParsedStrictly() {
+        XCTAssertEqual(TargetOrdinal("1/3"), TargetOrdinal(position: 1, count: 3))
+        for invalid in ["3/3", "0/1", "-1/3", "a/3", "1/", "01/3", "1/3/4"] {
+            XCTAssertNil(TargetOrdinal(invalid), invalid)
+        }
+    }
+}
+
+/// Brave's tab strip labels carry a live memory figure; the page beside them does not move.
+final class DocumentScopeTests: XCTestCase {
+    private func browser(tabs: [String], button: String = "Reload") -> FakeSource {
+        let fake = FakeSource()
+        let tabPids = tabs.indices.map { pid_t(100 + $0) }
+        for (offset, label) in tabs.enumerated() {
+            fake.nodes[tabPids[offset]] = FakeNode(role: "AXRadioButton", attributes: ["AXTitle": label],
+                                                   frame: CGRect(x: Double(offset) * 100, y: 0, width: 100, height: 30))
+        }
+        fake.nodes[1] = FakeNode(role: "AXWindow", children: [2, 3], frame: CGRect(x: 0, y: 0, width: 800, height: 600))
+        fake.nodes[2] = FakeNode(role: "AXTabGroup", children: tabPids, frame: CGRect(x: 0, y: 0, width: 800, height: 30))
+        fake.nodes[3] = FakeNode(role: "AXWebArea", attributes: ["AXURL": URL(string: "chrome://extensions/")!],
+                                 children: [4], frame: CGRect(x: 0, y: 40, width: 800, height: 560))
+        fake.nodes[4] = FakeNode(role: "AXGroup", children: [5], frame: CGRect(x: 0, y: 40, width: 800, height: 200))
+        fake.nodes[5] = FakeNode(role: "AXButton", attributes: ["AXDescription": button], actions: ["AXShowMenu"],
+                                 frame: CGRect(x: 10, y: 50, width: 60, height: 30))
+        return fake
+    }
+
+    private func tree(_ fake: FakeSource) throws -> ObservedTreeData {
+        try buildObservedTree(root: fake.element(1), source: fake, depth: 10, scope: "window")
+    }
+
+    private func button(_ tree: ObservedTreeData) -> Int {
+        tree.rows.firstIndex { $0["role"] as? String == "AXButton" }!
+    }
+
+    func testOnlyATabLabelChangedSoThePageTargetIsStillActionable() throws {
+        let observed = try tree(browser(tabs: ["Extensions - Memory usage - 166 MB"]))
+        let current = try tree(browser(tabs: ["Extensions - Memory usage - 171 MB"]))
+        XCTAssertNotEqual(observed.digest, current.digest, "the whole-window digest refused this before")
+        XCTAssertEqual(remapDocumentTarget(observedIndex: button(observed), observed: try documentScope(observed.rows),
+                                           current: try documentScope(current.rows)), button(current))
+    }
+
+    func testANewTabShiftsTheIndexAndTheTargetFollows() throws {
+        let observed = try tree(browser(tabs: ["Extensions"]))
+        let current = try tree(browser(tabs: ["Extensions", "New Tab"]))
+        XCTAssertEqual(remapDocumentTarget(observedIndex: button(observed), observed: try documentScope(observed.rows),
+                                           current: try documentScope(current.rows)), button(observed) + 1)
+    }
+
+    func testAChangedPageOrAChromeTargetStillRefuses() throws {
+        let observed = try tree(browser(tabs: ["Extensions"]))
+        let relabelled = try tree(browser(tabs: ["Extensions"], button: "Remove"))
+        XCTAssertNil(remapDocumentTarget(observedIndex: button(observed), observed: try documentScope(observed.rows),
+                                         current: try documentScope(relabelled.rows)))
+        let tab = observed.rows.firstIndex { $0["role"] as? String == "AXRadioButton" }!
+        let churned = try tree(browser(tabs: ["Extensions - 170 MB"]))
+        XCTAssertNil(remapDocumentTarget(observedIndex: tab, observed: try documentScope(observed.rows),
+                                         current: try documentScope(churned.rows)))
+    }
+}

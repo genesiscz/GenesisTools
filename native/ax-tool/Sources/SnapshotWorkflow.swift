@@ -348,7 +348,8 @@ private func workflowSnapshotOnce(appName: String, pid: pid_t, launch: Double, w
     }
     let token = SnapshotToken(pid: pid, launch: launch, window: Int(window.id), depth: depth,
                               digest: tree.digest, created: capturedAt, scope: scope, visual: visual,
-                              query: scope == "query" ? workflowQuery : nil)
+                              query: scope == "query" ? workflowQuery : nil,
+                              document: scope == "window" ? try documentScope(tree.rows) : nil)
     let encoded: String
     do {
         encoded = try JSONEncoder().encode(token).base64EncodedString()
@@ -899,11 +900,23 @@ func cmdAct(appName _: String) {
     if let key = workflowArgument("--target-key"), workflowFlag("--prepare") || revalidateScope == "element" {
         do {
             elementIndex = revalidateScope == "element"
-                ? try resolvedTargetIndex(key:key,rows:tree.rows)
-                : try preparedTargetIndex(key:key,rows:tree.rows)
+                ? try resolvedTargetIndex(key:key,rows:tree.rows,ordinal:workflowArgument("--target-ordinal").flatMap(TargetOrdinal.init))
+                : try preparedTargetIndex(key:key,rows:tree.rows,ordinal:workflowArgument("--target-ordinal").flatMap(TargetOrdinal.init))
             dispatchToken = SnapshotToken(pid:pid,launch:launch,window:Int(window.id),depth:token.depth,
                 digest:tree.digest,created:token.created,scope:token.effectiveScope,query:token.query)
         } catch { workflowFailure(error) }
+    }
+    // A page target is checked against the page, not the whole window: browser chrome churns on its
+    // own (a tab label's live memory figure). The page must be unchanged and the target keeps its
+    // position in it; anything else falls through to the whole-window refusal below.
+    var documentPin: DocumentScope?
+    if dispatchToken.digest != tree.digest, rawCoords == nil, let observed = token.document,
+       let current = try? documentScope(tree.rows),
+       let remapped = remapDocumentTarget(observedIndex: elementIndex, observed: observed, current: current) {
+        elementIndex = remapped
+        documentPin = current
+        dispatchToken = SnapshotToken(pid:pid,launch:launch,window:Int(window.id),depth:token.depth,
+            digest:tree.digest,created:token.created,scope:token.effectiveScope,query:token.query)
     }
     do {
         _ = try dispatchToken.validate(pid: pid, launch: launch, window: Int(window.id), digest: tree.digest,
@@ -1024,13 +1037,23 @@ func cmdAct(appName _: String) {
         let identityPinned = prepared || byIdentifier != nil
             || (revalidateScope == "element" && workflowArgument("--target-key") != nil)
         if identityPinned, let key = tree.rows[elementIndex][identityField] as? String {
-            let currentIndex = try preparedTargetIndex(key: key, rows: fresh.rows, field: identityField)
+            let currentIndex = try preparedTargetIndex(key: key, rows: fresh.rows, field: identityField,
+                ordinal: TargetOrdinal.of(elementIndex, rows: tree.rows, field: identityField))
 
             if prepared {
                 try validatePreparedTarget(before: tree.rows[elementIndex], after: fresh.rows[currentIndex],
                     sameElement: CFEqual(element, fresh.elements[currentIndex]))
             }
 
+            try validateModalTarget(rows: fresh.rows, target: currentIndex)
+            _ = try dispatchToken.validate(pid: pid, launch: observedLaunch(pid), window: Int(freshWindow.id),
+                digest: dispatchToken.digest, element: currentIndex, count: fresh.elements.count,
+                now: Date().timeIntervalSince1970)
+        } else if let documentPin {
+            guard let current = try documentScope(fresh.rows),
+                  let currentIndex = remapDocumentTarget(observedIndex: elementIndex, observed: documentPin, current: current) else {
+                throw SnapshotError.refusal(.staleObservation, "the page changed; run see again")
+            }
             try validateModalTarget(rows: fresh.rows, target: currentIndex)
             _ = try dispatchToken.validate(pid: pid, launch: observedLaunch(pid), window: Int(freshWindow.id),
                 digest: dispatchToken.digest, element: currentIndex, count: fresh.elements.count,

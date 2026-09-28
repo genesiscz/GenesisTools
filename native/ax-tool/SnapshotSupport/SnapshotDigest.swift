@@ -89,13 +89,54 @@ public func promoteSharedStableKeys(_ rows: inout [[String: Any]]) {
     }
 }
 
-public func preparedTargetIndex(key: String, rows: [[String:Any]], field: String = "targetKey") throws -> Int {
+/// Which of several rows sharing one key the caller observed: its position among them, and how many
+/// there were. Brave's extensions page has one identical "Reload" button per extension card, each
+/// under a different heading that is not an ancestor, so they share every key; without this an
+/// exact ref from the newest observation was refused as ambiguous every time.
+public struct TargetOrdinal: Equatable {
+    public let position: Int
+    public let count: Int
+
+    public init(position: Int, count: Int) {
+        self.position = position
+        self.count = count
+    }
+
+    /// "position/count", as `act --target-ordinal` takes it.
+    public init?(_ raw: String) {
+        let parts = raw.split(separator: "/", omittingEmptySubsequences: false)
+        guard parts.count == 2, let position = Int(parts[0]), let count = Int(parts[1]),
+              String(position) == parts[0], String(count) == parts[1],
+              count > 1, count <= observedElementLimit, (0..<count).contains(position) else { return nil }
+        self.init(position: position, count: count)
+    }
+
+    /// The ordinal of `index` among the rows carrying the same value in `field`; nil when unique.
+    public static func of(_ index: Int, rows: [[String: Any]], field: String) -> TargetOrdinal? {
+        guard let key = rows[index][field] as? String else { return nil }
+        let matches = rows.indices.filter { rows[$0][field] as? String == key }
+        guard matches.count > 1, let position = matches.firstIndex(of: index) else { return nil }
+        return TargetOrdinal(position: position, count: matches.count)
+    }
+}
+
+public func preparedTargetIndex(key: String, rows: [[String:Any]], field: String = "targetKey",
+                                ordinal: TargetOrdinal? = nil) throws -> Int {
 
     let matches = rows.indices.filter { rows[$0][field] as? String == key }
-    guard matches.count == 1, let index = matches.first else {
-        throw SnapshotError.refusal(.missingTarget,"observed target changed, disappeared or became ambiguous")
+    if matches.count == 1, let index = matches.first {
+        return index
     }
-    return index
+    // Identical twins are told apart only by where the caller saw them, and only while the set of
+    // twins is the same size; one added or removed shifts the positions, so that still refuses.
+    if matches.count > 1, let ordinal, ordinal.count == matches.count {
+        return matches[ordinal.position]
+    }
+    let detail = matches.count > 1
+        ? (ordinal.map { "; \($0.count) identical elements were observed and \(matches.count) are present now" }
+            ?? "; \(matches.count) identical elements carry this key")
+        : ""
+    throw SnapshotError.refusal(.missingTarget, "observed target changed, disappeared or became ambiguous\(detail)")
 }
 
 /// Resolve by the volatile identity first, then the stable one.
@@ -103,12 +144,12 @@ public func preparedTargetIndex(key: String, rows: [[String:Any]], field: String
 /// A caller copies one hash out of a `see` row and should not have to know which of the two it
 /// is. Trying targetKey first keeps the prepared path byte-identical; falling back to stableKey is
 /// what lets a window with a running clock be acted on at all.
-public func resolvedTargetIndex(key: String, rows: [[String:Any]]) throws -> Int {
-    if let index = try? preparedTargetIndex(key: key, rows: rows) {
+public func resolvedTargetIndex(key: String, rows: [[String:Any]], ordinal: TargetOrdinal? = nil) throws -> Int {
+    if let index = try? preparedTargetIndex(key: key, rows: rows, ordinal: ordinal) {
         return index
     }
 
-    return try preparedTargetIndex(key: key, rows: rows, field: "stableKey")
+    return try preparedTargetIndex(key: key, rows: rows, field: "stableKey", ordinal: ordinal)
 }
 
 public func bindTargetsToBrowserDocument(_ rows: inout [[String: Any]]) throws {

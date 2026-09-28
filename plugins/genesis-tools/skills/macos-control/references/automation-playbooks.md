@@ -309,6 +309,19 @@ only after the field shows the paste landed (up to 3 s), and on every other exit
 `ok:false` with `CLIPBOARD NOT RESTORED` or `CLIPBOARD STATE UNKNOWN`. `noRetry` in workflow
 plans still forbids replaying dispatched steps.
 
+Three browser cases that used to refuse an exact, fresh ref:
+
+- **Identical twins.** chrome://extensions has one "Reload" button per extension card, and every key
+  the backend computes is the same for all of them. The computer API passes the observed position
+  (`--target-ordinal 1/3`, also on `control act`), so the ref resolves to that button. When the
+  number of twins changed it still refuses, so a removed card never shifts the press to a neighbour.
+- **Live browser chrome.** Brave's tab labels carry a live memory figure. A page element is checked
+  against the page subtree, not the whole window: tab churn is ignored, a changed page or a new
+  sheet still refuses. This covers `control act --snapshot --element N` without a target key.
+- **No AXPress on a page element.** A button exposing only AXScrollToVisible/AXShowMenu (the
+  extension card's "Reload") is clicked in front after the hit test, because a page ignores a
+  window-addressed background click. Pass `background:true` to force the old delivery.
+
 Unstable AX/screenshot reads retry up to twice in the same pinned process/window within a one-second
 read budget. This also repairs `act --refresh` observations without repeating the action. Permanent
 read errors still surface. Successful read recovery appears as `observationRecovery.retries`.

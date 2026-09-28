@@ -22,6 +22,7 @@ import {
     observationSchema,
     primaryWebArea,
     sameScope,
+    targetOrdinalArgs,
 } from "../decision/observation";
 import { NativeObservationSource } from "../decision/observation-source";
 import { runNativeSequence } from "../decision/sequence";
@@ -168,9 +169,31 @@ function safeRows(rows: Observation["elements"]): Observation["elements"] {
  * key goes first: targetKey folds in sibling text, so a clock beside the target changes it, while a
  * shared stable key is already promoted to the unique targetKey natively (promoteSharedStableKeys).
  */
-function rowPin(row: Observation["elements"][number]): string[] {
+function rowPin(row: Observation["elements"][number], rows: Observation["elements"]): string[] {
     const pin = row.stableKey ?? row.targetKey;
-    return pin ? ["--target-key", pin, "--revalidate-scope", "element"] : [];
+    return pin
+        ? [
+              "--target-key",
+              pin,
+              "--revalidate-scope",
+              "element",
+              ...targetOrdinalArgs({ rows, row, key: pin, fields: ["targetKey", "stableKey"] }),
+          ]
+        : [];
+}
+
+/** `--prepare` with the row's targetKey, and its position when identical twins share that key. */
+function preparedPin(row: Observation["elements"][number], rows: Observation["elements"]): string[] {
+    return [
+        "--prepare",
+        ...(row.targetKey
+            ? [
+                  "--target-key",
+                  row.targetKey,
+                  ...targetOrdinalArgs({ rows, row, key: row.targetKey, fields: ["targetKey"] }),
+              ]
+            : []),
+    ];
 }
 
 /**
@@ -1026,7 +1049,7 @@ export class ComputerUse {
                         button,
                         ...(options.click_count === 2 ? ["--double"] : []),
                         ...(options.modifiers.length > 0 ? ["--modifiers", options.modifiers.join(",")] : []),
-                        ...(options.background ? ["--background"] : []),
+                        ...((options.background ?? true) ? ["--background"] : []),
                     ];
                 }
                 if (options.x !== undefined || options.y !== undefined) {
@@ -1058,7 +1081,7 @@ export class ComputerUse {
                         button,
                         ...(options.click_count === 2 ? ["--double"] : []),
                         ...(options.modifiers.length > 0 ? ["--modifiers", options.modifiers.join(",")] : []),
-                        ...(options.background ? ["--background"] : []),
+                        ...((options.background ?? true) ? ["--background"] : []),
                     ];
                 }
                 const row = this.select({
@@ -1084,10 +1107,18 @@ export class ComputerUse {
                         // Unprepared, AXPress is pinned like a background click: a default left click on
                         // a row that exposes AXPress lands here and never reaches that branch.
                         ...(options.prepare
-                            ? ["--prepare", ...(row.targetKey ? ["--target-key", row.targetKey] : [])]
-                            : rowPin(row)),
+                            ? preparedPin(row, record.snapshot.elements)
+                            : rowPin(row, record.snapshot.elements)),
                     ];
                 }
+                // A browser page ignores a window-addressed click, so a page element that exposes no
+                // AXPress (Brave's extension-card "Reload": AXScrollToVisible and AXShowMenu only)
+                // "succeeded" with no effect. Unless the caller chose, such a click is delivered in
+                // front: prepare focuses the window, scrolls the element in and hit-tests its centre.
+                const foreground =
+                    options.background === undefined &&
+                    (options.physical || !row.actions?.includes("AXPress")) &&
+                    hasAncestorRole(safeRows(record.snapshot.elements), row, "AXWebArea");
                 return [
                     "--action",
                     "click",
@@ -1097,12 +1128,12 @@ export class ComputerUse {
                     button,
                     ...(options.click_count === 2 ? ["--double"] : []),
                     ...(options.modifiers.length > 0 ? ["--modifiers", options.modifiers.join(",")] : []),
-                    ...(options.prepare
-                        ? ["--prepare", ...(row.targetKey ? ["--target-key", row.targetKey] : [])]
-                        : options.background
+                    ...(options.prepare || foreground
+                        ? preparedPin(row, record.snapshot.elements)
+                        : (options.background ?? true)
                           ? // The post-feedback check resolves by stableKey anyway (SnapshotWorkflow
                             // validateAfterFeedback), so the pin adds no new way to fail.
-                            ["--background", ...rowPin(row)]
+                            ["--background", ...rowPin(row, record.snapshot.elements)]
                           : []),
                 ];
             },
@@ -1237,8 +1268,8 @@ export class ComputerUse {
                     String(row.index),
                     ...flags,
                     ...(input.prepare
-                        ? ["--prepare", ...(row.targetKey ? ["--target-key", row.targetKey] : [])]
-                        : rowPin(row)),
+                        ? preparedPin(row, record.snapshot.elements)
+                        : rowPin(row, record.snapshot.elements)),
                 ];
             },
             signal,
@@ -1265,8 +1296,7 @@ export class ComputerUse {
                             "--format",
                             "text",
                             "--replace",
-                            "--prepare",
-                            ...(row.targetKey ? ["--target-key", row.targetKey] : []),
+                            ...preparedPin(row, record.snapshot.elements),
                         ];
                     }
                     return [
@@ -1276,8 +1306,7 @@ export class ComputerUse {
                         String(row.index),
                         "--value",
                         options.value,
-                        "--prepare",
-                        ...(row.targetKey ? ["--target-key", row.targetKey] : []),
+                        ...preparedPin(row, record.snapshot.elements),
                     ];
                 },
                 signal,

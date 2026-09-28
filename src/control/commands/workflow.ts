@@ -66,6 +66,7 @@ interface WorkflowOptions {
     prepare?: boolean;
     replace?: boolean;
     targetKey?: string;
+    targetOrdinal?: string;
     revalidateScope?: string;
     button?: string | boolean;
     modifiers?: string;
@@ -479,6 +480,10 @@ export function registerWorkflowCommands(program: Command): void {
             "Native targetKey from the observed row; identity for --prepare or --revalidate-scope element"
         )
         .option(
+            "--target-ordinal <position/count>",
+            "with --target-key: which of several identical rows sharing that key was observed, e.g. 1/3 (the second of three); refused when the number of identical rows changed"
+        )
+        .option(
             "--revalidate-scope <scope>",
             "element | window (default window). `element` checks only that the row at --element still carries --target-key, so a window whose clock or status text ticks stays actionable instead of refusing every act with stale_observation."
         )
@@ -600,6 +605,7 @@ export function registerWorkflowCommands(program: Command): void {
                 ["window-index", opts.byIdentifier === undefined ? undefined : opts.windowIndex],
                 ["depth", opts.byIdentifier === undefined ? undefined : opts.depth],
                 ["target-key", opts.targetKey],
+                ["target-ordinal", opts.targetOrdinal],
                 ["revalidate-scope", opts.revalidateScope],
                 ["coords", opts.coords],
                 ["frame", opts.frame],

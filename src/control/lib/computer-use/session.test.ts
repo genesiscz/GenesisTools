@@ -875,6 +875,78 @@ test("a query observation targets one element on a page too big to snapshot, and
     expect(f.calls.at(-1)).not.toContain("--query");
 });
 
+test("an exact ref to one of several identical buttons carries its position, so the backend can resolve it", async () => {
+    const f = fixture();
+    const twin = (index: number, heading: string) => [
+        {
+            index,
+            depth: 1,
+            role: "AXHeading",
+            AXTitle: heading,
+            targetKey: String(index).repeat(64),
+            stableKey: String(index).repeat(64),
+        },
+        {
+            index: index + 1,
+            depth: 1,
+            role: "AXButton",
+            AXDescription: "Reload",
+            actions: ["AXScrollToVisible", "AXShowMenu"],
+            targetKey: "e".repeat(64),
+            stableKey: "e".repeat(64),
+        },
+    ];
+    f.snapshot.elements.splice(1, 3, ...twin(1, "GenesisTools"), ...twin(3, "7TV"));
+    const state = await f.computer.get_app_state({ app: "Fixture", image: false });
+    const reloads = state.elements.filter((row) => row.label === "Reload");
+    await f.computer.click({ app: "Fixture", element_ref: reloads[1].ref });
+    const act = f.calls.at(-1) ?? [];
+    expect(act.slice(act.indexOf("--target-key"))).toContain("--target-ordinal");
+    expect(act[act.indexOf("--target-ordinal") + 1]).toBe("1/2");
+    await f.computer.get_app_state({ app: "Fixture", image: false });
+    const unique = (await f.computer.get_app_state({ app: "Fixture", image: false })).elements.find(
+        (row) => row.label === "GenesisTools"
+    );
+    await f.computer.click({ app: "Fixture", element_ref: unique!.ref });
+    expect(f.calls.at(-1)).not.toContain("--target-ordinal");
+});
+
+test("a page element without AXPress is clicked in front after the hit test, never by a background event the page ignores", async () => {
+    const f = fixture();
+    f.snapshot.elements.splice(
+        1,
+        3,
+        { index: 1, depth: 1, role: "AXWebArea", AXURL: "chrome://extensions/", AXTitle: "Extensions" },
+        {
+            index: 2,
+            depth: 2,
+            role: "AXButton",
+            AXDescription: "Reload",
+            actions: ["AXScrollToVisible", "AXShowMenu"],
+            targetKey: "a".repeat(64),
+            stableKey: "a".repeat(64),
+        },
+        { index: 3, depth: 1, role: "AXButton", AXTitle: "Native", actions: ["AXShowMenu"] }
+    );
+    const clickArgs = async (label: string, extra: { background?: boolean } = {}) => {
+        const state = await f.computer.get_app_state({ app: "Fixture", image: false });
+        const row = state.elements.find((element) => element.label === label)!;
+        await f.computer.click({ app: "Fixture", element_ref: row.ref, ...extra });
+        return f.calls.at(-1) ?? [];
+    };
+    const page = await clickArgs("Reload");
+    expect(page[page.indexOf("--action") + 1]).toBe("click");
+    expect(page).toContain("--prepare");
+    expect(page).not.toContain("--background");
+    expect(page[page.indexOf("--target-key") + 1]).toBe("a".repeat(64));
+    const chosen = await clickArgs("Reload", { background: true });
+    expect(chosen).toContain("--background");
+    expect(chosen).not.toContain("--prepare");
+    const native = await clickArgs("Native");
+    expect(native).toContain("--background");
+    expect(native).not.toContain("--prepare");
+});
+
 test("Jev target admission excludes controls behind a visible sheet", async () => {
     const f = fixture({
         evaluate: async (call) => {

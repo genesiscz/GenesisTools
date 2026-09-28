@@ -28,7 +28,7 @@ public struct WorkflowArguments {
                 "--keys", "--coords", "--button", "--to", "--duration", "--pages", "--pixels", "--range", "--prefix",
                 "--suffix", "--selection", "--format", "--path", "--region", "--target-key", "--dwell",
                 "--revalidate-scope", "--frame", "--by-identifier", "--window-index", "--depth", "--modifiers",
-                "--budget-ms",
+                "--budget-ms", "--target-ordinal",
             ]
             flagOptions = ["--background", "--double", "--refresh", "--no-cursor", "--no-image", "--prepare", "--replace", "--hold", "--no-activate"]
         default:
@@ -145,6 +145,11 @@ public struct WorkflowArguments {
         // an app-wide revalidation, so the flag promised a scope it did not check.
         guard ["element", "window"].contains(revalidateScope) else {
             throw WorkflowArgumentError.invalid("--revalidate-scope must be element or window")
+        }
+        if let ordinal = values["--target-ordinal"] {
+            guard values["--target-key"] != nil, TargetOrdinal(ordinal) != nil else {
+                throw WorkflowArgumentError.invalid("--target-ordinal takes position/count (e.g. 1/3) and needs --target-key")
+            }
         }
         if let key = values["--target-key"] {
             guard flags.contains("--prepare") || revalidateScope == "element", key.count == 64,
