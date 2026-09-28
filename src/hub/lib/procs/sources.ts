@@ -53,6 +53,30 @@ export function parseLaunchctlList(stdout: string): Map<number, string> {
     return jobs;
 }
 
+/**
+ * Each pid's energy impact from `top`. A failed `top` gives an empty map, never its partial output: that
+ * can end in the first sample, whose figures are all 0, and an empty map is what the report warns about.
+ */
+export async function readTopEnergy(run: typeof capture = capture): Promise<Map<number, number>> {
+    try {
+        const result = await run(
+            "top",
+            ["-l", "2", "-s", "1", "-stats", "pid,power", "-o", "power", "-n", String(TOP_ROWS)],
+            { timeoutMs: TOP_TIMEOUT_MS }
+        );
+
+        if (result.status !== 0) {
+            log.warn({ status: result.status, stderr: result.stderr.trim() }, "top failed; energy stays unknown");
+            return new Map();
+        }
+
+        return parseTopPower(result.stdout);
+    } catch (err) {
+        log.warn({ err }, "top could not run; energy stays unknown");
+        return new Map();
+    }
+}
+
 /** The last `PID POWER` table of `top -l 2 -stats pid,power` (the first sample has no power figures). */
 export function parseTopPower(stdout: string): Map<number, number> {
     const power = new Map<number, number>();
@@ -123,21 +147,7 @@ export const realProcsSources: ProcsSources = {
             return null;
         }
     },
-    energy: async () => {
-        const result = await capture(
-            "top",
-            ["-l", "2", "-s", "1", "-stats", "pid,power", "-o", "power", "-n", String(TOP_ROWS)],
-            {
-                timeoutMs: TOP_TIMEOUT_MS,
-            }
-        );
-
-        if (result.status !== 0) {
-            log.warn({ status: result.status, stderr: result.stderr.trim() }, "top failed; energy stays unknown");
-        }
-
-        return parseTopPower(result.stdout);
-    },
+    energy: () => readTopEnergy(),
     own: ownLineage,
     realpath: realpathOr,
     now: () => Date.now(),

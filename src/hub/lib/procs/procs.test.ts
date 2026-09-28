@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { PsRow } from "@genesiscz/utils/process/ps";
 import { argvSessionId, classifyCommand } from "./classify";
-import { type ProcsSources, parseLaunchctlList, parseTopPower, readProcsReport } from "./sources";
+import { type ProcsSources, parseLaunchctlList, parseTopPower, readProcsReport, readTopEnergy } from "./sources";
 import { refusal, type SignalOps, stopOrphans, stopTree } from "./stop";
 import { type BuildInput, buildProcsReport, LAUNCHD_UNKNOWN_REASON, type SessionLike } from "./tree";
 
@@ -656,5 +656,14 @@ describe("sources parsers", () => {
             [210, 4.7],
             [300, 12.5],
         ]);
+    });
+    test("top: a failed run is no figures at all, not the first sample's zeros, and a spawn error is not fatal", async () => {
+        const partial = async () => ({ status: 1, stdout: "PID    POWER\n210    0.0\n", stderr: "interrupted" });
+        const broken = async (): Promise<never> => {
+            throw new Error("spawn top ENOENT");
+        };
+
+        expect((await readTopEnergy(partial)).size).toBe(0);
+        expect((await readTopEnergy(broken)).size).toBe(0);
     });
 });
