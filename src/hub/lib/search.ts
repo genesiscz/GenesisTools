@@ -195,6 +195,11 @@ export async function searchSessions(
                 };
                 return hits.map((hit) => toSearchHit(hit, query));
             } catch (error) {
+                // A cancelled search is cancelled, never an empty answer from one provider.
+                if (options.signal?.aborted) {
+                    throw error;
+                }
+
                 // One provider's unreadable index must not blank the other two.
                 const message = error instanceof Error ? error.message : String(error);
                 log.warn({ error, provider }, "hub search: a provider's search failed");

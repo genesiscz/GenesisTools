@@ -159,6 +159,22 @@ describe("search", () => {
         expect(result.providers.claude).toMatchObject({ hits: 1, error: null });
     });
 
+    test("a cancelled search rejects instead of reporting the aborted provider as failed", async () => {
+        const controller = new AbortController();
+        const aborting = () => ({
+            kind: "claude",
+            list: async () => [],
+            search: async () => {
+                controller.abort();
+                throw new DOMException("The operation was aborted.", "AbortError");
+            },
+        });
+
+        await expect(
+            searchSessions({ query: "cart", providers: ["claude"], signal: controller.signal }, { claude: aborting })
+        ).rejects.toThrow("aborted");
+    });
+
     test("an empty query is refused", async () => {
         await expect(searchSessions({ query: "   " }, {})).rejects.toThrow("empty");
     });
