@@ -39,8 +39,6 @@ public struct ClipboardPasteOutcome {
     public let readback: String?
     /// "restored" or "unchanged" on every path that returns.
     public let clipboardRestore: String
-    /// False when the field's value cannot be read, so nothing proved the paste landed.
-    public let verified: Bool
     /// "ax", "keys", "empty" or nil when no replacement was asked for.
     public let selection: String?
     /// True when the field already held the text and nothing was pasted.
@@ -56,13 +54,16 @@ public struct ClipboardPasteError: Error, LocalizedError {
     public var errorDescription: String? { message }
 }
 
-/// Whether an inserted paste shows up in the field. Only plain text can be compared: an html or md
-/// paste is rendered by the receiver, so its markup never appears in AXValue. Line endings are
+/// Whether an inserted paste shows up in the field: one more occurrence of the text than before,
+/// since a field that already held it proves nothing. Only plain text can be compared: an html or
+/// md paste is rendered by the receiver, so its markup never appears in AXValue. Line endings are
 /// compared after normalizing, because text fields turn CRLF into LF.
-func insertedTextVisible(_ value: String?, text: String, format: String) -> Bool {
+func insertedTextVisible(_ value: String?, before: String?, text: String, format: String) -> Bool {
     guard format == "text" else { return true }
     func normalized(_ string: String) -> String { string.replacingOccurrences(of: "\r\n", with: "\n") }
-    return value.map { normalized($0).contains(normalized(text)) } ?? false
+    guard let value else { return false }
+    let needle = normalized(text)
+    return textOccurrences(of: needle, in: normalized(value)) > textOccurrences(of: needle, in: normalized(before ?? ""))
 }
 
 /// Wait until the receiver has visibly consumed the paste: the value moved away from `before`
@@ -125,8 +126,7 @@ public func performClipboardPaste(transaction: ClipboardTransaction, text: Strin
     if replace, before == text {
         // Nothing to replace. Writing the clipboard here would only open a window in which a late
         // cmd+v pastes whatever is restored.
-        return ClipboardPasteOutcome(readback: before, clipboardRestore: "unchanged", verified: true,
-                                     selection: nil, skipped: true)
+        return ClipboardPasteOutcome(readback: before, clipboardRestore: "unchanged", selection: nil, skipped: true)
     }
     if replace, before == nil {
         throw ClipboardPasteError(message: "replacement needs a readable AXValue to verify; nothing was pasted",
@@ -153,7 +153,7 @@ public func performClipboardPaste(transaction: ClipboardTransaction, text: Strin
         attempt = .success(waitForPasteConsumption(
             before: before, timeout: consumeTimeout, now: primitives.now, wait: primitives.wait,
             read: primitives.readValue,
-            settled: { replace ? $0 == text : insertedTextVisible($0, text: text, format: format) }))
+            settled: { replace ? $0 == text : insertedTextVisible($0, before: before, text: text, format: format) }))
     } catch {
         attempt = .failure(error)
     }
@@ -168,8 +168,11 @@ public func performClipboardPaste(transaction: ClipboardTransaction, text: Strin
         consumed = result.consumed
     }
     if before == nil, value == nil {
-        return ClipboardPasteOutcome(readback: nil, clipboardRestore: restoration, verified: false,
-                                     selection: selection, skipped: false)
+        // Nothing can show that the receiver took the paste, and the clipboard is back to the
+        // user's, so a cmd+v still queued would paste THAT. Uncertain, never a success.
+        throw ClipboardPasteError(
+            message: "the field's value is unreadable, so nothing proved the receiver took the paste; the clipboard was restored, so a paste that lands late inserts the ORIGINAL clipboard. Inspect the field before retrying",
+            clipboardRestore: restoration, dispatched: true)
     }
     guard consumed else {
         throw ClipboardPasteError(
@@ -180,13 +183,12 @@ public func performClipboardPaste(transaction: ClipboardTransaction, text: Strin
         throw ClipboardPasteError(message: "paste replacement read-back differs; inspect before retrying",
                                   clipboardRestore: restoration, dispatched: true)
     }
-    if !replace, !insertedTextVisible(value, text: text, format: format) {
+    if !replace, !insertedTextVisible(value, before: before, text: text, format: format) {
         throw ClipboardPasteError(
             message: "the field changed but does not contain the pasted text (another clipboard or a transformed paste); inspect before retrying",
             clipboardRestore: restoration, dispatched: true)
     }
-    return ClipboardPasteOutcome(readback: value, clipboardRestore: restoration, verified: true,
-                                 selection: selection, skipped: false)
+    return ClipboardPasteOutcome(readback: value, clipboardRestore: restoration, selection: selection, skipped: false)
 }
 
 /// Restores the clipboard when the process is told to stop mid-paste. The caller's deadline sends

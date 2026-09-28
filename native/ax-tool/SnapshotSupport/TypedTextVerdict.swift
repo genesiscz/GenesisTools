@@ -14,8 +14,21 @@ public enum TypedTextVerdict: Equatable {
     case different(String)
 }
 
+/// How often `needle` occurs in `haystack`, without overlap.
+public func textOccurrences(of needle: String, in haystack: String) -> Int {
+    guard !needle.isEmpty else { return 0 }
+    var count = 0
+    var searched = haystack.startIndex..<haystack.endIndex
+    while let found = haystack.range(of: needle, range: searched) {
+        count += 1
+        searched = found.upperBound..<haystack.endIndex
+    }
+    return count
+}
+
 public func typedTextVerdict(element: String?, before: String?, after: String?, text: String,
                              replace: Bool) -> TypedTextVerdict {
+    guard !text.isEmpty else { return .verified }
     guard let element else {
         return .unverifiable("the app reports no focused element")
     }
@@ -25,10 +38,12 @@ public func typedTextVerdict(element: String?, before: String?, after: String?, 
     if after == before, !(replace && after == text) {
         return .notLanded
     }
-    if replace ? after != text : !after.contains(text) {
-        return .different(after)
+    if replace {
+        return after == text ? .verified : .different(after)
     }
-    return .verified
+    // An insertion must add an occurrence. A field that already held the text and then changed for
+    // another reason (autocomplete rewrote it) is no proof that these keys landed.
+    return textOccurrences(of: text, in: after) > textOccurrences(of: text, in: before ?? "") ? .verified : .different(after)
 }
 
 /// Posts each item only while the target app still holds the front. The legacy `type` and

@@ -952,7 +952,12 @@ test("typed text counts as verified only when the backend read it back in the fi
     const original = f.native.run;
     const replies: AxResult[] = [
         { ok: true, dispatchState: "dispatched", typedVerified: true },
-        { ok: true, dispatchState: "dispatched", typedVerified: false, note: "the typed text could not be read back" },
+        {
+            ok: false,
+            dispatchState: "dispatched",
+            typedVerified: false,
+            error: "UNVERIFIED: the typed text could not be read back (the focused AXTextField has no readable value)",
+        },
         { ok: false, dispatchState: "dispatched", typedVerified: false, error: "the typed text did not appear" },
     ];
     f.native.run = async (call) => (call.args[0] === "act" ? (replies.shift() ?? { ok: false }) : original(call));
@@ -963,8 +968,10 @@ test("typed text counts as verified only when the backend read it back in the fi
     };
     expect((await type()).verification.status).toBe("verified");
     const unread = await type();
+    expect(unread.ok).toBe(false);
     expect(unread.verification.status).toBe("unverified");
-    expect(unread.note).toContain("could not be read back");
+    expect(unread.action.effect).toBe("dispatched");
+    expect(unread.error).toStartWith("UNVERIFIED");
     const missing = await type();
     expect(missing.ok).toBe(false);
     expect(missing.verification.status).toBe("unverified");

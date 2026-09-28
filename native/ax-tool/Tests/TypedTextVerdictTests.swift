@@ -27,6 +27,15 @@ final class TypedTextVerdictTests: XCTestCase {
                                         replace: false), .different("aaaa"))
     }
 
+    /// Autocomplete rewriting a field that already held the text is not the typed text landing.
+    func testAnInsertionNeedsANewOccurrence() {
+        XCTAssertEqual(typedTextVerdict(element: "AXTextField", before: "genesis.tools", after: "genesis.tools/t",
+                                        text: "genesis", replace: false), .different("genesis.tools/t"))
+        XCTAssertEqual(typedTextVerdict(element: "AXTextField", before: "genesis ", after: "genesis genesis",
+                                        text: "genesis", replace: false), .verified)
+        XCTAssertEqual(typedTextVerdict(element: "AXTextField", before: "x", after: "x", text: "", replace: false), .verified)
+    }
+
     func testReplacingWithIdenticalTextStillVerifies() {
         XCTAssertEqual(typedTextVerdict(element: "AXTextField", before: "same", after: "same", text: "same",
                                         replace: true), .verified)

@@ -24,6 +24,7 @@ final class ClipboardPasteTests: XCTestCase {
         var axSelectionWorks = true
         var keySelectionWorks = true
         var selectionUnreadable = false
+        var valueUnreadable = false
         var pastes = 0
         var pendingPasteAt: TimeInterval?
         var readFromPasteboard: String?
@@ -52,7 +53,7 @@ final class ClipboardPasteTests: XCTestCase {
 
         func primitives(ours: String) -> ClipboardPastePrimitives {
             ClipboardPastePrimitives(
-                readValue: { self.value },
+                readValue: { self.valueUnreadable ? nil : self.value },
                 focusedOnTarget: { self.focused },
                 setSelection: { length in
                     guard self.axSelectionWorks else { return false }
@@ -275,7 +276,25 @@ extension ClipboardPasteTests {
     }
 
     func testLineEndingsAreComparedNormalized() {
-        XCTAssertTrue(insertedTextVisible("a\nb", text: "a\r\nb", format: "text"))
-        XCTAssertFalse(insertedTextVisible("ab", text: "a\r\nb", format: "text"))
+        XCTAssertTrue(insertedTextVisible("a\nb", before: "", text: "a\r\nb", format: "text"))
+        XCTAssertFalse(insertedTextVisible("ab", before: "", text: "a\r\nb", format: "text"))
+    }
+
+    /// A field that already held the text and then changed for another reason proves nothing.
+    func testAnInsertionNeedsANewOccurrenceNotAnOldOne() {
+        XCTAssertFalse(insertedTextVisible("abc abcX", before: "abc abc", text: "abc", format: "text"))
+        XCTAssertTrue(insertedTextVisible("abc abcabc", before: "abc abc", text: "abc", format: "text"))
+    }
+
+    /// Nothing readable before or after: no evidence the receiver took the paste, and the clipboard
+    /// is already back to the user's, so this is an uncertain failure, never a success.
+    func testAnUnreadableFieldIsAnUncertainFailureNotASuccess() throws {
+        let field = Field(board: board, value: "")
+        field.valueUnreadable = true
+        let failure = try pasteFailure(field, text: "hello", replace: false)
+        XCTAssertTrue(failure.dispatched)
+        XCTAssertEqual(failure.clipboardRestore, "restored")
+        XCTAssertTrue(failure.message.contains("unreadable"), failure.message)
+        try assertOriginal()
     }
 }

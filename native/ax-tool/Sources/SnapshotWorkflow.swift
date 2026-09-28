@@ -1616,13 +1616,10 @@ func cmdAct(appName _: String) {
                                                     replace: workflowFlag("--replace"), primitives: primitives)
             termination.cancel()
             actionExtras["clipboardRestore"] = outcome.clipboardRestore
-            actionExtras["pasteVerified"] = outcome.verified
+            actionExtras["pasteVerified"] = true
             if let selection = outcome.selection { actionExtras["selection"] = selection }
             if outcome.skipped {
                 actionExtras["note"] = "the field already held exactly this text; nothing was pasted"
-            }
-            if !outcome.verified {
-                actionExtras["note"] = "the field's value is unreadable, so nothing proved the paste landed; inspect it"
             }
             if outcome.clipboardRestore == "restore-failed" {
                 actionOK = false
@@ -1657,8 +1654,10 @@ func cmdAct(appName _: String) {
             case .verified:
                 actionExtras["typedVerified"] = true
             case .unverifiable(let reason):
+                // Sent is not typed: the same UNVERIFIED status the legacy verb returns.
                 actionExtras["typedVerified"] = false
-                actionExtras["note"] = "the typed text could not be read back (\(reason)); verify the field"
+                actionOK = false
+                actionExtras["error"] = "UNVERIFIED: the typed text could not be read back (\(reason)); verify the field before typing again"
             case .notLanded, .different:
                 actionExtras["typedVerified"] = false
                 actionOK = false
