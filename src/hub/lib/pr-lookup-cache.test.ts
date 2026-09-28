@@ -4,6 +4,7 @@ import { Storage } from "@genesiscz/utils/storage";
 import {
     cachedPrForHead,
     DEFAULT_PR_LOOKUP_CACHE_SECONDS,
+    parsePrLookupCacheSeconds,
     prLookupCacheKey,
     readPrLookupCacheSeconds,
     writePrLookupCacheSeconds,
@@ -231,5 +232,14 @@ describe("readPrLookupCacheSeconds / writePrLookupCacheSeconds", () => {
         const storage = scratchStorage();
         await expect(writePrLookupCacheSeconds(-1, storage)).rejects.toThrow();
         await expect(writePrLookupCacheSeconds(Number.NaN, storage)).rejects.toThrow();
+        await expect(writePrLookupCacheSeconds(1.9, storage)).rejects.toThrow();
+    });
+
+    test("the option text takes digits only: an empty value is an error, never 0 (off)", () => {
+        expect(parsePrLookupCacheSeconds(" 30 ")).toBe(30);
+        expect(parsePrLookupCacheSeconds("0")).toBe(0);
+        expect(() => parsePrLookupCacheSeconds("")).toThrow();
+        expect(() => parsePrLookupCacheSeconds("1.9")).toThrow();
+        expect(() => parsePrLookupCacheSeconds("abc")).toThrow();
     });
 });

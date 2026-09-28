@@ -101,14 +101,22 @@ export async function readPrLookupCacheSeconds(storage = new Storage("hub")): Pr
         : DEFAULT_PR_LOOKUP_CACHE_SECONDS;
 }
 
+/** The `--pr-lookup-cache-seconds` text as seconds: digits only, so an empty value never turns the cache off. */
+export function parsePrLookupCacheSeconds(text: string): number {
+    if (!/^\d+$/.test(text.trim())) {
+        throw new Error(`the PR lookup cache TTL takes a whole number of seconds, 0 or more; got "${text}"`);
+    }
+
+    return Number(text.trim());
+}
+
 export async function writePrLookupCacheSeconds(seconds: number, storage = new Storage("hub")): Promise<number> {
-    if (!Number.isFinite(seconds) || seconds < 0) {
+    if (!Number.isInteger(seconds) || seconds < 0) {
         throw new Error(`the PR lookup cache TTL takes a whole number of seconds, 0 or more; got ${seconds}`);
     }
 
-    const value = Math.floor(seconds);
-    await storage.setConfigValue(PR_LOOKUP_CACHE_CONFIG_KEY, value);
-    return value;
+    await storage.setConfigValue(PR_LOOKUP_CACHE_CONFIG_KEY, seconds);
+    return seconds;
 }
 
 /**

@@ -2,6 +2,7 @@ import { out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
 import {
     DEFAULT_PR_LOOKUP_CACHE_SECONDS,
+    parsePrLookupCacheSeconds,
     readPrLookupCacheSeconds,
     writePrLookupCacheSeconds,
 } from "../lib/pr-lookup-cache";
@@ -46,7 +47,7 @@ export function registerConfigCommands(program: Command): void {
             }
 
             try {
-                const saved = await writePrLookupCacheSeconds(Number(opts.prLookupCacheSeconds));
+                const saved = await writePrLookupCacheSeconds(parsePrLookupCacheSeconds(opts.prLookupCacheSeconds));
 
                 if (opts.json) {
                     out.result({ prLookupCacheSeconds: saved });
