@@ -349,7 +349,10 @@ struct ToolCallRowView: View, Equatable {
 
     var body: some View {
         // A recycled row starts from what was loaded before (see `TranscriptServices.loaded`).
-        let current = loaded ?? (open && finished ? services.loaded(toolId: toolId) : nil)
+        // GenesisTools adaptation: what the current services loaded wins over detail this row took
+        // from an earlier one.
+        let cached = open && finished ? services.loaded(toolId: toolId) : nil
+        let current = loadedFrom == ObjectIdentifier(services) ? (loaded ?? cached) : (cached ?? loaded)
         let presentation = ToolPresentation.make(line: line, loaded: current, context: context, cwd: services.cwd)
         VStack(alignment: .leading, spacing: 2) {
             Button { onToggle(rowId) } label: { header(presentation) }
@@ -383,8 +386,18 @@ struct ToolCallRowView: View, Equatable {
         .padding(.vertical, 0)
         .task(id: open ? "\(toolId)|\(ObjectIdentifier(services))" : "") {
             let source = ObjectIdentifier(services)
-            // A finished call loaded before is drawn from `services.loaded` already (see body).
-            guard open, loaded == nil || loadedFrom != source, !finished || services.loaded(toolId: toolId) == nil else { return }
+            guard open, loaded == nil || loadedFrom != source else { return }
+            // A finished call the current services loaded before is drawn from `services.loaded`
+            // already (see body). GenesisTools adaptation: a row still holding an earlier source's
+            // detail takes that answer over; a recycled row with nothing loaded writes nothing, so it
+            // draws once.
+            if finished, let known = services.loaded(toolId: toolId) {
+                if loaded != nil {
+                    loaded = known
+                    loadedFrom = source
+                }
+                return
+            }
             let result = await services.load(toolId: toolId, finished: finished)
             // The detached load ignores cancellation: an older source's answer must not land late.
             guard !Task.isCancelled else { return }
