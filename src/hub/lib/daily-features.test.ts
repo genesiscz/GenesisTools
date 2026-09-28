@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { AgentSessionRow } from "@app/ai/lib/sessions/agent-session-rows";
 import type { DecisionRecord } from "@app/question/lib/decisions/store";
 import type { AgentSearchFilters, AgentSearchHit, AgentSessionAdapter } from "@genesiscz/utils/agent-sessions/types";
 import {
@@ -29,6 +30,7 @@ import {
     type RuleSession,
     ruleClickCommand,
     rulePrsFromNotifyState,
+    ruleSessionFromRow,
     runRules,
 } from "./rules";
 import { searchSessions, snippetAround } from "./search";
@@ -487,6 +489,24 @@ describe("rules", () => {
         id: `r_${overrides.kind}`,
         enabled: true,
         ...overrides,
+    });
+
+    test("a session's activity time is the same whether its usage was read or not", () => {
+        const row: AgentSessionRow = {
+            provider: "claude",
+            sessionId: "s-cart",
+            title: "Cart fix",
+            cwd: "/work/shop",
+            cwdShort: "shop",
+            project: "shop",
+            mtime: minutesAgo(45),
+            model: null,
+            account: null,
+            filePath: "/work/sessions/s-cart.jsonl",
+        };
+        const withUsage = ruleSessionFromRow({ ...row, lastCacheAt: minutesAgo(50) });
+
+        expect(withUsage.lastActivityMs).toBe(ruleSessionFromRow(row).lastActivityMs);
     });
 
     test("the first evaluation takes a baseline, the next one notifies only what is new", () => {

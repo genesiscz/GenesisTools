@@ -565,7 +565,9 @@ export function ruleSessionFromRow(row: AgentSessionRow): RuleSession {
         title: row.title ?? "",
         project: row.project,
         cwd: row.cwd,
-        lastActivityMs: row.lastCacheAt ?? row.mtime,
+        // The file's mtime, never `lastCacheAt`: a Claude row has that only when usage was read, which
+        // depends on the enabled rule kinds, and the idle key is built from this time.
+        lastActivityMs: row.mtime,
         contextTokens: typeof row.contextTokens === "number" ? row.contextTokens : null,
         model: row.model,
     };
