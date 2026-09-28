@@ -161,7 +161,8 @@ struct ResizableSidePanel<Content: View>: View {
     /// The fitted width until the reader drags this panel in this window, then the saved one.
     private var baseWidth: Double {
         guard let fitWidth, !SidePanelSizing.resized.contains(key) else { return width }
-        return Double(max(minWidth, fitWidth))
+        // Capped like the shown width: the narrow-window drawer uses this one as it is.
+        return Double(min(max(minWidth, fitWidth), max(minWidth, maxWidth)))
     }
     /// The width being drawn: the drag's live value, else the base one, never more than the room.
     private var shownWidth: CGFloat { min(CGFloat(liveWidth ?? baseWidth), max(minWidth, maxWidth)) }
