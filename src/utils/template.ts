@@ -20,7 +20,8 @@ export function promptVariables(text: string): string[] {
 export function renderPrompt(text: string, vars: Record<string, string>): { text: string; missing: string[] } {
     const missing: string[] = [];
     const rendered = text.replace(VARIABLE, (whole, name: string) => {
-        const value = vars[name];
+        // Own keys only: an inherited `constructor` or `toString` is not a value the caller supplied.
+        const value = Object.hasOwn(vars, name) ? vars[name] : undefined;
 
         if (value === undefined || value === "") {
             if (!missing.includes(name)) {

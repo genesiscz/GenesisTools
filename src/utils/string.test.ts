@@ -219,6 +219,14 @@ describe("template (promptVariables, renderPrompt)", () => {
         });
         expect(renderPrompt("{{a}}", { a: "" }).missing).toEqual(["a"]);
     });
+
+    it("an inherited property such as constructor is a missing variable, not a value", () => {
+        expect(renderPrompt("{{constructor}} {{toString}}", {})).toEqual({
+            text: "{{constructor}} {{toString}}",
+            missing: ["constructor", "toString"],
+        });
+        expect(renderPrompt("{{constructor}}", { constructor: "set" }).text).toBe("set");
+    });
 });
 
 describe("truncateText", () => {
