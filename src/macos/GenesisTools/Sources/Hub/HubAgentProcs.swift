@@ -14,6 +14,8 @@ enum AgentProcs {
     static let selectionID = "::procs"
     static let energyKey = "hub.procs.energy"
     static let refreshSeconds: UInt64 = 10
+    /// SIGTERM's head start before SIGKILL, passed to every stop as `--grace`, so the texts that name it are right.
+    static let graceSeconds = 5
 }
 
 struct ProcEntry: Decodable, Hashable, Identifiable {
@@ -158,9 +160,15 @@ final class AgentProcsStore: ObservableObject {
     }
 
     var orphans: [ProcGroup] { report?.groups.filter { $0.orphan && $0.stoppable } ?? [] }
+    /// A refresh asked for while one loads (the energy switch, the list after a stop) runs once that load
+    /// ends: the running one was built from the old arguments, or from the table before the stop.
+    private var rerun = false
 
     func refresh() async {
-        guard !loading else { return }
+        guard !loading else {
+            rerun = true
+            return
+        }
         loading = true
         let args = ["hub", "procs", "--json"] + (energy ? ["--energy"] : [])
         let span = HubPerf.begin("procs.refresh", energy ? "energy" : "", awaits: true)
@@ -179,6 +187,10 @@ final class AgentProcsStore: ObservableObject {
         case .failure(let error):
             span.end("failed")
             notice = ("Process list failed: \(error)", true)
+        }
+        if rerun {
+            rerun = false
+            await refresh()
         }
     }
 
@@ -210,7 +222,7 @@ final class AgentProcsStore: ObservableObject {
             let result = await Task.detached(priority: .userInitiated) { () -> Result<ProcStopOutcome, Error> in
                 Result {
                     // Exit 1 means "not stopped"; the JSON on stdout still says why.
-                    let capture = try ToolsCLIRunner.capture(["hub", "procs", "--stop", String(pid), "--yes", "--json"], timeout: 60)
+                    let capture = try ToolsCLIRunner.capture(["hub", "procs", "--stop", String(pid), "--grace", String(AgentProcs.graceSeconds), "--yes", "--json"], timeout: 60)
                     return try JSONDecoder().decode(ProcStopOutcome.self, from: capture.stdout)
                 }
             }.value
@@ -312,7 +324,7 @@ struct AgentProcsView: View {
             lines.append("… and \(groups.count - 12) more")
         }
         lines.append("")
-        lines.append("SIGTERM to every process of the tree, then SIGKILL after 5 s for what is left. Each pid's start time and command are checked again first, so a reused pid is never signalled.")
+        lines.append("SIGTERM to every process of the tree, then SIGKILL after \(AgentProcs.graceSeconds) s for what is left. Each pid's start time and command are checked again first, so a reused pid is never signalled.")
         return lines.joined(separator: "\n")
     }
 
@@ -524,7 +536,7 @@ struct AgentProcsRow: View {
                     IconButton(systemName: "arrow.right.circle", tooltip: "Show this session in the Sessions list", action: reveal)
                 }
                 if group.stoppable {
-                    IconButton(systemName: "stop.circle", tooltip: "Stop this tree: SIGTERM, then SIGKILL after 5 s (asks first)", action: stop)
+                    IconButton(systemName: "stop.circle", tooltip: "Stop this tree: SIGTERM, then SIGKILL after \(AgentProcs.graceSeconds) s (asks first)", action: stop)
                         .disabled(stopping)
                 }
             } else if stopping {
