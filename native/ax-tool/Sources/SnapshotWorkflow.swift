@@ -1157,6 +1157,10 @@ func cmdAct(appName _: String) {
         guard axStringAttribute(element, "AXValue") == value else {
             workflowFailure("AXValue read-back differs; inspect actual state before retrying")
         }
+        if let rewritten = valueRewrittenAfterWrite(written: value, read: { axStringAttribute(element, "AXValue") }) {
+            workflowFailure("the app rewrote the value right after the write: wrote \"\(value)\", now \"\(rewritten)\" "
+                + "(an address bar's autocomplete can do this); inspect it before submitting")
+        }
     case "select":
         guard let value = axStringAttribute(element, "AXValue") else {
             workflowFailure("select requires readable text in AXValue")
@@ -1591,11 +1595,11 @@ func cmdAct(appName _: String) {
             },
             postSelectAll: {
                 workflowDispatchState = "uncertain"
-                try postChord(0)
+                try postChord(ClipboardPasteKeys.selectAll)
             },
             postPaste: {
                 workflowDispatchState = "uncertain"
-                try postChord(9)
+                try postChord(ClipboardPasteKeys.paste)
             })
         let transaction: ClipboardTransaction
         do { transaction = try ClipboardTransaction(board: .general) } catch { workflowFailure(error) }
@@ -1666,6 +1670,13 @@ func cmdAct(appName _: String) {
         }
         down.flags = chord.flags
         up.flags = chord.flags
+        // Last read before a submit: the field commits what it holds now, not what was observed.
+        if !CFEqual(element, window.ax),
+           let refusal = commitRefusal(role: axStringAttribute(element, "AXRole"), code: chord.code,
+                                       observed: tree.rows[elementIndex]["AXValue"] as? String,
+                                       live: axStringAttribute(element, "AXValue")) {
+            workflowFailure(refusal)
+        }
         workflowDispatchState = "uncertain"
         down.postToPid(pid)
         Thread.sleep(forTimeInterval: 0.05)

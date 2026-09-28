@@ -135,6 +135,14 @@ and exact native readback, and requires preparation. `set_value` can also replac
 but Escape may leave such an AXValue write intact. Restore the captured original explicitly.
 If cleanup finds changed user text or a different document, stop and report instead of overwriting it.
 
+Submitting a field is guarded twice. `set_value` fails when the app rewrites the value within
+300 ms of the write (an address bar's autocomplete can), naming the written and the current text.
+`press_key` with Return or Enter on a text field reads the field right before posting and refuses,
+with both texts, when it no longer holds what the observation showed: on 2026-09-28 Brave's
+omnibox lost its last character between `set_value` and a prepared Return, and the Return navigated
+to the shortened URL. Read the field again after such a refusal and submit only a text you verified.
+A paste posts only cmd+a and cmd+v, never a submit key.
+
 ## 3. Handle a blocking sheet before navigation
 
 The Software Update incident exposed two separate issues: a modal blocked the sidebar, and
