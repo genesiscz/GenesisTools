@@ -137,10 +137,8 @@ struct ExternalLink: View {
                 .foregroundColor(color)
             }
             .buttonStyle(.genHoverPlain())
-            .onHover { inside in
-                hovering = inside
-                if inside { NSCursor.pointingHand.push() } else { NSCursor.pop() }
-            }
+            .onHover { inside in hovering = inside }
+            .hoverCursor(.pointingHand)
             .instantTooltip(tooltip.map { "\($0)\n\(url.absoluteString)" } ?? url.absoluteString)
             // A link, not a button, for VoiceOver and `tools control find --role link`.
             .accessibilityRemoveTraits(.isButton)

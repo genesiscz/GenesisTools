@@ -1757,6 +1757,8 @@ private struct SessionDetailView: View {
                                 .frame(minWidth: tab.minPaneWidth, idealWidth: tab.idealPaneWidth, maxWidth: .infinity, maxHeight: .infinity)
                         }
                     }
+                    // The side panels' grip, target and cursor on the split's bare 1 pt dividers too.
+                    .overlay(PaneDividerGrips())
                     // The split view too: its frame changing per window-resize step made the root
                     // hosting view rebuild the key view loop each step (72 ms with two panes).
                     .freezesWidthWhileResizing()

@@ -150,12 +150,11 @@ struct PRReviewBar: View {
         .overlay(Color.clear.frame(height: 10).contentShape(Rectangle()))
         .animation(.easeOut(duration: 0.14), value: hot)
         .onHover { inside in
-            guard inside != hovering else { return }
-            hovering = inside
-            if inside { NSCursor.resizeUpDown.push() } else { NSCursor.pop() }
+            if inside != hovering { hovering = inside }
         }
+        .hoverCursor(.resizeUpDown)
         .onDisappear {
-            if hovering { NSCursor.pop() }
+            if hovering { NSCursor.arrow.set() }
             hovering = false
         }
         // Global space: the handle moves with the list during the drag, so local translations would drift.

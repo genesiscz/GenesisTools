@@ -997,9 +997,7 @@ struct PRDetailView: View {
         } else if let url {
             Button { ExternalOpener.open(url) } label: { label }
                 .buttonStyle(.genHoverPlain())
-                .onHover { inside in
-                    if inside { NSCursor.pointingHand.push() } else { NSCursor.pop() }
-                }
+                .hoverCursor(.pointingHand)
                 .instantTooltip("Lines added and removed: open the \(pr.isGitLab ? "MR's changes" : "PR's files") on the host\n\(url.absoluteString)")
                 .accessibilityRemoveTraits(.isButton)
                 .accessibilityAddTraits(.isLink)

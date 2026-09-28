@@ -300,14 +300,13 @@ struct ResizableSidePanel<Content: View>: View {
         .animation(.easeOut(duration: 0.14), value: hot)
         .animation(.easeOut(duration: 0.14), value: willCollapse)
         .onHover { inside in
-            guard inside != hovering else { return }
-            hovering = inside
-            if inside { NSCursor.resizeLeftRight.push() } else { NSCursor.pop() }
+            if inside != hovering { hovering = inside }
         }
+        .hoverCursor(.resizeLeftRight)
         // Released below the minimum, the handle goes away under the pointer and never sees the
-        // hover end: without this pop the resize cursor stayed on for the rest of the window.
+        // hover end: without this the resize cursor stayed until another view set its own.
         .onDisappear {
-            if hovering { NSCursor.pop() }
+            if hovering { NSCursor.arrow.set() }
             hovering = false
         }
         .gesture(
@@ -573,5 +572,189 @@ extension View {
         } else {
             self
         }
+    }
+}
+
+// MARK: - Cursors
+
+/// Shows `cursor` while the pointer is over the view, set again on every move. A push on hover lost to
+/// the text and web views underneath, which reset the cursor on their next mouse move, and a push
+/// without its pop (a hover that never ended) left a stale cursor behind for the whole window.
+private struct HoverCursor: ViewModifier {
+    let cursor: NSCursor
+
+    func body(content: Content) -> some View {
+        content.onContinuousHover { phase in
+            switch phase {
+            case .active: cursor.set()
+            case .ended: NSCursor.arrow.set()
+            }
+        }
+    }
+}
+
+extension View {
+    func hoverCursor(_ cursor: NSCursor) -> some View { modifier(HoverCursor(cursor: cursor)) }
+}
+
+// MARK: - Pane divider grips
+
+/// The hub's panes sit in an `HSplitView`, so their dividers are AppKit's bare 1 pt NSSplitView ones: no
+/// grip, a one-pixel target, and a cursor the neighbouring text and web views take over. This view lies
+/// over the split and gives each divider what the side panels have (`ResizableSidePanel.handle`): a
+/// 10 pt target, the resize cursor and the glowing grip, and it moves the divider itself.
+struct PaneDividerGrips: NSViewRepresentable {
+    func makeNSView(context: Context) -> PaneDividerGripView { PaneDividerGripView() }
+    func updateNSView(_ view: PaneDividerGripView, context: Context) {}
+}
+
+/// Lets every event through except within `reach` of a divider, and keeps no SwiftUI state, so hovering
+/// and dragging re-render nothing. A drag calls `setPosition(_:ofDividerAt:)`, which posts the same
+/// `willResizeSubviews` notification a divider drag does, so `HubLiveResize` holds the heavy panes.
+final class PaneDividerGripView: NSView {
+    private static let reach: CGFloat = 5
+    private weak var split: NSSplitView?
+    private var splitObserver: NSObjectProtocol?
+    private var hot: Int? {
+        didSet { if hot != oldValue { needsDisplay = true } }
+    }
+    private var drag: (index: Int, startX: CGFloat, startPosition: CGFloat)?
+
+    override var isFlipped: Bool { true }
+
+    deinit {
+        if let splitObserver { NotificationCenter.default.removeObserver(splitObserver) }
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        split = nil
+    }
+
+    /// The vertical NSSplitView under this view: the one that fills the same rectangle of the window.
+    private func resolvedSplit() -> NSSplitView? {
+        if let split, split.window === window { return split }
+        guard let root = window?.contentView else { return nil }
+        let mine = convert(bounds, to: nil)
+        let found = Self.splitViews(in: root).first { candidate in
+            let theirs = candidate.convert(candidate.bounds, to: nil)
+            return candidate.isVertical && abs(theirs.minX - mine.minX) < 2 && abs(theirs.minY - mine.minY) < 2
+                && abs(theirs.width - mine.width) < 2
+        }
+        split = found
+        if let splitObserver { NotificationCenter.default.removeObserver(splitObserver) }
+        splitObserver = found.map { split in
+            NotificationCenter.default.addObserver(forName: NSSplitView.didResizeSubviewsNotification, object: split, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated {
+                    guard let self else { return }
+                    self.window?.invalidateCursorRects(for: self)
+                    if self.hot != nil { self.needsDisplay = true }
+                }
+            }
+        }
+        return found
+    }
+
+    private static func splitViews(in view: NSView) -> [NSSplitView] {
+        var found: [NSSplitView] = []
+        for child in view.subviews {
+            if let split = child as? NSSplitView { found.append(split) }
+            found += splitViews(in: child)
+        }
+        return found
+    }
+
+    /// Each divider's centre, in this view's coordinates.
+    private func dividerXs() -> [CGFloat] {
+        guard let split = resolvedSplit() else { return [] }
+        let panes = split.arrangedSubviews
+        guard panes.count > 1 else { return [] }
+        return (0 ..< panes.count - 1).map { index in
+            let x = panes[index].frame.maxX + split.dividerThickness / 2
+            return convert(NSPoint(x: x, y: 0), from: split).x
+        }
+    }
+
+    private func divider(at point: NSPoint) -> Int? {
+        let nearest = dividerXs().enumerated().min { abs($0.element - point.x) < abs($1.element - point.x) }
+        guard let nearest, abs(nearest.element - point.x) <= Self.reach else { return nil }
+        return nearest.offset
+    }
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        let local = convert(point, from: superview)
+        guard bounds.contains(local), divider(at: local) != nil else { return nil }
+        return self
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        trackingAreas.forEach(removeTrackingArea)
+        addTrackingArea(NSTrackingArea(rect: .zero, options: [.mouseMoved, .mouseEnteredAndExited, .cursorUpdate, .activeInKeyWindow, .inVisibleRect], owner: self))
+    }
+
+    override func resetCursorRects() {
+        for x in dividerXs() {
+            addCursorRect(NSRect(x: x - Self.reach, y: 0, width: Self.reach * 2, height: bounds.height), cursor: .resizeLeftRight)
+        }
+    }
+
+    override func cursorUpdate(with event: NSEvent) {
+        if hot != nil || drag != nil { NSCursor.resizeLeftRight.set() } else { super.cursorUpdate(with: event) }
+    }
+
+    override func mouseMoved(with event: NSEvent) { track(event) }
+    override func mouseEntered(with event: NSEvent) { track(event) }
+
+    override func mouseExited(with event: NSEvent) {
+        if drag == nil { hot = nil }
+    }
+
+    private func track(_ event: NSEvent) {
+        guard drag == nil else { return }
+        hot = divider(at: convert(event.locationInWindow, from: nil))
+        if hot != nil { NSCursor.resizeLeftRight.set() }
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        guard let index = divider(at: convert(event.locationInWindow, from: nil)), let split = resolvedSplit() else {
+            super.mouseDown(with: event)
+            return
+        }
+        drag = (index, event.locationInWindow.x, split.arrangedSubviews[index].frame.maxX)
+        hot = index
+        NSCursor.resizeLeftRight.set()
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        guard let drag, let split = resolvedSplit() else { return }
+        split.setPosition(drag.startPosition + event.locationInWindow.x - drag.startX, ofDividerAt: drag.index)
+        NSCursor.resizeLeftRight.set()
+        needsDisplay = true
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        guard drag != nil else { return }
+        drag = nil
+        window?.invalidateCursorRects(for: self)
+        track(event)
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        guard let index = drag?.index ?? hot else { return }
+        let xs = dividerXs()
+        guard xs.indices.contains(index) else { return }
+        let x = xs[index]
+        let tint = NSColor(ReviewPalette.renamed)
+        tint.withAlphaComponent(0.55).setFill()
+        NSRect(x: x - 0.5, y: 0, width: 1, height: bounds.height).fill()
+        NSGraphicsContext.saveGraphicsState()
+        let glow = NSShadow()
+        glow.shadowColor = tint.withAlphaComponent(0.6)
+        glow.shadowBlurRadius = 6
+        glow.set()
+        tint.setFill()
+        NSBezierPath(roundedRect: NSRect(x: x - 2, y: bounds.midY - 18, width: 4, height: 36), xRadius: 2, yRadius: 2).fill()
+        NSGraphicsContext.restoreGraphicsState()
     }
 }
