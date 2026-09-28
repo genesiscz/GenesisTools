@@ -90,6 +90,8 @@ describe("cleanupBlockers: each rule blocks, and its absence does not", () => {
         const session = { provider: "claude", sessionId: "s1", title: "fix", mtime: 1 };
         expect(kinds({ sessions: [session] })).toEqual(["session"]);
         expect(kinds({ sessionsError: "index locked" })).toEqual(["session"]);
+        // A failed `git stash list` is not "no stash": the worktree stays put.
+        expect(kinds({ stashError: "fatal: bad revision" })).toEqual(["stash"]);
     });
 
     test("git state: locked, prunable, folder gone", () => {

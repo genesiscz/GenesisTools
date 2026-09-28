@@ -97,6 +97,8 @@ export interface WorktreeFacts {
     ignored: string[];
     /** Stash entries made on this branch, or on this worktree's detached HEAD. */
     stashes: string[];
+    /** `git stash list` failed, so no stash can be ruled out (absent: it ran). */
+    stashError?: string | null;
     processes: LiveProcess[];
     sessions: LiveSession[];
     /** The agent sessions could not be read, so no session can be ruled out. */
@@ -175,6 +177,8 @@ export function cleanupBlockers(facts: WorktreeFacts, rules: AgeRule = {}): Bloc
 
     if (facts.stashes.length > 0) {
         blockers.push({ kind: "stash", text: `A stash names it: ${sample(facts.stashes)}` });
+    } else if (facts.stashError) {
+        blockers.push({ kind: "stash", text: `Stashes unknown, none can be ruled out: ${facts.stashError}` });
     }
 
     if (facts.processes.length > 0) {
@@ -531,6 +535,7 @@ async function scanRepo({
 
     const stashRes = await git.executor.exec(["stash", "list", "--format=%gd%x00%P%x00%gs"]);
     const stashes = stashRes.success ? parseStashList(stashRes.stdout) : [];
+    const stashError = stashRes.success ? null : stashRes.stderr.trim() || "git stash list failed";
     const epochs = await commitEpochs(
         repoRoot,
         entries.map((e) => e.head)
@@ -610,6 +615,7 @@ async function scanRepo({
             untracked: status.untracked.slice(0, SAMPLE),
             ignored,
             stashes: stashesFor(stashes, entry.branch, entry.head),
+            stashError,
             processes: live.processes
                 .filter((p) => ownerOf(p.cwd, allPaths) === path)
                 .map(({ pid, name }) => ({ pid, name })),
