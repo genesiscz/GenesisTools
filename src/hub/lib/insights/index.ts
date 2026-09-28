@@ -125,12 +125,17 @@ interface Loaded {
     defaultModel: string | null;
 }
 
-async function loadTranscript(resolved: ResolvedTranscript): Promise<Loaded> {
+/** `withNative: false` skips the second full read of the session file (a caller that needs no usage, model or folder). */
+async function loadTranscript(resolved: ResolvedTranscript, { withNative = true } = {}): Promise<Loaded> {
     const turns = await allTranscriptTurns(resolved);
     let native: NativeScan | null = null;
     let defaultModel: string | null = null;
 
-    if (resolved.source === "native" && (resolved.provider === "claude" || resolved.provider === "codex")) {
+    if (
+        withNative &&
+        resolved.source === "native" &&
+        (resolved.provider === "claude" || resolved.provider === "codex")
+    ) {
         const text = readText(resolved.filePath);
 
         if (text !== null) {
@@ -377,7 +382,8 @@ function indexedTitle(provider: string, sessionId: string): string | null {
 /** The handoff markdown for a range of one session's prompts. */
 export async function sessionHandoff(options: HandoffOptions): Promise<HandoffResult> {
     const resolved = await resolveTranscript(options.sessionId);
-    const loaded = await loadTranscript(resolved);
+    // The native scan only supplies the folder and branch here; the hub passes both, so it reads the file once.
+    const loaded = await loadTranscript(resolved, { withNative: !(options.cwd && options.branch) });
     const cwd = options.cwd ?? loaded.native?.cwd ?? null;
     const meta: HandoffMeta = {
         sessionId: resolved.sessionId,
