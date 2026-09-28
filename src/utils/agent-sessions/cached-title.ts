@@ -229,10 +229,11 @@ export function readCachedSessionCwd(options: { sessionId: string; path?: string
             return row?.cwd ?? null;
         }
 
+        // Every other session the prefix names counts, one with no folder too: the listing fallback counts it.
         const another = db
             .query<{ one: number }, [string, string, string]>(`
                 SELECT 1 AS one FROM session_metadata
-                WHERE session_id >= ? AND session_id < ? AND session_id <> ? AND cwd IS NOT NULL AND cwd <> ''
+                WHERE session_id >= ? AND session_id < ? AND session_id <> ?
                 LIMIT 1
             `)
             .get(options.sessionId, end, row.session_id);

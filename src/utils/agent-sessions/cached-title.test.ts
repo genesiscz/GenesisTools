@@ -206,6 +206,8 @@ test("a session's folder comes from the index: exact id first, main over subagen
         insert.run("newer", "openai-sub", "abc-2", "/fixture/abc-2.jsonl", "abc-2", "/projects/newer", 5, 0);
         insert.run("empty", "grok-sub", "zzz", "/fixture/zzz.jsonl", "zzz", "", 7, 0);
         insert.run("unique", "anthropic-sub", "uniq-9", "/fixture/uniq-9.jsonl", "uniq-9", "/projects/uniq", 3, 0);
+        insert.run("pair-a", "anthropic-sub", "pair-1", "/fixture/pair-1.jsonl", "pair-1", "/projects/pair", 4, 0);
+        insert.run("pair-b", "anthropic-sub", "pair-2", "/fixture/pair-2.jsonl", "pair-2", "", 6, 0);
         db.close();
 
         const path = world.databases.candidate;
@@ -213,6 +215,8 @@ test("a session's folder comes from the index: exact id first, main over subagen
         // A prefix names a session only when it names one: "abc" names abc-1 and abc-2.
         expect(readCachedSessionCwd({ path, sessionId: "abc" })).toBeNull();
         expect(readCachedSessionCwd({ path, sessionId: "uniq" })).toBe("/projects/uniq");
+        // A second session with no folder still makes the prefix ambiguous.
+        expect(readCachedSessionCwd({ path, sessionId: "pair" })).toBeNull();
         expect(readCachedSessionCwd({ path, sessionId: "zzz" })).toBeNull();
         expect(readCachedSessionCwd({ path, sessionId: "nothing" })).toBeNull();
     } finally {
