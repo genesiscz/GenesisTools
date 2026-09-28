@@ -12,6 +12,7 @@ import {
     postSessionHandoff,
     reserveHandoffPath,
     saveHandoff,
+    stuckSessions,
 } from "./index";
 import { codexModelOf, scanClaudeNative, toolInputKeys } from "./native";
 import {
@@ -278,6 +279,28 @@ describe("buildToolStats", () => {
 
 describe("stuckVerdict", () => {
     const thresholds = defaultStuckThresholds();
+
+    test("a listed session whose transcript cannot be read reports its own provider", async () => {
+        const rows = async () => [
+            {
+                provider: "codex" as const,
+                sessionId: "sess-codex-1",
+                title: "Cart totals",
+                cwd: "/work/shop",
+                cwdShort: "shop",
+                project: "shop",
+                mtime: T0,
+                model: null,
+                account: null,
+                // A folder where the transcript should be: reading it throws EISDIR.
+                filePath: mkdtempSync(join(tmpdir(), "gt-stuck-")),
+            },
+        ];
+        const [result] = await stuckSessions({ rows, thresholds, now: T0 });
+
+        expect(result?.provider).toBe("codex");
+        expect(result?.error).toBeDefined();
+    });
 
     test("flags a call waiting past the threshold, and not before it", () => {
         const turns = [

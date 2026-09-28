@@ -1,7 +1,11 @@
 import { createHash } from "node:crypto";
 import { closeSync, mkdirSync, openSync, readFileSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { listAgentSessionRows, POLLED_LISTING_REUSE_MS } from "@app/ai/lib/sessions/agent-session-rows";
+import {
+    type AgentSessionRow,
+    listAgentSessionRows,
+    POLLED_LISTING_REUSE_MS,
+} from "@app/ai/lib/sessions/agent-session-rows";
 import { costOf, DEFAULT_PRICING, priceFor, resolvePrice } from "@app/ai-spend/lib/pricing";
 import { DASHBOARD_ACTOR, type HandoffDeps, type PostHandoffResponse, postHandoff } from "@app/handoff/executor";
 import { resumeCommandLine } from "@genesiscz/utils/agent-sessions";
@@ -258,30 +262,39 @@ export interface StuckOptions {
     sessionIds?: string[];
     thresholds?: StuckThresholds;
     now?: number;
+    /** The recently active sessions to check when `sessionIds` is empty; tests pass their own rows. */
+    rows?: (hours: number) => Promise<AgentSessionRow[]>;
 }
 
 /** Verdicts for the given sessions, or for every recently active one. A session that fails to read carries `error`. */
 export async function stuckSessions(options: StuckOptions = {}): Promise<SessionStuck[]> {
     const now = options.now ?? Date.now();
     const thresholds = options.thresholds ?? readStuckThresholds();
-    const targets: { resolved: () => Promise<ResolvedTranscript>; id: string; title: string | null }[] = [];
+    const targets: {
+        resolved: () => Promise<ResolvedTranscript>;
+        id: string;
+        title: string | null;
+        /** Known before the transcript is read for a listed session; null for a bare id. */
+        provider: ResolvedTranscript["provider"] | null;
+    }[] = [];
 
     if (options.sessionIds && options.sessionIds.length > 0) {
         for (const id of new Set(options.sessionIds)) {
-            targets.push({ id, title: null, resolved: () => resolveTranscript(id) });
+            targets.push({ id, title: null, provider: null, resolved: () => resolveTranscript(id) });
         }
     } else {
-        const rows = await listAgentSessionRows({
-            hours: thresholds.maxAgeHours,
-            withUsage: false,
-            maxDiscoveryAgeMs: POLLED_LISTING_REUSE_MS,
-        });
+        const listRows =
+            options.rows ??
+            ((hours: number) =>
+                listAgentSessionRows({ hours, withUsage: false, maxDiscoveryAgeMs: POLLED_LISTING_REUSE_MS }));
+        const rows = await listRows(thresholds.maxAgeHours);
         log.debug({ rows: rows.length, hours: thresholds.maxAgeHours }, "stuck: discovered sessions");
 
         for (const row of rows.filter((candidate) => !candidate.archived)) {
             targets.push({
                 id: row.sessionId,
                 title: row.title,
+                provider: row.provider,
                 resolved: async () => ({
                     provider: row.provider,
                     source: "native",
@@ -298,8 +311,11 @@ export async function stuckSessions(options: StuckOptions = {}): Promise<Session
         items: targets,
         concurrency: STUCK_SCAN_CONCURRENCY,
         fn: async (target): Promise<SessionStuck> => {
+            let provider = target.provider;
+
             try {
                 const resolved = await target.resolved();
+                provider = resolved.provider;
                 return {
                     sessionId: resolved.sessionId,
                     provider: resolved.provider,
@@ -310,7 +326,8 @@ export async function stuckSessions(options: StuckOptions = {}): Promise<Session
                 log.warn({ err, sessionId: target.id }, "stuck: transcript unreadable");
                 return {
                     sessionId: target.id,
-                    provider: "claude",
+                    // A bare id whose transcript was never found has no provider to name.
+                    provider: provider ?? "claude",
                     title: target.title,
                     verdict: null,
                     error: err instanceof Error ? err.message : String(err),
