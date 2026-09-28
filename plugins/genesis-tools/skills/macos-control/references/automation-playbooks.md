@@ -19,6 +19,9 @@ Choose a unique regular, non-minimized window using its current title and `windo
 `transient: true` marks popups (subrole `AXUnknown`, `AXHelpTag`, `AXFloatingWindow`, or at most
 50 pt tall); `get_app_state` without a window ignores them when exactly one other window is open.
 A window's `sheets` lists an attached open/save panel or alert, which blocks the window behind it.
+A window that reports no position or size stays in the list with a `reason`, and `screenLocked`
+says when the screen is locked (macOS reports no window geometry then); nothing can be observed
+or acted on until it unlocks.
 If a prepared action answers "app activation failed", macOS kept another app in front even after
 the LaunchServices fallback (the path `open -a` takes); the message names the frontmost app.
 Never assume the first window is the user's intended one. A window's active title can change

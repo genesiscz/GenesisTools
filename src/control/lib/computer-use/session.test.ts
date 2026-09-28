@@ -1204,6 +1204,28 @@ test("a refusal to pick between windows names each candidate by window_id", asyn
         'Pass one: window_id 201118 "PR 424" (AXStandardWindow); window_id 201200 "Settings" (AXStandardWindow).'
     );
 });
+test("one window without bounds no longer fails the listing, and a locked screen is named", async () => {
+    const computer = new ComputerUse({
+        native: {
+            run: async () => ({
+                ok: true,
+                screenLocked: true,
+                windows: [
+                    { window_id: 201118, title: "Brave", unavailable: "the window reported no position or size" },
+                    { window_id: 201200, title: "Settings", x: 0, y: 0, width: 800, height: 600 },
+                ],
+            }),
+        },
+    });
+    const listed = await computer.list_windows({ app: "Fixture" });
+    expect(listed.screenLocked).toBe(true);
+    expect(listed.windows).toHaveLength(2);
+    expect(listed.windows[0].reason).toBe(
+        "the window reported no position or size; the screen is locked (CGSSessionScreenIsLocked), and macOS reports no window geometry until it unlocks"
+    );
+    expect(listed.windows[1]).toMatchObject({ window_id: 201200, width: 800, window_index: 1 });
+    expect("reason" in listed.windows[1]).toBe(false);
+});
 test("window inventory keeps the sheets a window carries, so an open file panel is visible", async () => {
     const computer = new ComputerUse({
         native: {

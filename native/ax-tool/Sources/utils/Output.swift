@@ -60,6 +60,13 @@ func bringFrontmost(_ pid: pid_t) -> Bool {
         pump: { CFRunLoopRunInMode(.defaultMode, $0, false) }).ok
 }
 
+/// True while the login session's screen is locked. macOS then reports no geometry for other apps'
+/// windows, which reads exactly like a broken window unless the reason is named.
+func sessionScreenLocked() -> Bool {
+    guard let session = CGSessionCopyCurrentDictionary() as? [String: Any] else { return false }
+    return (session["CGSSessionScreenIsLocked"] as? NSNumber)?.boolValue == true
+}
+
 /// "Name (pid N)" of the frontmost app, for a refusal that has to say who holds the front.
 func frontmostDescription() -> String {
     guard let pid = frontmostPid() else { return "no frontmost app" }

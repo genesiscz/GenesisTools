@@ -200,8 +200,13 @@ func cmdWindow(appName: String) {
         var info: [String: Any] = ["title": axStringAttribute(w, "AXTitle") ?? "window-\(i)"]
         if let windowID = nativeAXWindowID(w) { info["window_id"] = Int(windowID) }
         if let id = axStringAttribute(w, "AXIdentifier") { info["id"] = id }
-        if let pos = axPointValue(w, "AXPosition") { info["x"] = pos.x; info["y"] = pos.y }
-        if let sz = axSizeValue(w, "AXSize") { info["width"] = sz.width; info["height"] = sz.height }
+        let pos = axPointValue(w, "AXPosition")
+        let sz = axSizeValue(w, "AXSize")
+        if let pos { info["x"] = pos.x; info["y"] = pos.y }
+        if let sz { info["width"] = sz.width; info["height"] = sz.height }
+        if pos == nil || sz == nil {
+            info["unavailable"] = "the window reported no position or size"
+        }
         if let role = axStringAttribute(w, "AXRole") { info["role"] = role }
         if let sub = axStringAttribute(w, "AXSubrole") { info["subrole"] = sub }
         if let val = axAttribute(w, "AXMinimized") as? NSNumber { info["minimized"] = val.boolValue }
@@ -229,5 +234,6 @@ func cmdWindow(appName: String) {
         if !sheets.isEmpty { info["sheets"] = sheets }
         infos.append(info)
     }
-    jsonOutput(["ok": true, "app": appName, "pid": pid, "count": infos.count, "windows": infos])
+    jsonOutput(["ok": true, "app": appName, "pid": pid, "count": infos.count, "windows": infos,
+                "screenLocked": sessionScreenLocked()])
 }

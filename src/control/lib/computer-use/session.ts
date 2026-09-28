@@ -256,6 +256,9 @@ function describeWindowCandidates(result: AxResult): string | undefined {
     return `Pass one: ${listed.join("; ")}.`;
 }
 
+/** A listed window; `reason` says why a window has no bounds. */
+type ListedWindow<Window> = Omit<Window, "unavailable"> & { window_index: number; reason?: string };
+
 /** The `see` scope flags, including the query a query-scoped observation re-reads. */
 function observationScopeArgs(scope: string, query: AppRecord["query"]): string[] {
     if (scope !== "query") {
@@ -697,10 +700,13 @@ export class ComputerUse {
                 z.object({
                     title: z.string(),
                     window_id: z.number().int().positive().optional(),
-                    x: z.number(),
-                    y: z.number(),
-                    width: z.number(),
-                    height: z.number(),
+                    // Absent while the screen is locked, or for a window that reports no geometry:
+                    // one such window used to fail the whole listing.
+                    x: z.number().optional(),
+                    y: z.number().optional(),
+                    width: z.number().optional(),
+                    height: z.number().optional(),
+                    unavailable: z.string().optional(),
                     minimized: z.boolean().optional(),
                     transient: z.boolean().optional(),
                     subrole: z.string().optional(),
@@ -718,7 +724,27 @@ export class ComputerUse {
                 })
             )
             .parse(result.windows);
-        return { app: options.app, windows: windows.map((window, index) => ({ ...window, window_index: index })) };
+        const screenLocked = result.screenLocked === true;
+        return {
+            app: options.app,
+            screenLocked,
+            windows: windows.map((window, index): ListedWindow<typeof window> => {
+                const { unavailable, ...rest } = window;
+                const bounded = [window.x, window.y, window.width, window.height].every((value) => value !== undefined);
+                if (bounded) {
+                    return { ...rest, window_index: index };
+                }
+
+                const locked = screenLocked
+                    ? "; the screen is locked (CGSSessionScreenIsLocked), and macOS reports no window geometry until it unlocks"
+                    : "";
+                return {
+                    ...rest,
+                    window_index: index,
+                    reason: `${unavailable ?? "the window reported no position or size"}${locked}`,
+                };
+            }),
+        };
     }
     async list_apps(input: ComputerCall<"list_apps"> = {}) {
         const { options, signal } = parseCall("list_apps", input);

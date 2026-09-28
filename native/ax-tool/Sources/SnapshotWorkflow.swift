@@ -199,7 +199,8 @@ private func observedWindow(_ ax: AXUIElement, pid: pid_t) throws -> ObservedWin
     guard frame.origin.x.isFinite, frame.origin.y.isFinite,
           frame.width.isFinite, frame.height.isFinite, frame.width > 0, frame.height > 0,
           (axAttribute(ax, "AXMinimized") as? Bool) != true else {
-        throw ObservedTreeError("selected window is minimized or has no usable geometry; inspect again")
+        throw ObservedTreeError("selected window is minimized or has no usable geometry; inspect again"
+            + (sessionScreenLocked() ? " (the screen is locked, CGSSessionScreenIsLocked, and macOS reports no window geometry until it unlocks)" : ""))
     }
     let nativeID = nativeAXWindowID(ax)
     let matches = workflowWindows(pid).filter { info in
