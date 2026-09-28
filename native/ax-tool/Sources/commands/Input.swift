@@ -254,6 +254,12 @@ func cmdTypeText(appName: String, text: String) {
     if let targetEl { ActionCursor.element("type", targetEl) }
     else { ActionCursor.emit("type", point: nil, target: "desktop") }
     let beforeValue = targetEl.flatMap { axAttribute($0, "AXValue").map { "\($0)" } }
+    // Without a target the keys go to whatever holds focus, so that element is what gets read back.
+    let focusedBefore: AXUIElement? = targetEl == nil
+        ? axAttribute(app, "AXFocusedUIElement").flatMap { CFGetTypeID($0) == AXUIElementGetTypeID() ? ($0 as! AXUIElement) : nil }
+        : nil
+    let focusedBeforeValue = focusedBefore.flatMap { axAttribute($0, "AXValue").map { "\($0)" } }
+    let frontmostAtPost = frontmostPid()
     clearAndType()
 
     var result: [String: Any] = ["ok": true, "action": "type", "text": text, "length": text.count]
@@ -321,6 +327,35 @@ func cmdTypeText(appName: String, text: String) {
         } else {
             result["verified"] = false
             result["warning"] = "element AXValue unreadable — typed but could not verify"
+        }
+    } else {
+        Thread.sleep(forTimeInterval: 0.25)
+        let posted = args.contains("--to-pid") ? "posted to pid \(argValue("--to-pid") ?? "?")"
+            : "posted to the global keyboard tap while pid \(frontmostAtPost ?? -1) was frontmost"
+        let focusDescription = focusedBefore.map { element -> String in
+            let role = axStringAttribute(element, "AXRole") ?? "element"
+            let label = [axStringAttribute(element, "AXTitle"), axStringAttribute(element, "AXDescription")]
+                .compactMap { $0 }.first { !$0.isEmpty }
+            return label.map { "\(role) \"\(String($0.prefix(60)))\"" } ?? role
+        }
+        let after = focusedBefore.flatMap { axAttribute($0, "AXValue").map { "\($0)" } }
+        if let focusDescription { result["focused"] = focusDescription }
+        switch typedTextVerdict(element: focusDescription, before: focusedBeforeValue, after: after, text: text, replace: doClear) {
+        case .verified:
+            result["verified"] = true
+        case .unverifiable(let reason):
+            result["verified"] = false
+            result["warning"] = "\(reason), so nothing verified where the keystrokes went (\(posted)). Target the field with --id/--role/--q so it can be read back"
+        case .notLanded:
+            jsonOutput(["ok": false, "dispatched": true, "verified": false, "focused": focusDescription ?? "",
+                "error": "the keystrokes did not land in the focused \(focusDescription ?? "element") (its value is unchanged); where they went is unknown (\(posted)). "
+                    + "An open or save panel runs out of process and can drop typed text: put the text on the clipboard and send hotkey cmd,v instead"])
+            exit(1)
+        case .different(let value):
+            jsonOutput(["ok": false, "dispatched": true, "verified": false, "focused": focusDescription ?? "",
+                "fieldValue": value, "expected": text,
+                "error": "the focused \(focusDescription ?? "element") changed but does not hold the typed text; inspect it before typing again"])
+            exit(1)
         }
     }
 

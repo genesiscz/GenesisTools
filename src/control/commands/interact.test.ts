@@ -11,7 +11,7 @@
  * the live-pid cases are as load-bearing as the rejection cases.
  */
 import { describe, expect, test } from "bun:test";
-import { validateToPid } from "./interact";
+import { typeOutcome, validateToPid } from "./interact";
 
 describe("validateToPid", () => {
     test("undefined is fine — the flag is optional", () => {
@@ -50,5 +50,26 @@ describe("validateToPid", () => {
             // as "no such process" would refuse every send to another user's app.
             expect(validateToPid("1")).toBeNull();
         });
+    });
+});
+
+describe("typeOutcome", () => {
+    test("says typed only when the native side read the text back", () => {
+        const outcome = typeOutcome({ ok: true, verified: true, length: 4, focused: 'AXTextField "Go to"' }, "Brave");
+
+        expect(outcome.exitCode).toBe(0);
+        expect(outcome.line).toContain("typed");
+    });
+
+    test("keys sent without a readback are UNVERIFIED and exit 2, never a plain success", () => {
+        const outcome = typeOutcome(
+            { ok: true, verified: false, length: 66, warning: "the app reports no focused element" },
+            "Brave Browser"
+        );
+
+        expect(outcome.exitCode).toBe(2);
+        expect(outcome.line).toContain("UNVERIFIED");
+        expect(outcome.line).toContain("the app reports no focused element");
+        expect(outcome.line).not.toContain("typed");
     });
 });
