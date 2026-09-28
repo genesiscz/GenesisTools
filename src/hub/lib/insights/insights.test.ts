@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import type { ResolvedTranscript, TranscriptTool, TranscriptTurn } from "@genesiscz/utils/ai/transcripts";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { composeHandoff, HandoffRangeError, selectRange } from "./handoff";
+import { code, composeHandoff, HandoffRangeError, selectRange } from "./handoff";
 import {
     cachedInsightsFit,
     catalogPricer,
@@ -513,6 +513,15 @@ describe("composeHandoff", () => {
         expect(draft.openItems[0]).toBe('Answer the last prompt, which has no reply yet: "and deploy it"');
     });
 });
+describe("handoff inline code", () => {
+    test("the fence outgrows every backtick run inside, so transcript text never closes it", () => {
+        expect(code("plain")).toBe("`plain`");
+        expect(code("a `b` c")).toBe("``a `b` c``");
+        expect(code("x ``y`` z")).toBe("```x ``y`` z```");
+        expect(code("`tick")).toBe("`` `tick ``");
+    });
+});
+
 describe("saveHandoff", () => {
     test("names the file with the full session id and never replaces an earlier draft of the same range", () => {
         const dir = mkdtempSync(join(tmpdir(), "hub-handoff-"));

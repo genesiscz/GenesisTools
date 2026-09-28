@@ -59,10 +59,15 @@ function clip(text: string, max: number): string {
     return flat.length > max ? `${flat.slice(0, max - 1)}…` : flat;
 }
 
-/** Inline code that survives a backtick inside the value. */
-function code(text: string): string {
-    const fence = text.includes("`") ? "``" : "`";
-    return `${fence}${text}${fence}`;
+/**
+ * Inline code that survives backticks inside the value: the fence is one backtick longer than the longest
+ * run in it, and a value that starts or ends with one is padded, as CommonMark requires.
+ */
+export function code(text: string): string {
+    const longest = Math.max(0, ...[...text.matchAll(/`+/g)].map((run) => run[0].length));
+    const fence = "`".repeat(longest + 1);
+    const pad = text.startsWith("`") || text.endsWith("`") ? " " : "";
+    return `${fence}${pad}${text}${pad}${fence}`;
 }
 
 /** The turns the range covers: from its first prompt up to the next prompt after its last one. */
