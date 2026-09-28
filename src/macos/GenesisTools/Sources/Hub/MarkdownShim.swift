@@ -45,6 +45,8 @@ struct MarkdownContentView: View {
         var quote: [String] = []
         var table: [String] = []
         var code: [String]?
+        // The open fence's character and length: only the same character, at least as many, closes it.
+        var fence: (mark: Character, count: Int)?
         var inComment = false
 
         func flushQuote() {
@@ -70,19 +72,22 @@ struct MarkdownContentView: View {
         }
 
         for raw in markdown.components(separatedBy: "\n") {
-            if raw.trimmingCharacters(in: .whitespaces).hasPrefix("```") {
-                if let open = code {
-                    blocks.append(.code(open.joined(separator: "\n")))
+            let marker = fenceMarker(raw)
+            if let open = fence {
+                // ```swift inside a block, or a shorter fence inside a longer one, is code, not the end.
+                if let marker, marker.mark == open.mark, marker.count >= open.count, marker.info.isEmpty {
+                    blocks.append(.code((code ?? []).joined(separator: "\n")))
                     code = nil
+                    fence = nil
                 } else {
-                    flush()
-                    code = []
+                    code?.append(raw)
                 }
                 continue
             }
-
-            if code != nil {
-                code?.append(raw)
+            if let marker {
+                flush()
+                code = []
+                fence = (marker.mark, marker.count)
                 continue
             }
 
@@ -140,6 +145,15 @@ struct MarkdownContentView: View {
 
     /// The known tags become markdown or go; their text stays. Unknown tags are left alone, so a generic
     /// type written in prose (`Array<Int>`) is not eaten.
+    /// A fence line: three or more backticks or tildes, and what follows them (the info string), trimmed.
+    nonisolated static func fenceMarker(_ line: String) -> (mark: Character, count: Int, info: String)? {
+        let trimmed = line.trimmingCharacters(in: .whitespaces)
+        guard let mark = trimmed.first, mark == "`" || mark == "~" else { return nil }
+        let count = trimmed.prefix { $0 == mark }.count
+        guard count >= 3 else { return nil }
+        return (mark, count, trimmed.dropFirst(count).trimmingCharacters(in: .whitespaces))
+    }
+
     nonisolated static func cleanHTML(_ line: String) -> String {
         guard line.contains("<") else { return line }
         let rules: [(String, String)] = [

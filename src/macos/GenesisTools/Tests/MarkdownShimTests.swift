@@ -41,4 +41,23 @@ final class MarkdownShimTests: XCTestCase {
         XCTAssertTrue(blocks.contains(""), "the rule is its own block")
         XCTAssertTrue(text.contains("Line two and bold and Array<Int>"))
     }
+
+    /// Only a fence of the opener's character, at least as long and with nothing after it, closes a block.
+    func testCodeFenceClosesOnlyOnItsOwnKind() {
+        let body = """
+        ````markdown
+        ```swift
+        let a = 1
+        ```
+        - not a bullet
+        ````
+        ~~~
+        <b>kept</b>
+        ~~~
+        after
+        """
+        let blocks = MarkdownContentView.searchBlocks(body)
+
+        XCTAssertEqual(blocks, ["```swift\nlet a = 1\n```\n- not a bullet", "<b>kept</b>", "after"])
+    }
 }
