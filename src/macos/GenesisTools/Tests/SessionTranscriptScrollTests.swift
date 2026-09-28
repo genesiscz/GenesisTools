@@ -15,6 +15,8 @@ import XCTest
 ///
 /// - The behaviour tests always run: a vertical wheel gesture over a tool output scrolls the
 ///   transcript, and a horizontal one scrolls the output sideways and leaves the transcript alone.
+///   GenesisTools adaptation: and a click opens a tool call to its whole output, also one that
+///   arrived while the transcript was on screen.
 /// - `testScrollCost` prints what scrolling costs (`SCROLLPERF` lines: main-thread CPU per frame and
 ///   how many row bodies ran) and runs only with `SESSION_SCROLL_PERF=1`. `SESSION_SCROLL_SECTIONS`
 ///   sizes the invented session (40 prompts by default); `SESSION_SCROLL_ENVELOPE=<tools ai sessions
@@ -70,6 +72,57 @@ final class SessionTranscriptScrollTests: XCTestCase {
         let center = block.convert(NSPoint(x: block.bounds.midX, y: block.bounds.midY), to: block.superview)
         rig.deliverOtherEvent()
         XCTAssertNil(block.hitTest(center), "the wheel view must not take clicks")
+    }
+
+    // GenesisTools adaptation: Martin, 2026-09-28: "when i open the tool details it should 1. show me the
+    // entire input … 2. show me the entire output but it just keeps the height the same".
+
+    /// A click on a closed tool call at "Tool inputs" opens it to its whole output: the row grows to
+    /// hold it, the rows below move down by as much, and the call stays where it was clicked (the
+    /// transcript opened at its latest turn used to pin its end and push the call up by its output).
+    func testOpeningAToolRowGrowsItToItsWholeOutput() throws {
+        let session = try InventedSession.make(sections: 3)
+        let rig = Rig(session.list(verbosity: .inputs), size: NSSize(width: 700, height: 700))
+        defer { rig.close() }
+        rig.settle(1.5)
+        let list = try XCTUnwrap(rig.transcript, "no transcript scroll view")
+        let table = try XCTUnwrap(list.documentView as? NSTableView, "the transcript is not a table")
+        let rows = session.tableRows()
+        XCTAssertEqual(table.numberOfRows, rows.count, "the table's rows are not the list's rows")
+        let visible = list.contentView.bounds
+        let row = try XCTUnwrap(rows.indices.first { index in
+            guard let id = rows[index], session.tool(id)?.name == "Bash" else { return false }
+            let rect = table.rect(ofRow: index)
+            return rect.minY > visible.minY + 40 && rect.maxY < visible.midY
+        }, "no closed Bash call in the top half of the list")
+        let output = try XCTUnwrap(session.fullOutputLines(rows[row]), "no output in the session file")
+        let viewport = list.contentView.bounds.origin.y
+
+        try rig.opensWholeOutput(row: row, lines: output, in: table)
+        XCTAssertEqual(list.contentView.bounds.origin.y, viewport, accuracy: 0.5, "the clicked call must stay where it was")
+    }
+
+    /// The same for a call that arrived while the transcript was on screen, the way a running session's
+    /// turns come in. AppKit drops the height listener of every row on screen at each insert, so such a
+    /// call kept its closed height and drew its output over the rows below
+    /// (`TranscriptScrollAnchor.remeasureVisibleRows`).
+    func testARowOnScreenWhenTurnsArriveStillOpensToItsOutput() throws {
+        let session = try InventedSession.make(sections: 3)
+        let rig = Rig(Streaming(session: session), size: NSSize(width: 560, height: 700))
+        defer { rig.close() }
+        rig.settle(4.5)
+        let list = try XCTUnwrap(rig.transcript, "no transcript scroll view")
+        let table = try XCTUnwrap(list.documentView as? NSTableView, "the transcript is not a table")
+        let rows = session.tableRows()
+        XCTAssertEqual(table.numberOfRows, rows.count, "not every streamed row arrived")
+        let arrived = Set(session.document.sections.last?.rows.map(\.id) ?? [])
+        let row = try XCTUnwrap(rows.indices.first { rows[$0].map { arrived.contains($0) && session.tool($0)?.name == "Bash" } ?? false },
+                                "no streamed Bash call")
+        rig.scrollTranscript(to: table.rect(ofRow: row).minY - 150)
+        rig.settle(0.8)
+        let output = try XCTUnwrap(session.fullOutputLines(rows[row]), "no output in the session file")
+
+        try rig.opensWholeOutput(row: row, lines: output, in: table)
     }
 
     // MARK: Cost
@@ -201,6 +254,54 @@ final class SessionTranscriptScrollTests: XCTestCase {
         let over16 = cpu.filter { $0 > 16.7 }.count
         let counted = counts.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }.joined(separator: " ")
         print("SCROLLPERF \(label) frames=\(frames.count) cpu[\(stats(cpu))] sync[\(stats(frames.map(\.sync)))] over8ms=\(over8) over16ms=\(over16) \(extra) \(counted)")
+    }
+}
+
+// GenesisTools adaptation: the last section arrives one row at a time while the list is on screen, each
+// tool call first running and then finished, the way the hub's live tail brings a working session in.
+private struct Streaming: View {
+    let session: InventedSession
+    @State private var step = 0
+
+    private var document: TranscriptDocument {
+        var document = session.document
+        let last = document.sections.count - 1
+        let rows = document.sections[last].rows
+        let shown = min(rows.count, step / 2 + 1)
+        document.sections[last].rows = rows.prefix(shown).enumerated().map { index, row in
+            guard index == shown - 1, step % 2 == 0, case .tool(let line) = row.kind else { return row }
+            let running = TranscriptToolLine(
+                toolId: line.toolId, name: line.name, displayName: line.displayName, symbol: line.symbol,
+                keyArgument: line.keyArgument, input: line.input, result: nil, status: .pending, exitCode: nil,
+                resultChars: nil, duration: nil
+            )
+            return TranscriptRow(id: row.id, kind: .tool(running), at: row.at, clock: row.clock, searchText: row.searchText, showsAuthor: row.showsAuthor)
+        }
+        return document
+    }
+
+    var body: some View {
+        SessionTranscriptList(
+            document: document,
+            provider: AIProviders.meta(for: session.envelope.provider),
+            modelName: "opus",
+            loadState: .loaded,
+            hasEarlier: false,
+            loadingEarlier: false,
+            windowNote: nil,
+            onLoadEarlier: {},
+            preset: TranscriptPreset(verbosity: .inputs),
+            services: session.services
+        )
+        .environment(\.colorScheme, .dark)
+        .task {
+            // Two steps a row (running, then finished), the last one finishing it.
+            let total = session.document.sections.last?.rows.count ?? 0
+            while !Task.isCancelled, step < total * 2 - 1 {
+                try? await Task.sleep(nanoseconds: 120_000_000)
+                step += 1
+            }
+        }
     }
 }
 
@@ -395,6 +496,59 @@ private final class Rig {
         return NSEvent(cgEvent: cg)
     }
 
+    // GenesisTools adaptation: clicks the header of the closed tool call in `row`, then checks the row grew
+    // to hold all `lines` of its output, the rows below moved down by as much, and the output is drawn
+    // inside the row (a row that kept its height drew it over the next ones).
+    func opensWholeOutput(row: Int, lines: Int, in table: NSTableView, file: StaticString = #filePath, line: UInt = #line) throws {
+        let before = table.rect(ofRow: row)
+        let nextBefore = table.rect(ofRow: row + 1)
+        click(at: table.convert(NSPoint(x: before.minX + 120, y: before.minY + 11), to: nil))
+        settle(1.2)
+
+        let after = table.rect(ofRow: row)
+        let nextAfter = table.rect(ofRow: row + 1)
+        // 11.5 pt monospaced lines with 1.5 pt spacing: a little over 15 pt each.
+        XCTAssertGreaterThan(after.height, before.height + CGFloat(lines) * 14, "the opened call must grow to its \(lines) output lines", file: file, line: line)
+        XCTAssertEqual(nextAfter.minY, after.maxY, accuracy: 1, "the next row must start where the opened one ends", file: file, line: line)
+        XCTAssertEqual(nextAfter.minY - nextBefore.minY, after.height - before.height, accuracy: 1, "the rows below must move down by the growth", file: file, line: line)
+        let output = try XCTUnwrap(codeBlocks(in: table).last { $0.minY >= before.minY && $0.minY < after.maxY }, "no output drawn in the opened row", file: file, line: line)
+        XCTAssertGreaterThan(output.height, CGFloat(lines) * 14, "the output must show every line, not the first ten", file: file, line: line)
+        XCTAssertLessThanOrEqual(output.maxY, after.maxY + 1, "the output must fit inside its row", file: file, line: line)
+
+        // A second click on the header closes it again, and the rows below come back up.
+        click(at: table.convert(NSPoint(x: before.minX + 120, y: before.minY + 11), to: nil))
+        settle(0.8)
+        XCTAssertEqual(table.rect(ofRow: row).height, before.height, accuracy: 1, "the closed call must shrink back", file: file, line: line)
+        XCTAssertEqual(table.rect(ofRow: row + 1).minY, nextBefore.minY, accuracy: 1, "the rows below must come back up", file: file, line: line)
+    }
+
+    // GenesisTools adaptation: a plain left click at `point` (window coordinates), delivered the way the
+    // wheel events are.
+    func click(at point: NSPoint) {
+        for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+            guard let event = NSEvent.mouseEvent(
+                with: type,
+                location: point,
+                modifierFlags: [],
+                timestamp: ProcessInfo.processInfo.systemUptime,
+                windowNumber: window.windowNumber,
+                context: nil,
+                eventNumber: 0,
+                clickCount: 1,
+                pressure: type == .leftMouseDown ? 1 : 0
+            ) else { continue }
+            NSApp.postEvent(event, atStart: false)
+        }
+        pump(until: Date().addingTimeInterval(0.05))
+    }
+
+    // GenesisTools adaptation: the drawn tool outputs under `table`, as frames in its coordinates, top first.
+    func codeBlocks(in table: NSTableView) -> [NSRect] {
+        views { $0 is SidewaysWheel.WheelView && $0.isDescendant(of: table) }
+            .map { table.convert($0.bounds, from: $0) }
+            .sorted { $0.minY < $1.minY }
+    }
+
     private func views(_ match: (NSView) -> Bool) -> [NSView] {
         guard let root = window.contentView?.superview ?? window.contentView else { return [] }
         var found: [NSView] = []
@@ -547,8 +701,38 @@ private struct InventedSession {
     /// One per session, as a host keeps it: rows compare services by identity.
     let services: TranscriptServices
 
+    // GenesisTools adaptation: the transcript row id of each table row, nil for the rows the list adds
+    // (its top marker, each section's header and end marker, the spacer at the bottom).
+    func tableRows() -> [String?] {
+        var ids: [String?] = [nil]
+        for section in document.sections {
+            ids.append(nil)
+            ids += section.rows.map { Optional($0.id) }
+            ids.append(nil)
+        }
+        ids.append(nil)
+        return ids
+    }
+
+    // GenesisTools adaptation: the tool call of a row id.
+    func tool(_ rowId: String) -> TranscriptToolLine? {
+        for section in document.sections {
+            for row in section.rows where row.id == rowId {
+                if case .tool(let line) = row.kind { return line }
+            }
+        }
+        return nil
+    }
+
+    // GenesisTools adaptation: how many lines the call of a row id printed, from the session file.
+    func fullOutputLines(_ rowId: String?) -> Int? {
+        guard let rowId, let line = tool(rowId), let result = native?.detail(for: line.toolId)?.fullResult else { return nil }
+        return result.split(separator: "\n", omittingEmptySubsequences: false).count
+    }
+
     /// The transcript alone, at "Inputs + output".
-    func list() -> some View {
+    // GenesisTools adaptation: `verbosity`, so a test can open a closed tool call.
+    func list(verbosity: TranscriptVerbosity = .outputs) -> some View {
         SessionTranscriptList(
             document: document,
             provider: AIProviders.meta(for: envelope.provider),
@@ -558,7 +742,7 @@ private struct InventedSession {
             loadingEarlier: false,
             windowNote: nil,
             onLoadEarlier: {},
-            preset: TranscriptPreset(verbosity: .outputs),
+            preset: TranscriptPreset(verbosity: verbosity),
             services: services
         )
         .environment(\.colorScheme, .dark)

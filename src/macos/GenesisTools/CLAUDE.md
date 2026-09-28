@@ -81,6 +81,12 @@ not the hub's models (`TimelineRowView`), and carry buttons, hover sensors and t
 pointer is on them (its `live`, `ExternalLink(interactive:)`). A list that inserts rows above the
 viewport holds it with `TranscriptScrollAnchor` (Hub/HubTranscriptAnchor.swift).
 
+🛑 A SwiftUI `List` stops re-measuring the rows on screen once rows are inserted or removed: AppKit drops
+their height listener at each insert and `noteHeightOfRows` returns the cached height. A row that grows
+later (an opened tool call) keeps its old height and draws over the rows below; the live tail made every
+row of a running session do it (2026-09-28). `TranscriptScrollAnchor.remeasureVisibleRows` measures the
+rows on screen again after each change of the row count; a new list whose rows change height needs the same.
+
 ## Look
 
 - Palette: `ReviewPalette` (Review/ReviewWindow.swift) for hub and review; `SessionPalette` inside the stolen session screen. Dark only, near-black background, white-alpha hairlines, green/red/orange/blue status colours.
