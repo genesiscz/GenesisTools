@@ -74,6 +74,15 @@ export interface ChromeApi {
         onUpdated: { addListener(listener: (tabId: number, change: { status?: string }) => void): void };
         onRemoved: { addListener(listener: (tabId: number) => void): void };
     };
+    commands: {
+        onCommand: { addListener(listener: (command: string, tab?: Tab) => void): void };
+    };
+    storage: {
+        local: {
+            get(keys: string[]): Promise<Record<string, unknown>>;
+            set(items: Record<string, unknown>): Promise<void>;
+        };
+    };
     contextMenus: {
         create(properties: { id: string; title: string; contexts: string[]; documentUrlPatterns?: string[] }): void;
         removeAll(): Promise<void>;

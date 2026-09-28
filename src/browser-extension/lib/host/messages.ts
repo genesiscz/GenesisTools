@@ -9,6 +9,7 @@ export const HOST_COMMANDS = [
     "checkout.resolve",
     "open.file",
     "open.terminal",
+    "hub.open",
     "hunk.explain",
     "review.start",
     "action.run",

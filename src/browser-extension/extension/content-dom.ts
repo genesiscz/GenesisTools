@@ -76,12 +76,32 @@ export function contextAt(el: Element | null): DomContext {
     return { path: pathAt(el), line: lineAt(el) };
 }
 
-/** The PR/MR head branch shown on the page; a fork's `owner:branch` loses the owner. */
-export function headBranch(doc: Document): string | undefined {
+/**
+ * The head branch in the data GitHub's React PR page ships with its HTML
+ * (`script[data-target="react-app.embeddedData"]`, `"headBranch":"feat/x"`). That script can
+ * outlive an in-page navigation to another PR, so it counts only when it names this PR's number.
+ */
+export function headBranchFromEmbeddedData(text: string | null | undefined, number?: number): string | undefined {
+    if (!text || (number !== undefined && !text.includes(`"number":${number},`))) {
+        return undefined;
+    }
+
+    return text.match(/"headBranch":"([^"\\]{1,200})"/)?.[1];
+}
+
+/**
+ * The PR/MR head branch shown on the page; a fork's `owner:branch` loses the owner. The React PR
+ * page (2026) renders base and head as two `PullRequestBranchName-module__…` links, base first.
+ */
+export function headBranch(doc: Document, number?: number): string | undefined {
+    const branchLinks = doc.querySelectorAll("a[class*='PullRequestBranchName'][href*='/tree/']");
+    const embedded = doc.querySelector("script[data-target='react-app.embeddedData']")?.textContent;
     const candidates = [
+        headBranchFromEmbeddedData(embedded, number),
         doc.querySelector(".js-source-branch-copy")?.getAttribute("data-clipboard-text"),
         doc.querySelector("[data-testid='head-ref'], .head-ref")?.textContent,
         doc.querySelector(".ref-container .ref-name")?.textContent,
+        branchLinks.length >= 2 ? branchLinks[1]?.textContent : undefined,
     ];
 
     for (const raw of candidates) {

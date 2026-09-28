@@ -1,19 +1,23 @@
 import { afterAll, describe, expect, it } from "bun:test";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import type { OpenHubOptions, OpenHubResult } from "@app/hub/lib/open";
 import type { LocalCheckout } from "@genesiscz/utils/git/local-checkouts";
 import type { EditorTarget, RunResult, TerminalTarget } from "@genesiscz/utils/open-in";
 import { makeTempDir } from "@genesiscz/utils/paths";
 import { isProcessAlive } from "@genesiscz/utils/process-alive";
+import { headBranchFromEmbeddedData } from "../extension/content-dom";
 import { targetFromHash } from "../extension/shared/route-target";
 import { actionValues, runAction } from "./actions";
 import { ConfigError, parseConfig } from "./config";
 import { type Deps, type RunOptions, routedRunner, spawnArgv } from "./deps";
+import { cliTail } from "./errors";
 import { explainHunk } from "./explain";
 import { dispatch } from "./host/dispatch";
 import { extensionIdFromKey, pinnedExtensionId } from "./host/install";
 import { hostReplyDeadlineMs } from "./host/messages";
 import { encodeFrame, FrameReader } from "./host/protocol";
+import { openInHub } from "./hub";
 import { openFile } from "./open";
 import { parseForgeUrl, splitRefPath } from "./page-url";
 import { planReview, startReview } from "./review";
@@ -42,18 +46,21 @@ interface Calls {
     tools: string[][];
     editor: EditorTarget[];
     terminal: TerminalTarget[];
+    hub: OpenHubOptions[];
 }
 
 function fakeDeps({
     config = {},
     tools = () => ({ code: 0, stdout: "", stderr: "" }),
     run = () => ({ code: 0, stdout: "", stderr: "" }),
+    hub = (options) => ({ built: false, args: ["--hub", "--mode", options.mode ?? "sessions"] }),
 }: {
     config?: Record<string, unknown>;
     tools?: (args: string[]) => RunResult;
     run?: (argv: string[]) => RunResult;
+    hub?: (options: OpenHubOptions) => OpenHubResult;
 } = {}): { deps: Deps; calls: Calls } {
-    const calls: Calls = { run: [], tools: [], editor: [], terminal: [] };
+    const calls: Calls = { run: [], tools: [], editor: [], terminal: [], hub: [] };
     const parsed = parseConfig({ repoRoots: [], ...config });
     const deps: Deps = {
         config: async () => parsed,
@@ -84,6 +91,10 @@ function fakeDeps({
                 return { driver: "cmux", detail: "workspace:1" };
             },
         }),
+        hub: async (options) => {
+            calls.hub.push(options);
+            return hub(options);
+        },
         promptDir: join(base, "prompts"),
         now: () => new Date("2026-01-02T03:04:05Z"),
     };
@@ -261,6 +272,58 @@ describe("dispatch", () => {
         const { deps } = fakeDeps();
         const reply = await dispatch(deps, { command: "open.terminal", params: { url: "https://github.com/o/other" } });
         expect(reply).toMatchObject({ ok: false, code: "no-checkout" });
+    });
+});
+
+describe("open in GenesisTools", () => {
+    const mr = "https://gitlab.internal.example/group/app/-/merge_requests/7";
+
+    it("selects the MR in the hub's PRs mode, and opens a diff file in its review", async () => {
+        const { deps, calls } = fakeDeps();
+        expect(await openInHub(deps, { url: `${mr}/diffs` })).toMatchObject({ root });
+        expect(await openInHub(deps, { url: mr, path: "src/a.ts" })).toMatchObject({
+            detail: "GenesisTools shows group/app!7, src/a.ts",
+        });
+        expect(calls.hub).toEqual([
+            { mode: "prs", pr: "group/app!7", reveal: undefined },
+            { mode: "prs", pr: "group/app!7", reveal: "src/a.ts" },
+        ]);
+        await expect(openInHub(deps, { url: mr, path: "../app-feat/x" })).rejects.toThrow();
+        expect(calls.hub).toHaveLength(2);
+    });
+
+    it("opens any other project page in Worktrees, on the worktree of the page's branch", async () => {
+        const { deps, calls } = fakeDeps();
+        await openInHub(deps, { url: "https://gitlab.internal.example/group/app", branch: "feat/login" });
+        expect(calls.hub).toEqual([{ mode: "worktrees", worktree }]);
+    });
+
+    it("never reaches the hub for a project with no local checkout", async () => {
+        const { deps } = fakeDeps({
+            hub: () => {
+                throw new Error("the hub must not open for a project without a checkout");
+            },
+        });
+        const reply = await dispatch(deps, {
+            command: "hub.open",
+            params: { url: "https://github.com/o/other/pull/3" },
+        });
+        expect(reply).toMatchObject({ ok: false, code: "no-checkout" });
+    });
+});
+
+describe("page text for the cards", () => {
+    it("drops colour codes, clack glyphs and blank lines from a CLI failure, and keeps its end", () => {
+        expect(cliTail("\u001b[31m│\u001b[39m\n■  link used up\n\n")).toBe("link used up");
+        expect(cliTail(`${"x".repeat(400)}\nreason`, 20)).toBe(`…${"x".repeat(13)}\nreason`);
+    });
+
+    it("reads the PR head branch from GitHub's embedded page data only when it names this PR", () => {
+        const data =
+            '{"payload":{"pullRequest":{"number":424,"baseBranch":"master","headBranch":"feat/2026-09-26-enhancements"}}}';
+        expect(headBranchFromEmbeddedData(data, 424)).toBe("feat/2026-09-26-enhancements");
+        expect(headBranchFromEmbeddedData(data, 425)).toBeUndefined();
+        expect(headBranchFromEmbeddedData(undefined, 424)).toBeUndefined();
     });
 });
 

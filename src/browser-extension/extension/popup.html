@@ -1,19 +1,31 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" translate="no">
 <head>
     <meta charset="utf-8" />
+    <meta name="google" content="notranslate" />
     <title>GenesisTools</title>
-    <style>body { width: 360px; }</style>
+    <style>
+        body { width: 360px; }
+        #result:empty { display: none; }
+        footer { display: flex; justify-content: space-between; align-items: center; }
+    </style>
 </head>
 <body>
     <main>
         <div class="gt-row">
             <h1 class="gt-title"><span class="mark">GT</span> GenesisTools</h1>
-            <span id="host" class="gt-muted">checking host...</span>
+            <span class="gt-spacer"></span>
+            <span id="host"><span class="gt-chip busy"><span class="gt-dot"></span>host</span></span>
         </div>
+        <section id="host-help" class="gt-surface" hidden>
+            <h2>Native host</h2>
+            <div class="gt-muted">Register it once from a terminal, then restart the browser:</div>
+            <div class="gt-code">tools browser-extension install-host</div>
+        </section>
         <section id="page" class="gt-surface" hidden>
             <h2>This page</h2>
-            <div id="page-info" class="gt-muted"></div>
+            <div id="page-info" class="gt-row"></div>
+            <div id="page-checkout" class="gt-muted"></div>
             <div id="page-buttons" class="gt-row"></div>
         </section>
         <section id="actions" class="gt-surface" hidden>
@@ -21,7 +33,10 @@
             <div id="action-buttons" class="gt-row"></div>
         </section>
         <pre id="result" class="gt-pre" role="status" aria-live="polite"></pre>
-        <div class="gt-row"><a href="#" id="options">Options</a></div>
+        <footer class="gt-muted">
+            <a href="#" id="options">Options</a>
+            <span><span class="gt-kbd">⌥⇧G</span> opens a page in GenesisTools</span>
+        </footer>
     </main>
     <script type="module" src="popup.js"></script>
 </body>

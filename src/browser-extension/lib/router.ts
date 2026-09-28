@@ -2,7 +2,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { GENESIS_APP_BUNDLE_ID } from "@genesiscz/utils/macos/genesis-app";
 import type { Deps } from "./deps";
-import { FeatureError } from "./errors";
+import { cliTail, FeatureError } from "./errors";
 import { isRecord } from "./values";
 
 /** The public host whose links the extension hands to GenesisTools.app. */
@@ -65,7 +65,10 @@ export async function explainLink(deps: Deps, rawUrl: unknown): Promise<RouteOut
     const explained = await deps.tools(["browser-router", "explain", url, "--json"], { timeoutMs: 15_000 });
 
     if (explained.code !== 0) {
-        throw new FeatureError("unavailable", `browser-router explain failed: ${explained.stderr.trim().slice(-300)}`);
+        throw new FeatureError(
+            "unavailable",
+            `The local router could not read this link: ${cliTail(explained.stderr)}`
+        );
     }
 
     const decision = readDecision(explained.stdout);
@@ -94,7 +97,7 @@ export async function routeLink(deps: Deps, rawUrl: unknown): Promise<RouteOutco
     const cli = await deps.tools(["browser-router", "open", url], { timeoutMs: 60_000 });
 
     if (cli.code !== 0) {
-        throw new FeatureError("failed", `browser-router open failed: ${cli.stderr.trim().slice(-300)}`);
+        throw new FeatureError("failed", `The local router could not open this link: ${cliTail(cli.stderr)}`);
     }
 
     return { ...decision, routed: true };

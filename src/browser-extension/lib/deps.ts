@@ -1,4 +1,5 @@
 import { join } from "node:path";
+import { type OpenHubOptions, type OpenHubResult, openHub } from "@app/hub/lib/open";
 import { collectOutput, execTool } from "@genesiscz/utils/cli";
 import { checkoutsAt, discoverCheckouts, type LocalCheckout } from "@genesiscz/utils/git/local-checkouts";
 import { logger } from "@genesiscz/utils/logger";
@@ -32,6 +33,8 @@ export interface Deps {
     tools(args: string[], opts: { cwd?: string; timeoutMs: number }): Promise<RunResult>;
     editor(id: EditorDriverId): EditorDriver;
     terminal(id: TerminalDriverId): TerminalDriver;
+    /** Opens or raises the GenesisTools hub window with these options. */
+    hub(options: OpenHubOptions): Promise<OpenHubResult>;
     /** Where prompt files are written. */
     promptDir: string;
     now(): Date;
@@ -87,6 +90,8 @@ export function liveDeps(): Deps {
         tools: (args, { cwd, timeoutMs }) => execToolArgv(args, { cwd, timeoutMs }),
         editor: editorDriver,
         terminal: terminalDriver,
+        // A click must not wait a minute on a build: a stale app still opens, a missing one says how to build it.
+        hub: (options) => openHub({ ...options, build: false, staleOk: true }),
         promptDir: join(browserExtensionStorage().getBaseDir(), "prompts"),
         now: () => new Date(),
     };

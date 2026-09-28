@@ -189,6 +189,7 @@ async function syncGitlabScripts(): Promise<string[]> {
 }
 
 const MENU_TITLES: Record<MenuItem, [string, string[]]> = {
+    "open-hub": ["Open in GenesisTools", ["page", "selection", "link"]],
     "open-file": ["Open locally in the editor", ["page", "selection", "link"]],
     "open-terminal": ["Open the checkout in a terminal", ["page"]],
     explain: ["Explain the selected hunk", ["selection"]],
@@ -213,7 +214,24 @@ ext.contextMenus.onClicked.addListener((info: ContextMenuInfo, tab?: Tab) => {
         return;
     }
 
-    void ext.tabs.sendMessage(tab.id, { type: "menu", item: info.menuItemId, selectionText: info.selectionText });
+    void ext.tabs.sendMessage(tab.id, {
+        type: "menu",
+        item: info.menuItemId,
+        selectionText: info.selectionText,
+        linkUrl: info.linkUrl,
+    });
+});
+
+/** The keyboard shortcut (manifest `commands`) runs the same handler as the menu entry, on the active tab. */
+ext.commands.onCommand.addListener((command, tab) => {
+    if (command !== "open-in-genesistools" || tab?.id === undefined) {
+        return;
+    }
+
+    // A tab without the content script (not a GitHub or granted GitLab page) has no receiver.
+    ext.tabs.sendMessage(tab.id, { type: "menu", item: "open-hub" }).catch((error: unknown) => {
+        console.info("[genesis-tools] the shortcut has nothing to open on this tab", error);
+    });
 });
 
 async function handle(message: BackgroundMessage, sender: MessageSender): Promise<unknown> {

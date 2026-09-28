@@ -4,7 +4,7 @@ import { logger } from "@genesiscz/utils/logger";
 import type { OpenResult } from "@genesiscz/utils/open-in";
 import type { BrowserExtensionConfig } from "./config";
 import type { Deps } from "./deps";
-import { FeatureError } from "./errors";
+import { cliTail, FeatureError } from "./errors";
 
 const log = logger.child({ component: "browser-extension/agent" });
 
@@ -84,7 +84,7 @@ export async function askHeadless({
     });
 
     if (res.code !== 0) {
-        const detail = (res.stderr.trim() || res.stdout.trim()).slice(-500);
+        const detail = cliTail(res.stderr.trim() || res.stdout, 500);
         throw new FeatureError("failed", `${config.agent.headless.join(" ")} exited ${res.code}: ${detail}`);
     }
 

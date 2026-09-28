@@ -4,6 +4,7 @@ import { ConfigError, configPath, saveConfig } from "../config";
 import type { Deps } from "../deps";
 import { FeatureError } from "../errors";
 import { explainHunk } from "../explain";
+import { openInHub } from "../hub";
 import { describeCheckouts, openFile, openTerminal } from "../open";
 import { startReview } from "../review";
 import { explainLink, routeLink } from "../router";
@@ -33,6 +34,7 @@ const HANDLERS: Record<HostCommand, Handler> = {
     "open.file": (deps, params) =>
         openFile(deps, { url: params.url, branch: params.branch, path: params.path, line: params.line }),
     "open.terminal": (deps, params) => openTerminal(deps, { url: params.url, branch: params.branch }),
+    "hub.open": (deps, params) => openInHub(deps, { url: params.url, branch: params.branch, path: params.path }),
     "hunk.explain": (deps, params) =>
         explainHunk(deps, {
             url: params.url,

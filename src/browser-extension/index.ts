@@ -11,6 +11,7 @@ import { liveDeps } from "./lib/deps";
 import { explainHunk } from "./lib/explain";
 import { dispatch } from "./lib/host/dispatch";
 import { hostStatus, installHost } from "./lib/host/install";
+import { hubTarget, openInHub } from "./lib/hub";
 import { describeCheckouts, openFile, openTerminal } from "./lib/open";
 import { planReview, startReview } from "./lib/review";
 import { routeLink } from "./lib/router";
@@ -146,6 +147,31 @@ program
                 ? await openTerminal(deps, { url, branch: opts.branch })
                 : await openFile(deps, { url, branch: opts.branch, path: opts.path, line: lineOption(opts.line) });
             out.println(`${opened.driver}: ${opened.detail}`);
+        } catch (error) {
+            fail(error);
+        }
+    });
+
+program
+    .command("hub")
+    .description(
+        "Open a page in GenesisTools, as the extension's Open in GenesisTools does: a PR/MR in the PRs mode, any other project page in Worktrees"
+    )
+    .argument("<url>", "a PR/MR page, or any page of a project with a local checkout")
+    .option("--path <file>", "with a PR/MR: open this repository-relative file in its review")
+    .option("--branch <name>", "prefer the worktree on this branch")
+    .option("--dry-run", "print what would open; open nothing")
+    .action(async (url: string, opts: { path?: string; branch?: string; dryRun?: boolean }) => {
+        try {
+            const deps = liveDeps();
+
+            if (opts.dryRun) {
+                out.result(await hubTarget(deps, { url, path: opts.path, branch: opts.branch }));
+                return;
+            }
+
+            const opened = await openInHub(deps, { url, path: opts.path, branch: opts.branch });
+            out.println(opened.detail);
         } catch (error) {
             fail(error);
         }
