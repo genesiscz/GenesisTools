@@ -49,12 +49,20 @@ export async function withInterrupt<T>(
         }
 
         process.off("SIGINT", handler);
+        // pid-verified: process.pid is this process; re-raising lets the default SIGINT action end it.
         process.kill(process.pid, "SIGINT");
     };
     process.on("SIGINT", handler);
     try {
         return await fn(controller.signal);
     } finally {
-        process.off("SIGINT", handler);
+        // A forwarded copy of the first Ctrl-C may still be on its way. Without a listener it would take
+        // the default action and end the process while it prints what it found.
+        const remaining = controller.signal.aborted ? window - (now() - firstAt) : 0;
+        if (remaining > 0) {
+            setTimeout(() => process.off("SIGINT", handler), remaining).unref();
+        } else {
+            process.off("SIGINT", handler);
+        }
     }
 }
