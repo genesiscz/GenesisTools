@@ -178,7 +178,9 @@ final class WindowTitlebarTests: XCTestCase {
         super.tearDown()
     }
 
-    private func makeWindow(sidebar: CGFloat, clicks: Clicks = Clicks(), padded: Bool = false) -> NSWindow {
+    private func makeWindow(
+        sidebar: CGFloat, clicks: Clicks = Clicks(), padded: Bool = false, onDropFiles: (([URL]) -> Bool)? = nil
+    ) -> NSWindow {
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 900, height: 500),
             styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
@@ -188,7 +190,9 @@ final class WindowTitlebarTests: XCTestCase {
         window.title = "Agents"
         window.titlebarAppearsTransparent = true
         window.isReleasedWhenClosed = false
-        window.contentView = HubGlass.makeContentView(root: Root(sidebar: sidebar, clicks: clicks, padded: padded).titlebarZone())
+        window.contentView = HubGlass.makeContentView(
+            root: Root(sidebar: sidebar, clicks: clicks, padded: padded).titlebarZone(onDropFiles: onDropFiles)
+        )
         window.alphaValue = 0
         window.level = .init(rawValue: Int(CGWindowLevelForKey(.desktopWindow)) - 1)
         window.orderFrontRegardless()
@@ -281,6 +285,45 @@ final class WindowTitlebarTests: XCTestCase {
         }
     }
 
+    /// A file dropped on the empty strip: AppKit hands the drag to the view under the pointer (the zone)
+    /// or its nearest ancestor that takes files. The strip's fills take no hits, so without the zone's
+    /// own drop the file reached no drop target (Genesis's markdown toolbar, 2026-09-28).
+    func testAFileDroppedOnTheEmptyStripReachesTheWindowsOpenPath() throws {
+        var received: [URL] = []
+        let window = makeWindow(sidebar: 300, onDropFiles: { urls in
+            received = urls
+            return true
+        })
+        let strip = WindowTitlebar.stripHeight(of: window)
+        let zone = try XCTUnwrap(hit(window, x: 600, yFromTop: strip / 2) as? TitlebarZoneView)
+        XCTAssertTrue(zone.registeredDraggedTypes.contains(.fileURL), "the drag stops at the zone")
+        // AppKit finds a drag's destination by frame, so the zone is the strip and no more: a file
+        // dropped on the content is not the zone's.
+        let frame = zone.convert(zone.bounds, to: nil)
+        XCTAssertEqual(frame.minY, window.frame.height - strip, accuracy: 1, "the zone ends where the strip ends")
+        XCTAssertEqual(frame.maxY, window.frame.height, accuracy: 1)
+        XCTAssertTrue(try titlebarDragDestination(window, x: 600, yFromTop: strip / 2) === zone)
+        XCTAssertFalse(try titlebarDragDestination(window, x: 600, yFromTop: strip + 150) === zone, "a drop on the content")
+
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent("titlebar-drop-\(UUID().uuidString).md")
+        try "# dropped".write(to: file, atomically: true, encoding: .utf8)
+        let drag = TitlebarFakeDrag(files: [file])
+        XCTAssertEqual(zone.draggingEntered(drag), .copy)
+        XCTAssertTrue(zone.performDragOperation(drag))
+        XCTAssertEqual(received.map(\.standardizedFileURL), [file.standardizedFileURL])
+    }
+
+    /// The hub opens no dropped files: its zone takes no drags, so a drop there behaves as before.
+    func testAZoneWithoutAnOpenPathTakesNoDrops() throws {
+        let window = makeWindow(sidebar: 300)
+        let strip = WindowTitlebar.stripHeight(of: window)
+        let zone = try XCTUnwrap(hit(window, x: 600, yFromTop: strip / 2) as? TitlebarZoneView)
+        XCTAssertTrue(zone.registeredDraggedTypes.isEmpty)
+        let drag = TitlebarFakeDrag(files: [URL(fileURLWithPath: "/tmp/x.md")])
+        XCTAssertEqual(zone.draggingEntered(drag), [])
+        XCTAssertFalse(zone.performDragOperation(drag))
+    }
+
     /// A custom toolbar drawn right under the title bar (Genesis's markdown viewer): `below:` makes its
     /// empty part the strip too; its button and the content under it keep their clicks.
     func testChromeRightUnderTheTitleBarJoinsTheStripWithBelow() {
@@ -350,4 +393,53 @@ final class WindowTitlebarTests: XCTestCase {
         XCTAssertEqual(window.frame, start, "the control took the double-click, the window did not zoom")
         XCTAssertGreaterThan(clicks.count, 0, "the button in the strip got its click")
     }
+}
+
+/// Where AppKit delivers a file drag at this point: `-[NSView _hitTest:dragTypes:]`, the lookup it
+/// runs for a drag (by frame, the deepest view registered for the type). Private, so the test
+/// skips when AppKit no longer has it.
+@MainActor
+func titlebarDragDestination(_ window: NSWindow, x: CGFloat, yFromTop: CGFloat) throws -> NSView? {
+    let frameView = try XCTUnwrap(window.contentView?.superview)
+    let selector = NSSelectorFromString("_hitTest:dragTypes:")
+    guard frameView.responds(to: selector) else {
+        throw XCTSkip("AppKit has no _hitTest:dragTypes: on this system")
+    }
+
+    typealias Lookup = @convention(c) (AnyObject, Selector, UnsafeMutablePointer<NSPoint>, NSSet) -> Unmanaged<NSView>?
+    let lookup = unsafeBitCast(frameView.method(for: selector), to: Lookup.self)
+    var point = frameView.convert(NSPoint(x: x, y: window.frame.height - yFromTop), from: nil)
+    let types = NSSet(array: [NSPasteboard.PasteboardType.fileURL.rawValue])
+    return lookup(frameView, selector, &point, types)?.takeUnretainedValue()
+}
+
+/// A drag that carries files on a pasteboard of its own; the rest of the protocol is never read.
+final class TitlebarFakeDrag: NSObject, NSDraggingInfo {
+    let draggingPasteboard: NSPasteboard
+
+    init(files: [URL]) {
+        draggingPasteboard = NSPasteboard(name: NSPasteboard.Name("titlebar-drop-\(UUID().uuidString)"))
+        draggingPasteboard.clearContents()
+        draggingPasteboard.writeObjects(files.map { $0 as NSURL })
+    }
+
+    var draggingDestinationWindow: NSWindow? { nil }
+    var draggingSourceOperationMask: NSDragOperation { .copy }
+    var draggingLocation: NSPoint { .zero }
+    var draggedImageLocation: NSPoint { .zero }
+    var draggedImage: NSImage? { nil }
+    var draggingSource: Any? { nil }
+    var draggingSequenceNumber: Int { 1 }
+    var draggingFormation: NSDraggingFormation = .default
+    var animatesToDestination = false
+    var numberOfValidItemsForDrop = 1
+    var springLoadingHighlight: NSSpringLoadingHighlight { .none }
+
+    func slideDraggedImage(to screenPoint: NSPoint) {}
+    func resetSpringLoading() {}
+    func enumerateDraggingItems(
+        options enumOpts: NSDraggingItemEnumerationOptions = [], for view: NSView?, classes classArray: [AnyClass],
+        searchOptions: [NSPasteboard.ReadingOptionKey: Any] = [:],
+        using block: (NSDraggingItem, Int, UnsafeMutablePointer<ObjCBool>) -> Void
+    ) {}
 }

@@ -69,6 +69,12 @@ enum WindowTitlebar {
         perform(action(clickCount: 2, preference: preference), on: window)
     }
 
+    /// The file URLs a drag carries, or none.
+    static func fileURLs(on pasteboard: NSPasteboard) -> [URL] {
+        let objects = pasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true])
+        return (objects ?? []).compactMap { $0 as? URL }
+    }
+
     /// The strip's height: 32 pt on macOS 26 without a toolbar, 28 pt before, 0 in full screen
     /// (the title bar then slides in over the content and handles its own clicks).
     @MainActor
@@ -399,6 +405,41 @@ final class TitlebarZoneView: NSView {
         }
     }
 
+    /// Files dropped on the empty strip. The strip's fills take no hits, so without this a drop there
+    /// reached no drop target (Genesis's markdown viewer lost its toolbar drop). AppKit picks a drag's
+    /// destination by frame, not by `hitTest`: the deepest view registered for the dragged type whose
+    /// frame holds the pointer (`-[NSView _hitTest:dragTypes:]`, probed 2026-09-28). That is why the
+    /// zone's frame is the strip and no more (`TitlebarZoneHost`): as large as the window, it took
+    /// every file drop meant for the content.
+    var onDropFiles: (([URL]) -> Bool)? {
+        didSet {
+            guard (oldValue == nil) != (onDropFiles == nil) else { return }
+            if onDropFiles == nil {
+                unregisterDraggedTypes()
+            } else {
+                registerForDraggedTypes([.fileURL])
+            }
+        }
+    }
+
+    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        dropOperation(sender)
+    }
+
+    override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
+        dropOperation(sender)
+    }
+
+    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        let urls = WindowTitlebar.fileURLs(on: sender.draggingPasteboard)
+        guard let onDropFiles, !urls.isEmpty else { return false }
+        return onDropFiles(urls)
+    }
+
+    private func dropOperation(_ sender: NSDraggingInfo) -> NSDragOperation {
+        onDropFiles != nil && !WindowTitlebar.fileURLs(on: sender.draggingPasteboard).isEmpty ? .copy : []
+    }
+
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         report()
@@ -423,27 +464,72 @@ final class TitlebarZoneView: NSView {
     }
 }
 
+/// What SwiftUI sizes to the window's root: it only holds the zone at its top edge, as tall as the
+/// strip, and hands every hit to the zone. It takes no clicks and no drags of its own.
+final class TitlebarZoneHost: NSView {
+    let zone = TitlebarZoneView()
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        addSubview(zone)
+    }
+
+    required init?(coder: NSCoder) { fatalError("not supported") }
+
+    override var isFlipped: Bool { true }
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        zone.hitTest(convert(point, from: superview))
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        placeZone()
+    }
+
+    override func setFrameSize(_ newSize: NSSize) {
+        super.setFrameSize(newSize)
+        placeZone()
+    }
+
+    /// The window's title bar and the `below` points under it; in full screen only `below`.
+    func placeZone() {
+        let strip = window.map { WindowTitlebar.stripHeight(of: $0) } ?? 0
+        let frame = NSRect(x: 0, y: 0, width: bounds.width, height: min(bounds.height, strip + zone.below))
+        if zone.frame != frame {
+            zone.frame = frame
+        }
+    }
+}
+
 private struct TitlebarZone: NSViewRepresentable {
     var below: CGFloat
+    var onDropFiles: (([URL]) -> Bool)?
     var onMetrics: (TitlebarMetrics) -> Void
 
-    func makeNSView(context: Context) -> TitlebarZoneView { TitlebarZoneView() }
+    func makeNSView(context: Context) -> TitlebarZoneHost { TitlebarZoneHost() }
 
-    func updateNSView(_ view: TitlebarZoneView, context: Context) {
-        view.below = below
-        view.onMetrics = onMetrics
+    func updateNSView(_ host: TitlebarZoneHost, context: Context) {
+        if host.zone.below != below {
+            host.zone.below = below
+            host.placeZone()
+        }
+
+        host.zone.onDropFiles = onDropFiles
+        host.zone.onMetrics = onMetrics
     }
 }
 
 private struct TitlebarZoneModifier: ViewModifier {
     let below: CGFloat
+    let onDropFiles: (([URL]) -> Bool)?
     @State private var metrics = TitlebarMetrics()
 
     func body(content: Content) -> some View {
         content
             .environment(\.titlebarMetrics, metrics)
             .background {
-                TitlebarZone(below: below) { metrics = $0 }
+                TitlebarZone(below: below, onDropFiles: onDropFiles) { metrics = $0 }
                     .ignoresSafeArea(.container, edges: .top)
             }
     }
@@ -471,9 +557,11 @@ extension View {
     /// Put on a window's root view. The empty title bar strip zooms on a double-click (per System
     /// Settings) and drags the window; controls in the strip keep their clicks. `below`: points of
     /// chrome drawn right under the title bar that belong to the strip too (a custom toolbar row,
-    /// Genesis's markdown viewer); its fill must take no clicks.
-    func titlebarZone(below: CGFloat = 0) -> some View {
-        modifier(TitlebarZoneModifier(below: below))
+    /// Genesis's markdown viewer); its fill must take no clicks. `onDropFiles`: a window that opens
+    /// dropped files passes its open path, so a file dropped on the empty strip still opens: the
+    /// strip's fills take no hits, and a drop there otherwise reaches no drop target.
+    func titlebarZone(below: CGFloat = 0, onDropFiles: (([URL]) -> Bool)? = nil) -> some View {
+        modifier(TitlebarZoneModifier(below: below, onDropFiles: onDropFiles))
     }
 
     /// A background that also paints the title bar strip above the view, and leaves the strip's
