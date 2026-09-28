@@ -260,7 +260,10 @@ retry window does not kill a paste that has started. Successful calls report `re
 `elapsedMs`; workflow traces retain this receipt. No extra Jev request is made.
 
 This is not semantic rebinding. Changed values, documents, missing/ambiguous targets, modal barriers,
-permissions and expired tokens still stop. Coordinates and OCR regions are not retried. Unknown or
+permissions and expired tokens still stop. A retry that ends on a changed or missing target reports
+`dispatchState:"uncertain"` with `recovery.targetChanged` and each attempt's refusal: no attempt posted
+the input, but the UI moved after an earlier attempt activated and focused the target (on Brave, a
+page that navigated). Coordinates and OCR regions are not retried. Unknown or
 already-dispatched input never qualifies, including native crashes/timeouts. A failed paste readback
 cannot trigger a second paste. Replacement readback waits for the exact requested text, not the
 first intermediate value change, while keeping the clipboard available. The clipboard comes back

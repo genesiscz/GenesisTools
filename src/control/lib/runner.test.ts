@@ -451,6 +451,54 @@ test("prepared recovery refuses unsafe states and cannot loop forever", async ()
     expect(calls).toBe(1);
 });
 
+test("a retry that finds the target changed reports uncertain delivery and names every attempt", async () => {
+    const args = ["act", "--prepare", "--target-key", "a".repeat(64)];
+    const replies = [
+        {
+            ok: false,
+            dispatchState: "not_started",
+            refusal: "focus_mismatch",
+            error: 'focus changed before input; no action dispatched; focus is on AXList "Suggestions", not the target',
+        },
+        {
+            ok: false,
+            dispatchState: "not_started",
+            refusal: "missing_target",
+            error: "observed target changed, disappeared or became ambiguous",
+        },
+    ];
+    let calls = 0;
+    const result = await runAxAsyncWithRecovery({
+        args,
+        timeoutMs: 2000,
+        run: async () => {
+            const reply = replies[calls++];
+            if (!reply) {
+                throw new Error("The input was attempted a third time");
+            }
+
+            return reply;
+        },
+    });
+    expect(calls).toBe(2);
+    expect(result.dispatchState).toBe("uncertain");
+    expect(result.recovery).toMatchObject({ retries: 1, targetChanged: true });
+    expect(result.error).toContain(
+        'attempt 1: focus changed before input; no action dispatched; focus is on AXList "Suggestions"'
+    );
+    expect(result.error).toContain("attempt 2: observed target changed");
+    expect(result.error).toContain("Observe before repeating the input.");
+
+    // The negative control: one refusal, no preparation retried, stays an honest not_started.
+    const single = await runAxAsyncWithRecovery({
+        args,
+        timeoutMs: 2000,
+        run: async () => ({ ok: false, dispatchState: "not_started", refusal: "missing_target", error: "gone" }),
+    });
+    expect(single.dispatchState).toBe("not_started");
+    expect(single.error).toBe("gone");
+});
+
 test("terminated native refusal cannot authorize an action retry", () => {
     let calls = 0;
     const result = runAxWithBoundary({

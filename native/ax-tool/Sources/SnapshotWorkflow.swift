@@ -618,6 +618,16 @@ private func workflowFrontWindow(_ window: ObservedWindow, pid: pid_t, element: 
     }
 }
 
+/// Role and label of whatever holds keyboard focus, for a refusal message.
+private func describeFocusHolder(_ focused: CFTypeRef?) -> String {
+    guard let focused, CFGetTypeID(focused) == AXUIElementGetTypeID() else { return "nothing readable" }
+    let element = focused as! AXUIElement
+    let role = axStringAttribute(element, "AXRole") ?? "an element without a role"
+    let label = [axStringAttribute(element, "AXTitle"), axStringAttribute(element, "AXDescription")]
+        .compactMap { $0 }.first { !$0.isEmpty }
+    return label.map { "\(role) \"\(String($0.prefix(60)))\"" } ?? role
+}
+
 private func workflowAXAction(_ element: AXUIElement, action: String) {
     guard axActionNames(element).contains(action) else {
         workflowFailure("element does not expose \(action); inspect actions in a fresh see result")
@@ -908,7 +918,8 @@ func cmdAct(appName _: String) {
         targetEnabled: (axAttribute(element, "AXEnabled") as? Bool) != false,
         windowFocused: windowFocused, inputFocused: inputFocused,
         allowUnfocusedInput: workflowFlag("--no-activate") || nonActivatingPanel,
-        windowCanBecomeKey: !nonActivatingPanel, operation: operation)
+        windowCanBecomeKey: !nonActivatingPanel, operation: operation,
+        focusHolder: inputFocused ? nil : describeFocusHolder(focusedInput))
     func validateAfterFeedback() throws {
         let freshWindow = workflowWindowByID(token.window, pid: pid)
         let fresh = workflowTree(freshWindow.ax, depth: token.depth, scope: token.effectiveScope)
@@ -1529,6 +1540,9 @@ func cmdAct(appName _: String) {
             Thread.sleep(forTimeInterval: 0.01)
         }
     case "key":
+        // Every refusal below comes before the key is posted, so it is reported as not started;
+        // "uncertain" there told the caller a key might have landed when none had.
+        workflowDispatchState = "not_started"
         workflowFrontWindow(window, pid: pid, element: CFEqual(element, window.ax) ? nil : element)
         guard let keys = workflowArgument("--keys") else { workflowFailure("key requires --keys") }
         let chord: NativeKeyChord
@@ -1540,6 +1554,7 @@ func cmdAct(appName _: String) {
         }
         down.flags = chord.flags
         up.flags = chord.flags
+        workflowDispatchState = "uncertain"
         down.postToPid(pid)
         Thread.sleep(forTimeInterval: 0.05)
         up.postToPid(pid)

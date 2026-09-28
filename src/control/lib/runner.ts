@@ -83,6 +83,7 @@ export class PreparedActionRecovery {
     private readonly clock = new Stopwatch();
     private recoveryStarted?: number;
     private readonly refusals: string[] = [];
+    private readonly refusedAttempts: string[] = [];
     constructor(private readonly options: { args: string[]; timeoutMs: number; signal?: AbortSignal }) {}
 
     remaining(): number {
@@ -111,6 +112,7 @@ export class PreparedActionRecovery {
         }
         this.recoveryStarted ??= this.clock.elapsedMs;
         this.refusals.push(String(result.refusal));
+        this.refusedAttempts.push(String(result.error ?? result.refusal));
         logger.debug(
             { attempt: this.refusals.length + 1, refusal: result.refusal },
             "Retrying undispatched prepared action"
@@ -118,13 +120,38 @@ export class PreparedActionRecovery {
         return true;
     }
 
+    /**
+     * A retried call whose last attempt found the target changed or gone did not post its input, but
+     * it cannot claim that nothing happened: an earlier attempt had already activated, raised and
+     * focused the target, and the UI moved while the call ran. Measured 2026-09-28 on Brave: a
+     * prepared Return was refused at the focus gate, the retry found the omnibox changed, and the
+     * page had navigated. Reported as not started, that invites the caller to press Return again.
+     */
     finish(result: AxResult): AxResult {
-        return this.refusals.length
-            ? {
-                  ...result,
-                  recovery: { retries: this.refusals.length, refusals: this.refusals, elapsedMs: this.clock.elapsedMs },
-              }
-            : result;
+        if (!this.refusals.length) {
+            return result;
+        }
+
+        const recovery = { retries: this.refusals.length, refusals: this.refusals, elapsedMs: this.clock.elapsedMs };
+        const movedUnderUs =
+            result.dispatchState === "not_started" &&
+            ["missing_target", "stale_observation", "scope_changed"].includes(String(result.refusal));
+        if (!movedUnderUs) {
+            return { ...result, recovery };
+        }
+
+        const attempts = [...this.refusedAttempts, String(result.error ?? result.refusal)]
+            .map((error, index) => `attempt ${index + 1}: ${error}`)
+            .join("; ");
+        return {
+            ...result,
+            dispatchState: "uncertain",
+            recovery: { ...recovery, targetChanged: true },
+            error:
+                `No attempt posted the input (${attempts}). The target changed while this call ran, after an ` +
+                "earlier attempt had activated and focused it, so a preparation step or another actor changed the UI. " +
+                "Observe before repeating the input.",
+        };
     }
 }
 
