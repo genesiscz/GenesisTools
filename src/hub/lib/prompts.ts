@@ -31,9 +31,11 @@ export interface PromptsFile {
     prompts: SavedPrompt[];
 }
 
-/** A prompt as listed: its variables, in the order they first appear. */
+/** A prompt as listed: its variables, in the order they first appear, and how its saved text is sent. */
 export interface ListedPrompt extends SavedPrompt {
     variables: string[];
+    /** `deliveryMode` of the saved text, so the hub's "sent through a file" hint follows the same rule. */
+    delivery: "inline" | "file";
 }
 
 export type PromptErrorCode = "not-found" | "ambiguous" | "bad-input" | "missing-vars" | "send-failed";
@@ -194,6 +196,7 @@ export function listPrompts(path = promptsPath()): ListedPrompt[] {
     return sortByUse(readPrompts(path).prompts).map((prompt) => ({
         ...prompt,
         variables: promptVariables(prompt.text),
+        delivery: deliveryMode(prompt.text),
     }));
 }
 

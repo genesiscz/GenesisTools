@@ -57,6 +57,8 @@ struct HubPrompt: Decodable, Identifiable, Hashable {
     let lastUsedAt: String?
     let createdAt: String
     let variables: [String]
+    /// "file" when the send goes through a file (`deliveryMode` in src/hub/lib/prompts.ts); nil from an older CLI.
+    let delivery: String?
 
     var id: String { name }
 }
@@ -431,8 +433,8 @@ struct PromptPickerView: View {
                 .foregroundColor(ReviewPalette.removed)
                 .instantTooltip("Remove this prompt from the library")
                 Spacer()
-                if prompt.text.contains("\n") {
-                    Text("several lines: sent through a file")
+                if prompt.delivery == "file" {
+                    Text("several lines or an escape: sent through a file")
                         .font(.system(size: 10.5))
                         .foregroundColor(.settingsTextMuted)
                 }

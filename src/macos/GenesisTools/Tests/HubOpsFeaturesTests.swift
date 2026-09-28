@@ -74,11 +74,14 @@ final class HubOpsFeaturesTests: XCTestCase {
     func testPromptJSONDecodes() throws {
         let list = """
         [{"name":"fix-review","text":"Fix PR {{pr}}","description":null,"uses":3,"lastUsedAt":"2026-09-26T18:30:00.000Z",
-          "createdAt":"2026-09-26T10:00:00.000Z","variables":["pr"]}]
+          "createdAt":"2026-09-26T10:00:00.000Z","variables":["pr"],"delivery":"file"},
+         {"name":"old-cli","text":"t","description":null,"uses":0,"lastUsedAt":null,"createdAt":"2026-09-26T10:00:00.000Z","variables":[]}]
         """
         let prompts = try JSONDecoder().decode([HubPrompt].self, from: Data(list.utf8))
         XCTAssertEqual(prompts.first?.variables, ["pr"])
         XCTAssertEqual(prompts.first?.uses, 3)
+        // The hint follows the CLI's own delivery rule; a list from an older CLI has none.
+        XCTAssertEqual(prompts.map(\.delivery), ["file", nil])
 
         let sent = """
         {"name":"plan","session":"44444444-4444-4444-8444-444444444444","text":"a\\nb","typed":"Read /tmp/x.md and do what it says",

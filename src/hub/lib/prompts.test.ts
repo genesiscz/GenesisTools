@@ -156,6 +156,17 @@ describe("the prompts file", () => {
     });
 });
 
+describe("listPrompts", () => {
+    test("each prompt says how its text is sent, by the same rule the send uses", async () => {
+        const path = scratch();
+        await addPrompt({ name: "tabs", text: "col\\tvalue", path });
+        await addPrompt({ name: "plain", text: "Ship it", path });
+        const listed = new Map(listPrompts(path).map((prompt) => [prompt.name, prompt.delivery]));
+
+        expect([listed.get("tabs"), listed.get("plain")]).toEqual(["file", "inline"]);
+    });
+});
+
 describe("deliveryMode", () => {
     test("one plain line is typed; a line break or a cmux escape goes through a file", () => {
         expect(deliveryMode("Fix the tests")).toBe("inline");
