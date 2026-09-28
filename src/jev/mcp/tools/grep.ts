@@ -1,10 +1,16 @@
-import { createEvaluator, type Evaluator } from "@genesiscz/utils/ai/evaluation/service";
+import { createEvaluator, type Evaluator, lazyEvaluator } from "@genesiscz/utils/ai/evaluation/service";
 import { DEFAULT_EVALUATION_PROVIDER } from "@genesiscz/utils/ai/evaluation/types";
 import { logger } from "@genesiscz/utils/logger";
 import { profiler } from "@genesiscz/utils/profile";
 import { grepModelFor } from "../../lib/grep/evaluator";
 import { renderResult } from "../../lib/grep/render";
-import { GREP_USAGE_LABEL, grepInputSchema, grepOptionsFromInput, searchRepository } from "../../lib/grep/search";
+import {
+    GREP_USAGE_LABEL,
+    GrepSetupError,
+    grepInputSchema,
+    grepOptionsFromInput,
+    searchRepository,
+} from "../../lib/grep/search";
 import { type JevMcpRegistry, JevMcpTextOutput } from "../registry";
 import type { JevRouteDeps } from "./route";
 
@@ -20,19 +26,30 @@ export const jevGrepTool = {
 /**
  * Its own lazy evaluator, not the server's shared one: grep pins the TypeSafe model id, and the
  * model is fixed when the adapter is built. Like the shared one, it is created on the first call,
- * so listing tools never reads the key.
+ * so listing tools never reads the key. It is resolved before the search starts: a missing key is a
+ * credential error the caller can fix, not a provider failure inside a "0 relevant files" packet.
  */
-function lazyGrepEvaluator(deps: JevRouteDeps): Evaluator {
+export function lazyGrepEvaluator(
+    deps: JevRouteDeps,
+    /** Tests only. */
+    create: typeof createEvaluator = createEvaluator
+): () => Promise<Evaluator> {
     const provider = deps.provider ?? DEFAULT_EVALUATION_PROVIDER;
-    let shared: Promise<Evaluator> | undefined;
-    return async (call) => {
-        shared ??= createEvaluator({ provider, model: grepModelFor(provider), usageLabel: GREP_USAGE_LABEL });
-        return (await shared)(call);
+    const shared = lazyEvaluator(() =>
+        create({ provider, model: grepModelFor(provider), usageLabel: GREP_USAGE_LABEL })
+    );
+    return async () => {
+        try {
+            return await shared();
+        } catch (error) {
+            log.debug({ provider, error }, "jev_grep has no usable credential");
+            throw new GrepSetupError("credentials", error instanceof Error ? error.message : String(error));
+        }
     };
 }
 
 export function registerJevGrepTool(registry: JevMcpRegistry, deps: JevRouteDeps = {}): void {
-    const evaluate = deps.evaluate ?? lazyGrepEvaluator(deps);
+    const evaluator = lazyGrepEvaluator(deps);
     const provider = deps.provider ?? DEFAULT_EVALUATION_PROVIDER;
     registry.add({
         name: jevGrepTool.name,
@@ -43,6 +60,7 @@ export function registerJevGrepTool(registry: JevMcpRegistry, deps: JevRouteDeps
             const input = grepInputSchema.parse(raw);
             const options = grepOptionsFromInput(input, process.cwd());
             log.info({ root: options.root, provider }, "jev_grep called over MCP");
+            const evaluate = deps.evaluate ?? (await evaluator());
             const result = await prof.measureAsync("mcp-grep", () =>
                 searchRepository({
                     options,

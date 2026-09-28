@@ -1,4 +1,4 @@
-import { createEvaluator, type Evaluator } from "@genesiscz/utils/ai/evaluation/service";
+import { createEvaluator, type Evaluator, lazyEvaluator } from "@genesiscz/utils/ai/evaluation/service";
 import { DEFAULT_EVALUATION_PROVIDER } from "@genesiscz/utils/ai/evaluation/types";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
@@ -46,15 +46,14 @@ const jevVerifyInput = z
  * so listing tools costs nothing and a host without a Jev key still gets `jev_verify_templates`.
  */
 function sharedEvaluator(deps: JevRouteDeps): Evaluator {
-    let shared: Promise<Evaluator> | undefined;
+    const shared = lazyEvaluator(() => createEvaluator({ provider: deps.provider ?? DEFAULT_EVALUATION_PROVIDER }));
     return (call) =>
         prof.measureAsync("mcp-evaluate", async () => {
             if (deps.evaluate) {
                 return deps.evaluate(call);
             }
 
-            shared ??= createEvaluator({ provider: deps.provider ?? DEFAULT_EVALUATION_PROVIDER });
-            return (await shared)(call);
+            return (await shared())(call);
         });
 }
 

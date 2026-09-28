@@ -59,6 +59,21 @@ export type EvaluationProviderFactory = (
     provider: EvaluationProviderId
 ) => Promise<{ adapter: EvaluationProvider; apiKey: string }>;
 
+/**
+ * An evaluator made on first use and kept for later calls. A failed creation (no key yet, an unreadable
+ * vault) is not kept: the next call tries again, so `tools jev login` works without a server restart.
+ */
+export function lazyEvaluator(create: () => Promise<Evaluator>): () => Promise<Evaluator> {
+    let pending: Promise<Evaluator> | undefined;
+    return () => {
+        pending ??= create().catch((error: unknown) => {
+            pending = undefined;
+            throw error;
+        });
+        return pending;
+    };
+}
+
 export async function createEvaluator(options: EvaluationOptions = {}): Promise<Evaluator> {
     return createEvaluatorWithProviderFactory(options, async (provider) => {
         const apiKey = await resolveApiKey(provider);
