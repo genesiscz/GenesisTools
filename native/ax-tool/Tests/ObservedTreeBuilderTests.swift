@@ -219,6 +219,26 @@ final class ObservedTreeBuilderTests: XCTestCase {
             XCTAssertEqual((error as? ObservedTreeError)?.message, "AX tree exceeds \(observedElementLimit) elements; snapshot refused rather than truncated")
         }
     }
+
+    /// A sheet listing thousands of files made each read slow enough that the walk outlived the
+    /// caller's deadline and was killed with the dispatched result. The deadline now stops the walk
+    /// itself, with an error that says how far it got, and never with a partial tree.
+    func testCallerDeadlineStopsTheWalkWithoutAPartialTree() {
+        let fake = FakeSource()
+        var children: [pid_t] = []
+        for pid in 2...pid_t(40) {
+            fake.nodes[pid] = FakeNode(role: "AXGroup")
+            children.append(pid)
+        }
+        fake.nodes[1] = FakeNode(role: "AXWindow", children: children)
+        var checks = 0
+        XCTAssertThrowsError(try buildObservedTree(root: fake.element(1), source: fake, depth: 5, scope: "window",
+                                                   expired: { checks += 1; return checks > 10 })) { error in
+            XCTAssertEqual((error as? ObservedTreeError)?.message, observationBudgetMessage(walked: 10))
+        }
+        XCTAssertNoThrow(try buildObservedTree(root: fake.element(1), source: fake, depth: 5, scope: "window",
+                                               expired: { false }))
+    }
 }
 
 final class BulkHierarchySourceTests: XCTestCase {

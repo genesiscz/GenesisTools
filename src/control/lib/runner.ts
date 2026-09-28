@@ -258,6 +258,20 @@ export interface AxRunBoundary {
 export const AX_STDOUT_BUDGET_BYTES = 32 * 1024 * 1024;
 
 /** Argv the AX spawn will exec: launcher + binary + args when a launcher is installed. */
+/**
+ * `see` and `act` learn the deadline of the attempt they run in. Without it a slow tree (a sheet
+ * listing thousands of files, read through a remote view) walked until this side killed the
+ * process at its deadline, and the dispatched result died with it. Added per attempt, so a
+ * recovery retry carries its own, shorter deadline while every other argument stays the same.
+ */
+export function withNativeBudget(args: string[], timeoutMs: number): string[] {
+    if (!["see", "act"].includes(args[0] ?? "") || args.includes("--budget-ms")) {
+        return args;
+    }
+
+    return [...args, "--budget-ms", String(Math.min(600_000, Math.max(100, Math.floor(timeoutMs))))];
+}
+
 export function axCommandLine(binary: string, args: readonly string[]): string[] {
     assertGenesisAppNotUpdating();
     const launcher = installedGenesisAppLauncher();
@@ -345,7 +359,12 @@ export function runAxWithBoundary({
                     error: "Recovery deadline reached before dispatch.",
                 });
             }
-            r = boundary.spawn({ binary, args, timeoutMs: remainingMs, maxBufferBytes: AX_STDOUT_BUDGET_BYTES });
+            r = boundary.spawn({
+                binary,
+                args: withNativeBudget(args, remainingMs),
+                timeoutMs: remainingMs,
+                maxBufferBytes: AX_STDOUT_BUDGET_BYTES,
+            });
         } catch (error) {
             logger.warn({ error, command: args[0] }, "Native spawn failed; no retry");
             if (error instanceof GenesisAppUpdatingError) {
@@ -531,7 +550,7 @@ export async function runAxAsync(options: {
             run: async (attemptTimeoutMs) => {
                 const result = await prof.measureAsync(`ax-${args[0]}`, () =>
                     boundedCommand({
-                        command: axCommandLine(binary, args),
+                        command: axCommandLine(binary, withNativeBudget(args, attemptTimeoutMs)),
                         timeoutMs: attemptTimeoutMs,
                         maxBufferBytes: AX_STDOUT_BUDGET_BYTES,
                         signal: options.signal,

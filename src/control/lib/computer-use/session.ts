@@ -575,6 +575,18 @@ export class ComputerUse {
                     height: z.number(),
                     minimized: z.boolean().optional(),
                     transient: z.boolean().optional(),
+                    subrole: z.string().optional(),
+                    /** Sheets attached to this window (an open panel, an alert). They block it. */
+                    sheets: z
+                        .array(
+                            z.object({
+                                title: z.string(),
+                                subrole: z.string().optional(),
+                                width: z.number(),
+                                height: z.number(),
+                            })
+                        )
+                        .optional(),
                 })
             )
             .parse(result.windows);
@@ -858,6 +870,7 @@ export class ComputerUse {
                 state,
                 clipboardRestore: result.clipboardRestore,
                 recovery: result.recovery,
+                note: typeof result.note === "string" ? result.note : undefined,
             };
         });
     }

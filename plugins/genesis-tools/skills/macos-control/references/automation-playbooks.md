@@ -158,6 +158,17 @@ destructive confirmations and external submissions need their own authorization.
 message, not just the button. Reobserve the background pane after dismissal before navigating.
 `AXRaise` failure can be a symptom of a blocking sheet; repeated focus attempts are not a cure.
 
+A press that OPENS a modal (Brave's "Load unpacked" opens a file panel as a sheet) has two
+slow paths, and both now end inside the call's deadline with the action reported, never as a
+killed process. An AppKit button that runs the dialog inside its action holds AXPress until the
+dialog closes: the press returns after at most 2 s with `effect:"unknown"` and a message saying
+the dialog may be open. A browser answers AXPress at once, but the sheet can list thousands of
+files, so the post-action refresh gets its own 4 s budget: the result is `effect:"dispatched"`,
+no `state`, and a `note` saying the refresh did not finish. In both cases do not press again:
+call `list_windows` (it reports each window's sheets) and read the dialog with a query.
+`see` and `act` receive the attempt's deadline as `--budget-ms`, and a walk that runs out says
+how many elements it read ("observation budget ran out after N elements") instead of timing out.
+
 ## 4. Disambiguate meaning before spending a request
 
 Use the actual domain context already present in the tree:

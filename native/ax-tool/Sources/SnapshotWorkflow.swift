@@ -90,6 +90,21 @@ private func describeOutsideWindow(point: CGPoint, window: ObservedWindow) -> St
 
 private var workflowInput: WorkflowArguments?
 
+/// The caller's deadline (`--budget-ms`), less a margin for printing the result and exiting.
+private var workflowDeadline: TimeInterval?
+/// A tighter deadline for one phase, such as the post-action refresh.
+private var workflowPhaseDeadline: TimeInterval?
+
+private func workflowRemaining() -> TimeInterval? {
+    let now = ProcessInfo.processInfo.systemUptime
+    let ends = [workflowDeadline, workflowPhaseDeadline].compactMap { $0 }
+    return ends.min().map { $0 - now }
+}
+
+private func workflowExpired() -> Bool {
+    (workflowRemaining() ?? 1) <= 0
+}
+
 private func workflowArgument(_ flag: String) -> String? {
     workflowInput?.values[flag]
 }
@@ -102,6 +117,12 @@ private func workflowParse(_ command: String) -> String {
     do {
         let parsed = try WorkflowArguments(Array(args.dropFirst(2)), command: command)
         workflowInput = parsed
+        if let budget = parsed.values["--budget-ms"].flatMap(Double.init) {
+            workflowDeadline = ProcessInfo.processInfo.systemUptime + budget / 1000 - min(0.35, budget / 4000)
+            // One stuck read (a busy app answers nothing for the default 6 s) must not eat the
+            // whole budget: bound every AX read of this process.
+            AXUIElementSetMessagingTimeout(AXUIElementCreateSystemWide(), Float(min(3, max(0.25, budget / 3000))))
+        }
         return parsed.values["--app"]!
     } catch {
         workflowFailure(error)
@@ -209,10 +230,11 @@ private func observedTree(_ window: AXUIElement, depth: Int, scope: String) thro
     // The bulk read cannot stop at a web area, so under chrome scope it would fetch the whole
     // page only for the builder to discard it; the walk never descends into it. Measured on
     // Brave 2026-09-11: walk 342-461 ms, bulk 544-911 ms for the same 125 rows.
+    guard !workflowExpired() else { throw ObservedTreeError(observationBudgetMessage(walked: 0)) }
     if scope != "chrome", ProcessInfo.processInfo.environment["AX_TOOL_NO_BULK"] == nil, let reader = BulkHierarchyReader() {
         do {
             let source = try reader.read(root: window, attributes: bulkAttributeList, maxDepth: depth + 2, maxArrayCount: observedElementLimit)
-            let tree = try buildObservedTree(root: window, source: source, depth: depth, scope: scope)
+            let tree = try buildObservedTree(root: window, source: source, depth: depth, scope: scope, expired: workflowExpired)
             workflowBulkUsed = true
             return tree
         } catch is BulkHierarchyError {
@@ -220,7 +242,8 @@ private func observedTree(_ window: AXUIElement, depth: Int, scope: String) thro
             // children list) is answered by the per-attribute walk, which is the ground truth.
         }
     }
-    return try buildObservedTree(root: window, source: LiveHierarchySource(root: window), depth: depth, scope: scope)
+    return try buildObservedTree(root: window, source: LiveHierarchySource(root: window), depth: depth, scope: scope,
+                                 expired: workflowExpired)
 }
 
 private func workflowTree(_ window: AXUIElement, depth: Int, scope: String) -> ObservedTreeData {
@@ -633,8 +656,17 @@ private func workflowAXAction(_ element: AXUIElement, action: String) {
         workflowFailure("element does not expose \(action); inspect actions in a fresh see result")
     }
     // AX messaging timeout is an uncertain outcome, never a synthetic success.
-    AXUIElementSetMessagingTimeout(element, 3)
+    let timeout = min(2, max(0.2, (workflowRemaining() ?? 3) - 0.3))
+    AXUIElementSetMessagingTimeout(element, Float(timeout))
     let result = AXUIElementPerformAction(element, action as CFString)
+    if result == .cannotComplete {
+        // AppKit runs a modal dialog (an open panel, an alert) inside the button's action, so the
+        // press does not return until the dialog closes. Brave's "Load unpacked" held the process
+        // for the caller's whole 10 s deadline this way, and the result was lost with it.
+        workflowFailure("\(action) did not return within \(String(format: "%.1f", timeout)) s (AX \(result.rawValue)). "
+            + "A control that opens a modal dialog holds its press until the dialog closes, so the dialog may be open now; "
+            + "observe (list_windows reports sheets) before pressing again")
+    }
     guard result == .success else {
         workflowFailure("\(action) failed or timed out (AX \(result.rawValue)); outcome may be uncertain, inspect before retrying")
     }
@@ -1581,6 +1613,10 @@ func cmdAct(appName _: String) {
         let awaiting = opensMenu
             ? SettleExpectation(name: "the opened menu", timeout: 3, holds: { treeCarriesOpenMenu($0) })
             : nil
+        // The refresh is a courtesy after a dispatched action, so it gets a phase budget of its own:
+        // a sheet the action opened can make the window's tree slow enough to eat the caller's
+        // whole deadline, and the dispatched result must still come back.
+        workflowPhaseDeadline = ProcessInfo.processInfo.systemUptime + (opensMenu ? 5 : 4)
         let after = workflowAfterState(appName: appName, pid: pid, launch: launch, window: window, token: token,
                                        awaiting: awaiting)
         let refreshed = (after["ok"] as? Bool) ?? false
@@ -1588,7 +1624,10 @@ func cmdAct(appName _: String) {
         payload["after"] = after
 
         if !refreshed {
-            payload["note"] = "the refresh did not produce a new snapshot; run see again before acting"
+            let reason = (after["error"] as? String).map { " (\($0))" } ?? ""
+            payload["note"] = "the action was dispatched, but the refresh did not produce a new snapshot\(reason). "
+                + "If the action opened a dialog or sheet, its tree can be too slow or too large to read: "
+                + "list_windows reports sheets, and get_app_state with a query reads one element. Do not repeat the action"
         }
     } else {
         payload["refreshRequired"] = true

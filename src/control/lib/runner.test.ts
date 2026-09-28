@@ -11,6 +11,7 @@ import {
     DEFAULT_AX_RUN_BOUNDARY,
     runAxAsyncWithRecovery,
     runAxWithBoundary,
+    withNativeBudget,
 } from "./runner";
 
 test("a build failure never reaches the native spawn boundary", () => {
@@ -341,6 +342,25 @@ test("native deadlines round down to subprocess milliseconds and never become un
     expect(builds).toBe(1);
     expect(observedTimeouts).toHaveLength(1);
 });
+test("see and act carry the attempt's deadline to the native side, other commands do not", () => {
+    expect(withNativeBudget(["act", "--app", "Fixture"], 9876.5)).toEqual([
+        "act",
+        "--app",
+        "Fixture",
+        "--budget-ms",
+        "9876",
+    ]);
+    expect(withNativeBudget(["see", "--app", "Fixture"], 20)).toEqual([
+        "see",
+        "--app",
+        "Fixture",
+        "--budget-ms",
+        "100",
+    ]);
+    expect(withNativeBudget(["window", "--app", "Fixture"], 9000)).toEqual(["window", "--app", "Fixture"]);
+    expect(withNativeBudget(["act", "--budget-ms", "500"], 9000)).toEqual(["act", "--budget-ms", "500"]);
+});
+
 test("a throwing spawn is reported as uncertain and never retried", () => {
     let spawns = 0;
     const result = runAxWithBoundary({
@@ -367,7 +387,8 @@ test("prepared recovery resumes only the refused action and keeps its original a
         boundary: {
             ensureBinary: () => "/fixture/ax-tool",
             spawn: (call) => {
-                expect(call.args).toEqual(args);
+                // The same token and target key every time; only the attempt's own deadline differs.
+                expect(call.args).toEqual([...args, "--budget-ms", String(call.timeoutMs)]);
                 timeouts.push(call.timeoutMs);
                 attempts++;
                 return {

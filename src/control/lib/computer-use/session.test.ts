@@ -808,6 +808,33 @@ test("a paste reports the clipboard restore on every path, and an unreported or 
     expect(replies).toHaveLength(0);
 });
 
+test("a dispatched press whose refresh ran out of budget comes back dispatched with the note, not as a timeout", async () => {
+    const f = fixture();
+    const original = f.native.run;
+    const acts: string[] = [];
+    f.native.run = async (call) => {
+        if (call.args[0] === "act") {
+            acts.push(call.args[call.args.indexOf("--action") + 1]);
+            return {
+                ok: true,
+                dispatchState: "dispatched",
+                refreshRequired: true,
+                after: { ok: false, error: "observation budget ran out after 2210 elements" },
+                note: "the action was dispatched, but the refresh did not produce a new snapshot. Do not repeat the action",
+            };
+        }
+
+        return original(call);
+    };
+    const state = await f.computer.get_app_state({ app: "Fixture", image: false });
+    const pressed = await f.computer.click({ app: "Fixture", element_ref: state.elements[1].ref });
+    expect(pressed.ok).toBe(true);
+    expect(pressed.action.effect).toBe("dispatched");
+    expect(pressed.state).toBeUndefined();
+    expect(pressed.note).toContain("Do not repeat the action");
+    expect(acts).toEqual(["press"]);
+});
+
 test("Jev target admission excludes controls behind a visible sheet", async () => {
     const f = fixture({
         evaluate: async (call) => {
@@ -1047,6 +1074,30 @@ test("window inventory preserves native IDs independently of duplicate titles an
     expect(first.windows.map((window) => window.window_id)).toEqual([101, 202]);
     expect(second.windows.map((window) => window.window_id)).toEqual([202, 101]);
     expect(second.windows.map((window) => window.window_index)).toEqual([0, 1]);
+});
+test("window inventory keeps the sheets a window carries, so an open file panel is visible", async () => {
+    const computer = new ComputerUse({
+        native: {
+            run: async () => ({
+                ok: true,
+                windows: [
+                    {
+                        window_id: 201118,
+                        title: "Extensions",
+                        subrole: "AXStandardWindow",
+                        x: 0,
+                        y: 0,
+                        width: 1400,
+                        height: 900,
+                        sheets: [{ title: "Open", width: 900, height: 600, x: 250, y: 60 }],
+                    },
+                ],
+            }),
+        },
+    });
+    const listed = await computer.list_windows({ app: "Fixture" });
+    expect(listed.windows[0].sheets).toEqual([{ title: "Open", width: 900, height: 600 }]);
+    expect(listed.windows[0].subrole).toBe("AXStandardWindow");
 });
 test("unnamed browser status text has an exact readable label without treating editable values as labels", async () => {
     const f = fixture({

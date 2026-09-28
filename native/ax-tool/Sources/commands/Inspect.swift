@@ -213,6 +213,19 @@ func cmdWindow(appName: String) {
         if sub == "AXUnknown" || sub == "AXHelpTag" || height <= 50 {
             info["transient"] = true
         }
+        // A sheet (an open or save panel, an alert attached to the window) is a child of its
+        // window, not a window of its own, so the list above never showed the file panel that
+        // "Load unpacked" had opened. Name it on its window: it blocks everything behind it.
+        let sheets = axChildren(w).filter { axStringAttribute($0, "AXRole") == "AXSheet" }.map { sheet -> [String: Any] in
+            var entry: [String: Any] = ["title": axStringAttribute(sheet, "AXTitle") ?? ""]
+            if let sub = axStringAttribute(sheet, "AXSubrole") { entry["subrole"] = sub }
+            if let identifier = axStringAttribute(sheet, "AXIdentifier") { entry["id"] = identifier }
+            let frame = axFrame(sheet)
+            entry["x"] = frame.minX; entry["y"] = frame.minY
+            entry["width"] = frame.width; entry["height"] = frame.height
+            return entry
+        }
+        if !sheets.isEmpty { info["sheets"] = sheets }
         infos.append(info)
     }
     jsonOutput(["ok": true, "app": appName, "pid": pid, "count": infos.count, "windows": infos])

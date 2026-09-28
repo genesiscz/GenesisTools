@@ -20,7 +20,7 @@ public struct WorkflowArguments {
         let flagOptions: Set<String>
         switch command {
         case "see":
-            valueOptions = ["--app", "--window-index", "--window-id", "--depth", "--path", "--scope", "--perception", "--perception-crop", "--perception-width"]
+            valueOptions = ["--app", "--window-index", "--window-id", "--depth", "--path", "--scope", "--perception", "--perception-crop", "--perception-width", "--budget-ms"]
             flagOptions = ["--no-image"]
         case "act":
             valueOptions = [
@@ -28,6 +28,7 @@ public struct WorkflowArguments {
                 "--keys", "--coords", "--button", "--to", "--duration", "--pages", "--pixels", "--range", "--prefix",
                 "--suffix", "--selection", "--format", "--path", "--region", "--target-key", "--dwell",
                 "--revalidate-scope", "--frame", "--by-identifier", "--window-index", "--depth", "--modifiers",
+                "--budget-ms",
             ]
             flagOptions = ["--background", "--double", "--refresh", "--no-cursor", "--no-image", "--prepare", "--replace", "--hold", "--no-activate"]
         default:
@@ -60,6 +61,13 @@ public struct WorkflowArguments {
 
         guard parsedValues["--app"] != nil else {
             throw WorkflowArgumentError.invalid("--app required")
+        }
+        // The caller's own deadline. Without it a slow tree (a file panel's thousands of rows read
+        // through a remote view) ran until the caller killed the process, taking the result with it.
+        if let raw = parsedValues["--budget-ms"] {
+            guard let budget = Int(raw), String(budget) == raw, (100...600_000).contains(budget) else {
+                throw WorkflowArgumentError.invalid("--budget-ms must be an integer from 100 to 600000")
+            }
         }
         if command == "see", parsedFlags.contains("--no-image"), parsedValues["--path"] != nil {
             throw WorkflowArgumentError.invalid("--no-image cannot be combined with --path")

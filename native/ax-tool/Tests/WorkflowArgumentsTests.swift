@@ -209,3 +209,19 @@ extension WorkflowArgumentsTests {
                                                    "--action", "key", "--keys", "cmd,a,b"], command: "act"))
     }
 }
+
+extension WorkflowArgumentsTests {
+    func testSeeAndActAcceptTheCallerBudget() throws {
+        let see = try WorkflowArguments(["--app", "Brave", "--budget-ms", "9998"], command: "see")
+        XCTAssertEqual(see.values["--budget-ms"], "9998")
+        let act = try WorkflowArguments([
+            "--app", "Brave", "--snapshot", "token", "--element", "3", "--action", "press", "--budget-ms", "4000",
+        ], command: "act")
+        XCTAssertEqual(act.values["--budget-ms"], "4000")
+        for invalid in ["0", "99", "600001", "1.5", "soon"] {
+            XCTAssertThrowsError(try WorkflowArguments(["--app", "Brave", "--budget-ms", invalid], command: "see")) { error in
+                XCTAssertEqual(error.localizedDescription, "--budget-ms must be an integer from 100 to 600000")
+            }
+        }
+    }
+}
