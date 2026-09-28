@@ -105,19 +105,32 @@ export async function waitingBlock(
     return found?.blocks.find((block) => block.number === number) ?? null;
 }
 
-/** The folder of a session that has no stored row: the agent session list (the Inbox's own source), recent first. */
-async function lookupSessionCwd(session: string): Promise<string | null> {
-    for (const hours of [72, 24 * 90]) {
-        const row = (await listAgentSessionRows({ hours })).find(
-            (candidate) => candidate.sessionId === session || candidate.sessionId.startsWith(session)
-        );
+/**
+ * The folder of a session that has no stored row: the agent session list (the Inbox's own source), recent first.
+ * The exact id wins in either window; a prefix counts only when it names one session, never the first of several.
+ */
+export async function lookupSessionCwd(
+    session: string,
+    list: (hours: number) => Promise<AgentSessionRow[]> = (hours) => listAgentSessionRows({ hours })
+): Promise<string | null> {
+    let rows: AgentSessionRow[] = [];
 
-        if (row) {
-            return row.cwd || null;
+    for (const hours of [72, 24 * 90]) {
+        rows = await list(hours);
+        const exact = rows.find((candidate) => candidate.sessionId === session);
+
+        if (exact) {
+            return exact.cwd || null;
         }
     }
 
-    return null;
+    const prefixed = rows.filter((candidate) => candidate.sessionId.startsWith(session));
+
+    if (new Set(prefixed.map((candidate) => candidate.sessionId)).size !== 1) {
+        return null;
+    }
+
+    return prefixed[0].cwd || null;
 }
 
 /** Every decision of one session (the hub's Decisions pane). A transcript that cannot be read leaves the stored rows. */
