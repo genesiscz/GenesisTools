@@ -7,6 +7,7 @@ import {
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import type { ApiLimit, UsageBucket, UsageResponse } from "./api";
+import { type ProbeBudget, persistedProbeBudget } from "./probe-budget";
 
 /**
  * Usage read from the rate-limit headers of an inference response instead of `/api/oauth/usage`.
@@ -27,11 +28,28 @@ import type { ApiLimit, UsageBucket, UsageResponse } from "./api";
  * limits); a header reading is a fallback laid over the last endpoint reading.
  */
 
+/** How often a header reading asks the Fable model; the cheap probe in between keeps the last Fable window. */
+export const FABLE_READING_INTERVAL_MS = 30 * 60_000;
+
 export const QUOTA_PROBE_URL = "https://api.anthropic.com/v1/messages";
 /** The only model whose answer carries the Fable window. */
 export const QUOTA_PROBE_MODEL = "claude-fable-5-1";
-/** For an account the Fable model refuses: the two windows still come back, without Fable. */
+/**
+ * The cheap probe: the 5-hour and weekly windows, without Fable. Also the fallback for an account the
+ * Fable model refuses.
+ */
 export const QUOTA_PROBE_FALLBACK_MODEL = "claude-haiku-4-5-20251001";
+/**
+ * Probes allowed per account and model in 7 days. Martin's rule (2026-09-28): the probes may cost at most
+ * 1 % of a weekly limit. A probe is about 34 input tokens, so the Haiku cap is about 204k Haiku input tokens
+ * ($0.20 at list price) and the Fable cap about 14k Fable input tokens ($0.14). The poll asks for a Haiku
+ * probe every 2 minutes (5,040 a week) and a Fable probe every 30 minutes (336 a week); the caps sit a
+ * little above that.
+ */
+export const WEEKLY_PROBE_CAPS: Readonly<Record<string, number>> = {
+    [QUOTA_PROBE_FALLBACK_MODEL]: 6_000,
+    [QUOTA_PROBE_MODEL]: 400,
+};
 const QUOTA_PROBE_TIMEOUT_MS = 20_000;
 const HEADER = "anthropic-ratelimit-unified";
 /** Starts the message of every failed header reading, so a recorded failure names its source. */
@@ -51,6 +69,8 @@ export interface QuotaHeaderStatus {
     overageStatus: string | null;
     /** When the endpoint reading this one keeps the other limits from was taken (ISO). */
     endpointAsOf?: string;
+    /** When the Fable window was last read (ISO); a cheap probe keeps the window of that reading. */
+    fableReadAt?: string;
 }
 
 function bucket(headers: Headers, window: "5h" | "7d" | "7d_oi"): UsageBucket | null {
@@ -107,6 +127,13 @@ export function isHeaderReading(usage: UsageResponse | undefined): boolean {
 export function endpointAsOf(usage: UsageResponse | undefined): string | undefined {
     const quota = usage?.quota as Partial<QuotaHeaderStatus> | undefined;
     return quota?.source === "headers" ? quota.endpointAsOf : undefined;
+}
+
+/** The next header reading should ask the Fable model: no Fable reading yet, or the last one is 30 minutes old. */
+export function fableReadingDue(previous: UsageResponse | undefined, now: number): boolean {
+    const quota = previous?.quota as Partial<QuotaHeaderStatus> | undefined;
+    const readAt = quota?.source === "headers" && quota.fableReadAt ? Date.parse(quota.fableReadAt) : Number.NaN;
+    return !Number.isFinite(readAt) || now - readAt >= FABLE_READING_INTERVAL_MS;
 }
 
 /** A recorded poll failure came from a header reading (an org refusal, a revoked long-lived token). */
@@ -166,16 +193,26 @@ function keptFrom(previous: UsageResponse): Partial<UsageResponse> {
 /**
  * A header reading laid over the last endpoint reading. The headers answer the 5-hour, weekly and Fable
  * windows; everything else the endpoint returns (extra usage, spend, the weekly breakdown, other scoped
- * limits) is kept from that reading, and `quota.endpointAsOf` says when it was taken. The result always
- * carries a `limits` list, because `normalizeLimits` reads that list over the flat windows.
+ * limits) is kept from that reading, and `quota.endpointAsOf` says when it was taken. A cheap probe
+ * carries no Fable window, so the last header reading's Fable window stays, with `quota.fableReadAt`.
+ * The result always carries a `limits` list, because `normalizeLimits` reads that list over the flat windows.
  */
 export function mergeHeaderReading(
     fresh: UsageResponse,
     previous: UsageResponse | undefined,
-    previousFetchedAt: number | undefined
+    previousFetchedAt: number | undefined,
+    now: number = Date.now()
 ): UsageResponse {
-    const quota = fresh.quota as QuotaHeaderStatus;
     const previousQuota = previous?.quota as Partial<QuotaHeaderStatus> | undefined;
+    const freshFable = fresh.seven_day_overage_included;
+    const keptFable =
+        !freshFable && previousQuota?.source === "headers" ? previous?.seven_day_overage_included : undefined;
+    const fableReadAt = freshFable ? new Date(now).toISOString() : keptFable ? previousQuota?.fableReadAt : undefined;
+    const quota: QuotaHeaderStatus = {
+        ...(fresh.quota as QuotaHeaderStatus),
+        ...(keptFable ? { fableStatus: previousQuota?.fableStatus ?? null } : {}),
+        ...(fableReadAt ? { fableReadAt } : {}),
+    };
     const endpointAsOf =
         previousQuota?.source === "headers"
             ? previousQuota.endpointAsOf
@@ -184,7 +221,7 @@ export function mergeHeaderReading(
               : undefined;
     const endpoint = previous && endpointAsOf !== undefined ? keptFrom(previous) : {};
     const base = Array.isArray(endpoint.limits) ? endpoint.limits : [];
-    const fable = fresh.seven_day_overage_included;
+    const fable = freshFable ?? keptFable;
     const updates = [
         limitFrom({ kind: "session", window: fresh.five_hour, status: quota.fiveHourStatus, quota }),
         limitFrom({ kind: "weekly_all", window: fresh.seven_day, status: quota.sevenDayStatus, quota }),
@@ -212,6 +249,7 @@ export function mergeHeaderReading(
     return {
         ...endpoint,
         ...fresh,
+        ...(fable ? { seven_day_overage_included: fable } : {}),
         limits,
         quota: endpointAsOf === undefined ? quota : { ...quota, endpointAsOf },
     };
@@ -242,28 +280,40 @@ function sendQuotaProbe(
 }
 
 /**
- * One `max_tokens: 0` request, read for its headers; a second one to the fallback model only when the
- * Fable model is refused without headers. A 429 that carries the windows is a reading (the account is at
- * a limit), not a failure. Anything else without headers throws, with the body in the message, so an
- * org-level refusal is still classified.
+ * One `max_tokens: 0` request, read for its headers: to the Fable model when the Fable window is wanted,
+ * else to the cheap model. A second one to the cheap model only when the Fable model is refused without
+ * headers. A 429 that carries the windows is a reading (the account is at a limit), not a failure.
+ * Anything else without headers throws, with the body in the message, so an org-level refusal is still
+ * classified. Every request is charged to the account's probe budget first, and a spent budget throws
+ * before anything is sent.
  */
 export async function fetchUsageFromHeaders(
     token: string,
-    opts: { signal?: AbortSignal; accountHint?: string; fetchImpl?: typeof fetch } = {}
+    opts: {
+        account: string;
+        withFable?: boolean;
+        signal?: AbortSignal;
+        fetchImpl?: typeof fetch;
+        budget?: ProbeBudget;
+    }
 ): Promise<UsageResponse> {
-    const tag = opts.accountHint ? `[usage:${opts.accountHint}]` : "[usage]";
+    const tag = `[usage:${opts.account}]`;
+    const budget = opts.budget ?? persistedProbeBudget(opts.account, WEEKLY_PROBE_CAPS);
     const deadline = AbortSignal.timeout(QUOTA_PROBE_TIMEOUT_MS);
     const probe = {
         signal: opts.signal ? AbortSignal.any([opts.signal, deadline]) : deadline,
         fetchImpl: opts.fetchImpl,
     };
-    let res = await sendQuotaProbe(token, QUOTA_PROBE_MODEL, probe);
+    const model = opts.withFable === false ? QUOTA_PROBE_FALLBACK_MODEL : QUOTA_PROBE_MODEL;
+    await budget.spend(model);
+    let res = await sendQuotaProbe(token, model, probe);
 
-    if ([400, 404, 429].includes(res.status) && !usageFromQuotaHeaders(res.headers)) {
+    if (model === QUOTA_PROBE_MODEL && [400, 404, 429].includes(res.status) && !usageFromQuotaHeaders(res.headers)) {
         const refusal = await res.text().catch(() => "");
         logger.debug(
             `${tag} quota headers: ${QUOTA_PROBE_MODEL} answered ${res.status} (${refusal.slice(0, 160)}); asking ${QUOTA_PROBE_FALLBACK_MODEL}`
         );
+        await budget.spend(QUOTA_PROBE_FALLBACK_MODEL);
         res = await sendQuotaProbe(token, QUOTA_PROBE_FALLBACK_MODEL, probe);
     }
 
