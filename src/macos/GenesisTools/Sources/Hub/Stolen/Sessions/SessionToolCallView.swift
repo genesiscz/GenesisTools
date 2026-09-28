@@ -80,6 +80,8 @@ final class TranscriptServices: @unchecked Sendable {
     let cwd: String?
     let nativeLog: SessionNativeLog?
     let changes: ToolChangeSource?
+    /// "Open the Changes view at this file (and line)". nil hides every "Open diff" button.
+    /// Genesis leaves it nil; the GenesisTools hub wires it to its diff window.
     let showChange: ((String, Int?) -> Void)?
     // GenesisTools adaptation: the host hears the applied search query, so ⌘F can search the whole
     // session (`tools ai sessions grep`) and not only the loaded window. Never set on `.none`.
@@ -329,6 +331,9 @@ struct ToolCallRowView: View, Equatable {
     let onToggle: (String) -> Void
 
     @State private var loaded: ToolLoaded?
+    // GenesisTools adaptation: the services `loaded` came from. The rows appear before the session
+    // file is scanned (with `.none`), so a row opened by then loads again when the real services arrive.
+    @State private var loadedFrom: ObjectIdentifier?
     @State private var context = 0
 
     static func == (lhs: Self, rhs: Self) -> Bool {
@@ -357,6 +362,7 @@ struct ToolCallRowView: View, Equatable {
                     rowId: rowId,
                     presentation: presentation,
                     limit: showAll ? nil : verbosity.bodyLimit,
+                    expandedByReader: showAll && verbosity.bodyLimit != nil,
                     canAddContext: current?.fileLines != nil && (current?.detail.edits.count ?? 0) == 1,
                     onShowAll: { onToggle(rowId + "#all") },
                     onMoreContext: { context += 10 },
@@ -375,10 +381,14 @@ struct ToolCallRowView: View, Equatable {
         .padding(.leading, 24)
         .padding(.trailing, 12)
         .padding(.vertical, 0)
-        .task(id: open ? toolId : "") {
+        .task(id: open ? "\(toolId)|\(ObjectIdentifier(services))" : "") {
+            let source = ObjectIdentifier(services)
             // A finished call loaded before is drawn from `services.loaded` already (see body).
-            guard open, loaded == nil, !finished || services.loaded(toolId: toolId) == nil else { return }
-            loaded = await services.load(toolId: toolId, finished: finished)
+            guard open, loaded == nil || loadedFrom != source, !finished || services.loaded(toolId: toolId) == nil else { return }
+            if let result = await services.load(toolId: toolId, finished: finished) {
+                loaded = result
+                loadedFrom = source
+            }
         }
     }
 
@@ -447,6 +457,9 @@ private struct ToolResultBody: View {
     let rowId: String
     let presentation: ToolPresentation
     let limit: Int?
+    // GenesisTools adaptation: the reader pressed "… +N lines" at a verbosity that trims the body.
+    // The "show fewer" link only makes sense then (it was hard-coded off).
+    let expandedByReader: Bool
     let canAddContext: Bool
     let onShowAll: () -> Void
     let onMoreContext: () -> Void
@@ -503,7 +516,7 @@ private struct ToolResultBody: View {
                     .padding(.leading, 16)
                     .instantTooltip("Show every line")
                     .accessibilityIdentifier("transcript-tool-show-all")
-                } else if limit == nil, block.lines.count > (TranscriptVerbosity.outputs.bodyLimit ?? 0), presentationIsExpandedByReader {
+                } else if limit == nil, block.lines.count > (TranscriptVerbosity.outputs.bodyLimit ?? 0), expandedByReader {
                     Button(action: onShowAll) {
                         Text("Show fewer lines")
                             .font(.system(size: 11, weight: .semibold))
@@ -517,9 +530,6 @@ private struct ToolResultBody: View {
         .padding(.leading, 20)
         .padding(.bottom, 6)
     }
-
-    /// The "show fewer" link only makes sense when the reader opened all lines themselves.
-    private var presentationIsExpandedByReader: Bool { false }
 
     private func smallButton(_ title: String, symbol: String, tip: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {

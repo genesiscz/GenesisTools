@@ -77,9 +77,8 @@ struct SessionDetailActions {
     /// Raise, or choose, the terminal pane of the session ("Open in a cmux pane", the status pill).
     /// nil falls back to `focus`.
     var openTerminal: (() -> Void)?
-    /// "Open the Changes view at this file (and line)". nil hides every "Open diff" button.
-    /// Genesis leaves it nil; the GenesisTools hub wires it to its diff window.
-    var showChange: ((String, Int?) -> Void)?
+    // GenesisTools adaptation: no `showChange` here. Nothing read it; the Open diff hook is
+    // `TranscriptServices.showChange`, which HubSessionDetail sets.
     // GenesisTools adaptation: a click on the header's alert line (the hub opens the stuck call).
     var alertAction: (() -> Void)?
 }
@@ -422,7 +421,8 @@ struct SessionDetailHeader: View {
     }
 
     private func counter(_ label: String?, _ value: String, color: Color, tip: String) -> some View {
-        Button { actions.copy(tip) } label: {
+        // GenesisTools adaptation: a click copies the value shown, not the tooltip text.
+        Button { actions.copy(value) } label: {
             HStack(spacing: 4) {
                 if let label {
                     Text(verbatim: label)
@@ -640,15 +640,18 @@ struct SessionDetailSidebar<Extra: View>: View {
                 }
             }
             if let cwd = info.cwd, !cwd.isEmpty {
-                row(symbol: "folder", dot: nil, action: info.cwdExists ? actions.openInFinder : nil) {
-                    Text(verbatim: URL(fileURLWithPath: cwd).lastPathComponent)
-                        .foregroundStyle(SessionPalette.secondary)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                    Spacer(minLength: 4)
+                // GenesisTools adaptation: the folder buttons sit beside the row, not in it: inside,
+                // they were buttons nested in the row's Finder button.
+                HStack(spacing: 4) {
+                    row(symbol: "folder", dot: nil, action: info.cwdExists ? actions.openInFinder : nil) {
+                        Text(verbatim: URL(fileURLWithPath: cwd).lastPathComponent)
+                            .foregroundStyle(SessionPalette.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    }
+                    .instantTooltip((cwd as NSString).abbreviatingWithTildeInPath)
                     folderButtons(cwd)
                 }
-                .instantTooltip((cwd as NSString).abbreviatingWithTildeInPath)
             }
             if let branch = info.branch {
                 // GenesisTools adaptation: the tooltip carries the whole branch name, which truncates here.

@@ -283,6 +283,73 @@ final class HubLogicTests: XCTestCase {
         XCTAssertNil(skipped)
     }
 
+    /// A failed lookup is not cached, and the run gets ToolsBridge's scrubbed PATH (a GUI app's own
+    /// PATH has no bun, so `#!/usr/bin/env bun` failed).
+    func testAFailedChangeLookupIsAskedAgainWithTheScrubbedPath() async throws {
+        // A stand-in `tools`: fails on its first run, then prints one file whose path is its PATH.
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("tool-changes-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let script = dir.appendingPathComponent("tools")
+        try """
+        #!/bin/sh
+        if [ -f "$0.ran" ]; then printf '{"files":[{"path":"%s","diff":"@@ -1 +1 @@"}]}' "$PATH"; else touch "$0.ran"; exit 1; fi
+        """.write(to: script, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script.path)
+
+        let source = CLIToolChangeSource(toolsBinary: script.path, objectsDir: dir.path)
+        let first = await source.changes(sessionId: "s", toolUseId: "t")
+        XCTAssertTrue(first.isEmpty)
+        let second = await source.changes(sessionId: "s", toolUseId: "t")
+        XCTAssertEqual(second.count, 1, "the failed run was not cached")
+        XCTAssertTrue(second.first?.path.contains("/.bun/bin") == true, "the run gets ToolsBridge's scrubbed PATH")
+    }
+
+    // MARK: Session Details rendering and usage
+
+    /// A section ends at the next section's first turn; a turn the scan never indexed is not the end
+    /// of the file (that summed every later section's calls into this one).
+    func testNativeUsageStopsOnlyAtATurnInTheFile() throws {
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent("native-usage-\(UUID().uuidString).jsonl")
+        try """
+        {"type":"user","uuid":"u1","message":{"role":"user","content":"hi"}}
+        {"type":"assistant","uuid":"a1","message":{"id":"m1","model":"claude-opus-5-5","content":[],"usage":{"input_tokens":1,"output_tokens":2}}}
+        {"type":"assistant","uuid":"a2","message":{"id":"m2","model":"claude-opus-5-5","content":[],"usage":{"input_tokens":1,"output_tokens":2}}}
+        """.write(to: file, atomically: true, encoding: .utf8)
+        let summary = try XCTUnwrap(SessionNativeLog.scan(path: file.path)).summary
+
+        XCTAssertEqual(summary.usage(fromTurn: "a1", untilTurn: nil)?.modelCalls, 2, "nil runs to the end of the file")
+        XCTAssertEqual(summary.usage(fromTurn: "a1", untilTurn: "a2")?.modelCalls, 1)
+        XCTAssertNil(summary.usage(fromTurn: "a1", untilTurn: "not-in-the-file"), "an unknown end is not the end of the file")
+    }
+
+    /// The plain draw on the main thread gives text to the first lines only, with the full height.
+    func testFirstDrawGivesTextToTheFirstLinesAndKeepsTheHeight() {
+        let block = CodeBlockBuilder.numbered((1...500).map { "line \($0)" }.joined(separator: "\n"), language: .plain)
+        let full = CodeBlockRenderer.attributed(block, limit: nil, highlight: false)
+        let first = CodeBlockRenderer.attributed(block, limit: nil, highlight: false, drawn: 200)
+        func lines(_ text: AttributedString) -> [String] {
+            String(text.characters).split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+        }
+
+        XCTAssertEqual(lines(first.body).count, 500, "the block keeps its full height")
+        XCTAssertEqual(Array(lines(first.body).prefix(200)), Array(lines(full.body).prefix(200)))
+        XCTAssertEqual(lines(first.body)[200], "")
+        XCTAssertEqual(lines(first.gutter).first, "  1", "the gutter is as wide as the last number")
+        XCTAssertEqual(lines(first.gutter).count, 500)
+        XCTAssertEqual(
+            lines(CodeBlockRenderer.attributed(block, limit: 10, highlight: false, drawn: 200).body).count, 10,
+            "a limit below the first draw draws every shown line"
+        )
+    }
+
+    /// VoiceOver hears a diff's marks: the gutter that shows them is hidden from it.
+    func testDiffSpeaksItsMarks() {
+        let diff = CodeBlockBuilder.unifiedDiff("@@ -3,2 +3,2 @@\n keep\n-old\n+new", language: .plain)
+        XCTAssertEqual(CodeBlockRenderer.attributed(diff, limit: nil, highlight: false).spoken, "keep\nremoved: old\nadded: new")
+
+        let plain = CodeBlockBuilder.numbered("a\nb", language: .plain)
+        XCTAssertNil(CodeBlockRenderer.attributed(plain, limit: nil, highlight: false).spoken, "a block that is not a diff reads its text")
+    }
 
     // MARK: Tool-change batches
 

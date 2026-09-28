@@ -248,6 +248,9 @@ enum CodeBlockBuilder {
 enum CodeBlockRenderer {
     /// Lines past this many are never syntax-coloured, only drawn.
     static let highlightLimit = 1500
+    // GenesisTools adaptation: lines the plain draw on the main thread gives text to (see `drawn`).
+    // A Verbose result can run to thousands of lines; the rest arrive with the off-main pass.
+    static let firstDrawLimit = 200
     /// Diff bands are padded to this many columns so a changed line reads as a full-width band.
     static let bandWidth = 96
 
@@ -255,7 +258,9 @@ enum CodeBlockRenderer {
 
     /// The first `limit` lines (all when nil): line numbers and diff marks in `gutter`, the code in
     /// `body`, line for line. Two strings, so selecting and copying the code never takes the numbers.
-    static func attributed(_ block: CodeBlock, limit: Int?, highlight: Bool) -> CodeBlockAttributed {
+    /// With `drawn`, lines past the first `drawn` are empty: the block keeps its full height and gutter
+    /// width, and the work stays bounded.
+    static func attributed(_ block: CodeBlock, limit: Int?, highlight: Bool, drawn: Int? = nil) -> CodeBlockAttributed {
         let lines = limit.map { Array(block.lines.prefix($0)) } ?? block.lines
         let width = String(lines.compactMap(\.number).max() ?? 0).count
         // GenesisTools adaptation: a focus line is banded like a diff line.
@@ -265,8 +270,17 @@ enum CodeBlockRenderer {
         var highlighter = SyntaxHighlighter(language: highlight ? block.language : .plain)
         var gutter = AttributedString()
         var out = AttributedString()
+        // GenesisTools adaptation: see `CodeBlockAttributed.spoken`.
+        var spoken: [String] = []
 
         for (index, line) in lines.enumerated() {
+            // GenesisTools adaptation: see `drawn`.
+            if index > 0, index == drawn {
+                let blank = AttributedString(String(repeating: "\n", count: lines.count - index))
+                gutter.append(blank)
+                out.append(blank)
+                break
+            }
             if index > 0 {
                 gutter.append(AttributedString("\n"))
                 out.append(AttributedString("\n"))
@@ -279,6 +293,7 @@ enum CodeBlockRenderer {
                 var gap = AttributedString(line.text)
                 gap.foregroundColor = SessionPalette.faint
                 out.append(gap)
+                spoken.append(line.text)
                 continue
             }
 
@@ -302,6 +317,7 @@ enum CodeBlockRenderer {
                 var mark = AttributedString(line.mark == .added ? " +" : line.mark == .removed ? " -" : "  ")
                 mark.foregroundColor = line.mark == .added ? SessionPalette.green : line.mark == .removed ? SessionPalette.red : SessionPalette.faint
                 gutter.append(mark)
+                spoken.append(line.mark == .added ? "added: \(line.text)" : line.mark == .removed ? "removed: \(line.text)" : line.text)
             }
 
             var body = AttributedString()
@@ -328,7 +344,12 @@ enum CodeBlockRenderer {
             }
             out.append(body)
         }
-        return CodeBlockAttributed(gutter: gutter, body: out, hasGutter: width > 0 || isDiff)
+        return CodeBlockAttributed(
+            gutter: gutter,
+            body: out,
+            hasGutter: width > 0 || isDiff,
+            spoken: isDiff ? spoken.joined(separator: "\n") : nil
+        )
     }
 }
 
@@ -337,6 +358,10 @@ struct CodeBlockAttributed: Equatable, Sendable {
     var gutter: AttributedString
     var body: AttributedString
     var hasGutter: Bool
+    // GenesisTools adaptation: a diff's code with "added" / "removed" before its changed lines, for
+    // VoiceOver: the gutter holds the only `+` / `-` and is hidden from it, and the bands are colour
+    // only. nil for other blocks.
+    var spoken: String?
 }
 
 /// Memoised highlighted bodies, so a recycled row redraws without re-highlighting. Sized for a long
@@ -404,7 +429,9 @@ struct CodeBlockText: View {
         // GenesisTools adaptation: a highlighted body counts only for its own key (see `highlighted`).
         let key = key
         let current = highlighted?.key == key ? highlighted?.value : nil
-        let rendered = current ?? CodeBlockCache.shared.get(key) ?? CodeBlockRenderer.attributed(block, limit: limit, highlight: false)
+        // GenesisTools adaptation: the plain first draw is bounded (see `CodeBlockRenderer.firstDrawLimit`).
+        let rendered = current ?? CodeBlockCache.shared.get(key)
+            ?? CodeBlockRenderer.attributed(block, limit: limit, highlight: false, drawn: CodeBlockRenderer.firstDrawLimit)
         HStack(alignment: .top, spacing: 0) {
             if rendered.hasGutter {
                 Text(rendered.gutter)
@@ -419,6 +446,8 @@ struct CodeBlockText: View {
                 .lineSpacing(1.5)
                 .textSelection(.enabled)
                 .fixedSize()
+                // GenesisTools adaptation: a diff reads its marks too (see `CodeBlockAttributed.spoken`).
+                .accessibilityLabel(rendered.spoken.map { Text(verbatim: $0) } ?? Text(rendered.body))
                 .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { codeWidth.value = $0 }
                 .offset(x: -sideways)
                 // `minWidth: 0` makes the frame as wide as the row gives, not as wide as the code.

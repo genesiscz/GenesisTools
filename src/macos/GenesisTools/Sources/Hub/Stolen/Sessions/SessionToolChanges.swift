@@ -12,9 +12,11 @@
 //
 //  (handoff h_p38uwgeo). Older builds of the command reject `--tool`; that, a missing binary, a
 //  timeout or unreadable output all read as "no recorded change" and the row shows nothing.
+//  Only a run that succeeded is cached, so a failed one is asked again when the row comes back.
 //  More context comes from `git --git-dir <objects> diff -U<n> <before> <after>`.
 //
-//  Portable: Foundation only. Hosts pass their own `ToolChangeSource` or use the CLI one.
+//  Portable: Foundation, plus `ToolsBridge`'s launch plan and environment for the `tools` script.
+//  Hosts pass their own `ToolChangeSource` or use the CLI one.
 //
 
 import Foundation
@@ -121,7 +123,10 @@ final class CLIToolChangeSource: ToolChangeSource, @unchecked Sendable {
         // GenesisTools adaptation: `changes` stores the before and after blobs only when asked, and
         // `expandedDiff` reads them from the object store.
         let output = await Self.run(binary, ["agents", "changes", sessionId, "--tool", toolUseId, "--json", "--store-blobs"], timeout: timeout)
-        var files = output.map(Self.decode) ?? []
+        // GenesisTools adaptation: a failed run (a timeout, no bun on the PATH) is not "no change", so
+        // it is not cached.
+        guard let output else { return [] }
+        var files = Self.decode(output)
         // GenesisTools adaptation: a file the log skipped keeps no diff.
         for index in files.indices where files[index].unifiedDiff == nil && files[index].skipReason == nil {
             files[index].unifiedDiff = await expandedDiff(for: files[index], context: 3)
@@ -191,11 +196,18 @@ final class CLIToolChangeSource: ToolChangeSource, @unchecked Sendable {
     }
 
     /// stdout of a finished, successful run; nil on launch failure, non-zero exit or timeout.
+    /// Launched the way `ToolsBridge` launches `tools`: a bun script through bun, from the script's
+    /// folder, with the scrubbed environment. A GUI app's PATH has no bun, so `#!/usr/bin/env bun`
+    /// failed there, and a signed app may not exec the script at all (see `ToolsBridge.launchPlan`).
+    // GenesisTools adaptation: this used to exec `executable` directly with the app's environment.
     static func run(_ executable: String, _ arguments: [String], timeout: TimeInterval) async -> String? {
         await withCheckedContinuation { continuation in
+            let plan = ToolsBridge.launchPlan(binaryPath: executable, argv: arguments)
             let process = Process()
-            process.executableURL = URL(fileURLWithPath: executable)
-            process.arguments = arguments
+            process.executableURL = plan.executable
+            process.arguments = plan.arguments
+            process.currentDirectoryURL = plan.workingDirectory
+            process.environment = ToolsBridge.scrubbedEnvironment()
             let stdout = Pipe()
             process.standardOutput = stdout
             process.standardError = FileHandle.nullDevice

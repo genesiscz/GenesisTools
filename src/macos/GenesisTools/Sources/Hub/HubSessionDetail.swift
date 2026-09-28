@@ -43,6 +43,8 @@ struct HubSessionDetailHost: View {
     @State private var loadingEarlier = false
     @State private var banner: String?
     @State private var loadID = 0
+    /// The latest `rebuild()`; an older one that finishes later is dropped.
+    @State private var buildID = 0
     /// ⌘F over the whole session: the window plus the earlier turns that match, while a query is on.
     @State private var searchDocument: TranscriptDocument?
     @State private var searchNote: String?
@@ -551,8 +553,12 @@ struct HubSessionDetailHost: View {
         }
     }
 
-    /// Off the main thread: a long session is thousands of rows with regex work per prompt.
+    /// Off the main thread: a long session is thousands of rows with regex work per prompt. Builds
+    /// overlap (a fetch, the native scan, an earlier page, the live tail), and only the latest may
+    /// land: an older one would drop turns added after it started.
     private func rebuild() async {
+        buildID += 1
+        let id = buildID
         let snapshot = turns
         let offset = windowStart
         let native = nativeLog?.summary
@@ -561,6 +567,7 @@ struct HubSessionDetailHost: View {
                 (TranscriptDocument.build(snapshot, turnOffset: offset, native: native), SessionActivityDigest.build(snapshot))
             }
         }.value
+        guard id == buildID else { return }
         document = built.0
         digest = built.1
     }

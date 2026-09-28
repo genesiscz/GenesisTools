@@ -507,7 +507,9 @@ struct SessionTranscriptList: View {
                                     modelName: modelName,
                                     verbosity: verbosity,
                                     expanded: expansion.isOpen(row.id, byDefault: defaultOpen(row)),
-                                    showAll: expansion.isOpen(row.id + "#all"),
+                                    // GenesisTools adaptation: the reader's own "… +N lines" only:
+                                    // Expand all opens rows, it does not untrim every output.
+                                    showAll: expansion.toggled.contains(row.id + "#all"),
                                     openMembers: openMembers(row),
                                     services: services,
                                     onToggle: { expansion.toggle($0) }
@@ -1149,6 +1151,8 @@ private struct TranscriptThumbnail: View {
             }
             .buttonStyle(.genHoverPlain())
             .instantTooltip("Open \(image.label)")
+            // GenesisTools adaptation: VoiceOver names the file, not only the picture.
+            .accessibilityLabel(Text(verbatim: "Open \(image.label)"))
             .accessibilityIdentifier("transcript-image-thumbnail")
             .task(id: path) {
                 thumbnail = await TranscriptThumbnailCache.shared.thumbnail(for: path)

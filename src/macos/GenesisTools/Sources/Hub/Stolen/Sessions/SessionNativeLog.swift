@@ -6,7 +6,9 @@
 //  Reads the provider's own session file (Claude `~/.claude/projects/**/<id>.jsonl`, Codex
 //  rollouts) for what `tools ai sessions tail --json` leaves out:
 //
-//  - token usage per model call, with cache writes, and the model that made each call;
+//  - token usage per model call, with cache writes, and the model that made each call. Claude
+//    files only: a Codex envelope already carries each turn's usage, and its turn ids are
+//    positions the GenesisTools reader assigns, so a Codex line cannot be matched to a turn here;
 //  - the full input of every tool call (Write content, Edit old/new strings, patches);
 //  - the full, unclipped tool result.
 //
@@ -108,7 +110,7 @@ struct SessionNativeSummary: Equatable, Sendable {
         let messageId: String
     }
 
-    /// Short model name per transcript turn id (`opus`, `sonnet`, `gpt-5.5`).
+    /// Short model name per transcript turn id (`opus`, `sonnet`). Claude files only (see the header).
     var models: [String: String] = [:]
     fileprivate var ordinals: [String: Int] = [:]
     fileprivate var calls: [Call] = []
@@ -118,10 +120,18 @@ struct SessionNativeSummary: Equatable, Sendable {
     func model(forTurn id: String) -> String? { models[id] }
 
     /// Usage of every model call from the line `fromTurn` up to, not including, `untilTurn`
-    /// (nil: to the end of the file). nil when `fromTurn` is not in the file.
+    /// (nil: to the end of the file). nil when `fromTurn`, or a given `untilTurn`, is not in the
+    /// file: summing to the end would count every later section's calls in this one.
+    // GenesisTools adaptation: an unknown `untilTurn` used to read as the end of the file.
     func usage(fromTurn: String, untilTurn: String?) -> SessionUsage? {
         guard let start = ordinals[fromTurn] else { return nil }
-        let end = untilTurn.flatMap { ordinals[$0] } ?? Int.max
+        let end: Int
+        if let untilTurn {
+            guard let found = ordinals[untilTurn] else { return nil }
+            end = found
+        } else {
+            end = Int.max
+        }
         var seen = Set<String>()
         var sum = SessionUsage()
         for call in calls where call.ordinal >= start && call.ordinal < end && seen.insert(call.messageId).inserted {
