@@ -22,8 +22,13 @@ export class XAIClient {
     private readonly explicitKey?: string;
     private pending?: Promise<string>;
     private pendingAt = 0;
+    private readonly lookup: () => Promise<string>;
+    private readonly now: () => number;
 
-    constructor(apiKey?: string) {
+    /** `deps` is for tests: the account lookup and the clock. */
+    constructor(apiKey?: string, deps: { lookup?: () => Promise<string>; now?: () => number } = {}) {
+        this.lookup = deps.lookup ?? (() => providerApiKey(XAI_PROVIDER_ID));
+        this.now = deps.now ?? Date.now;
         const trimmed = apiKey?.trim();
 
         if (trimmed) {
@@ -51,12 +56,17 @@ export class XAIClient {
             return this.explicitKey;
         }
 
-        if (!this.pending || Date.now() - this.pendingAt > KEY_TTL_MS) {
-            this.pendingAt = Date.now();
-            this.pending = providerApiKey(XAI_PROVIDER_ID).catch((err: unknown) => {
-                this.pending = undefined;
+        if (!this.pending || this.now() - this.pendingAt > KEY_TTL_MS) {
+            this.pendingAt = this.now();
+            const lookup: Promise<string> = this.lookup().catch((err: unknown) => {
+                // An expired lookup that fails late must not drop the one that replaced it.
+                if (this.pending === lookup) {
+                    this.pending = undefined;
+                }
+
                 throw err;
             });
+            this.pending = lookup;
         }
 
         return this.pending;
