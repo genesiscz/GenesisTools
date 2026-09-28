@@ -2,12 +2,14 @@ import { describe, expect, test } from "bun:test";
 import { injectTtydMobileShell, shouldInjectTtydMobileShell } from "@app/dev-dashboard/lib/ttyd/mobile-shell";
 
 describe("ttyd mobile-shell", () => {
-    test("shouldInjectTtydMobileShell only patches ttyd HTML documents", () => {
-        expect(shouldInjectTtydMobileShell("/ttyd/550e8400-e29b-41d4-a716-446655440000/", "text/html")).toBe(true);
+    test("shouldInjectTtydMobileShell only patches ttyd HTML documents, and never a HEAD probe", () => {
+        const page = "/ttyd/550e8400-e29b-41d4-a716-446655440000/";
+        expect(shouldInjectTtydMobileShell({ method: "GET", pathname: page, contentType: "text/html" })).toBe(true);
         expect(
-            shouldInjectTtydMobileShell("/ttyd/550e8400-e29b-41d4-a716-446655440000/app.js", "text/javascript")
+            shouldInjectTtydMobileShell({ method: "GET", pathname: `${page}app.js`, contentType: "text/javascript" })
         ).toBe(false);
-        expect(shouldInjectTtydMobileShell("/cmux", "text/html")).toBe(false);
+        expect(shouldInjectTtydMobileShell({ method: "GET", pathname: "/cmux", contentType: "text/html" })).toBe(false);
+        expect(shouldInjectTtydMobileShell({ method: "HEAD", pathname: page, contentType: "text/html" })).toBe(false);
     });
 
     test("injectTtydMobileShell replaces viewport and injects shell assets", () => {

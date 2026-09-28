@@ -638,7 +638,14 @@ export function startFrontProxy(opts: {
                 }
             }
 
-            if (ttyd && shouldInjectTtydMobileShell(url.pathname, headers.get("content-type"))) {
+            if (
+                ttyd &&
+                shouldInjectTtydMobileShell({
+                    method: req.method,
+                    pathname: url.pathname,
+                    contentType: headers.get("content-type"),
+                })
+            ) {
                 const html = await upstream.text();
 
                 return new Response(injectTtydMobileShell(html), {
