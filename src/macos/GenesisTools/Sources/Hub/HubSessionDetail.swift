@@ -293,12 +293,14 @@ struct HubSessionDetailHost: View {
         return actions
     }
 
-    /// Shows one turn's row: a turn before the loaded window loads a window around it first (the live
-    /// tail then follows from its end, as after any earlier page), then the list reveals the row.
+    /// Shows one turn's row: a turn before the loaded window loads a window from it to the current end
+    /// (as the refresh does, so the newest turns stay), then the list reveals the row.
     private func jump(toTurn index: Int, rowId: String) async {
         HubPerf.log("transcript.jump turn=\(index) row=\(rowId.prefix(12)) window=\(windowStart)")
         if index < windowStart {
-            await load(offset: max(0, index - 2), limit: Self.pageSize)
+            let offset = max(0, index - 2)
+            let end = envelope?.nextOffset ?? windowStart + turns.count
+            await load(offset: offset, limit: max(Self.pageSize, end - offset))
         }
         // The list knows its session by the transcript's own id (`services.sessionId`).
         HubTranscriptBus.post(HubTranscriptBus.list, sessionId: services.sessionId, .reveal(rowId: rowId))
