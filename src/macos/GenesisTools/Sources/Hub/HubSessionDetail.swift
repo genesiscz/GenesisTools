@@ -260,7 +260,7 @@ struct HubSessionDetailHost: View {
     private var actions: SessionDetailActions {
         var actions = SessionDetailActions()
         actions.refresh = {
-            Task { await load(offset: windowStart > 0 ? windowStart : nil, limit: max(Self.pageSize, turns.count + Self.pageSize)) }
+            Task { await load(offset: windowStart > 0 ? windowStart : nil, limit: max(Self.pageSize, turns.count + Self.pageSize), throughEnd: true) }
         }
         actions.copy = { text in PathOpener.copy(text) }
         // The header's "Copy the resume command" copied an empty string (it cleared the clipboard):
@@ -321,7 +321,9 @@ struct HubSessionDetailHost: View {
 
     // MARK: loading
 
-    private func load(offset: Int?, limit: Int) async {
+    /// `throughEnd`: the window must reach the latest turn (a refresh that keeps the earlier pages),
+    /// unlike a jump's window around one turn.
+    private func load(offset: Int?, limit: Int, throughEnd: Bool = false) async {
         loadID += 1
         let id = loadID
         // A new window (another session, a refresh): an earlier page or a tail still on its way
@@ -331,7 +333,16 @@ struct HubSessionDetailHost: View {
         let span = HubPerf.begin("transcript.page", "limit=\(limit) offset=\(offset.map(String.init) ?? "-")", awaits: true)
         defer { span.end("\(turns.count) turns") }
         do {
-            let fetched = try await SessionTranscriptClient.fetch(using: HubSource.bridge, sessionId: session.sessionId, limit: limit, offset: offset)
+            var limit = limit
+            var fetched = try await SessionTranscriptClient.fetch(using: HubSource.bridge, sessionId: session.sessionId, limit: limit, offset: offset)
+            // A full answer may have stopped short of the latest turn, when more turns arrived than the
+            // limit left room for, so ask again from the same offset with twice the room until one
+            // comes back short.
+            while throughEnd, offset != nil, fetched.turns.count >= limit {
+                guard id == loadID else { return }
+                limit *= 2
+                fetched = try await SessionTranscriptClient.fetch(using: HubSource.bridge, sessionId: session.sessionId, limit: limit, offset: offset)
+            }
             guard id == loadID else { return }
             envelope = fetched
             turns = fetched.turns

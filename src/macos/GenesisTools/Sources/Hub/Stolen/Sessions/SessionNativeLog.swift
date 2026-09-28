@@ -233,9 +233,44 @@ final class SessionNativeLog: @unchecked Sendable {
         case claude, codex, other
 
         static func of(_ line: UnsafeRawBufferPointer) -> LineKind {
-            if contains(line, #""type":"assistant""#) || contains(line, #""type":"user""#) { return .claude }
+            if hasClaudeType(line) { return .claude }
             if contains(line, #""response_item""#) { return .codex }
             return .other
+        }
+
+        /// `"type":"assistant"` or `"type":"user"`, with any spaces or tabs around the colon: Claude
+        /// Code writes its lines minified, but a JSONL writer may not. Byte work only, no JSON: most
+        /// lines of a session file are not turns and must be skipped cheaply.
+        // GenesisTools adaptation: the exact minified spelling used to be required.
+        private static func hasClaudeType(_ line: UnsafeRawBufferPointer) -> Bool {
+            guard let base = line.baseAddress else { return false }
+            let count = line.count
+            func skipBlanks(_ index: inout Int) {
+                while index < count, line[index] == 0x20 || line[index] == 0x09 { index += 1 }
+            }
+            func startsWith(_ needle: String, at index: Int) -> Bool {
+                var needle = needle
+                return needle.withUTF8 { bytes in
+                    index + bytes.count <= count && memcmp(base + index, bytes.baseAddress, bytes.count) == 0
+                }
+            }
+
+            var key = #""type""#
+            return key.withUTF8 { keyBytes in
+                var from = 0
+                while from < count, let hit = memmem(base + from, count - from, keyBytes.baseAddress, keyBytes.count) {
+                    let start = base.distance(to: UnsafeRawPointer(hit))
+                    var index = start + keyBytes.count
+                    skipBlanks(&index)
+                    if index < count, line[index] == UInt8(ascii: ":") {
+                        index += 1
+                        skipBlanks(&index)
+                        if startsWith(#""assistant""#, at: index) || startsWith(#""user""#, at: index) { return true }
+                    }
+                    from = start + 1
+                }
+                return false
+            }
         }
 
         private static func contains(_ line: UnsafeRawBufferPointer, _ needle: String) -> Bool {

@@ -420,8 +420,13 @@ struct SessionTranscriptList: View {
         return "\(cursor + 1) / \(promptIds.count)"
     }
 
+    // GenesisTools adaptation: rows that hold the query. A prompt kept only as its section's context
+    // is not one.
     private var matchCount: Int {
-        visible.reduce(0) { $0 + $1.rows.count }
+        let needle = appliedQuery.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return visible.reduce(0) { total, section in
+            total + section.rows.filter { !$0.isPrompt || needle.isEmpty || $0.searchText.contains(needle) }.count
+        }
     }
 
     // MARK: Content

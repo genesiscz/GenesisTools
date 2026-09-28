@@ -322,6 +322,33 @@ final class HubLogicTests: XCTestCase {
         XCTAssertNil(summary.usage(fromTurn: "a1", untilTurn: "not-in-the-file"), "an unknown end is not the end of the file")
     }
 
+    /// A JSONL writer that puts spaces around the colon still gets its turns read (Claude Code
+    /// writes minified lines; the prefilter used to require that spelling).
+    func testNativeLogReadsLinesWithSpacesAroundTheColon() throws {
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent("native-spaced-\(UUID().uuidString).jsonl")
+        try """
+        {"type": "user", "uuid": "u1", "message": {"role": "user", "content": "hi"}}
+        {"type" : "assistant", "uuid": "a1", "message": {"id": "m1", "model": "claude-opus-5-5", "content": [], "usage": {"input_tokens": 1, "output_tokens": 2}}}
+        """.write(to: file, atomically: true, encoding: .utf8)
+        let summary = try XCTUnwrap(SessionNativeLog.scan(path: file.path)).summary
+        XCTAssertEqual(summary.total.modelCalls, 1)
+        XCTAssertEqual(summary.model(forTurn: "a1"), "opus")
+        XCTAssertEqual(summary.usage(fromTurn: "u1", untilTurn: nil)?.outputTokens, 2)
+    }
+
+    /// A search hit in a reply keeps its section's prompt as context; a section with no hit goes.
+    func testASearchKeepsThePromptOfEachHit() throws {
+        let json = """
+        [{"id":"u1","role":"user","text":"fix the export","tools":[],"index":0},
+         {"id":"a1","role":"assistant","text":"PrintButton was the cause","tools":[],"index":1},
+         {"id":"u2","role":"user","text":"thanks","tools":[],"index":2},
+         {"id":"a2","role":"assistant","text":"you are welcome","tools":[],"index":3}]
+        """
+        let document = TranscriptDocument.build(try JSONDecoder().decode([TranscriptTurn].self, from: Data(json.utf8)))
+        let hits = document.filtered([], query: "printbutton")
+        XCTAssertEqual(hits.flatMap(\.rows).map(\.id), ["p-u1", "a-a1"])
+    }
+
     /// The plain draw on the main thread gives text to the first lines only, with the full height.
     func testFirstDrawGivesTextToTheFirstLinesAndKeepsTheHeight() {
         let block = CodeBlockBuilder.numbered((1...500).map { "line \($0)" }.joined(separator: "\n"), language: .plain)
