@@ -19,10 +19,11 @@ export function shellQuote(value: string): string {
 /**
  * A value as one shell word in a command a person copies: bare when no character in it means
  * anything to the shell (`work`, `alice@example.com`), `shellQuote`d otherwise. An account named
- * `my account` split into two arguments, and one with `$(...)` in it ran that when pasted.
+ * `my account` split into two arguments, and one with `$(...)` in it ran that when pasted. A leading `=`
+ * is quoted too: zsh (EQUALS) turns `=cat` into the path of `cat`.
  */
 export function shellWord(value: string): string {
-    return /^[A-Za-z0-9_@%+=:,./-]+$/.test(value) ? value : shellQuote(value);
+    return /^(?!=)[A-Za-z0-9_@%+=:,./-]+$/.test(value) ? value : shellQuote(value);
 }
 
 /** `shellQuote` for a whole argv, joined into one `sh -c` command line. */

@@ -205,10 +205,12 @@ struct HubSessionDetailHost: View {
         "'" + text.replacingOccurrences(of: "'", with: "'\\''") + "'"
     }
 
-    /// A command word as typed: bare when no character in it means anything to a shell, else quoted.
+    /// A command word as typed: bare when no character in it means anything to a shell, else quoted. A
+    /// leading `=` is quoted too: zsh (EQUALS) turns `=cat` into the path of `cat`.
     nonisolated static func shellWord(_ text: String) -> String {
         let plain = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_@%+=:,./-")
-        return !text.isEmpty && text.unicodeScalars.allSatisfy { plain.contains($0) } ? text : shellQuoted(text)
+        let bare = !text.isEmpty && !text.hasPrefix("=") && text.unicodeScalars.allSatisfy { plain.contains($0) }
+        return bare ? text : shellQuoted(text)
     }
 
     /// The branch the session ran on: the folder's branch while it runs there now, else the branch its

@@ -159,6 +159,7 @@ final class HubPathActionsTests: XCTestCase {
         XCTAssertEqual(HubSessionDetailHost.shellWord("id; rm -r x"), "'id; rm -r x'")
         XCTAssertEqual(HubSessionDetailHost.shellWord("$(whoami)"), "'$(whoami)'")
         XCTAssertEqual(HubSessionDetailHost.shellWord(""), "''")
+        XCTAssertEqual(HubSessionDetailHost.shellWord("=cat"), "'=cat'", "zsh would expand a leading =")
     }
 
     // MARK: diff header menu

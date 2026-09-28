@@ -123,6 +123,9 @@ describe("shellWord", () => {
     test("a plain name stays bare; spaces and substitutions become one quoted word", async () => {
         expect(shellWord("work")).toBe("work");
         expect(shellWord("alice@example.com")).toBe("alice@example.com");
+        // zsh expands a word that starts with = into a command path; one = inside stays bare.
+        expect(shellWord("=cat")).toBe("'=cat'");
+        expect(shellWord("--name=work")).toBe("--name=work");
         expect(
             await argvFrom([shellWord("work"), shellWord("my account"), shellWord("$(echo pwned)")].join(" "))
         ).toEqual(["work", "my account", "$(echo pwned)"]);
