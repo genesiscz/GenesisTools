@@ -31,6 +31,15 @@ test("a plain session maps to a cache row and a search hit carries its snippet",
     expect(row.matchSnippet).toBe("the invoice totals");
 });
 
+test("a long prompt with no space wraps without splitting an emoji into lone surrogates", () => {
+    const prompt = `${"a".repeat(71)}😀${"b".repeat(100)}`;
+    const [row] = buildSessionTableOpts([toSessionDisplay(session({ prompt }))], { message: "Pick" }).rows;
+    const lone = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
+
+    expect(row?.detail?.some((line) => lone.test(line))).toBe(false);
+    expect(row?.detail?.join("")).toContain("😀");
+});
+
 test("the row name falls back title, summary, prompt, then says so", () => {
     expect(toSessionDisplay(session()).name).toBe("Invoice import");
     expect(toSessionDisplay(session({ title: "", summary: "Import run" })).name).toBe("Import run");

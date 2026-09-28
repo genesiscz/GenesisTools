@@ -207,7 +207,8 @@ function wrapText(text: string, width: number, maxLines: number): string[] {
         let breakAt = remaining.lastIndexOf(" ", width);
 
         if (breakAt <= 0) {
-            breakAt = width;
+            // No space to break at: never between the two halves of a surrogate pair (an emoji).
+            breakAt = sliceWhole(remaining, width).length || width;
         }
 
         lines.push(remaining.slice(0, breakAt));
