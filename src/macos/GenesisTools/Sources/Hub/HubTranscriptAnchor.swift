@@ -100,11 +100,15 @@ final class TranscriptScrollAnchor: ObservableObject {
                 MainActor.assumeIsolated { self?.viewportMoved() }
             },
         ]
-        // A scroll or a click in the list is the reader's: the viewport is theirs from then on.
-        inputMonitor = NSEvent.addLocalMonitorForEvents(matching: [.scrollWheel, .leftMouseDown]) { [weak self] event in
+        // A scroll, a click or a key in the list is the reader's: the viewport is theirs from then on. A key
+        // counts while the list has focus (Page Up, the arrows, Home, End, space).
+        inputMonitor = NSEvent.addLocalMonitorForEvents(matching: [.scrollWheel, .leftMouseDown, .keyDown]) { [weak self] event in
             MainActor.assumeIsolated {
-                if let self, let scroll = self.scrollView, event.window === scroll.window,
-                   scroll.bounds.contains(scroll.convert(event.locationInWindow, from: nil)) {
+                guard let self, let scroll = self.scrollView, event.window === scroll.window else { return }
+                let reader = event.type == .keyDown
+                    ? (scroll.window?.firstResponder as? NSView)?.isDescendant(of: scroll) == true
+                    : scroll.bounds.contains(scroll.convert(event.locationInWindow, from: nil))
+                if reader {
                     self.releaseHold()
                 }
             }
