@@ -10,6 +10,7 @@ import {
     sanitizeOutput,
     sliceWhole,
     slugify,
+    snippetAround,
     stripAnsi,
     truncateText,
 } from "./string";
@@ -100,6 +101,17 @@ describe.skipIf(skip.onWindows)("escapeShellArg (Unix)", () => {
         expect(escapeShellArg("*.ts")).toBe("'*.ts'");
         expect(escapeShellArg("src/**/*.tsx")).toBe("'src/**/*.tsx'");
     });
+
+    it("sh reads each value back as one word, the same word the '\\'' spelling gives", () => {
+        // The hub's worktree restore command used the '\'' spelling before it moved to escapeShellArg.
+        const backslashSpelling = (value: string) => `'${value.replace(/'/g, `'\\''`)}'`;
+        const values = ["plain", "it's", "a'b'c", "''", "/tmp/My Repo's/wt-1", "$HOME `x` \\n", "line\nbreak"];
+        const words = values.flatMap((value) => [escapeShellArg(value), backslashSpelling(value)]).join(" ");
+        const result = Bun.spawnSync(["sh", "-c", `printf '%s\\0' ${words}`], { env: process.env });
+
+        expect(result.exitCode).toBe(0);
+        expect(result.stdout.toString().split("\0").slice(0, -1)).toEqual(values.flatMap((value) => [value, value]));
+    });
 });
 
 describe("escapeShellArg (Windows — cross-spawn compatible)", () => {
@@ -175,6 +187,17 @@ describe("removeDiacritics", () => {
 
     it("handles empty string", () => {
         expect(removeDiacritics("")).toBe("");
+    });
+});
+
+describe("snippetAround", () => {
+    it("keeps short text and centres long text on the match", () => {
+        expect(snippetAround("  a   short\nline ", "short")).toBe("a short line");
+        const long = `${"x".repeat(300)} needle here ${"y".repeat(300)}`;
+        const cut = snippetAround(long, "needle", 60);
+        expect(cut).toContain("needle here");
+        expect(cut.startsWith("…")).toBe(true);
+        expect(cut.endsWith("…")).toBe(true);
     });
 });
 

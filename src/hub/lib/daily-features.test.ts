@@ -46,7 +46,7 @@ import {
     runRules,
     updateRulesConfig,
 } from "./rules";
-import { searchSessions, snippetAround } from "./search";
+import { searchSessions } from "./search";
 import type { TimelineEvent, TimelineResult } from "./timeline";
 
 // The four daily hub doors (search, digest, forecast, rules) in one file: pure logic over injected
@@ -83,15 +83,6 @@ describe("search", () => {
             },
         });
     }
-
-    test("snippetAround keeps short text and centres long text on the match", () => {
-        expect(snippetAround("  a   short\nline ", "short")).toBe("a short line");
-        const long = `${"x".repeat(300)} needle here ${"y".repeat(300)}`;
-        const cut = snippetAround(long, "needle", 60);
-        expect(cut).toContain("needle here");
-        expect(cut.startsWith("…")).toBe(true);
-        expect(cut.endsWith("…")).toBe(true);
-    });
 
     test("fans out to every provider with the filters pushed in, merges newest first and dedupes", async () => {
         const seen: AgentSearchFilters[] = [];

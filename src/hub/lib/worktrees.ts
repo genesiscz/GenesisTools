@@ -19,9 +19,10 @@ import type { How, Verdict } from "@app/git/lib/merged/verdict";
 import { createGit, type DetectedBase, detectBase, loadRepoConfig } from "@genesiscz/utils/git";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
-import { readParentPid, readProcessCwd } from "@genesiscz/utils/process/cwd";
+import { ownLineage, readProcessCwd } from "@genesiscz/utils/process/cwd";
 import { listPsRows, processBasename } from "@genesiscz/utils/process/ps";
 import { Storage } from "@genesiscz/utils/storage";
+import { escapeShellArg } from "@genesiscz/utils/string";
 
 const log = logger.child({ component: "hub/worktrees" });
 
@@ -297,22 +298,10 @@ export function ownerOf(cwd: string, worktreePaths: string[]): string | null {
     return best;
 }
 
-/** This process and its ancestors: the hub's own `tools` call must not count as a user. */
-function ownLineage(): Set<number> {
-    const own = new Set<number>();
-    let pid: number | null = process.pid;
-
-    while (pid !== null && pid > 1 && !own.has(pid) && own.size < 32) {
-        own.add(pid);
-        pid = readParentPid(pid);
-    }
-
-    return own;
-}
-
 /** One `ps`, then libproc for each cwd (microseconds each), plus the agent sessions of the last hour. */
 export async function readLiveUsers({ liveMinutes }: { liveMinutes: number }): Promise<LiveUsers> {
-    const own = ownLineage();
+    // The hub's own `tools` call must not count as a user.
+    const own = ownLineage(32);
     const processes: LiveUsers["processes"] = [];
 
     for (const row of await listPsRows({ timeoutMs: 10_000 })) {
@@ -969,10 +958,6 @@ export function moveAsideJournalPath(): string {
     return join(new Storage("hub").getBaseDir(), "moved-aside.jsonl");
 }
 
-function shellQuote(value: string): string {
-    return `'${value.replace(/'/g, `'\\''`)}'`;
-}
-
 /** The first of `<base>`, `<base>-2`, `<base>-3`… that does not exist yet. */
 function freeDestination(base: string): string {
     let candidate = base;
@@ -1108,7 +1093,7 @@ export async function moveAsideWorktrees({
             continue;
         }
 
-        const restore = `git -C ${shellQuote(row.repoRoot)} worktree move ${shellQuote(to)} ${shellQuote(path)}`;
+        const restore = `git -C ${escapeShellArg(row.repoRoot)} worktree move ${escapeShellArg(to)} ${escapeShellArg(path)}`;
         const record: MoveAsideRecord = {
             from: path,
             to,

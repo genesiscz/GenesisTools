@@ -3,7 +3,7 @@ import { mkdtempSync, realpathSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { readParentPid, readProcessCwd, resolveAncestorCwd } from "./cwd";
+import { ownLineage, readParentPid, readProcessCwd, resolveAncestorCwd } from "./cwd";
 
 const SUPPORTED = process.platform === "darwin" || process.platform === "linux";
 const MODULE = resolve(import.meta.dir, "cwd.ts");
@@ -31,6 +31,14 @@ describe.skipIf(!SUPPORTED)("process cwd", () => {
 
     it("reads our own parent pid", () => {
         expect(readParentPid(process.pid)).toBe(process.ppid);
+    });
+
+    it("ownLineage holds this process and its parent, and stops at the depth it was given", () => {
+        const own = ownLineage();
+        expect(own.has(process.pid)).toBe(true);
+        expect(own.has(process.ppid)).toBe(true);
+        expect(own.has(1)).toBe(false);
+        expect([...ownLineage(1)]).toEqual([process.pid]);
     });
 
     it("returns null for a pid that does not exist", () => {

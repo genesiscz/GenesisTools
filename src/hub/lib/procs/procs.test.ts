@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { PsRow } from "@genesiscz/utils/process/ps";
 import { argvSessionId, classifyCommand } from "./classify";
-import { type ProcsSources, parseLaunchctlList, parseTopPower, readProcsReport, readTopEnergy } from "./sources";
+import { type ProcsSources, readProcsReport } from "./sources";
 import { refusal, type SignalOps, stopOrphans, stopTree } from "./stop";
 import { type BuildInput, buildProcsReport, LAUNCHD_UNKNOWN_REASON, type SessionLike } from "./tree";
 
@@ -693,42 +693,5 @@ describe("stopTree", () => {
 
         expect(outcomes.map((outcome) => outcome.pid)).toEqual([310]);
         expect(ops.sent).toEqual(["SIGTERM 310"]);
-    });
-});
-
-describe("sources parsers", () => {
-    test("launchctl list: running jobs only", () => {
-        const jobs = parseLaunchctlList(
-            "PID\tStatus\tLabel\n330\t0\tcom.example.mcp-gateway\n-\t0\tcom.example.idle\n"
-        );
-
-        expect([...jobs]).toEqual([[330, "com.example.mcp-gateway"]]);
-    });
-
-    test("top: the second sample's PID POWER table", () => {
-        const stdout = [
-            "PID    POWER",
-            "210    0.0",
-            "",
-            "Processes: 700 total",
-            "PID    POWER",
-            "210    4.7 ",
-            "300    12.5",
-            "",
-        ].join("\n");
-
-        expect([...parseTopPower(stdout)]).toEqual([
-            [210, 4.7],
-            [300, 12.5],
-        ]);
-    });
-    test("top: a failed run is no figures at all, not the first sample's zeros, and a spawn error is not fatal", async () => {
-        const partial = async () => ({ status: 1, stdout: "PID    POWER\n210    0.0\n", stderr: "interrupted" });
-        const broken = async (): Promise<never> => {
-            throw new Error("spawn top ENOENT");
-        };
-
-        expect((await readTopEnergy(partial)).size).toBe(0);
-        expect((await readTopEnergy(broken)).size).toBe(0);
     });
 });

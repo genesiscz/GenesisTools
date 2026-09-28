@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { parseLaunchctlList } from "@genesiscz/utils/process/launchctl";
 import {
     capture,
     chunk,
@@ -10,6 +11,7 @@ import {
     parsePsTable,
     processBasename,
 } from "@genesiscz/utils/process/ps";
+import { parseTopPower, readTopEnergy } from "@genesiscz/utils/process/top";
 
 // Real `ps` and `lsof` output shapes, with invented user names.
 const PS_INFO_LINE = "17512 40508 alice    Ss     0.4   3584 Wed Sep 16 17:58:55 2026 /bin/zsh -c echo hello world";
@@ -168,5 +170,42 @@ describe("processBasename", () => {
     test("survives an empty command", () => {
         expect(processBasename("")).toBe("");
         expect(processBasename("   ")).toBe("");
+    });
+});
+
+describe("launchctl list and top power parsers", () => {
+    test("launchctl list: running jobs only", () => {
+        const jobs = parseLaunchctlList(
+            "PID\tStatus\tLabel\n330\t0\tcom.example.mcp-gateway\n-\t0\tcom.example.idle\n"
+        );
+
+        expect([...jobs]).toEqual([[330, "com.example.mcp-gateway"]]);
+    });
+
+    test("top: the second sample's PID POWER table", () => {
+        const stdout = [
+            "PID    POWER",
+            "210    0.0",
+            "",
+            "Processes: 700 total",
+            "PID    POWER",
+            "210    4.7 ",
+            "300    12.5",
+            "",
+        ].join("\n");
+
+        expect([...parseTopPower(stdout)]).toEqual([
+            [210, 4.7],
+            [300, 12.5],
+        ]);
+    });
+    test("top: a failed run is no figures at all, not the first sample's zeros, and a spawn error is not fatal", async () => {
+        const partial = async () => ({ status: 1, stdout: "PID    POWER\n210    0.0\n", stderr: "interrupted" });
+        const broken = async (): Promise<never> => {
+            throw new Error("spawn top ENOENT");
+        };
+
+        expect((await readTopEnergy(partial)).size).toBe(0);
+        expect((await readTopEnergy(broken)).size).toBe(0);
     });
 });

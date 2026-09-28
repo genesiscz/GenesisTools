@@ -8,6 +8,7 @@ import type {
     NativeHistoryEntry,
 } from "@genesiscz/utils/agent-sessions/types";
 import { logger } from "@genesiscz/utils/logger";
+import { snippetAround } from "@genesiscz/utils/string";
 
 // `tools hub search`: one query over every provider's indexed sessions. There is no second index:
 // each provider's own `AgentSessionAdapter.search` (the one behind `tools <provider> history`) runs
@@ -83,27 +84,6 @@ export function isSearchProvider(value: string): value is SearchProvider {
     return (SEARCH_PROVIDERS as readonly string[]).includes(value);
 }
 
-function collapse(text: string): string {
-    return text.replace(/\s+/g, " ").trim();
-}
-
-/** `text` cut to `max` characters around the first case-insensitive occurrence of a query word. */
-export function snippetAround(text: string, query: string, max = SEARCH_LIMITS.snippetChars): string {
-    const flat = collapse(text);
-
-    if (flat.length <= max) {
-        return flat;
-    }
-
-    const lower = flat.toLowerCase();
-    const needles = [query, ...query.split(/\s+/)].map((word) => word.trim().toLowerCase()).filter(Boolean);
-    const at = needles.map((needle) => lower.indexOf(needle)).find((index) => index >= 0) ?? 0;
-    const start = Math.max(0, Math.min(at - Math.floor(max / 3), flat.length - max));
-    const end = Math.min(flat.length, start + max);
-
-    return `${start > 0 ? "…" : ""}${flat.slice(start, end).trim()}${end < flat.length ? "…" : ""}`;
-}
-
 function snippetsOf(hit: AgentSearchHit<string>, query: string): SearchSnippet[] {
     const entries = hit.matchedEntries ?? [];
     const snippets = entries
@@ -111,7 +91,7 @@ function snippetsOf(hit: AgentSearchHit<string>, query: string): SearchSnippet[]
         .slice(0, SEARCH_LIMITS.snippets)
         .map((entry) => ({
             role: entry.role,
-            text: snippetAround(entry.text, query),
+            text: snippetAround(entry.text, query, SEARCH_LIMITS.snippetChars),
             line: entry.line,
             timestamp: entry.timestamp ?? null,
             tool: entry.tool ?? null,
@@ -121,7 +101,7 @@ function snippetsOf(hit: AgentSearchHit<string>, query: string): SearchSnippet[]
         // A metadata hit (title, summary, first prompt) carries text but no entry.
         snippets.push({
             role: "user",
-            text: snippetAround(hit.matchedText, query),
+            text: snippetAround(hit.matchedText, query, SEARCH_LIMITS.snippetChars),
             line: 0,
             timestamp: null,
             tool: null,
