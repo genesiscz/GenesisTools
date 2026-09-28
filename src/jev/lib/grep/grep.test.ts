@@ -23,6 +23,7 @@ import { budgetArg, positiveCap, requestCap, writeResult } from "./evaluations/a
 import { createGrepEvaluator, DEFAULT_REQUEST_LIMIT, GREP_TYPESAFE_MODEL } from "./evaluator";
 import { createFilesystem, type FilesystemPolicy } from "./filesystem";
 import { renderResult } from "./render";
+import { repositoryContext } from "./repository-context";
 import { evidenceRequest, fileAssessmentRequest, navigationRequest } from "./requests";
 import { retrieve } from "./retrieve";
 import { DEFAULT_GREP_BUDGET, GrepSetupError, searchRepository } from "./search";
@@ -460,6 +461,53 @@ describe("selection", () => {
     });
 });
 
+describe("repository context", () => {
+    test("a test command is suggested only for a case the packet prints", async () => {
+        const root = scratch("context");
+        const source =
+            'import { expect, test } from "bun:test";\n\ntest("adds", () => {\n    expect(1).toBe(1);\n});\n';
+        tree(root, {
+            "package.json": '{ "name": "fixture", "scripts": { "test": "bun test" } }\n',
+            "cart.test.ts": source,
+        });
+        const reader = await createFilesystem({ root });
+        const excerpt = (startLine: number, endLine: number) => ({
+            range: { startLine, endLine },
+            source: source
+                .split("\n")
+                .slice(startLine - 1, endLine)
+                .join("\n"),
+        });
+        const commandsFor = async (presentationExcerpts: ReturnType<typeof excerpt>[]) => {
+            const file: FileEvidence = {
+                path: "cart.test.ts",
+                contentHash: "h",
+                score: 0.9,
+                roles: ["test"],
+                leads: [],
+                selected: [],
+                rendered: [{ startLine: 1, endLine: 5 }],
+                excerpts: [excerpt(1, 5)],
+                presentationExcerpts,
+                sourceOmitted: false,
+            };
+            const context = await repositoryContext({
+                reader,
+                files: [file],
+                readCurrent: async (path) => {
+                    const result = await reader.readSnapshot(path);
+                    return result.status === "ok" ? result.snapshot : undefined;
+                },
+            });
+            return context.testCommands.map((command) => command.path);
+        };
+        // `rendered` covers the case at the 0.5 cut; the packet prints only the import at the 0.7 cut.
+        expect(await commandsFor([excerpt(1, 1)])).toEqual([]);
+        expect(await commandsFor([excerpt(3, 5)])).toEqual(["cart.test.ts"]);
+        await reader.close();
+    });
+});
+
 describe("renderer", () => {
     const base: RetrievalResult = {
         root: "/fixture",
@@ -533,6 +581,31 @@ describe("renderer", () => {
         expect(packet).toContain('- "b.ts" — relevant; role uncertain; source omitted');
         expect(packet).toContain("Source omitted: 1 file(s).");
         expect(packet).not.toContain("y".repeat(40));
+    });
+
+    test("a test command whose file lost every body to the byte budget is not suggested", () => {
+        const command = (path: string) => ({ path, cwd: ".", argv: ["bun", "test", path], runner: "bun" as const });
+        const packet = renderResult(
+            {
+                ...base,
+                repositoryContext: {
+                    ...base.repositoryContext,
+                    testCommands: [command("a.test.ts"), command("b.test.ts")],
+                },
+                files: [
+                    evidence("a.test.ts", {
+                        excerpts: [{ range: { startLine: 1, endLine: 1 }, source: "x".repeat(40) }],
+                    }),
+                    evidence("b.test.ts", {
+                        score: 0.5,
+                        excerpts: [{ range: { startLine: 1, endLine: 1 }, source: "y".repeat(40) }],
+                    }),
+                ],
+            },
+            50
+        );
+        expect(packet).toContain("bun test a.test.ts");
+        expect(packet).not.toContain("bun test b.test.ts");
     });
 
     test("a control character is escaped in the path and left alone in the source", () => {

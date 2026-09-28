@@ -64,11 +64,14 @@ export async function repositoryContext({
     files: FileEvidence[];
     readCurrent: (path: string) => Promise<Snapshot | undefined>;
 }): Promise<RepositoryContext> {
-    // Upstream's rule: a file with no excerpt shows no test case, and `rendered` is what was shown.
+    // A file with no excerpt shows no test case. Upstream checks `rendered`, the 0.5 selection cut, but
+    // the packet prints the presentation excerpts at the 0.7 cut, so a case must sit in those.
     const targets: ContextTarget[] = files.map((file) => ({
         path: file.path,
         roles: file.roles,
-        shownRanges: file.excerpts.length ? file.rendered : [],
+        shownRanges: file.excerpts.length
+            ? (file.presentationExcerpts ?? file.excerpts).map((excerpt) => excerpt.range)
+            : [],
     }));
     const { results, failed } = await gatherRepoContext({
         reader: grepContextReader({ reader, returned: new Set(files.map((file) => file.path)), readCurrent }),

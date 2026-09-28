@@ -90,6 +90,8 @@ export function renderResult(result: RetrievalResult, maxSourceBytes = DEFAULT_M
     });
     const context = result.repositoryContext;
     const omittedCount = files.filter(({ omitted }) => omitted).length;
+    // The byte budget above can drop every body of a test file; its command then names a case nobody sees.
+    const printed = new Set(files.filter(({ excerpts }) => excerpts.length).map(({ file }) => file.path));
     const lines = [
         `Jev grep: ${files.length} relevant files${result.status !== "complete" ? "; discovery incomplete" : ""}.`,
         "Symbols use name@start-end. Roles are estimates; locations-only files remain reading leads.",
@@ -103,7 +105,7 @@ export function renderResult(result: RetrievalResult, maxSourceBytes = DEFAULT_M
         ...(result.warnings ?? []).map(({ kind, count }) => `Warning: ${quote(kind)}: ${count}`),
         ...result.issues.map(({ kind, count }) => `Issue: ${quote(kind)}: ${count}`),
         ...(result.providerFailure ? [`Provider error: ${quote(result.providerFailure)}`] : []),
-        ...context.testCommands.map(testLine),
+        ...context.testCommands.filter((command) => printed.has(command.path)).map(testLine),
         ...files.map(
             ({ file, excerpts, omitted }) =>
                 `- ${quote(file.path)} — ${file.roles.join(", ") || "relevant; role uncertain"}; ${excerpts.length ? "source below" : omitted ? "source omitted" : "locations only"}`
