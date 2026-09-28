@@ -1,9 +1,10 @@
 import { expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, unlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import { GenesisAppUpdatingError } from "@genesiscz/utils/macos/genesis-app";
+import { buildPidRecord, serializePidRecord } from "@genesiscz/utils/process/pidfile";
 import { skip } from "@genesiscz/utils/test/skip";
 import {
     type AxRunBoundary,
@@ -211,27 +212,37 @@ test("a launcher replacement refusal is pre-dispatch and never retries", () => {
 });
 
 test.skipIf(skip.unlessMac)(
-    "launcher replacement never falls back to a bare native binary or removes the build lock",
+    "only a live bundle swap refuses a native command: never a build in progress, never a swap whose owner is gone",
     async () => {
         const taskHome = mkdtempSync(join(tmpdir(), "gt-ax-update-"));
         const appDir = join(taskHome, ".genesis-tools", "app");
         mkdirSync(appDir, { recursive: true });
-        const lock = join(appDir, "build.lock");
-        writeFileSync(lock, "fixture-holder");
+        const marker = join(appDir, "install.lock");
+        const live = serializePidRecord(buildPidRecord());
+        writeFileSync(join(appDir, "build.lock"), live);
+        writeFileSync(marker, live);
         await env.testing.withOverrides({ GENESIS_TOOLS_HOME: taskHome, GENESIS_TOOLS_NO_APP: undefined }, () => {
             expect(() => axCommandLine("/fixture/ax-tool", ["permissions"])).toThrow(GenesisAppUpdatingError);
-            expect(readFileSync(lock, "utf8")).toBe("fixture-holder");
+            expect(readFileSync(marker, "utf8")).toBe(live);
             const dir = join(taskHome, "Applications", "GenesisTools.app", "Contents", "MacOS");
             mkdirSync(dir, { recursive: true });
             const launcher = join(dir, "GenesisTools");
             writeFileSync(launcher, "");
+            const launched = [launcher, "/fixture/ax-tool", "permissions"];
             expect(() => axCommandLine("/fixture/ax-tool", ["permissions"])).toThrow(GenesisAppUpdatingError);
-            unlinkSync(lock);
-            expect(axCommandLine("/fixture/ax-tool", ["permissions"])).toEqual([
-                launcher,
-                "/fixture/ax-tool",
-                "permissions",
-            ]);
+
+            unlinkSync(marker);
+            expect(axCommandLine("/fixture/ax-tool", ["permissions"])).toEqual(launched);
+
+            const gone = { pid: 2_147_483_000, command: "gone", startedAt: null, writtenAt: Date.now() };
+            writeFileSync(marker, serializePidRecord(gone));
+            expect(axCommandLine("/fixture/ax-tool", ["permissions"])).toEqual(launched);
+
+            writeFileSync(marker, "");
+            expect(() => axCommandLine("/fixture/ax-tool", ["permissions"])).toThrow(GenesisAppUpdatingError);
+            const anHourAgo = new Date(Date.now() - 3_600_000);
+            utimesSync(marker, anHourAgo, anHourAgo);
+            expect(axCommandLine("/fixture/ax-tool", ["permissions"])).toEqual(launched);
         });
     }
 );
