@@ -1,4 +1,4 @@
-import { catalogCostUsd, firstUsageDay, queryUsage, type UsageEvent } from "@genesiscz/utils/ai/usage";
+import { catalogCostUsd, firstUsageDay, parseBound, queryUsage, type UsageEvent } from "@genesiscz/utils/ai/usage";
 
 /** The `app` every Jev call is booked under in the usage ledger (`src/utils/ai/evaluation/service.ts`). */
 export const JEV_USAGE_APP = "jev";
@@ -66,7 +66,8 @@ function toCall(event: UsageEvent): JevCall {
 export function jevCalls(window: { from?: string; to?: string } = {}): { from: string; to: string; calls: JevCall[] } {
     const to = window.to ?? new Date().toISOString();
     const from = window.from ?? firstUsageDay() ?? to;
-    if (from >= to) {
+    // As instants: a bare day and a full timestamp, or "9/18/2026", do not order as text. Throws on junk.
+    if (parseBound(from) >= parseBound(to)) {
         return { from, to, calls: [] };
     }
 

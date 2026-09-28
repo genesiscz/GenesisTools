@@ -536,10 +536,15 @@ describe("Jev spend", () => {
             );
         writeFileSync(dayFilePath(day), `${row("jev-latest", "jev listen")}\n${row("jev-future")}\n`);
         const { calls } = jevCalls({ from: day, to: "2026-09-19" });
-        expect(calls.map((call) => [call.label, call.costBasis, call.costUsd])).toEqual([
-            ["jev listen", "catalog", 0.021],
-            [UNLABELED_JEV_USE, "unpriced", undefined],
+        expect(calls.map((call) => [call.label, call.costBasis])).toEqual([
+            ["jev listen", "catalog"],
+            [UNLABELED_JEV_USE, "unpriced"],
         ]);
+        expect(calls[0]?.costUsd).toBeCloseTo(0.021, 9);
+        expect(calls[1]?.costUsd).toBeUndefined();
         expect(jevSpend({ from: day, to: "2026-09-19" }).total).toMatchObject({ calls: 2, unpricedCalls: 1 });
+        // A window is compared as instants, not as text: "9/17/2026" sorts after "2026-..." as a string.
+        expect(jevCalls({ from: "9/17/2026", to: "2026-09-19" }).calls).toHaveLength(2);
+        expect(() => jevCalls({ from: "someday", to: "2026-09-19" })).toThrow("Not a date");
     });
 });
