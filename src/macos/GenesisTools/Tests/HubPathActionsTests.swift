@@ -147,6 +147,14 @@ final class HubPathActionsTests: XCTestCase {
         XCTAssertEqual(HubSessionDetailHost.shellQuoted("/tmp/it's"), "'/tmp/it'\\''s'")
     }
 
+    func testTheResumeCommandQuotesOnlyTheWordsAShellWouldRead() {
+        let words = ["tools", "claude", "resume", "11111111-2222-4333-8444-555555555555"]
+        XCTAssertEqual(words.map(HubSessionDetailHost.shellWord).joined(separator: " "), "tools claude resume 11111111-2222-4333-8444-555555555555")
+        XCTAssertEqual(HubSessionDetailHost.shellWord("id; rm -r x"), "'id; rm -r x'")
+        XCTAssertEqual(HubSessionDetailHost.shellWord("$(whoami)"), "'$(whoami)'")
+        XCTAssertEqual(HubSessionDetailHost.shellWord(""), "''")
+    }
+
     // MARK: diff header menu
 
     func testTheHeaderMenuMessageDecodes() {

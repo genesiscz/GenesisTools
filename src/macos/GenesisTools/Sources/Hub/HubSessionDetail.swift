@@ -205,6 +205,12 @@ struct HubSessionDetailHost: View {
         "'" + text.replacingOccurrences(of: "'", with: "'\\''") + "'"
     }
 
+    /// A command word as typed: bare when no character in it means anything to a shell, else quoted.
+    nonisolated static func shellWord(_ text: String) -> String {
+        let plain = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_@%+=:,./-")
+        return !text.isEmpty && text.unicodeScalars.allSatisfy { plain.contains($0) } ? text : shellQuoted(text)
+    }
+
     /// The branch the session ran on: the folder's branch while it runs there now, else the branch its
     /// transcript recorded (`gitBranch` from `tools ai usage sessions`). An old session no longer
     /// shows whatever the folder has checked out today, nor that branch's PR.
@@ -240,7 +246,7 @@ struct HubSessionDetailHost: View {
         // The header's "Copy the resume command" copied an empty string (it cleared the clipboard):
         // nothing set the command. It runs in the session's folder, where the agent finds the session.
         if let command = AgentLauncher.resumeCommand(for: session) {
-            let line = command.joined(separator: " ")
+            let line = command.map(Self.shellWord).joined(separator: " ")
             actions.resumeCommand = session.cwd.isEmpty ? line : "cd \(Self.shellQuoted(session.cwd)) && \(line)"
         }
         if !session.cwd.isEmpty {
