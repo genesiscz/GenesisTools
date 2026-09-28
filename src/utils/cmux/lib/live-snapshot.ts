@@ -77,6 +77,11 @@ export interface CmuxLiveSnapshot {
 
 /** The old preflight's `identify` timeout, now the first state command's (see fetchCmuxLiveSnapshot). */
 const FIRST_CALL_TIMEOUT_MS = 3_500;
+/**
+ * The optional `tree --all` answers in about 100 ms. Every pane waits for it before its own
+ * `list-pane-surfaces` fallback, so a stalled tree must give up long before the 30 s default.
+ */
+export const TREE_TIMEOUT_MS = 3_500;
 
 type CmuxJsonRunner = <T>(args: string[], opts?: CmuxTimeoutOpt) => Promise<T>;
 type CmuxRunner = (args: string[]) => Promise<CmuxRunResult>;
@@ -354,7 +359,7 @@ async function treeSurfaces(runJson: CmuxJsonRunner): Promise<SurfaceLookup> {
     const byPane = new Map<string, SurfaceRpc[]>();
 
     try {
-        const tree = await runJson<TreeRpc>(["tree", "--all"]);
+        const tree = await runJson<TreeRpc>(["tree", "--all"], { timeoutMs: TREE_TIMEOUT_MS });
 
         for (const window of tree.windows ?? []) {
             for (const workspace of window.workspaces ?? []) {

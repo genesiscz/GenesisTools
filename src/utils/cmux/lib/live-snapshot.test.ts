@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { fetchCmuxLiveSnapshot } from "./live-snapshot";
+import { DEFAULT_CMUX_TIMEOUT_MS } from "./cli";
+import { fetchCmuxLiveSnapshot, TREE_TIMEOUT_MS } from "./live-snapshot";
 
 describe("fetchCmuxLiveSnapshot", () => {
     /**
@@ -35,6 +36,26 @@ describe("fetchCmuxLiveSnapshot", () => {
 
         expect(snapshot.available).toBe(true);
         expect(peakInFlight).toBe(3);
+    });
+
+    test("the optional tree call has its own short timeout, so a stalled tree falls back to per-pane calls quickly", async () => {
+        let treeTimeout: number | null | undefined;
+        const runJson = async <T>(args: string[], opts?: { timeoutMs?: number | null }): Promise<T> => {
+            if (args[0] === "tree") {
+                treeTimeout = opts?.timeoutMs;
+                throw new Error("cmux tree --all timed out");
+            }
+
+            return (args[0] === "list-workspaces" ? { workspaces: [{ ref: "ws-0" }] } : { panes: [] }) as T;
+        };
+        const snapshot = await fetchCmuxLiveSnapshot({
+            runJson,
+            run: async () => ({ code: 0, stdout: "", stderr: "" }),
+        });
+
+        expect(snapshot.available).toBe(true);
+        expect(treeTimeout).toBe(TREE_TIMEOUT_MS);
+        expect(TREE_TIMEOUT_MS).toBeLessThan(DEFAULT_CMUX_TIMEOUT_MS);
     });
 
     test("allWindows lists every window and keeps each workspace with its own", async () => {
