@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -115,6 +115,15 @@ describe("the prompts file", () => {
         ]);
         writeFileSync(path, "{ not json");
         expect(readPrompts(path).prompts).toHaveLength(3);
+    });
+
+    test("a write never replaces a file it cannot read with the defaults", async () => {
+        const path = scratch();
+        writeFileSync(path, '{ "prompts": [ half-edited');
+
+        await expect(addPrompt({ name: "ship", text: "Ship it", path })).rejects.toThrow(/move it aside/);
+        await expect(removePrompt({ name: "rebase", path })).rejects.toThrow(HubPromptError);
+        expect(readFileSync(path, "utf8")).toBe('{ "prompts": [ half-edited');
     });
 
     test("add keeps the defaults, refuses a duplicate without --replace, and replace keeps the use count", async () => {

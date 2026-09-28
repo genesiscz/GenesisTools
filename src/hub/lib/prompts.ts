@@ -108,16 +108,32 @@ function normalizePrompt(raw: unknown): SavedPrompt | null {
     };
 }
 
-export function readPrompts(path = promptsPath()): PromptsFile {
+/**
+ * The saved prompts. A file that cannot be read lists the defaults, except with `strict` (every write):
+ * writing that fallback back would replace every prompt the file held, so a write refuses instead.
+ */
+export function readPrompts(path = promptsPath(), { strict = false }: { strict?: boolean } = {}): PromptsFile {
     if (!existsSync(path)) {
         return { version: 1, prompts: defaultPrompts() };
     }
 
     try {
         const raw: unknown = SafeJSON.parse(readFileSync(path, "utf8"));
-        const list = isRecord(raw) && Array.isArray(raw.prompts) ? raw.prompts : [];
-        return { version: 1, prompts: list.map(normalizePrompt).filter((prompt) => prompt !== null) };
+        const list = isRecord(raw) && Array.isArray(raw.prompts) ? raw.prompts : null;
+
+        if (strict && !list) {
+            throw new Error("it holds no prompts list");
+        }
+
+        return { version: 1, prompts: (list ?? []).map(normalizePrompt).filter((prompt) => prompt !== null) };
     } catch (err) {
+        if (strict) {
+            throw new HubPromptError(
+                "bad-input",
+                `${path} cannot be read as a prompts file (${err instanceof Error ? err.message : String(err)}); fix it or move it aside, since saving now would replace every prompt in it`
+            );
+        }
+
         log.warn({ err, path }, "prompts file unreadable; showing the defaults");
         return { version: 1, prompts: defaultPrompts() };
     }
@@ -127,7 +143,7 @@ export function readPrompts(path = promptsPath()): PromptsFile {
 async function updatePrompts<T>(path: string, change: (file: PromptsFile) => T): Promise<T> {
     mkdirSync(dirname(path), { recursive: true });
     return withFileLock(`${path}.lock`, async () => {
-        const file = readPrompts(path);
+        const file = readPrompts(path, { strict: true });
         const result = change(file);
         atomicWriteFileSync(path, `${SafeJSON.stringify(file, null, 2)}\n`);
         return result;
