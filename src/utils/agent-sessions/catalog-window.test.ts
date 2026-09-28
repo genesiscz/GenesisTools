@@ -199,6 +199,33 @@ test("a catalog with maxDiscoveryAgeMs reuses a recent refresh of the same scope
     }
 });
 
+test("a refresh of a caller's own database never stamps the default index's refresh marker", async () => {
+    const home = mkdtempSync(join(tmpdir(), "history-catalog-marker-home-"));
+    const root = mkdtempSync(join(tmpdir(), "history-catalog-marker-"));
+    session(root, "11111111-2222-4333-8444-000000000031", HOUR);
+    env.testing.set("GENESIS_TOOLS_HOME", home);
+    const markers = join(dirname(historyDatabasePath()), "listing-fresh");
+    const database = new Database(":memory:");
+
+    try {
+        await openHistoryService({ provider: "claude", roots: [root], database }).catalog(
+            {},
+            { maxDiscoveryAgeMs: 30_000 }
+        );
+        expect(existsSync(markers)).toBe(false);
+
+        // The default index still stamps it, so pollers keep sharing one refresh.
+        await openHistoryService({ provider: "claude", roots: [root] }).catalog({}, { maxDiscoveryAgeMs: 30_000 });
+        expect(existsSync(markers)).toBe(true);
+    } finally {
+        database.close();
+        HistoryDatabase.closeInstance();
+        env.testing.unset("GENESIS_TOOLS_HOME");
+        rmSync(root, { recursive: true, force: true });
+        rmSync(home, { recursive: true, force: true });
+    }
+});
+
 test("a catalog with refresh: false reads the index as it is and never walks, while an ordinary catalog still does", async () => {
     const root = mkdtempSync(join(tmpdir(), "history-catalog-unrefreshed-"));
     const id = "11111111-2222-4333-8444-000000000031";

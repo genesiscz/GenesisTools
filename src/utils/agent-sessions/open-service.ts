@@ -11,15 +11,23 @@ import type { AgentSearchFilters } from "./types";
 
 const log = logger.child({ component: "history/open-service" });
 
-/** Writable history operations share the canonical connection and provider registry. */
-function buildHistoryService(provider: HistoryProvider, db: Database, roots?: string[]): HistoryService {
+/**
+ * Writable history operations share the canonical connection and provider registry. The refresh
+ * marker belongs to the default index only: a refresh of another database (a caller's own, an
+ * in-memory one) stamping it would let a poller of the real index skip a refresh it never had.
+ */
+function buildHistoryService(
+    provider: HistoryProvider,
+    db: Database,
+    { roots, defaultIndex }: { roots?: string[]; defaultIndex: boolean }
+): HistoryService {
     return new HistoryService({
         providerId: provider.id,
         reader: provider.reader,
         repository: new HistorySyncRepository(db),
         statistics: new HistoryStatisticsRepository(db),
         roots: roots ?? provider.reader.roots(),
-        freshness: fileListingFreshness(),
+        ...(defaultIndex ? { freshness: fileListingFreshness() } : {}),
     });
 }
 
@@ -32,7 +40,7 @@ export function openHistoryService(options: {
     const db = options.database ?? HistoryDatabase.getInstance().getDb();
     initializeCompactHistorySchema(db);
 
-    return buildHistoryService(provider, db, options.roots);
+    return buildHistoryService(provider, db, { roots: options.roots, defaultIndex: !options.database });
 }
 
 /**
@@ -61,7 +69,7 @@ export function openHistoryCached(options: {
     }
 
     return {
-        service: buildHistoryService(provider, db, options.roots),
+        service: buildHistoryService(provider, db, { roots: options.roots, defaultIndex: !borrowed }),
         close: () => {
             if (!borrowed) {
                 db.close();
@@ -94,7 +102,7 @@ export async function catalogHistory(options: {
 
     if (db) {
         try {
-            const service = buildHistoryService(resolveHistoryProvider(provider), db, roots);
+            const service = buildHistoryService(resolveHistoryProvider(provider), db, { roots, defaultIndex: true });
             return await service.catalog(filters, { refresh: false });
         } catch (error) {
             log.warn(
@@ -118,5 +126,8 @@ export async function catalogHistory(options: {
 function emptyHistory(provider: string, roots?: string[]): { service: HistoryService; close: () => void } {
     const db = new Database(":memory:");
     initializeCompactHistorySchema(db);
-    return { service: buildHistoryService(resolveHistoryProvider(provider), db, roots), close: () => db.close() };
+    return {
+        service: buildHistoryService(resolveHistoryProvider(provider), db, { roots, defaultIndex: false }),
+        close: () => db.close(),
+    };
 }
