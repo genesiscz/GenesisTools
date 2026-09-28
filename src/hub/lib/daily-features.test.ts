@@ -11,6 +11,7 @@ import {
     digestDecisions,
     digestFromTimeline,
     digestMarkdown,
+    localDate,
     parseNumstat,
 } from "./digest";
 import { forecastClock, forecastFromSamples, forecastWindow, type UsageSample, windowLabel } from "./forecast";
@@ -329,7 +330,8 @@ describe("digest", () => {
         expect(digest.warnings.some((warning) => warning.includes("docs"))).toBe(true);
 
         const markdown = digestMarkdown(digest);
-        expect(markdown).toContain("# Agents digest 2026-03-02");
+        // The heading carries the window start's LOCAL day, which is 2026-03-01 west of UTC.
+        expect(markdown).toContain(`# Agents digest ${localDate(window.since)}`);
         expect(markdown).toContain("## Files changed");
         expect(markdown).toContain("[work/shop#4](https://example.com/4)");
         expect(markdown).toContain("posted #1 Pick a cache TTL");
