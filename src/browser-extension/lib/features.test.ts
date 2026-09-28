@@ -6,7 +6,7 @@ import type { LocalCheckout } from "@genesiscz/utils/git/local-checkouts";
 import type { EditorTarget, RunResult, TerminalTarget } from "@genesiscz/utils/open-in";
 import { makeTempDir } from "@genesiscz/utils/paths";
 import { isProcessAlive } from "@genesiscz/utils/process-alive";
-import { headBranchFromEmbeddedData, menuTargetContext } from "../extension/content-dom";
+import { checkoutCache, headBranchFromEmbeddedData, menuTargetContext } from "../extension/content-dom";
 import { targetFromHash } from "../extension/shared/route-target";
 import { actionValues, runAction } from "./actions";
 import { ConfigError, parseConfig } from "./config";
@@ -15,7 +15,7 @@ import { cliTail } from "./errors";
 import { explainHunk } from "./explain";
 import { dispatch } from "./host/dispatch";
 import { extensionIdFromKey, pinnedExtensionId } from "./host/install";
-import { hostReplyDeadlineMs } from "./host/messages";
+import { type HostResponse, hostReplyDeadlineMs } from "./host/messages";
 import { encodeFrame, FrameReader } from "./host/protocol";
 import { openInHub } from "./hub";
 import { openFile } from "./open";
@@ -328,6 +328,35 @@ describe("page text for the cards", () => {
             path: "src/a.ts",
         });
         expect(menuTargetContext({ type: "menu", item: "open-file" }, read, {})).toEqual({ path: "src/a.ts" });
+    });
+
+    it("keeps a definite checkout answer for the page's life and asks again after a host failure", async () => {
+        const replies: HostResponse[] = [
+            { ok: false, code: "unavailable", error: "host down" },
+            { ok: true, data: { root: "/tmp/x" } },
+            { ok: false, code: "no-checkout", error: "none" },
+        ];
+        const asked: string[] = [];
+        const known = checkoutCache(async (webBase) => {
+            asked.push(webBase);
+            const reply = replies.shift();
+
+            if (!reply) {
+                throw new Error(`asked again for ${webBase} after a definite answer`);
+            }
+
+            return reply;
+        });
+
+        expect(await known("https://github.com/a/b")).toBe(true);
+        expect(await known("https://github.com/a/b")).toBe(true);
+        expect(await known("https://github.com/a/b")).toBe(true);
+        expect(await Promise.all([known("https://github.com/c/d"), known("https://github.com/c/d")])).toEqual([
+            false,
+            false,
+        ]);
+        expect(await known("https://github.com/c/d")).toBe(false);
+        expect(asked).toEqual(["https://github.com/a/b", "https://github.com/a/b", "https://github.com/c/d"]);
     });
 
     it("reads the PR head branch from GitHub's embedded page data only when it names this PR", () => {

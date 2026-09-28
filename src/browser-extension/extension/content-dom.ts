@@ -1,3 +1,4 @@
+import type { HostResponse } from "../lib/host/messages";
 import type { MenuMessage } from "./shared/bridge";
 
 /**
@@ -123,4 +124,33 @@ export function headBranch(doc: Document, number?: number): string | undefined {
  */
 export function menuTargetContext<T>(message: MenuMessage, read: () => T, empty: T): T {
     return message.source === "shortcut" ? empty : read();
+}
+
+/**
+ * "Does this project have a local checkout?", asked once per project while the answer is definite.
+ * Only a definite "no checkout" hides the dock; a host that is down or failed still shows it (a click
+ * explains what is wrong), and that answer is not kept, so the next render asks again.
+ */
+export function checkoutCache(
+    probe: (webBase: string) => Promise<HostResponse>
+): (webBase: string) => Promise<boolean> {
+    const known = new Map<string, Promise<boolean>>();
+
+    return (webBase) => {
+        let answer = known.get(webBase);
+
+        if (!answer) {
+            answer = probe(webBase).then((reply) => {
+                if (!reply.ok && reply.code !== "no-checkout") {
+                    known.delete(webBase);
+                    return true;
+                }
+
+                return reply.ok;
+            });
+            known.set(webBase, answer);
+        }
+
+        return answer;
+    };
 }

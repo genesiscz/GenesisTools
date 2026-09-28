@@ -1,7 +1,7 @@
 import type { HostResponse } from "../lib/host/messages";
 import { type ForgePage, parseForgeUrl } from "../lib/page-url";
 import { ext } from "./chrome";
-import { contextAt, type DomContext, headBranch, menuTargetContext } from "./content-dom";
+import { checkoutCache, contextAt, type DomContext, headBranch, menuTargetContext } from "./content-dom";
 import { callHost, isMenuMessage, isRecord, type MenuItem } from "./shared/bridge";
 import { chip, el, shadowMount } from "./shared/theme";
 
@@ -184,29 +184,13 @@ function start(): void {
     let dockHidden = false;
     let compact = false;
     let renderToken = 0;
-    /** Per project: does it have a local checkout? One host call per project per page load. */
-    const hasCheckout = new Map<string, Promise<boolean>>();
+    const hasCheckout = checkoutCache((webBase) => callHost("checkout.resolve", { url: webBase }));
 
     const pageParams = (extra: Record<string, unknown> = {}): Record<string, unknown> => ({
         url: location.href,
         branch: page?.view === "pr" ? headBranch(document, page.number) : undefined,
         ...extra,
     });
-
-    const checkoutKnown = (forge: ForgePage): Promise<boolean> => {
-        let known = hasCheckout.get(forge.webBase);
-
-        if (!known) {
-            // Only a definite "no checkout" hides the dock; a host that is down still shows it, so a
-            // click explains what is wrong instead of the buttons silently missing.
-            known = callHost("checkout.resolve", { url: forge.webBase }).then(
-                (reply) => reply.ok || reply.code !== "no-checkout"
-            );
-            hasCheckout.set(forge.webBase, known);
-        }
-
-        return known;
-    };
 
     const openHub = (ctx: DomContext = {}, linkUrl?: string) => {
         const linked = linkUrl ? parseForgeUrl(linkUrl, [location.host]) : null;
@@ -262,7 +246,7 @@ function start(): void {
     const renderDock = async () => {
         const token = ++renderToken;
         const forge = page;
-        const show = forge !== null && !dockHidden && (await checkoutKnown(forge));
+        const show = forge !== null && !dockHidden && (await hasCheckout(forge.webBase));
 
         if (token !== renderToken) {
             return;
