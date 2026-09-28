@@ -284,6 +284,29 @@ describe("admission", () => {
         );
     });
 
+    test("a directory sample never reads a file too large to sample", async () => {
+        // The relationship pass samples lib/half but does not enter it, so only the sample could read huge.ts.
+        const inspectedWith = async (files: Record<string, string>) => {
+            const root = admissionTree(true);
+            tree(root, files);
+            const { evaluator } = recording((request) => {
+                if (!stateOf(request).items) {
+                    return probabilities(request, () => 0);
+                }
+
+                return stateOf(request).relationAnchor ? probabilities(request, () => 0.5) : navigationScores(request);
+            });
+            const result = await retrieve(
+                { root, query: "cart totals", signal: new AbortController().signal },
+                evaluator
+            );
+            return result.counts.inspectedFiles;
+        };
+        const plain = await inspectedWith({});
+        const withHuge = await inspectedWith({ "lib/half/huge.ts": "export const x = 1;\n".repeat(60_000) });
+        expect(withHuge).toBe(plain);
+    });
+
     test("the path survives when its excerpt fails", async () => {
         const root = admissionTree(false);
         const { evaluator } = recording((request) => {

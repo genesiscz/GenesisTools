@@ -34,6 +34,8 @@ const prof = profiler.scope("jev-grep");
 export const STAGE_WORKERS = 32;
 const MAX_ENTRIES = 100_000;
 const MAX_INSPECTED_BYTES = 1_000_000;
+/** Bytes one directory's content samples may read, over all its files. */
+const MAX_DIRECTORY_SAMPLE_BYTES = 4_000_000;
 const NAVIGATION_BATCH_ITEMS = 128;
 const NAVIGATION_BATCH_BYTES = 38_000;
 /**
@@ -137,8 +139,8 @@ export async function retrieve(input: SearchInput, evaluator: Evaluator): Promis
         }
     }
 
-    async function snapshot(path: string): Promise<Snapshot | undefined> {
-        const result = await reader.readSnapshot(path);
+    async function snapshot(path: string, maxBytes?: number): Promise<Snapshot | undefined> {
+        const result = await reader.readSnapshot(path, { maxBytes });
         if (result.status === "issue") {
             issue(result.issue.kind);
             return undefined;
@@ -343,16 +345,22 @@ export async function retrieve(input: SearchInput, evaluator: Evaluator): Promis
         const sources: Donor[] = [];
         const children = preview.entries.filter((child) => child.kind === "file");
         const perFile = Math.max(80, Math.floor(16000 / Math.max(1, children.length)));
+        // The request carries a few short slices; the whole file is read only to hash it for the donor check.
+        let sampleBytes = MAX_DIRECTORY_SAMPLE_BYTES;
         for (const child of children) {
-            if (stop) {
+            if (stop || sampleBytes <= 0) {
                 break;
             }
 
-            const snapshotValue = await snapshot(`${item.path}/${child.name}`);
-            if (!snapshotValue || Buffer.byteLength(snapshotValue.source) > MAX_INSPECTED_BYTES) {
+            const snapshotValue = await snapshot(
+                `${item.path}/${child.name}`,
+                Math.min(MAX_INSPECTED_BYTES, sampleBytes)
+            );
+            if (!snapshotValue) {
                 continue;
             }
 
+            sampleBytes -= Buffer.byteLength(snapshotValue.source);
             sources.push({ path: snapshotValue.path, contentHash: snapshotValue.contentHash });
             const source = snapshotValue.source;
             const part = Math.floor(perFile / 3);

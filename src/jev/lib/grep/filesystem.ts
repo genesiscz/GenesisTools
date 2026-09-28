@@ -481,7 +481,8 @@ export async function createFilesystem(options: FilesystemOptions) {
         return result.stat.isFile() ? { status: "file" } : excluded("not_file");
     }
 
-    async function readSnapshot(path: string): Promise<SnapshotResult> {
+    /** `maxBytes` skips a larger file before any byte is read: a sample, not a finding, so it is no issue. */
+    async function readSnapshot(path: string, options: { maxBytes?: number } = {}): Promise<SnapshotResult> {
         const admitted = await eligibility(path);
         if (admitted.status !== "eligible") {
             return admitted;
@@ -489,6 +490,10 @@ export async function createFilesystem(options: FilesystemOptions) {
 
         if (!admitted.stat.isFile()) {
             return excluded("not_file");
+        }
+
+        if (options.maxBytes !== undefined && admitted.stat.size > BigInt(options.maxBytes)) {
+            return excluded("over_sample_bytes");
         }
 
         const read = await readBytes(admitted, limits.maxFileBytes);
