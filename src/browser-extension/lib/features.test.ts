@@ -6,7 +6,12 @@ import type { LocalCheckout } from "@genesiscz/utils/git/local-checkouts";
 import type { EditorTarget, RunResult, TerminalTarget } from "@genesiscz/utils/open-in";
 import { makeTempDir } from "@genesiscz/utils/paths";
 import { isProcessAlive } from "@genesiscz/utils/process-alive";
-import { checkoutCache, headBranchFromEmbeddedData, menuTargetContext } from "../extension/content-dom";
+import {
+    checkoutCache,
+    headBranchFromEmbeddedData,
+    menuTargetContext,
+    quickCardMayClose,
+} from "../extension/content-dom";
 import { targetFromHash } from "../extension/shared/route-target";
 import { actionValues, runAction } from "./actions";
 import { ConfigError, parseConfig } from "./config";
@@ -357,6 +362,35 @@ describe("page text for the cards", () => {
         ]);
         expect(await known("https://github.com/c/d")).toBe(false);
         expect(asked).toEqual(["https://github.com/a/b", "https://github.com/a/b", "https://github.com/c/d"]);
+    });
+
+    it("recovers a checkout probe that throws instead of keeping the rejection", async () => {
+        let calls = 0;
+        const known = checkoutCache(async () => {
+            calls++;
+
+            if (calls === 1) {
+                throw new Error("transport gone");
+            }
+
+            return { ok: false, code: "no-checkout", error: "none" };
+        });
+
+        expect(await known("https://github.com/a/b")).toBe(true);
+        expect(await known("https://github.com/a/b")).toBe(false);
+        expect(calls).toBe(2);
+    });
+
+    it("keeps a quick result open while it has the focus or the pointer", () => {
+        const inside = "close button";
+        const card = (hovered: boolean) => ({
+            contains: (node: string | null) => node === inside,
+            matches: (selector: string) => selector === ":hover" && hovered,
+        });
+
+        expect(quickCardMayClose(card(false), null)).toBe(true);
+        expect(quickCardMayClose(card(false), inside)).toBe(false);
+        expect(quickCardMayClose(card(true), null)).toBe(false);
     });
 
     it("reads the PR head branch from GitHub's embedded page data only when it names this PR", () => {

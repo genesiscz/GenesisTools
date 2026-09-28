@@ -1,7 +1,14 @@
 import type { HostResponse } from "../lib/host/messages";
 import { type ForgePage, parseForgeUrl } from "../lib/page-url";
 import { ext } from "./chrome";
-import { checkoutCache, contextAt, type DomContext, headBranch, menuTargetContext } from "./content-dom";
+import {
+    checkoutCache,
+    contextAt,
+    type DomContext,
+    headBranch,
+    menuTargetContext,
+    quickCardMayClose,
+} from "./content-dom";
 import { callHost, isMenuMessage, isRecord, type MenuItem } from "./shared/bridge";
 import { chip, el, shadowMount } from "./shared/theme";
 
@@ -24,7 +31,8 @@ class Card {
     private returnFocus: HTMLElement | null = null;
     private closeTimer: ReturnType<typeof setTimeout> | undefined;
 
-    show(title: string, status: string) {
+    /** A quick result is a status toast: it is announced (role=status) but does not take the focus. */
+    show(title: string, status: string, { takeFocus = true }: { takeFocus?: boolean } = {}) {
         // A card replacing another keeps the focus target the first one saved.
         const previous = this.box ? this.returnFocus : document.activeElement;
         this.close(false);
@@ -73,7 +81,10 @@ class Card {
         this.box.addEventListener("pointerenter", () => clearTimeout(this.closeTimer));
         this.box.addEventListener("focusin", () => clearTimeout(this.closeTimer));
         this.root.append(this.box);
-        close.focus();
+
+        if (takeFocus) {
+            close.focus();
+        }
 
         const settle = (label: string, tone: "ok" | "err" | "idle") => {
             const next = chip(label, tone);
@@ -100,7 +111,7 @@ class Card {
         render: (data: unknown) => string,
         { quick = false }: { quick?: boolean } = {}
     ) {
-        const view = this.show(title, pending);
+        const view = this.show(title, pending, { takeFocus: !quick });
         const reply = await call();
 
         if (!view.body.isConnected) {
@@ -115,7 +126,9 @@ class Card {
             view.body.append(el("pre", { className: "gt-pre", text: shown }));
 
             if (quick) {
-                this.closeTimer = setTimeout(() => this.close(), QUICK_CARD_MS);
+                if (this.box && quickCardMayClose(this.box, this.root.activeElement)) {
+                    this.closeTimer = setTimeout(() => this.close(), QUICK_CARD_MS);
+                }
             } else {
                 view.offerCopy(shown);
             }

@@ -140,17 +140,39 @@ export function checkoutCache(
         let answer = known.get(webBase);
 
         if (!answer) {
-            answer = probe(webBase).then((reply) => {
-                if (!reply.ok && reply.code !== "no-checkout") {
+            answer = probe(webBase).then(
+                (reply) => {
+                    if (!reply.ok && reply.code !== "no-checkout") {
+                        known.delete(webBase);
+                        return true;
+                    }
+
+                    return reply.ok;
+                },
+                (error: unknown) => {
+                    // A probe that throws is as transient as a host that is down: show, and ask again.
+                    console.warn("[genesis-tools] checkout probe failed", error);
                     known.delete(webBase);
                     return true;
                 }
-
-                return reply.ok;
-            });
+            );
             known.set(webBase, answer);
         }
 
         return answer;
     };
+}
+
+/** The parts of the result card the auto-close rule reads. */
+export interface CardPresence<T> {
+    contains(node: T | null): boolean;
+    matches(selector: string): boolean;
+}
+
+/**
+ * A quick result closes itself only while nobody uses it: focus inside the card, or a pointer over
+ * it, keeps it open until it is closed by hand, so a keyboard user can read it.
+ */
+export function quickCardMayClose<T>(card: CardPresence<T>, focused: T | null): boolean {
+    return !card.contains(focused) && !card.matches(":hover");
 }
