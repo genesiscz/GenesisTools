@@ -1,4 +1,14 @@
-import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
+import {
+    appendFileSync,
+    chmodSync,
+    existsSync,
+    lstatSync,
+    mkdirSync,
+    readdirSync,
+    readFileSync,
+    realpathSync,
+    statSync,
+} from "node:fs";
 import { availableParallelism } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { listAgentSessionRows, POLLED_LISTING_REUSE_MS } from "@app/ai/lib/sessions/agent-session-rows";
@@ -839,6 +849,30 @@ export function moveAsideRoot(now = new Date()): string {
     );
 }
 
+/**
+ * Makes `path` a folder only this user can enter: created 0700, or an existing one of ours narrowed to 0700.
+ * A moved worktree keeps its files' modes, and under /tmp the private home-folder ancestors that kept other
+ * local users out are gone, so this folder has to. Returns why it cannot be used, or null.
+ */
+export function claimPrivateFolder(path: string): string | null {
+    mkdirSync(path, { recursive: true, mode: 0o700 });
+    const info = lstatSync(path);
+
+    if (!info.isDirectory()) {
+        return `${path} is not a plain folder (a symlink?), so nothing is moved into it`;
+    }
+
+    if (process.getuid && info.uid !== process.getuid()) {
+        return `${path} belongs to another user, so nothing is moved into it`;
+    }
+
+    if ((info.mode & 0o077) !== 0) {
+        chmodSync(path, 0o700);
+    }
+
+    return null;
+}
+
 export function moveAsideJournalPath(): string {
     return join(new Storage("hub").getBaseDir(), "moved-aside.jsonl");
 }
@@ -911,6 +945,8 @@ export async function moveAsideWorktrees({
     // start using that worktree meanwhile. After the first move, each path is scanned again right before
     // its own move.
     let attempted = false;
+    // Claimed at the first move, so a run that moves nothing creates no folder.
+    let privacy: { refusal: string | null } | undefined;
 
     for (const path of wanted) {
         const row = attempted
@@ -930,6 +966,13 @@ export async function moveAsideWorktrees({
 
         if (!row.removable) {
             stay(row.blockers.map((blocker) => blocker.text));
+            continue;
+        }
+
+        privacy ??= { refusal: claimPrivateFolder(destRoot) };
+
+        if (privacy.refusal) {
+            stay([privacy.refusal]);
             continue;
         }
 

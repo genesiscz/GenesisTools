@@ -1,5 +1,15 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+    chmodSync,
+    existsSync,
+    mkdirSync,
+    mkdtempSync,
+    readFileSync,
+    renameSync,
+    statSync,
+    symlinkSync,
+    writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { TestRepo } from "@genesiscz/utils/git/test-repo";
@@ -7,6 +17,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { Command, CommanderError } from "commander";
 import {
     type BlockerKind,
+    claimPrivateFolder,
     cleanupBlockers,
     type LiveUsers,
     moveAsideWorktrees,
@@ -432,6 +443,37 @@ describe("move aside rechecks each worktree before its own move", () => {
         expect(byPath.get(second)?.moved).toBe(false);
         expect(byPath.get(second)?.reasons.join(" ")).toContain("vim (4242)");
         expect(existsSync(second)).toBe(true);
+    });
+
+    test("the move-aside folder is private: created 0700, an open one narrowed, a symlink refused", async () => {
+        const scratch = mkdtempSync(join(tmpdir(), "gt-hub-wt-private-"));
+        const fresh = join(scratch, "fresh");
+        expect(claimPrivateFolder(fresh)).toBeNull();
+        expect(statSync(fresh).mode & 0o777).toBe(0o700);
+
+        const open = join(scratch, "open");
+        mkdirSync(open, { mode: 0o755 });
+        chmodSync(open, 0o755);
+        expect(claimPrivateFolder(open)).toBeNull();
+        expect(statSync(open).mode & 0o777).toBe(0o700);
+
+        const linked = join(scratch, "linked");
+        symlinkSync(open, linked);
+        const path = await repo
+            .branch("feat/linked")
+            .then(() => repo.worktreeAdd({ name: "wt-linked", ref: "feat/linked" }));
+        const outcomes = await moveAsideWorktrees({
+            paths: [path],
+            base: "master",
+            live: { processes: [], sessions: [], sessionsError: null },
+            destRoot: linked,
+            journal: join(scratch, "moved-aside.jsonl"),
+            now: new Date(Date.now() + 30 * 86_400_000),
+        });
+
+        expect(outcomes[0]?.moved).toBe(false);
+        expect(outcomes[0]?.reasons.join(" ")).toContain("not a plain folder");
+        expect(existsSync(path)).toBe(true);
     });
 });
 
