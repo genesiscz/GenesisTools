@@ -1,6 +1,7 @@
 import { statSync } from "node:fs";
 import {
     type AgentSessionRow,
+    type AgentSessionRowsOptions,
     listAgentSessionRows,
     POLLED_LISTING_REUSE_MS,
 } from "@app/ai/lib/sessions/agent-session-rows";
@@ -110,6 +111,22 @@ export async function waitingBlock(
     return found?.blocks.find((block) => block.number === number) ?? null;
 }
 
+/** The listings a folder lookup reads when the index does not know the session: 72 hours, then 90 days. */
+const LOOKUP_WINDOWS_HOURS = [72, 24 * 90];
+
+/**
+ * One listing of the lookup. Only the first may reuse a poller's refresh from the last seconds: that
+ * refresh covered its own window, never a session older than it that was not indexed yet, which is
+ * what the 90-day pass is there to find.
+ */
+export function lookupListing(hours: number): AgentSessionRowsOptions {
+    return {
+        hours,
+        withUsage: false,
+        ...(hours === LOOKUP_WINDOWS_HOURS[0] ? { maxDiscoveryAgeMs: POLLED_LISTING_REUSE_MS } : {}),
+    };
+}
+
 /**
  * The folder of a session that has no stored row. The history index answers first: a hub session
  * click used to list every provider's sessions, twice for one older than 72 h (0.7 to 1.2 s), to
@@ -119,8 +136,7 @@ export async function waitingBlock(
  */
 export async function lookupSessionCwd(
     session: string,
-    list: (hours: number) => Promise<AgentSessionRow[]> = (hours) =>
-        listAgentSessionRows({ hours, withUsage: false, maxDiscoveryAgeMs: POLLED_LISTING_REUSE_MS })
+    list: (hours: number) => Promise<AgentSessionRow[]> = (hours) => listAgentSessionRows(lookupListing(hours))
 ): Promise<string | null> {
     const cached = readCachedSessionCwd({ sessionId: session });
 
@@ -130,7 +146,7 @@ export async function lookupSessionCwd(
 
     let rows: AgentSessionRow[] = [];
 
-    for (const hours of [72, 24 * 90]) {
+    for (const hours of LOOKUP_WINDOWS_HOURS) {
         rows = await list(hours);
         const exact = rows.find((candidate) => candidate.sessionId === session);
 

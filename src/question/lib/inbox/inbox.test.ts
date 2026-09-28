@@ -15,7 +15,7 @@ import { type AskDeps, getAskForm, postAskForm } from "../pending/ask";
 import type { AskForm } from "../pending/types";
 import { answerInboxDecision, answerInboxDecisions, answerInboxForm } from "./answer";
 import { buildInbox, type InboxSessionInfo, inboxDelivery, scanTurns, sessionDecisions } from "./build";
-import { type InboxDeps, loadInbox, loadSessionDecisions, lookupSessionCwd, waitingBlock } from "./load";
+import { type InboxDeps, loadInbox, loadSessionDecisions, lookupListing, lookupSessionCwd, waitingBlock } from "./load";
 
 function turn(role: TranscriptTurn["role"], text: string, at = "2026-03-01T10:00:00.000Z"): TranscriptTurn {
     return { id: `${role}-${at}`, role, at, text, tools: [] };
@@ -191,6 +191,11 @@ describe("lookupSessionCwd", () => {
         const list = async (hours: number) => (hours === 72 ? recent : older);
 
         expect(await lookupSessionCwd("s-alpha", list)).toBe("/work/alpha");
+    });
+
+    test("only the 72-hour listing may reuse a recent refresh; the 90-day one refreshes its own window", () => {
+        expect(lookupListing(72).maxDiscoveryAgeMs).toBeGreaterThan(0);
+        expect(lookupListing(24 * 90).maxDiscoveryAgeMs).toBeUndefined();
     });
 
     test("a prefix names a session only when it names one", async () => {
