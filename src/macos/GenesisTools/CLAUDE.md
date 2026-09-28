@@ -23,6 +23,7 @@ install, reap stale faces). Swift UI you have not seen rendered is not done.
 | A status message | `NoticePill` (fades, error stays) | a raw colored `Text` line |
 | A relative time on screen ("5 min. ago", "active 20s ago") | `LiveAgo(date:)` (HubComponents.swift) or `LiveTime(date:style:)` (Hub/Stolen/UI/LiveTime.swift, shared with Genesis): the label keeps its own clock, nothing above it re-renders per tick | `HubFormat.ago` in a body (formats once and goes stale), or a `Timer` / `TimelineView` above the label (re-renders the whole row or list per tick) |
 | Find inside a panel (⌘F) | Hub/HubPanelFind.swift: `@State` `PanelFindModel`, `PanelFindBar` under the header as its own row above the scroll view, `.panelFind(find, revision:rows:)` on the root, `.findRow(id)` per row, `FindText(text, field:)` for shown text (`MarkdownContentView` + `.findField(key)` for markdown). A pane with its own find registers with `.panelFindNative(scope)`, an overlay that owns the keyboard with `.panelFindModal()` | a bar in `.safeAreaInset(edge: .top)` (selectable text draws through it), a SwiftUI `.keyboardShortcut("f")` button or a local key monitor per view: `PanelFindRouter` is the one ⌘F / ⌘G / ⇧⌘G / Esc owner and sends the key to the panel of the last click |
+| A window whose content runs under the title bar (`.fullSizeContentView`, transparent title bar) | `.titlebarZone()` on the window's root view, `.titlebarBackground(fill)` for any fill that paints the strip (`.hubSurface` already does), `.titlebarRow()` for a row of controls placed in the strip (Sources/WindowTitlebar.swift) | a view, or a `.background(… .ignoresSafeArea(edges: .top))`, over the title bar without them: the double-click never reaches the window, so it does not zoom |
 | A PR/MR's review threads or any write to them | `ReviewModel.attachPR` → `PRThreadsStore` + `PRCommand` argv (Review/PRThreads.swift, fed by `tools hub pr`). The diff's thread cards carry Reply / Resolve / Edit / Delete (web/diff-viewer/main.ts, `renderLiveThread`): the page only posts `thread.action`, and Swift confirms, runs `tools`, then answers `threadDone`. The PR bar and threads list are in Review/PRThreadsPanel.swift. 🛑 `PRCommand.publish` has one caller, the Submit review confirmation (a test scans Sources for it) | `tools github …` / `tools gitlab …` calls from a view, or a second path to `publish` |
 
 **Every button has a hover effect.** Icon buttons: `IconButton` (uses `.genHoverIcon()`); text-like buttons and
@@ -30,6 +31,24 @@ links: `.buttonStyle(.genHoverPlain())`; list rows and menu rows: `.buttonStyle(
 Hub/Stolen/UI/GenHoverButton.swift). Never `.buttonStyle(.borderless)` on something clickable.
 
 **Every button that shows only an icon has a tooltip.** Check before you finish: `rg -n 'Image\(systemName' Sources | rg -v 'IconButton|instantTooltip'` and look at each hit.
+
+## 🛑 Every title bar zooms on a double-click and drags on empty chrome
+
+Martin, 2026-09-28: "the top of the window is not clickable to fill in the whole display.. this keeps reoccuring in
+all swift stuff you do". In a `.fullSizeContentView` window the SwiftUI hosting view covers the title bar, so every
+click there lands in SwiftUI (hit test: `NSHostingView`, never `NSTitlebarView`) and AppKit never zooms the window.
+The window server still drags it from anywhere in the strip, a control placed there included. So every window with
+a title bar gets, through Sources/WindowTitlebar.swift:
+
+- `.titlebarZone()` on its root view: the empty strip does what System Settings says on a double-click
+  (`AppleActionOnDoubleClick`: zoom, minimize or nothing) and drags the window; controls keep their clicks and drags.
+- `.titlebarBackground(fill)` for every fill that reaches up into the strip. A plain hit-testable fill there takes
+  the strip's clicks before the zone sees them.
+- `.titlebarRow()` for controls moved up into the strip: the strip's height, clear of the traffic lights and title.
+
+Never put a view over the title bar without these. A window with a standard (not full-size) title bar needs nothing.
+Check it: the `--hub` and `--review` snapshots print `titlebar …; ok` or the problem (`WindowTitlebar.audit`), and
+`swift test --filter WindowTitlebarTests` covers the behaviour.
 
 ## 🛑 Never block the main thread inside a view body
 

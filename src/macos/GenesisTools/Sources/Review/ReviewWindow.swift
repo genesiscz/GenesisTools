@@ -80,7 +80,8 @@ func runReview(_ args: [String]) -> Never {
     window.titlebarAppearsTransparent = true
     window.appearance = NSAppearance(named: .darkAqua)
     window.backgroundColor = ReviewPalette.background
-    window.contentView = NSHostingView(rootView: ReviewRootView(model: model))
+    // The title bar strip zooms on a double-click and drags the window (WindowTitlebar.swift).
+    window.contentView = NSHostingView(rootView: ReviewRootView(model: model).titlebarZone())
     window.center()
     window.setFrameAutosaveName("GenesisToolsReview")
     delegate.window = window
@@ -89,6 +90,8 @@ func runReview(_ args: [String]) -> Never {
         model.onFirstRender = {
             demo.apply(to: model) {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+                    // Where a click on the title bar lands (WindowTitlebar.swift): the empty strip must reach the zone.
+                    FileHandle.standardError.write(Data("review snapshot: titlebar \(WindowTitlebar.audit(window).line)\n".utf8))
                     ReviewSnapshot.write(window: window, webView: (model.renderer as? PierreWebDiffRenderer)?.webView, to: snapshotPath) {
                         exit(0)
                     }

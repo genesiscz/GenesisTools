@@ -202,7 +202,8 @@ func runHub(_ args: [String]) -> Never {
     window.titlebarAppearsTransparent = true
     window.appearance = NSAppearance(named: .darkAqua)
     window.backgroundColor = ReviewPalette.background
-    window.contentView = HubGlass.makeContentView(root: HubRootView(model: model).defaultAppStorage(HubDefaults.store))
+    // The title bar strip zooms on a double-click and drags the window (WindowTitlebar.swift).
+    window.contentView = HubGlass.makeContentView(root: HubRootView(model: model).defaultAppStorage(HubDefaults.store).titlebarZone())
     window.center()
     if request.isScripted {
         // Start from the live hub's size, but never write a scripted resize back into it.
@@ -249,6 +250,13 @@ func runHub(_ args: [String]) -> Never {
                             PerfLog.mark("hub.snapshot \(rows)")
                             FileHandle.standardError.write(Data("hub snapshot: \(rows)\n".utf8))
                         }
+                        // Where a click on the title bar row lands: the empty strip must reach the zone, no
+                        // control may start under the traffic lights or the title, and an open session has its
+                        // header row up there. A modal panel's dim layer covers the strip on purpose.
+                        let sessionRow = model.mode == .sessions && model.selected != nil && model.selectedID != AgentProcs.selectionID
+                        let titlebar = (covered ? "(a modal panel covers it) " : "") + WindowTitlebar.audit(window, expectsRow: sessionRow).line
+                        PerfLog.mark("hub.snapshot titlebar \(titlebar)")
+                        FileHandle.standardError.write(Data("hub snapshot: titlebar \(titlebar)\n".utf8))
                         ReviewSnapshot.write(window: window, webView: showsDiff && !covered ? web : nil, to: snapshotPath) {
                             exit(0)
                         }
@@ -1852,26 +1860,33 @@ private struct SessionDetailView: View {
         }
     }
 
+    /// The first row sits in the window's title bar, right of the traffic lights and the title, so the
+    /// panes start right under the title bar (Martin, 2026-09-28). Its empty part zooms and drags the
+    /// window (`.titlebarZone()` on the root, WindowTitlebar.swift).
     private var header: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 10) {
                 if !model.panes.contains(.transcript) {
-                    ProviderBadge(provider: session.provider)
-                    Text(session.displayTitle)
-                        .font(.system(size: 15, weight: .semibold))
-                        .lineLimit(1)
-                    Circle()
-                        .fill(session.isLive ? ReviewPalette.added : Color.white.opacity(0.25))
-                        .frame(width: 7, height: 7)
+                    // Title text, not controls: a double-click on it zooms, as on the window's own title.
                     Group {
-                        if session.isLive {
-                            Text("live")
-                        } else {
-                            LiveAgo(date: session.lastActivity) { "idle · \($0)" }
+                        ProviderBadge(provider: session.provider)
+                        Text(session.displayTitle)
+                            .font(.system(size: 15, weight: .semibold))
+                            .lineLimit(1)
+                        Circle()
+                            .fill(session.isLive ? ReviewPalette.added : Color.white.opacity(0.25))
+                            .frame(width: 7, height: 7)
+                        Group {
+                            if session.isLive {
+                                Text("live")
+                            } else {
+                                LiveAgo(date: session.lastActivity) { "idle · \($0)" }
+                            }
                         }
+                            .font(.system(size: 11.5))
+                            .foregroundColor(ReviewPalette.dim)
                     }
-                        .font(.system(size: 11.5))
-                        .foregroundColor(ReviewPalette.dim)
+                    .allowsHitTesting(false)
                     if let verdict = stuck.verdicts[session.sessionId] {
                         StuckBadge(verdict: verdict)
                     }
@@ -1879,7 +1894,9 @@ private struct SessionDetailView: View {
                 Spacer()
                 if model.panes.contains(.transcript) {
                     // The account row below hides with the transcript open; the forecast stays in sight.
+                    // In a narrow window it gives way first, before the pane buttons' titles.
                     HubForecastChip(account: session.account)
+                        .layoutPriority(-1)
                 }
                 if let notice = model.notice {
                     NoticePill(text: notice, isError: notice.hasPrefix("cmux:") || notice.contains("failed")) { model.notice = nil }
@@ -1889,6 +1906,9 @@ private struct SessionDetailView: View {
                     Task { @MainActor in model.notice = await model.exportSession(session) }
                 }
             }
+            .padding(.leading, 18)
+            .padding(.trailing, 14)
+            .titlebarRow()
             if !model.panes.contains(.transcript) {
                 HStack(spacing: 8) {
                     chip("person.crop.circle", session.account ?? "no pin")
@@ -1921,13 +1941,16 @@ private struct SessionDetailView: View {
                     .instantTooltip("Copy the full session id")
                     Spacer()
                 }
+                .padding(.leading, 18)
+                .padding(.trailing, 14)
+                .padding(.top, 2)
+                .padding(.bottom, 10)
             }
+            // A row of its own, not an overlay: the title bar row above takes no height, and a pane
+            // that starts right at the title bar's edge gets its safe area. The session screen ignores
+            // that area and slid up under the row (snapshot 2026-09-28 21:02).
+            Rectangle().fill(ReviewPalette.hairline).frame(height: 1)
         }
-        .padding(.leading, 18)
-        .padding(.trailing, 14)
-        .padding(.top, model.panes.contains(.transcript) ? 8 : 34)
-        .padding(.bottom, model.panes.contains(.transcript) ? 6 : 10)
-        .overlay(Rectangle().fill(ReviewPalette.hairline).frame(height: 1), alignment: .bottom)
     }
 
     private func chip(_ icon: String, _ text: String) -> some View {

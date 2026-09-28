@@ -227,7 +227,7 @@ struct ResizableSidePanel<Content: View>: View {
     private var railLine: some View {
         Color.clear
             .frame(width: 1)
-            .background { Rectangle().fill(ReviewPalette.hairline).ignoresSafeArea(.container, edges: .top) }
+            .titlebarBackground(Rectangle().fill(ReviewPalette.hairline))
     }
 
     private var rail: some View {
@@ -289,13 +289,9 @@ struct ResizableSidePanel<Content: View>: View {
             // A 10 pt target around a 1 pt line: the edge no longer has to be hit to the pixel.
             .frame(width: 1)
             .frame(maxHeight: .infinity)
-            .background {
-                // A background, so the line can reach up through the title bar like the surfaces on
-                // both sides of it; the hit target below stays out of the title bar.
-                Rectangle()
-                    .fill(hot ? tint.opacity(0.55) : ReviewPalette.hairline)
-                    .ignoresSafeArea(.container, edges: .top)
-            }
+            // A background, so the line can reach up through the title bar like the surfaces on both
+            // sides of it; the hit target below stays out of the title bar.
+            .titlebarBackground(Rectangle().fill(hot ? tint.opacity(0.55) : ReviewPalette.hairline))
         .overlay(Color.clear.frame(width: 10).contentShape(Rectangle()))
         .animation(.easeOut(duration: 0.14), value: hot)
         .animation(.easeOut(duration: 0.14), value: willCollapse)
@@ -478,14 +474,11 @@ private struct HubSurface: ViewModifier {
     @Environment(\.hubGlass) private var glass
 
     func body(content: Content) -> some View {
-        content.background {
-            fill
-                // A surface that reaches the window's top edge also paints the transparent title bar
-                // above it. Without this the title bar strip kept the window's own colour, a band of a
-                // third grey over the sidebar (screenshot 2026-09-24 19:41). A surface lower down
-                // touches no safe area, so this changes nothing for it.
-                .ignoresSafeArea(.container, edges: .top)
-        }
+        // A surface that reaches the window's top edge also paints the transparent title bar above it.
+        // Without this the title bar strip kept the window's own colour, a band of a third grey over the
+        // sidebar (screenshot 2026-09-24 19:41). A surface lower down touches no safe area, so this
+        // changes nothing for it. The strip's clicks stay with `.titlebarZone()` (WindowTitlebar.swift).
+        content.titlebarBackground(fill)
     }
 
     @ViewBuilder
