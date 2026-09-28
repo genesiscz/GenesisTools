@@ -202,6 +202,50 @@ describe("lookupSessionCwd", () => {
     });
 });
 
+describe("loadSessionDecisions folder lookup", () => {
+    const scan = async () => ({
+        at: "2026-03-01T10:04:00.000Z",
+        blocks: parseDecisionBlocks(["See notes.txt:1.", "", "❓ DECISION 1: Keep it?", "- **a)** yes"].join("\n")),
+    });
+
+    test("a stored row with an empty folder does not stop the session lookup", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "inbox-cwd-empty-"));
+        writeFileSync(join(dir, "notes.txt"), "the line\n");
+        const stored: DecisionRecord = {
+            id: "d_9_s-alpha",
+            sessionId: "s-alpha",
+            number: 9,
+            prompt: "Other?",
+            options: ["a"],
+            state: "open",
+            updatedTs: "2026-03-01T10:05:00.000Z",
+            cwd: "",
+        };
+        const decisions = await loadSessionDecisions("s-alpha", {
+            rows: () => [stored],
+            scan,
+            sessionCwd: async () => dir,
+        });
+
+        expect(decisions.find((item) => item.number === 1)?.refs[0]?.excerpt).toContain("the line");
+    });
+
+    test("a session with no decisions never lists sessions to find its folder", async () => {
+        let asked = 0;
+        const none = await loadSessionDecisions("s-quiet", {
+            rows: () => [],
+            scan: async () => ({ at: "2026-03-01T10:04:00.000Z", blocks: [] }),
+            sessionCwd: async () => {
+                asked++;
+                return null;
+            },
+        });
+
+        expect(none).toEqual([]);
+        expect(asked).toBe(0);
+    });
+});
+
 describe("sessionDecisions", () => {
     test("every stored state plus the unstored blocks of the last reply, by number", () => {
         const rows: DecisionRecord[] = [

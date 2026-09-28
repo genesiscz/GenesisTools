@@ -150,10 +150,16 @@ export async function loadSessionDecisions(
         log.debug({ error, session }, "session decisions: transcript not readable, stored rows only");
     }
 
+    const stored = rows();
+    const decisions = sessionDecisions({ sessionId: session, rows: stored, scan: found });
+
     // A decision harvested from the transcript has no stored row to carry the folder; without it
     // every `file:line` of the Decisions pane read "file not found" while the Inbox showed the lines.
-    const cwd = rows().find((row) => row.sessionId === session)?.cwd ?? (await sessionCwd(session)) ?? undefined;
-    return withExcerpts(sessionDecisions({ sessionId: session, rows: rows(), scan: found }), cwd);
+    // The session listing is asked only when a reference needs a folder and no stored row has one.
+    const needsFolder = decisions.some((item) => item.refs.length > 0);
+    const storedCwd = stored.find((row) => row.sessionId === session && row.cwd)?.cwd;
+    const cwd = storedCwd || (needsFolder ? await sessionCwd(session) : null) || undefined;
+    return withExcerpts(decisions, cwd);
 }
 
 /** Reads each decision's `file:line` references from disk (bounded), off the hub's hot path. */
