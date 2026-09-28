@@ -263,14 +263,23 @@ export function createGrepCache(options: GrepCacheOptions) {
         const size = Buffer.byteLength(payload);
         let temporary: string | undefined;
         let handle: FileHandle | undefined;
+        let reserved = 0;
         try {
-            opening ??= openEntries();
-            storedBytes ??= await opening;
+            // A failed first scan is not kept: the next write scans again.
+            opening ??= openEntries().catch((error: unknown) => {
+                opening = undefined;
+                throw error;
+            });
+            const measured = await opening;
+            storedBytes ??= measured;
+            // Check and reserve in one synchronous step: up to 32 writers share this cap.
             if (size > maxEntryBytes || storedBytes + size > maxBytes) {
                 warn("cache_limit");
                 return;
             }
 
+            storedBytes += size;
+            reserved = size;
             // A concurrent clear may have detached the directory; recreate it rather than fail.
             await checkDirectory(entries, true);
             temporary = join(entries, `.pending-${randomUUID()}`);
@@ -284,10 +293,14 @@ export function createGrepCache(options: GrepCacheOptions) {
             handle = undefined;
             await rename(temporary, join(entries, `${key(input)}.json`));
             temporary = undefined;
-            storedBytes += size;
+            reserved = 0;
         } catch (error) {
             warn("cache_unavailable", error);
         } finally {
+            if (storedBytes !== undefined) {
+                storedBytes -= reserved;
+            }
+
             try {
                 await handle?.close();
             } catch (error) {

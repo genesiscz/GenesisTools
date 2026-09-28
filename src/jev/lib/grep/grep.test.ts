@@ -712,6 +712,37 @@ describe("cache", () => {
         expect(stored.some((text) => text.includes("CACHE_SOURCE_MARKER") || text.includes("a.ts"))).toBe(false);
     });
 
+    const namespace = { provider: "vercel", model: "m", policyVersion: "{}", promptVersion: "p" };
+    const entryInput = (index: number) => ({
+        namespace,
+        sources: [],
+        request: { ...request, state: { query: `q${index}` } },
+    });
+
+    test("a cache that could not open retries on the next write", async () => {
+        const directory = join(scratch("cache-retry"), "grep-cache");
+        writeFileSync(directory, "a file where the cache directory belongs");
+        const cache = createGrepCache({ directory });
+        await cache.put(entryInput(1), { q0: 0.7 });
+        expect(cache.stats().warnings).toEqual([{ kind: "cache_unavailable", count: 1 }]);
+        rmSync(directory);
+        await cache.put(entryInput(2), { q0: 0.7 });
+        expect(readdirSync(join(directory, "entries-v1")).length).toBe(1);
+        expect(await cache.get(entryInput(2))).toEqual({ q0: 0.7 });
+    });
+
+    test("concurrent writes share one size cap", async () => {
+        const probe = join(scratch("cache-size"), "grep-cache");
+        await createGrepCache({ directory: probe }).put(entryInput(0), { q0: 0.7 });
+        const [name] = readdirSync(join(probe, "entries-v1"));
+        const size = readFileSync(join(probe, "entries-v1", name!)).length;
+        const directory = join(scratch("cache-cap"), "grep-cache");
+        const cache = createGrepCache({ directory, maxBytes: Math.floor(size * 2.5) });
+        await Promise.all([1, 2, 3, 4, 5].map((index) => cache.put(entryInput(index), { q0: 0.7 })));
+        expect(readdirSync(join(directory, "entries-v1")).length).toBe(2);
+        expect(cache.stats().warnings).toEqual([{ kind: "cache_limit", count: 3 }]);
+    });
+
     test("--no-cache creates nothing", async () => {
         const directory = join(scratch("nocache"), "grep-cache");
         await wrapper(
