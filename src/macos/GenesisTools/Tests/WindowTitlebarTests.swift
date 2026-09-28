@@ -281,6 +281,22 @@ final class WindowTitlebarTests: XCTestCase {
         }
     }
 
+    /// Chrome the zone does not cover (Genesis's markdown tab bar) calls the same action directly.
+    func testADoubleClickOnOtherChromeFollowsTheSettingToo() {
+        let window = makeWindow(sidebar: 300)
+        let start = window.frame
+        withDoubleClickPreference("None") {
+            WindowTitlebar.performDoubleClick(on: window)
+            RunLoop.main.run(until: Date().addingTimeInterval(0.5))
+            XCTAssertEqual(window.frame, start)
+        }
+        withDoubleClickPreference("Maximize") {
+            WindowTitlebar.performDoubleClick(on: window)
+            RunLoop.main.run(until: Date().addingTimeInterval(0.5))
+            XCTAssertTrue(window.isZoomed, "frame \(window.frame)")
+        }
+    }
+
     func testDoubleClickOnAControlInTheStripDoesNotZoom() throws {
         let clicks = Clicks()
         let window = makeWindow(sidebar: 300, clicks: clicks)

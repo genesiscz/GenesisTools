@@ -52,6 +52,23 @@ enum WindowTitlebar {
         }
     }
 
+    /// Zoom, minimize or nothing. `.drag` needs the mouse-down event: only the zone does that.
+    @MainActor
+    static func perform(_ action: Action, on window: NSWindow) {
+        switch action {
+        case .zoom: window.zoom(nil)
+        case .minimize: window.miniaturize(nil)
+        case .drag, .none: break
+        }
+    }
+
+    /// A double-click on chrome the zone does not cover, as System Settings says: a tab bar under a
+    /// custom toolbar (Genesis's markdown viewer).
+    @MainActor
+    static func performDoubleClick(on window: NSWindow) {
+        perform(action(clickCount: 2, preference: preference), on: window)
+    }
+
     /// The strip's height: 32 pt on macOS 26 without a toolbar, 28 pt before, 0 in full screen
     /// (the title bar then slides in over the content and handles its own clicks).
     @MainActor
@@ -376,11 +393,11 @@ final class TitlebarZoneView: NSView {
 
     override func mouseDown(with event: NSEvent) {
         guard let window else { return }
-        switch WindowTitlebar.action(clickCount: event.clickCount, preference: WindowTitlebar.preference) {
-        case .drag: window.performDrag(with: event)
-        case .zoom: window.zoom(nil)
-        case .minimize: window.miniaturize(nil)
-        case .none: break
+        let action = WindowTitlebar.action(clickCount: event.clickCount, preference: WindowTitlebar.preference)
+        if action == .drag {
+            window.performDrag(with: event)
+        } else {
+            WindowTitlebar.perform(action, on: window)
         }
     }
 
