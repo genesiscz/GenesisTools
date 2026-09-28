@@ -292,8 +292,13 @@ export function parseSince(value: string | undefined, now = new Date()): Date | 
 
     if (day) {
         // A bare date is that day's local midnight, like the default; `Date.parse` would read UTC.
+        // new Date() rolls an impossible month or day into another date, so every part must come back unchanged.
         const at = new Date(Number(day[1]), Number(day[2]) - 1, Number(day[3]));
-        return at.getDate() === Number(day[3]) ? at : null;
+        const same =
+            at.getFullYear() === Number(day[1]) &&
+            at.getMonth() === Number(day[2]) - 1 &&
+            at.getDate() === Number(day[3]);
+        return same ? at : null;
     }
 
     if (!/^\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})?)?$/.test(text)) {
