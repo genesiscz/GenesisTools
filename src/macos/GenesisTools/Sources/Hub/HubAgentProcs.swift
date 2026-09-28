@@ -498,6 +498,17 @@ struct AgentProcsRow: View {
         .background(RoundedRectangle(cornerRadius: 8).fill(hovering ? Color.white.opacity(0.04) : Color.clear))
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
+        // The buttons appear on hover; keyboard and VoiceOver users get the same three as the row's actions.
+        .accessibilityElement(children: .combine)
+        .accessibilityActions {
+            Button(expanded ? "Hide the processes" : "Show every process of the tree") { toggle() }
+            if group.session != nil {
+                Button("Show this session in the Sessions list", action: reveal)
+            }
+            if group.stoppable && !stopping {
+                Button("Stop this tree (asks first)", action: stop)
+            }
+        }
         .padding(.horizontal, 6)
     }
 
