@@ -118,7 +118,9 @@ program
     .description("Open the hub window (the default); a hub that already runs comes forward and takes the flags")
     .option("--mode [mode]", `${HUB_MODES.join("|")} (default sessions)`)
     .option("--session <id>", "select this session (id or id prefix)")
-    .option("--pr <ref>", "select this PR/MR in the PRs mode: 42, or with its project: group/app#42")
+    .option("--pr <ref>", "select this PR/MR in the PRs mode: 42, with its project: group/app#42, or its page URL")
+    .option("--reveal <path>", "with --pr: open this repo-relative file in that PR's review")
+    .option("--worktree <path>", "open the Worktrees mode on this checkout folder")
     .option("--tab [tab]", `${HUB_TABS.join("|")}: the pane to show`)
     .option("--filter <text>", "filter the session list (also searches every project's history)")
     .option("--palette [text]", "open the command palette (⌘K), optionally with this text: 'gt pr 424'")
@@ -135,6 +137,8 @@ program
             mode?: string | true;
             session?: string;
             pr?: string;
+            reveal?: string;
+            worktree?: string;
             tab?: string | true;
             filter?: string;
             palette?: string | true;
@@ -156,7 +160,13 @@ program
 
             const pr = opts.pr?.trim();
             if (pr !== undefined && !isHubPrRef(pr)) {
-                out.log.error(`--pr takes 42, #42 or <project>#42, got ${opts.pr}`);
+                out.log.error(`--pr takes 42, #42, <project>#42 or a PR page URL, got ${opts.pr}`);
+                process.exitCode = 1;
+                return;
+            }
+
+            if (opts.reveal && pr === undefined) {
+                out.log.error("--reveal opens a file in one PR's review: pass --pr too");
                 process.exitCode = 1;
                 return;
             }
@@ -166,6 +176,8 @@ program
                     mode,
                     tab,
                     pr,
+                    reveal: opts.reveal,
+                    worktree: opts.worktree,
                     session: opts.session,
                     filter: opts.filter,
                     palette: opts.palette === true ? "" : opts.palette,

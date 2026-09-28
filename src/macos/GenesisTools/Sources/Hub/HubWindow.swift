@@ -24,6 +24,9 @@ struct HubRequest {
     var benchPath: String?
     var session: String?
     var pr: HubPRRef?
+    /// With `--pr`: this repo-relative file opens in that PR's review (`--reveal <path>`, the browser
+    /// extension's "Open in GenesisTools" on a diff file).
+    var reveal: String?
     var tab: HubTab?
     var mode: HubMode?
     var panes: [HubTab]?
@@ -69,6 +72,12 @@ struct HubRequest {
     var textSettings: [String: String] = [:]
     var activate = true
 
+    /// The file `--reveal` names, in the PR `--pr` names.
+    var prReveal: PRReveal? {
+        guard let pr, let reveal, !reveal.isEmpty else { return nil }
+        return PRReveal(ref: pr, path: reveal, threadID: nil)
+    }
+
     /// Off screen, never active, on scratch settings.
     var isScripted: Bool { snapshotPath != nil || benchPath != nil }
 
@@ -81,6 +90,7 @@ struct HubRequest {
             case "--bench": benchPath = value; index += 1
             case "--session": session = value; index += 1
             case "--pr": pr = value.flatMap(HubPRRef.init); index += 1
+            case "--reveal": reveal = value; index += 1
             case "--tab": tab = value.flatMap(HubTab.init(rawValue:)); index += 1
             case "--mode": mode = value.flatMap(HubMode.init(rawValue:)); index += 1
             case "--panes":
@@ -175,7 +185,7 @@ func runHub(_ args: [String]) -> Never {
     model.applyOverlays(request)
     MainActor.assumeIsolated {
         if let wantedPR {
-            model.prs.request(wantedPR)
+            model.prs.request(wantedPR, reveal: request.prReveal)
         }
         // The Inbox count in the mode switch; the Inbox mode itself loads when it opens.
         if !request.isScripted && mode != .inbox {
@@ -1042,7 +1052,7 @@ final class HubModel: ObservableObject {
             selectedWorktree = WorktreeCleanup.selection(for: worktree)
         }
         if let ref = request.pr {
-            MainActor.assumeIsolated { prs.request(ref) }
+            MainActor.assumeIsolated { prs.request(ref, reveal: request.prReveal) }
             if request.mode == nil {
                 setMode(.prs)
             }

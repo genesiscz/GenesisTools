@@ -72,6 +72,33 @@ final class HubLogicTests: XCTestCase {
         XCTAssertNil(HubPRRef("seven"))
     }
 
+    /// The browser extension and pasted links hand the hub a page URL, often with a tab suffix.
+    func testAPRRefReadsAPRorMRPageURL() {
+        XCTAssertEqual(HubPRRef("https://github.com/acme/App/pull/424/files"), HubPRRef(project: "acme/App", number: 424))
+        XCTAssertEqual(HubPRRef("https://gitlab.example/group/sub/app/-/merge_requests/12"), HubPRRef(project: "group/sub/app", number: 12))
+        XCTAssertNil(HubPRRef("https://github.com/acme/app/issues/3"))
+        XCTAssertNil(HubPRRef("https://github.com/acme/app"))
+    }
+
+    func testAPRRefMatchesItsProjectInAnyLetterCase() throws {
+        let json = """
+        {"repo":"GenesisTools","repoRoot":null,"origin":{"kind":"github","host":"github.com","web":"https://github.com/genesiscz/GenesisTools"},
+         "number":424,"title":"t","state":"OPEN","draft":false,"author":"a","headBranch":"feat/x","baseBranch":"master",
+         "url":"https://github.com/genesiscz/GenesisTools/pull/424","labels":[],"reviewers":[],"headSha":null,"crossRepository":false,"headRepo":null}
+        """
+        let pr = try JSONDecoder().decode(HubPR.self, from: Data(json.utf8))
+        XCTAssertTrue(try XCTUnwrap(HubPRRef("genesiscz/genesistools#424")).matches(pr))
+        XCTAssertTrue(try XCTUnwrap(HubPRRef("genesistools#424")).matches(pr))
+        XCTAssertTrue(try XCTUnwrap(HubPRRef("https://github.com/GenesisCZ/GenesisTools/pull/424")).matches(pr))
+        XCTAssertFalse(try XCTUnwrap(HubPRRef("genesiscz/other#424")).matches(pr))
+    }
+
+    func testRevealNamesAFileOnlyTogetherWithAPR() {
+        let request = HubRequest(["--pr", "acme/app#7", "--reveal", "src/parse.ts"])
+        XCTAssertEqual(request.prReveal, PRReveal(ref: HubPRRef(project: "acme/app", number: 7), path: "src/parse.ts", threadID: nil))
+        XCTAssertNil(HubRequest(["--reveal", "src/parse.ts"]).prReveal)
+    }
+
     func testALiveLaunchIsNotScripted() {
         let request = HubRequest(["--session", "abc", "--no-activate"])
         XCTAssertFalse(request.isScripted)

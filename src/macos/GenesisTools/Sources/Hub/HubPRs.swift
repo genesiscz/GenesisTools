@@ -80,6 +80,10 @@ struct HubPRRef: Equatable {
 
     init?(_ raw: String) {
         let text = raw.trimmingCharacters(in: .whitespaces)
+        if let page = Self.fromPageURL(text) {
+            self = page
+            return
+        }
         guard let split = text.lastIndex(where: { $0 == "#" || $0 == "!" }) else {
             guard let number = Int(text) else { return nil }
             project = nil
@@ -92,11 +96,29 @@ struct HubPRRef: Equatable {
         self.number = number
     }
 
-    /// The project matches the folder name (`app`), the web path (`group/app`) or the whole key.
+    /// A PR or MR page: `https://github.com/owner/repo/pull/42/files`,
+    /// `https://gitlab.example/group/app/-/merge_requests/12`. The browser extension and links pass these.
+    private static func fromPageURL(_ text: String) -> HubPRRef? {
+        guard let url = URL(string: text), url.scheme == "https" || url.scheme == "http" else { return nil }
+        let parts = url.path.split(separator: "/").map(String.init)
+        if let at = parts.firstIndex(of: "pull"), at >= 2, at + 1 < parts.count, let number = Int(parts[at + 1]) {
+            return HubPRRef(project: parts[..<at].joined(separator: "/"), number: number)
+        }
+        if let at = parts.firstIndex(of: "merge_requests"), at >= 3, parts[at - 1] == "-", at + 1 < parts.count,
+           let number = Int(parts[at + 1]) {
+            return HubPRRef(project: parts[..<(at - 1)].joined(separator: "/"), number: number)
+        }
+        return nil
+    }
+
+    /// The project matches the folder name (`app`), the web path (`group/app`) or the whole key, in any
+    /// letter case: GitHub and GitLab paths are case-insensitive, and a typed or lowercased URL is common.
     func matches(_ pr: HubPR) -> Bool {
         guard pr.number == number else { return false }
         guard let project else { return true }
-        return pr.repo == project || pr.project == project || pr.project.hasSuffix("/" + project)
+        let wanted = project.lowercased()
+        let key = pr.project.lowercased()
+        return pr.repo.lowercased() == wanted || key == wanted || key.hasSuffix("/" + wanted)
     }
 
     var label: String { project.map { "\($0)#\(number)" } ?? "#\(number)" }

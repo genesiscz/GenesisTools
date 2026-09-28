@@ -12,8 +12,12 @@ export type HubTab = (typeof HUB_TABS)[number];
 export interface OpenHubOptions {
     mode?: HubMode;
     session?: string;
-    /** `42`, `#42`, or with its project: `group/app#42`, `app!12` (numbers repeat across projects). */
+    /** `42`, `#42`, or with its project: `group/app#42`, `app!12` (numbers repeat across projects), or a PR page URL. */
     pr?: string;
+    /** With `pr`: this repo-relative file opens in that PR's review. */
+    reveal?: string;
+    /** Opens the Worktrees mode on this checkout folder. */
+    worktree?: string;
     tab?: HubTab;
     /** The session list filter, which also searches every project's history. */
     filter?: string;
@@ -35,6 +39,8 @@ export interface OpenHubOptions {
     activate?: boolean;
     /** false never builds; a missing or stale app is then an error. */
     build?: boolean;
+    /** With `build: false`: an app older than its Swift sources still opens (a browser click must not wait on a build). */
+    staleOk?: boolean;
     onStep?: (message: string) => void;
 }
 
@@ -58,6 +64,14 @@ export function hubArgs(options: OpenHubOptions): string[] {
 
     if (options.pr !== undefined) {
         args.push("--pr", options.pr);
+
+        if (options.reveal) {
+            args.push("--reveal", options.reveal);
+        }
+    }
+
+    if (options.worktree) {
+        args.push("--worktree", options.worktree);
     }
 
     if (options.tab) {
@@ -99,14 +113,14 @@ export function hubArgs(options: OpenHubOptions): string[] {
 }
 
 /** Why the installed app cannot serve the hub as it is, or undefined when it can. */
-export function buildReason(): string | undefined {
+export function buildReason({ staleOk = false }: { staleOk?: boolean } = {}): string | undefined {
     const status = appStatus();
 
     if (!status.built) {
         return "GenesisTools.app is not built";
     }
 
-    if (status.stale) {
+    if (status.stale && !staleOk) {
         return "GenesisTools.app is older than its Swift sources";
     }
 
@@ -120,7 +134,7 @@ export function buildReason(): string | undefined {
  * already runs takes the arguments and comes forward instead of a second window opening.
  */
 export async function openHub(options: OpenHubOptions): Promise<OpenHubResult> {
-    const reason = buildReason();
+    const reason = buildReason({ staleOk: options.build === false && options.staleOk === true });
     let built = false;
 
     if (reason) {
