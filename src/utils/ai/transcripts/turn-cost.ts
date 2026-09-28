@@ -1,7 +1,4 @@
 import { isHarnessDeliveryText } from "@genesiscz/utils/agent-sessions/user-text";
-import type { TranscriptTurn } from "@genesiscz/utils/ai/transcripts";
-import { shortModel } from "./native";
-import { isFailedTool } from "./tool-kind";
 import {
     type CallTokens,
     EXPENSIVE_TURNS,
@@ -9,7 +6,10 @@ import {
     type TokenTotals,
     type ToolStat,
     type TurnCost,
-} from "./types";
+} from "./insights-types";
+import { shortModel } from "./native-scan";
+import { isFailedTool } from "./tool-kind";
+import type { TranscriptTurn } from "./types";
 
 /** A model call with the model that made it, ready to price. */
 export interface PricedCallInput extends CallTokens {

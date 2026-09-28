@@ -1,4 +1,4 @@
-import type { TranscriptTool } from "@genesiscz/utils/ai/transcripts";
+import type { TranscriptTool } from "./types";
 
 // The tool families the hub's transcript groups calls by (Swift `TranscriptToolKind` in
 // Hub/Stolen/Sessions/SessionTranscriptDocument.swift). Same names, same verbs, so a handoff reads
