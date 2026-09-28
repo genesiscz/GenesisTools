@@ -389,6 +389,50 @@ describe("move aside on a scratch repository", () => {
     });
 });
 
+describe("move aside rechecks each worktree before its own move", () => {
+    let repo: TestRepo;
+
+    beforeAll(async () => {
+        repo = await TestRepo.create({ prefix: "gt-hub-wt-recheck-" });
+        await repo.commitMany({ files: { ".gitignore": "node_modules/\n" }, message: "ignore" });
+    });
+
+    afterAll(() => {
+        repo.cleanup();
+    });
+
+    test("a worktree that gains a user while an earlier one moves stays where it is", async () => {
+        const first = await repo
+            .branch("feat/first")
+            .then(() => repo.worktreeAdd({ name: "wt-first", ref: "feat/first" }));
+        const second = await repo
+            .branch("feat/second")
+            .then(() => repo.worktreeAdd({ name: "wt-second", ref: "feat/second" }));
+        // An editor opens in the second worktree once the first one has moved.
+        const live: LiveUsers = {
+            get processes() {
+                return existsSync(first) ? [] : [{ pid: 4242, name: "vim", cwd: second }];
+            },
+            sessions: [],
+            sessionsError: null,
+        };
+        const outcomes = await moveAsideWorktrees({
+            paths: [first, second],
+            base: "master",
+            live,
+            destRoot: join(repo.root, "..", "aside-recheck"),
+            journal: join(mkdtempSync(join(tmpdir(), "gt-hub-wt-journal-")), "moved-aside.jsonl"),
+            now: new Date(Date.now() + 30 * 86_400_000),
+        });
+        const byPath = new Map(outcomes.map((outcome) => [outcome.path, outcome]));
+
+        expect(byPath.get(first)?.moved).toBe(true);
+        expect(byPath.get(second)?.moved).toBe(false);
+        expect(byPath.get(second)?.reasons.join(" ")).toContain("vim (4242)");
+        expect(existsSync(second)).toBe(true);
+    });
+});
+
 describe("the CLI and size doors", () => {
     test("--live-minutes abc is a commander usage error, not a stack trace", async () => {
         const program = new Command().exitOverride().configureOutput({ writeErr: () => {}, writeOut: () => {} });

@@ -880,20 +880,28 @@ export async function moveAsideWorktrees({
     now?: Date;
 }): Promise<MoveAsideOutcome[]> {
     const wanted = [...new Set(paths.map(realpathOr))];
-    const fresh = await scanWorktrees({
-        repos: wanted.map((p) => (existsSync(p) ? p : dirname(p))),
-        liveMinutes,
-        base,
-        only: wanted,
-        live,
-        olderThanDays,
-        now: now.getTime(),
-    });
+    const scan = (only: string[]) =>
+        scanWorktrees({
+            repos: only.map((p) => (existsSync(p) ? p : dirname(p))),
+            liveMinutes,
+            base,
+            only,
+            live,
+            olderThanDays,
+            now: now.getTime(),
+        });
+    const fresh = await scan(wanted);
     const byPath = new Map(fresh.rows.map((row) => [row.path, row]));
     const outcomes: MoveAsideOutcome[] = [];
+    // Each move awaits git, so seconds pass between the scan and a later move, and another process may
+    // start using that worktree meanwhile. After the first move, each path is scanned again right before
+    // its own move.
+    let attempted = false;
 
     for (const path of wanted) {
-        const row = byPath.get(path);
+        const row = attempted
+            ? (await scan([path])).rows.find((candidate) => candidate.path === path)
+            : byPath.get(path);
         const stay = (reasons: string[], branch: string | null = row?.branch ?? null) =>
             outcomes.push({ path, moved: false, to: null, restore: null, reasons, branch });
 
@@ -920,6 +928,7 @@ export async function moveAsideWorktrees({
         }
 
         const to = freeDestination(join(realpathOr(parent), basename(path)));
+        attempted = true;
         const res = await createGit({ cwd: row.repoRoot }).executor.exec(["worktree", "move", path, to], {
             cwd: row.repoRoot,
             timeout: WORKTREE_REMOVE_TIMEOUT_MS,
