@@ -6,7 +6,7 @@ import type { LocalCheckout } from "@genesiscz/utils/git/local-checkouts";
 import type { EditorTarget, RunResult, TerminalTarget } from "@genesiscz/utils/open-in";
 import { makeTempDir } from "@genesiscz/utils/paths";
 import { isProcessAlive } from "@genesiscz/utils/process-alive";
-import { headBranchFromEmbeddedData } from "../extension/content-dom";
+import { headBranchFromEmbeddedData, menuTargetContext } from "../extension/content-dom";
 import { targetFromHash } from "../extension/shared/route-target";
 import { actionValues, runAction } from "./actions";
 import { ConfigError, parseConfig } from "./config";
@@ -316,6 +316,18 @@ describe("page text for the cards", () => {
     it("drops colour codes, clack glyphs and blank lines from a CLI failure, and keeps its end", () => {
         expect(cliTail("\u001b[31m│\u001b[39m\n■  link used up\n\n")).toBe("link used up");
         expect(cliTail(`${"x".repeat(400)}\nreason`, 20)).toBe(`…${"x".repeat(13)}\nreason`);
+    });
+
+    it("reads the right-clicked element for a menu entry and nothing for the keyboard shortcut", () => {
+        const read = (): { path?: string } => ({ path: "src/a.ts" });
+        const never = (): { path?: string } => {
+            throw new Error("the shortcut must not read an old right-click target");
+        };
+        expect(menuTargetContext({ type: "menu", item: "open-hub", source: "shortcut" }, never, {})).toEqual({});
+        expect(menuTargetContext({ type: "menu", item: "open-hub", source: "menu" }, read, {})).toEqual({
+            path: "src/a.ts",
+        });
+        expect(menuTargetContext({ type: "menu", item: "open-file" }, read, {})).toEqual({ path: "src/a.ts" });
     });
 
     it("reads the PR head branch from GitHub's embedded page data only when it names this PR", () => {

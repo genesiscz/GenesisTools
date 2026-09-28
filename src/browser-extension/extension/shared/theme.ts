@@ -55,6 +55,7 @@ export const THEME_CSS = `
 .gt-btn.primary { background: var(--primary); color: var(--primary-foreground); border-color: var(--primary); font-weight: 600; }
 .gt-btn.ghost { background: transparent; border-color: transparent; color: var(--muted-foreground); padding: 5px 7px; }
 .gt-btn.ghost:hover:not(:disabled) { color: var(--foreground); background: var(--muted); box-shadow: none; }
+.gt-btn.ghost.gt-mark { color: var(--primary); }
 .gt-btn[aria-busy="true"] { cursor: progress; }
 .gt-row { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
 .gt-spacer { flex: 1; }

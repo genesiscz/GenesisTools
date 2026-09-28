@@ -1,7 +1,7 @@
 import type { HostResponse } from "../lib/host/messages";
 import { type ForgePage, parseForgeUrl } from "../lib/page-url";
 import { ext } from "./chrome";
-import { contextAt, type DomContext, headBranch } from "./content-dom";
+import { contextAt, type DomContext, headBranch, menuTargetContext } from "./content-dom";
 import { callHost, isMenuMessage, isRecord, type MenuItem } from "./shared/bridge";
 import { chip, el, shadowMount } from "./shared/theme";
 
@@ -433,7 +433,9 @@ function start(): void {
             return undefined;
         }
 
-        const ctx = contextAt(contextTarget);
+        const ctx = menuTargetContext<DomContext>(message, () => contextAt(contextTarget), {});
+        // One right-click, one menu entry: a later shortcut or entry must not reuse this element.
+        contextTarget = null;
         const handlers: Record<MenuItem, () => Promise<void>> = {
             "open-hub": () => openHub(ctx, message.linkUrl),
             "open-file": () => openFile(ctx),

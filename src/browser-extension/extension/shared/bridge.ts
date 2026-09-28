@@ -14,6 +14,8 @@ export interface MenuMessage {
     selectionText?: string;
     /** The link that was right-clicked, when the menu opened on a link. */
     linkUrl?: string;
+    /** "shortcut" for the keyboard command: no right-click happened, so no element is the target. */
+    source?: "menu" | "shortcut";
 }
 
 export const MENU_ITEMS = ["open-hub", "open-file", "open-terminal", "explain", "review"] as const;

@@ -1,3 +1,5 @@
+import type { MenuMessage } from "./shared/bridge";
+
 /**
  * Best-effort reads of GitHub and GitLab markup: which file and line an element belongs to, and
  * the head branch of a PR/MR page. Both sites change their markup, so every reader tries several
@@ -113,4 +115,12 @@ export function headBranch(doc: Document, number?: number): string | undefined {
     }
 
     return undefined;
+}
+
+/**
+ * The page element a menu entry acts on: the last right-clicked one for a menu click, nothing for
+ * the keyboard shortcut (a right-click from minutes ago must not turn Alt+Shift+G into "open that file").
+ */
+export function menuTargetContext<T>(message: MenuMessage, read: () => T, empty: T): T {
+    return message.source === "shortcut" ? empty : read();
 }

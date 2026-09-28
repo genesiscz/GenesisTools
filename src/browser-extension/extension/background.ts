@@ -219,6 +219,7 @@ ext.contextMenus.onClicked.addListener((info: ContextMenuInfo, tab?: Tab) => {
         item: info.menuItemId,
         selectionText: info.selectionText,
         linkUrl: info.linkUrl,
+        source: "menu",
     });
 });
 
@@ -229,7 +230,7 @@ ext.commands.onCommand.addListener((command, tab) => {
     }
 
     // A tab without the content script (not a GitHub or granted GitLab page) has no receiver.
-    ext.tabs.sendMessage(tab.id, { type: "menu", item: "open-hub" }).catch((error: unknown) => {
+    ext.tabs.sendMessage(tab.id, { type: "menu", item: "open-hub", source: "shortcut" }).catch((error: unknown) => {
         console.info("[genesis-tools] the shortcut has nothing to open on this tab", error);
     });
 });
