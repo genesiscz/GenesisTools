@@ -12,6 +12,14 @@ export type EvaluationProviderId = z.infer<typeof evaluationProviderSchema>;
 export const DEFAULT_EVALUATION_PROVIDER: EvaluationProviderId = "typesafe";
 export interface EvaluationOptions {
     provider?: EvaluationProviderId;
+    /**
+     * TypeSafe model id. Omitted means `jev-latest`, which every live-policy caller keeps. Only
+     * `tools jev grep` passes a pin, because its answer cache must not outlive a moved alias. The
+     * Vercel adapter ignores it and stays on `JEV_MODEL`.
+     */
+    model?: string;
+    /** Which feature spent the call (`grep`, `listen`, ...). Booked as `meta.label` in the usage ledger. */
+    usageLabel?: string;
     timeoutMs?: number;
     zeroDataRetention?: boolean;
     signal?: AbortSignal;

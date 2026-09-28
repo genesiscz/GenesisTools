@@ -872,6 +872,36 @@ const GROQ_ENTRIES: CatalogEntry[] = apiEntries("groq", [
     },
 ]);
 
+/**
+ * Jev, the TypeSafe decision model. Billed per input token only; output is free. $42 per billion
+ * input tokens, verified 2026-09-28 on docs.typesafe.ai/models (`jev-1.13.0`: "$42 / $0.042" per
+ * Btok / Mtok, "Charged per input token. Output tokens are free.") and on Vercel's model page for
+ * `typesafe-ai/jev` (shown rounded as $0.04/M).
+ *
+ * The providers are the ids `recordUsage` receives from the Jev evaluator (`jev-${provider}`), so
+ * every Jev call is priced at write time from this one table. Hidden, and `classify` only: Jev
+ * returns probabilities, never text, so no chat picker may offer it.
+ */
+const JEV_PRICING: ModelPricing = { inputPer1M: 0.042, outputPer1M: 0 };
+
+function jev(entry: { id: string; provider: "jev-typesafe" | "jev-vercel"; displayName: string }): CatalogEntry {
+    return {
+        ...entry,
+        contextWindow: 64_000,
+        capabilities: new Set(["classify"]),
+        thinking: "none",
+        pricing: JEV_PRICING,
+        flags: { hidden: true },
+        source: "static",
+    };
+}
+
+const JEV_ENTRIES: CatalogEntry[] = [
+    jev({ id: "jev-1.13.0", provider: "jev-typesafe", displayName: "Jev 1.13" }),
+    jev({ id: "jev-latest", provider: "jev-typesafe", displayName: "Jev (latest)" }),
+    jev({ id: "typesafe-ai/jev", provider: "jev-vercel", displayName: "Jev via AI Gateway" }),
+];
+
 export const STATIC_CATALOG: CatalogEntry[] = [
     ...ANTHROPIC_ENTRIES,
     ...XAI_ENTRIES,
@@ -879,6 +909,7 @@ export const STATIC_CATALOG: CatalogEntry[] = [
     ...OPENAI_ENTRIES,
     ...GOOGLE_ENTRIES,
     ...GROQ_ENTRIES,
+    ...JEV_ENTRIES,
 ];
 
 /**

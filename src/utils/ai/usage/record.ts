@@ -165,6 +165,15 @@ function deriveCostUsd(event: UsageEvent, usage: UsageEventInput["usage"]): numb
 }
 
 /**
+ * Price a stored row from today's catalog, the way `recordUsage` would price it now. For readers of
+ * rows booked before the catalog knew their model (Jev before 2026-09-28): a booked `costUsd` always
+ * wins over this, so an invoice-grade row is never repriced.
+ */
+export function catalogCostUsd(event: UsageEvent): number | undefined {
+    return deriveCostUsd(event, undefined);
+}
+
+/**
  * Provider-scoped first, because one id can name two products at different
  * prices (`gpt-5.4` is both a Codex-subscription model and an OpenAI API model).
  *

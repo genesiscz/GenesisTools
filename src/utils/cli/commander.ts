@@ -3,6 +3,7 @@ import { env } from "@genesiscz/utils/env";
 import { setBaseBinding, setConsoleLevel } from "@genesiscz/utils/logger";
 import { consoleFloorFor } from "@genesiscz/utils/logging/tool-policy";
 import type { Command } from "commander";
+import { setCurrentCommand } from "./current-command";
 import { enhanceHelp, markRequiredOptionsDeep, setSuggestCommandProgram, showHelpAfterErrorDeep } from "./executor";
 // `logger` itself is intentionally NOT imported here — runTool only drives the
 // console gate / base binding via the setters above (importing the logger
@@ -253,7 +254,8 @@ export async function runTool(
         printReadmeAndExit(callerDirOf(argv));
     }
 
-    program.hook("preAction", async () => {
+    program.hook("preAction", async (_thisCommand, actionCommand) => {
+        setCurrentCommand(actionCommand);
         if (program.opts().readme) {
             const { printReadmeAndExit } = await import("@genesiscz/utils/readme");
             printReadmeAndExit(callerDirOf(argv));

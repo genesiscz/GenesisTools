@@ -10,9 +10,9 @@
  * a CLAUDE.md carve-out) and claude's `UsageHistoryDb` is still the source of
  * truth for subscription bucket utilization; both merely emit here as well.
  */
-export { dayFilePath, usageDir, utcDayOf } from "./paths";
+export { dayFilePath, firstUsageDay, usageDir, utcDayOf } from "./paths";
 export { emptyAggregate, emptyBuckets, queryUsage } from "./query";
-export { recordUsage } from "./record";
+export { catalogCostUsd, recordUsage } from "./record";
 export { isValidTimeZone, spendBucketKey, systemTimeZone } from "./series-keys";
 export type {
     AccountRef,

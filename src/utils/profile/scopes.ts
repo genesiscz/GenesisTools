@@ -37,6 +37,8 @@ export const PROFILER_SCOPE_NAMES = [
     "jev-experiment",
     "jev-evaluate",
     "jev-probably",
+    "jev-grep",
+    "repo-context",
     "control-native",
     "control-overlay",
     "control-simulator",
