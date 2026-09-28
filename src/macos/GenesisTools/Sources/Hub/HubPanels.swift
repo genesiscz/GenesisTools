@@ -572,17 +572,33 @@ extension View {
 
 /// Shows `cursor` while the pointer is over the view, set again on every move. A push on hover lost to
 /// the text and web views underneath, which reset the cursor on their next mouse move, and a push
-/// without its pop (a hover that never ended) left a stale cursor behind for the whole window.
+/// without its pop (a hover that never ended) left a stale cursor behind for the whole window. A view
+/// swapped out under the pointer (a link that becomes a label) gets no `.ended`, so it resets on disappear.
 private struct HoverCursor: ViewModifier {
     let cursor: NSCursor
+    @State private var hovering = false
 
     func body(content: Content) -> some View {
-        content.onContinuousHover { phase in
-            switch phase {
-            case .active: cursor.set()
-            case .ended: NSCursor.arrow.set()
+        content
+            .onContinuousHover { phase in
+                switch phase {
+                case .active:
+                    if !hovering {
+                        hovering = true
+                    }
+
+                    cursor.set()
+                case .ended:
+                    hovering = false
+                    NSCursor.arrow.set()
+                }
             }
-        }
+            .onDisappear {
+                if hovering {
+                    hovering = false
+                    NSCursor.arrow.set()
+                }
+            }
     }
 }
 
