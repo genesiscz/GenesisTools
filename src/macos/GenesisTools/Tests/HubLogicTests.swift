@@ -446,6 +446,42 @@ final class HubLogicTests: XCTestCase {
         XCTAssertNil(log.detail(for: "never"), "an unknown id has no detail")
     }
 
+    /// The lines written after the scan are read once each, however often the rows of a running call
+    /// ask for its detail (PR #429 t21: each ask scanned the whole appended part again), and a line
+    /// still being written is read once it is whole.
+    func testLinesWrittenAfterTheScanAreReadOnce() throws {
+        func json(_ object: Any) throws -> String {
+            String(decoding: try JSONSerialization.data(withJSONObject: object), as: UTF8.self)
+        }
+        let use = try json(["type": "assistant", "uuid": "a1", "message": ["id": "m1", "role": "assistant", "content": [
+            ["type": "tool_use", "id": "running", "name": "Bash", "input": ["command": "sleep 5"]],
+        ]]]) + "\n"
+        let result = try json(["type": "user", "uuid": "r1", "message": ["role": "user", "content": [
+            ["type": "tool_result", "tool_use_id": "running", "content": "done"],
+        ]]]) + "\n"
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent("native-once-\(UUID().uuidString).jsonl")
+        try "{\"type\":\"user\",\"uuid\":\"u0\",\"message\":{\"role\":\"user\",\"content\":\"hi\"}}\n".write(to: file, atomically: true, encoding: .utf8)
+        let log = try XCTUnwrap(SessionNativeLog.scan(path: file.path))
+        let handle = try FileHandle(forWritingTo: file)
+        defer { try? handle.close() }
+        try handle.seekToEnd()
+
+        try handle.write(contentsOf: Data(use.utf8))
+        for _ in 0..<5 {
+            XCTAssertEqual(log.detail(for: "running")?.command, "sleep 5")
+        }
+        XCTAssertEqual(log.appendedBytesRead, use.utf8.count, "five asks read the appended line once")
+
+        let half = result.utf8.count / 2
+        try handle.write(contentsOf: Data(result.utf8.prefix(half)))
+        XCTAssertNil(log.detail(for: "running")?.fullResult)
+        XCTAssertEqual(log.appendedBytesRead, use.utf8.count, "a line still being written is left for later")
+
+        try handle.write(contentsOf: Data(result.utf8.dropFirst(half)))
+        XCTAssertEqual(log.detail(for: "running")?.fullResult, "done")
+        XCTAssertEqual(log.appendedBytesRead, use.utf8.count + result.utf8.count)
+    }
+
     /// A tool row the reader opened shows its whole body; one open by its level's default or by Expand
     /// all stays trimmed, and "… +N lines" / "Show fewer lines" flips either.
     @MainActor

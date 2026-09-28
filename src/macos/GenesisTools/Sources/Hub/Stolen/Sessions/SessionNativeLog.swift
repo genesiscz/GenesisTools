@@ -154,19 +154,30 @@ final class SessionNativeLog: @unchecked Sendable {
     private let toolResult: [String: Range<Int>]
     private let lock = NSLock()
     private var cache: [String: ToolCallDetail] = [:]
-    // GenesisTools adaptation: the bytes the scan read. A call written after it (the hub's live tail
-    // appends turns to an open transcript, the scan runs once) is found in the rest of the file on first
-    // use (`appendedRanges`); it used to have no detail at all, so its output stayed clipped.
-    private let scannedBytes: Int
+    // GenesisTools adaptation: a call written after the scan (the hub's live tail appends turns to an
+    // open transcript, the scan runs once) is found in the lines written since (`indexAppended`); it
+    // used to have no detail at all, so its output stayed clipped. `appendedEnd` is where that index
+    // stops: the start of a line not written whole yet, else the file's end. Each whole line past the
+    // scan is read once (PR #429 t21: every look used to scan the whole appended part again).
+    private let appendLock = NSLock()
+    private var appendedEnd: Int
+    private var appendedRead = 0
     private var appendedUse: [String: Range<Int>] = [:]
     private var appendedResult: [String: Range<Int>] = [:]
 
-    private init(path: String, summary: SessionNativeSummary, toolUse: [String: Range<Int>], toolResult: [String: Range<Int>], scannedBytes: Int) {
+    private init(path: String, summary: SessionNativeSummary, toolUse: [String: Range<Int>], toolResult: [String: Range<Int>], appendedStart: Int) {
         self.path = path
         self.summary = summary
         self.toolUse = toolUse
         self.toolResult = toolResult
-        self.scannedBytes = scannedBytes
+        appendedEnd = appendedStart
+    }
+
+    // GenesisTools adaptation: bytes read past the scan over this log's life (see `appendedEnd`).
+    var appendedBytesRead: Int {
+        appendLock.lock()
+        defer { appendLock.unlock() }
+        return appendedRead
     }
 
     var toolCount: Int { toolUse.count }
@@ -210,7 +221,10 @@ final class SessionNativeLog: @unchecked Sendable {
         for call in summary.calls {
             if let usage = summary.usageByMessage[call.messageId] { summary.total.add(usage) }
         }
-        return SessionNativeLog(path: path, summary: summary, toolUse: toolUse, toolResult: toolResult, scannedBytes: data.count)
+        // GenesisTools adaptation: a last line with no newline may still be being written; the index of
+        // appended lines reads it again once it is whole.
+        let appendedStart = data.last == 0x0A ? data.count : (data.lastIndex(of: 0x0A).map { $0 + 1 } ?? 0)
+        return SessionNativeLog(path: path, summary: summary, toolUse: toolUse, toolResult: toolResult, appendedStart: appendedStart)
     }
 
     /// The input and full result of one tool call, read from disk on first use and cached.
@@ -223,13 +237,15 @@ final class SessionNativeLog: @unchecked Sendable {
         lock.unlock()
 
         // GenesisTools adaptation: a call the scan did not see, or saw still running, is looked up in
-        // the bytes written since (`scannedBytes`).
+        // the lines written since (`indexAppended`).
         var use = toolUse[toolId]
         var result = toolResult[toolId]
         if use == nil || result == nil {
-            let found = appendedRanges(toolId)
-            use = use ?? found.use
-            result = result ?? found.result
+            indexAppended()
+            lock.lock()
+            use = use ?? appendedUse[toolId]
+            result = result ?? appendedResult[toolId]
+            lock.unlock()
         }
         guard use != nil || result != nil else { return nil }
         var detail = ToolCallDetail()
@@ -249,49 +265,48 @@ final class SessionNativeLog: @unchecked Sendable {
         return detail
     }
 
-    /// GenesisTools adaptation: the lines past `scannedBytes` that hold this call's input and result,
-    /// found by the quoted id and classified by the scan's own indexers.
-    private func appendedRanges(_ toolId: String) -> (use: Range<Int>?, result: Range<Int>?) {
-        lock.lock()
-        var use = appendedUse[toolId]
-        var result = appendedResult[toolId]
-        lock.unlock()
-        guard use == nil || result == nil,
-              let data = try? Data(contentsOf: URL(fileURLWithPath: path), options: .alwaysMapped), data.count > scannedBytes
-        else { return (use, result) }
-        let needle = Array("\"\(toolId)\"".utf8)
+    /// GenesisTools adaptation: indexes the whole lines written since the last look, with the scan's own
+    /// indexers, and moves `appendedEnd` past them. A last line with no newline is parsed on each look
+    /// but never passed: it may still be being written, or its writer ended the file without one.
+    private func indexAppended() {
+        appendLock.lock()
+        defer { appendLock.unlock() }
+        guard let data = try? Data(contentsOf: URL(fileURLWithPath: path), options: .alwaysMapped), data.count > appendedEnd else { return }
+        var summary = SessionNativeSummary()
+        var uses: [String: Range<Int>] = [:]
+        var results: [String: Range<Int>] = [:]
+        func index(_ line: UnsafeRawBufferPointer, _ range: Range<Int>) {
+            let kind = LineKind.of(line)
+            guard kind != .other, let object = try? JSONSerialization.jsonObject(with: Data(line)) as? [String: Any] else { return }
+            if kind == .claude {
+                Self.indexClaude(object, range: range, ordinal: 0, summary: &summary, toolUse: &uses, toolResult: &results)
+            } else {
+                Self.indexCodex(object, range: range, toolUse: &uses, toolResult: &results)
+            }
+        }
+        var end = appendedEnd
         data.withUnsafeBytes { (raw: UnsafeRawBufferPointer) in
             guard let base = raw.baseAddress else { return }
             let count = raw.count
-            var from = scannedBytes
-            while from < count, use == nil || result == nil,
-                  let hit = memmem(base + from, count - from, needle, needle.count) {
-                let at = base.distance(to: UnsafeRawPointer(hit))
-                // The scan's last line may have been cut mid-write, so a line can start before `scannedBytes`.
-                var start = at
-                while start > 0, raw[start - 1] != 0x0A { start -= 1 }
-                let end = memchr(base + at, 0x0A, count - at).map { base.distance(to: UnsafeRawPointer($0)) } ?? count
-                from = end + 1
-                let line = UnsafeRawBufferPointer(start: base + start, count: end - start)
-                let kind = LineKind.of(line)
-                guard kind != .other, let object = try? JSONSerialization.jsonObject(with: Data(line)) as? [String: Any] else { continue }
-                var summary = SessionNativeSummary()
-                var uses: [String: Range<Int>] = [:]
-                var results: [String: Range<Int>] = [:]
-                if kind == .claude {
-                    Self.indexClaude(object, range: start..<end, ordinal: 0, summary: &summary, toolUse: &uses, toolResult: &results)
-                } else {
-                    Self.indexCodex(object, range: start..<end, toolUse: &uses, toolResult: &results)
+            var start = end
+            while start < count, let newline = memchr(base + start, 0x0A, count - start) {
+                let lineEnd = base.distance(to: UnsafeRawPointer(newline))
+                if lineEnd > start {
+                    index(UnsafeRawBufferPointer(start: base + start, count: lineEnd - start), start..<lineEnd)
                 }
-                use = use ?? uses[toolId]
-                result = result ?? results[toolId]
+                start = lineEnd + 1
+                end = start
+            }
+            if start < count {
+                index(UnsafeRawBufferPointer(start: base + start, count: count - start), start..<count)
             }
         }
+        appendedRead += end - appendedEnd
+        appendedEnd = end
         lock.lock()
-        appendedUse[toolId] = use
-        appendedResult[toolId] = result
+        appendedUse.merge(uses) { _, new in new }
+        appendedResult.merge(results) { _, new in new }
         lock.unlock()
-        return (use, result)
     }
 
     // MARK: Scan helpers
