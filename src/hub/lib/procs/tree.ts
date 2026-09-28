@@ -1,5 +1,5 @@
+import { type AgentProvider, classifyCommand, type ProcClass, type ProcKind } from "@genesiscz/utils/process/classify";
 import type { PsRow } from "@genesiscz/utils/process/ps";
-import { type AgentProvider, classifyCommand, type ProcClass, type ProcKind } from "./classify";
 
 /**
  * The hub's agent resource monitor, as data: every agent CLI session with its whole process tree
