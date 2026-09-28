@@ -106,9 +106,31 @@ extension ClipboardTests {
         board.setString("before", forType: .string)
         let transaction = try ClipboardTransaction(board: board)
         try transaction.write(text: "our paste", format: "text")
+        let item = try XCTUnwrap(board.pasteboardItems?.first)
+        let copy = NSPasteboardItem()
+        for type in item.types {
+            copy.setData(try XCTUnwrap(item.data(forType: type)), forType: type)
+        }
         board.clearContents()
-        board.setString("our paste", forType: .string)
+        XCTAssertTrue(board.writeObjects([copy]))
         XCTAssertEqual(transaction.restore(), "restored")
         XCTAssertEqual(board.string(forType: .string), "before")
+    }
+
+    /// The same text copied by the user is a newer copy, not ours: it carries no paste nonce, so the
+    /// restore must leave it alone rather than put the older clipboard back over it.
+    func testAUserCopyOfTheSameTextIsNeverOverwritten() throws {
+        let board = NSPasteboard.withUniqueName()
+        defer { board.releaseGlobally() }
+        board.setString("before", forType: .string)
+        let transaction = try ClipboardTransaction(board: board)
+        try transaction.write(text: "our paste", format: "text")
+        board.clearContents()
+        let userCopy = NSPasteboardItem()
+        userCopy.setString("our paste", forType: .string)
+        userCopy.setString("<b>our paste</b>", forType: .html)
+        XCTAssertTrue(board.writeObjects([userCopy]))
+        XCTAssertEqual(transaction.restore(), "skipped-concurrent-change")
+        XCTAssertEqual(board.string(forType: .html), "<b>our paste</b>")
     }
 }
