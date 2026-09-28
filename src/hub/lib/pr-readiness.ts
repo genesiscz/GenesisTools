@@ -241,7 +241,7 @@ query($owner: String!, $repo: String!, $number: Int!) {
         nodes { isResolved isOutdated comments(first: 1) { nodes { author { login } } } }
       }
       timelineItems(last: 1, itemTypes: [HEAD_REF_FORCE_PUSHED_EVENT]) {
-        nodes { ... on HeadRefForcePushedEvent { createdAt } }
+        nodes { ... on HeadRefForcePushedEvent { createdAt afterCommit { oid } } }
       }
     }
   }
@@ -296,7 +296,7 @@ export interface RawReadiness {
             /** Each reviewer's newest review, however many reviews came after it. */
             latestReviews: { nodes: RawReview[] };
             reviewThreads: RawThreadPage;
-            timelineItems: { nodes: Array<{ createdAt?: string }> };
+            timelineItems: { nodes: Array<{ createdAt?: string; afterCommit?: { oid: string } | null }> };
         } | null;
     } | null;
 }
@@ -338,7 +338,10 @@ export function githubFacts(raw: RawReadiness, extraThreads: RawThreadPage["node
     // Only a push event's own time says when the head arrived. A commit's date is when it was made:
     // a cherry-pick pushed hours later made a review in between read as a review of the head. With no
     // such event, a review that names no commit stays "unknown" instead of guessing.
-    const lastPushAt = pr.timelineItems.nodes[0]?.createdAt ?? null;
+    // GitHub records force pushes only, so the event dates the head only when it pushed this very head;
+    // after a normal push since, the time is unknown rather than the older force push's.
+    const forcePush = pr.timelineItems.nodes[0];
+    const lastPushAt = forcePush?.afterCommit?.oid === pr.headRefOid ? (forcePush.createdAt ?? null) : null;
 
     return {
         url: pr.url,

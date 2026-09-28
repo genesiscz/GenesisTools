@@ -218,7 +218,7 @@ function raw(): RawReadiness {
                     pageInfo: { hasNextPage: false, endCursor: null },
                     nodes: [{ isResolved: false, isOutdated: false, comments: { nodes: [{ author: null }] } }],
                 },
-                timelineItems: { nodes: [{ createdAt: "2026-09-26T16:30:00Z" }] },
+                timelineItems: { nodes: [{ createdAt: "2026-09-26T16:30:00Z", afterCommit: { oid: HEAD } }] },
             },
         },
     };
@@ -272,6 +272,18 @@ describe("githubFacts", () => {
         }
 
         expect(judgeReadiness(mapped, NOW).staleReviewers).toEqual(["dave"]);
+    });
+
+    test("a force push that did not push the current head dates nothing: a normal push came after it", () => {
+        const answer = raw();
+        const pullRequest = answer.repository?.pullRequest;
+
+        if (!pullRequest) {
+            throw new Error("the fixture always has a pull request");
+        }
+
+        pullRequest.timelineItems = { nodes: [{ createdAt: "2026-09-26T16:30:00Z", afterCommit: { oid: OLD } }] };
+        expect(githubFacts(answer)?.lastPushAt).toBeNull();
     });
 
     test("thread pages past the first are appended; a missing PR is null", () => {
