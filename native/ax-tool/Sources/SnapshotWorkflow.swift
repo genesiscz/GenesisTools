@@ -1642,6 +1642,29 @@ func cmdAct(appName _: String) {
             workflowFailure("type requires single-line --text; use an explicit key action to submit")
         }
         workflowFrontWindow(window, pid: pid, element: element)
+        let typedBefore = axStringAttribute(element, "AXValue")
+        defer {
+            // Read back what landed, so the result says verified only when it was; the keys were
+            // posted either way, so this changes the status, never the dispatch state.
+            var typedAfter = axStringAttribute(element, "AXValue")
+            let readDeadline = ProcessInfo.processInfo.systemUptime + 1
+            while typedAfter.map({ !$0.contains(text) }) ?? false, ProcessInfo.processInfo.systemUptime < readDeadline {
+                Thread.sleep(forTimeInterval: 0.05)
+                typedAfter = axStringAttribute(element, "AXValue")
+            }
+            switch typedTextVerdict(element: axStringAttribute(element, "AXRole") ?? "target element", before: typedBefore,
+                                    after: typedAfter, text: text, replace: false) {
+            case .verified:
+                actionExtras["typedVerified"] = true
+            case .unverifiable(let reason):
+                actionExtras["typedVerified"] = false
+                actionExtras["note"] = "the typed text could not be read back (\(reason)); verify the field"
+            case .notLanded, .different:
+                actionExtras["typedVerified"] = false
+                actionOK = false
+                actionExtras["error"] = "the typed text did not appear in the field; inspect it before typing again"
+            }
+        }
         for character in text {
             workflowFrontWindow(window, pid: pid, element: element)
             var units = Array(String(character).utf16)

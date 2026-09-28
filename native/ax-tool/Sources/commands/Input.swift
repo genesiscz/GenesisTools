@@ -369,6 +369,18 @@ func cmdTypeText(appName: String, text: String) {
         }
     }
 
+    // Keys that were sent but not read back are not a success: the status says UNVERIFIED (exit 2),
+    // and a --return after text nobody saw land is not sent at all.
+    if result["verified"] as? Bool != true {
+        result["ok"] = false
+        result["unverified"] = true
+        result["dispatched"] = true
+        let reason = result["warning"] as? String ?? "nothing read the text back"
+        result["error"] = "UNVERIFIED: \(reason)" + (doReturn ? "; --return was not sent" : "")
+        jsonOutput(result)
+        exit(2)
+    }
+
     if doReturn {
         Thread.sleep(forTimeInterval: 0.03)
         tapKey(36)  // Return

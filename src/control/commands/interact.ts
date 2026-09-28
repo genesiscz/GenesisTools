@@ -40,8 +40,12 @@ export function validateToPid(toPid: string | undefined): string | null {
 export function typeOutcome(result: AxResult, app: string): { line: string; exitCode: number } {
     const count = String(result.length ?? "?");
     const target = String(result.axId ?? result.desc ?? result.focused ?? app);
-    if (result.verified === true) {
+    if (result.ok && result.verified === true) {
         return { line: `${pc.green("typed")} ${pc.bold(count)} chars into ${pc.cyan(target)}`, exitCode: 0 };
+    }
+
+    if (!result.ok && result.unverified !== true) {
+        return { line: String(result.error ?? "typing failed"), exitCode: 1 };
     }
 
     const warning = typeof result.warning === "string" ? result.warning : "nothing read the text back";
@@ -258,15 +262,15 @@ export function registerInteractCommands(program: Command): void {
                 axArgs.push("--delay", opts.delay);
             }
             const result = runAx(axArgs, 30_000);
+            const outcome = typeOutcome(result, opts.app);
             if (opts.json) {
                 out.println(SafeJSON.stringify(result, null, opts.pretty ? 2 : 0));
-                process.exit(result.ok === false ? 1 : typeOutcome(result, opts.app).exitCode);
+                process.exit(outcome.exitCode);
             }
-            if (!result.ok) {
-                logger.error(String(result.error));
+            if (outcome.exitCode === 1) {
+                logger.error(outcome.line);
                 process.exit(1);
             }
-            const outcome = typeOutcome(result, opts.app);
             out.println(outcome.line);
             process.exitCode = outcome.exitCode;
         });

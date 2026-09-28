@@ -947,6 +947,30 @@ test("a page element without AXPress is clicked in front after the hit test, nev
     expect(native).not.toContain("--prepare");
 });
 
+test("typed text counts as verified only when the backend read it back in the field", async () => {
+    const f = fixture();
+    const original = f.native.run;
+    const replies: AxResult[] = [
+        { ok: true, dispatchState: "dispatched", typedVerified: true },
+        { ok: true, dispatchState: "dispatched", typedVerified: false, note: "the typed text could not be read back" },
+        { ok: false, dispatchState: "dispatched", typedVerified: false, error: "the typed text did not appear" },
+    ];
+    f.native.run = async (call) => (call.args[0] === "act" ? (replies.shift() ?? { ok: false }) : original(call));
+    const type = async () => {
+        const state = await f.computer.get_app_state({ app: "Fixture", image: false });
+        const field = state.elements.find((row) => row.identifier === "name")!;
+        return f.computer.type_text({ app: "Fixture", element_ref: field.ref, text: "abc" });
+    };
+    expect((await type()).verification.status).toBe("verified");
+    const unread = await type();
+    expect(unread.verification.status).toBe("unverified");
+    expect(unread.note).toContain("could not be read back");
+    const missing = await type();
+    expect(missing.ok).toBe(false);
+    expect(missing.verification.status).toBe("unverified");
+    expect(missing.action.effect).toBe("dispatched");
+});
+
 test("Jev target admission excludes controls behind a visible sheet", async () => {
     const f = fixture({
         evaluate: async (call) => {

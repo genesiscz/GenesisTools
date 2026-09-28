@@ -1019,7 +1019,11 @@ export class ComputerUse {
                               ? ("not_started" as const)
                               : ("unknown" as const),
                 },
-                verification: { status: "unverified" as const },
+                // Only a typed text the backend read back in the field counts as verified.
+                verification: {
+                    status:
+                        result.ok && result.typedVerified === true ? ("verified" as const) : ("unverified" as const),
+                },
                 error: clipboardIssue ? [clipboardIssue, result.error].filter(Boolean).join(" ") : result.error,
                 state,
                 clipboardRestore: result.clipboardRestore,
