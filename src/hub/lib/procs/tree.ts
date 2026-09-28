@@ -245,11 +245,10 @@ export function buildProcsReport(input: BuildInput): Omit<ProcsReport, "elapsedM
         return bt - at;
     });
 
-    // Explicit ids first: a folder match must not take a session some process names outright.
-    for (const pid of ordered) {
-        const node = nodes.get(pid);
-
-        if (node?.cls.sessionId) {
+    // Explicit ids first: a folder match must not take a session some process names outright, a root
+    // by its argv or a tool shell deep in an older agent's tree by its environment.
+    for (const node of nodes.values()) {
+        if (node.cls.sessionId) {
             takenSessions.add(node.cls.sessionId);
         }
     }

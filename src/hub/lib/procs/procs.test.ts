@@ -312,6 +312,40 @@ describe("buildProcsReport", () => {
         expect(matched.groups.find((entry) => entry.rootPid === 700)?.session).toBeNull();
     });
 
+    test("a folder match never takes the session an older agent's tool shell names", () => {
+        const rows = [
+            row(1, 0, "/sbin/launchd", { user: "root", age: 10 * DAY }),
+            row(110, 1, "/bin/zsh -l", { age: DAY }),
+            row(901, 110, `${HOME}/.bun/bin/claude`, { age: 30 * MIN }),
+            row(902, 901, `/bin/zsh -c source ${HOME}/.claude/shell-snapshots/s.sh && export X_SESSION_ID='${S1}'`, {
+                age: MIN,
+            }),
+            row(903, 110, `${HOME}/.bun/bin/claude`, { age: 10 * MIN }),
+        ];
+        const matched = buildProcsReport(
+            input({
+                table: rows,
+                own: new Set(),
+                launchd: new Map(),
+                sessions: [
+                    { provider: "claude", sessionId: S1, title: "older agent", cwd: "/work/shop", mtime: NOW - MIN },
+                    {
+                        provider: "claude",
+                        sessionId: S2,
+                        title: "newer agent",
+                        cwd: "/work/shop",
+                        mtime: NOW - 2 * MIN,
+                    },
+                ],
+                cwdOf: () => "/work/shop",
+            })
+        );
+        const sessionOf = (pid: number) => matched.groups.find((entry) => entry.rootPid === pid)?.session;
+
+        expect(sessionOf(901)).toMatchObject({ sessionId: S1, match: "shell" });
+        expect(sessionOf(903)).toMatchObject({ sessionId: S2, match: "cwd" });
+    });
+
     test("with the launchd jobs unknown, no PPID-1 process and no agent under an adopted wrapper is an orphan", () => {
         const rows = table().map((entry) => (entry.pid === 200 ? { ...entry, ppid: 1 } : entry));
         const unknown = buildProcsReport(input({ table: rows, launchd: null }));
