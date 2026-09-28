@@ -658,6 +658,10 @@ struct SessionTranscriptList: View {
 
     /// Which calls inside a folded group the reader opened.
     private func openMembers(_ row: TranscriptRow) -> Set<String> {
+        // GenesisTools adaptation: and which parts of a prompt (Hub/HubPromptParts.swift).
+        if !row.parts.isEmpty {
+            return Set(row.parts.indices.map { HubPromptParts.partId(row.id, $0) }.filter { expansion.isOpen($0) })
+        }
         guard case .toolGroup(let group) = row.kind else { return [] }
         return Set(group.members.map(\.id).filter { expansion.isOpen($0) })
     }
@@ -853,7 +857,12 @@ struct TranscriptRowView: View, Equatable {
     var body: some View {
         switch row.kind {
         case .prompt(let text, let images):
-            PromptCard(id: row.id, text: text, images: images, clock: row.clock, expanded: expanded, onToggle: onToggle)
+            // GenesisTools adaptation: a prompt with peer messages, task results or reminders shows each part.
+            if row.parts.isEmpty {
+                PromptCard(id: row.id, text: text, images: images, clock: row.clock, expanded: expanded, onToggle: onToggle)
+            } else {
+                PromptPartsView(rowId: row.id, parts: row.parts, images: images, clock: row.clock, open: openMembers, onToggle: onToggle)
+            }
         case .reply(let text, let usage, let model):
             ReplyBlock(text: text, usage: usage, clock: row.clock, provider: provider, modelName: model ?? modelName, showsAuthor: row.showsAuthor)
         case .thinking(let text):
@@ -915,7 +924,8 @@ private struct Avatar: View {
     }
 }
 
-private struct PromptCard: View {
+// GenesisTools adaptation: not private, so a prompt's parts (Hub/HubPromptParts.swift) show the user's words in it.
+struct PromptCard: View {
     let id: String
     let text: String
     let images: [TranscriptImageRef]
@@ -1115,7 +1125,8 @@ private struct ThinkingLine: View {
     }
 }
 
-private struct Chevron: View {
+// GenesisTools adaptation: not private, shared with Hub/HubPromptParts.swift.
+struct Chevron: View {
     let expanded: Bool
 
     var body: some View {

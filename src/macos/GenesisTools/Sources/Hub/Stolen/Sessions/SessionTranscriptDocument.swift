@@ -72,6 +72,8 @@ struct TranscriptRow: Identifiable, Equatable {
     /// A reply draws its author row ("Claude · opus · 14:32") only at the start of a run of
     /// replies, and again when the model changes. Set by `TranscriptDocument.filtered`.
     var showsAuthor = true
+    // GenesisTools adaptation: a prompt's peer messages, task results and reminders (Hub/HubPromptParts.swift).
+    var parts: [TranscriptPromptPart] = []
 
     var isPrompt: Bool {
         if case .prompt = kind { return true }
@@ -339,12 +341,16 @@ struct TranscriptDocument: Equatable {
                 sectionId = "s-\(turn.id)"
                 sectionStart = at
                 let text = turn.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                // GenesisTools adaptation: a prompt with parts shows and searches the parts, not its raw text.
+                let parts = turn.parts ?? []
+                let own = parts.isEmpty ? text : HubPromptParts.userText(parts)
                 append(TranscriptRow(
                     id: "p-\(turn.id)",
-                    kind: .prompt(text: text, images: imageRefs(in: text, fileExists: fileExists)),
+                    kind: .prompt(text: text, images: imageRefs(in: own, fileExists: fileExists)),
                     at: at,
                     clock: clock,
-                    searchText: searchable(text)
+                    searchText: searchable(parts.isEmpty ? text : HubPromptParts.searchText(parts)),
+                    parts: parts
                 ))
                 continue
             }
