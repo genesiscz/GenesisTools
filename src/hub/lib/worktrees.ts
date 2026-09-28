@@ -1013,12 +1013,23 @@ export async function moveAsideWorktrees({
             continue;
         }
 
-        const to = freeDestination(join(realpathOr(parent), basename(path)));
+        const move = (destination: string) =>
+            createGit({ cwd: row.repoRoot }).executor.exec(["worktree", "move", path, destination], {
+                cwd: row.repoRoot,
+                timeout: WORKTREE_REMOVE_TIMEOUT_MS,
+            });
+        let to = freeDestination(join(realpathOr(parent), basename(path)));
         attempted = true;
-        const res = await createGit({ cwd: row.repoRoot }).executor.exec(["worktree", "move", path, to], {
-            cwd: row.repoRoot,
-            timeout: WORKTREE_REMOVE_TIMEOUT_MS,
-        });
+        let res = await move(to);
+
+        // Another move-aside can take the same free name between the check and git's move, and git refuses
+        // an existing destination: take the next free name, a few times.
+        for (let retry = 0; !res.success && existsSync(to) && existsSync(path) && retry < 3; retry++) {
+            log.info({ path, taken: to }, "move-aside: the destination was taken meanwhile; trying the next name");
+            to = freeDestination(join(realpathOr(parent), basename(path)));
+            res = await move(to);
+        }
+
         const moved = res.success && existsSync(to) && !existsSync(path);
         log.info(
             { path, to, branch: row.branch, success: res.success, moved, stderr: res.stderr },
