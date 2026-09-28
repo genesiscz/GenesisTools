@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, renameSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import type { ResolvedTranscript, TranscriptTool, TranscriptTurn } from "@genesiscz/utils/ai/transcripts";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { composeHandoff, HandoffRangeError, selectRange } from "./handoff";
@@ -527,6 +527,19 @@ describe("saveHandoff", () => {
         expect(first).toEndWith("handoff-sess-1234-abcd-p1-1.md");
         expect(second).toEndWith("handoff-sess-1234-abcd-p1-1-2.md");
         expect(readFileSync(first, "utf8")).toBe(draft.markdown);
+    });
+
+    test("a session id with path separators stays one file name inside the folder", () => {
+        const dir = mkdtempSync(join(tmpdir(), "hub-handoff-"));
+        const draft = composeHandoff({
+            turns: [user("p1", "Ship the report", 0)],
+            meta: { sessionId: "../../escape", provider: "claude" as const },
+            range: { last: 1 },
+        });
+        const path = saveHandoff({ ...draft, sessionId: "../../escape", provider: "claude" }, dir);
+
+        expect(dirname(path)).toBe(resolve(dir));
+        expect(path).toEndWith("handoff-.._.._escape-p1-1.md");
     });
 
     test("two composers that both pick a name before either writes get different names", () => {

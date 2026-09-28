@@ -402,7 +402,9 @@ export async function sessionHandoff(options: HandoffOptions): Promise<HandoffRe
 export function saveHandoff(draft: HandoffResult, dir: string): string {
     const folder = resolve(dir);
     mkdirSync(folder, { recursive: true });
-    const path = reserveHandoffPath(folder, `handoff-${draft.sessionId}-p${draft.fromNumber}-${draft.toNumber}`);
+    // The id comes from a transcript; a separator in it must not name a folder outside `dir`.
+    const id = draft.sessionId.replace(/[^A-Za-z0-9._-]/g, "_");
+    const path = reserveHandoffPath(folder, `handoff-${id}-p${draft.fromNumber}-${draft.toNumber}`);
     atomicWriteFileSync(path, draft.markdown);
     log.debug({ path }, "handoff saved");
     return path;
