@@ -611,6 +611,11 @@ describe("vite cache location", () => {
         expect(dirname(inRoot)).toBe("/tmp/cache-root");
         expect(basename(inRoot)).toBe(basename(inRepo));
     });
+
+    // Vite resolves a relative cacheDir against each mount's own folder, so every mount would get its own.
+    test("a relative root becomes absolute from the working directory", () => {
+        expect(dirname(cacheDirFor("/tmp/served", "cache-root"))).toBe(resolve("cache-root"));
+    });
 });
 
 describe("embed budget", () => {

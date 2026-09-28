@@ -130,5 +130,5 @@ export function fsAllowRoots(dir: string): string[] {
 export function cacheDirFor(dir: string, root = join(REPO_ROOT, "node_modules", ".vite-cache")): string {
     const slug = createHash("sha1").update(dir).digest("hex").slice(0, 12);
 
-    return join(root, `artifact-${slug}`);
+    return join(resolve(root), `artifact-${slug}`);
 }
