@@ -1,0 +1,253 @@
+[
+  {
+    "id": "tools-control",
+    "query": "Where is tools control implemented command?",
+    "budget": 100,
+    "status": "complete",
+    "wallMs": 13676,
+    "requests": 100,
+    "inputTokens": 700301,
+    "costUsd": 0.029412642,
+    "files": 52,
+    "withSource": 7,
+    "top": [
+      "src/scripts/commands/tools.ts",
+      "src/control/mcp/server.ts",
+      "tools",
+      "src/control/commands/simulator.ts",
+      "src/macos/commands/control/index.ts",
+      "src/control/commands/workflow.ts",
+      "src/control/commands/await.ts",
+      "src/control/commands/visual.ts"
+    ],
+    "warnings": [
+      {
+        "kind": "budget_unverified_files",
+        "count": 242
+      },
+      {
+        "kind": "budget_locations_only",
+        "count": 45
+      }
+    ],
+    "issues": [],
+    "gold": [
+      {
+        "path": "src/control/index.ts",
+        "rank": 13,
+        "withSource": false
+      }
+    ],
+    "hit": false
+  },
+  {
+    "id": "grep-cache-key",
+    "query": "How is the answer cache key for a Jev grep call built?",
+    "budget": 100,
+    "status": "complete",
+    "wallMs": 14234,
+    "requests": 99,
+    "inputTokens": 663284,
+    "costUsd": 0.027857928,
+    "files": 12,
+    "withSource": 2,
+    "top": [
+      "src/jev/lib/grep/cache.ts",
+      "src/jev/lib/grep/evaluator.ts",
+      "src/utils/agent-sessions/service.ts",
+      "src/jev/lib/grep/retrieve.ts",
+      "src/utils/agent-sessions/fingerprint.ts",
+      "src/jev/lib/grep/selection.ts",
+      "src/jev/lib/grep/search.ts",
+      "src/jev/commands/grep.ts"
+    ],
+    "warnings": [
+      {
+        "kind": "budget_locations_only",
+        "count": 7
+      },
+      {
+        "kind": "budget_skipped_reference_pass",
+        "count": 1
+      }
+    ],
+    "issues": [],
+    "gold": [
+      {
+        "path": "src/jev/lib/grep/cache.ts",
+        "rank": 1,
+        "withSource": true
+      }
+    ],
+    "hit": true
+  },
+  {
+    "id": "sigint-forward",
+    "query": "Where is a Ctrl-C forwarded from the tools wrapper to the running tool process?",
+    "budget": 100,
+    "status": "complete",
+    "wallMs": 14554,
+    "requests": 100,
+    "inputTokens": 708376,
+    "costUsd": 0.029751791999999996,
+    "files": 12,
+    "withSource": 4,
+    "top": [
+      "tools",
+      "src/utils/process/spawnDashboard.ts",
+      "src/utils/cli/tools.ts",
+      "src/utils/cli/interrupt.ts",
+      "src/cmux/commands/send-self.ts",
+      "src/daemon/lib/runner.ts",
+      "src/control/lib/runner.ts",
+      "src/control/commands/sequence.ts"
+    ],
+    "warnings": [
+      {
+        "kind": "budget_unverified_files",
+        "count": 16
+      },
+      {
+        "kind": "budget_locations_only",
+        "count": 1
+      },
+      {
+        "kind": "budget_skipped_reference_pass",
+        "count": 1
+      }
+    ],
+    "issues": [],
+    "gold": [
+      {
+        "path": "tools",
+        "rank": 1,
+        "withSource": true
+      },
+      {
+        "path": "src/macos/GenesisTools/Sources/Launcher.swift",
+        "rank": null,
+        "withSource": false
+      }
+    ],
+    "hit": true
+  },
+  {
+    "id": "usage-cost",
+    "query": "Where is the dollar cost of an AI call computed when the call is recorded in the usage ledger?",
+    "budget": 100,
+    "status": "complete",
+    "wallMs": 12178,
+    "requests": 100,
+    "inputTokens": 794031,
+    "costUsd": 0.03334930199999999,
+    "files": 53,
+    "withSource": 6,
+    "top": [
+      "src/ai-proxy/lib/usage/client-ledger.ts",
+      "src/utils/ai/usage/record.ts",
+      "src/ai-spend/lib/monitor.ts",
+      "src/ai-spend/lib/events-cache.ts",
+      "src/utils/ai/usage/usage.test.ts",
+      "src/ai-proxy/lib/usage/client-ledger.test.ts",
+      "src/ai-proxy/lib/usage/extract.ts",
+      "src/utils/ai/evaluation/service.ts"
+    ],
+    "warnings": [
+      {
+        "kind": "budget_unverified_files",
+        "count": 86
+      },
+      {
+        "kind": "budget_locations_only",
+        "count": 47
+      },
+      {
+        "kind": "budget_skipped_reference_pass",
+        "count": 1
+      }
+    ],
+    "issues": [],
+    "gold": [
+      {
+        "path": "src/utils/ai/usage/record.ts",
+        "rank": 2,
+        "withSource": true
+      }
+    ],
+    "hit": true
+  },
+  {
+    "id": "port-listen",
+    "query": "How does tools port find which process is listening on a port?",
+    "budget": 100,
+    "status": "complete",
+    "wallMs": 14191,
+    "requests": 99,
+    "inputTokens": 870183,
+    "costUsd": 0.03654768600000001,
+    "files": 12,
+    "withSource": 5,
+    "top": [
+      "src/utils/network.ts",
+      "src/port/lib/scanner.ts",
+      "src/utils/DashboardApp/stopUiServerOnPort.ts",
+      "raycast/kill-port/kill-port.sh",
+      "src/utils/DashboardApp/portConflict.ts",
+      "src/port/index.ts",
+      "src/utils/process/ps.ts",
+      "src/utils/DashboardApp/lifecycle.ts"
+    ],
+    "warnings": [],
+    "issues": [],
+    "gold": [
+      {
+        "path": "src/port/lib/scanner.ts",
+        "rank": 2,
+        "withSource": true
+      }
+    ],
+    "hit": true
+  },
+  {
+    "id": "say-profile",
+    "query": "Where does tools say load the voice and volume from a per-app profile?",
+    "budget": 100,
+    "status": "complete",
+    "wallMs": 15331,
+    "requests": 91,
+    "inputTokens": 634201,
+    "costUsd": 0.026636442000000003,
+    "files": 9,
+    "withSource": 3,
+    "top": [
+      "src/say/index.ts",
+      "src/utils/macos/SayConfigManager.ts",
+      "src/say/lib/speak.ts",
+      "CLAUDE.md",
+      "src/say/README.md",
+      "src/utils/ai/AIConfig.ts",
+      "src/utils/macos/tts.ts",
+      "src/utils/audio/playback.ts"
+    ],
+    "warnings": [
+      {
+        "kind": "budget_skipped_reference_pass",
+        "count": 1
+      }
+    ],
+    "issues": [],
+    "gold": [
+      {
+        "path": "src/utils/macos/SayConfigManager.ts",
+        "rank": 2,
+        "withSource": true
+      },
+      {
+        "path": "src/say/index.ts",
+        "rank": 1,
+        "withSource": true
+      }
+    ],
+    "hit": true
+  }
+]

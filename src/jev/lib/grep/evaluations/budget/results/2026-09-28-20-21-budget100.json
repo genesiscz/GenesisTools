@@ -1,0 +1,39 @@
+[
+  {
+    "id": "port-listen",
+    "query": "How does tools port find which process is listening on a port?",
+    "budget": 100,
+    "status": "complete",
+    "wallMs": 16286,
+    "requests": 92,
+    "inputTokens": 861742,
+    "costUsd": 0.036193164,
+    "files": 18,
+    "withSource": 3,
+    "top": [
+      "src/utils/network.ts",
+      "src/port/lib/scanner.ts",
+      "raycast/kill-port/kill-port.sh",
+      "src/utils/DashboardApp/stopUiServerOnPort.ts",
+      "src/utils/DashboardApp/readiness.ts",
+      "src/utils/DashboardApp/portConflict.ts",
+      "src/utils/DashboardApp/lifecycle.ts",
+      "src/port/index.ts"
+    ],
+    "warnings": [
+      {
+        "kind": "budget_locations_only",
+        "count": 10
+      }
+    ],
+    "issues": [],
+    "gold": [
+      {
+        "path": "src/port/lib/scanner.ts",
+        "rank": 2,
+        "withSource": false
+      }
+    ],
+    "hit": false
+  }
+]

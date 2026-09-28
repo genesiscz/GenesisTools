@@ -1,4 +1,5 @@
 import { suggestEnumFlag } from "@genesiscz/utils/cli";
+import { withInterrupt } from "@genesiscz/utils/cli/interrupt";
 import { ui } from "@genesiscz/utils/cli/ui";
 import { logger, out } from "@genesiscz/utils/logger";
 
@@ -31,21 +32,11 @@ export function failPlain(error: unknown, context?: Record<string, unknown>): vo
 }
 
 /**
- * Runs `fn` with an AbortSignal that fires on SIGINT and is detached afterwards. Replaces the
- * AbortController + `process.once("SIGINT")` boilerplate that listen, watch and loop each carried.
+ * Runs `fn` with an AbortSignal that fires on SIGINT and is detached afterwards. The copies of one
+ * Ctrl-C that `tools` and the app launcher forward count once; see `withInterrupt`.
  */
 export async function withSigint<T>(fn: (signal: AbortSignal) => Promise<T>): Promise<T> {
-    const controller = new AbortController();
-    const cancel = () => {
-        logger.info("SIGINT received; aborting the jev command");
-        controller.abort();
-    };
-    process.once("SIGINT", cancel);
-    try {
-        return await fn(controller.signal);
-    } finally {
-        process.off("SIGINT", cancel);
-    }
+    return withInterrupt(fn, { onInterrupt: () => logger.info("SIGINT received; aborting the jev command") });
 }
 
 export function parseEnum<T extends readonly string[]>(

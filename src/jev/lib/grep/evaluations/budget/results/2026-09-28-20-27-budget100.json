@@ -1,0 +1,271 @@
+[
+  {
+    "id": "tools-control",
+    "query": "Where is tools control implemented command?",
+    "budget": 100,
+    "status": "complete",
+    "wallMs": 20223,
+    "requests": 100,
+    "inputTokens": 905288,
+    "costUsd": 0.03802209600000003,
+    "files": 40,
+    "withSource": 1,
+    "top": [
+      "src/jev/mcp/server.ts",
+      "tools",
+      "src/macos/commands/control/index.ts",
+      "src/control/commands/workflow.ts",
+      "src/control/commands/interact.ts",
+      "src/control/index.ts",
+      "src/control/commands/assist.ts",
+      "src/control/commands/await.ts"
+    ],
+    "warnings": [
+      {
+        "kind": "budget_unexplored_directories",
+        "count": 13
+      },
+      {
+        "kind": "budget_unverified_files",
+        "count": 476
+      },
+      {
+        "kind": "budget_locations_only",
+        "count": 36
+      }
+    ],
+    "issues": [],
+    "gold": [
+      {
+        "path": "src/control/index.ts",
+        "rank": 6,
+        "withSource": false
+      }
+    ],
+    "hit": false
+  },
+  {
+    "id": "grep-cache-key",
+    "query": "How is the answer cache key for a Jev grep call built?",
+    "budget": 100,
+    "status": "incomplete",
+    "wallMs": 15439,
+    "requests": 100,
+    "inputTokens": 872448,
+    "costUsd": 0.036642816000000016,
+    "files": 9,
+    "withSource": 1,
+    "top": [
+      "src/jev/lib/grep/cache.ts",
+      "src/jev/lib/screen/batch.ts",
+      "src/jev/lib/grep/retrieve.ts",
+      "src/jev/lib/grep/search.ts",
+      "src/jev/lib/grep/selection.ts",
+      "src/jev/mcp/tools/grep.ts",
+      "src/jev/commands/grep.ts",
+      "docs/specs/2026-09-28-jev-grep.md"
+    ],
+    "warnings": [
+      {
+        "kind": "budget_unexplored_directories",
+        "count": 4
+      },
+      {
+        "kind": "budget_unverified_files",
+        "count": 75
+      },
+      {
+        "kind": "budget_locations_only",
+        "count": 5
+      }
+    ],
+    "issues": [
+      {
+        "kind": "changed",
+        "count": 6
+      }
+    ],
+    "gold": [
+      {
+        "path": "src/jev/lib/grep/cache.ts",
+        "rank": 1,
+        "withSource": true
+      }
+    ],
+    "hit": true
+  },
+  {
+    "id": "sigint-forward",
+    "query": "Where is a Ctrl-C forwarded from the tools wrapper to the running tool process?",
+    "budget": 100,
+    "status": "complete",
+    "wallMs": 21439,
+    "requests": 99,
+    "inputTokens": 912419,
+    "costUsd": 0.03832159799999999,
+    "files": 12,
+    "withSource": 3,
+    "top": [
+      "tools",
+      "src/utils/process/spawnDashboard.ts",
+      "src/utils/cli/tools.ts",
+      "src/utils/cli/interrupt.ts",
+      "src/control/mcp/server.ts",
+      "src/tools/index.ts",
+      "src/utils/agent-harness/coordinator.ts",
+      "src/utils/DashboardApp/lifecycle.ts"
+    ],
+    "warnings": [
+      {
+        "kind": "budget_unexplored_directories",
+        "count": 10
+      },
+      {
+        "kind": "budget_unverified_files",
+        "count": 53
+      },
+      {
+        "kind": "budget_locations_only",
+        "count": 5
+      }
+    ],
+    "issues": [],
+    "gold": [
+      {
+        "path": "tools",
+        "rank": 1,
+        "withSource": true
+      },
+      {
+        "path": "src/macos/GenesisTools/Sources/Launcher.swift",
+        "rank": null,
+        "withSource": false
+      }
+    ],
+    "hit": true
+  },
+  {
+    "id": "usage-cost",
+    "query": "Where is the dollar cost of an AI call computed when the call is recorded in the usage ledger?",
+    "budget": 100,
+    "status": "complete",
+    "wallMs": 14035,
+    "requests": 100,
+    "inputTokens": 884820,
+    "costUsd": 0.037162439999999984,
+    "files": 18,
+    "withSource": 3,
+    "top": [
+      "src/ai-spend/lib/events-cache.ts",
+      "src/ai-spend/lib/monitor.ts",
+      "src/ai-spend/lib/aggregate.ts",
+      "src/ai-spend/lib/pricing.ts",
+      "src/utils/ai/llm-cost.ts",
+      "src/utils/grok/stream.ts",
+      "src/ai-spend/lib/register.ts",
+      "src/ai-spend/lib/types.ts"
+    ],
+    "warnings": [
+      {
+        "kind": "budget_unexplored_directories",
+        "count": 13
+      },
+      {
+        "kind": "budget_locations_only",
+        "count": 14
+      }
+    ],
+    "issues": [],
+    "gold": [
+      {
+        "path": "src/utils/ai/usage/record.ts",
+        "rank": null,
+        "withSource": false
+      }
+    ],
+    "hit": false
+  },
+  {
+    "id": "port-listen",
+    "query": "How does tools port find which process is listening on a port?",
+    "budget": 100,
+    "status": "complete",
+    "wallMs": 14948,
+    "requests": 99,
+    "inputTokens": 948308,
+    "costUsd": 0.039828935999999995,
+    "files": 16,
+    "withSource": 4,
+    "top": [
+      "src/utils/network.ts",
+      "src/port/lib/scanner.ts",
+      "raycast/kill-port/kill-port.sh",
+      "src/utils/DashboardApp/stopUiServerOnPort.ts",
+      "src/port/index.ts",
+      "src/utils/DashboardApp/portConflict.ts",
+      "src/utils/process/ps.test.ts",
+      "src/utils/DashboardApp/portConflict.test.ts"
+    ],
+    "warnings": [
+      {
+        "kind": "budget_locations_only",
+        "count": 8
+      }
+    ],
+    "issues": [],
+    "gold": [
+      {
+        "path": "src/port/lib/scanner.ts",
+        "rank": 2,
+        "withSource": true
+      }
+    ],
+    "hit": true
+  },
+  {
+    "id": "say-profile",
+    "query": "Where does tools say load the voice and volume from a per-app profile?",
+    "budget": 100,
+    "status": "complete",
+    "wallMs": 15853,
+    "requests": 100,
+    "inputTokens": 896614,
+    "costUsd": 0.03765778799999998,
+    "files": 9,
+    "withSource": 1,
+    "top": [
+      "src/utils/macos/SayConfigManager.ts",
+      "src/say/index.ts",
+      "src/say/lib/speak.ts",
+      "CLAUDE.md",
+      "src/say/README.md",
+      "src/utils/notifications/types.ts",
+      "src/utils/notifications/dispatch.ts",
+      "src/utils/macos/tts.ts"
+    ],
+    "warnings": [
+      {
+        "kind": "budget_unexplored_directories",
+        "count": 3
+      },
+      {
+        "kind": "budget_locations_only",
+        "count": 4
+      }
+    ],
+    "issues": [],
+    "gold": [
+      {
+        "path": "src/utils/macos/SayConfigManager.ts",
+        "rank": 1,
+        "withSource": true
+      },
+      {
+        "path": "src/say/index.ts",
+        "rank": 2,
+        "withSource": false
+      }
+    ],
+    "hit": true
+  }
+]

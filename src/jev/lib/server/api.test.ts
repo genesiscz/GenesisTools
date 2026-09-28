@@ -1,9 +1,16 @@
-import { expect, test } from "bun:test";
+import { afterAll, describe, expect, test } from "bun:test";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { EvaluationError } from "@genesiscz/utils/ai/evaluation/errors";
 import { evaluationSchema } from "@genesiscz/utils/ai/evaluation/evaluate";
 import type { EvaluationResponse, Evaluator } from "@genesiscz/utils/ai/evaluation/service";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { ZodError } from "zod";
+import { renderResult } from "../grep/render";
+import { DEFAULT_GREP_BUDGET, GrepSetupError, searchRepository } from "../grep/search";
 import type { ToolCatalogue } from "../route/catalogue";
-import { compactRequest, observeRequest, routeRequest, verifyRequest, watchRequest } from "./api";
+import { compactRequest, grepRequest, observeRequest, routeRequest, verifyRequest, watchRequest } from "./api";
 
 /**
  * One fixture evaluator for every route, in the shape 409's replay routes use: it reads the
@@ -169,4 +176,74 @@ test("POST /watch ticks on the fixture driver and stops on its own budget", asyn
     expect(result.observes).toBe(result.ticks);
     expect(result.hz).toBe(10);
     expect(["stopped", "verified"]).toContain(result.status);
+});
+
+describe("POST /grep", () => {
+    const root = mkdtempSync(join(tmpdir(), "jev-grep-api-"));
+    afterAll(() => rmSync(root, { recursive: true, force: true }));
+    mkdirSync(join(root, "src"));
+    writeFileSync(join(root, "src", "orders.ts"), "export function refund(order: string) {\n    return order;\n}\n");
+    const everything: Evaluator = async (call) => {
+        const input = evaluationSchema.parse(call.input);
+        const answers: EvaluationResponse["answers"] = {};
+        for (const id of Object.keys(input.questions)) {
+            answers[id] = { type: "boolean", probability: 0.9 };
+        }
+
+        return {
+            model: "fixture",
+            answers,
+            usage: { inputTokens: 1, outputTokens: 0, totalTokens: 1 },
+            warnings: [],
+            rounding: undefined,
+            providerMetadata: undefined,
+        };
+    };
+
+    test("returns the JSON twin of the CLI packet", async () => {
+        const signal = new AbortController().signal;
+        // Disabled by noCache, and protected anyway: it sits inside the root only to prove the root stays clean.
+        const cacheDirectory = join(root, "grep-cache");
+        const viaHttp = await grepRequest({
+            input: { query: "Where are refunds issued?", root, noCache: true },
+            provider: "typesafe",
+            signal,
+            evaluate: everything,
+            cacheDirectory,
+        });
+        const viaCli = await searchRepository({
+            options: {
+                query: "Where are refunds issued?",
+                root,
+                policy: {},
+                noCache: true,
+                maxSourceBytes: 0,
+                budget: DEFAULT_GREP_BUDGET,
+            },
+            provider: "typesafe",
+            signal,
+            evaluate: everything,
+            cacheDirectory,
+        });
+        expect(viaHttp.status).toBe("complete");
+        expect(viaHttp.files.map((file) => file.path)).toEqual(["src/orders.ts"]);
+        expect(renderResult(viaHttp)).toBe(renderResult(viaCli));
+    });
+
+    test("a missing root is a usage failure and a rejected key is an authentication failure", async () => {
+        const signal = new AbortController().signal;
+        await expect(
+            grepRequest({ input: { query: "q" }, provider: "typesafe", signal, evaluate: everything })
+        ).rejects.toThrow(ZodError);
+        const rejected: Evaluator = async () => {
+            throw new EvaluationError({ code: "authentication", message: "TypeSafe rejected the credential." });
+        };
+        const failure = await grepRequest({
+            input: { query: "q", root, noCache: true },
+            provider: "typesafe",
+            signal,
+            evaluate: rejected,
+        }).catch((error: unknown) => error);
+        expect(failure instanceof GrepSetupError && failure.kind).toBe("authentication");
+    });
 });

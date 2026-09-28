@@ -4,6 +4,73 @@ Try `typesafe-ai/jev` through Vercel AI Gateway. Jev evaluates shared state and 
 boolean probabilities, named choices, and scores. It does not generate chat replies.
 Requires Bun and AI SDK 7.0.105 or newer.
 
+## Spend: what Jev cost
+
+Every Jev call from every feature goes through the shared evaluator, which prices it from the model
+catalog ($0.042 per million input tokens, output free) and books it in the usage ledger with a label:
+the explicit `usageLabel`, or else the running command (`jev listen`, `control fill`, ...). The
+evaluator's `Jev evaluation done` log line carries the call's `costUsd` and the process running total.
+
+```bash
+tools jev spend                         # by feature, by model, by day
+tools jev spend --from 2026-09-01 --json
+tools ai-spend jev session              # the same rows inside ai-spend; "session" is the feature
+```
+
+The dev-dashboard spend block shows the same rows when its source is `calls` or `both`. Rows booked
+before the catalog knew Jev are priced when read. Shared reader: `src/utils/ai/evaluation/spend.ts`.
+
+## Grep: find the source for a behavior
+
+`tools jev grep` is a port of [dzhng/jevgrep](https://github.com/dzhng/jevgrep) (the `jg` CLI). An
+agent asks what code does, without knowing the symbol. The command walks the tree, asks Jev which
+directories, files and declarations matter, and prints verbatim source. It does not explain, edit or
+test anything. For a known symbol or string, use `rg`.
+
+```bash
+tools jev grep "Where is authentication checked before a request reaches a handler?"
+tools jev grep "How are database connections created, pooled, and closed?" src
+tools jev grep "Which tests cover retry behavior when a request times out?" . --json
+tools jev grep --cache-clear
+```
+
+- Budget: by default a search plans for about 100 Jev calls (`--budget <calls>`). It walks the
+  best-scoring directories first, scores files by a small card (opening lines and a declaration index),
+  checks only the shortlisted files with upstream's full-source question, and selects source for the
+  highest-priority files whose complete selection still fits. Admitted files beyond that stay in the
+  list as locations-only leads, and `Warning:` lines say what the budget left out. `--budget 0` runs
+  upstream's exhaustive loop, which reads every file in every explored directory; on this repository
+  that was over 1,200 calls for one question.
+- Eligible source under the root is uploaded to the configured provider (`typesafe` by default, pinned to
+  `jev-1.13.0`; `--provider vercel` uses the gateway's `typesafe-ai/jev`). The credential comes from
+  `tools jev login`.
+- Excluded by default: dot paths, `.gitignore`/`.ignore` matches, dependency and build directories,
+  credential filenames (`.env`, `*.pem`, `id_rsa`, `secrets.json` and similar), symlinks, binaries, and
+  the jev config and grep cache. `--hidden`, `--no-ignore`, `--include-dependencies` and
+  `--include-sensitive` each widen one category. The name list is not a secret scanner; do not rely
+  on it as a guarantee.
+- Stdout is the packet: file list, source blocks, declaration locations, then `End context.`. A packet
+  without that last line was cut. Errors go to stderr. `--json` prints the retrieval object instead.
+- The packet also names agent instruction files (`AGENTS.md`, `CLAUDE.md`, ...), the project that owns the
+  returned files, and a never-executed test command per shown test case. These come from the shared
+  gatherers in `src/utils/repo-context/`.
+- Exit codes: 0 complete (also when nothing matched), 1 bad arguments or credentials, 2 incomplete
+  discovery, 130 interrupted (the evidence so far is still printed).
+- Cost: Jev bills $0.042 per million input tokens, output free. At a terminal the command prints what
+  the run spent on stderr; `--json` carries it in `counts.inputTokens` and `counts.costUsd`.
+  `bun src/jev/lib/grep/evaluations/jevgrep/run.ts` compares this port with upstream `jg` on the same
+  budget (see its README).
+- Answers (never source) are cached for seven days in `~/.genesis-tools/jev/grep-cache/`, keyed by
+  provider, model, question, relative path and content hash. `--no-cache` skips it; `--cache-clear`
+  deletes only that directory, never the arena cache in `~/.genesis-tools/jev/cache/`.
+- The same search is the MCP tool `jev_grep` (`tools jev mcp`) and `POST /api/jev/grep` on the dashboard
+  server.
+- Python has no parser here: `.py` files are read as text chunks, so leads are coarser than upstream's
+  CPython-backed declarations. Upstream reports lower agent cost on a Python SWE-bench run; that figure
+  is upstream's measurement and is not a claim about this port.
+
+The contract is `docs/specs/2026-09-28-jev-grep.md`; the license notice is `lib/grep/NOTICE.md`.
+
 ## Probably Lang lab (experimental)
 
 A fun lab port of Probably 0.1 under `tools jev evaluation` (aliases: `probably`, `prob`).

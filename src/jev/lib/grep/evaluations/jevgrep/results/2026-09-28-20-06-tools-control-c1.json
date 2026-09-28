@@ -1,0 +1,1771 @@
+{
+  "testCase": {
+    "id": "tools-control",
+    "query": "Where is tools control implemented command?",
+    "root": ".",
+    "maxRequests": 200,
+    "maxCostUsd": 0.1
+  },
+  "concurrency": 1,
+  "upstream": {
+    "implementation": "upstream",
+    "status": "incomplete",
+    "wallMs": 91086,
+    "requests": 200,
+    "inputTokens": 1945644,
+    "costUsd": 0.08171704800000001,
+    "issues": [
+      {
+        "kind": "changed",
+        "count": 3
+      },
+      {
+        "kind": "request-limit",
+        "count": 32
+      },
+      {
+        "kind": "resource_limit",
+        "count": 1
+      }
+    ],
+    "files": [
+      {
+        "path": "tools",
+        "score": 0.92,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/ask/index.ts",
+        "score": 0.87,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/tools/index.ts",
+        "score": 0.86,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/claude/registrars.ts",
+        "score": 0.84,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "plugins/genesis-tools/hooks/record-session-account.ts",
+        "score": 0.83,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "DevDashboard/plans/2026-05-29-DevDashboardMobile-01-ServerExtraction.md",
+        "score": 0.82,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/ai/registrars.ts",
+        "score": 0.82,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "scripts/codemod/runtool-append.ts",
+        "score": 0.81,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "scripts/tools-entrypoint.test.ts",
+        "score": 0.81,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/ai-proxy/lib/lifecycle.test.ts",
+        "score": 0.81,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/mcp-manager/index.ts",
+        "score": 0.81,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "plugins/genesis-tools/hooks/harness.ts",
+        "score": 0.8,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/agents/bin/hook-pre.ts",
+        "score": 0.8,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/ai-proxy/lib/rewrite-upstream-body.ts",
+        "score": 0.8,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/cmux/registrars.ts",
+        "score": 0.8,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/ai-proxy/lib/lifecycle.ts",
+        "score": 0.78,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/ai/registrars.test.ts",
+        "score": 0.78,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/chrome-devtools/index.ts",
+        "score": 0.78,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/jev/index.ts",
+        "score": 0.78,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "plugins/genesis-tools/hooks/hooks.json",
+        "score": 0.77,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/agents/bin/hook-guard.ts",
+        "score": 0.77,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/claude/registrars.test.ts",
+        "score": 0.77,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/daemon/daemon.ts",
+        "score": 0.77,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/daemon/index.ts",
+        "score": 0.77,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/dev-dashboard/index.ts",
+        "score": 0.76,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/scripts/index.ts",
+        "score": 0.76,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "docs/benchmarks-simulator.md",
+        "score": 0.75,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/agents/tests/matrix.sh",
+        "score": 0.75,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/control/README.md",
+        "score": 0.75,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "plugins/genesis-tools/lib/project-overrides.ts",
+        "score": 0.74,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/agents/index.ts",
+        "score": 0.74,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/ts/index.ts",
+        "score": 0.74,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "tools.cmd",
+        "score": 0.74,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "CLAUDE.md",
+        "score": 0.73,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "docs/qa-pending-contract.md",
+        "score": 0.73,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/ai-proxy/index.ts",
+        "score": 0.72,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/ask/Plan.md",
+        "score": 0.72,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/control/index.ts",
+        "score": 0.72,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/agents/README.md",
+        "score": 0.71,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/ai-proxy/commands/config.ts",
+        "score": 0.71,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/ai-proxy/lib/rewrite-upstream-body.test.ts",
+        "score": 0.71,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "install.sh",
+        "score": 0.7,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/ai-proxy/lib/runtime.test.ts",
+        "score": 0.7,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "DevDashboard/plans/2026-05-29-DevDashboardMobile-02-TransportTrust.md",
+        "score": 0.69,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "plugins/genesis-tools/hooks/record-session-cmux.ts",
+        "score": 0.69,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "scripts/test-reap.ts",
+        "score": 0.69,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/ai-proxy/commands/config-wizard.ts",
+        "score": 0.69,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "DevDashboard/plans/2026-05-29-DevDashboardMobile-11-Distribution.md",
+        "score": 0.68,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "plugins/genesis-tools/lib/project-overrides.test.ts",
+        "score": 0.68,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "scripts/test.ts",
+        "score": 0.68,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/boards/index.ts",
+        "score": 0.68,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "scripts/hooks-diff-parity.ts",
+        "score": 0.67,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/ai/README.md",
+        "score": 0.67,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/aliases/lib/analysis.ts",
+        "score": 0.67,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "plugins/genesis-tools/commands/github-pr.md",
+        "score": 0.66,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/ai-proxy/commands/usage.test.ts",
+        "score": 0.66,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/ai-proxy/lib/gateway-account.test.ts",
+        "score": 0.66,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/ai-proxy/lib/model-meta.ts",
+        "score": 0.65,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/cmux/index.ts",
+        "score": 0.65,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/ai/commands/sessions.test.ts",
+        "score": 0.64,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "plugins/genesis-tools/hooks/track-session-files.test.ts",
+        "score": 0.63,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/agents/commands/message.ts",
+        "score": 0.63,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/ai-proxy/lib/model-meta.grok-merge.test.ts",
+        "score": 0.63,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/aliases/index.ts",
+        "score": 0.63,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/tmux/index.ts",
+        "score": 0.63,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "index.ts",
+        "score": 0.62,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "plugins/genesis-tools/agents/agent-driver.md",
+        "score": 0.62,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/ai-proxy/commands/accounts.test.ts",
+        "score": 0.62,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/hub/index.ts",
+        "score": 0.62,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "scripts/hooks-config-parity.ts",
+        "score": 0.61,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/agents/bin/hook-diff-post.ts",
+        "score": 0.61,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/ai-proxy/lib/runtime.ts",
+        "score": 0.61,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "DevDashboard/plans/2026-05-29-DevDashboardMobile-10-LandingAndManaged.md",
+        "score": 0.6,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/agents/bin/hook-diff-pre.ts",
+        "score": 0.6,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/ai-proxy/commands/usage.ts",
+        "score": 0.6,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/chrome-devtools/cli-guidance.test.ts",
+        "score": 0.6,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/clarity/index.ts",
+        "score": 0.6,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/dev-dashboard/README.md",
+        "score": 0.6,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/tools/README.md",
+        "score": 0.6,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "DevDashboard/plans/2026-05-29-DevDashboardMobile-03-SharedContract.md",
+        "score": 0.59,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "DevDashboard/plans/2026-05-29-DevDashboardMobile-07-FeatureQA.md",
+        "score": 0.59,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "scripts/hooks-parity.ts",
+        "score": 0.59,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "MONOREPO-SPEC.md",
+        "score": 0.58,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "plugins/genesis-tools/hooks/track-session-files.ts",
+        "score": 0.58,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "scripts/hooks-shadow-report.ts",
+        "score": 0.58,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/agents/tests/login-stream.test.ts",
+        "score": 0.58,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/ai-proxy/lib/account-refs.ts",
+        "score": 0.58,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/ai-proxy/lib/gateway-account.ts",
+        "score": 0.58,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/claude/index.ts",
+        "score": 0.58,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/cmux/README.md",
+        "score": 0.58,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/scripts/README.md",
+        "score": 0.58,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/ai-proxy/commands/accounts.ts",
+        "score": 0.57,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/ai/commands/sessions.ts",
+        "score": 0.57,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/cmux/capture-watch.ts",
+        "score": 0.57,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "DevDashboard/plans/2026-05-29-DevDashboardMobile-08-FeatureObsidian.md",
+        "score": 0.56,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/ai-proxy/commands/accounts-login.ts",
+        "score": 0.56,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/ai-proxy/lib/account-refs.test.ts",
+        "score": 0.56,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/ai/commands/tokens.ts",
+        "score": 0.56,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/aliases/lib/aliases.test.ts",
+        "score": 0.56,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "DevDashboard/plans/2026-05-29-DevDashboardMobile-05-FeaturePulse.md",
+        "score": 0.55,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/agents/tests/session-resolve.test.ts",
+        "score": 0.55,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/ai-proxy/lib/model-meta.test.ts",
+        "score": 0.55,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/debugging-master/index.ts",
+        "score": 0.55,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/boards/README.md",
+        "score": 0.54,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "DevDashboard/plans/2026-05-29-DevDashboardMobile-04-MobileFoundation.md",
+        "score": 0.53,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/agents/commands/changes.ts",
+        "score": 0.53,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "README.md",
+        "score": 0.52,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/ai-proxy/lib/copilot-models-cache.test.ts",
+        "score": 0.52,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/ai/commands/warmup.ts",
+        "score": 0.52,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/ai-proxy/lib/catalog-probe.test.ts",
+        "score": 0.51,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/mcp-manager/EnhancePlan.md",
+        "score": 0.51,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/ts/README.md",
+        "score": 0.51,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      }
+    ],
+    "bodySha256": "0915ccf64ed7fc5249bc5a64f05b20eb6213a8beaf086cea421e7e38c82b3347",
+    "bodyBytes": 13271,
+    "stoppedByCost": false
+  },
+  "port": {
+    "implementation": "port",
+    "status": "incomplete",
+    "wallMs": 77993,
+    "requests": 200,
+    "inputTokens": 1941019,
+    "costUsd": 0.08152279800000001,
+    "issues": [
+      {
+        "kind": "request-limit",
+        "count": 32
+      },
+      {
+        "kind": "resource_limit",
+        "count": 1
+      }
+    ],
+    "files": [
+      {
+        "path": "tools",
+        "score": 0.92,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/codex/daemon.ts",
+        "score": 0.87,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "plugins/genesis-tools/hooks/record-session-account.ts",
+        "score": 0.85,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/ask/chat/CommandHandler.ts",
+        "score": 0.85,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/chrome-devtools/commands/cleanup.ts",
+        "score": 0.85,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/ask/index.ts",
+        "score": 0.84,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/mcp-manager/index.ts",
+        "score": 0.84,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "DevDashboard/plans/2026-05-29-DevDashboardMobile-01-ServerExtraction.md",
+        "score": 0.82,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/stash/index.ts",
+        "score": 0.82,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/ts/index.ts",
+        "score": 0.82,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "plugins/genesis-tools/hooks/harness.ts",
+        "score": 0.81,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "scripts/tools-entrypoint.test.ts",
+        "score": 0.8,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/agents/bin/hook-pre.ts",
+        "score": 0.8,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/boards/commands/board-from-set.ts",
+        "score": 0.8,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/clarity/index.ts",
+        "score": 0.8,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/jev/index.ts",
+        "score": 0.8,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "scripts/codemod/runtool-append.ts",
+        "score": 0.79,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/daemon/daemon.ts",
+        "score": 0.79,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "plugins/genesis-tools/hooks/hooks.json",
+        "score": 0.78,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/boards/commands/add.ts",
+        "score": 0.78,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/boards/commands/operator.ts",
+        "score": 0.78,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/chrome-devtools/index.ts",
+        "score": 0.78,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/control/index.ts",
+        "score": 0.78,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/daemon/index.ts",
+        "score": 0.78,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "docs/benchmarks-simulator.md",
+        "score": 0.77,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "plugins/genesis-tools/lib/project-overrides.ts",
+        "score": 0.77,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/agents/bin/hook-guard.ts",
+        "score": 0.77,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/claude/registrars.ts",
+        "score": 0.77,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/cmux/registrars.ts",
+        "score": 0.77,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/control/README.md",
+        "score": 0.77,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/dev-dashboard/index.ts",
+        "score": 0.76,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/macos/index.ts",
+        "score": 0.76,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/scripts/index.ts",
+        "score": 0.76,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/ai/registrars.test.ts",
+        "score": 0.75,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/ai/registrars.ts",
+        "score": 0.75,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "scripts/test-reap.ts",
+        "score": 0.74,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/boards/commands/watch.ts",
+        "score": 0.74,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/agents/tests/matrix.sh",
+        "score": 0.73,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/ask/Plan.md",
+        "score": 0.73,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "tools.cmd",
+        "score": 0.73,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "DevDashboard/plans/2026-05-29-DevDashboardMobile-11-Distribution.md",
+        "score": 0.72,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/agents/index.ts",
+        "score": 0.72,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/ask/AIChat.ts",
+        "score": 0.72,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/ask/utils/cli.ts",
+        "score": 0.72,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/boards/commands/init.ts",
+        "score": 0.72,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/chrome-devtools/commands/follow.ts",
+        "score": 0.72,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/claude/registrars.test.ts",
+        "score": 0.72,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "CLAUDE.md",
+        "score": 0.71,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "scripts/test.ts",
+        "score": 0.71,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/boards/commands/push.ts",
+        "score": 0.71,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/chrome-devtools/cli-guidance.test.ts",
+        "score": 0.71,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/claude/index.ts",
+        "score": 0.71,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "plugins/genesis-tools/lib/project-overrides.test.ts",
+        "score": 0.7,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/chrome-devtools/commands/har.ts",
+        "score": 0.7,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "DevDashboard/plans/2026-05-29-DevDashboardMobile-02-TransportTrust.md",
+        "score": 0.69,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "docs/qa-pending-contract.md",
+        "score": 0.69,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/cmux/index.ts",
+        "score": 0.69,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/chrome-devtools/commands/attach.ts",
+        "score": 0.68,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/codex/index.ts",
+        "score": 0.68,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "plugins/genesis-tools/commands/github-pr.md",
+        "score": 0.67,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "scripts/hooks-diff-parity.ts",
+        "score": 0.67,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "plugins/genesis-tools/hooks/record-session-cmux.ts",
+        "score": 0.66,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/agents/README.md",
+        "score": 0.66,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/ask/providers/ProviderManager.ts",
+        "score": 0.66,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/cmux/capture-watch.ts",
+        "score": 0.66,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/stash/index.test.ts",
+        "score": 0.66,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/tools/index.ts",
+        "score": 0.66,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/ask/chat/ChatEngine.test.ts",
+        "score": 0.65,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/boards/commands/watch.test.ts",
+        "score": 0.65,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/stash/README.md",
+        "score": 0.65,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/tools/README.md",
+        "score": 0.65,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "install.sh",
+        "score": 0.64,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/ai/commands/sessions.test.ts",
+        "score": 0.64,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/ask/providers/ProviderManager.test.ts",
+        "score": 0.64,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/chrome-devtools/commands/doctor.ts",
+        "score": 0.64,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/ts/README.md",
+        "score": 0.64,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "plugins/genesis-tools/hooks/track-session-files.test.ts",
+        "score": 0.63,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "scripts/hooks-parity.ts",
+        "score": 0.63,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/ai/README.md",
+        "score": 0.63,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/codex/README.md",
+        "score": 0.63,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/jev/README.md",
+        "score": 0.63,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "DevDashboard/plans/2026-05-29-DevDashboardMobile-08-FeatureObsidian.md",
+        "score": 0.62,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "plugins/genesis-tools/agents/agent-driver.md",
+        "score": 0.62,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/agents/commands/message.ts",
+        "score": 0.62,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/chrome-devtools/commands/browse.ts",
+        "score": 0.62,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "DevDashboard/plans/2026-05-29-DevDashboardMobile-07-FeatureQA.md",
+        "score": 0.61,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "DevDashboard/plans/2026-05-29-DevDashboardMobile-10-LandingAndManaged.md",
+        "score": 0.61,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "scripts/hooks-config-parity.ts",
+        "score": 0.61,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/agents/bin/hook-diff-post.ts",
+        "score": 0.61,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/ask/commands/configure.ts",
+        "score": 0.61,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/stash/e2e.test.ts",
+        "score": 0.61,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/dev-dashboard/README.md",
+        "score": 0.6,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "DevDashboard/plans/2026-05-29-DevDashboardMobile-05-FeaturePulse.md",
+        "score": 0.59,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/agents/tests/login-stream.test.ts",
+        "score": 0.59,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "scripts/hooks-shadow-report.ts",
+        "score": 0.58,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/cmux/README.md",
+        "score": 0.58,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/hub/index.ts",
+        "score": 0.58,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "DevDashboard/plans/2026-05-29-DevDashboardMobile-03-SharedContract.md",
+        "score": 0.57,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/agents/tests/session-resolve.test.ts",
+        "score": 0.57,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "MONOREPO-SPEC.md",
+        "score": 0.56,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/agents/bin/hook-diff-pre.ts",
+        "score": 0.56,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/ask/chat/ChatEngine.ts",
+        "score": 0.56,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/ai/commands/sessions.ts",
+        "score": 0.55,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/aliases/commands/decay.ts",
+        "score": 0.55,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/chrome-devtools/README.md",
+        "score": 0.55,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/scripts/README.md",
+        "score": 0.55,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "index.ts",
+        "score": 0.54,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "README.md",
+        "score": 0.54,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/agents/commands/changes.ts",
+        "score": 0.54,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/ask/lib/db.ts",
+        "score": 0.54,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/boards/lib/client.ts",
+        "score": 0.54,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/boards/lib/operator.ts",
+        "score": 0.54,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/clarity/README.md",
+        "score": 0.54,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/debugging-master/index.ts",
+        "score": 0.54,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/tmux/index.ts",
+        "score": 0.54,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "docs/design-system-dashboards.md",
+        "score": 0.52,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "plugins/genesis-tools/hooks/track-session-files.ts",
+        "score": 0.52,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/aliases/commands/analyze.ts",
+        "score": 0.52,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/aliases/lib/aliases.test.ts",
+        "score": 0.51,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      },
+      {
+        "path": "src/claude/README.md",
+        "score": 0.51,
+        "roles": [],
+        "excerpts": [],
+        "leads": 0
+      }
+    ],
+    "bodySha256": "957b06cc22692ebf1a4bfcc481eda548c34b93519c9f3653acc54dade18a65d0",
+    "bodyBytes": 13694,
+    "stoppedByCost": false
+  },
+  "comparison": {
+    "sameStatus": true,
+    "sameFiles": false,
+    "sameRanking": false,
+    "sameBody": false,
+    "jaccard": 0.536,
+    "onlyUpstream": [
+      "src/ai-proxy/lib/lifecycle.test.ts",
+      "src/ai-proxy/lib/rewrite-upstream-body.ts",
+      "src/ai-proxy/lib/lifecycle.ts",
+      "src/ai-proxy/index.ts",
+      "src/ai-proxy/commands/config.ts",
+      "src/ai-proxy/lib/rewrite-upstream-body.test.ts",
+      "src/ai-proxy/lib/runtime.test.ts",
+      "src/ai-proxy/commands/config-wizard.ts",
+      "src/boards/index.ts",
+      "src/aliases/lib/analysis.ts",
+      "src/ai-proxy/commands/usage.test.ts",
+      "src/ai-proxy/lib/gateway-account.test.ts",
+      "src/ai-proxy/lib/model-meta.ts",
+      "src/ai-proxy/lib/model-meta.grok-merge.test.ts",
+      "src/aliases/index.ts",
+      "src/ai-proxy/commands/accounts.test.ts",
+      "src/ai-proxy/lib/runtime.ts",
+      "src/ai-proxy/commands/usage.ts",
+      "src/ai-proxy/lib/account-refs.ts",
+      "src/ai-proxy/lib/gateway-account.ts",
+      "src/ai-proxy/commands/accounts.ts",
+      "src/ai-proxy/commands/accounts-login.ts",
+      "src/ai-proxy/lib/account-refs.test.ts",
+      "src/ai/commands/tokens.ts",
+      "src/ai-proxy/lib/model-meta.test.ts",
+      "src/boards/README.md",
+      "DevDashboard/plans/2026-05-29-DevDashboardMobile-04-MobileFoundation.md",
+      "src/ai-proxy/lib/copilot-models-cache.test.ts",
+      "src/ai/commands/warmup.ts",
+      "src/ai-proxy/lib/catalog-probe.test.ts",
+      "src/mcp-manager/EnhancePlan.md"
+    ],
+    "onlyPort": [
+      "src/codex/daemon.ts",
+      "src/ask/chat/CommandHandler.ts",
+      "src/chrome-devtools/commands/cleanup.ts",
+      "src/stash/index.ts",
+      "src/boards/commands/board-from-set.ts",
+      "src/boards/commands/add.ts",
+      "src/boards/commands/operator.ts",
+      "src/macos/index.ts",
+      "src/boards/commands/watch.ts",
+      "src/ask/AIChat.ts",
+      "src/ask/utils/cli.ts",
+      "src/boards/commands/init.ts",
+      "src/chrome-devtools/commands/follow.ts",
+      "src/boards/commands/push.ts",
+      "src/chrome-devtools/commands/har.ts",
+      "src/chrome-devtools/commands/attach.ts",
+      "src/codex/index.ts",
+      "src/ask/providers/ProviderManager.ts",
+      "src/stash/index.test.ts",
+      "src/ask/chat/ChatEngine.test.ts",
+      "src/boards/commands/watch.test.ts",
+      "src/stash/README.md",
+      "src/ask/providers/ProviderManager.test.ts",
+      "src/chrome-devtools/commands/doctor.ts",
+      "src/codex/README.md",
+      "src/jev/README.md",
+      "src/chrome-devtools/commands/browse.ts",
+      "src/ask/commands/configure.ts",
+      "src/stash/e2e.test.ts",
+      "src/ask/chat/ChatEngine.ts",
+      "src/aliases/commands/decay.ts",
+      "src/chrome-devtools/README.md",
+      "src/ask/lib/db.ts",
+      "src/boards/lib/client.ts",
+      "src/boards/lib/operator.ts",
+      "src/clarity/README.md",
+      "docs/design-system-dashboards.md",
+      "src/aliases/commands/analyze.ts",
+      "src/claude/README.md"
+    ],
+    "maxScoreDelta": 0.20000000000000007,
+    "roleMismatches": [],
+    "excerptMismatches": [],
+    "requestsDeltaPct": 0,
+    "costDeltaPct": -0.2,
+    "wallDeltaPct": -14.4
+  }
+}

@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
+import { loadJevEvents } from "./jev";
 import {
     asNumber,
     asRecord,
@@ -838,6 +839,7 @@ const LOADERS: Record<
     kilo: loadKiloEvents,
     hermes: loadHermesEvents,
     goose: loadGooseEvents,
+    jev: loadJevEvents,
 };
 
 export function loadExtraSource(

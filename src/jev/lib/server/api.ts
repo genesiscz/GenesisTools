@@ -28,6 +28,8 @@ import { demoInput } from "../evaluate";
 import { stepExperiment } from "../experiment";
 import { experimentRequestSchema } from "../experiment-contract";
 import { generationMode } from "../generation";
+import { GrepSetupError, grepInputSchema, grepOptionsFromInput, searchRepository } from "../grep/search";
+import type { RetrievalResult } from "../grep/types";
 import { languages } from "../languages";
 import {
     LISTEN_LAB_FIXTURES,
@@ -52,6 +54,7 @@ const compactProf = profiler.scope("jev-compact");
 const verifyProf = profiler.scope("jev-verify");
 const observeProf = profiler.scope("jev-observe");
 const watchProf = profiler.scope("jev-watch");
+const grepProf = profiler.scope("jev-grep");
 
 /** `src/`, the directory the route catalogue is built from (this file is `src/jev/lib/server/`). */
 const SRC_DIR = join(import.meta.dir, "..", "..", "..");
@@ -272,8 +275,105 @@ export async function watchRequest(options: {
     });
 }
 
+/** `root` is required over HTTP: the dashboard server's working directory is nobody's search root. */
+export const grepRequestSchema = grepInputSchema.extend({ root: z.string().min(1) });
+/** A real search is minutes long; the playground's 45-second timer must never wrap it. */
+export const GREP_DEADLINE_MS = 10 * 60 * 1000;
+
+/**
+ * `POST /grep`. The same retrieval `tools jev grep --json` prints, run on the server so the browser
+ * never holds the key. A search the deadline or a closed response cut short is still the result:
+ * whatever evidence exists comes back with `status: "interrupted"`.
+ */
+export async function grepRequest(options: {
+    input: unknown;
+    provider: EvaluationProviderId;
+    signal: AbortSignal;
+    evaluate?: Evaluator;
+    cacheDirectory?: string;
+}): Promise<RetrievalResult> {
+    const body = grepRequestSchema.parse(options.input);
+    return searchRepository({
+        options: grepOptionsFromInput(body, body.root),
+        provider: options.provider,
+        signal: options.signal,
+        ...(options.evaluate ? { evaluate: options.evaluate } : {}),
+        ...(options.cacheDirectory ? { cacheDirectory: options.cacheDirectory } : {}),
+    });
+}
+
+function grepFailureStatus(error: unknown): number {
+    if (error instanceof ZodError || (error instanceof GrepSetupError && error.kind === "usage")) {
+        return 400;
+    }
+
+    return error instanceof GrepSetupError ? 401 : 502;
+}
+
 export function jevApiPlugin(): Plugin {
     let activeRequests = 0;
+    let grepRunning = false;
+
+    /** Outside the shared cap and timer: one grep at a time, a 10-minute deadline, aborted on disconnect. */
+    function handleGrep(req: IncomingMessage, res: ServerResponse): void {
+        if (req.method !== "POST") {
+            reply(res, 405, { error: "Use POST for /grep." });
+            return;
+        }
+
+        if (grepRunning) {
+            reply(res, 429, { error: "A grep search is already running. Wait for it to finish." });
+            return;
+        }
+
+        grepRunning = true;
+        const controller = new AbortController();
+        const timer = setTimeout(() => {
+            log.info({ ms: GREP_DEADLINE_MS }, "Jev grep reached its deadline; returning the evidence so far");
+            controller.abort();
+        }, GREP_DEADLINE_MS);
+        const disconnect = () => {
+            if (!res.writableEnded) {
+                controller.abort();
+            }
+        };
+        res.once("close", disconnect);
+        const started = performance.now();
+        const run = async () => {
+            const provider = evaluationProviderSchema.parse(
+                req.headers["x-jev-provider"] ?? DEFAULT_EVALUATION_PROVIDER
+            );
+            const body = (await readBody(req)).value;
+            return grepProf.measureAsync("http-grep", () =>
+                grepRequest({ input: body, provider, signal: controller.signal })
+            );
+        };
+        void run()
+            .then((result) => {
+                if (!res.destroyed && !res.writableEnded) {
+                    reply(res, 200, result);
+                }
+            })
+            .catch((error: unknown) => {
+                const message =
+                    error instanceof ZodError
+                        ? error.issues.map((issue) => `${issue.path.join(".")}: ${issue.message}`).join("\n")
+                        : error instanceof Error
+                          ? error.message
+                          : "Request failed.";
+                log.debug({ message }, "Jev grep request ended with an error");
+                if (!res.destroyed && !res.writableEnded) {
+                    reply(res, grepFailureStatus(error), { error: message });
+                }
+            })
+            .finally(() => {
+                grepRunning = false;
+                clearTimeout(timer);
+                res.removeListener("close", disconnect);
+                log.info({ ms: Math.round(performance.now() - started) }, "Jev grep request finished");
+            });
+    }
+
     const visuals = new VisualCaptureStore();
     // Per-process state, beside the retained-capture store: a module-level singleton would leak
     // one dashboard's live session into another server in the same process.
@@ -288,6 +388,11 @@ export function jevApiPlugin(): Plugin {
             server.middlewares.use("/api/jev", (req, res) => {
                 if (!validLocalRequest(req)) {
                     reply(res, 403, { error: "This API accepts same-origin local requests only." });
+                    return;
+                }
+
+                if (req.url?.split("?")[0] === "/grep") {
+                    handleGrep(req, res);
                     return;
                 }
 

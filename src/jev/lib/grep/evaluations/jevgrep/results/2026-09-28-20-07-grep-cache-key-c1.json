@@ -1,0 +1,214 @@
+{
+  "testCase": {
+    "id": "grep-cache-key",
+    "query": "How is the answer cache key for a Jev grep call built?",
+    "root": "src/jev/lib/grep",
+    "maxRequests": 200,
+    "maxCostUsd": 0.1
+  },
+  "concurrency": 1,
+  "upstream": {
+    "implementation": "upstream",
+    "status": "complete",
+    "wallMs": 27538,
+    "requests": 78,
+    "inputTokens": 532092,
+    "costUsd": 0.022347864000000002,
+    "issues": [],
+    "files": [
+      {
+        "path": "cache.ts",
+        "score": 0.97,
+        "priority": 0.96,
+        "roles": [
+          "helper",
+          "implementation"
+        ],
+        "excerpts": [
+          "9-15",
+          "20-33",
+          "59-320"
+        ],
+        "leads": 17
+      },
+      {
+        "path": "evaluator.ts",
+        "score": 0.93,
+        "priority": 0.94,
+        "roles": [
+          "caller",
+          "helper",
+          "implementation"
+        ],
+        "excerpts": [
+          "16-22",
+          "138-382"
+        ],
+        "leads": 15
+      },
+      {
+        "path": "grep.test.ts",
+        "score": 0.88,
+        "priority": 0.35,
+        "roles": [
+          "fixture",
+          "helper",
+          "test"
+        ],
+        "excerpts": [
+          "534-556",
+          "676-839"
+        ],
+        "leads": 21
+      },
+      {
+        "path": "search.ts",
+        "score": 0.81,
+        "priority": 0.53,
+        "roles": [
+          "caller",
+          "helper",
+          "implementation"
+        ],
+        "excerpts": [],
+        "leads": 3
+      },
+      {
+        "path": "retrieve.ts",
+        "score": 0.72,
+        "priority": 0.69,
+        "roles": [
+          "helper",
+          "implementation"
+        ],
+        "excerpts": [],
+        "leads": 2
+      },
+      {
+        "path": "types.ts",
+        "score": 0.59,
+        "priority": 0.24,
+        "roles": [
+          "helper"
+        ],
+        "excerpts": [
+          "112-129"
+        ],
+        "leads": 7
+      }
+    ],
+    "bodySha256": "9382699723eb35b05084844f40c52d7697fd1507ee38319810f709034a52057b",
+    "bodyBytes": 30874,
+    "stoppedByCost": false
+  },
+  "port": {
+    "implementation": "port",
+    "status": "complete",
+    "wallMs": 28351,
+    "requests": 78,
+    "inputTokens": 532092,
+    "costUsd": 0.022347864000000002,
+    "issues": [],
+    "files": [
+      {
+        "path": "cache.ts",
+        "score": 0.97,
+        "priority": 0.96,
+        "roles": [
+          "helper",
+          "implementation"
+        ],
+        "excerpts": [
+          "9-15",
+          "20-33",
+          "59-320"
+        ],
+        "leads": 17
+      },
+      {
+        "path": "evaluator.ts",
+        "score": 0.93,
+        "priority": 0.94,
+        "roles": [
+          "caller",
+          "helper",
+          "implementation"
+        ],
+        "excerpts": [
+          "16-22",
+          "138-382"
+        ],
+        "leads": 13
+      },
+      {
+        "path": "grep.test.ts",
+        "score": 0.88,
+        "priority": 0.34,
+        "roles": [
+          "fixture",
+          "helper",
+          "test"
+        ],
+        "excerpts": [
+          "676-839"
+        ],
+        "leads": 23
+      },
+      {
+        "path": "search.ts",
+        "score": 0.81,
+        "priority": 0.51,
+        "roles": [
+          "caller",
+          "helper",
+          "implementation"
+        ],
+        "excerpts": [],
+        "leads": 9
+      },
+      {
+        "path": "retrieve.ts",
+        "score": 0.73,
+        "priority": 0.66,
+        "roles": [
+          "helper",
+          "implementation"
+        ],
+        "excerpts": [],
+        "leads": 3
+      },
+      {
+        "path": "types.ts",
+        "score": 0.57,
+        "priority": 0.25,
+        "roles": [
+          "helper"
+        ],
+        "excerpts": [
+          "112-129"
+        ],
+        "leads": 7
+      }
+    ],
+    "bodySha256": "9730d37629f150bae9145ef7685957023131651199b1bcbc6f96f484bac6f320",
+    "bodyBytes": 30221,
+    "stoppedByCost": false
+  },
+  "comparison": {
+    "sameStatus": true,
+    "sameFiles": true,
+    "sameRanking": true,
+    "sameBody": false,
+    "jaccard": 1,
+    "onlyUpstream": [],
+    "onlyPort": [],
+    "maxScoreDelta": 0.020000000000000018,
+    "roleMismatches": [],
+    "excerptMismatches": [
+      "grep.test.ts"
+    ],
+    "requestsDeltaPct": 0,
+    "costDeltaPct": 0,
+    "wallDeltaPct": 3
+  }
+}

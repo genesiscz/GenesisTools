@@ -5,7 +5,13 @@ import { jevToolEntries } from "./genesis-tools";
 describe("jevToolEntries", () => {
     test("exposes every Jev MCP tool under the jev_ prefix with a JSON schema", () => {
         const entries = jevToolEntries();
-        expect(Object.keys(entries).sort()).toEqual(["jev_compact", "jev_route", "jev_verify", "jev_verify_templates"]);
+        expect(Object.keys(entries).sort()).toEqual([
+            "jev_compact",
+            "jev_grep",
+            "jev_route",
+            "jev_verify",
+            "jev_verify_templates",
+        ]);
         for (const [name, entry] of Object.entries(entries)) {
             expect(name.startsWith("jev_")).toBe(true);
             expect(entry.description.length).toBeGreaterThan(0);
