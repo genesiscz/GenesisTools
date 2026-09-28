@@ -199,6 +199,40 @@ function clipboardProblem(action: string | undefined, result: AxResult): string 
     return "CLIPBOARD STATE UNKNOWN: the paste ended without reporting a restore (terminated or timed out), so the pasted text may still be on the system clipboard.";
 }
 
+const windowCandidatesSchema = z.array(
+    z.object({
+        windowId: z.number().int().positive().optional(),
+        title: z.string(),
+        subrole: z.string().optional(),
+        secondary: z.boolean().optional(),
+        minimized: z.boolean().optional(),
+    })
+);
+
+/**
+ * A refusal to choose between windows names every candidate the way the API takes it. The native
+ * text alone ("multiple windows") left the caller to call list_windows and guess which one it meant.
+ */
+function describeWindowCandidates(result: AxResult): string | undefined {
+    const parsed = windowCandidatesSchema.safeParse(result.windows);
+    if (!parsed.success || parsed.data.length === 0) {
+        return undefined;
+    }
+
+    const listed = parsed.data.map((window) => {
+        const traits = [
+            window.subrole,
+            window.secondary ? "popup" : undefined,
+            window.minimized ? "minimized" : undefined,
+        ]
+            .filter(Boolean)
+            .join(", ");
+        const id = window.windowId === undefined ? "no window_id" : `window_id ${window.windowId}`;
+        return `${id} "${window.title}"${traits ? ` (${traits})` : ""}`;
+    });
+    return `Pass one: ${listed.join("; ")}.`;
+}
+
 /** The `see` scope flags, including the query a query-scoped observation re-reads. */
 function observationScopeArgs(scope: string, query: AppRecord["query"]): string[] {
     if (scope !== "query") {
@@ -578,7 +612,9 @@ export class ComputerUse {
                 if (!result.ok) {
                     throw new ComputerUseError(
                         "OBSERVATION_FAILED",
-                        result.error ?? "Native observation failed.",
+                        [result.error ?? "Native observation failed.", describeWindowCandidates(result)]
+                            .filter(Boolean)
+                            .join(" "),
                         result
                     );
                 }

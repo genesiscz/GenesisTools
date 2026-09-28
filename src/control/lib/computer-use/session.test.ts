@@ -1115,6 +1115,23 @@ test("window inventory preserves native IDs independently of duplicate titles an
     expect(second.windows.map((window) => window.window_id)).toEqual([202, 101]);
     expect(second.windows.map((window) => window.window_index)).toEqual([0, 1]);
 });
+test("a refusal to pick between windows names each candidate by window_id", async () => {
+    const computer = new ComputerUse({
+        native: {
+            run: async () => ({
+                ok: false,
+                error: "multiple windows; choose one by window ID (the API's window_id, the CLI's --window-id) from these candidates",
+                windows: [
+                    { index: 0, windowId: 201118, title: "PR 424", subrole: "AXStandardWindow", secondary: false },
+                    { index: 1, windowId: 201200, title: "Settings", subrole: "AXStandardWindow", secondary: false },
+                ],
+            }),
+        },
+    });
+    await expect(computer.get_app_state({ app: "Fixture", image: false })).rejects.toThrow(
+        'Pass one: window_id 201118 "PR 424" (AXStandardWindow); window_id 201200 "Settings" (AXStandardWindow).'
+    );
+});
 test("window inventory keeps the sheets a window carries, so an open file panel is visible", async () => {
     const computer = new ComputerUse({
         native: {

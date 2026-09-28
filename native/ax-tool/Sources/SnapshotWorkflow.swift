@@ -588,13 +588,31 @@ func cmdSee(appName _: String) {
     if requested != nil && workflowArgument("--window-id") != nil {
         workflowFailure("choose --window-index or --window-id, not both")
     }
-    if windows.count > 1 && requested == nil && workflowArgument("--window-id") == nil {
-        jsonOutput(["ok": false, "error": "multiple windows; select --window-index from these current candidates",
-                    "pid": pid, "windows": windows.enumerated().map { index, window in
-                        ["index": index, "title": axStringAttribute(window, "AXTitle") ?? "",
-                         "width": axPx(axFrame(window).width), "height": axPx(axFrame(window).height)]
-                    }])
-        exit(1)
+    let candidates = windows.enumerated().map { index, window in
+        WindowCandidate(index: index, windowID: nativeAXWindowID(window).map { Int($0) },
+                        title: axStringAttribute(window, "AXTitle") ?? "",
+                        subrole: axStringAttribute(window, "AXSubrole"), height: Double(axFrame(window).height),
+                        minimized: (axAttribute(window, "AXMinimized") as? NSNumber)?.boolValue == true)
+    }
+    // A popup (a translate bubble, a hover card) is a window too; it must not make the one real
+    // window ambiguous. Anything else stays the caller's choice, named by window ID.
+    var chosenIndex: Int?
+    if requested == nil && workflowArgument("--window-id") == nil {
+        guard let only = defaultWindowIndex(candidates) else {
+            jsonOutput(["ok": false,
+                        "error": "multiple windows; choose one by window ID (the API's window_id, the CLI's --window-id) from these candidates",
+                        "pid": pid, "windows": candidates.map { candidate -> [String: Any] in
+                            var entry: [String: Any] = ["index": candidate.index, "title": candidate.title,
+                                                        "height": axPx(CGFloat(candidate.height)),
+                                                        "width": axPx(axFrame(windows[candidate.index]).width),
+                                                        "secondary": candidate.secondary, "minimized": candidate.minimized]
+                            if let id = candidate.windowID { entry["windowId"] = id }
+                            if let subrole = candidate.subrole { entry["subrole"] = subrole }
+                            return entry
+                        }])
+            exit(1)
+        }
+        chosenIndex = only
     }
     let index: Int
     let window: ObservedWindow
@@ -605,7 +623,7 @@ func cmdSee(appName _: String) {
         }
         index = found
     } else {
-        index = workflowInteger("--window-index", defaultValue: 0)
+        index = chosenIndex ?? workflowInteger("--window-index", defaultValue: 0)
         guard windows.indices.contains(index) else {
             workflowFailure("--window-index outside current window list")
         }
@@ -722,7 +740,11 @@ private func workflowRaise(_ window: ObservedWindow) {
 
 private func workflowFocus(_ window: ObservedWindow, pid: pid_t, element: AXUIElement) {
         guard bringFrontmost(pid) else {
-            workflowFailure("app activation failed")
+            let name = NSRunningApplication(processIdentifier: pid)?.localizedName ?? "the app"
+            workflowFailure("app activation failed: macOS kept \(frontmostDescription()) in front for 3 s, also through "
+                + "LaunchServices. This action needs \(name) frontmost: bring it forward yourself (click its window, "
+                + "or open -a \"\(name)\"), or send keys without focus (press_key with activate:false and no prepare), "
+                + "then observe again")
         }
         let focusedWindow = axAttribute(AXUIElementCreateApplication(pid), kAXFocusedWindowAttribute as String)
         let alreadyFocused = frontmostPid() == pid && focusedWindow.map {
@@ -933,7 +955,12 @@ func cmdAct(appName _: String) {
     }
     if token.effectiveScope == "chrome", action != "get",
        axStringAttribute(element, "AXRole") == "AXWebArea" || (action == "key" && CFEqual(element, window.ax)) {
-        workflowFailure("this action requires window scope or an inspected browser-chrome input")
+        workflowFailure(action == "key"
+            ? "a key without an element targets the whole window, which a chrome-scope observation cannot address "
+              + "(the page is left out). Pass element_ref of a chrome input, such as the AXTextField \"Address and search "
+              + "bar\", or observe with scope \"window\" and act on a page element"
+            : "this element is the browser page, which a chrome-scope observation leaves out; observe with scope \"window\" "
+              + "to act inside the page")
     }
     // dispatchSnapshotAction owns the enabled-state boundary: "get" is the only .read
     // operation, and it applies the same unknown-as-enabled rule to every other one.

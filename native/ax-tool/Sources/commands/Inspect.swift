@@ -208,9 +208,10 @@ func cmdWindow(appName: String) {
         if let val = axAttribute(w, "AXFullScreen") as? NSNumber { info["fullscreen"] = val.boolValue }
         // Transient popups (find bars, tooltips, hover cards) pollute the list
         // and are easily mistaken for real windows.
-        let sub = axStringAttribute(w, "AXSubrole")
-        let height = axSizeValue(w, "AXSize")?.height ?? 0
-        if sub == "AXUnknown" || sub == "AXHelpTag" || height <= 50 {
+        // The rule see uses to choose a default window, so both commands call the same popups transient.
+        let candidate = WindowCandidate(index: i, windowID: nil, title: "", subrole: axStringAttribute(w, "AXSubrole"),
+                                        height: Double(axSizeValue(w, "AXSize")?.height ?? 0), minimized: false)
+        if candidate.secondary {
             info["transient"] = true
         }
         // A sheet (an open or save panel, an alert attached to the window) is a child of its
