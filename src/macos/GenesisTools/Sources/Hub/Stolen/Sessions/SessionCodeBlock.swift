@@ -34,20 +34,37 @@ struct CodeLine: Equatable, Sendable {
     var text: String
 }
 
+// GenesisTools adaptation: immutable, so what `init` derives from the lines stays true: a body
+// reads `isDiff` and `fingerprint`, and at Verbose a block is a whole unclipped result.
 struct CodeBlock: Equatable, Sendable {
-    var lines: [CodeLine]
-    var language: SyntaxLanguage
+    let lines: [CodeLine]
+    let language: SyntaxLanguage
     /// Draw every line red: the output of a failed call.
-    var failed = false
+    let failed: Bool
+    let isDiff: Bool
+    /// A hash of everything drawn, taken once here, for `CodeBlockText`'s cache key.
+    let fingerprint: Int
+
+    init(lines: [CodeLine], language: SyntaxLanguage, failed: Bool = false) {
+        self.lines = lines
+        self.language = language
+        self.failed = failed
+        isDiff = lines.contains { $0.mark == .added || $0.mark == .removed }
+        var hasher = Hasher()
+        hasher.combine(language)
+        hasher.combine(failed)
+        for line in lines {
+            hasher.combine(line)
+        }
+        fingerprint = hasher.finalize()
+    }
 
     var additions: Int { lines.filter { $0.mark == .added }.count }
     var removals: Int { lines.filter { $0.mark == .removed }.count }
-    var isDiff: Bool { lines.contains { $0.mark == .added || $0.mark == .removed } }
 }
 
-// GenesisTools adaptation: hashed into `CodeBlockText`'s cache key.
+// GenesisTools adaptation: hashed into `CodeBlock.fingerprint`.
 extension CodeLine: Hashable {}
-extension CodeBlock: Hashable {}
 
 // MARK: - Builders
 
@@ -411,18 +428,11 @@ struct CodeBlockText: View {
     /// How wide the code is. A box, not a value: measuring it must not draw the block again.
     @State private var codeWidth = SidewaysWheel.Width()
 
-    // GenesisTools adaptation: the key hashes the content (see `highlighted`): the shown lines only,
-    // because nothing past `limit` is drawn, and hashing a whole long output on every body was the
-    // bigger part of it.
+    // GenesisTools adaptation: the key carries the content (see `highlighted`) as the block's
+    // fingerprint, hashed once when the block was made: hashing here ran on every body (every
+    // sideways wheel event included), over every line of a Verbose result.
     private var key: String {
-        var hasher = Hasher()
-        hasher.combine(block.language)
-        hasher.combine(block.failed)
-        hasher.combine(block.isDiff)
-        for line in limit.map({ block.lines.prefix($0) }) ?? block.lines[...] {
-            hasher.combine(line)
-        }
-        return "\(cacheKey)|\(limit.map(String.init) ?? "all")|\(block.lines.count)|\(hasher.finalize())"
+        "\(cacheKey)|\(limit.map(String.init) ?? "all")|\(block.lines.count)|\(block.fingerprint)"
     }
 
     var body: some View {

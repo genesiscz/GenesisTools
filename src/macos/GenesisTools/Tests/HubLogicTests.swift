@@ -342,6 +342,15 @@ final class HubLogicTests: XCTestCase {
         )
     }
 
+    /// The code block's cache key comes from this fingerprint, hashed once when the block is made.
+    func testTheFingerprintFollowsTheContent() {
+        let block = CodeBlockBuilder.numbered("a\nb", language: .plain)
+        XCTAssertEqual(block.fingerprint, CodeBlockBuilder.numbered("a\nb", language: .plain).fingerprint)
+        XCTAssertNotEqual(block.fingerprint, CodeBlockBuilder.numbered("a\nc", language: .plain).fingerprint, "same line count, new text")
+        XCTAssertNotEqual(block.fingerprint, CodeBlockBuilder.numbered("a\nb", language: .swift).fingerprint)
+        XCTAssertNotEqual(block.fingerprint, CodeBlockBuilder.numbered("a\nb", language: .plain, failed: true).fingerprint)
+    }
+
     /// VoiceOver hears a diff's marks: the gutter that shows them is hidden from it.
     func testDiffSpeaksItsMarks() {
         let diff = CodeBlockBuilder.unifiedDiff("@@ -3,2 +3,2 @@\n keep\n-old\n+new", language: .plain)

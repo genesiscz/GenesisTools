@@ -385,10 +385,13 @@ struct ToolCallRowView: View, Equatable {
             let source = ObjectIdentifier(services)
             // A finished call loaded before is drawn from `services.loaded` already (see body).
             guard open, loaded == nil || loadedFrom != source, !finished || services.loaded(toolId: toolId) == nil else { return }
-            if let result = await services.load(toolId: toolId, finished: finished) {
-                loaded = result
-                loadedFrom = source
-            }
+            let result = await services.load(toolId: toolId, finished: finished)
+            // The detached load ignores cancellation: an older source's answer must not land late.
+            guard !Task.isCancelled else { return }
+            // The new source's answer replaces the old one, nil included (its scan had no detail),
+            // so a refresh never keeps the previous source's detail. Until it lands, the old one stays.
+            loaded = result
+            loadedFrom = source
         }
     }
 
@@ -596,7 +599,10 @@ struct ToolChangesView: View {
             guard files == nil else { return }
             let loaded = await source.changes(sessionId: sessionId, toolUseId: toolId)
             // GenesisTools adaptation: a row that left the screen got an empty answer; keep asking when it returns.
-            guard !Task.isCancelled else { return }
+            // Only an answer with files is kept: a source answers [] for "no change" and for a failed
+            // lookup alike, so an empty answer leaves `files` nil and the row asks again the next time it
+            // appears. The source's cache answers a successful empty lookup without a process.
+            guard !Task.isCancelled, !loaded.isEmpty else { return }
             files = loaded
         }
     }
