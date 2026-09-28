@@ -281,6 +281,46 @@ final class WindowTitlebarTests: XCTestCase {
         }
     }
 
+    /// A custom toolbar drawn right under the title bar (Genesis's markdown viewer): `below:` makes its
+    /// empty part the strip too; its button and the content under it keep their clicks.
+    func testChromeRightUnderTheTitleBarJoinsTheStripWithBelow() {
+        struct Toolbar: View {
+            var body: some View {
+                VStack(spacing: 0) {
+                    HStack {
+                        Spacer()
+                        Button("Save") {}.buttonStyle(.genHoverPlain()).frame(width: 80)
+                    }
+                    .padding(.horizontal, 14)
+                    .frame(height: 40)
+                    .background { Color.gray.allowsHitTesting(false) }
+                    Color.black.contentShape(Rectangle())
+                }
+            }
+        }
+
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 900, height: 500),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
+            backing: .buffered,
+            defer: false
+        )
+        window.titlebarAppearsTransparent = true
+        window.isReleasedWhenClosed = false
+        window.contentView = NSHostingView(rootView: Toolbar().titlebarZone(below: 40))
+        window.alphaValue = 0
+        window.level = .init(rawValue: Int(CGWindowLevelForKey(.desktopWindow)) - 1)
+        window.orderFrontRegardless()
+        windows.append(window)
+        RunLoop.main.run(until: Date().addingTimeInterval(0.8))
+
+        let strip = WindowTitlebar.stripHeight(of: window)
+        XCTAssertTrue(hit(window, x: 400, yFromTop: strip / 2) is TitlebarZoneView, "the title bar itself")
+        XCTAssertTrue(hit(window, x: 400, yFromTop: strip + 20) is TitlebarZoneView, "the toolbar's empty part")
+        XCTAssertFalse(hit(window, x: 900 - 14 - 40, yFromTop: strip + 20) is TitlebarZoneView, "the toolbar's button")
+        XCTAssertFalse(hit(window, x: 400, yFromTop: strip + 60) is TitlebarZoneView, "the page under the toolbar")
+    }
+
     /// Chrome the zone does not cover (Genesis's markdown tab bar) calls the same action directly.
     func testADoubleClickOnOtherChromeFollowsTheSettingToo() {
         let window = makeWindow(sidebar: 300)

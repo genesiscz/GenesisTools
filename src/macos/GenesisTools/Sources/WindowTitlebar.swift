@@ -12,7 +12,7 @@ import SwiftUI
 //
 // - `.titlebarZone()` on the window's root view: the empty strip zooms (or minimizes, or nothing,
 //   as System Settings says) on a double-click and drags the window. A control in the strip keeps
-//   its clicks and its drags.
+//   its clicks and its drags. `below:` adds a custom toolbar drawn right under the title bar.
 // - `.titlebarBackground(fill)` for any fill that also paints the strip. A plain `.background` that
 //   ignores the top safe area takes the strip's clicks before the zone sees them.
 // - `.titlebarRow()` on a row of controls placed in the strip: the strip's height, and clear of the
@@ -76,11 +76,11 @@ enum WindowTitlebar {
         max(0, window.frame.height - window.contentLayoutRect.maxY)
     }
 
-    /// True for a point in window coordinates inside the strip: the top `height` points, or the
-    /// window's own title bar when `height` is nil.
+    /// True for a point in window coordinates inside the strip: the window's own title bar and the
+    /// `below` points of chrome right under it.
     @MainActor
-    static func contains(_ point: CGPoint, window: NSWindow, height: CGFloat? = nil) -> Bool {
-        let strip = height ?? stripHeight(of: window)
+    static func contains(_ point: CGPoint, window: NSWindow, below: CGFloat = 0) -> Bool {
+        let strip = stripHeight(of: window) + below
         return strip > 0 && point.y >= window.frame.height - strip && point.y <= window.frame.height
     }
 
@@ -368,10 +368,8 @@ extension EnvironmentValues {
 /// The empty part of the strip. It lies behind the window's SwiftUI content, so a control in the
 /// strip is hit first, and it claims only points inside the strip.
 final class TitlebarZoneView: NSView {
-    /// The strip's height; nil: the window's own title bar.
-    var height: CGFloat? {
-        didSet { report() }
-    }
+    /// Chrome right under the title bar that belongs to the strip too (a custom toolbar).
+    var below: CGFloat = 0
     var onMetrics: ((TitlebarMetrics) -> Void)? {
         didSet { report() }
     }
@@ -388,7 +386,7 @@ final class TitlebarZoneView: NSView {
 
     override func hitTest(_ point: NSPoint) -> NSView? {
         guard let window, let superview, frame.contains(point) else { return nil }
-        return WindowTitlebar.contains(superview.convert(point, to: nil), window: window, height: height) ? self : nil
+        return WindowTitlebar.contains(superview.convert(point, to: nil), window: window, below: below) ? self : nil
     }
 
     override func mouseDown(with event: NSEvent) {
@@ -415,7 +413,7 @@ final class TitlebarZoneView: NSView {
     private func report() {
         guard let window, let onMetrics else { return }
         let metrics = TitlebarMetrics(
-            height: height ?? WindowTitlebar.stripHeight(of: window),
+            height: WindowTitlebar.stripHeight(of: window),
             leadingReserve: WindowTitlebar.leadingReserve(of: window)
         )
         guard metrics != reported else { return }
@@ -426,29 +424,26 @@ final class TitlebarZoneView: NSView {
 }
 
 private struct TitlebarZone: NSViewRepresentable {
-    var height: CGFloat?
+    var below: CGFloat
     var onMetrics: (TitlebarMetrics) -> Void
 
     func makeNSView(context: Context) -> TitlebarZoneView { TitlebarZoneView() }
 
     func updateNSView(_ view: TitlebarZoneView, context: Context) {
-        if view.height != height {
-            view.height = height
-        }
-
+        view.below = below
         view.onMetrics = onMetrics
     }
 }
 
 private struct TitlebarZoneModifier: ViewModifier {
-    let height: CGFloat?
+    let below: CGFloat
     @State private var metrics = TitlebarMetrics()
 
     func body(content: Content) -> some View {
         content
             .environment(\.titlebarMetrics, metrics)
             .background {
-                TitlebarZone(height: height) { metrics = $0 }
+                TitlebarZone(below: below) { metrics = $0 }
                     .ignoresSafeArea(.container, edges: .top)
             }
     }
@@ -474,10 +469,11 @@ private struct TitlebarRowModifier: ViewModifier {
 
 extension View {
     /// Put on a window's root view. The empty title bar strip zooms on a double-click (per System
-    /// Settings) and drags the window; controls in the strip keep their clicks. `height` makes the
-    /// top `height` points the strip instead of the window's own title bar (a taller custom toolbar).
-    func titlebarZone(height: CGFloat? = nil) -> some View {
-        modifier(TitlebarZoneModifier(height: height))
+    /// Settings) and drags the window; controls in the strip keep their clicks. `below`: points of
+    /// chrome drawn right under the title bar that belong to the strip too (a custom toolbar row,
+    /// Genesis's markdown viewer); its fill must take no clicks.
+    func titlebarZone(below: CGFloat = 0) -> some View {
+        modifier(TitlebarZoneModifier(below: below))
     }
 
     /// A background that also paints the title bar strip above the view, and leaves the strip's
