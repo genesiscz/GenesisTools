@@ -161,6 +161,32 @@ function rowPin(row: Observation["elements"][number]): string[] {
     return pin ? ["--target-key", pin, "--revalidate-scope", "element"] : [];
 }
 
+/**
+ * A paste owns the user's clipboard until it puts the original back. Only a reported restore, or a
+ * paste refused before it touched the clipboard, stays quiet; a failed or unreported restore is an
+ * error even when the paste itself landed.
+ */
+function clipboardProblem(action: string | undefined, result: AxResult): string | undefined {
+    if (action !== "paste") {
+        return undefined;
+    }
+
+    const status = result.clipboardRestore;
+    if (status === "restored" || status === "unchanged" || status === "skipped-concurrent-change") {
+        return undefined;
+    }
+
+    if (status === "restore-failed") {
+        return "CLIPBOARD NOT RESTORED: the pasted text is still on the system clipboard and the previous clipboard is lost.";
+    }
+
+    if (result.dispatchState === "not_started") {
+        return undefined;
+    }
+
+    return "CLIPBOARD STATE UNKNOWN: the paste ended without reporting a restore (terminated or timed out), so the pasted text may still be on the system clipboard.";
+}
+
 function webActivationKey(rows: Observation["elements"], target: Observation["elements"][number]) {
     if (!hasAncestorRole(rows, target, "AXWebArea")) {
         return undefined;
@@ -801,12 +827,23 @@ export class ComputerUse {
             if (capturePath && this.records.get(input.app)?.snapshot.screenshot.path !== capturePath) {
                 this.artifacts.release(capturePath);
             }
+            const clipboardIssue = clipboardProblem(argv[1], result);
             logger.debug(
-                { app: input.app, ok: result.ok, action: argv[1], refreshed: Boolean(state) },
+                {
+                    app: input.app,
+                    ok: result.ok,
+                    action: argv[1],
+                    refreshed: Boolean(state),
+                    clipboardRestore: result.clipboardRestore,
+                },
                 "Computer Use action completed"
             );
+            if (clipboardIssue) {
+                logger.warn({ app: input.app, clipboardRestore: result.clipboardRestore }, clipboardIssue);
+            }
+
             return {
-                ok: result.ok,
+                ok: result.ok && !clipboardIssue,
                 action: {
                     native: argv[1],
                     effect:
@@ -817,7 +854,7 @@ export class ComputerUse {
                               : ("unknown" as const),
                 },
                 verification: { status: "unverified" as const },
-                error: result.error,
+                error: clipboardIssue ? [clipboardIssue, result.error].filter(Boolean).join(" ") : result.error,
                 state,
                 clipboardRestore: result.clipboardRestore,
                 recovery: result.recovery,

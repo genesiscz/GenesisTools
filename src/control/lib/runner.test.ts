@@ -51,6 +51,23 @@ test("a subprocess timeout reports a partial outcome without retrying", () => {
     expect(spawnCalls).toBe(1);
 });
 
+test("a paste stopped at the deadline keeps only the clipboard status it printed on the way out", () => {
+    const timeout = Object.assign(new Error("fixture ETIMEDOUT"), { code: "ETIMEDOUT" });
+    const printed = '{"ok":false,"dispatchState":"dispatched","clipboardRestore":"restored"}';
+    const boundary: AxRunBoundary = {
+        ensureBinary: () => "/fixture/ax-tool",
+        spawn: () => ({ status: null, signal: "SIGTERM", stdout: `${printed}\n`, stderr: "", error: timeout }),
+    };
+
+    const result = runAxWithBoundary({ args: ["act"], timeoutMs: 25, boundary });
+
+    expect(result).toEqual({
+        ok: false,
+        error: "native execution timed out after 25ms; the action may have partially completed; no retry was attempted",
+        clipboardRestore: "restored",
+    });
+});
+
 test("a signaled subprocess overrides a success envelope as a partial outcome", () => {
     const boundary: AxRunBoundary = {
         ensureBinary: () => "/fixture/ax-tool",

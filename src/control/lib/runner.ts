@@ -341,6 +341,29 @@ export function runAxWithBoundary({
     return recovery.finish(result);
 }
 
+/**
+ * A paste that is told to stop restores the clipboard and prints the outcome before it exits. The
+ * timeout result keeps only that field: the rest of a terminated process's envelope is not
+ * evidence of what the action did.
+ */
+function terminatedClipboard(stdout: string | null): { clipboardRestore?: string } {
+    const lastLine = (stdout ?? "").trim().split("\n").at(-1);
+    if (!lastLine) {
+        return {};
+    }
+
+    try {
+        const parsed: unknown = SafeJSON.parse(lastLine, { strict: true });
+        if (isAxResult(parsed) && typeof parsed.clipboardRestore === "string") {
+            return { clipboardRestore: parsed.clipboardRestore };
+        }
+    } catch (error) {
+        logger.debug({ error }, "terminated native command printed no parseable result");
+    }
+
+    return {};
+}
+
 export function interpretNativeResult({
     args,
     result: r,
@@ -361,6 +384,7 @@ export function interpretNativeResult({
         return {
             ok: false,
             error: `native execution timed out after ${timeoutMs}ms; the action may have partially completed; no retry was attempted`,
+            ...terminatedClipboard(r.stdout),
         };
     }
 
@@ -368,6 +392,7 @@ export function interpretNativeResult({
         return {
             ok: false,
             error: `native execution failed: ${r.error.message}; the action may have partially completed; no retry was attempted`,
+            ...terminatedClipboard(r.stdout),
         };
     }
 

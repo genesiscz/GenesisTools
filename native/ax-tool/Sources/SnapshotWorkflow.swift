@@ -57,9 +57,12 @@ private struct ObservedWindow {
 
 private var workflowDispatchState: String?
 
-private func workflowFailure(_ message: String, category: SnapshotRefusal = .refused) -> Never {
+private func workflowFailure(_ message: String, category: SnapshotRefusal = .refused,
+                             extras: [String: Any] = [:]) -> Never {
     if let state = workflowDispatchState {
-        jsonOutput(["ok": false, "error": message, "dispatchState": state, "refusal": category.rawValue])
+        var payload: [String: Any] = ["ok": false, "error": message, "dispatchState": state, "refusal": category.rawValue]
+        payload.merge(extras) { _, new in new }
+        jsonOutput(payload)
         exit(1)
     }
     errorExit(message)
@@ -1423,60 +1426,88 @@ func cmdAct(appName _: String) {
             workflowFailure(error)
         }
     case "paste":
+        // Nothing is posted until performClipboardPaste reaches cmd+v, so a refusal before it is
+        // truthfully not_started; the clipboard helper says when it did post.
+        workflowDispatchState = "not_started"
         workflowFrontWindow(window, pid: pid, element: element)
         guard let text = workflowArgument("--text") else { workflowFailure("paste requires --text") }
-        do {
-            let transaction = try ClipboardTransaction(board: .general)
-            var restoration = "unchanged"
-            do {
-                defer { restoration = transaction.restore() }
-                try transaction.write(text: text, format: workflowArgument("--format") ?? "text")
-                // --no-activate waives the frontmost requirement here too, as in workflowFrontWindow;
-                // the focused-input check is what decides where the paste lands, so it always runs.
+        func postChord(_ key: CGKeyCode) throws {
+            guard let down = CGEvent(keyboardEventSource: nil, virtualKey: key, keyDown: true),
+                  let up = CGEvent(keyboardEventSource: nil, virtualKey: key, keyDown: false) else {
+                throw WindowEventError.unavailable("could not allocate paste keys")
+            }
+            down.flags = .maskCommand
+            up.flags = .maskCommand
+            down.postToPid(pid)
+            Thread.sleep(forTimeInterval: 0.05)
+            up.postToPid(pid)
+            Thread.sleep(forTimeInterval: 0.05)
+        }
+        let primitives = ClipboardPastePrimitives(
+            readValue: { axStringAttribute(element, "AXValue") },
+            // --no-activate waives the frontmost requirement here too, as in workflowFrontWindow;
+            // the focused-input check is what decides where the paste lands, so it always runs.
+            focusedOnTarget: {
                 guard workflowFlag("--no-activate") || frontmostPid() == pid,
                       let focused = axAttribute(AXUIElementCreateApplication(pid), "AXFocusedUIElement"),
-                      CFGetTypeID(focused) == AXUIElementGetTypeID(), CFEqual(focused, element) else {
-                    throw WindowEventError.unavailable("focus changed before paste; clipboard restored without dispatch")
-                }
-                guard let down = CGEvent(keyboardEventSource: nil, virtualKey: 9, keyDown: true),
-                      let up = CGEvent(keyboardEventSource: nil, virtualKey: 9, keyDown: false) else {
-                    throw WindowEventError.unavailable("could not allocate paste keys")
-                }
-                down.flags = .maskCommand
-                up.flags = .maskCommand
-                let before = axStringAttribute(element, "AXValue")
-                try transaction.dispatchPaste {
-                    if workflowFlag("--replace") {
-                        guard let selectDown = CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: true),
-                              let selectUp = CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: false) else {
-                            throw WindowEventError.unavailable("could not allocate select-all keys")
-                        }
-                        selectDown.flags = .maskCommand
-                        selectUp.flags = .maskCommand
-                        selectDown.postToPid(pid)
-                        Thread.sleep(forTimeInterval: 0.05)
-                        selectUp.postToPid(pid)
-                        Thread.sleep(forTimeInterval: 0.05)
-                    }
-                    down.postToPid(pid)
-                    Thread.sleep(forTimeInterval: 0.05)
-                    up.postToPid(pid)
-                }
-                // Keep the pasteboard available while the receiver consumes its queued shortcut.
-                let replacement = workflowFlag("--replace")
-                let readback = waitForPasteReadback(before: before, expected: replacement ? text : nil) {
-                    axStringAttribute(element, "AXValue")
-                }
-                if replacement, readback != text {
-                    throw WindowEventError.unavailable("paste replacement read-back differs; inspect before retrying")
-                }
+                      CFGetTypeID(focused) == AXUIElementGetTypeID() else { return false }
+                return CFEqual(focused, element)
+            },
+            setSelection: { length in
+                var settable = DarwinBoolean(false)
+                var range = CFRange(location: 0, length: length)
+                guard AXUIElementIsAttributeSettable(element, kAXSelectedTextRangeAttribute as CFString, &settable) == .success,
+                      settable.boolValue, let encoded = AXValueCreate(.cfRange, &range) else { return false }
+                return AXUIElementSetAttributeValue(element, kAXSelectedTextRangeAttribute as CFString, encoded) == .success
+            },
+            selectedRange: {
+                guard let raw = axAttribute(element, "AXSelectedTextRange"), CFGetTypeID(raw) == AXValueGetTypeID() else { return nil }
+                var range = CFRange(location: 0, length: 0)
+                guard AXValueGetValue(raw as! AXValue, .cfRange, &range) else { return nil }
+                return (range.location, range.length)
+            },
+            postSelectAll: {
+                workflowDispatchState = "uncertain"
+                try postChord(0)
+            },
+            postPaste: {
+                workflowDispatchState = "uncertain"
+                try postChord(9)
+            })
+        let transaction: ClipboardTransaction
+        do { transaction = try ClipboardTransaction(board: .general) } catch { workflowFailure(error) }
+        let termination = ClipboardTerminationGuard(transaction: transaction) { signal, restoration in
+            jsonOutput(["ok": false, "action": action, "dispatchState": workflowDispatchState ?? "uncertain",
+                        "refusal": SnapshotRefusal.refused.rawValue, "clipboardRestore": restoration,
+                        "error": "terminated by signal \(signal) during paste; clipboard \(restoration); inspect before retrying"])
+            exit(128 + signal)
+        }
+        defer { termination.cancel() }
+        do {
+            let outcome = try performClipboardPaste(transaction: transaction, text: text,
+                                                    format: workflowArgument("--format") ?? "text",
+                                                    replace: workflowFlag("--replace"), primitives: primitives)
+            termination.cancel()
+            actionExtras["clipboardRestore"] = outcome.clipboardRestore
+            actionExtras["pasteVerified"] = outcome.verified
+            if let selection = outcome.selection { actionExtras["selection"] = selection }
+            if outcome.skipped {
+                actionExtras["note"] = "the field already held exactly this text; nothing was pasted"
             }
-            actionExtras["clipboardRestore"] = restoration
-            actionOK = restoration != "restore-failed"
-            if !actionOK {
+            if !outcome.verified {
+                actionExtras["note"] = "the field's value is unreadable, so nothing proved the paste landed; inspect it"
+            }
+            if outcome.clipboardRestore == "restore-failed" {
+                actionOK = false
                 actionExtras["error"] = "paste dispatched but clipboard restoration failed; do not repeat the paste"
             }
+        } catch let failure as ClipboardPasteError {
+            termination.cancel()
+            workflowDispatchState = failure.dispatched ? "uncertain" : "not_started"
+            workflowFailure(failure.message, extras: ["clipboardRestore": failure.clipboardRestore,
+                                                      "pasteDispatched": failure.dispatched])
         } catch {
+            termination.cancel()
             workflowFailure(error)
         }
     case "type":

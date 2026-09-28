@@ -29,7 +29,7 @@ if args.count < 2 || args[1] == "--help" || args[1] == "-h" {
                               pages use observed viewport dimensions (default: one page); pixels use an exact wheel distance
                       select: --text TEXT [--prefix TEXT] [--suffix TEXT] OR --range utf16Start,length
                               [--selection text|cursor_before|cursor_after]
-                      paste: --text TEXT [--format text|md|html]; restores clipboard unless another writer changes it
+                      paste: --text TEXT [--format text|md|html]; restores the clipboard on every exit path unless another writer copied something new
                       Refuses stale app/window/tree/index. No automatic retries or focus. Refresh with see after action.
       ax-tool preflight --app <name> [--depth <n>] [--wanted g1,g2]  Discover everything (see above)
                         --wanted groups: screens,frontmost,windows,elements,browser,plan

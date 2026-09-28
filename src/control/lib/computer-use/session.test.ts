@@ -6,6 +6,7 @@ import { Client } from "@modelcontextprotocol/client";
 import { InMemoryTransport } from "@modelcontextprotocol/server";
 import { createComputerMcpServer, invokeComputerTool } from "../../mcp/server";
 import type { Observation } from "../decision/observation";
+import type { AxResult } from "../runner";
 import { ComputerReplEngine } from "./repl";
 import { ComputerUse, type NativeBridge } from "./session";
 
@@ -753,6 +754,58 @@ test("explicit paste replacement requires preparation and does not alter default
         text: "insert",
     });
     expect(f.calls.at(-1)).not.toContain("--replace");
+});
+
+test("a paste reports the clipboard restore on every path, and an unreported or failed restore is an error", async () => {
+    const f = fixture();
+    const original = f.native.run;
+    const replies: AxResult[] = [
+        // Refused before the clipboard was touched: quiet.
+        { ok: false, dispatchState: "not_started", refusal: "focus_mismatch", error: "wrong frontmost app/window" },
+        // Dispatched, readback differs, clipboard restored: the error is the paste's own.
+        {
+            ok: false,
+            dispatchState: "uncertain",
+            refusal: "refused",
+            clipboardRestore: "restored",
+            error: "paste replacement read-back differs; inspect before retrying",
+        },
+        // The paste landed but the restore failed: never ok.
+        { ok: true, dispatchState: "dispatched", clipboardRestore: "restore-failed" },
+        // Killed at the deadline without a report.
+        { ok: false, error: "native execution timed out after 10000ms; the action may have partially completed" },
+    ];
+    f.native.run = async (call) => {
+        if (call.args[0] === "act") {
+            const reply = replies.shift();
+            if (!reply) {
+                throw new Error("An extra paste was dispatched");
+            }
+
+            return reply;
+        }
+
+        return original(call);
+    };
+    const paste = async () => {
+        const state = await f.computer.get_app_state({ app: "Fixture", image: false });
+        const field = state.elements.find((row) => row.identifier === "name")!;
+        return f.computer.paste({ app: "Fixture", element_ref: field.ref, text: "new", replace: true, prepare: true });
+    };
+    const refused = await paste();
+    expect(refused.ok).toBe(false);
+    expect(refused.error).toBe("wrong frontmost app/window");
+    const mismatch = await paste();
+    expect(mismatch.error).toBe("paste replacement read-back differs; inspect before retrying");
+    expect(mismatch.clipboardRestore).toBe("restored");
+    const leaked = await paste();
+    expect(leaked.ok).toBe(false);
+    expect(leaked.error).toStartWith("CLIPBOARD NOT RESTORED");
+    const killed = await paste();
+    expect(killed.ok).toBe(false);
+    expect(killed.error).toStartWith("CLIPBOARD STATE UNKNOWN");
+    expect(killed.action.effect).toBe("unknown");
+    expect(replies).toHaveLength(0);
 });
 
 test("Jev target admission excludes controls behind a visible sheet", async () => {

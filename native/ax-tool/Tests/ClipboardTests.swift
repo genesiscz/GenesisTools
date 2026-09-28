@@ -65,28 +65,50 @@ final class ClipboardTests: XCTestCase {
 }
 
 extension ClipboardTests {
-    func testReplacementWaitsPastIntermediateValueWithoutRepeatingPaste() throws {
-        let board = NSPasteboard.withUniqueName()
-        defer { board.releaseGlobally() }
-        let transaction = try ClipboardTransaction(board: board)
-        try transaction.write(text: "complete", format: "text")
-        defer { transaction.restore() }
-        var pastes = 0
-        try transaction.dispatchPaste { pastes += 1 }
+    func testConsumptionWaitsPastIntermediateValue() {
         var time: TimeInterval = 0
         var reads = ["seed", "", "complete"]
-        let value = waitForPasteReadback(before: "seed", expected: "complete", now: { time }, wait: { time += $0 }) {
-            XCTAssertEqual(board.string(forType: .string), "complete")
-            return reads.removeFirst()
-        }
-        XCTAssertEqual(value, "complete")
-        XCTAssertEqual(pastes, 1)
-        XCTAssertEqual(time, 0.3, accuracy: 0.0001)
+        let result = waitForPasteConsumption(before: "seed", timeout: 3, now: { time }, wait: { time += $0 },
+                                             read: { reads.removeFirst() }, settled: { $0 == "complete" })
+        XCTAssertEqual(result.value, "complete")
+        XCTAssertTrue(result.consumed)
+        XCTAssertEqual(time, 0.15, accuracy: 0.0001)
     }
-    func testReadbackDeadlineReturnsMismatchWithoutDispatchingAnything() {
+
+    func testConsumptionDeadlineReportsAChangeThatNeverSettled() {
         var time: TimeInterval = 0
-        let value = waitForPasteReadback(before: "seed", expected: "complete", now: { time }, wait: { time += $0 }) { "partial" }
-        XCTAssertEqual(value, "partial")
-        XCTAssertEqual(time, 1, accuracy: 0.0001)
+        let result = waitForPasteConsumption(before: "seed", timeout: 3, now: { time }, wait: { time += $0 },
+                                             read: { "partial" }, settled: { $0 == "complete" })
+        XCTAssertEqual(result.value, "partial")
+        XCTAssertTrue(result.consumed)
+        XCTAssertEqual(time, 3, accuracy: 0.0001)
+    }
+
+    func testWrittenPayloadCarriesTheTransientMarkers() throws {
+        let board = NSPasteboard.withUniqueName()
+        defer { board.releaseGlobally() }
+        board.setString("before", forType: .string)
+        let transaction = try ClipboardTransaction(board: board)
+        try transaction.write(text: "ours", format: "text")
+        defer { transaction.restore() }
+        let types = board.pasteboardItems?.first?.types ?? []
+        for marker in clipboardTransientTypes {
+            XCTAssertTrue(types.contains(marker), "missing \(marker.rawValue)")
+        }
+    }
+
+    /// A clipboard-history app that re-publishes the item it recorded moves the change count
+    /// without the user copying anything. Skipping the restore then left our text on the
+    /// clipboard for good.
+    func testRepublishedPayloadIsStillRestored() throws {
+        let board = NSPasteboard.withUniqueName()
+        defer { board.releaseGlobally() }
+        board.setString("before", forType: .string)
+        let transaction = try ClipboardTransaction(board: board)
+        try transaction.write(text: "our paste", format: "text")
+        board.clearContents()
+        board.setString("our paste", forType: .string)
+        XCTAssertEqual(transaction.restore(), "restored")
+        XCTAssertEqual(board.string(forType: .string), "before")
     }
 }

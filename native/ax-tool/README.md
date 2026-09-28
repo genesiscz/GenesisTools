@@ -139,7 +139,7 @@ them off for interactive use, where raising the app is what you asked for.
 
 `paste --text PAYLOAD --format text|md|html` uses the focused input's current selection. Select another range or caret through `select → see → paste`; selection flags on paste are rejected. `type` rejects more than 256 UTF-16 code units before dispatch; use paste for longer text.
 
-Clipboard restoration skips observed competing writes, but remains best effort because AppKit has no atomic compare-and-swap. HTML paste also supplies raw markup as plain text, so rich rendering depends on the receiver.
+Clipboard restoration skips a genuinely newer copy, but not a clipboard-history app re-publishing our own payload. It waits for the field to show the paste (up to 3 s) and runs on every exit path, SIGTERM included; results carry `clipboardRestore`. `--replace` proves the whole-field selection before cmd+v. It remains best effort because AppKit has no atomic compare-and-swap. HTML paste also supplies raw markup as plain text, so rich rendering depends on the receiver.
 
 ## Tests
 

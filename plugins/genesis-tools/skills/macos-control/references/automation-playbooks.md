@@ -263,7 +263,10 @@ This is not semantic rebinding. Changed values, documents, missing/ambiguous tar
 permissions and expired tokens still stop. Coordinates and OCR regions are not retried. Unknown or
 already-dispatched input never qualifies, including native crashes/timeouts. A failed paste readback
 cannot trigger a second paste. Replacement readback waits for the exact requested text, not the
-first intermediate value change, while keeping the clipboard available. `noRetry` in workflow
+first intermediate value change, while keeping the clipboard available. The clipboard comes back
+only after the field shows the paste landed (up to 3 s), and on every other exit path too. Check
+`clipboardRestore` on the result: a paste whose restore failed or went unreported returns
+`ok:false` with `CLIPBOARD NOT RESTORED` or `CLIPBOARD STATE UNKNOWN`. `noRetry` in workflow
 plans still forbids replaying dispatched steps.
 
 Unstable AX/screenshot reads retry up to twice in the same pinned process/window within a one-second
