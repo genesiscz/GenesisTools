@@ -120,7 +120,7 @@ export function registerListen(program: Command): void {
         .option("--surface [kind]", `ax, browser, or auto (chrome verbs need --port)`)
         .option("--port <n>", "CDP port for the browser surface", "9222")
         .option("--page-url <text>", "Browser surface: select the page whose URL contains this text")
-        .option("--page-index <n>", "Browser surface: select the page with this list_pages index")
+        .option("--page-index <n>", "Browser surface: select the page with this index in the page list")
         .option("--url <url>", "Browser surface: open this URL as a NEW page before the first snapshot")
         .option("--inputs <json>", "Browser surface: JSON object of values Jev may type; it never invents text")
         .option("--wake <phrases>", "Comma-separated wake phrases", DEFAULT_WAKE_PHRASES.join(","))

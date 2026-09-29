@@ -1,304 +1,423 @@
 import { expect, test } from "bun:test";
+import type { DomAction, DomSnapshot } from "@app/chrome-devtools/lib/dom/in-page";
+import type { DomActResult } from "@app/chrome-devtools/lib/dom/page";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { performVerb } from "../browser/verbs";
-import { createBrowserSurface } from "./browser";
-import type { SurfaceSnapshot } from "./surface";
+import { matchPage, type PageSelector, pageRefusal } from "../browser/pages";
+import { createWriter, type WriterRequest, type WriterResult } from "../browser/writer";
+import { type BrowserSurfaceOptions, createBrowserSurface, type DomPageDriver, type ScreenPoint } from "./browser";
+import type { SurfaceCandidate, SurfaceSnapshot } from "./surface";
 
-interface Call {
-    name: string;
-    args: Record<string, unknown>;
+function domAction(overrides: Partial<DomAction> & Pick<DomAction, "id" | "node" | "kind" | "label">): DomAction {
+    return { role: overrides.kind === "fill" ? "textbox" : "button", guard: `g${overrides.node}`, ...overrides };
 }
 
-const FIXTURE_PAGES = `## Pages
-0: Inbox (https://mail.example.test/inbox)
-1: Jev fixture page (http://127.0.0.1:3990/) [selected]
-`;
-
-const FIXTURE_SNAPSHOT = `## Latest page snapshot
-uid=1_0 RootWebArea "Jev fixture page" url="http://127.0.0.1:3990/"
-  uid=1_3 link "Learn more" url="http://127.0.0.1:3990/second"
-  uid=1_5 button "Export report"
-  uid=1_8 textbox "Name"
-  uid=1_9 button "Submit"
-`;
-
-const LOGIN_SNAPSHOT = `## Latest page snapshot
-uid=2_0 RootWebArea "Sign in" url="https://example.test/login"
-  uid=2_4 textbox "Email"
-  uid=2_6 textbox "Password"
-  uid=2_10 button "Sign in"
-`;
-
-function script(value: string): string {
-    return `Script ran on page and returned:\n\`\`\`json\n${SafeJSON.stringify(value)}\n\`\`\``;
+function field(name: string, type = "text", secret = false) {
+    return { type, name, id: "", ariaLabel: "", autocomplete: "", secret };
 }
 
-function fakeMcp(options: { snapshot?: string; pages?: string; fieldTypes?: Record<string, string> } = {}) {
-    const calls: Call[] = [];
-    const fieldTypes = options.fieldTypes ?? {};
-    const door = {
-        calls,
-        async callTool(name: string, args: Record<string, unknown> = {}) {
-            calls.push({ name, args });
-            if (name === "list_pages" || name === "select_page") {
-                return { content: [{ type: "text", text: options.pages ?? FIXTURE_PAGES }] };
-            }
+const checkout: DomSnapshot = {
+    url: "https://shop.example/checkout",
+    title: "Checkout",
+    text: "Checkout Your order",
+    actions: [
+        domAction({
+            id: "n1",
+            node: 1,
+            kind: "click",
+            role: "link",
+            label: "Pricing",
+            href: "https://shop.example/pricing",
+        }),
+        domAction({ id: "n2f", node: 2, kind: "fill", label: "Email", value: "", field: field("email", "email") }),
+        domAction({ id: "n3f", node: 3, kind: "fill", label: "Password", field: field("password", "password", true) }),
+        domAction({ id: "n4o1", node: 4, kind: "select", label: "Shipping", option: { index: 1, label: "Express" } }),
+        domAction({ id: "n5f", node: 5, kind: "fill", label: "Name", value: "Ada", field: field("name") }),
+    ],
+    omitted: 0,
+    belowFold: 2,
+    belowFoldLabels: ["Place order", "Terms of sale"],
+    secretFields: [{ label: "Password", field: field("password", "password", true) }],
+    canScrollDown: true,
+    canScrollUp: false,
+    historyLength: 1,
+    marker: "m1",
+};
 
-            if (name === "take_snapshot") {
-                return { content: [{ type: "text", text: options.snapshot ?? FIXTURE_SNAPSHOT }] };
-            }
+const plain: DomSnapshot = {
+    ...checkout,
+    url: "http://127.0.0.1:3990/",
+    title: "Jev fixture page",
+    actions: [
+        domAction({ id: "n1", node: 1, kind: "click", role: "link", label: "Learn more" }),
+        domAction({ id: "n2", node: 2, kind: "click", label: "Export report" }),
+        domAction({ id: "n3f", node: 3, kind: "fill", label: "Name", value: "", field: field("name") }),
+    ],
+    canScrollDown: false,
+    historyLength: 3,
+    marker: "p1",
+    secretFields: [],
+};
 
-            if (name === "evaluate_script") {
-                const uids = Array.isArray(args.args) ? (args.args as string[]) : [];
-                const describing = String(args.function).includes("els.map");
-                const text = describing
-                    ? uids.map((uid) => `${fieldTypes[uid] ?? "text"}|${uid}|${uid}|`).join("\n")
-                    : "10,20,30,40,100,200,800,900,1000,1000";
-                return { content: [{ type: "text", text: script(text) }] };
-            }
-
-            return { content: [{ type: "text", text: "ok" }] };
-        },
-        toolText(result: unknown) {
-            const content = (result as { content: Array<{ text: string }> }).content;
-            return content.map((block) => block.text).join("\n");
-        },
-        connectionId: () => 1,
-        async close() {},
+/** A page driver that records every call and answers success, so the surface's routing is what is tested. */
+function scriptedPage(
+    snapshots: DomSnapshot[],
+    calls: string[],
+    screen?: ScreenPoint
+): DomPageDriver & { reads: number } {
+    const done = (call: string): Promise<DomActResult> => {
+        calls.push(call);
+        return Promise.resolve({
+            ok: true,
+            settled: { reason: "quiet", mutations: 1, ms: 5 },
+            ...(screen ? { screen } : {}),
+        });
     };
-    return door;
+    const driver = {
+        reads: 0,
+        snapshot: async () => snapshots[Math.min(driver.reads++, snapshots.length - 1)],
+        click: (action: DomAction) => done(`click ${action.id}@${action.guard}`),
+        fill: (action: DomAction, value: string) => done(`fill ${action.id}=${value}`),
+        select: (action: DomAction) => done(`select ${action.id}`),
+        scroll: (direction: 1 | -1) => done(`scroll ${direction}`),
+        wait: () => done("wait"),
+        back: () => done("back"),
+        reload: () => done("reload"),
+        navigate: (url: string) => done(`navigate ${url}`),
+        close: () => {},
+    };
+    return driver;
 }
 
-function surfaceWith(mcp: ReturnType<typeof fakeMcp>, extra: Record<string, unknown> = {}) {
-    const drawn: Array<{ x: number; y: number }> = [];
+function surfaceWith(options: {
+    snapshots: DomSnapshot[];
+    calls?: string[];
+    screen?: ScreenPoint;
+    extra?: Partial<BrowserSurfaceOptions>;
+}) {
+    const calls = options.calls ?? [];
+    const drawn: ScreenPoint[] = [];
+    const selectors: PageSelector[] = [];
+    const page = scriptedPage(options.snapshots, calls, options.screen);
     const surface = createBrowserSurface({
         port: 9222,
-        mcp,
         overlay: (point) => {
             drawn.push(point);
             return true;
         },
-        ...extra,
-    });
-    return { surface, drawn };
-}
-
-test("refuses to act when several pages are open and no selector names one", async () => {
-    const mcp = fakeMcp();
-    const { surface } = surfaceWith(mcp);
-    await expect(surface.see()).rejects.toThrow(/2 CDP pages are open; pass --page-url/);
-    expect(mcp.calls.some((call) => call.name === "select_page")).toBe(false);
-    expect(mcp.calls.some((call) => call.name === "take_snapshot")).toBe(false);
-});
-
-test("--page-url selects the matching page exactly once, before the first snapshot", async () => {
-    const mcp = fakeMcp();
-    const { surface } = surfaceWith(mcp, { pageUrl: "127.0.0.1:3990" });
-    await surface.see();
-    await surface.see();
-    const selects = mcp.calls.filter((call) => call.name === "select_page");
-    expect(selects).toHaveLength(1);
-    expect(selects[0].args).toEqual({ pageId: 1 });
-    expect(mcp.calls.findIndex((call) => call.name === "select_page")).toBeLessThan(
-        mcp.calls.findIndex((call) => call.name === "take_snapshot")
-    );
-});
-
-test("--page-index that matches nothing names the open pages", async () => {
-    const mcp = fakeMcp();
-    const { surface } = surfaceWith(mcp, { pageIndex: 7 });
-    await expect(surface.see()).rejects.toThrow(/No CDP page matches --page-index 7/);
-});
-
-test("a text field is a candidate only when --inputs names it", async () => {
-    const without = surfaceWith(fakeMcp(), { pageUrl: "3990" });
-    const plain = await without.surface.see();
-    expect(plain.candidates.filter((row) => row.action === "set")).toHaveLength(0);
-
-    const mcp = fakeMcp();
-    const { surface } = surfaceWith(mcp, { pageUrl: "3990", inputs: { name: "Robin" } });
-    const snapshot = await surface.see();
-    const set = snapshot.candidates.filter((row) => row.action === "set");
-    expect(set).toEqual([{ id: "1_8", label: "Name", element: -1, action: "set", role: "textbox" }]);
-
-    await surface.act(snapshot, set[0]);
-    const fill = mcp.calls.find((call) => call.name === "fill");
-    expect(fill?.args).toEqual({ uid: "1_8", value: "Robin" });
-});
-
-test("a password page with no supplied secret yields no candidates", async () => {
-    const mcp = fakeMcp({
-        snapshot: LOGIN_SNAPSHOT,
-        pages: `## Pages\n0: Sign in (https://example.test/login) [selected]\n`,
-        fieldTypes: { "2_4": "email", "2_6": "password" },
-    });
-    const { surface } = surfaceWith(mcp, { pageUrl: "example.test" });
-    const snapshot = await surface.see();
-    expect(snapshot.candidates).toEqual([]);
-    expect(snapshot.evidence).toMatchObject({ passwordWall: true, fields: ["Password"] });
-    expect(mcp.calls.some((call) => call.name === "click")).toBe(false);
-});
-
-test("a supplied password opens the same page for acting", async () => {
-    const mcp = fakeMcp({
-        snapshot: LOGIN_SNAPSHOT,
-        pages: `## Pages\n0: Sign in (https://example.test/login) [selected]\n`,
-        fieldTypes: { "2_4": "email", "2_6": "password" },
-    });
-    const { surface } = surfaceWith(mcp, { pageUrl: "example.test", inputs: { password: "hunter-invented" } });
-    const snapshot = await surface.see();
-    expect(snapshot.candidates.map((row) => row.id)).toContain("2_10");
-});
-
-test("acting twice on the same uid without a page change stops the loop", async () => {
-    const mcp = fakeMcp();
-    const { surface } = surfaceWith(mcp, { pageUrl: "3990" });
-    const snapshot = await surface.see();
-    const target = snapshot.candidates.find((row) => row.id === "1_5");
-    if (!target) {
-        throw new Error("the fixture snapshot lost its button");
-    }
-
-    expect(await surface.act(snapshot, target)).toEqual({ ok: true, error: undefined });
-    const again = await surface.see();
-    expect(again.id).toBe(snapshot.id);
-    expect(await surface.act(again, target)).toEqual({ ok: false, error: "repeated_action" });
-    expect(mcp.calls.filter((call) => call.name === "click")).toHaveLength(1);
-});
-
-test("a click draws the overlay at real screen coordinates", async () => {
-    const mcp = fakeMcp();
-    const { surface, drawn } = surfaceWith(mcp, { pageUrl: "3990" });
-    const snapshot = await surface.see();
-    const target = snapshot.candidates.find((row) => row.id === "1_5");
-    if (!target) {
-        throw new Error("the fixture snapshot lost its button");
-    }
-
-    await surface.act(snapshot, target);
-    expect(drawn).toEqual([{ x: 125, y: 340 }]);
-});
-
-test("a candidate outside the snapshot never reaches the browser", async () => {
-    const mcp = fakeMcp();
-    const { surface } = surfaceWith(mcp, { pageUrl: "3990" });
-    const snapshot = await surface.see();
-    const result = await surface.act(snapshot, {
-        id: "9_9",
-        label: "invented",
-        element: -1,
-        action: "click",
-    });
-    expect(result.ok).toBe(false);
-    expect(mcp.calls.some((call) => call.name === "click")).toBe(false);
-});
-
-test("chrome rows are choosable and reach chrome-devtools", async () => {
-    const mcp = fakeMcp();
-    const { surface } = surfaceWith(mcp, { pageUrl: "3990" });
-    const snapshot = await surface.see();
-    const back = snapshot.candidates.find((row) => row.chrome === "back");
-    expect(back).toMatchObject({ action: "chrome", element: -1 });
-    if (!back) {
-        throw new Error("the browser surface offered no chrome verbs");
-    }
-
-    expect(await surface.act(snapshot, back)).toEqual({ ok: true, error: undefined });
-    expect(mcp.calls.find((call) => call.name === "navigate_page")?.args).toEqual({ type: "back" });
-});
-
-function verbMcp() {
-    const calls: Call[] = [];
-    return {
-        calls,
-        async callTool(name: string, args: Record<string, unknown> = {}) {
-            calls.push({ name, args });
-            return { content: [{ type: "text", text: "done" }] };
+        openPage: async (selector) => {
+            selectors.push(selector);
+            return page;
         },
-        toolText: () => "done",
-        connectionId: () => 1,
-        async close() {},
-    };
+        ...options.extra,
+    });
+    return { surface, calls, drawn, selectors, page };
 }
 
-test("every verb reaches exactly one MCP tool and an unknown verb reaches none", async () => {
-    const cases: Array<[Record<string, unknown>, string]> = [
-        [{ verb: "click", uid: "1_5" }, "click"],
-        [{ verb: "fill", uid: "1_8", value: "Robin" }, "fill"],
-        [{ verb: "select", uid: "1_7", value: "Pro" }, "fill"],
-        [{ verb: "back" }, "navigate_page"],
-        [{ verb: "reload" }, "navigate_page"],
-        [{ verb: "scroll_down" }, "evaluate_script"],
-        [{ verb: "scroll_up" }, "evaluate_script"],
-        [{ verb: "wait" }, "evaluate_script"],
-        [
-            { verb: "navigate", url: "https://example.test/next", pageUrl: "https://example.test/start" },
-            "navigate_page",
-        ],
-    ];
-    for (const [request, tool] of cases) {
-        const mcp = verbMcp();
-        const result = await performVerb({ mcp, request: request as { verb: string } });
-        expect({ verb: request.verb, ...result }).toMatchObject({ verb: request.verb, ok: true });
-        expect(mcp.calls.map((call) => call.name)).toEqual([tool]);
+function row(snapshot: SurfaceSnapshot, id: string): SurfaceCandidate {
+    const found = snapshot.candidates.find((candidate) => candidate.id === id);
+    if (!found) {
+        throw new Error(`no row ${id}`);
     }
 
-    const unknown = verbMcp();
-    expect(await performVerb({ mcp: unknown, request: { verb: "purchase" } })).toEqual({
-        ok: false,
-        error: "unsupported_verb: purchase",
+    return found;
+}
+
+const pages = [
+    { index: 0, url: "https://mail.example.test/inbox", title: "Inbox" },
+    { index: 1, url: "http://127.0.0.1:3990/", title: "Jev fixture page" },
+];
+
+test("several open pages and no selector name no page, and the refusal lists them", () => {
+    expect(matchPage(pages, {})).toBeUndefined();
+    expect(pageRefusal(pages, {})).toMatch(/2 CDP pages are open; pass --page-url/);
+    expect(pageRefusal(pages, {})).toContain("1: http://127.0.0.1:3990/");
+});
+
+test("--page-url picks the matching page and --page-index that matches nothing names the open pages", () => {
+    expect(matchPage(pages, { pageUrl: "127.0.0.1:3990" })?.index).toBe(1);
+    expect(matchPage(pages, { pageIndex: 7 })).toBeUndefined();
+    expect(pageRefusal(pages, { pageIndex: 7 })).toMatch(/No CDP page matches --page-index 7/);
+});
+
+test("the page is opened once, with the caller's selector, before the first read", async () => {
+    const { surface, selectors, page } = surfaceWith({ snapshots: [plain], extra: { pageUrl: "3990" } });
+    await surface.see();
+    await surface.see();
+    expect(selectors).toEqual([{ pageUrl: "3990", pageTitle: undefined, pageIndex: undefined, url: undefined }]);
+    expect(page.reads).toBe(2);
+});
+
+test("only rows the page can take now are offered, and only supplied values are typed", async () => {
+    const { surface } = surfaceWith({
+        snapshots: [checkout],
+        extra: { inputs: { email: "ada@example.com", password: "hunter-invented", name: "Ada" } },
     });
-    expect(unknown.calls).toEqual([]);
+    const seen = await surface.see();
+    expect(seen.candidates.map((candidate) => `${candidate.id}:${candidate.action}`)).toEqual([
+        "n1:click",
+        "n2f:set",
+        "n3f:set",
+        "n4o1:click",
+        "chrome:reload:chrome",
+        "chrome:scroll_down:chrome",
+        "chrome:wait:chrome",
+    ]);
+    const serialized = SafeJSON.stringify(seen.evidence);
+    expect(serialized).not.toContain("hunter-invented");
+    expect(serialized).not.toContain("ada@example.com");
 });
 
-test("a verb without the input it needs refuses instead of reaching the browser", async () => {
-    for (const request of [
-        { verb: "click" },
-        { verb: "fill", uid: "1_8" },
-        { verb: "navigate" },
-        { verb: "navigate", url: "https://elsewhere.test/", pageUrl: "https://example.test/start" },
-    ]) {
-        const mcp = verbMcp();
-        const result = await performVerb({ mcp, request });
-        expect(result.ok).toBe(false);
-        expect(mcp.calls).toEqual([]);
-    }
+test("a text field is a candidate only when --inputs names it, and the act types exactly that value", async () => {
+    const bare = await surfaceWith({ snapshots: [plain] }).surface.see();
+    expect(bare.candidates.filter((candidate) => candidate.action === "set")).toHaveLength(0);
+
+    const { surface, calls } = surfaceWith({ snapshots: [plain], extra: { inputs: { name: "Robin" } } });
+    const seen = await surface.see();
+    expect(await surface.act(seen, row(seen, "n3f"))).toEqual({ ok: true });
+    expect(calls).toEqual(["fill n3f=Robin"]);
 });
 
-test("the surface tolerates the auto surface's cdp: prefix on snapshot rows", async () => {
-    const mcp = fakeMcp();
-    const { surface } = surfaceWith(mcp, { pageUrl: "3990" });
-    const snapshot = await surface.see();
-    const merged: SurfaceSnapshot = {
-        ...snapshot,
-        candidates: snapshot.candidates.map((row) => ({ ...row, id: `cdp:${row.id}` })),
+test("a page asking for a password that --inputs lacks offers nothing and touches nothing", async () => {
+    const { surface, calls } = surfaceWith({ snapshots: [checkout], extra: { inputs: { email: "ada@example.com" } } });
+    const seen = await surface.see();
+    expect(seen.candidates).toEqual([]);
+    expect(seen.evidence).toMatchObject({ passwordWall: true, fields: ["Password"] });
+    expect(calls).toEqual([]);
+});
+
+test("one password key does not unlock a page that also asks for a one-time code nobody supplied", async () => {
+    const twoSecrets = {
+        ...checkout,
+        secretFields: [
+            { label: "Password", field: field("password", "password", true) },
+            { label: "Verification code", field: field("otp", "text", true) },
+        ],
     };
-    const result = await surface.act(merged, { id: "1_5", label: "Export report", element: -1, action: "click" });
-    expect(result.ok).toBe(true);
+    const { surface, calls } = surfaceWith({
+        snapshots: [twoSecrets],
+        extra: { inputs: { email: "ada@example.com", password: "hunter-invented" } },
+    });
+    const seen = await surface.see();
+    expect(seen.candidates).toEqual([]);
+    expect(seen.evidence).toMatchObject({ passwordWall: true, fields: ["Verification code"] });
+    expect(calls).toEqual([]);
 });
 
-test("a reconnected session re-selects the target page before the next snapshot", async () => {
-    const mcp = fakeMcp();
-    let connection = 1;
-    const reconnecting = { ...mcp, connectionId: () => connection };
-    const { surface } = surfaceWith(reconnecting, { pageUrl: "3990" });
-    await surface.see();
-    connection = 2;
-    await surface.see();
-    const selects = mcp.calls.filter((call) => call.name === "select_page");
-    expect(selects).toHaveLength(2);
-    expect(selects[1].args).toEqual({ pageId: 1 });
+test("a link off the page's origin is never offered, and a forged act on it is refused", async () => {
+    const offsite = domAction({
+        id: "n9",
+        node: 9,
+        kind: "click",
+        role: "link",
+        label: "Partner deal",
+        href: "https://elsewhere.example/deal",
+    });
+    const local = domAction({ id: "n8", node: 8, kind: "click", role: "link", label: "Top", href: "#top" });
+    const page = { ...plain, actions: [...plain.actions, offsite, local] };
+    const { surface, calls } = surfaceWith({ snapshots: [page] });
+    const seen = await surface.see();
+    expect(seen.candidates.some((candidate) => candidate.id === "n9")).toBe(false);
+    expect(seen.candidates.some((candidate) => candidate.id === "n8")).toBe(true);
+    expect(calls).toEqual([]);
 });
 
-test("a field that already holds the supplied value is no longer a candidate", async () => {
-    const filled = `## Latest page snapshot
-uid=1_0 RootWebArea "Jev fixture page" url="http://127.0.0.1:3990/"
-  uid=1_8 textbox "Name" value="Robin"
-  uid=1_9 button "Submit"
-`;
-    const mcp = fakeMcp({ snapshot: filled });
-    const { surface } = surfaceWith(mcp, { pageUrl: "3990", inputs: { name: "Robin" } });
-    const snapshot = await surface.see();
-    expect(snapshot.candidates.filter((row) => row.action === "set")).toEqual([]);
-    expect(snapshot.candidates.map((row) => row.id)).toContain("1_9");
+test("a password field below the fold still raises the wall, though no visible row asks for it", async () => {
+    const belowFold = { ...plain, secretFields: [{ label: "Password", field: field("password", "password", true) }] };
+    const { surface, calls } = surfaceWith({ snapshots: [belowFold] });
+    const seen = await surface.see();
+    expect(seen.candidates).toEqual([]);
+    expect(seen.evidence).toMatchObject({ passwordWall: true, fields: ["Password"] });
+    expect(calls).toEqual([]);
+});
+
+test("an act runs exactly the action its row was built from; a row never offered never reaches the page", async () => {
+    const { surface, calls } = surfaceWith({
+        snapshots: [checkout],
+        extra: { inputs: { email: "ada@example.com", password: "hunter-invented" } },
+    });
+    const seen = await surface.see();
+    expect(await surface.act(seen, row(seen, "n4o1"))).toEqual({ ok: true });
+    expect(await surface.act(seen, row(seen, "chrome:scroll_down"))).toEqual({ ok: true });
+    const forged = await surface.act(seen, { id: "n99", label: "invented", element: -1, action: "click" });
+    expect(forged.ok).toBe(false);
+    expect(calls).toEqual(["select n4o1", "scroll 1"]);
+});
+
+test("chrome rows appear only when the page can take them: back needs history, scroll needs room", async () => {
+    const seen = await surfaceWith({ snapshots: [plain] }).surface.see();
+    const verbs = seen.candidates
+        .filter((candidate) => candidate.action === "chrome")
+        .map((candidate) => candidate.chrome);
+    expect(verbs).toEqual(["back", "reload", "wait"]);
+});
+
+test("a click draws the overlay at the screen point the page reported, and only then", async () => {
+    const shown = surfaceWith({ snapshots: [plain], screen: { x: 125, y: 340 } });
+    const seen = await shown.surface.see();
+    await shown.surface.act(seen, row(seen, "n2"));
+    expect(shown.drawn).toEqual([{ x: 125, y: 340 }]);
+
+    const hidden = surfaceWith({ snapshots: [plain] });
+    const background = await hidden.surface.see();
+    await hidden.surface.act(background, row(background, "n2"));
+    expect(hidden.drawn).toEqual([]);
+});
+
+test("the auto surface's merged snapshot and cdp: prefix reach the page row", async () => {
+    const { surface, calls } = surfaceWith({ snapshots: [plain] });
+    const seen = await surface.see();
+    const merged: SurfaceSnapshot = {
+        id: `auto:ax-token:${seen.id}`,
+        label: "merged",
+        candidates: seen.candidates.map((candidate) => ({ ...candidate, id: `cdp:${candidate.id}` })),
+    };
+    expect(await surface.act(merged, { ...row(seen, "n2") })).toEqual({ ok: true });
+    expect(calls).toEqual(["click n2@g2"]);
+});
+
+/**
+ * Node ids restart on every document. An act on the snapshot the loop saw must use THAT page's
+ * action (and its guard, which the page checks again), never a newer page's row with the same id.
+ */
+test("an act uses the row of the snapshot it names, not a newer page's row with the same id", async () => {
+    const next: DomSnapshot = {
+        ...plain,
+        url: "http://127.0.0.1:3990/second",
+        actions: [domAction({ id: "n2", node: 2, kind: "click", label: "Delete everything", guard: "other" })],
+        marker: "p2",
+    };
+    const { surface, calls } = surfaceWith({ snapshots: [plain, next] });
+    const first = await surface.see();
+    await surface.see();
+    await surface.act(first, row(first, "n2"));
+    expect(calls).toEqual(["click n2@g2"]);
+});
+
+test("a field that already holds the supplied value is no longer offered", async () => {
+    const { surface } = surfaceWith({ snapshots: [checkout], extra: { inputs: { name: "Ada", password: "x" } } });
+    const seen = await surface.see();
+    expect(seen.candidates.some((candidate) => candidate.id === "n5f")).toBe(false);
+});
+
+test("a navigate off the page's origin is refused before it reaches the browser", async () => {
+    const { surface, calls } = surfaceWith({
+        snapshots: [{ ...checkout, actions: [], secretFields: [] }],
+        extra: { url: "https://elsewhere.example/landing" },
+    });
+    const seen = await surface.see();
+    const result = await surface.act(seen, row(seen, "chrome:navigate"));
+    expect(result.ok).toBe(false);
+    expect(calls).toEqual([]);
+});
+
+test("controls below the fold reach the evidence by name, never as rows, so scrolling has a named reason", async () => {
+    const seen = await surfaceWith({ snapshots: [checkout], extra: { inputs: { password: "x" } } }).surface.see();
+    expect(seen.evidence).toMatchObject({ belowFold: 2, below_the_fold: ["Place order", "Terms of sale"] });
+    expect(seen.candidates.some((candidate) => candidate.label === "Place order")).toBe(false);
+});
+
+const searchPage: DomSnapshot = {
+    ...plain,
+    url: "https://shop.example/search",
+    title: "Search",
+    text: "Search the catalogue",
+    actions: [
+        domAction({
+            id: "n7f",
+            node: 7,
+            kind: "fill",
+            role: "searchbox",
+            label: "Search",
+            value: "",
+            field: field("q", "search"),
+        }),
+        domAction({ id: "n8f", node: 8, kind: "fill", label: "Email", value: "", field: field("email", "email") }),
+        domAction({ id: "n9f", node: 9, kind: "fill", label: "Coupon", value: "", field: field("coupon") }),
+    ],
+};
+
+test("with the writer on, a field --inputs does not cover is offered to write, never an email or credential field", async () => {
+    const requests: WriterRequest[] = [];
+    const writer = async (request: WriterRequest): Promise<WriterResult> => {
+        requests.push(request);
+        return { fill: true, text: "blue kettle" };
+    };
+    const { surface, calls } = surfaceWith({
+        snapshots: [searchPage],
+        extra: { writer, goal: "find a blue kettle", inputs: { coupon: "SAVE10" } },
+    });
+    const seen = await surface.see();
+    const sets = seen.candidates.filter((candidate) => candidate.action === "set");
+    expect(sets.map((candidate) => candidate.label)).toEqual(["Write into Search", "Coupon"]);
+    expect(await surface.act(seen, row(seen, "n7f"))).toEqual({ ok: true });
+    expect(calls).toEqual(["fill n7f=blue kettle"]);
+    expect(requests[0]).toMatchObject({ goal: "find a blue kettle", field: { label: "Search", name: "q" } });
+});
+
+test("with the writer off nothing is offered to write, and a declined write reaches nothing (negative control)", async () => {
+    const off = await surfaceWith({ snapshots: [searchPage] }).surface.see();
+    expect(off.candidates.some((candidate) => candidate.label.startsWith("Write into"))).toBe(false);
+
+    const { surface, calls } = surfaceWith({
+        snapshots: [searchPage],
+        extra: { writer: async () => ({ fill: false, reason: "the goal names no query" }), goal: "shop" },
+    });
+    const seen = await surface.see();
+    const result = await surface.act(seen, row(seen, "n7f"));
+    expect(result).toEqual({ ok: false, error: "writer declined: the goal names no query" });
+    expect(calls).toEqual([]);
+});
+
+test("the writer asks once per identical request, never for a credential field, and refuses credential text", async () => {
+    let asked = 0;
+    let answer = "blue kettle";
+    const writer = createWriter({
+        call: async () => {
+            asked += 1;
+            return { object: { fill: true, text: answer, reason: "" } };
+        },
+    });
+    const request: WriterRequest = {
+        goal: "find a blue kettle",
+        field: { label: "Search", role: "searchbox" },
+        page: { url: "https://shop.example/", title: "Shop", text: "" },
+    };
+    expect(await writer(request)).toEqual({ fill: true, text: "blue kettle" });
+    expect(await writer(request)).toEqual({ fill: true, text: "blue kettle" });
+    expect(asked).toBe(1);
+
+    const pin = await writer({ ...request, field: { label: "PIN code", role: "textbox" } });
+    expect(pin.fill).toBe(false);
+    expect(asked).toBe(1);
+
+    answer = "my password is hunter2";
+    const leaked = await writer({ ...request, goal: "something else" });
+    expect(leaked).toEqual({ fill: false, reason: "the written text mentions a credential" });
+});
+
+test("the option a list already shows is not offered again, the others are", async () => {
+    const shipping: DomSnapshot = {
+        ...plain,
+        actions: [
+            domAction({
+                id: "n4o0",
+                node: 4,
+                kind: "select",
+                label: "Shipping",
+                value: "Express",
+                option: { index: 0, label: "Standard" },
+            }),
+            domAction({
+                id: "n4o1",
+                node: 4,
+                kind: "select",
+                label: "Shipping",
+                value: "Express",
+                option: { index: 1, label: "Express" },
+            }),
+        ],
+    };
+    const seen = await surfaceWith({ snapshots: [shipping] }).surface.see();
+    const options = seen.candidates.filter((candidate) => candidate.role === "option").map((candidate) => candidate.id);
+    expect(options).toEqual(["n4o0"]);
 });

@@ -6,6 +6,7 @@ import { logger } from "@genesiscz/utils/logger";
 import type { PrefetchPayload } from "../prefetch";
 import { dispatchChromeVerb } from "./chrome";
 import type { MenuCandidates } from "./menu-candidates";
+import { browserTabTitle } from "./target";
 import { CHROME_VERBS } from "./verbs";
 
 const { log } = logger.scoped("jev-listen");
@@ -64,7 +65,12 @@ export async function actOnSurface(input: DispatchInput): Promise<{ ok: boolean;
             return { ok: false, error: `unknown chrome verb ${String(input.payload.chrome)}` };
         }
 
-        return dispatchChromeVerb({ verb, port: input.port });
+        // The frontmost browser window's title is its active tab's title: that is the tab meant.
+        return dispatchChromeVerb({
+            verb,
+            port: input.port,
+            pageTitle: browserTabTitle(input.observation?.window.title),
+        });
     }
 
     const observation = input.observation;
