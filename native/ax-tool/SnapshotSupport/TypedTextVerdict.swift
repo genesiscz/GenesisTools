@@ -26,6 +26,14 @@ public func textOccurrences(of needle: String, in haystack: String) -> Int {
     return count
 }
 
+/// An insertion has landed once the field holds one more occurrence of `text` than before. The
+/// readback polls on this, not on containment: a field that already held the text contains it before
+/// the keys arrive, and stopping there reads the unchanged value and reports `.notLanded`.
+public func typedTextLanded(before: String?, after: String?, text: String) -> Bool {
+    guard let after else { return false }
+    return textOccurrences(of: text, in: after) > textOccurrences(of: text, in: before ?? "")
+}
+
 public func typedTextVerdict(element: String?, before: String?, after: String?, text: String,
                              replace: Bool) -> TypedTextVerdict {
     guard !text.isEmpty else { return .verified }
@@ -43,7 +51,7 @@ public func typedTextVerdict(element: String?, before: String?, after: String?, 
     }
     // An insertion must add an occurrence. A field that already held the text and then changed for
     // another reason (autocomplete rewrote it) is no proof that these keys landed.
-    return textOccurrences(of: text, in: after) > textOccurrences(of: text, in: before ?? "") ? .verified : .different(after)
+    return typedTextLanded(before: before, after: after, text: text) ? .verified : .different(after)
 }
 
 /// Posts each item only while the target app still holds the front. The legacy `type` and

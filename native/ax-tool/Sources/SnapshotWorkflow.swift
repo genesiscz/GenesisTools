@@ -1645,7 +1645,8 @@ func cmdAct(appName _: String) {
             // posted either way, so this changes the status, never the dispatch state.
             var typedAfter = axStringAttribute(element, "AXValue")
             let readDeadline = ProcessInfo.processInfo.systemUptime + 1
-            while typedAfter.map({ !$0.contains(text) }) ?? false, ProcessInfo.processInfo.systemUptime < readDeadline {
+            while typedAfter != nil, !typedTextLanded(before: typedBefore, after: typedAfter, text: text),
+                  ProcessInfo.processInfo.systemUptime < readDeadline {
                 Thread.sleep(forTimeInterval: 0.05)
                 typedAfter = axStringAttribute(element, "AXValue")
             }

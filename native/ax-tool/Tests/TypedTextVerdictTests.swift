@@ -9,6 +9,14 @@ final class TypedTextVerdictTests: XCTestCase {
                                         replace: true), .verified)
     }
 
+    /// The readback's stop rule: a field that already held the text has not landed it again yet.
+    func testLandedNeedsANewOccurrenceNotContainment() {
+        XCTAssertFalse(typedTextLanded(before: "hello", after: "hello", text: "hello"))
+        XCTAssertTrue(typedTextLanded(before: "hello", after: "hello hello", text: "hello"))
+        XCTAssertTrue(typedTextLanded(before: "", after: "hello", text: "hello"))
+        XCTAssertFalse(typedTextLanded(before: "hello", after: nil, text: "hello"))
+    }
+
     /// The observed case: a Go-to-folder field that stayed empty while the command said "typed".
     func testUnchangedFieldIsNotLanded() {
         XCTAssertEqual(typedTextVerdict(element: "AXTextField \"Go to\"", before: "", after: "",
