@@ -1,8 +1,8 @@
 import { closeSync, fstatSync, openSync, readSync } from "node:fs";
-import type { TranscriptProvider } from "@genesiscz/utils/ai/transcripts";
-import { parseTranscriptLine } from "@genesiscz/utils/ai/transcripts/parse-line";
 import { SafeJSON } from "@genesiscz/utils/json";
-import type { NativeCall, NativeScan, ToolTiming } from "./types";
+import type { NativeCall, NativeScan, ToolTiming } from "./insights-types";
+import { parseTranscriptLine } from "./parse-line";
+import type { TranscriptProvider } from "./types";
 
 // The provider's own session file, for what `tools ai sessions tail` turns leave out: per-call
 // usage with cache writes and the model (Claude turns carry no usage at all), exact tool timing

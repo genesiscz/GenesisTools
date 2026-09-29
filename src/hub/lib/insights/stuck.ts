@@ -2,12 +2,12 @@ import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { TranscriptTool, TranscriptTurn } from "@genesiscz/utils/ai/transcripts";
 import { isTaskReport } from "@genesiscz/utils/ai/transcripts/prompt-parts";
+import { isFailedTool, keyArgument, toolDisplayName } from "@genesiscz/utils/ai/transcripts/tool-kind";
 import { formatDuration } from "@genesiscz/utils/format";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { Storage, withFileLock } from "@genesiscz/utils/storage";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/storage";
-import { isFailedTool, keyArgument, toolDisplayName } from "./tool-kind";
 import type { StuckThresholds, StuckVerdict } from "./types";
 
 // The stuck-agent detector: a running session whose last tool call has waited too long, or that
