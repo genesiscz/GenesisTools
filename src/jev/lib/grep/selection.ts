@@ -219,6 +219,8 @@ export async function selectFile({
     }
 
     const contextSpans: Span[] = (prior?.rendered ?? []).map(spanForRange);
+    /** A second-pass rejection removed a unit from `selected`; its printed spans must go too. */
+    let retracted = false;
     const leads = new Map<string, ReadingLead>();
     const addLead = (lead: ReadingLead) => leads.set(toJson([lead.name, lead.range]), lead);
     for (const lead of prior?.leads ?? []) {
@@ -298,6 +300,7 @@ export async function selectFile({
                         ];
                     });
                     selected.splice(0, selected.length, ...retained);
+                    retracted = true;
                 }
 
                 if (value > KEEP_THRESHOLD) {
@@ -333,6 +336,12 @@ export async function selectFile({
                 break;
             }
         }
+    }
+
+    // `contextSpans` carries the first pass's rendered windows, which still cover a rejected unit.
+    // Rebuilt from what stays selected, the windows below are drawn again around the survivors only.
+    if (retracted) {
+        contextSpans.splice(0, contextSpans.length, ...selected);
     }
 
     const chosen = mergeSpans(selected);

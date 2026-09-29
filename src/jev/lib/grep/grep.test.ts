@@ -451,6 +451,34 @@ describe("selection", () => {
             previous: first.file,
         });
         expect(lines(retracted.file)).toEqual([]);
+        // The rejected unit leaves the excerpts too: --json and the next file's donors read them.
+        expect(retracted.file.excerpts).toEqual([]);
+        expect(retracted.file.rendered).toEqual([]);
+    });
+
+    test("a retraction keeps the excerpt of a unit that stays selected", async () => {
+        const both = await selectFile({
+            snapshot,
+            query: "store",
+            score: 0.9,
+            evaluator: byDeclaration({ alpha: { q: 0.9, scope: 0.9 }, "Store.add": { q: 0.9, scope: 0.9 } }),
+        });
+        const evidence = async () => ({ evidence: [{ path: "other.ts", startLine: 1, endLine: 1, source: "x" }] });
+        const narrowed = await selectFile({
+            snapshot,
+            query: "store",
+            score: 0.9,
+            evaluator: byDeclaration({
+                alpha: { q: 0.9, scope: 0.9, ref: 0 },
+                "Store.add": { q: 0.5, scope: 0.5, ref: 0 },
+            }),
+            prepare: evidence,
+            previous: both.file,
+        });
+
+        expect(narrowed.file.excerpts.map((excerpt) => excerpt.source).join("\n")).toContain("export function alpha()");
+        // alpha's 3-line window reaches line 6; the retracted body (line 7) must not be printed.
+        expect(narrowed.file.excerpts.map((excerpt) => excerpt.source).join("\n")).not.toContain("return item;");
     });
 
     test("leads start above 0.25 and never name a .context header; printing needs 0.7", async () => {
