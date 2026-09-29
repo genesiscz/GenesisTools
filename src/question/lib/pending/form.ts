@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, normalize, resolve, sep } from "node:path";
 import { detectImageFormat } from "@genesiscz/utils/image/detect-format";
@@ -235,11 +235,21 @@ export function sanitizeImages(images: AskImage[] | undefined): AskImage[] {
  * (2MB) of base64.
  */
 export function readImageAnswers(paths: string[]): AskImage[] {
+    // Base64 turns 3 bytes into 4 characters; a file over this would be dropped by `sanitizeImages`.
+    const maxBytes = Math.floor(MAX_IMAGE_BASE64_CHARS / 4) * 3;
     return paths.slice(0, MAX_IMAGES_PER_ANSWER).map((path) => {
-        const buf = readFileSync(path);
-        const { mime } = detectImageFormat(buf);
+        const size = statSync(path).size;
+        if (size > maxBytes) {
+            throw new Error(`${path} is ${size} bytes; an answer image may be at most ${maxBytes} bytes`);
+        }
 
-        return { name: basename(path), mime, base64: buf.toString("base64") };
+        const buf = readFileSync(path);
+        const format = detectImageFormat(buf);
+        if (!format) {
+            throw new Error(`${path} is not a PNG, JPEG, GIF, WebP or BMP image`);
+        }
+
+        return { name: basename(path), mime: format.mime, base64: buf.toString("base64") };
     });
 }
 

@@ -31,6 +31,18 @@ describe("readImageAnswers", () => {
 
         expect(readImageAnswers(paths)).toHaveLength(4);
     });
+
+    test("a file too large for an answer image or with no image signature fails with a reason", () => {
+        const dir = mkdtempSync(join(tmpdir(), "gt-form-image-refuse-"));
+        const large = join(dir, "large.png");
+        const header = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+        writeFileSync(large, Buffer.concat([header, Buffer.alloc(1_500_000)]));
+        const script = join(dir, "run.png");
+        writeFileSync(script, "#!/bin/sh\necho not an image\n");
+
+        expect(() => readImageAnswers([large])).toThrow("at most 1500000 bytes");
+        expect(() => readImageAnswers([script])).toThrow("is not a PNG");
+    });
 });
 
 describe("attachImageFiles", () => {

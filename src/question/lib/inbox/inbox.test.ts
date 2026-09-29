@@ -793,7 +793,7 @@ describe("inbox answer: the hub's argv", () => {
         );
         const itemId = posted.items[0]?.id ?? "";
         const imagePath = join(dir, "shot.png");
-        writeFileSync(imagePath, Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3]));
+        writeFileSync(imagePath, Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3, 4]));
 
         const printed = await runInboxAnswer(
             ["--form", posted.id, "--answers", "[]", "--image", `${itemId}=${imagePath}`],
