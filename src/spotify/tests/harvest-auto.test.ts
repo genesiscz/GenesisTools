@@ -7,8 +7,9 @@
  * install a helper that authenticates as nobody and fail 401 several steps later.
  */
 import { describe, expect, test } from "bun:test";
+import type { CapturedRequest, RequestWaitOptions, TabDriver } from "@app/chrome-devtools/lib/tab-driver";
 import { autoHarvest, payload, preparedSetupGql } from "@app/spotify/lib/browser/harvest";
-import { SafeJSON } from "@genesiscz/utils/json";
+import { SPOTIFY_LIBRARY_URL } from "@app/spotify/lib/browser/session";
 
 const tokens = { authorization: "Bearer test-access-token", clientToken: "test-client-token" };
 
@@ -45,142 +46,121 @@ describe("preparedSetupGql", () => {
 /**
  * The success path, which a signed-in Spotify account is otherwise the only way to reach.
  *
- * The failure paths were verified against a real logged-out browser (they are what exposed
- * three wrong output-format assumptions). This covers what that browser could not: reading
- * the tokens out of a pathfinder request, installing the helper with them, and walking the
- * library. The fixtures are the REAL chrome-devtools-mcp output shapes.
+ * This covers what a logged-out browser cannot: reading the tokens off a pathfinder request,
+ * installing the helper with them, and walking the library. The fake answers the way the CDP
+ * tab driver does: evaluated payloads return plain objects, and a request wait returns the
+ * first matching request with lower-cased header names.
  */
 describe("autoHarvest success path", () => {
-    const PAGES = "## Pages\n1: https://open.spotify.com/collection/tracks [selected]";
-    const REQUESTS = [
-        "## Network requests",
-        "reqid=3 GET https://open.spotifycdn.com/cdn/build/web-player/vendor.js [200]",
-        "reqid=7 POST https://api-partner.spotify.com/pathfinder/v2/query [200]",
-    ].join("\n");
-    const DETAIL = [
-        "## Request https://api-partner.spotify.com/pathfinder/v2/query",
-        "Status: 200",
-        "### Request Headers",
-        "- client-token:CLIENT123",
-        "- authorization:Bearer ACCESS123",
-    ].join("\n");
+    const PATHFINDER: CapturedRequest = {
+        url: "https://api-partner.spotify.com/pathfinder/v2/query",
+        method: "POST",
+        headers: { "client-token": "test-client-token", authorization: "Bearer test-access-token" },
+    };
 
-    const plain = (text: string) => ({ content: [{ type: "text", text }] });
-    const fenced = (v: unknown) => ({
-        content: [{ type: "text", text: `\`\`\`json\n${SafeJSON.stringify(v)}\n\`\`\`` }],
-    });
+    interface FakeOptions {
+        /** When the page sends its pathfinder request: on its own, or only once the library loads. */
+        requestWhen?: "idle" | "navigate";
+        probeStatus?: number;
+    }
 
-    function fake() {
-        const seen: string[] = [];
+    function fake({ requestWhen = "idle", probeStatus = 200 }: FakeOptions = {}) {
+        const evaluated: string[] = [];
+        const waits: RequestWaitOptions[] = [];
+        let closed = false;
 
-        const client = {
-            callTool: async ({ name, arguments: args }: { name: string; arguments?: Record<string, unknown> }) => {
-                const fn = typeof args?.function === "string" ? args.function : undefined;
-
-                if (name === "list_pages") {
-                    return plain(PAGES);
+        const driver: TabDriver = {
+            tabs: async () => [
+                { id: "tab-spotify", url: "https://open.spotify.com/collection/tracks", title: "Liked Songs" },
+            ],
+            evaluate: async (_tabId, source) => {
+                // The sign-in probe runs first, and it asks the PAGE, not the traffic.
+                if (source.includes("now-playing-widget") && source.includes("__REACT_DEVTOOLS_GLOBAL_HOOK__")) {
+                    return { ok: true };
                 }
 
-                if (name === "select_page" || name === "navigate_page") {
-                    return plain("ok");
+                evaluated.push(source);
+
+                if (source.includes("window.__H")) {
+                    return probeStatus === 200
+                        ? { installed: true, probeStatus, totalLikedTracks: 2 }
+                        : { installed: true, probeStatus, hint: "token expired" };
                 }
 
-                if (name === "list_network_requests") {
-                    return plain(REQUESTS);
-                }
-
-                if (name === "get_network_request") {
-                    return plain(DETAIL);
-                }
-
-                if (name === "evaluate_script" && fn) {
-                    // The sign-in probe runs first now, and it asks the PAGE, not the traffic.
-                    if (fn.includes("now-playing-widget") && fn.includes("__REACT_DEVTOOLS_GLOBAL_HOOK__")) {
-                        return fenced({ ok: true });
-                    }
-
-                    seen.push(fn);
-
-                    if (fn.includes("window.__H")) {
-                        return fenced({ installed: true, probeStatus: 200, totalLikedTracks: 2 });
-                    }
-
-                    return fenced({
-                        total: 2,
-                        fetched: 2,
-                        unique: 2,
-                        requests: 1,
-                        errors: [],
-                        tracks: [
-                            { uri: "spotify:track:a", name: "A", playcount: 100 },
-                            { uri: "spotify:track:b", name: "B", playcount: 200 },
-                        ],
-                    });
-                }
-
-                return plain("");
+                return {
+                    total: 2,
+                    fetched: 2,
+                    unique: 2,
+                    requests: 1,
+                    errors: [],
+                    tracks: [
+                        { uri: "spotify:track:a", name: "A", playcount: 100 },
+                        { uri: "spotify:track:b", name: "B", playcount: 200 },
+                    ],
+                };
             },
-        } as unknown as import("@modelcontextprotocol/client").Client;
+            navigate: async () => true,
+            open: async () => {
+                throw new Error("a Spotify tab is open; nothing should open another");
+            },
+            waitForRequest: async (_tabId, options) => {
+                waits.push(options);
+                const sends = requestWhen === "idle" || options.cause !== undefined;
+                const request = sends && options.matches(PATHFINDER) ? PATHFINDER : null;
 
-        return { seen, withClient: <T>(f: (c: typeof client) => Promise<T>) => f(client) };
+                return { request, seen: sends ? [PATHFINDER.url] : [] };
+            },
+            close: () => {
+                closed = true;
+            },
+        };
+
+        return { driver, evaluated, waits, isClosed: () => closed };
     }
 
     test("reads the tokens, installs the helper with them, and returns the library", async () => {
         const f = fake();
-        const result = await autoHarvest({
-            browserUrl: "http://127.0.0.1:9222",
-            onLog: () => {},
-            withClient: f.withClient,
-        });
+        const result = await autoHarvest({ browserUrl: "http://127.0.0.1:9222", onLog: () => {}, driver: f.driver });
 
         expect(result.unique).toBe(2);
         expect(result.tracks).toHaveLength(2);
 
-        // The tokens from the network log must reach the installed helper verbatim; a
-        // placeholder surviving here is the silent failure preparedSetupGql guards against.
-        const setup = f.seen.find((s) => s.includes("window.__H"));
-        expect(setup).toContain("Bearer ACCESS123");
-        expect(setup).toContain("CLIENT123");
+        // The tokens from the request must reach the installed helper verbatim; a placeholder
+        // surviving here is the silent failure preparedSetupGql guards against.
+        const setup = f.evaluated.find((s) => s.includes("window.__H"));
+        expect(setup).toContain("Bearer test-access-token");
+        expect(setup).toContain("test-client-token");
         expect(setup).not.toContain("<BEARER>");
+
+        // An active tab answered the first, passive wait, so the page was not reloaded.
+        expect(f.waits).toHaveLength(1);
+        expect(f.waits[0]?.cause).toBeUndefined();
+        // The driver was the caller's, so the harvest leaves it open.
+        expect(f.isClosed()).toBe(false);
+    });
+
+    test("an idle tab is made to send a request by loading the library", async () => {
+        const f = fake({ requestWhen: "navigate" });
+        const lines: string[] = [];
+        const result = await autoHarvest({
+            browserUrl: "http://127.0.0.1:9222",
+            onLog: (line) => lines.push(line),
+            driver: f.driver,
+        });
+
+        expect(result.unique).toBe(2);
+        expect(f.waits).toHaveLength(2);
+        expect(f.waits[1]?.cause).toEqual({ navigate: SPOTIFY_LIBRARY_URL });
+        expect(lines).toContain("no pathfinder request yet, loading the library to make one");
     });
 
     test("a non-200 probe fails loudly instead of harvesting nothing", async () => {
-        const f = fake();
-        const client = {
-            callTool: async (a: { name: string; arguments?: Record<string, unknown> }) => {
-                const fn = typeof a.arguments?.function === "string" ? a.arguments.function : undefined;
-
-                if (a.name === "list_pages") {
-                    return plain(PAGES);
-                }
-
-                if (a.name === "list_network_requests") {
-                    return plain(REQUESTS);
-                }
-
-                if (a.name === "get_network_request") {
-                    return plain(DETAIL);
-                }
-
-                if (a.name === "evaluate_script" && fn?.includes("now-playing-widget")) {
-                    return fenced({ ok: true });
-                }
-
-                if (a.name === "evaluate_script" && fn?.includes("window.__H")) {
-                    return fenced({ installed: true, probeStatus: 401, hint: "token expired" });
-                }
-
-                return plain("ok");
-            },
-        } as unknown as import("@modelcontextprotocol/client").Client;
+        const f = fake({ probeStatus: 401 });
 
         await expect(
-            autoHarvest({
-                browserUrl: "http://127.0.0.1:9222",
-                onLog: () => {},
-                withClient: <T>(fn: (c: typeof client) => Promise<T>) => fn(client),
-            })
+            autoHarvest({ browserUrl: "http://127.0.0.1:9222", onLog: () => {}, driver: f.driver })
         ).rejects.toThrow(/401|token expired/);
-        expect(f.seen).toHaveLength(0);
+        // Only the helper was installed; the library walk never ran.
+        expect(f.evaluated).toHaveLength(1);
     });
 });

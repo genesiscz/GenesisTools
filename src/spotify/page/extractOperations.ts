@@ -1,6 +1,7 @@
 /**
- * BROWSER PAYLOAD — paste into mcp__chrome-devtools-mcp__evaluate_script on any
- * open.spotify.com tab. Needs no tokens.
+ * BROWSER PAYLOAD — run on any open.spotify.com tab. Needs no tokens. Either paste the
+ * function below into that tab's DevTools Console and call it, or run
+ * `tools chrome-devtools eval --file src/spotify/page/extractOperations.ts --match open.spotify.com`.
  *
  * Recovers the whole persisted-query catalogue (operationName -> sha256Hash) from the
  * live JS bundle, so you never hardcode a hash that a web-player release has rotated.
@@ -11,8 +12,8 @@
  * shape is far more robust than matching a hash next to a nearby string, which mostly
  * finds the generic words "query" and "mutation".
  *
- * Yielded 104 operations on the 2026-08-13 build. Pass a filePath if you want them all;
- * the inline return is deliberately trimmed to the ones worth knowing.
+ * Yielded 104 operations on the 2026-08-13 build. `ops` carries all of them, so save the
+ * result to a file if you want them all; `known` is trimmed to the ones worth knowing.
  *
  * No type annotations: this text is evaluated as JavaScript inside the page.
  */

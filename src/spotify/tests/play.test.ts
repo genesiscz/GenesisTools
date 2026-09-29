@@ -1,7 +1,7 @@
 /**
  * The pure parts of `play`: window-spec parsing, tracks-file loading, and the
- * evaluate_script result parser. The driver itself needs a live browser and is
- * exercised by hand; these are the pieces a typo would silently break.
+ * payload result check. The run loop is covered against a fake browser in
+ * driver.test.ts; these are the pieces a typo would silently break.
  */
 import { afterAll, beforeEach, describe, expect, test } from "bun:test";
 import { appendFileSync, existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -10,7 +10,7 @@ import { dirname, join } from "node:path";
 import { playDir } from "@app/spotify/lib/paths";
 import { emptyReason } from "@app/spotify/lib/play/driver";
 import { appendJournal, clearJournal, journalPath, progressFor } from "@app/spotify/lib/play/journal";
-import { FIND_PLAYER, parsePayloadResult } from "@app/spotify/lib/play/payloads";
+import { FIND_PLAYER, PayloadStatusSchema, parsePayload } from "@app/spotify/lib/play/payloads";
 import {
     findPlan,
     formatWindows,
@@ -126,18 +126,14 @@ describe("emptyReason", () => {
     });
 });
 
-describe("parsePayloadResult", () => {
-    test("digs the object out of a ```json fence", () => {
-        const raw = 'Ran script.\n```json\n{"ok": true, "track": "A — B"}\n```\n';
-        expect(parsePayloadResult<{ ok: boolean; track: string }>(raw)).toEqual({ ok: true, track: "A — B" });
+describe("parsePayload", () => {
+    test("returns the page's value when it has the expected shape", () => {
+        expect(parsePayload(PayloadStatusSchema, { ok: true, track: "A — B" })).toEqual({ ok: true, track: "A — B" });
     });
 
-    test("falls back to the first brace when unfenced", () => {
-        expect(parsePayloadResult<{ ok: boolean }>('result: {"ok": false}')).toEqual({ ok: false });
-    });
-
-    test("returns null for garbage instead of throwing", () => {
-        expect(parsePayloadResult("no json here")).toBeNull();
+    test("returns null for another shape instead of throwing", () => {
+        expect(parsePayload(PayloadStatusSchema, { ok: "yes" })).toBeNull();
+        expect(parsePayload(PayloadStatusSchema, undefined)).toBeNull();
     });
 });
 

@@ -1,6 +1,6 @@
 /**
- * BROWSER PAYLOAD — paste the function below into
- * mcp__chrome-devtools-mcp__evaluate_script, on a tab that is already on open.spotify.com.
+ * BROWSER PAYLOAD — paste the function below into the DevTools Console of a tab that is
+ * already on open.spotify.com, and call it. `harvest --auto` does this for you.
  *
  * Installs window.__gql, the one helper every other page payload calls. Replace
  * <BEARER> and <CLIENT_TOKEN> with the values read out of a live pathfinder request

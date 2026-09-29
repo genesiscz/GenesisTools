@@ -1,7 +1,7 @@
 /**
- * BROWSER PAYLOAD — run setupGql first, then paste this into
- * mcp__chrome-devtools-mcp__evaluate_script WITH a filePath argument, because the result
- * is roughly 1 MB and would otherwise land in the conversation.
+ * BROWSER PAYLOAD — run setupGql first, then run this in the same tab's DevTools Console as
+ * `copy(await (<this function>)())`. The result is roughly 1 MB, so it goes to the clipboard
+ * and from there into a file, never into a conversation. `harvest --auto` runs it for you.
  *
  * Walks the Liked Songs pseudo-playlist through fetchPlaylistContents and returns every
  * track with its real global `playcount` — the number the public Web API does not expose

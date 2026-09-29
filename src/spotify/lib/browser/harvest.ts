@@ -1,23 +1,31 @@
 /**
  * `harvest --auto`: the five manual copy-paste steps, done by the tool.
  *
- * The manual path asks a person (or an agent with chrome-devtools-mcp) to read two headers
- * out of the Network panel, paste one payload to install a helper, paste a second payload
- * with a file path, and then run `build`. Every one of those steps is mechanical, and the
- * two involving tokens are the ones where a slip pastes an account credential into a chat
- * log. Doing it here keeps the tokens inside this process.
+ * The manual path asks a person to read two headers out of the browser's Network panel,
+ * paste one payload into the DevTools Console to install a helper, run a second payload and
+ * save its result, and then run `build`. Every one of those steps is mechanical, and the two
+ * involving tokens are the ones where a slip pastes an account credential into a chat log.
+ * Doing it here keeps the tokens inside this process.
  *
  * What this does NOT do is mint a token. See `session.ts` for why.
  */
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { isSignedIn, readPathfinderTokens, SpotifyTab } from "@app/spotify/lib/browser/session";
-import { parsePayloadResult } from "@app/spotify/lib/play/payloads";
-import { withDevtoolsClient } from "@genesiscz/utils/devtools/mcp-client";
+import { cdpPortOf } from "@app/chrome-devtools/lib/cdp";
+import { createTabDriver, type TabDriver } from "@app/chrome-devtools/lib/tab-driver";
+import { isSignedIn, readPathfinderTokens, SPOTIFY_LIBRARY_URL, SpotifyTab } from "@app/spotify/lib/browser/session";
+import { parsePayload } from "@app/spotify/lib/play/payloads";
 import { logger } from "@genesiscz/utils/logger";
-import type { Client } from "@modelcontextprotocol/client";
+import { z } from "zod";
 
 const log = logger.child({ component: "spotify:harvest" });
+
+/** An active tab may send a pathfinder query on its own; this is how long it gets before we make one. */
+const IDLE_TOKEN_WAIT_MS = 2_500;
+/** Loading the library sends pathfinder queries while it draws, well inside this on a normal connection. */
+const LOAD_TOKEN_WAIT_MS = 25_000;
+/** The library walk paces itself (about 90 s for 4200 tracks), so the default 30 s deadline is far too short. */
+const HARVEST_DEADLINE_MS = 10 * 60_000;
 
 /** The browser payloads are shipped as source and evaluated verbatim, never re-typed here. */
 export function payload(name: "setupGql" | "harvestLibrary"): string {
@@ -56,25 +64,36 @@ export function preparedSetupGql(tokens: { authorization: string; clientToken: s
     return filled;
 }
 
-export interface HarvestResult {
-    total: number | null;
-    fetched: number;
-    unique: number;
-    requests: number;
-    errors: unknown[];
-    tracks: Record<string, unknown>[];
-}
+/** What `setupGql.ts` returns once it has installed the helper and probed the library. */
+const SetupResultSchema = z.object({
+    installed: z.boolean().optional(),
+    probeStatus: z.number().optional(),
+    hint: z.string().optional(),
+});
+
+/** Loose on purpose: the whole object is returned to the caller, which writes it out. */
+const HarvestResultSchema = z
+    .object({
+        total: z.number().nullable(),
+        fetched: z.number(),
+        unique: z.number(),
+        requests: z.number(),
+        errors: z.array(z.unknown()),
+        tracks: z.array(z.record(z.string(), z.unknown())),
+    })
+    .passthrough();
+
+export type HarvestResult = z.infer<typeof HarvestResultSchema>;
 
 export interface AutoHarvestOptions {
     browserUrl: string;
     onLog: (line: string) => void;
     /**
-     * How to obtain the MCP session. Defaults to spawning chrome-devtools-mcp against
-     * `browserUrl`; tests pass a fake, which is the only way the SUCCESS path is reachable
-     * without a signed-in Spotify account. Its failure paths were verified against a real
-     * logged-out browser; this covers the rest.
+     * The browser's tabs. Defaults to a CDP driver on `browserUrl`'s port, closed when the
+     * harvest ends; a passed-in driver belongs to the caller. Tests pass a fake, which is the
+     * only way the SUCCESS path is reachable without a signed-in Spotify account.
      */
-    withClient?: <T>(fn: (client: Client) => Promise<T>) => Promise<T>;
+    driver?: TabDriver;
 }
 
 /**
@@ -82,14 +101,11 @@ export interface AutoHarvestOptions {
  * Songs, and returns the harvested rows. The caller writes them, so this stays testable and
  * the file layout lives with the rest of the pipeline.
  */
-export async function autoHarvest({ browserUrl, onLog, withClient }: AutoHarvestOptions): Promise<HarvestResult> {
-    const connect =
-        withClient ??
-        (<T>(fn: (client: Client) => Promise<T>) =>
-            withDevtoolsClient(fn, { cdpUrl: browserUrl, clientName: "genesis-spotify-harvest" }));
+export async function autoHarvest({ browserUrl, onLog, driver }: AutoHarvestOptions): Promise<HarvestResult> {
+    const tabs = driver ?? createTabDriver(cdpPortOf(browserUrl));
 
-    return connect(async (client) => {
-        const tab = new SpotifyTab(client);
+    try {
+        const tab = new SpotifyTab(tabs);
 
         if (!(await tab.pin({ rescan: true }))) {
             onLog("no open.spotify.com tab — opening one");
@@ -119,20 +135,18 @@ export async function autoHarvest({ browserUrl, onLog, withClient }: AutoHarvest
             );
         }
 
-        let tokens = await readPathfinderTokens(client);
+        let tokens = await readPathfinderTokens(tab, { timeoutMs: IDLE_TOKEN_WAIT_MS });
 
-        // An idle tab has issued no pathfinder request since its last navigation, so there is
-        // nothing to lift the tokens from. A reload makes the app issue its own — but it does
-        // so WHILE loading, so this polls instead of sleeping once: a fixed wait is either
-        // too short on a slow load or wasted on a fast one.
+        // An idle tab sends no pathfinder request, so there is nothing to lift the tokens from.
+        // Loading the library makes the app send its own while it draws. The wait listens before
+        // the navigation starts and ends at the first matching request, so neither a slow load
+        // nor a fast one is guessed at with a fixed sleep.
         if ("failure" in tokens) {
-            onLog("no pathfinder request in this tab's log yet — reloading to make one");
-            await tab.open();
-
-            for (let attempt = 0; attempt < 12 && "failure" in tokens; attempt++) {
-                await Bun.sleep(2000);
-                tokens = await readPathfinderTokens(client);
-            }
+            onLog("no pathfinder request yet, loading the library to make one");
+            tokens = await readPathfinderTokens(tab, {
+                timeoutMs: LOAD_TOKEN_WAIT_MS,
+                cause: { navigate: SPOTIFY_LIBRARY_URL },
+            });
         }
 
         if ("failure" in tokens) {
@@ -145,9 +159,7 @@ export async function autoHarvest({ browserUrl, onLog, withClient }: AutoHarvest
 
         onLog("read the session's own authorization and client-token (kept in this process)");
 
-        const installed = parsePayloadResult<{ installed?: boolean; probeStatus?: number; hint?: string }>(
-            await tab.evaluate(preparedSetupGql(tokens))
-        );
+        const installed = parsePayload(SetupResultSchema, await tab.evaluate(preparedSetupGql(tokens)));
 
         if (installed?.probeStatus !== 200) {
             throw new Error(
@@ -158,9 +170,12 @@ export async function autoHarvest({ browserUrl, onLog, withClient }: AutoHarvest
 
         onLog("probe ok — walking Liked Songs (about 4 requests in flight, 800ms between batches)");
 
-        const harvested = parsePayloadResult<HarvestResult>(await tab.evaluate(payload("harvestLibrary")));
+        const harvested = parsePayload(
+            HarvestResultSchema,
+            await tab.evaluate(payload("harvestLibrary"), { deadlineMs: HARVEST_DEADLINE_MS })
+        );
 
-        if (!harvested?.tracks?.length) {
+        if (!harvested?.tracks.length) {
             throw new Error("the harvest returned no tracks. Check the Spotify tab is still signed in.");
         }
 
@@ -170,5 +185,9 @@ export async function autoHarvest({ browserUrl, onLog, withClient }: AutoHarvest
         );
 
         return harvested;
-    });
+    } finally {
+        if (!driver) {
+            tabs.close();
+        }
+    }
 }
