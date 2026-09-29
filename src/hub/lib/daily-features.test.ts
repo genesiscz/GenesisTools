@@ -27,6 +27,7 @@ import {
     windowLabel,
 } from "./forecast";
 import type { NotifyState } from "./notify-poll";
+import { parsePrRef } from "./prs";
 import {
     addRule,
     contextWindowFor,
@@ -836,6 +837,11 @@ describe("rules", () => {
 
     test("click commands open the hub at the PR or the session's Decisions pane", () => {
         expect(prRefFromKey("github.com/work/shop#4")).toBe("work/shop#4");
+        // GitLab keeps GitLab's own `!`, so a TypeScript lookup never reads it as a GitHub PR.
+        expect(prRefFromKey("gitlab.example.com/group/app#12")).toBe("group/app!12");
+        expect(prRefFromKey("gitlab.example.com/group/app#12", "gitlab")).toBe("group/app!12");
+        expect(prRefFromKey("git.example.com/work/shop#4", "github")).toBe("work/shop#4");
+        expect(parsePrRef("group/app!12")).toBeNull();
         expect(ruleClickCommand({ pr: "work/shop#4" }, "/Apps/G.app")).toContain("'--mode' 'prs' '--pr' 'work/shop#4'");
         expect(ruleClickCommand({ sessionId: "s1", tab: "decisions" }, "/Apps/G.app")).toContain(
             "'--session' 's1' '--tab' 'decisions'"

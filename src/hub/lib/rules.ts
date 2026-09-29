@@ -16,6 +16,7 @@ import { dispatchNotification, type NotificationEvent } from "@genesiscz/utils/n
 import { LockTimeoutError, Storage, withFileLock } from "@genesiscz/utils/storage";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/storage";
 import { escapeShellArg } from "@genesiscz/utils/string";
+import type { NotifyItem } from "./notify";
 import { notifyDir } from "./notify-config";
 import { type NotifyState, readNotifyState } from "./notify-poll";
 
@@ -600,10 +601,16 @@ export function ruleSessionFromRow(row: AgentSessionRow): RuleSession {
     };
 }
 
-/** `github.com/owner/repo#42` into `owner/repo#42`, the form `--pr` takes. */
-export function prRefFromKey(key: string): string {
+/**
+ * `github.com/owner/repo#42` into `owner/repo#42`, the form `--pr` takes. A GitLab key becomes
+ * `group/app!12`, GitLab's own MR form: `parsePrRef` reads a hostless `#` ref as a GitHub PR, and never
+ * a `!` one. The hub's `--pr` (`HubPRRef`) accepts both. Without a known provider, only github.com is GitHub.
+ */
+export function prRefFromKey(key: string, provider?: NotifyItem["provider"]): string {
     const slash = key.indexOf("/");
-    return slash >= 0 ? key.slice(slash + 1) : key;
+    const ref = slash >= 0 ? key.slice(slash + 1) : key;
+    const gitlab = (provider ?? (key.startsWith("github.com/") ? "github" : "gitlab")) === "gitlab";
+    return gitlab ? ref.replace(/#(\d+)$/, "!$1") : ref;
 }
 
 export function rulePrsFromNotifyState(state: NotifyState): { prs: RulePr[]; postedCi: RuleInputs["postedCi"] } {
@@ -623,7 +630,14 @@ export function rulePrsFromNotifyState(state: NotifyState): { prs: RulePr[]; pos
         const sha = current ? (memory.headSha ?? "") : split > 0 ? seen.slice(0, split) : seen;
         const ci = current ? (memory.ci ?? "") : split > 0 ? seen.slice(split + 1) : "";
         const last = [...state.recent].reverse().find((item) => item.key === key);
-        prs.push({ key, ref: prRefFromKey(key), title: last?.title ?? null, url: last?.url ?? null, sha, ci });
+        prs.push({
+            key,
+            ref: prRefFromKey(key, last?.provider),
+            title: last?.title ?? null,
+            url: last?.url ?? null,
+            sha,
+            ci,
+        });
     }
 
     const postedCi = state.recent
