@@ -21,6 +21,8 @@ export interface LibraryOptions {
     port: number;
     host: string;
     templateDir: string;
+    /** Folder that holds each mount's Vite cache. Default: the repo's node_modules (`cacheDirFor`). */
+    cacheRoot?: string;
 }
 
 export interface LibraryHandle {
@@ -88,7 +90,7 @@ function startMount(
         root: entry.dir,
         appType: "mpa",
         base: `${urlBase}/`,
-        cacheDir: cacheDirFor(entry.dir),
+        cacheDir: cacheDirFor(entry.dir, options.cacheRoot),
         logLevel: "warn",
         plugins: [...basePlugins(), artifactServePlugin({ dir: entry.dir, templateDir: options.templateDir, urlBase })],
         resolve: baseResolve(),

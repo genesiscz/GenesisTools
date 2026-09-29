@@ -34,8 +34,17 @@ async function get(path: string): Promise<{ status: number; body: string }> {
 }
 
 beforeAll(async () => {
+    // Every mount dir is new on each run, so the default cache (keyed on it, in the
+    // repo's node_modules) would leave one more folder there per mount per run.
+    const cacheRoot = realpathSync(mkdtempSync(join(tmpdir(), "artifact-library-cache-")));
+    dirs.push(cacheRoot);
     // Port 0 asks the OS for a free one, so this never fights a real library.
-    library = await startLibrary({ port: 0, host: "127.0.0.1", templateDir: resolveTemplateDir(undefined) });
+    library = await startLibrary({
+        port: 0,
+        host: "127.0.0.1",
+        templateDir: resolveTemplateDir(undefined),
+        cacheRoot,
+    });
     base = `http://127.0.0.1:${library.port}`;
 }, 60_000);
 

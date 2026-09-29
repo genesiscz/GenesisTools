@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { stripAnsi } from "@genesiscz/utils/string";
 import { ui } from "./ui";
 
 describe("ui (high-density stderr status)", () => {
@@ -41,8 +42,9 @@ describe("ui (high-density stderr status)", () => {
         } finally {
             process.stderr.write = orig;
         }
-        // Default keyWidth = 9 → "  a        1\n"  (2 leading spaces, key padded to 9, then value)
-        expect(writes.join("")).toMatch(/ {2}a {8}1/);
+        // Default keyWidth = 9 → "  a        1\n"  (2 leading spaces, key padded to 9, then value).
+        // chalk dims the key when stderr is a terminal, so compare the visible text.
+        expect(stripAnsi(writes.join(""))).toMatch(/ {2}a {8}1/);
     });
 
     // padEnd gives no separator once the key IS keyWidth, so a 9-character key ran straight
@@ -63,7 +65,7 @@ describe("ui (high-density stderr status)", () => {
             process.stderr.write = orig;
         }
 
-        const out = writes.join("");
+        const out = stripAnsi(writes.join(""));
         expect(out).toContain("remaining 40");
         expect(out).not.toMatch(/remaining40/);
         expect(out).toContain("toolongforthecolumn x");

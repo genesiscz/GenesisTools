@@ -1,0 +1,42 @@
+Backport of vitejs/vite#23567 (shipped in vite 8.3.1): the deps optimizer resolves its
+pending processing promises on close(). Without it, server.close() hangs forever when a
+dependency was discovered before the first optimize run finished (vitejs/vite#22934).
+Drop this patch and its entry in scripts/apply-patches.ts when vite moves to >= 8.3.1.
+
+diff --git a/dist/node/chunks/node.js b/dist/node/chunks/node.js
+index 87cfa48..81caedc 100644
+--- a/dist/node/chunks/node.js
++++ b/dist/node/chunks/node.js
+@@ -34421,11 +34421,15 @@ function createDepsOptimizer(environment) {
+ 	let discover;
+ 	async function close() {
+ 		closed = true;
++		if (debounceProcessingHandle) clearTimeout(debounceProcessingHandle);
++		debounceProcessingHandle = void 0;
+ 		await Promise.allSettled([
+ 			discover?.cancel(),
+ 			depsOptimizer.scanProcessing,
+ 			optimizationResult?.cancel()
+ 		]);
++		depOptimizationProcessing.resolve();
++		resolveEnqueuedProcessingPromises();
+ 	}
+ 	let initState = "idle";
+ 	async function init() {
+@@ -34511,8 +34515,6 @@ function createDepsOptimizer(environment) {
+ 		if (debounceProcessingHandle) clearTimeout(debounceProcessingHandle);
+ 		if (closed) {
+ 			currentlyProcessing = false;
+-			depOptimizationProcessing.resolve();
+-			resolveEnqueuedProcessingPromises();
+ 			return;
+ 		}
+ 		currentlyProcessing = true;
+@@ -34529,7 +34531,6 @@ function createDepsOptimizer(environment) {
+ 			if (closed) {
+ 				currentlyProcessing = false;
+ 				processingResult.cancel();
+-				resolveEnqueuedProcessingPromises();
+ 				return;
+ 			}
+ 			const newData = processingResult.metadata;

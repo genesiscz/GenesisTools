@@ -1,5 +1,17 @@
 import { expect, test } from "bun:test";
-import { DEFAULT_MAX_MINUTES, maxRunMs, profileArgs } from "./test-args";
+import { DEFAULT_MAX_MINUTES, maxRunMs, profileArgs, withSerialIsolation } from "./test-args";
+
+test("a serial run gets per-file isolation, like a parallel one", () => {
+    expect(withSerialIsolation(["src/cmux"])).toEqual(["src/cmux", "--isolate"]);
+    expect(withSerialIsolation([])).toEqual(["--isolate"]);
+});
+
+test("a parallel run, or an explicit isolation choice, is left alone", () => {
+    expect(withSerialIsolation(["--parallel", "src/cmux"])).toEqual(["--parallel", "src/cmux"]);
+    expect(withSerialIsolation(["--parallel=4"])).toEqual(["--parallel=4"]);
+    expect(withSerialIsolation(["src/cmux", "--isolate"])).toEqual(["src/cmux", "--isolate"]);
+    expect(withSerialIsolation(["src/cmux", "--no-isolate"])).toEqual(["src/cmux", "--no-isolate"]);
+});
 
 test("a leading path survives --profile without --jobs", () => {
     // The documented shape `bun scripts/test.ts <paths> --profile`: index 0 is the path, and

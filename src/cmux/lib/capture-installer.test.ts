@@ -31,6 +31,10 @@ import { skip, zshPath } from "@genesiscz/utils/test/skip";
  * /bin/zsh, which exists on macOS but not on the Linux CI runners, where Bun.spawn threw ENOENT
  * before either test could assert anything. Only those two are gated; the other fifteen never
  * start a shell and keep running everywhere.
+ *
+ * Each zsh is `detached` (its own session, so no controlling terminal). A `bun test` run from
+ * a shell hands its terminal to every child, and `zsh -i` then prompts on that terminal and
+ * reads from it instead of the stdin pipe.
  */
 const ZSH = zshPath ?? "/bin/zsh";
 const zshTest = test.skipIf(skip.unlessZsh);
@@ -108,6 +112,7 @@ zshTest("installed recorder survives removal of its source checkout entrypoint a
         )?.command
     ).toBe("printf direct-runtime");
     const proc = Bun.spawn([ZSH, "-dfi"], {
+        detached: true,
         cwd: tmpdir(),
         stdin: "pipe",
         stdout: "pipe",
@@ -309,6 +314,7 @@ zshTest("commands-only shell startup associates identity for recovery after runt
         })
     );
     const proc = Bun.spawn([ZSH, "-dfi"], {
+        detached: true,
         stdin: "pipe",
         stdout: "pipe",
         stderr: "pipe",

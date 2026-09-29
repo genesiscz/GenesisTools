@@ -90,6 +90,9 @@ globalThis.nodeRepl = replApi;
  * `count`, `timeEnd`, `timeLog` and the `group` label writing to stdout, which is the same silent
  * loss. A Console built on the turn's own stream keeps every method's native formatting, and its
  * write runs synchronously, so a line is in `output` before the next statement runs.
+ *
+ * Colour stays off: the turn text is data for the caller, not a terminal, and the default
+ * `colorMode: "auto"` paints inspected values whenever FORCE_COLOR is set in the environment.
  */
 const turnStream = new Writable({
     write(chunk: Buffer | string, _encoding, done): void {
@@ -100,7 +103,7 @@ const turnStream = new Writable({
         done();
     },
 });
-const turnConsole = new Console({ stdout: turnStream, stderr: turnStream });
+const turnConsole = new Console({ stdout: turnStream, stderr: turnStream, colorMode: false });
 const turnMethods = new Set([
     ...Object.keys(turnConsole),
     ...Object.getOwnPropertyNames(Object.getPrototypeOf(turnConsole)),

@@ -8,6 +8,8 @@ export interface ServeOptions {
     host?: string;
     templateDir: string;
     plugins?: PluginOption[];
+    /** Vite's cache folder. Default: `cacheDirFor(dir)` in the repo's node_modules. */
+    cacheDir?: string;
 }
 
 /**
@@ -22,7 +24,7 @@ export async function serveArtifacts(options: ServeOptions): Promise<ViteDevServ
         envFile: false,
         root: options.dir,
         appType: "mpa",
-        cacheDir: cacheDirFor(options.dir),
+        cacheDir: options.cacheDir ?? cacheDirFor(options.dir),
         logLevel: "warn",
         plugins: [
             ...basePlugins(),

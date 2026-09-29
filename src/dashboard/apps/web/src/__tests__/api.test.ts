@@ -23,9 +23,12 @@ async function isServerRunning(): Promise<boolean> {
         const response = await fetch(`${SSE_ENDPOINT}?userId=health-check`, {
             signal: AbortSignal.timeout(2000),
         });
-        // The endpoint should return 200 for valid requests
-        // If we get 404, the route doesn't exist (server might be running but endpoint not registered)
-        return response.status === 200;
+        // Only the real SSE endpoint counts: a dev server of another project on the same port
+        // answers 200 with its HTML fallback for every path.
+        const isEventStream = response.headers.get("Content-Type")?.startsWith("text/event-stream") ?? false;
+        await response.body?.cancel();
+
+        return response.status === 200 && isEventStream;
     } catch {
         return false;
     }

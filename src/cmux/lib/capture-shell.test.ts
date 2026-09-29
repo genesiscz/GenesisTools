@@ -12,6 +12,10 @@ import { skip, zshPath } from "@genesiscz/utils/test/skip";
  * exists on macOS but not on the Linux CI runners, where Bun.spawn threw ENOENT and turned
  * seven real assertions into seven stack traces. On a machine with no zsh at all the tests
  * skip, and bun prints one `(skip)` line each, so the gap is visible rather than silent.
+ *
+ * Each zsh is `detached` (its own session, so no controlling terminal). A `bun test` run from
+ * a shell hands its terminal to every child, and `zsh -i` then prompts on that terminal and
+ * reads from it instead of the stdin pipe, so every test hung until its timeout.
  */
 const ZSH = zshPath ?? "/bin/zsh";
 const zshTest = test.skipIf(skip.unlessZsh);
@@ -28,6 +32,7 @@ zshTest("zsh records a short-lived command before execution and preserves its ex
         })
     );
     const proc = Bun.spawn([ZSH, "-dfi"], {
+        detached: true,
         stdin: "pipe",
         stdout: "pipe",
         stderr: "pipe",
@@ -62,6 +67,7 @@ zshTest("the journal exists before a short-lived command can observe the filesys
         })
     );
     const proc = Bun.spawn([ZSH, "-dfi"], {
+        detached: true,
         stdin: "pipe",
         stdout: "pipe",
         stderr: "pipe",
@@ -93,6 +99,7 @@ zshTest("reserved restore setup leaves the last genuine command and its completi
         })
     );
     const proc = Bun.spawn([ZSH, "-dfi"], {
+        detached: true,
         stdin: "pipe",
         stdout: "pipe",
         stderr: "pipe",
@@ -129,6 +136,7 @@ zshTest("a user function with a similar name is still captured", async () => {
         })
     );
     const proc = Bun.spawn([ZSH, "-dfi"], {
+        detached: true,
         stdin: "pipe",
         stdout: "pipe",
         stderr: "pipe",
@@ -159,6 +167,7 @@ zshTest("the hook captures with no Bun or recorder executable in its command pat
         renderCaptureShell({ directory, bunPath: "/missing-bun", recorderPath: "/missing-recorder" })
     );
     const proc = Bun.spawn([ZSH, "-dfi"], {
+        detached: true,
         stdin: "pipe",
         stdout: "pipe",
         stderr: "pipe",
@@ -185,6 +194,7 @@ zshTest("the lightweight shell spool rotates within two bounded generations", as
     const hook = join(directory, "hook.zsh");
     await Bun.write(hook, renderCaptureShell({ directory }));
     const proc = Bun.spawn([ZSH, "-dfi"], {
+        detached: true,
         stdin: "pipe",
         stdout: "pipe",
         stderr: "pipe",
@@ -217,6 +227,7 @@ zshTest("a completed cd records the directory the shell ended in, not the one it
         })
     );
     const proc = Bun.spawn([ZSH, "-dfi"], {
+        detached: true,
         cwd: launchDir,
         stdin: "pipe",
         stdout: "pipe",

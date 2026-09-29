@@ -130,6 +130,16 @@ describeOnDarwin("getattrlistbulk", () => {
         expect(caught).not.toBe(null);
         expect(caught instanceof GetattrlistbulkUnsupportedError).toBe(false);
     });
+
+    it("still works after a full GC reuses freed memory (the syscall buffers stay alive)", () => {
+        const dir = withTmpDir("galb-gc");
+        writeFileSync(join(dir, "a.txt"), "alpha");
+        Bun.gc(true);
+        // Small allocations land in any 24-byte slot the collector just freed.
+        const filler = Array.from({ length: 20_000 }, () => new Uint8Array(24).fill(0xff));
+        expect([...iterDir(dir)].map((e) => e.name)).toEqual(["a.txt"]);
+        expect(filler.length).toBe(20_000);
+    });
 });
 
 describeOnDarwin("getattrlistbulk feature probe", () => {

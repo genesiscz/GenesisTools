@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 import { cpus } from "node:os";
 import { dirname, join } from "node:path";
-import { maxRunMs, profileArgs } from "./test-args";
+import { maxRunMs, profileArgs, withSerialIsolation } from "./test-args";
 import { diagnose, lockStamp, STAMP_FILE } from "./test-deps";
 import { descendantsOf, reap } from "./test-reap";
 
@@ -435,8 +435,22 @@ const hasExplicitPaths = args.some((arg) => !arg.startsWith("-"));
 // Set once the tripwire has killed a phase, so finish() withholds the marker.
 let stalled = false;
 
+/**
+ * Every `bun test` this runner starts is isolated per file, serial runs included
+ * (`withSerialIsolation`). `--parallel` implies `--isolate`, and the suite is written for
+ * that: fifty test files use `mock.module`, which bun keeps for the whole process, often with
+ * only the exports that one file needs. A serial run shared one module registry, so such a
+ * mock reached every later file (`store.read is not a function`,
+ * `AIConfig.invalidate is not a function`).
+ *
+ * Serial is not a corner case: CLAUDE.md sends a directory-heavy worktree to a serial run
+ * because of the bun 1.3.13 `--parallel` hang above. Measured 2026-09-25 on the whole suite,
+ * run serially: 156 failures in 34 files without isolation (14152 pass), and 14310 pass with
+ * 0 failures with it. The price is time, 232 s against 166 s for that phase. A caller who
+ * passes `--isolate` or `--no-isolate` keeps that choice.
+ */
 async function runBunTest(testArgs: string[]): Promise<number> {
-    const proc = Bun.spawn(["bun", "test", ...testArgs], {
+    const proc = Bun.spawn(["bun", "test", ...withSerialIsolation(testArgs)], {
         cwd: ROOT,
         stdio: ["inherit", "inherit", "inherit"],
         env: testEnv,
