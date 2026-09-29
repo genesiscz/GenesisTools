@@ -1,4 +1,11 @@
-import { catalogCostUsd, firstUsageDay, parseBound, queryUsage, type UsageEvent } from "@genesiscz/utils/ai/usage";
+import {
+    catalogCostUsd,
+    emptyBuckets,
+    firstUsageDay,
+    parseBound,
+    queryUsage,
+    type UsageEvent,
+} from "@genesiscz/utils/ai/usage";
 
 /** The `app` every Jev call is booked under in the usage ledger (`src/utils/ai/evaluation/service.ts`). */
 export const JEV_USAGE_APP = "jev";
@@ -98,7 +105,15 @@ function addCall(total: JevSpendTotal, call: JevCall): void {
 /** Totals for all Jev use, split by feature, by model and by UTC day. */
 export function jevSpend(window: { from?: string; to?: string } = {}): JevSpendSummary {
     const { from, to, calls } = jevCalls(window);
-    const summary: JevSpendSummary = { from, to, total: emptyTotal(), byLabel: {}, byModel: {}, byDay: {} };
+    // Labels and model ids come from ledger rows: a label such as `__proto__` must stay an ordinary key.
+    const summary: JevSpendSummary = {
+        from,
+        to,
+        total: emptyTotal(),
+        byLabel: emptyBuckets<JevSpendTotal>(),
+        byModel: emptyBuckets<JevSpendTotal>(),
+        byDay: emptyBuckets<JevSpendTotal>(),
+    };
     for (const call of calls) {
         addCall(summary.total, call);
         add(summary.byLabel, call.label, call);

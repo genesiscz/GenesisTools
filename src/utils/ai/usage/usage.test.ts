@@ -547,4 +547,28 @@ describe("Jev spend", () => {
         expect(jevCalls({ from: "9/17/2026", to: "2026-09-19" }).calls).toHaveLength(2);
         expect(() => jevCalls({ from: "someday", to: "2026-09-19" })).toThrow("Not a date");
     });
+
+    test("a ledger label named __proto__ is counted like any other label", () => {
+        const day = "2026-09-18";
+        mkdirSync(usageDir(), { recursive: true });
+        const row = SafeJSON.stringify(
+            {
+                at: `${day}T10:00:00.000Z`,
+                app: JEV_USAGE_APP,
+                accountId: "jev:typesafe",
+                provider: "jev-typesafe",
+                modelId: "jev-latest",
+                inputTokens: 1_000,
+                outputTokens: 0,
+                meta: { label: "__proto__" },
+            },
+            { jsonl: true }
+        );
+        writeFileSync(dayFilePath(day), `${row}\n`);
+        const summary = jevSpend({ from: day, to: "2026-09-19" });
+        expect(Object.entries(summary.byLabel)).toEqual([
+            ["__proto__", { calls: 1, inputTokens: 1_000, costUsd: expect.any(Number), unpricedCalls: 0 }],
+        ]);
+        expect(Object.hasOwn(Object.prototype, "calls")).toBe(false);
+    });
 });
