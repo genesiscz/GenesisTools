@@ -11,7 +11,7 @@ import { DAEMON_ALIVE_MS, readerMaxStaleMs, touchUsageDaemonHeartbeat, usageDaem
 import { formatBlockedNotice, formatNeedsLoginNotice } from "./format-blocked";
 import { mergeAccountSlice } from "./legacy-cache";
 import { __fetchProviderSnapshots, latestFetchedAt, type UsagePlugin, usagePlugins } from "./poll";
-import { blockedEntry, loadPollGate, type PollGate, recordFailure, savePollGate } from "./poll-gate";
+import { blockedEntry, loadPollGate, type PollGate, PollSuppressed, recordFailure, savePollGate } from "./poll-gate";
 import { __resetUsagePollStorage } from "./storage";
 import type { AccountUsageSnapshot } from "./types";
 
@@ -288,6 +288,29 @@ describe("__fetchProviderSnapshots", () => {
         expect(reasons).toEqual(["invalid_grant"]);
         expect(snapshots[0].error).toBeUndefined();
         expect((await loadPollGate(PROVIDER)).work.failures).toBe(2);
+    });
+
+    // A gated poll can still come back PollSuppressed (no usable long-lived token, or no open
+    // window): its row must say WHY it is blocked, the same as the ungated suppressed path below,
+    // not read as a live failure for lack of a `blocked` field.
+    test("a gated poll that is itself suppressed still carries the gate's blocked notice", async () => {
+        useTempHome();
+        const work = account("work");
+        const now = Date.now();
+        await savePollGate(
+            PROVIDER,
+            recordFailure(recordFailure({}, "work", "invalid_grant", now), "work", "invalid_grant", now)
+        );
+
+        const entry = fakePlugin({
+            poll: () => Promise.reject(new PollSuppressed("no usable long-lived token")),
+            pollsWhileGated: () => true,
+        });
+        const snapshots = await __fetchProviderSnapshots(entry, [work], {}, new Set());
+
+        expect(snapshots[0].error).toBe("no usable long-lived token");
+        expect(snapshots[0].blocked).toBeDefined();
+        expect(snapshots[0].blocked?.failures).toBe(2);
     });
 
     test("a reading that reports a refresh-path failure is kept and still earns the failure", async () => {

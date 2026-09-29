@@ -348,6 +348,9 @@ export async function __fetchProviderSnapshots(
 
             if (blocked && entry.usage.pollsWhileGated?.(account, blocked)) {
                 gatedPolls.add(account.name);
+                // A gated poll that gets suppressed (PollSuppressedError) still builds a failure
+                // snapshot; it reads `blockedBy` for its `blocked` field, so it is set here too.
+                blockedBy.set(account.name, blocked);
                 return entry.usage.poll(account, {
                     probe: opts.probe,
                     force: opts.force,
