@@ -314,7 +314,9 @@ final class WorktreeCleanupStore: ObservableObject {
         let gone = Set(moved.map(\.path))
         rows.removeAll { gone.contains($0.path) }
         selected.subtract(gone)
-        lastMoved = moved
+        // Earlier restore commands stay until Dismiss: with a journal error they are the only record
+        // of where that worktree went, and a later move (even one that moves nothing) must not drop it.
+        lastMoved += moved
         if let failure {
             notice = ("Move stopped: \(failure)", true)
         } else if let kept = outcomes.first(where: { !$0.moved }) {
