@@ -1,4 +1,5 @@
 import { logger } from "@genesiscz/utils/logger";
+import { openHeaderWebSocket } from "@genesiscz/utils/net/header-websocket";
 import { providerApiKey } from "../resolve";
 
 const BASE_URL = "https://api.x.ai/v1";
@@ -92,13 +93,7 @@ export class XAIClient {
     async openWebSocket(path: string, params: URLSearchParams): Promise<WebSocket> {
         const apiKey = await this.requireKey();
         const url = `${WS_BASE_URL}${path}?${params.toString()}`;
-        // `WebSocket` resolves to the DOM lib's constructor here (this project's tsconfig loads
-        // "DOM", and bun-types defers to it whenever DOM is present), so `Bun.WebSocketOptions`
-        // is not a reachable parameter type to name. The runtime is still Bun's, which does take
-        // a headers option; the same unavoidable cast is at every other `new WebSocket(url, {
-        // headers })` call in this repo (ai-proxy/lib/realtime.ts, utils/ai/stt/socket-session.ts,
-        // utils/ai/providers/elevenlabs/ElevenLabsClient.ts).
-        return new WebSocket(url, { headers: authHeader(apiKey) } as never);
+        return openHeaderWebSocket(url, authHeader(apiKey));
     }
 }
 
