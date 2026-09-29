@@ -4,7 +4,7 @@ import { profiler } from "@genesiscz/utils/profile";
 import { localCallContext } from "./call-context";
 import { fileCard } from "./cards";
 import { createFilesystem, type DirectoryEntry, type Snapshot } from "./filesystem";
-import { repositoryContext } from "./repository-context";
+import { repositoryContext, withCurrentTestCommands } from "./repository-context";
 import {
     type DirectoryPreview,
     type Evidence,
@@ -1187,12 +1187,13 @@ export async function retrieve(input: SearchInput, evaluator: Evaluator): Promis
             await unchanged(candidate);
         }
 
+        const returned = sortedCandidates().map((candidate) => files.get(candidate.path)!);
         const result: RetrievalResult = {
             root: reader.root,
             query: input.query,
             status: input.signal.aborted ? "interrupted" : issues.size ? "incomplete" : "complete",
-            files: sortedCandidates().map((candidate) => files.get(candidate.path)!),
-            repositoryContext: context,
+            files: returned,
+            repositoryContext: withCurrentTestCommands(context, returned),
             issues: [...issues].map(([kind, count]) => ({ kind, count })),
             // Budget warnings say what the budget left out; like cache warnings, they never flip the status.
             warnings: warnings.size

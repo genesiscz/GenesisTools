@@ -23,7 +23,7 @@ import { budgetArg, positiveCap, requestCap, writeResult } from "./evaluations/a
 import { createGrepEvaluator, DEFAULT_REQUEST_LIMIT, GREP_TYPESAFE_MODEL } from "./evaluator";
 import { createFilesystem, type FilesystemPolicy } from "./filesystem";
 import { renderResult } from "./render";
-import { repositoryContext } from "./repository-context";
+import { repositoryContext, withCurrentTestCommands } from "./repository-context";
 import { evidenceRequest, fileAssessmentRequest, navigationRequest } from "./requests";
 import { retrieve } from "./retrieve";
 import { DEFAULT_GREP_BUDGET, GrepSetupError, searchRepository } from "./search";
@@ -505,6 +505,37 @@ describe("repository context", () => {
         expect(await commandsFor([excerpt(1, 1)])).toEqual([]);
         expect(await commandsFor([excerpt(3, 5)])).toEqual(["cart.test.ts"]);
         await reader.close();
+    });
+
+    test("a file the final freshness pass cleared keeps no test command", () => {
+        const command = (path: string) => ({ path, cwd: ".", argv: ["bun", "test", path], runner: "bun" as const });
+        const file = (path: string, excerpts: FileEvidence["excerpts"]): FileEvidence => ({
+            path,
+            contentHash: "h",
+            score: 0.9,
+            roles: [],
+            leads: [],
+            selected: [],
+            rendered: [],
+            excerpts,
+            sourceOmitted: excerpts.length === 0,
+        });
+        const context = withCurrentTestCommands(
+            {
+                instructionFiles: [],
+                instructionLookupIncomplete: false,
+                pytestFiles: ["kept_test.py", "changed_test.py"],
+                projects: [],
+                testCommands: [command("kept_test.py"), command("changed_test.py")],
+                failedGatherers: [],
+            },
+            [
+                file("kept_test.py", [{ range: { startLine: 1, endLine: 2 }, source: "def test_a():\n    pass" }]),
+                file("changed_test.py", []),
+            ]
+        );
+        expect(context.testCommands.map((entry) => entry.path)).toEqual(["kept_test.py"]);
+        expect(context.pytestFiles).toEqual(["kept_test.py"]);
     });
 });
 

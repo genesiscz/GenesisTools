@@ -54,6 +54,20 @@ export function grepContextReader({
     };
 }
 
+/**
+ * The context without test commands for files that no longer show source. The final freshness pass runs
+ * after the context is gathered and clears a file that changed meanwhile; its command would then name a
+ * case the packet does not print. Project targets stay: a cleared file is still a returned path.
+ */
+export function withCurrentTestCommands(context: RepositoryContext, files: readonly FileEvidence[]): RepositoryContext {
+    const shown = new Set(files.filter((file) => file.excerpts.length).map((file) => file.path));
+    return {
+        ...context,
+        testCommands: context.testCommands.filter((command) => shown.has(command.path)),
+        pytestFiles: context.pytestFiles.filter((path) => shown.has(path)),
+    };
+}
+
 /** Locate scoped guidance, owning projects and test entry points. Executes nothing. */
 export async function repositoryContext({
     reader,
