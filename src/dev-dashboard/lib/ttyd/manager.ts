@@ -549,7 +549,22 @@ export async function spawnTtyd(opts: SpawnOptions = {}): Promise<TtydSession> {
     } catch (err) {
         registry.delete(id);
         await killWithEscalation(child);
-        logger.error({ err, id }, "[ttyd] registry persist failed after spawn; killed orphaned child");
+
+        // A session this call created has no owner once the spawn fails (it leaked one per failure,
+        // including from the test suite onto the live server); an attached session belongs to someone else.
+        if (!opts.attachTmuxSession) {
+            await killTmuxSession(tmuxSessionName).catch((killErr: unknown) => {
+                logger.warn(
+                    { err: killErr, tmuxSessionName },
+                    "[ttyd] could not remove the tmux session of a failed spawn"
+                );
+            });
+        }
+
+        logger.error(
+            { err, id, tmuxSessionName },
+            "[ttyd] registry persist failed after spawn; killed the orphaned child and its new tmux session"
+        );
         throw err;
     }
 

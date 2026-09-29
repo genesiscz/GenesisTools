@@ -52,6 +52,21 @@ config.server = {
 };
 
 config.plugins = [
+    {
+        // First, ahead of pinNodeModules (also "pre"), which would resolve `katex` itself.
+        // marked-katex-extension imports KaTeX for its renderer; give it the lazy stand-in, so
+        // KaTeX (260 KB) loads only when a message has math. Only that importer is redirected:
+        // the stand-in's own `import("katex")` still resolves to the real package.
+        name: "dev-dashboard-lazy-katex",
+        enforce: "pre",
+        resolveId(source, importer) {
+            if (source === "katex" && importer?.includes("/node_modules/marked-katex-extension/")) {
+                return resolve(__dirname, "src/lib/katex-lazy.ts");
+            }
+
+            return null;
+        },
+    },
     ...(config.plugins ?? []),
     {
         name: "dev-dashboard-middleware",
