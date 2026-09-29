@@ -79,6 +79,8 @@ export function createGrepCache(options: GrepCacheOptions) {
     /** Bytes this process believes the entries directory holds; measured once, then kept by the writer. */
     let storedBytes: number | undefined;
     let opening: Promise<number> | undefined;
+    /** Entry names with a write in flight: an identical second write would add nothing. */
+    const writing = new Set<string>();
 
     function warn(kind: CacheWarning, error?: unknown): void {
         warnings.set(kind, (warnings.get(kind) ?? 0) + 1);
@@ -95,11 +97,9 @@ export function createGrepCache(options: GrepCacheOptions) {
             .digest("hex");
     }
 
-    async function checkDirectory(path: string, create: boolean): Promise<void> {
-        if (create) {
-            await mkdir(path, { recursive: true, mode: 0o700 });
-        }
-
+    /** True when `create` had to make the directory. */
+    async function checkDirectory(path: string, create: boolean): Promise<boolean> {
+        const created = create ? await mkdir(path, { recursive: true, mode: 0o700 }) : undefined;
         const info = await lstat(path);
         if (!info.isDirectory() || info.isSymbolicLink()) {
             throw new Error("Cache path is not a directory");
@@ -107,6 +107,22 @@ export function createGrepCache(options: GrepCacheOptions) {
 
         if (create && (info.mode & 0o777) !== 0o700) {
             await chmod(path, 0o700);
+        }
+
+        return created !== undefined;
+    }
+
+    /** Bytes of the entry a write replaces; 0 when there is none. */
+    async function entryBytes(path: string): Promise<number> {
+        try {
+            const info = await lstat(path);
+            return info.isFile() ? info.size : 0;
+        } catch (error) {
+            if (!missing(error)) {
+                throw error;
+            }
+
+            return 0;
         }
     }
 
@@ -259,6 +275,12 @@ export function createGrepCache(options: GrepCacheOptions) {
             return;
         }
 
+        const name = `${key(input)}.json`;
+        if (writing.has(name)) {
+            return;
+        }
+
+        writing.add(name);
         const payload = toJson({ schema: SCHEMA, createdAt: now(), answers });
         const size = Buffer.byteLength(payload);
         let temporary: string | undefined;
@@ -272,16 +294,21 @@ export function createGrepCache(options: GrepCacheOptions) {
             });
             const measured = await opening;
             storedBytes ??= measured;
+            // A concurrent clear detaches the directory; the one recreated here starts an empty generation.
+            if (await checkDirectory(entries, true)) {
+                storedBytes = 0;
+            }
+
+            // Rewriting a key replaces its file, so only the difference is new.
+            const net = size - (await entryBytes(join(entries, name)));
             // Check and reserve in one synchronous step: up to 32 writers share this cap.
-            if (size > maxEntryBytes || storedBytes + size > maxBytes) {
+            if (size > maxEntryBytes || storedBytes + net > maxBytes) {
                 warn("cache_limit");
                 return;
             }
 
-            storedBytes += size;
-            reserved = size;
-            // A concurrent clear may have detached the directory; recreate it rather than fail.
-            await checkDirectory(entries, true);
+            storedBytes += net;
+            reserved = net;
             temporary = join(entries, `.pending-${randomUUID()}`);
             handle = await open(
                 temporary,
@@ -291,12 +318,13 @@ export function createGrepCache(options: GrepCacheOptions) {
             await handle.writeFile(payload);
             await handle.close();
             handle = undefined;
-            await rename(temporary, join(entries, `${key(input)}.json`));
+            await rename(temporary, join(entries, name));
             temporary = undefined;
             reserved = 0;
         } catch (error) {
             warn("cache_unavailable", error);
         } finally {
+            writing.delete(name);
             if (storedBytes !== undefined) {
                 storedBytes -= reserved;
             }

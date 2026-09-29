@@ -18,7 +18,7 @@ import { evaluationSchema } from "@genesiscz/utils/ai/evaluation/evaluate";
 import type { EvaluationResponse, Evaluator as ServiceEvaluator } from "@genesiscz/utils/ai/evaluation/service";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { exitCodeFor, type GrepCliOptions, parseGrepCommand } from "../../commands/grep";
-import { createGrepCache } from "./cache";
+import { clearGrepCache, createGrepCache } from "./cache";
 import { budgetArg, positiveCap, requestCap, writeResult } from "./evaluations/args";
 import { createGrepEvaluator, DEFAULT_REQUEST_LIMIT, GREP_TYPESAFE_MODEL } from "./evaluator";
 import { createFilesystem, type FilesystemPolicy } from "./filesystem";
@@ -828,16 +828,45 @@ describe("cache", () => {
         expect(await cache.get(entryInput(2))).toEqual({ q0: 0.7 });
     });
 
-    test("concurrent writes share one size cap", async () => {
+    async function entrySize(): Promise<number> {
         const probe = join(scratch("cache-size"), "grep-cache");
         await createGrepCache({ directory: probe }).put(entryInput(0), { q0: 0.7 });
         const [name] = readdirSync(join(probe, "entries-v1"));
-        const size = readFileSync(join(probe, "entries-v1", name!)).length;
+        return readFileSync(join(probe, "entries-v1", name!)).length;
+    }
+
+    test("concurrent writes share one size cap", async () => {
+        const size = await entrySize();
         const directory = join(scratch("cache-cap"), "grep-cache");
         const cache = createGrepCache({ directory, maxBytes: Math.floor(size * 2.5) });
         await Promise.all([1, 2, 3, 4, 5].map((index) => cache.put(entryInput(index), { q0: 0.7 })));
         expect(readdirSync(join(directory, "entries-v1")).length).toBe(2);
         expect(cache.stats().warnings).toEqual([{ kind: "cache_limit", count: 3 }]);
+    });
+
+    test("a rewritten key counts once, and an identical write in flight adds nothing", async () => {
+        const size = await entrySize();
+        const directory = join(scratch("cache-rewrite"), "grep-cache");
+        const cache = createGrepCache({ directory, maxBytes: Math.floor(size * 1.5) });
+        await Promise.all([cache.put(entryInput(1), { q0: 0.7 }), cache.put(entryInput(1), { q0: 0.7 })]);
+        await cache.put(entryInput(1), { q0: 0.7 });
+        expect(cache.stats().warnings).toEqual([]);
+        await cache.put(entryInput(2), { q0: 0.7 });
+        expect(readdirSync(join(directory, "entries-v1")).length).toBe(1);
+        expect(cache.stats().warnings).toEqual([{ kind: "cache_limit", count: 1 }]);
+    });
+
+    test("a clear during a search starts the count again", async () => {
+        const size = await entrySize();
+        const directory = join(scratch("cache-clear"), "grep-cache");
+        const cache = createGrepCache({ directory, maxBytes: Math.floor(size * 2.5) });
+        await cache.put(entryInput(1), { q0: 0.7 });
+        await cache.put(entryInput(2), { q0: 0.7 });
+        await clearGrepCache(directory);
+        await cache.put(entryInput(3), { q0: 0.7 });
+        await cache.put(entryInput(4), { q0: 0.7 });
+        expect(readdirSync(join(directory, "entries-v1")).length).toBe(2);
+        expect(cache.stats().warnings).toEqual([]);
     });
 
     test("--no-cache creates nothing", async () => {
