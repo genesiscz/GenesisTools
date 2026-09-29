@@ -1,0 +1,499 @@
+import { createHash } from "node:crypto";
+import { closeSync, mkdirSync, openSync, readFileSync, statSync } from "node:fs";
+import { join, resolve } from "node:path";
+import {
+    type AgentSessionRow,
+    listAgentSessionRows,
+    POLLED_LISTING_REUSE_MS,
+} from "@app/ai/lib/sessions/agent-session-rows";
+import { costOf, DEFAULT_PRICING, priceFor, resolvePrice } from "@app/ai-spend/lib/pricing";
+import { DASHBOARD_ACTOR, type HandoffDeps, type PostHandoffResponse, postHandoff } from "@app/handoff/executor";
+import { resumeCommandLine } from "@genesiscz/utils/agent-sessions";
+import { readCachedHistoryTitle } from "@genesiscz/utils/agent-sessions/cached-title";
+import { cleanSessionTitle } from "@genesiscz/utils/agent-sessions/user-text";
+import { PROVIDER_ALIASES } from "@genesiscz/utils/ai/providers/aliases";
+import {
+    allTranscriptTurns,
+    type ResolvedTranscript,
+    resolveTranscript,
+    type TranscriptTurn,
+    transcriptEnvelope,
+} from "@genesiscz/utils/ai/transcripts";
+import { concurrentMap } from "@genesiscz/utils/async";
+import { logger } from "@genesiscz/utils/logger";
+import { Storage } from "@genesiscz/utils/storage";
+import { atomicWriteFileSync } from "@genesiscz/utils/storage/storage";
+import { readProcsReport } from "../procs/sources";
+import { composeHandoff, type HandoffDraft, type HandoffMeta, type HandoffRange } from "./handoff";
+import { codexModelOf, readTail, scanClaudeNative, toolInputKeys } from "./native";
+import { readStuckThresholds, stuckVerdict } from "./stuck";
+import { buildToolStats, buildTurnCosts, type CallPricer } from "./timeline";
+import type { NativeScan, SessionInsights, SessionStuck, StuckThresholds } from "./types";
+
+export { composeHandoff, DEFAULT_HANDOFF_PROMPTS, HandoffRangeError } from "./handoff";
+export {
+    defaultStuckThresholds,
+    parseThresholdFlag,
+    readStuckThresholds,
+    STUCK_LIMITS,
+    stuckConfigPath,
+    updateStuckThresholds,
+} from "./stuck";
+export type * from "./types";
+
+const log = logger.child({ component: "hub/insights" });
+
+/** Transcripts the stuck scan reads at once. */
+const STUCK_SCAN_CONCURRENCY = 4;
+
+/** Bump when the cached JSON's shape or the cache key changes. */
+const CACHE_VERSION = 2;
+const CACHE_TTL = "7 days";
+/** The stuck detector reads this much of the file's end for full tool inputs. */
+const TAIL_BYTES = 2 * 1024 * 1024;
+/** Turns the stuck detector reads: enough for a long loop inside one prompt. */
+const STUCK_TURNS = 120;
+
+// The header's cost (tools ai-spend session) adds the sub-agents: for one session it read $1862 beside $548 here.
+export const INSIGHTS_PRICING_NOTE =
+    "List prices from the model catalog (the rates tools ai-spend uses), per model call of this transcript; sub-agent transcripts are not included (the header's cost includes them); an estimate, not a bill";
+
+/** List price per call from the catalog, with its dated and context-banded rules applied. */
+export function catalogPricer(): CallPricer {
+    return (call) => {
+        if (!call.model) {
+            return null;
+        }
+
+        const entry = priceFor(call.model, DEFAULT_PRICING);
+
+        if (!entry) {
+            return null;
+        }
+
+        const at = call.at ? new Date(call.at) : undefined;
+        const price = resolvePrice(entry, {
+            ...(at && !Number.isNaN(at.getTime()) ? { at } : {}),
+            contextTokens: call.input + call.cacheRead + call.cacheWrite,
+        });
+        return costOf(
+            { input: call.input, output: call.output, cacheWrite: call.cacheWrite, cacheRead: call.cacheRead },
+            price
+        );
+    };
+}
+
+function readText(path: string): string | null {
+    try {
+        return readFileSync(path, "utf8");
+    } catch (err) {
+        log.warn({ err, path }, "session file unreadable");
+        return null;
+    }
+}
+
+/**
+ * The cache file for one transcript: its provider, a hash of its file paths, and each file's inode, size
+ * and mtime. Another provider's transcript with the same session id, a moved file, or a same-sized file
+ * put in its place therefore never answers from this transcript's entry.
+ */
+export function insightsCacheKey(resolved: ResolvedTranscript): string {
+    const files = [...(resolved.extraFiles ?? []), resolved.filePath].map((file) => resolve(file));
+    const where = createHash("sha256").update(files.join("\n")).digest("hex").slice(0, 16);
+    const stamp = files
+        .map((file) => {
+            const stat = statSync(file);
+            return `${stat.ino}-${stat.size}-${Math.round(stat.mtimeMs)}`;
+        })
+        .join("_");
+    return `insights/${resolved.provider}-${resolved.sessionId}-${where}-${stamp}-v${CACHE_VERSION}.json`;
+}
+
+/** A cached entry serves only the transcript it was computed from (a check beside the key, not instead of it). */
+export function cachedInsightsFit(
+    hit: Pick<SessionInsights, "provider" | "sessionId" | "filePath">,
+    resolved: ResolvedTranscript
+): boolean {
+    return (
+        hit.provider === resolved.provider && hit.sessionId === resolved.sessionId && hit.filePath === resolved.filePath
+    );
+}
+
+interface Loaded {
+    resolved: ResolvedTranscript;
+    turns: TranscriptTurn[];
+    native: NativeScan | null;
+    defaultModel: string | null;
+}
+
+/** `withNative: false` skips the second full read of the session file (a caller that needs no usage, model or folder). */
+async function loadTranscript(resolved: ResolvedTranscript, { withNative = true } = {}): Promise<Loaded> {
+    const turns = await allTranscriptTurns(resolved);
+    let native: NativeScan | null = null;
+    let defaultModel: string | null = null;
+
+    if (
+        withNative &&
+        resolved.source === "native" &&
+        (resolved.provider === "claude" || resolved.provider === "codex")
+    ) {
+        const text = readText(resolved.filePath);
+
+        if (text !== null) {
+            if (resolved.provider === "claude") {
+                native = scanClaudeNative(text);
+            } else {
+                defaultModel = codexModelOf(text);
+            }
+        }
+    }
+
+    log.debug(
+        {
+            sessionId: resolved.sessionId,
+            provider: resolved.provider,
+            turns: turns.length,
+            calls: native?.calls.length,
+        },
+        "insights transcript loaded"
+    );
+    return { resolved, turns, native, defaultModel };
+}
+
+/** The verdict for one resolved transcript, from its tail only (cheap even for a huge file). */
+async function stuckOf(resolved: ResolvedTranscript, thresholds: StuckThresholds, now: number) {
+    const envelope = await transcriptEnvelope(resolved, { limit: STUCK_TURNS });
+    let inputKeys: Map<string, string> | undefined;
+
+    try {
+        inputKeys = toolInputKeys(readTail(resolved.filePath, TAIL_BYTES), resolved.provider);
+    } catch (err) {
+        log.debug({ err, path: resolved.filePath }, "stuck: no tail for full tool inputs; comparing key arguments");
+    }
+
+    return stuckVerdict({
+        turns: envelope.turns,
+        turnOffset: envelope.nextOffset - envelope.turns.length,
+        now,
+        thresholds,
+        ...(inputKeys ? { inputKeys } : {}),
+        terminated: envelope.terminated === "end" || envelope.terminated === "error",
+    });
+}
+
+export interface InsightsOptions {
+    sessionId: string;
+    /** Skip the cache (a changed pricing table, a debugging run). */
+    fresh?: boolean;
+    now?: number;
+    storage?: Storage;
+}
+
+/**
+ * Timeline, tool analytics and the stuck verdict of one session. The heavy part (every turn and the
+ * native scan) is cached per file size and mtime, so an unchanged session answers from disk; the
+ * stuck verdict depends on the clock and is always computed fresh from the tail.
+ */
+export async function sessionInsights(options: InsightsOptions): Promise<SessionInsights> {
+    const now = options.now ?? Date.now();
+    const storage = options.storage ?? new Storage("hub");
+    const resolved = await resolveTranscript(options.sessionId);
+    const thresholds = readStuckThresholds();
+    const key = insightsCacheKey(resolved);
+
+    if (!options.fresh) {
+        const hit = await storage.getCacheFile<SessionInsights>(key, CACHE_TTL);
+
+        if (hit && !cachedInsightsFit(hit, resolved)) {
+            log.warn(
+                { key, cached: { provider: hit.provider, filePath: hit.filePath }, filePath: resolved.filePath },
+                "insights cache entry belongs to another transcript; recomputing"
+            );
+        } else if (hit) {
+            log.debug({ key }, "insights cache hit");
+            return {
+                ...hit,
+                stuck: await stuckOf(resolved, thresholds, now),
+                thresholds,
+                generatedAt: new Date(now).toISOString(),
+            };
+        }
+    }
+
+    const loaded = await loadTranscript(resolved);
+    const costs = buildTurnCosts({
+        turns: loaded.turns,
+        native: loaded.native,
+        defaultModel: loaded.defaultModel,
+        price: catalogPricer(),
+    });
+    const tools = buildToolStats({ turns: loaded.turns, native: loaded.native });
+    // The same tail read as a cache hit and `tools hub stuck`, so all three print one verdict.
+    const stuck = await stuckOf(resolved, thresholds, now);
+    const firstPrompt = loaded.turns.find((turn) => turn.role === "user");
+    const result: SessionInsights = {
+        sessionId: resolved.sessionId,
+        provider: resolved.provider,
+        filePath: resolved.filePath,
+        title: firstPrompt ? firstPrompt.text.split("\n", 1)[0]?.trim().slice(0, 120) || null : null,
+        cwd: loaded.native?.cwd ?? null,
+        branch: loaded.native?.branch ?? null,
+        turnCount: loaded.turns.length,
+        priced: costs.priced,
+        pricingNote: INSIGHTS_PRICING_NOTE,
+        totals: costs.totals,
+        turns: costs.turns,
+        tools,
+        stuck,
+        thresholds,
+        generatedAt: new Date(now).toISOString(),
+    };
+    await storage.putCacheFile(key, { ...result, stuck: null }, CACHE_TTL);
+    log.debug(
+        {
+            sessionId: resolved.sessionId,
+            turns: result.turnCount,
+            sections: result.turns.length,
+            tools: result.tools.length,
+            priced: result.priced,
+            stuck: result.stuck?.kind ?? null,
+        },
+        "insights computed"
+    );
+    return result;
+}
+
+export interface StuckOptions {
+    /** Check these sessions; none discovers every session active within `maxAgeHours`. */
+    sessionIds?: string[];
+    thresholds?: StuckThresholds;
+    now?: number;
+    /** The recently active sessions to check when `sessionIds` is empty; tests pass their own rows. */
+    rows?: (hours: number) => Promise<AgentSessionRow[]>;
+    /** Session ids a live agent process holds, read once per discovery; tests pass their own. */
+    liveSessions?: () => Promise<Set<string>>;
+}
+
+/** The sessions the process pane ties to a running agent (one `ps`), for the stuck scan's discovery. */
+async function liveAgentSessions(): Promise<Set<string>> {
+    const report = await readProcsReport();
+    return new Set(report.groups.flatMap((group) => (group.session ? [group.session.sessionId] : [])));
+}
+
+/** Verdicts for the given sessions, or for every recently active one. A session that fails to read carries `error`. */
+export async function stuckSessions(options: StuckOptions = {}): Promise<SessionStuck[]> {
+    const now = options.now ?? Date.now();
+    const thresholds = options.thresholds ?? readStuckThresholds();
+    const targets: {
+        resolved: () => Promise<ResolvedTranscript>;
+        id: string;
+        title: string | null;
+        /** Known before the transcript is read for a listed session; null for a bare id. */
+        provider: ResolvedTranscript["provider"] | null;
+    }[] = [];
+
+    if (options.sessionIds && options.sessionIds.length > 0) {
+        for (const id of new Set(options.sessionIds)) {
+            targets.push({ id, title: null, provider: null, resolved: () => resolveTranscript(id) });
+        }
+    } else {
+        const listRows =
+            options.rows ??
+            ((hours: number) =>
+                listAgentSessionRows({ hours, withUsage: false, maxDiscoveryAgeMs: POLLED_LISTING_REUSE_MS }));
+        const rows = await listRows(thresholds.maxAgeHours);
+        log.debug({ rows: rows.length, hours: thresholds.maxAgeHours }, "stuck: discovered sessions");
+
+        for (const row of rows.filter((candidate) => !candidate.archived)) {
+            targets.push({
+                id: row.sessionId,
+                title: row.title,
+                provider: row.provider,
+                resolved: async () => ({
+                    provider: row.provider,
+                    source: "native",
+                    sessionId: row.sessionId,
+                    filePath: row.filePath,
+                }),
+            });
+        }
+    }
+
+    // Bounded: each target opens its transcript and reads a tail of up to 2 MB, and the list is every
+    // recently active session on the machine.
+    const results = await concurrentMap({
+        items: targets,
+        concurrency: STUCK_SCAN_CONCURRENCY,
+        fn: async (target): Promise<SessionStuck> => {
+            let provider = target.provider;
+
+            try {
+                const resolved = await target.resolved();
+                provider = resolved.provider;
+                return {
+                    sessionId: resolved.sessionId,
+                    provider: resolved.provider,
+                    title: target.title,
+                    verdict: await stuckOf(resolved, thresholds, now),
+                };
+            } catch (err) {
+                log.warn({ err, sessionId: target.id }, "stuck: transcript unreadable");
+                return {
+                    sessionId: target.id,
+                    // A bare id whose transcript was never found has no provider to name.
+                    provider: provider ?? "claude",
+                    title: target.title,
+                    verdict: null,
+                    error: err instanceof Error ? err.message : String(err),
+                };
+            }
+        },
+    });
+
+    const found = targets.map((target) => results.get(target)).filter((entry) => entry !== undefined);
+
+    if (options.sessionIds && options.sessionIds.length > 0) {
+        return found;
+    }
+
+    // Discovered from history, so a transcript alone does not prove an agent is still running it.
+    let live: Set<string> | null = null;
+
+    try {
+        live = await (options.liveSessions ?? liveAgentSessions)();
+    } catch (err) {
+        log.warn({ err }, "stuck: the process table could not be read; running is unknown");
+    }
+
+    return found.map((entry) => ({ ...entry, running: live ? live.has(entry.sessionId) : null }));
+}
+
+export interface HandoffOptions {
+    sessionId: string;
+    range: HandoffRange;
+    /** Overrides for what the transcript cannot say (the hub knows the session's title). */
+    title?: string | null;
+    cwd?: string | null;
+    branch?: string | null;
+    account?: string | null;
+}
+
+export interface HandoffResult extends HandoffDraft {
+    sessionId: string;
+    provider: string;
+}
+
+/**
+ * The session's name as the history index keeps it (a `/rename` title, else its summary). Without
+ * it a handoff was named after the session's first prompt, 5,000 turns before the range.
+ */
+function indexedTitle(provider: string, sessionId: string): string | null {
+    const providerId = PROVIDER_ALIASES[provider];
+
+    if (!providerId) {
+        return null;
+    }
+
+    try {
+        const cached = readCachedHistoryTitle({ providerId, sessionId });
+        return cleanSessionTitle(cached?.customTitle ?? cached?.summary);
+    } catch (error) {
+        log.debug({ error, sessionId }, "handoff: the history index has no title for this session");
+        return null;
+    }
+}
+
+/** The handoff markdown for a range of one session's prompts. */
+export async function sessionHandoff(options: HandoffOptions): Promise<HandoffResult> {
+    const resolved = await resolveTranscript(options.sessionId);
+    // The native scan only supplies the folder and branch here; the hub passes both, so it reads the file once.
+    const loaded = await loadTranscript(resolved, { withNative: !(options.cwd && options.branch) });
+    const cwd = options.cwd ?? loaded.native?.cwd ?? null;
+    const meta: HandoffMeta = {
+        sessionId: resolved.sessionId,
+        provider: resolved.provider,
+        title: options.title ?? indexedTitle(resolved.provider, resolved.sessionId),
+        cwd,
+        branch: options.branch ?? loaded.native?.branch ?? null,
+        resumeCommand: resumeCommandLine(resolved.provider, resolved.sessionId, { account: options.account ?? null }),
+    };
+    const draft = composeHandoff({ turns: loaded.turns, meta, range: options.range });
+    log.debug(
+        { sessionId: resolved.sessionId, from: draft.fromNumber, to: draft.toNumber, open: draft.openItems.length },
+        "handoff composed"
+    );
+    return { ...draft, sessionId: resolved.sessionId, provider: resolved.provider };
+}
+
+/**
+ * `handoff-<session id>-p<from>-<to>.md` inside `dir`, written atomically; `-2`, `-3`… when that name is
+ * taken, so a revised draft never replaces an earlier one. Returns the absolute path.
+ */
+export function saveHandoff(draft: HandoffResult, dir: string): string {
+    const folder = resolve(dir);
+    mkdirSync(folder, { recursive: true });
+    // The id comes from a transcript; a separator in it must not name a folder outside `dir`.
+    const id = draft.sessionId.replace(/[^A-Za-z0-9._-]/g, "_");
+    const path = reserveHandoffPath(folder, `handoff-${id}-p${draft.fromNumber}-${draft.toNumber}`);
+    atomicWriteFileSync(path, draft.markdown);
+    log.debug({ path }, "handoff saved");
+    return path;
+}
+
+/**
+ * Claims the first free `<stem>.md`, `<stem>-2.md`… by exclusive creation. Checking for the name and then
+ * writing let two composers of the same range pick one name, and the second write replaced the first draft.
+ */
+export function reserveHandoffPath(folder: string, stem: string): string {
+    for (let copy = 1; ; copy++) {
+        const path = join(folder, copy === 1 ? `${stem}.md` : `${stem}-${copy}.md`);
+
+        try {
+            closeSync(openSync(path, "wx"));
+            return path;
+        } catch (error) {
+            if (!(error instanceof Error && "code" in error && error.code === "EEXIST")) {
+                throw error;
+            }
+        }
+    }
+}
+
+/**
+ * Posts the draft to the handoff store (`handoff_post`): the markdown is the description, each open
+ * item a task. `owner` posts as the human owner (the hub), in the session's folder, instead of as
+ * the calling agent.
+ */
+export function postSessionHandoff(
+    draft: HandoffResult,
+    options: {
+        owner?: boolean;
+        cwd?: string | null;
+        branch?: string | null;
+        /** The handoff log and database (tests). */
+        store?: Pick<HandoffDeps, "base" | "dbPath">;
+    } = {}
+): PostHandoffResponse {
+    const tasks =
+        draft.openItems.length > 0
+            ? draft.openItems.map((text) => ({ text }))
+            : [{ text: "Continue the session's work from the handoff notes", acceptanceCriteria: "The goal is met" }];
+    const response = postHandoff(
+        { title: draft.title, description: draft.markdown, tasks, refs: [draft.sessionId] },
+        {
+            ...options.store,
+            ...(options.owner
+                ? {
+                      by: {
+                          ...DASHBOARD_ACTOR,
+                          sessionTitle: "hub handoff composer",
+                          cwd: options.cwd ?? null,
+                          branch: options.branch ?? null,
+                      },
+                  }
+                : {}),
+        }
+    );
+    log.debug({ handoff: response.handoff.id, sessionId: draft.sessionId }, "handoff posted from a session draft");
+    return response;
+}
