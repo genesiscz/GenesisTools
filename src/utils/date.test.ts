@@ -164,7 +164,8 @@ describe("startOfDay, parseSince and parseUntil", () => {
 
     test("parseSince refuses what Date.parse or setHours would silently misread", () => {
         // Date.parse reads "9" and "Sep 24" as dates in 2001; setHours rolls 25:99 into tomorrow.
-        // new Date() rolls month 13 into next January and month 00 into last December with the same day.
+        // new Date() rolls month 13 into next January and month 00 into last December with the same day,
+        // and Date.parse rolls February 30 into March 2 when a time follows the date.
         for (const junk of [
             "9",
             "12",
@@ -175,6 +176,9 @@ describe("startOfDay, parseSince and parseUntil", () => {
             "2026-02-30",
             "2026-13-01",
             "2026-00-15",
+            "2026-02-30T10:00:00Z",
+            "2026-13-01T10:00",
+            "2026-04-31 10:00:00+00:00",
         ]) {
             expect(parseSince(junk, NOW)).toBeNull();
             expect(parseUntil(junk, NOW)).toBeNull();

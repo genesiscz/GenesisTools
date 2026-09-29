@@ -262,6 +262,12 @@ export function startOfDay(now = new Date()): Date {
     return day;
 }
 
+/** A real day: `new Date` and `Date.parse` roll month 13 or February 30 into another date instead of failing. */
+function isCalendarDay(year: number, month: number, day: number): boolean {
+    const at = new Date(Date.UTC(year, month - 1, day));
+    return at.getUTCFullYear() === year && at.getUTCMonth() === month - 1 && at.getUTCDate() === day;
+}
+
 /**
  * `--since`: undefined = midnight, `HH:MM` = that time today, else an ISO date or time; null when
  * unreadable. `Date.parse` alone takes "9" and "Sep 24" as dates in 2001, and `setHours` rolls
@@ -292,16 +298,15 @@ export function parseSince(value: string | undefined, now = new Date()): Date | 
 
     if (day) {
         // A bare date is that day's local midnight, like the default; `Date.parse` would read UTC.
-        // new Date() rolls an impossible month or day into another date, so every part must come back unchanged.
-        const at = new Date(Number(day[1]), Number(day[2]) - 1, Number(day[3]));
-        const same =
-            at.getFullYear() === Number(day[1]) &&
-            at.getMonth() === Number(day[2]) - 1 &&
-            at.getDate() === Number(day[3]);
-        return same ? at : null;
+        const [year, month, date] = [Number(day[1]), Number(day[2]), Number(day[3])];
+        return isCalendarDay(year, month, date) ? new Date(year, month - 1, date) : null;
     }
 
-    if (!/^\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})?)?$/.test(text)) {
+    const stamp = /^(\d{4})-(\d{2})-(\d{2})(?:[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})?)?$/.exec(
+        text
+    );
+
+    if (!stamp || !isCalendarDay(Number(stamp[1]), Number(stamp[2]), Number(stamp[3]))) {
         return null;
     }
 
