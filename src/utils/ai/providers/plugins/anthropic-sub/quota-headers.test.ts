@@ -1,8 +1,24 @@
-import { afterEach, describe, expect, it, mock } from "bun:test";
+import { afterAll, afterEach, beforeAll, describe, expect, it, mock } from "bun:test";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { AIConfig } from "@genesiscz/utils/ai/AIConfig";
 import type { AccountEntry } from "@genesiscz/utils/ai/config/schema";
+import { __resetUsagePollStorage } from "@genesiscz/utils/ai/usage-poll/storage";
 import type { AIAccountEntry } from "@genesiscz/utils/config/ai.types";
+import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
+
+// Every header reading is charged to a probe budget kept on disk: keep it in a scratch home.
+beforeAll(() => {
+    env.testing.set("GENESIS_TOOLS_HOME", mkdtempSync(join(tmpdir(), "quota-headers-")));
+    __resetUsagePollStorage();
+});
+
+afterAll(() => {
+    env.testing.unset("GENESIS_TOOLS_HOME");
+    __resetUsagePollStorage();
+});
 
 // The refresh grant is single-use: the spy records every resolve and THROWS on a force-refresh
 // unless a test asks for one, so a path that would spend it unasked fails loudly.
@@ -43,10 +59,14 @@ mock.module("@genesiscz/utils/ai/providers/plugins/anthropic-sub/subscription", 
     planAllowsClaudeCode: () => true,
 }));
 
-const { pollAccount, headerReadingAllowed, isSubscriptionExpiredError, PollSuppressedError } = await import(
+const { pollAccount, isSubscriptionExpiredError, PollSuppressedError } = await import(
     "@genesiscz/utils/ai/providers/plugins/anthropic-sub/api"
 );
+const { persistedProbeBudget, probesInWindow, ProbeBudgetExceeded } = await import(
+    "@genesiscz/utils/ai/providers/plugins/anthropic-sub/probe-budget"
+);
 const {
+    fableReadingDue,
     fetchUsageFromHeaders,
     endpointAsOf,
     isHeaderReading,
@@ -214,9 +234,53 @@ describe("fetchUsageFromHeaders", () => {
         return { fetchImpl, sent };
     }
 
+    /** A budget that never refuses, for the tests about the request itself. */
+    const OPEN = { account: "work", budget: { spend: async () => undefined } };
+
+    it("a spent budget refuses before anything is sent", async () => {
+        // The spy on the spending call THROWS: a probe that got past the budget fails loudly.
+        const fetchImpl = (async () => {
+            throw new Error("a probe was sent past a spent budget");
+        }) as unknown as typeof fetch;
+        const spent = {
+            spend: async (model: string) => {
+                throw new ProbeBudgetExceeded("work", model, 400, 400);
+            },
+        };
+        const error = await fetchUsageFromHeaders(LONG_LIVED, { account: "work", budget: spent, fetchImpl }).catch(
+            (err: unknown) => err
+        );
+
+        expect(error).toBeInstanceOf(ProbeBudgetExceeded);
+    });
+
+    it("negative control: a budget with room charges the model it sends, once per request", async () => {
+        const charged: string[] = [];
+        const budget = { spend: async (model: string) => void charged.push(model) };
+        const cheap = recorder([() => new Response("{}", { status: 200, headers: quotaHeaders() })]);
+        await fetchUsageFromHeaders(LONG_LIVED, {
+            account: "work",
+            budget,
+            withFable: false,
+            fetchImpl: cheap.fetchImpl,
+        });
+
+        expect(cheap.sent.map((request) => request.model)).toEqual([QUOTA_PROBE_FALLBACK_MODEL]);
+        expect(charged).toEqual([QUOTA_PROBE_FALLBACK_MODEL]);
+
+        const refused = recorder([
+            () => new Response('{"error":{"message":"model not supported"}}', { status: 400 }),
+            () => new Response("{}", { status: 200, headers: quotaHeaders() }),
+        ]);
+        charged.length = 0;
+        await fetchUsageFromHeaders(LONG_LIVED, { account: "work", budget, fetchImpl: refused.fetchImpl });
+
+        expect(charged).toEqual([QUOTA_PROBE_MODEL, QUOTA_PROBE_FALLBACK_MODEL]);
+    });
+
     it("asks a Fable model in Claude Code's request shape with max_tokens 0, and reads 200 and 429 alike", async () => {
         const ok = recorder([() => new Response("{}", { status: 200, headers: quotaHeaders("0.23", "0.39", "0.06") })]);
-        const usage = await fetchUsageFromHeaders(LONG_LIVED, { fetchImpl: ok.fetchImpl });
+        const usage = await fetchUsageFromHeaders(LONG_LIVED, { ...OPEN, fetchImpl: ok.fetchImpl });
 
         expect(usage.seven_day_overage_included?.utilization).toBe(6);
         expect(ok.sent).toHaveLength(1);
@@ -227,9 +291,9 @@ describe("fetchUsageFromHeaders", () => {
         expect(ok.sent[0].headers["user-agent"]).toContain(CC_VERSION);
 
         const capped = recorder([() => new Response("{}", { status: 429, headers: quotaHeaders("1", "0.4") })]);
-        expect((await fetchUsageFromHeaders(LONG_LIVED, { fetchImpl: capped.fetchImpl })).five_hour.utilization).toBe(
-            100
-        );
+        expect(
+            (await fetchUsageFromHeaders(LONG_LIVED, { ...OPEN, fetchImpl: capped.fetchImpl })).five_hour.utilization
+        ).toBe(100);
     });
 
     it("asks the fallback model once when the Fable model is refused without headers", async () => {
@@ -237,7 +301,7 @@ describe("fetchUsageFromHeaders", () => {
             () => new Response('{"error":{"message":"model not supported"}}', { status: 400 }),
             () => new Response("{}", { status: 200, headers: quotaHeaders() }),
         ]);
-        const usage = await fetchUsageFromHeaders(LONG_LIVED, { fetchImpl });
+        const usage = await fetchUsageFromHeaders(LONG_LIVED, { ...OPEN, fetchImpl });
 
         expect(sent.map((request) => request.model)).toEqual([QUOTA_PROBE_MODEL, QUOTA_PROBE_FALLBACK_MODEL]);
         expect(usage.five_hour.utilization).toBe(23);
@@ -249,7 +313,7 @@ describe("fetchUsageFromHeaders", () => {
             error: { message: "OAuth authentication is currently not allowed for this organization." },
         });
         const { fetchImpl, sent } = recorder([() => new Response(refusal, { status: 403 })]);
-        const error = await fetchUsageFromHeaders(LONG_LIVED, { fetchImpl }).catch((err: unknown) => err);
+        const error = await fetchUsageFromHeaders(LONG_LIVED, { ...OPEN, fetchImpl }).catch((err: unknown) => err);
 
         expect(error).toBeInstanceOf(Error);
         expect(sent).toHaveLength(1);
@@ -327,21 +391,59 @@ describe("anthropicUsage.pollsWhileGated", () => {
     });
 });
 
-describe("headerReadingAllowed", () => {
-    const reading = (resetsAt: string | null, utilization = 5) => ({
-        five_hour: { utilization, resets_at: resetsAt },
-        seven_day: { utilization: 1, resets_at: null },
+describe("the Fable reading cadence", () => {
+    const withFable = (readAtMsAgo: number) =>
+        mergeHeaderReading(
+            usageFromQuotaHeaders(quotaHeaders("0.1", "0.2", "0.3")) as Usage,
+            undefined,
+            undefined,
+            NOW - readAtMsAgo
+        );
+
+    it("asks Fable without a Fable reading, not again within 30 minutes, and again after", () => {
+        expect(fableReadingDue(undefined, NOW)).toBe(true);
+        expect(fableReadingDue(ENDPOINT_READING, NOW)).toBe(true);
+        expect(fableReadingDue(withFable(10 * 60_000), NOW)).toBe(false);
+        expect(fableReadingDue(withFable(30 * 60_000), NOW)).toBe(true);
     });
 
-    it("allows a first reading and an open window, never a closed one", () => {
-        expect(headerReadingAllowed(undefined, NOW)).toBe(true);
-        expect(headerReadingAllowed(reading("2026-09-27T12:00:00Z"), NOW)).toBe(true);
-        expect(headerReadingAllowed(reading("2026-09-27T10:00:00Z"), NOW)).toBe(false);
-        expect(headerReadingAllowed(reading(null, 0), NOW)).toBe(false);
-        // A reading older than a whole 5-hour period says nothing about the current window.
-        const closed = reading("2026-09-25T07:50:00Z", 84);
-        expect(headerReadingAllowed(closed, NOW, NOW - 2 * 24 * 3_600_000)).toBe(true);
-        expect(headerReadingAllowed(closed, NOW, NOW - 60 * 60_000)).toBe(false);
+    it("a cheap reading keeps the last Fable window with the time it was read", () => {
+        const fable = withFable(10 * 60_000);
+        const cheap = mergeHeaderReading(
+            usageFromQuotaHeaders(quotaHeaders("0.4", "0.5")) as Usage,
+            fable,
+            NOW - 2 * 60_000,
+            NOW
+        );
+
+        expect(percents(cheap)).toMatchObject({ five_hour: 40, seven_day: 50, seven_day_fable: 30 });
+        expect(cheap.seven_day_overage_included?.utilization).toBe(30);
+        expect(cheap.quota).toMatchObject({
+            fableReadAt: new Date(NOW - 10 * 60_000).toISOString(),
+            fableStatus: "allowed",
+        });
+    });
+});
+
+describe("the probe budget", () => {
+    it("counts only the last 7 days", () => {
+        const days = { "2026-09-20": 900, "2026-09-21": 5, "2026-09-27": 3 };
+
+        expect(probesInWindow(days, NOW)).toBe(8);
+    });
+
+    it("refuses the probe past the cap, per account and model, and counts nothing when it refuses", async () => {
+        const caps = { [QUOTA_PROBE_MODEL]: 2, [QUOTA_PROBE_FALLBACK_MODEL]: 1 };
+        const work = persistedProbeBudget("work", caps);
+        await work.spend(QUOTA_PROBE_MODEL);
+        await work.spend(QUOTA_PROBE_MODEL);
+        const third = await work.spend(QUOTA_PROBE_MODEL).catch((err: unknown) => err);
+
+        expect(third).toBeInstanceOf(ProbeBudgetExceeded);
+        expect((third as InstanceType<typeof ProbeBudgetExceeded>).spent).toBe(2);
+        await work.spend(QUOTA_PROBE_FALLBACK_MODEL);
+        await persistedProbeBudget("personal", caps).spend(QUOTA_PROBE_MODEL);
+        expect(await work.spend(QUOTA_PROBE_MODEL).catch((err: unknown) => err)).toBeInstanceOf(ProbeBudgetExceeded);
     });
 });
 
@@ -371,7 +473,7 @@ describe("pollAccount with a long-lived token", () => {
         expect(requests).toEqual([USAGE_URL, QUOTA_PROBE_URL]);
     });
 
-    it("reads an account whose OAuth refresh died, and waits instead of opening a closed window", async () => {
+    it("reads an account whose OAuth refresh died, also when its last reading shows a closed window", async () => {
         stubFetch();
         resolveBehavior = "dead";
         const read = await poll(withPair());
@@ -381,17 +483,18 @@ describe("pollAccount with a long-lived token", () => {
         expect(read.oauthFailure).toContain("invalid_grant");
 
         requests.length = 0;
+        // A reset that passed says nothing about now: the account may be in use again (2026-09-28).
         const closed = {
-            five_hour: { utilization: 0, resets_at: null },
+            five_hour: { utilization: 82, resets_at: "2026-09-27T10:30:00Z" },
             seven_day: { utilization: 40, resets_at: null },
         };
-        const waited = await poll(withPair(), { previousUsage: closed }).catch((err: unknown) => err);
+        const again = await poll(withPair(), { previousUsage: closed, previousFetchedAt: NOW - 3 * 60_000 });
 
-        expect(waited).toBeInstanceOf(PollSuppressedError);
-        expect(requests).toEqual([]);
+        expect(again.usage?.five_hour.utilization).toBe(23);
+        expect(requests).toEqual([QUOTA_PROBE_URL]);
     });
 
-    it("a gated poll reads the headers without resolving any token, and waits on a closed window", async () => {
+    it("a gated poll reads the headers without resolving any token, on a closed window too", async () => {
         stubFetch();
         const read = await poll(withPair(), { headersOnly: true });
 
@@ -402,16 +505,31 @@ describe("pollAccount with a long-lived token", () => {
             five_hour: { utilization: 0, resets_at: null },
             seven_day: { utilization: 40, resets_at: null },
         };
-        const waited = await poll(withPair(), {
+        const again = await poll(withPair(), {
             headersOnly: true,
             previousUsage: closed,
-            previousFetchedAt: NOW - 60_000,
-        }).catch((err: unknown) => err);
+            previousFetchedAt: NOW - 3 * 60_000,
+        });
 
-        expect(waited).toBeInstanceOf(PollSuppressedError);
+        expect(again.usage?.five_hour.utilization).toBe(23);
+        expect(resolveCalls).toEqual([]);
     });
 
-    it("serves the last header reading again inside five minutes, stamped with its own time", async () => {
+    it("a spent probe budget skips the account instead of failing it", async () => {
+        stubFetch();
+        const spent = {
+            spend: async (model: string) => {
+                throw new ProbeBudgetExceeded("work", model, 400, 400);
+            },
+        };
+        const skipped = await poll(withPair(), { headersOnly: true, probeBudget: spent }).catch((err: unknown) => err);
+
+        expect(skipped).toBeInstanceOf(PollSuppressedError);
+        expect(String(skipped)).toContain("budget is spent");
+        expect(requests).toEqual([]);
+    });
+
+    it("serves the last header reading again inside two minutes, stamped with its own time", async () => {
         stubFetch();
         const last = usageFromQuotaHeaders(quotaHeaders("0.5", "0.6"));
         const recent = await poll(withPair(), {
@@ -427,7 +545,7 @@ describe("pollAccount with a long-lived token", () => {
         const due = await poll(withPair(), {
             headersOnly: true,
             previousUsage: last,
-            previousFetchedAt: NOW - 6 * 60_000,
+            previousFetchedAt: NOW - 2 * 60_000,
         });
 
         expect(due.usage?.five_hour.utilization).toBe(23);

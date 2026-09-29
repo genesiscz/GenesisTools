@@ -14,7 +14,8 @@ import { resolveAccountToken } from "@genesiscz/utils/claude/subscription-auth";
 import { longLivedTokenUsable } from "@genesiscz/utils/claude/token-verify";
 import type { AIAccountEntry } from "@genesiscz/utils/config/ai.types";
 import { logger } from "@genesiscz/utils/logger";
-import { fetchUsageFromHeaders, isHeaderReading, mergeHeaderReading } from "./quota-headers";
+import { type ProbeBudget, ProbeBudgetExceeded } from "./probe-budget";
+import { fableReadingDue, fetchUsageFromHeaders, isHeaderReading, mergeHeaderReading } from "./quota-headers";
 import {
     billingAnchor,
     isAnchorDue,
@@ -306,22 +307,24 @@ export interface PollAccountArgs {
      * the 6-hourly profile re-read, which WRITES the plan fields back to the config.
      */
     probe?: boolean;
-    /** The account's previous reading (the last round), for the header reading's window check. */
+    /** The account's previous reading (the last round): reused inside the interval, merged into a fresh one. */
     previousUsage?: UsageResponse;
-    /** Epoch ms of that reading: one older than a 5-hour period says nothing about the current window. */
+    /** Epoch ms of that reading. */
     previousFetchedAt?: number;
     /** The poll gate blocks the refresh path: read the headers only, never resolve or refresh a token. */
     headersOnly?: boolean;
+    /** The header reading's probe budget; the persisted one (`WEEKLY_PROBE_CAPS`) when absent. */
+    probeBudget?: ProbeBudget;
 }
 
-const FIVE_HOURS_MS = 5 * 3_600_000;
-
 /**
- * At most one header reading per account in this interval. A header reading is an inference
- * request, so the two-minute daemon and every interactive round would otherwise send one each.
- * A round inside the interval serves the last reading again, stamped with the time it was taken.
+ * At most one header reading per account in this interval: the same freshness as the usage endpoint
+ * path. A header reading is an inference request, so the per-minute daemon and every interactive round
+ * would otherwise send one each; a round inside the interval serves the last reading again, stamped
+ * with the time it was taken. 5 s under two minutes, so a daemon tick that lands a little early still
+ * reads. Its cost is capped by the probe budget (`WEEKLY_PROBE_CAPS`).
  */
-const HEADER_READING_INTERVAL_MS = 5 * 60_000;
+export const HEADER_READING_INTERVAL_MS = 2 * 60_000 - 5_000;
 
 /** The long-lived token when a header reading may stand in for the usage endpoint. Never in a probe. */
 function headerReadingToken(account: AIAccountEntry, probe: boolean | undefined): string | undefined {
@@ -332,26 +335,6 @@ function headerReadingToken(account: AIAccountEntry, probe: boolean | undefined)
     }
 
     return tokens.longLivedToken;
-}
-
-/**
- * A header reading is an inference request, so it may START the 5-hour window of an idle account
- * (unproven on 2026-09-27: every live account was in use; assumed, since it bills 8 input tokens).
- * It runs only while the previous reading shows a window still open, or when there is none yet.
- */
-export function headerReadingAllowed(
-    previous: UsageResponse | undefined,
-    now: number,
-    previousFetchedAt?: number
-): boolean {
-    // Without a reading, or with one older than a whole 5-hour period, nothing is known about the
-    // current window; waiting would only keep a dead-refresh account stale forever.
-    if (!previous || (previousFetchedAt !== undefined && now - previousFetchedAt >= FIVE_HOURS_MS)) {
-        return true;
-    }
-
-    const resetsAt = previous.five_hour?.resets_at ? Date.parse(previous.five_hour.resets_at) : Number.NaN;
-    return Number.isFinite(resetsAt) && resetsAt > now;
 }
 
 /**
@@ -403,8 +386,11 @@ export async function pollAccount(args: PollAccountArgs): Promise<AccountUsage> 
     // The rate-limit headers of a max_tokens:0 request answer the same two windows with the
     // long-lived token alone (quota-headers.ts). A FALLBACK: only the usage endpoint returns the
     // Fable and other scoped limits, so the headers answer only when the OAuth path cannot.
+    //
+    // A header reading may START the 5-hour window of an idle account (a reading after a closed window
+    // showed 0 % and a reset 5 hours out, 4 of 4 times on 2026-09-28). Martin allows that, so a closed
+    // window no longer holds the reading back: waiting kept accounts stale for hours while in use.
     const longLived = headerReadingToken(account, probe);
-    const headersAllowed = headerReadingAllowed(args.previousUsage, now, args.previousFetchedAt);
     const viaHeaders = async (why: string, extra: { oauthFailure?: string } = {}): Promise<AccountUsage> => {
         const readAt = args.previousFetchedAt;
         const reused =
@@ -412,13 +398,25 @@ export async function pollAccount(args: PollAccountArgs): Promise<AccountUsage> 
                 ? args.previousUsage
                 : undefined;
         logger.debug(`${tag} usage from the rate-limit headers${reused ? " (the last reading, reused)" : ""}: ${why}`);
-        const usage =
-            reused ??
-            mergeHeaderReading(
-                await fetchUsageFromHeaders(longLived ?? "", { signal, accountHint: account.name }),
-                args.previousUsage,
-                args.previousFetchedAt
-            );
+        const read = async (): Promise<UsageResponse> => {
+            try {
+                return await fetchUsageFromHeaders(longLived ?? "", {
+                    signal,
+                    account: account.name,
+                    withFable: fableReadingDue(args.previousUsage, now),
+                    ...(args.probeBudget ? { budget: args.probeBudget } : {}),
+                });
+            } catch (err) {
+                // A spent probe budget is not a failure of the account: the poll skips it (the last
+                // snapshot stays) instead of backing the account off.
+                if (err instanceof ProbeBudgetExceeded) {
+                    throw new PollSuppressedError(err.message);
+                }
+
+                throw err;
+            }
+        };
+        const usage = reused ?? mergeHeaderReading(await read(), args.previousUsage, args.previousFetchedAt, now);
         return {
             ...identityOf(account),
             usage,
@@ -431,12 +429,6 @@ export async function pollAccount(args: PollAccountArgs): Promise<AccountUsage> 
     if (args.headersOnly) {
         if (!longLived) {
             throw new PollSuppressedError("the refresh path is backing off and there is no usable long-lived token");
-        }
-
-        if (!headersAllowed) {
-            throw new PollSuppressedError(
-                "the refresh path is backing off; the last reading shows no open 5-hour window, so the header reading waits rather than start one"
-            );
         }
 
         return viaHeaders("the refresh path is backing off");
@@ -458,13 +450,6 @@ export async function pollAccount(args: PollAccountArgs): Promise<AccountUsage> 
         }
 
         const detail = err instanceof Error ? err.message : String(err);
-
-        if (!headersAllowed) {
-            throw new PollSuppressedError(
-                `no usable OAuth token (${detail}); the last reading shows no open 5-hour window, so the header reading waits rather than start one`
-            );
-        }
-
         return viaHeaders(`no usable OAuth token (${detail})`, { oauthFailure: detail });
     }
 
@@ -524,7 +509,7 @@ export async function pollAccount(args: PollAccountArgs): Promise<AccountUsage> 
 
             // The OAuth pair is dead; a long-lived token is a separate grant and still reads the two
             // windows. The failure rides along, so the gate still backs the dead refresh off.
-            if (longLived && headersAllowed) {
+            if (longLived) {
                 return viaHeaders(`usage endpoint ${err.statusCode}, then the refresh failed (${detail})`, {
                     oauthFailure: detail,
                 });
