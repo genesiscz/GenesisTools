@@ -2,6 +2,8 @@ import { describe, expect, test } from "bun:test";
 import type { AxResult } from "../runner";
 import { deeperSeeDepth, MAX_SEE_DEPTH, NativeControlDriver, overflowsObservation } from "./native";
 import { candidatesFor } from "./observation";
+import { actionRefusal, RecoveryController } from "./recovery";
+import { ControlSession } from "./session";
 
 function observation(): AxResult {
     return {
@@ -175,5 +177,84 @@ describe("act options follow the action actually dispatched", () => {
         ]);
         expect(args).not.toContain("--prepare");
         expect(args).toContain("--target-key");
+    });
+});
+
+describe("OCR reuse", () => {
+    async function seeArguments(options: { perceptionReuse?: string; image?: boolean }): Promise<string[]> {
+        let seen: string[] = [];
+        const driver = new NativeControlDriver({
+            app: "Electron App",
+            ...options,
+            run: async ({ args }) => {
+                seen = args;
+                return observation();
+            },
+        });
+        await driver.observe({});
+        return seen;
+    }
+
+    test("a cache path turns OCR on with --perception-reuse, and no path leaves see as it was", async () => {
+        const reused = await seeArguments({ perceptionReuse: "/tmp/session/ocr.json" });
+        expect(reused.slice(reused.indexOf("--perception"), reused.indexOf("--perception") + 4)).toEqual([
+            "--perception",
+            "ocr",
+            "--perception-reuse",
+            "/tmp/session/ocr.json",
+        ]);
+
+        const plain = await seeArguments({});
+        expect(plain).not.toContain("--perception");
+        expect(plain).not.toContain("--perception-reuse");
+    });
+
+    test("a cache path without the screenshot is refused before native runs", async () => {
+        await expect(seeArguments({ perceptionReuse: "/tmp/session/ocr.json", image: false })).rejects.toThrow(
+            /cannot be combined with image: false/
+        );
+    });
+});
+
+describe("user takeover", () => {
+    test("is its own refusal whatever the dispatch state, and recovery stops before any read or model call", async () => {
+        expect(actionRefusal({ ok: false, dispatchState: "uncertain", refusal: "user_takeover" })).toBe(
+            "user_takeover"
+        );
+        expect(actionRefusal({ ok: false, dispatchState: "not_started", refusal: "user_takeover" })).toBe(
+            "user_takeover"
+        );
+        expect(actionRefusal({ ok: false, dispatchState: "uncertain", refusal: "refused" })).toBe(
+            "transport_uncertainty"
+        );
+
+        let observed = 0;
+        const session = new ControlSession({
+            driver: new NativeControlDriver({
+                app: "Fixture",
+                run: async () => {
+                    observed++;
+                    throw new Error("fixture observation");
+                },
+            }),
+            evaluate: async () => {
+                throw new Error("Must not call model");
+            },
+        });
+        const recovery = new RecoveryController({ mode: "bounded" });
+        expect(await recovery.recover({ session, category: "user_takeover", goal: "Continue" })).toBeNull();
+        expect(recovery.attempts[0]).toMatchObject({ category: "user_takeover", status: "stopped" });
+        expect(observed).toBe(0);
+        expect(session.report().requests).toBe(0);
+
+        // The negative control: an ordinary stale refusal does go on to read the UI again.
+        await expect(
+            new RecoveryController({ mode: "bounded" }).recover({
+                session,
+                category: "stale_observation",
+                goal: "Continue",
+            })
+        ).rejects.toThrow("fixture observation");
+        expect(observed).toBe(1);
     });
 });

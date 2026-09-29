@@ -167,6 +167,11 @@ export class NativeControlDriver implements ControlDriver {
             expectedURL?: string;
             /** AX traversal depth for `see`; escalated automatically when ax-tool refuses. */
             depth?: number;
+            /**
+             * Cache file for `see --perception-reuse`. Turns OCR on, and a repeat observation re-reads
+             * only the regions that changed since the previous one. Needs the screenshot.
+             */
+            perceptionReuse?: string;
             run?: typeof runAxAsync;
         }
     ) {}
@@ -174,6 +179,16 @@ export class NativeControlDriver implements ControlDriver {
         const args = ["see", "--app", this.options.app, "--scope", this.scope ?? this.options.scope ?? "window"];
         if (this.options.image === false) {
             args.push("--no-image");
+        }
+
+        if (this.options.perceptionReuse !== undefined) {
+            if (this.options.image === false) {
+                throw new Error(
+                    "perceptionReuse reads OCR from the screenshot, so it cannot be combined with image: false."
+                );
+            }
+
+            args.push("--perception", "ocr", "--perception-reuse", this.options.perceptionReuse);
         }
 
         const depth = this.depth ?? this.options.depth;

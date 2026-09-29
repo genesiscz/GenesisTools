@@ -1,4 +1,5 @@
 import { expect, mock, test } from "bun:test";
+import { env } from "@genesiscz/utils/env";
 
 /**
  * `ensureBinary` runs before every `runAx`, so the freshness check it delegates to is on the
@@ -19,14 +20,18 @@ mock.module("./native-build", () => ({
     recordNativeBuild: () => {},
 }));
 
-const { ensureBinary } = await import("./runner");
+const { ensureBinary, REAL_AX_TOOL_IN_TESTS } = await import("./runner");
 
-test("the native freshness check is consulted once per process, not once per command", () => {
-    const first = ensureBinary();
+test("the native freshness check is consulted once per process, not once per command", async () => {
+    // Under test ensureBinary refuses to hand out the real binary. This test spawns nothing and
+    // builds nothing (native-build is mocked above), so it opts in to reach the memo it pins.
+    await env.testing.withOverrides({ [REAL_AX_TOOL_IN_TESTS]: "1" }, () => {
+        const first = ensureBinary();
 
-    for (let call = 0; call < 20; call++) {
-        expect(ensureBinary()).toBe(first);
-    }
+        for (let call = 0; call < 20; call++) {
+            expect(ensureBinary()).toBe(first);
+        }
+    });
 
     expect(needsBuildCalls).toBe(1);
 });

@@ -5,16 +5,28 @@ import { z } from "zod";
 import { ComputerReplEngine } from "../lib/computer-use/repl";
 import { ensureBinary } from "../lib/runner";
 
-export function registerComputerUseCommands(program: Command) {
+/**
+ * `tools computer-use` is the main door for agents; `tools control` and `tools jev control` register
+ * the same three commands as aliases so an existing MCP config keeps working. One core underneath:
+ * `ComputerUse` in `lib/computer-use/session.ts`.
+ */
+export function registerComputerUseCommands(program: Command, options: { primary?: boolean } = {}) {
+    const alias = (text: string, name: string) =>
+        options.primary ? text : `${text} (alias of \`tools computer-use ${name}\`)`;
     program
         .command("prepare")
-        .description("Compile the native backend before latency-sensitive UI calls")
+        .description(alias("Compile the native backend before latency-sensitive UI calls", "prepare"))
         .action(() => {
             out.result({ ok: true, binary: ensureBinary() });
         });
     program
         .command("mcp")
-        .description("Independent native Computer Use MCP; --repl exposes persistent JS/TS with computer preloaded")
+        .description(
+            alias(
+                "Native Computer Use MCP (no Codex or Sky); --repl exposes persistent JS/TS with computer preloaded",
+                "mcp"
+            )
+        )
         .option("--repl", "Use the four node-repl-compatible tools with the native computer API")
         .action(async (options: { repl?: boolean }) => {
             if (options.repl) {
@@ -26,7 +38,10 @@ export function registerComputerUseCommands(program: Command) {
     program
         .command("computer-run [code]")
         .description(
-            "Run JS/TS with the independent computer API preloaded (one process, no Codex or Sky). The turn is an async module body: the LAST EXPRESSION is the result, top-level `await` works, and a top-level `return` is a syntax error. Emit extra output with `nodeRepl.write(value)`; console.log is captured into the same text."
+            alias(
+                "Run JS/TS with the computer API preloaded (one process, no Codex or Sky). The turn is an async module body: the LAST EXPRESSION is the result, top-level `await` works, and a top-level `return` is a syntax error. Emit extra output with `nodeRepl.write(value)`; console.log is captured into the same text.",
+                "run"
+            )
         )
         .option("--file <path>", "Read script from a file")
         .option("--timeout <ms>", "Whole REPL turn deadline", "30000")

@@ -27,6 +27,11 @@ const rowSchema = z
         actions: z.array(z.string()).optional(),
         valueSettable: z.boolean().optional(),
         visible: z.boolean().optional(),
+        /**
+         * False when ax-tool sampled the screenshot and found blank pixels where AX reports a visible
+         * element (a CSS-hidden panel still in the tree). Absent when drawn or unknown.
+         */
+        drawn: z.boolean().optional(),
     })
     .passthrough();
 export const observedElementSchema = rowSchema;
@@ -313,6 +318,7 @@ export function candidatesFor({
         if (
             permitted &&
             row.visible !== false &&
+            row.drawn !== false &&
             modals.every(
                 (modal) => row.index === modal.index || ancestors.some((ancestor) => ancestor.index === modal.index)
             ) &&
@@ -369,7 +375,7 @@ export function observedEvidence(observation: Observation) {
  */
 export function observedRows(observation: Observation) {
     return observation.elements
-        .filter((row) => row.visible !== false)
+        .filter((row) => row.visible !== false && row.drawn !== false)
         .map((row) => ({
             id: `e${row.index}`,
             role: row.role,

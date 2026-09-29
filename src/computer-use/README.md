@@ -134,6 +134,10 @@ Native `AXPopUpButton` fields use their observed AXPress menu. `set_value` and `
 
 `bun src/control/scripts/live-smoke.ts --background-only --dropdown` proves native selection, readback and missing-option refusal. Add `--semantic` to test public Jev form mapping too. This probe disables cursor feedback so animation cannot invalidate its later screenshot-bound checks; `--cursor-proof` separately exercises cursor animation.
 
+## Taking over from the agent
+
+Move the pointer into the top-left corner of the main display (a 4-point square) and every synthetic input stops before its next event. ax-tool first releases any key or button it still holds, then refuses with `refusal: "user_takeover"` and `dispatchState` `not_started` or `uncertain`. Recovery never retries it. `GENESIS_CONTROL_ABORT_CORNER=0` turns the check off, for example for a target that sits in that corner.
+
 ## Fast sequences and OCR
 
 `press_sequence` uses one native process for a generic role/root-role target set. It requires explicit `jev:true`, admits the observed set once per window, then performs and verifies the bounded native sequence. It shares a 200-action cap and a whole-run deadline; unknown delivery stops the run.
@@ -154,6 +158,10 @@ await computer.press_sequence({
 ```
 
 For OCR, observe with `perception:"ocr"`. The returned `visual.regions` carry revision-bound refs. `resolve_visual_target` defaults to exact text matching; selecting Jev or Auto explicitly enables one Jev request. Pass its `region_ref` to `click`. Native code checks the captured pixels and consumes that evidence once.
+
+A region whose text an actionable AX element already shows carries `element_ref` (overlap of at least half the smaller box plus a text match, or a symbol glyph such as `←` centred on the control). `resolve_visual_target` returns the same `element_ref` for its choice. Prefer it: an AX press lands on the control even under an overlay and needs no pixel evidence. A repeat OCR observation of the same window re-reads only the tiles that changed (`perception.ocrReuse` says `full`, `partial` or `unchanged`); the session keeps one reuse cache per app and drops it with the app.
+
+When a screenshot is captured, ax-tool samples each actionable row's pixels. A row that AX reports as visible but that reads as blank (a CSS-hidden panel still in the tree) comes back with `drawn: false`, and semantic choice and evidence leave it out. An empty grid cell or a flat colour swatch can read blank too.
 
 ```ts
 await computer.get_app_state({app:"Example App", window_index:0, perception:"ocr"});

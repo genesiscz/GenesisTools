@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { appendFileSync, existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { agentSessionIds } from "@genesiscz/utils/agent/host";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -13,12 +13,45 @@ import {
 import { boundedCommand } from "@genesiscz/utils/process/bounded-command";
 import { profiler } from "@genesiscz/utils/profile";
 import { Stopwatch } from "@genesiscz/utils/Stopwatch";
+import { isTestProcess } from "@genesiscz/utils/test-process";
 import { captureNativeSources, nativeNeedsBuild, recordNativeBuild } from "./native-build";
 
 const GT_ROOT = join(import.meta.dir, "..", "..", "..");
 const BINARY_PATH = join(GT_ROOT, "native", "ax-tool", ".build", "release", "ax-tool");
 const SWIFT_SOURCE = join(GT_ROOT, "native", "ax-tool");
 const prof = profiler.scope("control-native");
+
+/** Deliberate opt-in for a test that must run the real ax-tool. Nothing in the default suite sets it. */
+export const REAL_AX_TOOL_IN_TESTS = "GENESIS_TOOLS_ALLOW_REAL_AX_TOOL_IN_TESTS";
+
+/**
+ * A test reached the real ax-tool. Every catch in this file rethrows it rather than folding it into
+ * an `{ ok: false }` result: a swallowed refusal reads as "the app has no windows", and the test
+ * passes on it.
+ */
+export class RealMachineInTestError extends Error {
+    constructor(what: string) {
+        super(`a test reached the real machine through ${what}; inject a fixture binary, spawn or transport instead`);
+        this.name = "RealMachineInTestError";
+    }
+}
+
+/**
+ * Every real input, screen read and click goes through ax-tool, and the suite runs on the
+ * developer's own Mac while they use it. So under the test runner the real binary is never handed
+ * out, built or spawned. The opt-in is the injection runner.test.ts already used: an
+ * `AxRunBoundary` whose `ensureBinary` names a fixture (the real spawn then runs the fixture), a
+ * `transport` for the persistent session, a `run` for the asynchronous driver. None of those names
+ * the real binary, so none of them needs a flag. Ported from typesafe-computer-use
+ * `tests/conftest.py` (`no_real_machine`).
+ */
+export function refuseRealMachineInTest(what: string): void {
+    if (!isTestProcess() || env.isFlag(REAL_AX_TOOL_IN_TESTS)) {
+        return;
+    }
+
+    throw new RealMachineInTestError(what);
+}
 
 export const RECORD_DIR = join(env.tools.getHome(), ".genesis-tools", "control", "record");
 export const RECORD_SESSION = join(RECORD_DIR, "session.json");
@@ -174,6 +207,10 @@ export async function runAxAsyncWithRecovery(options: {
         try {
             result = await options.run(recovery.remaining());
         } catch (error) {
+            if (error instanceof RealMachineInTestError) {
+                throw error;
+            }
+
             logger.warn({ error, command: options.args[0] }, "Native transport failed; no further retry");
             result =
                 error instanceof GenesisAppUpdatingError
@@ -200,6 +237,7 @@ export async function runAxAsyncWithRecovery(options: {
 let verifiedBinary: string | null = null;
 
 export function ensureBinary(): string {
+    refuseRealMachineInTest("ax-tool (ensureBinary hands out, and may build, the real binary)");
     if (verifiedBinary !== null) {
         return verifiedBinary;
     }
@@ -273,6 +311,10 @@ export function withNativeBudget(args: string[], timeoutMs: number): string[] {
 }
 
 export function axCommandLine(binary: string, args: readonly string[]): string[] {
+    if (resolve(binary) === BINARY_PATH) {
+        refuseRealMachineInTest(`ax-tool ${args.join(" ")}`);
+    }
+
     assertGenesisAppNotUpdating();
     const launcher = installedGenesisAppLauncher();
     return launcher ? [launcher, binary, ...args] : [binary, ...args];
@@ -342,6 +384,10 @@ export function runAxWithBoundary({
     try {
         binary = boundary.ensureBinary();
     } catch (error) {
+        if (error instanceof RealMachineInTestError) {
+            throw error;
+        }
+
         logger.error({ error }, "native control build unavailable");
         return { ok: false, error: error instanceof Error ? error.message : String(error) };
     }
@@ -366,6 +412,10 @@ export function runAxWithBoundary({
                 maxBufferBytes: AX_STDOUT_BUDGET_BYTES,
             });
         } catch (error) {
+            if (error instanceof RealMachineInTestError) {
+                throw error;
+            }
+
             logger.warn({ error, command: args[0] }, "Native spawn failed; no retry");
             if (error instanceof GenesisAppUpdatingError) {
                 return recovery.finish({
@@ -534,6 +584,10 @@ export async function runAxAsync(options: {
     try {
         binary = ensureBinary();
     } catch (error) {
+        if (error instanceof RealMachineInTestError) {
+            throw error;
+        }
+
         logger.error({ error }, "Native build unavailable");
         return { ok: false, dispatchState: "not_started", error: "Native build unavailable; no action dispatched." };
     }
@@ -571,6 +625,10 @@ export async function runAxAsync(options: {
         );
         return interpreted;
     } catch (error) {
+        if (error instanceof RealMachineInTestError) {
+            throw error;
+        }
+
         logger.warn({ error, command: args[0] }, "Native transport failed; no retry");
         if (error instanceof GenesisAppUpdatingError) {
             return { ok: false, dispatchState: "not_started", refusal: "launcher_updating", error: error.message };

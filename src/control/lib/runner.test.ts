@@ -6,10 +6,19 @@ import { env } from "@genesiscz/utils/env";
 import { GenesisAppUpdatingError } from "@genesiscz/utils/macos/genesis-app";
 import { buildPidRecord, serializePidRecord } from "@genesiscz/utils/process/pidfile";
 import { skip } from "@genesiscz/utils/test/skip";
+import { isTestProcess } from "@genesiscz/utils/test-process";
+import { NativeControlSession } from "./decision/native-session";
+import { emitClickOverlay } from "./overlay";
 import {
     type AxRunBoundary,
     axCommandLine,
     DEFAULT_AX_RUN_BOUNDARY,
+    ensureBinary,
+    getBinaryPath,
+    REAL_AX_TOOL_IN_TESTS,
+    RealMachineInTestError,
+    runAx,
+    runAxAsync,
     runAxAsyncWithRecovery,
     runAxWithBoundary,
     withNativeBudget,
@@ -433,7 +442,14 @@ test("prepared recovery refuses unsafe states and cannot loop forever", async ()
         });
         expect(calls).toBe(1);
     }
-    for (const refusal of ["scope_changed", "missing_target", "permission", "refused", "launcher_updating"]) {
+    for (const refusal of [
+        "scope_changed",
+        "missing_target",
+        "permission",
+        "refused",
+        "launcher_updating",
+        "user_takeover",
+    ]) {
         let calls = 0;
         await runAxAsyncWithRecovery({
             args,
@@ -531,6 +547,49 @@ test("a retry that finds the target changed reports uncertain delivery and names
     expect(single.error).toBe("gone");
 });
 
+test("a user takeover ends a recovering call on the attempt it arrives and keeps its own dispatch state", async () => {
+    const args = ["act", "--prepare", "--target-key", "a".repeat(64)];
+    const replies = [
+        { ok: false, dispatchState: "not_started", refusal: "stale_observation", error: "UI changed" },
+        { ok: false, dispatchState: "uncertain", refusal: "user_takeover", error: "the user took over" },
+    ];
+    let calls = 0;
+    const result = await runAxAsyncWithRecovery({
+        args,
+        timeoutMs: 2000,
+        run: async () => {
+            const reply = replies[calls++];
+            if (!reply) {
+                throw new Error("The input was attempted after the user took over");
+            }
+
+            return reply;
+        },
+    });
+    expect(calls).toBe(2);
+    expect(result).toMatchObject({
+        ok: false,
+        dispatchState: "uncertain",
+        refusal: "user_takeover",
+        error: "the user took over",
+        recovery: { retries: 1 },
+    });
+
+    // The negative control: the same prepared call is still retried for an ordinary stale refusal.
+    calls = 0;
+    await runAxAsyncWithRecovery({
+        args,
+        timeoutMs: 2000,
+        run: async () => {
+            calls++;
+            return calls === 1
+                ? { ok: false, dispatchState: "not_started", refusal: "stale_observation" }
+                : { ok: true, dispatchState: "dispatched" };
+        },
+    });
+    expect(calls).toBe(2);
+});
+
 test("terminated native refusal cannot authorize an action retry", () => {
     let calls = 0;
     const result = runAxWithBoundary({
@@ -578,4 +637,73 @@ test("async recovery retains earlier refusal when transport is lost and never re
         },
     });
     expect(calls).toBe(0);
+});
+
+// The guard's own proof, ported from typesafe-computer-use `tests/test_no_real_machine.py`. Each
+// test first proves the door it relies on refuses, so a regressed guard fails there, before a
+// later call could reach the real ax-tool. Every probe passes an argument ax-tool does not know.
+test("under test the real ax-tool is never handed out, built or spawned", () => {
+    expect(isTestProcess()).toBe(true);
+    expect(() => ensureBinary()).toThrow(RealMachineInTestError);
+    expect(() => ensureBinary()).toThrow(/^a test reached the real machine through ax-tool/);
+    expect(() => axCommandLine(getBinaryPath(), ["guard-probe", "--app", "Fixture"])).toThrow(
+        "a test reached the real machine through ax-tool guard-probe --app Fixture"
+    );
+});
+
+test("every entry point throws the refusal instead of folding it into an ok:false result", async () => {
+    expect(() => ensureBinary()).toThrow(RealMachineInTestError);
+
+    expect(() => runAx(["guard-probe"])).toThrow(RealMachineInTestError);
+    await expect(runAxAsync({ args: ["guard-probe"] })).rejects.toThrow(RealMachineInTestError);
+    expect(() => runAxWithBoundary({ args: ["guard-probe"], boundary: DEFAULT_AX_RUN_BOUNDARY })).toThrow(
+        RealMachineInTestError
+    );
+    expect(() => new NativeControlSession({ app: "Fixture" })).toThrow(RealMachineInTestError);
+    // The overlay draws on the real screen; it used to swallow every failure into `false`.
+    expect(() => emitClickOverlay({ x: 100, y: 100 })).toThrow(RealMachineInTestError);
+});
+
+test("the spawn door refuses the real binary even when an injected boundary hands it out", async () => {
+    expect(() => axCommandLine(getBinaryPath(), ["guard-probe"])).toThrow(RealMachineInTestError);
+
+    const handsOutTheRealBinary: AxRunBoundary = { ...DEFAULT_AX_RUN_BOUNDARY, ensureBinary: getBinaryPath };
+    expect(() => runAxWithBoundary({ args: ["guard-probe"], boundary: handsOutTheRealBinary })).toThrow(
+        RealMachineInTestError
+    );
+    // A recovering call must not report the refusal as an uncertain transport failure either.
+    await expect(
+        runAxAsyncWithRecovery({
+            args: ["guard-probe"],
+            timeoutMs: 2000,
+            run: async () => {
+                axCommandLine(getBinaryPath(), ["guard-probe"]);
+                return { ok: true };
+            },
+        })
+    ).rejects.toThrow(RealMachineInTestError);
+});
+
+test("a fixture binary, an injected transport and the explicit opt-in still pass (negative control)", async () => {
+    // A fixture binary through the real spawn is covered end to end by "the real subprocess
+    // boundary accepts valid native JSON larger than one MiB" above: it spawns process.execPath.
+    expect(axCommandLine("/fixture/ax-tool", ["see"]).slice(-2)).toEqual(["/fixture/ax-tool", "see"]);
+
+    const transport = {
+        request: async () => ({ ok: true }),
+        close: () => {},
+    };
+    expect(() => new NativeControlSession({ app: "Fixture", transport })).not.toThrow();
+
+    await env.testing.withOverrides({ [REAL_AX_TOOL_IN_TESTS]: "1" }, () => {
+        expect(axCommandLine(getBinaryPath(), ["see"]).slice(-2)).toEqual([getBinaryPath(), "see"]);
+    });
+    expect(() => axCommandLine(getBinaryPath(), ["see"])).toThrow(RealMachineInTestError);
+});
+
+test("peekaboo's own spawns, which bypass runner.ts, refuse under test too", async () => {
+    const { runCmd, runCmdFull, runPeekabooJson } = await import("./peekaboo");
+    expect(() => runCmd(["osascript", "-e", "guard-probe"])).toThrow(RealMachineInTestError);
+    expect(() => runCmdFull([getBinaryPath(), "guard-probe"])).toThrow(RealMachineInTestError);
+    expect(() => runPeekabooJson(["guard-probe"])).toThrow(RealMachineInTestError);
 });

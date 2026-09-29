@@ -376,9 +376,13 @@ tools control assist --app Fixture --goal "Enable Show line numbers" --no-fanout
 ```
 
 `tools jev control observe` (`observeFanout` in `src/control/lib/decision/observe.ts`) takes one
-`see` and asks six questions in a single request: which target, which verb, whether the goal is
-already done, whether the view is blocked, whether to wait, and the risk of acting. Code branches
-on the answers instead of picking a target and separately judging the outcome.
+`see` and asks five questions in a single request: which target, whether the goal is already done,
+whether the view is blocked, whether to wait, and the risk of acting. Code branches on the answers
+instead of picking a target and separately judging the outcome. The act is always the chosen
+target's own action; there is no separate verb question, so no answer can pair a target with an act
+it cannot take. The default targets are press rows only, because a fan-out carries no value to type.
+A caller may pass `triedHere` (labels of acts that already led back to this screen); they reach the
+model as `already_tried_on_this_screen`.
 
 `control assist` uses this fan-out by default and keeps the same serial guards the older chooser
 path has always had: a checkbox or toggle is never dispatched twice while completion stays
