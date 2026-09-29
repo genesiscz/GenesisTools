@@ -1,6 +1,8 @@
 import { existsSync } from "node:fs";
+import { GATE_ONLY_TAG } from "@genesiscz/utils/ai/config/selectors";
 import {
     auditPath,
+    GATE_API_KEY_PROVIDERS,
     GATE_PROVIDERS,
     GateDeniedError,
     grantsPath,
@@ -32,13 +34,15 @@ interface RequestOpts {
     client: string;
     pid?: string;
     provider?: string | true;
-    account: string;
+    account?: string;
     json?: boolean;
     printToken?: boolean;
 }
 
 /**
- * `tools ai gate` — the door other processes knock on for an AI account token.
+ * `tools ai gate` — the door other processes knock on for an AI account token, or for the stored
+ * API key of an xai/openai account (an app with no key in its environment, e.g. Genesis speaking
+ * through `tools say`).
  *
  * `request` is the only verb that spends anything: after Martin allows it in the app window, it may
  * refresh the account's expired OAuth access token inside the vault, by design, because a request is
@@ -52,19 +56,22 @@ interface RequestOpts {
 export function registerGateCommands(program: Command): void {
     const gate = program
         .command("gate")
-        .description("Hand an AI account access token to another app after native approval");
+        .description("Hand an AI account access token or API key to another app after native approval");
 
     gate.command("request")
-        .description("Ask for an access token; GenesisTools.app shows who asks and confirms with Touch ID")
+        .description("Ask for an access token or API key; GenesisTools.app shows who asks and confirms with Touch ID")
         .requiredOption("--client <name>", "Short name of the asking app, shown in the approval window")
         .option(
             "--pid <n>",
             "Pid of the asking process; without it the grant can only be allowed once, never remembered"
         )
         .option("--provider [value]", `Provider: ${GATE_PROVIDERS.join(", ")}`)
-        .requiredOption("--account <name>", "Account name or id from `tools ai accounts list`")
+        .option(
+            "--account <name>",
+            `Account name or id from \`tools ai accounts list\`; optional for ${GATE_API_KEY_PROVIDERS.join(", ")} (an account that stores a key, tagged ${GATE_ONLY_TAG} first)`
+        )
         .option("--json", "Print the full result as JSON")
-        .option("--print-token", "Print only the access token (for a provider's `!command` credential)")
+        .option("--print-token", "Print only the token or key (for a provider's `!command` credential)")
         .action(async (opts: RequestOpts) => {
             const provider = typeof opts.provider === "string" ? opts.provider : "";
 
@@ -107,7 +114,9 @@ export function registerGateCommands(program: Command): void {
                     return;
                 }
 
-                out.result({ ...result, accessToken: `${result.accessToken.slice(0, 12)}…` });
+                // An API key never expires, so its masked form keeps fewer characters than a token's.
+                const shown = result.tokenKind === "api-key" ? 4 : 12;
+                out.result({ ...result, accessToken: `${result.accessToken.slice(0, shown)}…` });
             } catch (error) {
                 if (error instanceof GateDeniedError) {
                     out.log.error(`${error.code}: ${error.message}`);

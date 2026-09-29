@@ -64,6 +64,7 @@ tools ai config account add                     # add an account, secrets go int
 tools ai config account list
 tools ai config account show <id-or-name>       # secret values are never resolved
 tools ai config account edit <id-or-name>
+printf '%s' "$XAI_API_KEY" | tools ai config account edit <id-or-name> --api-key-stdin   # give an existing account a key
 tools ai config account test <id-or-name>       # resolve the credential and bind the provider
 tools ai config account rm <id-or-name>
 
@@ -72,7 +73,7 @@ tools ai config default list
 
 tools ai config link                            # what references an account
 
-tools ai config secret set <path> [value]       # value comes from stdin or a file
+tools ai config secret set <path> [value]       # value comes from stdin or a file; does not link it to an account
 tools ai config secret ls [prefix]              # paths only, never values
 tools ai config secret rotate                   # new master key, re-encrypt everything
 tools ai config secret export                   # passphrase-protected copy

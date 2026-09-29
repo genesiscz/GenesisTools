@@ -31,6 +31,7 @@ import { SayAudioCache } from "./lib/cache";
 import { captureCallerContext } from "./lib/caller";
 import { failedSayOutcome, newCallId, type SayCallRequest, tryRecordCall, withCallLog } from "./lib/calls";
 import { registerCallLogCommands, showCallLogs, showCallStats } from "./lib/calls-view";
+import { checkSayCredential } from "./lib/credential";
 import { speakWithProfile } from "./lib/speak";
 import { getSayStorage } from "./lib/storage";
 
@@ -239,16 +240,17 @@ const program = new Command()
         let exitCode = 0;
 
         await withCallLog(request, async (setOutcome) => {
-            if (provider !== "macos" && !envForProvider(provider)) {
-                if (opts.fallback === false) {
-                    setOutcome(failedSayOutcome({ provider, error: `env var for ${provider} is not set` }));
-                    out.error(pc.red(`[say] env var for ${provider} is not set.`));
-                    out.error(pc.dim(suggestCommand("tools say", { add: ["--provider", "macos"] })));
-                    exitCode = 1;
-                    return;
-                }
+            const credential = await checkSayCredential({ provider, fallback: opts.fallback !== false });
 
-                out.error(pc.yellow(`[say] env var for ${provider} is not set — falling back to macos.`));
+            if (credential.kind === "fail") {
+                setOutcome(failedSayOutcome({ provider, error: credential.reason }));
+                out.error(pc.red(credential.line));
+                exitCode = 1;
+                return;
+            }
+
+            if (credential.kind === "fallback") {
+                out.error(pc.yellow(credential.line));
                 fallbackFrom = provider;
                 provider = "macos";
 
@@ -462,18 +464,6 @@ async function resolveText(messageParts: string[], filePath?: string): Promise<s
     }
 
     return messageParts.join(" ");
-}
-
-function envForProvider(provider: SayProvider): boolean {
-    if (provider === "xai") {
-        return env.x.hasApiKey();
-    }
-
-    if (provider === "openai") {
-        return env.ai.openai.hasKey();
-    }
-
-    return true;
 }
 
 interface SpeakCachedArgs {

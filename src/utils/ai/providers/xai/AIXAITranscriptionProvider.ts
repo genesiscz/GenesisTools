@@ -101,7 +101,7 @@ export class AIXAITranscriptionProvider implements AITranscriptionProvider {
     }
 
     async transcribeStream(audio: Buffer, options?: TranscribeOptions): Promise<TranscriptionResult> {
-        this.client.requireKey();
+        await this.client.requireKey();
         const wav = await convertToWhisperWav(audio);
         const pcm = stripWavHeader(wav);
         const sampleRate = 16_000;
@@ -122,8 +122,9 @@ export class AIXAITranscriptionProvider implements AITranscriptionProvider {
             params.set("diarize", "true");
         }
 
+        const ws = await this.client.openWebSocket("/stt", params);
+
         return new Promise<TranscriptionResult>((resolve, reject) => {
-            const ws = this.client.openWebSocket("/stt", params);
             const collectedSegments: TranscriptionSegment[] = [];
             let aggregatedText = "";
             let aggregatedDuration: number | undefined;

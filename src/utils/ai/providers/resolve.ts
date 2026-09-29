@@ -1,7 +1,13 @@
 import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
 import type { AccountEntry } from "../config/schema";
-import { CredentialUnavailableError, type ResolvedCredential, resolveCredential } from "./credentials";
+import {
+    addApiKeyAccountCommand,
+    CredentialUnavailableError,
+    type ResolvedCredential,
+    resolveCredential,
+    storeApiKeyCommand,
+} from "./credentials";
 import type { CredentialSpec } from "./plugin-types";
 import { tryProviderPlugin } from "./registry";
 
@@ -37,7 +43,9 @@ export async function resolveProviderApiKey(providerId: string): Promise<Resolve
     const plugin = tryProviderPlugin(providerId);
     const spec: CredentialSpec = plugin?.credential ?? { fields: ["apiKey"], envKeys: [], required: ["apiKey"] };
 
-    for (const account of await accountsFor(providerId)) {
+    const accounts = await accountsFor(providerId);
+
+    for (const account of accounts) {
         try {
             const resolved = await resolveCredential(account, spec);
             logger.debug(
@@ -61,13 +69,23 @@ export async function resolveProviderApiKey(providerId: string): Promise<Resolve
         }
     }
 
-    throw new CredentialUnavailableError(
-        "<none>",
-        providerId,
-        spec.envKeys.length > 0
-            ? `no account and none of ${spec.envKeys.join(", ")} is set. Add one with: tools ai config account add --provider ${providerId}`
-            : `no account configured. Add one with: tools ai config account add --provider ${providerId}`
-    );
+    // "no account" is false when an env-only account exists (the seeded `xai-api`
+    // is one), and a user who can see it in `account list` stops trusting the rest
+    // of the line. Such an account needs a key of its own, not a second account:
+    // the model ladder picks the first account for a provider and would keep
+    // binding the keyless one.
+    const envKey = spec.envKeys[0];
+    const found =
+        accounts.length > 0
+            ? `no key in account${accounts.length === 1 ? "" : "s"} ${accounts.map((account) => account.name).join(", ")}`
+            : "no account";
+    const detail = spec.envKeys.length > 0 ? `${found} and none of ${spec.envKeys.join(", ")} is set` : found;
+    const fix =
+        accounts.length > 0
+            ? `Store a key on ${accounts[0].name} with: ${storeApiKeyCommand({ accountName: accounts[0].name, envKey })}`
+            : `Add one with: ${addApiKeyAccountCommand({ providerId, envKey })}`;
+
+    throw new CredentialUnavailableError("<none>", providerId, `${detail}. ${fix}`);
 }
 
 /** The api key alone, for the many call sites that only need that. */

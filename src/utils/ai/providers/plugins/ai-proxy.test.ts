@@ -56,7 +56,8 @@ describe("ai-proxy gateway plugin", () => {
         const promise = aiProxyPlugin.bind({ account: account({ credentials: {} }) });
 
         await expect(promise).rejects.toThrow(CredentialUnavailableError);
-        await expect(promise).rejects.toThrow(/tools ai config secret set/);
+        await expect(promise).rejects.toThrow(/tools ai config account edit \S+ --api-key-stdin/);
+        await expect(promise).rejects.not.toThrow(/secret set/);
     });
 
     test("declares no env variables at all", () => {

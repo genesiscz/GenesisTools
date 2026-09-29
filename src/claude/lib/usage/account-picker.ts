@@ -47,6 +47,24 @@ export const FABLE_LOW_PCT = 3;
 /** A dead LOGIN, not a spent bucket — no refresh will fix it. */
 const EXPIRED_ERROR_RE = /invalid_grant|Usage API 401/i;
 
+/**
+ * A 429 whose token rotation failed still carries the refresh error in the
+ * same string (`Usage API 429: … (token refresh failed: … invalid_grant …)`).
+ * Matching that substring ranked a live account `expired` until the next 200,
+ * which is the usage-panel badge that appears and then heals itself.
+ */
+function isLoginExpiredError(message: string | undefined): boolean {
+    if (message === undefined || message.length === 0) {
+        return false;
+    }
+
+    if (/Usage API 429\b/.test(message)) {
+        return false;
+    }
+
+    return EXPIRED_ERROR_RE.test(message);
+}
+
 export type AccountTier = "ready" | "session-starved" | "weekly-blocked" | "no-data";
 export type AccountGroup = "fable" | "opus" | "dead" | "expired";
 
@@ -193,7 +211,7 @@ export function scoreAccounts(accounts: AccountUsage[], opts: ScoreOptions = {})
         // shared-cache backfills the last good payload and records the
         // invalid_grant in `stale.reason`, so both places must be checked.
         const expiredError = account.error ?? account.stale?.reason;
-        const loginExpired = expiredError !== undefined && EXPIRED_ERROR_RE.test(expiredError);
+        const loginExpired = isLoginExpiredError(expiredError);
 
         // Org-level 403 means the subscription is gone. This wins over
         // stale-replayed usage: shared-cache backfills the last good payload,
