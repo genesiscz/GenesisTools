@@ -10,10 +10,8 @@ import {
     HubPromptError,
     listPrompts,
     parseVars,
-    promptVariables,
     readPrompts,
     removePrompt,
-    renderPrompt,
     type SavedPrompt,
     type SendPromptDeps,
     sendPrompt,
@@ -57,23 +55,6 @@ function fakeDeps(overrides: Partial<SendPromptDeps> = {}): SendPromptDeps & { s
 }
 
 describe("variables", () => {
-    test("each variable once, in the order it first appears, spaces inside the braces allowed", () => {
-        expect(promptVariables("Fix {{pr}} on {{ branch }}, then {{pr}} again and {{file.path}}")).toEqual([
-            "pr",
-            "branch",
-            "file.path",
-        ]);
-        expect(promptVariables("no variables {here}")).toEqual([]);
-    });
-
-    test("render fills what it has and reports the rest, which stays as written", () => {
-        expect(renderPrompt("Rebase {{branch}} onto {{base}}", { branch: "feat/x" })).toEqual({
-            text: "Rebase feat/x onto {{base}}",
-            missing: ["base"],
-        });
-        expect(renderPrompt("{{a}}", { a: "" }).missing).toEqual(["a"]);
-    });
-
     test("parseVars splits at the first =", () => {
         expect(parseVars(["branch=feat/x", "query=a=b"])).toEqual({ branch: "feat/x", query: "a=b" });
         expect(() => parseVars(["novalue"])).toThrow(HubPromptError);

@@ -3,12 +3,13 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { readCachedSessionCwd } from "@genesiscz/utils/agent-sessions/cached-title";
 import { execTool } from "@genesiscz/utils/cli";
+import { repoFacts } from "@genesiscz/utils/git/repo-facts";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { Storage, withFileLock } from "@genesiscz/utils/storage";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/storage";
+import { promptVariables, renderPrompt } from "@genesiscz/utils/template";
 import { noPaneMatched } from "./fix-threads";
-import { repoFacts } from "./repo";
 
 // The hub's prompt library: `~/.genesis-tools/hub/prompts.json`. A prompt is a text with named
 // variables (`{{branch}}`, `{{pr}}`, `{{file}}`); sending renders it and types it into a session's
@@ -51,7 +52,6 @@ export class HubPromptError extends Error {
     }
 }
 
-const VARIABLE = /\{\{\s*([A-Za-z_][\w.-]*)\s*\}\}/g;
 const NAME = /^[A-Za-z0-9][\w .:-]{0,63}$/;
 /** cmux reads these escapes as keys (Enter, Tab): a text holding one cannot be typed as it is. */
 const CMUX_ESCAPE = /\\[nrt]/;
@@ -158,38 +158,6 @@ async function updatePrompts<T>(path: string, change: (file: PromptsFile) => T):
         atomicWriteFileSync(path, `${SafeJSON.stringify(file, null, 2)}\n`);
         return result;
     });
-}
-
-/** The variables a text uses, each once, in the order they first appear. */
-export function promptVariables(text: string): string[] {
-    const names: string[] = [];
-
-    for (const match of text.matchAll(VARIABLE)) {
-        if (!names.includes(match[1])) {
-            names.push(match[1]);
-        }
-    }
-
-    return names;
-}
-
-/** Fill every `{{name}}`; a variable without a value stays as written and is reported missing. */
-export function renderPrompt(text: string, vars: Record<string, string>): { text: string; missing: string[] } {
-    const missing: string[] = [];
-    const rendered = text.replace(VARIABLE, (whole, name: string) => {
-        const value = vars[name];
-
-        if (value === undefined || value === "") {
-            if (!missing.includes(name)) {
-                missing.push(name);
-            }
-
-            return whole;
-        }
-
-        return value;
-    });
-    return { text: rendered, missing };
 }
 
 /** Most used first, then most recently used, then by name. */
