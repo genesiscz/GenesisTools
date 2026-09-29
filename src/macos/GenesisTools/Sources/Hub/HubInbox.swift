@@ -663,7 +663,8 @@ final class HubInboxModel: ObservableObject {
             return
         }
 
-        run(args, item: item)
+        // The answering process reads the staged images in place; once it is done they are not needed.
+        run(args, item: item, staged: imagePaths.values.flatMap { $0 })
     }
 
     /// Pure: the argv `answerForm` sends to `tools question inbox answer`
@@ -709,7 +710,7 @@ final class HubInboxModel: ObservableObject {
         return args
     }
 
-    private func run(_ args: [String], item: InboxItem) {
+    private func run(_ args: [String], item: InboxItem, staged: [String] = []) {
         guard !sending.contains(item.id) else { return }
         sending.insert(item.id)
         deliveries[item.id] = nil
@@ -725,6 +726,10 @@ final class HubInboxModel: ObservableObject {
                 delivery = .failure("\(error)")
             }
             span.end(delivery.channel ?? "error")
+            // A failed answer keeps them: the card is still there, and a retry sends the same files.
+            if !delivery.isError {
+                staged.forEach(QaAttachedImage.remove)
+            }
             DispatchQueue.main.async { [weak self] in
                 MainActor.assumeIsolated {
                     guard let self else { return }
@@ -1779,6 +1784,58 @@ private struct QaAttachedImage: Identifiable {
     let id = UUID()
     let path: String
     let thumbnail: NSImage
+
+    enum Outcome {
+        case staged(QaAttachedImage)
+        case failed(String)
+    }
+
+    static let directory = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("gt-qa-images", isDirectory: true)
+    /// A staged file older than this belongs to a card that went away mid-answer or a hub that quit.
+    static let staleAge: TimeInterval = 24 * 3_600
+
+    /// Off the main thread: PNG-encodes the image, refuses one over the server's cap, writes it to a
+    /// private temp file and sweeps stale ones.
+    static func stage(_ image: NSImage?) -> Outcome {
+        guard let image, let tiff = image.tiffRepresentation, let rep = NSBitmapImageRep(data: tiff),
+              let png = rep.representation(using: .png, properties: [:])
+        else {
+            return .failed("Could not read that image.")
+        }
+
+        guard png.count <= QaFormFields.maxImageBytes else {
+            return .failed("That image is too large; the server keeps up to about 1.5 MB per image.")
+        }
+
+        let url = directory.appendingPathComponent("\(UUID().uuidString).png")
+        do {
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            sweepStale()
+            try png.write(to: url)
+        } catch {
+            return .failed("Could not save that image: \(error.localizedDescription)")
+        }
+
+        return .staged(QaAttachedImage(path: url.path, thumbnail: NSImage(data: png) ?? image))
+    }
+
+    static func remove(_ path: String) {
+        do {
+            try FileManager.default.removeItem(atPath: path)
+        } catch {
+            NSLog("[hub] could not remove staged QA image \(path): \(error.localizedDescription)")
+        }
+    }
+
+    private static func sweepStale(now: Date = Date()) {
+        let files = (try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: [.contentModificationDateKey])) ?? []
+        for file in files where file.pathExtension == "png" {
+            let modified = (try? file.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? now
+            if now.timeIntervalSince(modified) > staleAge {
+                remove(file.path)
+            }
+        }
+    }
 }
 
 private struct InboxFormCard: View {
@@ -1826,6 +1883,16 @@ private struct InboxFormCard: View {
             images.isEmpty ? nil : (itemId, images.map(\.path))
         })
         inbox.answerForm(item, choices: picked, texts: texts, fileTags: fileTagsByItem, imagePaths: imagePathsByItem)
+    }
+
+    /// A card that goes away with no answer in flight takes its staged images with it. With an answer
+    /// in flight the model removes them once the answering process has read them.
+    private func discardStagedImages() {
+        guard !sending else { return }
+        for path in attachedImages.values.flatMap({ $0.map(\.path) }) {
+            QaAttachedImage.remove(path)
+        }
+        attachedImages = [:]
     }
 
     var body: some View {
@@ -1899,6 +1966,7 @@ private struct InboxFormCard: View {
         .background(RoundedRectangle(cornerRadius: 11).fill(Color.white.opacity(0.045)))
         .overlay(RoundedRectangle(cornerRadius: 11).stroke(ReviewPalette.renamed.opacity(0.3)))
         .findRow(item.id, cornerRadius: 11)
+        .onDisappear { discardStagedImages() }
     }
 
     private func choiceChip(_ question: InboxQuestion, _ choice: InboxChoice) -> some View {
@@ -1969,7 +2037,8 @@ private struct InboxFormCard: View {
             }
             fieldError[question.itemId] = nil
             let existing = fileTagsText[question.itemId] ?? ""
-            fileTagsText[question.itemId] = existing.trimmed.isEmpty ? relative : existing + " " + relative
+            let token = QaFormFields.fileTagToken(relative)
+            fileTagsText[question.itemId] = existing.trimmed.isEmpty ? token : existing + " " + token
         }
     }
 
@@ -2018,7 +2087,7 @@ private struct InboxFormCard: View {
             for provider in providers {
                 _ = provider.loadObject(ofClass: NSImage.self) { image, _ in
                     guard let image = image as? NSImage else { return }
-                    DispatchQueue.main.async { attachImage(itemId: itemId, image: image) }
+                    DispatchQueue.main.async { attachImage(itemId: itemId) { image } }
                 }
             }
         }
@@ -2035,53 +2104,43 @@ private struct InboxFormCard: View {
         panel.begin { response in
             guard response == .OK else { return }
             for url in panel.urls {
-                if let image = NSImage(contentsOf: url) {
-                    attachImage(itemId: itemId, image: image)
+                attachImage(itemId: itemId) { NSImage(contentsOf: url) }
+            }
+        }
+    }
+
+    /// Loads, converts, size-checks and writes the image on a background queue, so a large screenshot
+    /// never stalls the hub, then adds it on the main queue against the latest count.
+    private func attachImage(itemId: String, load: @escaping () -> NSImage?) {
+        guard (attachedImages[itemId] ?? []).count < QaFormFields.maxImagesPerAnswer else {
+            fieldError[itemId] = "Only \(QaFormFields.maxImagesPerAnswer) images per answer; remove one first."
+            return
+        }
+
+        DispatchQueue.global(qos: .userInitiated).async {
+            let outcome = QaAttachedImage.stage(load())
+            DispatchQueue.main.async {
+                switch outcome {
+                case .failed(let message):
+                    fieldError[itemId] = message
+                case .staged(let image):
+                    let current = attachedImages[itemId] ?? []
+                    guard current.count < QaFormFields.maxImagesPerAnswer else {
+                        QaAttachedImage.remove(image.path)
+                        fieldError[itemId] = "Only \(QaFormFields.maxImagesPerAnswer) images per answer; remove one first."
+                        return
+                    }
+                    fieldError[itemId] = nil
+                    attachedImages[itemId] = current + [image]
                 }
             }
         }
     }
 
-    private func attachImage(itemId: String, image: NSImage) {
-        let current = attachedImages[itemId] ?? []
-
-        guard current.count < QaFormFields.maxImagesPerAnswer else {
-            fieldError[itemId] = "Only \(QaFormFields.maxImagesPerAnswer) images per answer; remove one first."
-            return
-        }
-
-        guard let tiff = image.tiffRepresentation, let rep = NSBitmapImageRep(data: tiff),
-              let png = rep.representation(using: .png, properties: [:])
-        else {
-            fieldError[itemId] = "Could not read that image."
-            return
-        }
-
-        guard png.count <= QaFormFields.maxImageBytes else {
-            fieldError[itemId] = "That image is too large; the server keeps up to about 1.5 MB per image."
-            return
-        }
-
-        let dir = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("gt-qa-images", isDirectory: true)
-        let path = dir.appendingPathComponent("\(UUID().uuidString).png").path
-
-        do {
-            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-            try png.write(to: URL(fileURLWithPath: path))
-        } catch {
-            fieldError[itemId] = "Could not save that image: \(error.localizedDescription)"
-            return
-        }
-
-        fieldError[itemId] = nil
-        let thumbnail = NSImage(data: png) ?? image
-        attachedImages[itemId] = current + [QaAttachedImage(path: path, thumbnail: thumbnail)]
-    }
-
     private func removeImage(itemId: String, id: UUID) {
         guard var list = attachedImages[itemId] else { return }
         if let index = list.firstIndex(where: { $0.id == id }) {
-            try? FileManager.default.removeItem(atPath: list[index].path)
+            QaAttachedImage.remove(list[index].path)
             list.remove(at: index)
         }
         attachedImages[itemId] = list

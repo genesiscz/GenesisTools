@@ -15,11 +15,31 @@ enum QaFormFields {
 
     /// Splits a manual `@file` field the way the dashboard does (`splitTags`,
     /// `QaPendingCard.tsx`): space or comma separated, a leading `@` stripped, blanks dropped.
+    /// A double-quoted run stays one tag, so a browsed `src/My File.swift` is not split in two.
     static func splitFileTags(_ raw: String) -> [String] {
-        raw.split(whereSeparator: { $0 == " " || $0 == "," || $0.isNewline })
+        var tokens: [String] = []
+        var current = ""
+        var quoted = false
+        for character in raw {
+            if character == "\"" {
+                quoted.toggle()
+            } else if !quoted, character == " " || character == "," || character.isNewline {
+                tokens.append(current)
+                current = ""
+            } else {
+                current.append(character)
+            }
+        }
+        tokens.append(current)
+        return tokens
             .map { $0.trimmingCharacters(in: .whitespaces) }
             .filter { !$0.isEmpty }
             .map { $0.hasPrefix("@") ? String($0.dropFirst()) : $0 }
+    }
+
+    /// A picked path as one token `splitFileTags` reads back whole: quoted when it holds a separator.
+    static func fileTagToken(_ path: String) -> String {
+        path.contains(where: { $0 == " " || $0 == "," || $0.isNewline }) ? "\"\(path)\"" : path
     }
 
     /// A path picked from `NSOpenPanel`, made relative to the form's cwd; nil when the file is
