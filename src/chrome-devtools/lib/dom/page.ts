@@ -348,16 +348,17 @@ export class DomPage {
         };
     }
 
-    private async untilLoaded(loaded: Promise<void>): Promise<void> {
+    /** True when the document loaded, false when the cap came first. */
+    private async untilLoaded(loaded: Promise<void>): Promise<boolean> {
         let timer: ReturnType<typeof setTimeout> | undefined;
-        const cap = new Promise<void>((resolve) => {
+        const cap = new Promise<boolean>((resolve) => {
             timer = setTimeout(() => {
                 log.warn({ capMs: NAVIGATION_CAP_MS }, "navigation did not reach DOMContentLoaded in time");
-                resolve();
+                resolve(false);
             }, NAVIGATION_CAP_MS);
         });
         try {
-            await prof.measureAsync("dom-navigation", () => Promise.race([loaded, cap]));
+            return await prof.measureAsync("dom-navigation", () => Promise.race([loaded.then(() => true), cap]));
         } finally {
             clearTimeout(timer);
         }
@@ -367,7 +368,14 @@ export class DomPage {
         const load = this.nextLoad();
         try {
             await withDeadline(send(), CALL_DEADLINE_MS, label);
-            await this.untilLoaded(load.loaded);
+            if (!(await this.untilLoaded(load.loaded))) {
+                return {
+                    ok: false,
+                    error: `navigation_unconfirmed: ${label} did not reach DOMContentLoaded within ${NAVIGATION_CAP_MS} ms`,
+                    dispatched: true,
+                };
+            }
+
             return { ok: true, settled: "navigated" };
         } catch (error) {
             return uncertain(error);
@@ -412,6 +420,11 @@ export class DomPage {
 
         await this.agent("arm", null);
         const load = this.nextLoad();
+        if ((await this.agent("hasFocus", { node: action.node }, { retry: false })) !== true) {
+            load.cancel();
+            return { ok: false, error: "target changed: focus moved before typing", dispatched: false };
+        }
+
         try {
             await this.input("Input.insertText", { text: value });
         } catch (error) {

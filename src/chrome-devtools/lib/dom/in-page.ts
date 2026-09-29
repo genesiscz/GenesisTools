@@ -58,7 +58,7 @@ export interface DomSnapshot {
     /**
      * Names of every shown secret field in the document (password, one-time code, payment), below
      * the fold and past the action cap included, so a page that asks for a secret is known before
-     * anything on it is pressed. Capped at 10.
+     * anything on it is pressed. Never capped, since the password wall reads it.
      */
     secretFields: Array<{ label: string; field: DomField }>;
     canScrollDown: boolean;
@@ -141,7 +141,7 @@ export function installPageAgent(): void {
         ].map((role) => `[role=${role}]`),
     ].join(",");
     const NO_TEXT = "script,style,noscript,template,textarea,input,select,[contenteditable=''],[contenteditable=true]";
-    const MAX_SECRET_FIELDS = 10;
+
     // A mutation inside a shadow root is not reported to an observer on the document, so every open
     // root is observed on its own.
     const MUTATIONS: MutationObserverInit = { subtree: true, childList: true, attributes: true, characterData: true };
@@ -615,7 +615,8 @@ export function installPageAgent(): void {
         for (const root of roots) {
             for (const element of Array.from(root.querySelectorAll("input[type=password],[autocomplete]"))) {
                 const field = fieldOf(element);
-                if (secretFields.length < MAX_SECRET_FIELDS && field?.secret && shown(element) && !disabled(element)) {
+                // Never capped: the password wall checks this list, and a secret past a cap would slip by.
+                if (field?.secret && shown(element) && !disabled(element)) {
                     secretFields.push({
                         label: nameOf(element, roleOf(element)) || field.name || "secret field",
                         field,
@@ -715,6 +716,22 @@ export function installPageAgent(): void {
     };
 
     /** Focus and select a field's whole content, so the next inserted text replaces it. */
+    /** The element that really holds focus: the document names a shadow host, so descend. */
+    const deepActive = (): Element | null => {
+        let active = document.activeElement;
+        while (active?.shadowRoot?.activeElement) {
+            active = active.shadowRoot.activeElement;
+        }
+
+        return active;
+    };
+
+    /** Right before typing: the field still holds focus, so no page handler moved it elsewhere. */
+    const hasFocus = (request: { node: number }): boolean => {
+        const element = state.nodes.get(request.node);
+        return element !== undefined && deepActive() === element;
+    };
+
     const focusField = (request: { node: number; guard: string }): DomPrepared => {
         const prepared = prepare(request);
         if (!prepared.ok) {
@@ -723,6 +740,12 @@ export function installPageAgent(): void {
 
         const element = state.nodes.get(request.node) as HTMLElement;
         element.focus();
+        // A focus handler runs page code and can move focus to another field; typing there would put
+        // the caller's value, a secret included, into a field nobody chose.
+        if (deepActive() !== element) {
+            return { ok: false, reason: "changed", detail: "focus moved to another element" };
+        }
+
         if (element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement) {
             element.select();
         } else if (element.isContentEditable) {
@@ -773,6 +796,8 @@ export function installPageAgent(): void {
             return { ok: false, reason: "changed", detail: "the option moved or was disabled" };
         }
 
+        // Set like Playwright's selectOption: the value, then input and change. Those events are
+        // untrusted; the native list popup is drawn by the browser, where page input cannot reach it.
         element.selectedIndex = request.option;
         element.dispatchEvent(new Event("input", { bubbles: true }));
         element.dispatchEvent(new Event("change", { bubbles: true }));
@@ -838,5 +863,16 @@ export function installPageAgent(): void {
         return Math.round(scrollY - before);
     };
 
-    scope.__gtJevAgent = { snapshot, prepare, focusField, holds, selectOption, selected, arm, settle, scroll };
+    scope.__gtJevAgent = {
+        snapshot,
+        prepare,
+        focusField,
+        hasFocus,
+        holds,
+        selectOption,
+        selected,
+        arm,
+        settle,
+        scroll,
+    };
 }
