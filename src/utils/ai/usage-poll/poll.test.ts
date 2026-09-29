@@ -7,10 +7,11 @@ import type { AccountFeatures, AccountUsageFeature } from "@genesiscz/utils/ai/p
 import { _resetBuiltInPluginsForTest } from "@genesiscz/utils/ai/providers/plugins";
 import { _resetPluginsForTest } from "@genesiscz/utils/ai/providers/registry";
 import { env } from "@genesiscz/utils/env";
+import { DAEMON_ALIVE_MS, readerMaxStaleMs, touchUsageDaemonHeartbeat, usageDaemonAgeMs } from "./daemon-heartbeat";
 import { formatBlockedNotice, formatNeedsLoginNotice } from "./format-blocked";
 import { mergeAccountSlice } from "./legacy-cache";
 import { __fetchProviderSnapshots, latestFetchedAt, type UsagePlugin, usagePlugins } from "./poll";
-import { blockedEntry, loadPollGate, type PollGate, recordFailure, savePollGate } from "./poll-gate";
+import { blockedEntry, loadPollGate, type PollGate, PollSuppressed, recordFailure, savePollGate } from "./poll-gate";
 import { __resetUsagePollStorage } from "./storage";
 import type { AccountUsageSnapshot } from "./types";
 
@@ -185,10 +186,12 @@ describe("__fetchProviderSnapshots", () => {
     function fakePlugin(args: {
         poll: AccountUsageFeature["poll"];
         credentialStamp?: AccountUsageFeature["credentialStamp"];
+        pollsWhileGated?: AccountUsageFeature["pollsWhileGated"];
     }): UsagePlugin {
         const usage: AccountUsageFeature = {
             poll: args.poll,
             ...(args.credentialStamp === undefined ? {} : { credentialStamp: args.credentialStamp }),
+            ...(args.pollsWhileGated === undefined ? {} : { pollsWhileGated: args.pollsWhileGated }),
         };
         const features: AccountFeatures = {
             presentation: { displayName: "Fake", alias: "fake", limitOrder: [], prominentLimits: [] },
@@ -254,6 +257,72 @@ describe("__fetchProviderSnapshots", () => {
 
         expect(snapshots[0].error).toBeUndefined();
         expect((await loadPollGate(PROVIDER)).work).toBeUndefined();
+    });
+
+    // Anthropic's long-lived token reads the rate-limit headers while the refresh path backs off.
+    test("a gated account the plugin can read without a refresh is polled, and the gate stays", async () => {
+        useTempHome();
+        const work = account("work");
+        const now = Date.now();
+        await savePollGate(
+            PROVIDER,
+            recordFailure(recordFailure({}, "work", "invalid_grant", now), "work", "invalid_grant", now)
+        );
+        const seen: Array<boolean | undefined> = [];
+        const reasons: string[] = [];
+
+        const entry = fakePlugin({
+            poll: (target, opts) => {
+                seen.push(opts.gated);
+                return Promise.resolve(ok(target));
+            },
+            pollsWhileGated: (_account, gate) => {
+                reasons.push(gate.reason);
+                return true;
+            },
+        });
+        const snapshots = await __fetchProviderSnapshots(entry, [work], {}, new Set());
+
+        expect(seen).toEqual([true]);
+        // The plugin sees the failure that blocked the account, so it can refuse to poll past it.
+        expect(reasons).toEqual(["invalid_grant"]);
+        expect(snapshots[0].error).toBeUndefined();
+        expect((await loadPollGate(PROVIDER)).work.failures).toBe(2);
+    });
+
+    // A gated poll can still come back PollSuppressed (no usable long-lived token, or no open
+    // window): its row must say WHY it is blocked, the same as the ungated suppressed path below,
+    // not read as a live failure for lack of a `blocked` field.
+    test("a gated poll that is itself suppressed still carries the gate's blocked notice", async () => {
+        useTempHome();
+        const work = account("work");
+        const now = Date.now();
+        await savePollGate(
+            PROVIDER,
+            recordFailure(recordFailure({}, "work", "invalid_grant", now), "work", "invalid_grant", now)
+        );
+
+        const entry = fakePlugin({
+            poll: () => Promise.reject(new PollSuppressed("no usable long-lived token")),
+            pollsWhileGated: () => true,
+        });
+        const snapshots = await __fetchProviderSnapshots(entry, [work], {}, new Set());
+
+        expect(snapshots[0].error).toBe("no usable long-lived token");
+        expect(snapshots[0].blocked).toBeDefined();
+        expect(snapshots[0].blocked?.failures).toBe(2);
+    });
+
+    test("a reading that reports a refresh-path failure is kept and still earns the failure", async () => {
+        useTempHome();
+        const work = account("work");
+        const entry = fakePlugin({
+            poll: (target) => Promise.resolve({ ...ok(target), auth: { oauthFailure: "invalid_grant" } }),
+        });
+        const snapshots = await __fetchProviderSnapshots(entry, [work], {}, new Set());
+
+        expect(snapshots[0].limits).toHaveLength(1);
+        expect((await loadPollGate(PROVIDER)).work.failures).toBe(1);
     });
 
     test("a thrown failure is still recorded as one", async () => {
@@ -554,5 +623,40 @@ describe("__fetchProviderSnapshots and a repaired credential", () => {
 
         expect(polled).toEqual([]);
         expect(snapshots[0].error).toBe("session expired");
+    });
+});
+
+describe("readerMaxStaleMs", () => {
+    afterEach(() => {
+        env.testing.unset("GENESIS_TOOLS_HOME");
+        __resetUsagePollStorage();
+    });
+
+    test("a live daemon's cycle is trusted: floor, one tick and the fetch", () => {
+        expect(readerMaxStaleMs({ floorMs: 60_000, daemonAgeMs: 5_000 })).toBe(150_000);
+        // A provider floor above the API minimum grows the window with it.
+        expect(readerMaxStaleMs({ floorMs: 300_000, daemonAgeMs: 5_000 })).toBe(390_000);
+    });
+
+    test("no heartbeat, or a stale one, leaves the reader on its own floor", () => {
+        expect(readerMaxStaleMs({ floorMs: 60_000, daemonAgeMs: null })).toBe(60_000);
+        expect(readerMaxStaleMs({ floorMs: 60_000, daemonAgeMs: DAEMON_ALIVE_MS })).toBe(60_000);
+        expect(readerMaxStaleMs({ floorMs: 0, daemonAgeMs: null })).toBe(45_000);
+    });
+
+    test("the daemon's heartbeat is what readers see", () => {
+        const home = mkdtempSync(join(tmpdir(), "ai-usage-heartbeat-"));
+        env.testing.set("GENESIS_TOOLS_HOME", home);
+        __resetUsagePollStorage();
+
+        try {
+            expect(usageDaemonAgeMs()).toBeNull();
+            touchUsageDaemonHeartbeat();
+            const age = usageDaemonAgeMs();
+            expect(age).not.toBeNull();
+            expect(age ?? Number.POSITIVE_INFINITY).toBeLessThan(DAEMON_ALIVE_MS);
+        } finally {
+            rmSync(home, { recursive: true, force: true });
+        }
     });
 });

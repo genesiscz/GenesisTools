@@ -1,4 +1,5 @@
 import { join } from "node:path";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { isObject } from "@genesiscz/utils/object";
 import { Storage } from "@genesiscz/utils/storage/storage";
@@ -269,10 +270,7 @@ export async function writeSnapshotsCache(
         Object.entries(providers).map(([id, slice]) => [id, { ...slice, accounts: slice.accounts.map(stripNative) }])
     );
 
-    // `atomicUpdate` reads the file with no TTL gate, unlike `readSnapshotsCache`.
-    // Immaterial at USAGE_CACHE_TTL of 365 days, and the payload carries its own
-    // `fetchedAt` for any reader that wants to judge age for itself.
-    const payload = await usagePollStorage().atomicUpdate<SnapshotsCache>(SNAPSHOTS_CACHE_KEY, (current) => ({
+    const merged = (current: SnapshotsCache | null): SnapshotsCache => ({
         // One round's rows can be older than another provider's slice already in the file
         // (an anthropic-only poll serving a 40s-old cache beside a grok slice fetched a
         // moment ago), so the file-level stamp keeps the newest data the file holds.
@@ -280,7 +278,23 @@ export async function writeSnapshotsCache(
         providers: opts.mergeAccounts
             ? mergeProviderAccounts(current?.providers, fresh)
             : { ...current?.providers, ...fresh },
-    }));
+    });
+
+    // A read served from the cache hands back the rows the file already holds, and it still took
+    // the lock and rewrote the file: 11 to 179 ms on every Genesis poll, beside the daemon's
+    // writer. A payload equal to the file is not written. That is safe against a concurrent
+    // writer too: skipping only declines to write back what was already there.
+    const existing = await readSnapshotsCache();
+
+    if (existing && SafeJSON.stringify(merged(existing)) === SafeJSON.stringify(existing)) {
+        logger.debug({ providers: Object.keys(existing.providers) }, "[usage] all-provider snapshots cache unchanged");
+        return existing;
+    }
+
+    // `atomicUpdate` reads the file with no TTL gate, unlike `readSnapshotsCache`.
+    // Immaterial at USAGE_CACHE_TTL of 365 days, and the payload carries its own
+    // `fetchedAt` for any reader that wants to judge age for itself.
+    const payload = await usagePollStorage().atomicUpdate<SnapshotsCache>(SNAPSHOTS_CACHE_KEY, merged);
 
     logger.debug({ providers: Object.keys(payload.providers) }, "[usage] all-provider snapshots cache written");
 

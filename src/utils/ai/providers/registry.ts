@@ -17,7 +17,9 @@ export function registerPlugin(plugin: ProviderPlugin): void {
     }
 
     plugins.set(plugin.id, plugin);
-    logger.debug({ provider: plugin.id, kind: plugin.kind }, "registered provider plugin");
+    // trace, not debug: every `tools` process registers every plugin, and at debug this was 55,704 of
+    // 102,161 lines in one day's log (2,509 processes). An unknown id's error already lists them all.
+    logger.trace({ provider: plugin.id, kind: plugin.kind }, "registered provider plugin");
 }
 
 export class UnknownProviderError extends Error {

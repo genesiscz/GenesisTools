@@ -1,4 +1,5 @@
 import { AIConfig } from "@genesiscz/utils/ai/AIConfig";
+import { LONG_TOKEN_MIN_LENGTH } from "@genesiscz/utils/claude/token-verify";
 import type { AIAccountEntry } from "@genesiscz/utils/config/ai.types";
 import { logger } from "@genesiscz/utils/logger";
 import type { AccountEntry } from "../../../config/schema";
@@ -11,10 +12,11 @@ import type {
     UsagePollOptions,
 } from "../../account-features";
 import type { AccountUsage, UsageResponse } from "./api";
-import { ANTHROPIC_SUB, isSubscriptionExpiredError, pollAccount } from "./api";
+import { ANTHROPIC_SUB, isSubscriptionExpiredError, isUsageBucket, pollAccount } from "./api";
 import { BUCKET_LABELS, BUCKET_PERIODS_MS, bucketKind } from "./buckets";
 import type { Severity } from "./limits";
 import { normalizeLimits, normalizeSpend } from "./limits";
+import { isQuotaHeaderFailure } from "./quota-headers";
 import { calendarDay, nextRenewalDate } from "./subscription";
 
 /**
@@ -125,6 +127,10 @@ function snapshotBase(account: AccountEntry, usage: AccountUsage, fetchedAt: str
         auth.orgBlocked = true;
     }
 
+    if (usage.oauthFailure) {
+        auth.oauthFailure = usage.oauthFailure;
+    }
+
     return {
         provider: ANTHROPIC_SUB,
         accountId: account.id,
@@ -160,12 +166,24 @@ async function legacyEntryFor(account: AccountEntry): Promise<{ entry: AIAccount
     return { entry, config };
 }
 
+/** The previous round's usage payload, when it has the endpoint's shape (a header reading has it too). */
+function previousUsageOf(snapshot: AccountUsageSnapshot | undefined): UsageResponse | undefined {
+    const native = snapshot?.native;
+
+    if (!native || typeof native !== "object" || !("five_hour" in native) || !isUsageBucket(native.five_hour)) {
+        return undefined;
+    }
+
+    return native as UsageResponse;
+}
+
 export async function pollAnthropicAccount(
     account: AccountEntry,
     opts: UsagePollOptions = {}
 ): Promise<AccountUsageSnapshot> {
     const fetchedAt = new Date().toISOString();
     const { entry, config } = await legacyEntryFor(account);
+    const previousUsage = previousUsageOf(opts.previous);
 
     // An empty gate on purpose: the poll core already refused every account the gate
     // blocks, so re-reading it here would only make the backoff decision twice.
@@ -176,9 +194,17 @@ export async function pollAnthropicAccount(
         now: Date.now(),
         ...(opts.probe === undefined ? {} : { probe: opts.probe }),
         ...(opts.orgBlocked === undefined ? {} : { orgBlocked: opts.orgBlocked }),
+        ...(previousUsage ? { previousUsage } : {}),
+        ...(opts.previous ? { previousFetchedAt: Date.parse(opts.previous.fetchedAt) } : {}),
+        ...(opts.gated ? { headersOnly: true } : {}),
     });
 
-    const snapshot = snapshotBase(account, usage, fetchedAt);
+    // A reused header reading keeps the time it was taken, never this round's.
+    const snapshot = snapshotBase(
+        account,
+        usage,
+        usage.readAt === undefined ? fetchedAt : new Date(usage.readAt).toISOString()
+    );
 
     if (!usage.usage) {
         logger.debug({ account: account.name }, "[usage] anthropic poll returned no usage payload");
@@ -247,8 +273,35 @@ export function classifyAnthropicFailure(err: unknown): UsageFailureClass | unde
     return { orgBlocked: true };
 }
 
+/**
+ * `account.credentials.longLivedToken` is a stored value, a vault `SecureRef`, or absent
+ * (`AccountEntry`'s v4 shape); `longLivedTokenUsable` in `token-verify.ts` wants a plain string and
+ * cannot be reused directly. Its length check only applies to the string case: a `SecureRef` names a
+ * real vault entry with no local text to measure, so presence stands in for it there. Expiry is a
+ * plain field either way and always applies.
+ */
+function longLivedCredentialUsable(credentials: AccountEntry["credentials"]): boolean {
+    const token = credentials.longLivedToken;
+
+    if (!token) {
+        return false;
+    }
+
+    if (typeof token === "string" && token.length < LONG_TOKEN_MIN_LENGTH) {
+        return false;
+    }
+
+    return !(credentials.longLivedTokenExpiresAt !== undefined && credentials.longLivedTokenExpiresAt <= Date.now());
+}
+
 export const anthropicUsage: AccountUsageFeature = {
     poll: pollAnthropicAccount,
     minIntervalMs: MIN_INTERVAL_MS,
     classifyFailure: classifyAnthropicFailure,
+    // A long-lived token reads the rate-limit headers without the refresh path the gate guards,
+    // unless the header reading is what failed (a lapsed org answers 403 to every request). Presence
+    // alone is not enough: an expired or truncated token still polls here, then pollAccount rejects
+    // the gated read anyway.
+    pollsWhileGated: (account, gate) =>
+        longLivedCredentialUsable(account.credentials) && !isQuotaHeaderFailure(gate.reason),
 };

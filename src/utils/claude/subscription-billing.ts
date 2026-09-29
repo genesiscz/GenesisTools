@@ -36,7 +36,7 @@ const BILLING_SALT = "59cf53e54c78";
  * still passed. A replay with 2.1.280 and the same salt returned 200, so the salt is not
  * per-version. Bump this when a new model demands it; keep it at or below the installed CLI.
  */
-const CC_VERSION = "2.1.280";
+export const CC_VERSION = "2.1.280";
 
 /** System prompt line required by subscription OAuth API. */
 export const SUBSCRIPTION_SYSTEM_PREFIX = "You are Claude Code, Anthropic's official CLI for Claude.";

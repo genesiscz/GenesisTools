@@ -1,3 +1,4 @@
+import { endpointAsOf, isHeaderReading } from "@genesiscz/utils/ai/providers/plugins/anthropic-sub/quota-headers";
 import { formatDateTime } from "@genesiscz/utils/date";
 import { formatRelativeTime } from "@genesiscz/utils/format";
 import pc from "picocolors";
@@ -160,6 +161,15 @@ export function renderAccountUsage(account: AccountUsage): string {
     if (account.stale) {
         const ago = formatRelativeTime(new Date(account.stale.lastSuccessAt), { compact: true });
         lines.push(pc.yellow(`  ⚠ Stale data (updated ${ago}) — ${truncateReason(account.stale.reason)}`));
+    }
+
+    // A fallback reading: the OAuth path could not answer, so the long-lived token read the headers.
+    if (isHeaderReading(account.usage)) {
+        const keptAt = endpointAsOf(account.usage);
+        const kept = keptAt
+            ? `; the other limits as of ${formatRelativeTime(new Date(keptAt), { compact: true })}`
+            : "";
+        lines.push(pc.dim(`  5h, weekly and Fable from the rate-limit headers${kept}`));
     }
 
     const limits = normalizeLimits(account.usage);
