@@ -27,22 +27,32 @@ final class HubOpsFeaturesTests: XCTestCase {
        "own":true,"totals":{"cpu":10.5,"rssKb":1373000,"energy":5.0,"processes":7},"processes":[]}
     ],
     "totals":{"groups":2,"orphans":1,"idle":0,"processes":10,"cpu":10.5,"rssKb":1378400},
-    "energy":true,"takenAt":"2026-09-26T18:00:00.000Z","elapsedMs":102,"warnings":[]}
+    "energy":true,"launchdUnknown":false,"takenAt":"2026-09-26T18:00:00.000Z","elapsedMs":102,"warnings":[]}
     """
 
     func testProcsReportDecodesAndKnowsWhatCanBeStopped() throws {
         let report = try JSONDecoder().decode(ProcsReport.self, from: Data(procsJSON.utf8))
         XCTAssertEqual(report.groups.count, 2)
+        XCTAssertFalse(report.launchdUnknown)
         let orphan = report.groups[0]
         XCTAssertTrue(orphan.orphan)
-        XCTAssertTrue(orphan.stoppable)
+        XCTAssertTrue(orphan.stoppable(launchdUnknown: false))
         XCTAssertEqual(orphan.title, "claude tool shell", "no session title: the label")
         XCTAssertEqual(orphan.session?.match, "shell")
         let own = report.groups[1]
-        XCTAssertFalse(own.stoppable, "the tree running the asking process is never offered a stop")
+        XCTAssertFalse(own.stoppable(launchdUnknown: false), "the tree running the asking process is never offered a stop")
         XCTAssertEqual(own.title, "cart totals")
         XCTAssertEqual(own.totals.energy, 5.0)
         XCTAssertEqual(ProcsFormat.summary(report), "2 trees · 10 processes · 10.5 % CPU · \(ProcsFormat.memory(1_378_400)) · 1 orphan")
+    }
+
+    func testAnAdoptedRootIsNotStoppableWhileTheLaunchdJobsAreUnknown() throws {
+        // stop.ts refuses a PPID-1 root when `launchctl list` failed: it may be a launchd job.
+        let json = procsJSON.replacingOccurrences(of: "\"launchdUnknown\":false", with: "\"launchdUnknown\":true")
+        let report = try JSONDecoder().decode(ProcsReport.self, from: Data(json.utf8))
+        XCTAssertTrue(report.launchdUnknown)
+        XCTAssertFalse(report.groups[0].stoppable(launchdUnknown: true), "the orphan's parent is PID 1")
+        XCTAssertTrue(report.groups[0].stoppable(launchdUnknown: false))
     }
 
     func testProcAgesReadLikeTheCLI() {

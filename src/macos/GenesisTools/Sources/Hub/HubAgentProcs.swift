@@ -86,7 +86,12 @@ struct ProcGroup: Decodable, Hashable, Identifiable {
 
     var started: Date? { HubFormat.date(startedAt) }
     /// A launchd job and the tree of the asking process cannot be stopped from here (the CLI refuses both).
-    var stoppable: Bool { !own && launchdLabel == nil }
+    /// `launchdUnknown` (the report's, not this group's) adds a third refusal the CLI also enforces
+    /// (`stop.ts`): a PPID-1 root with no confirmed launchd label MAY be a launchd job `launchctl list`
+    /// itself failed to read, so it fails closed rather than offering a stop the CLI is going to refuse.
+    func stoppable(launchdUnknown: Bool) -> Bool {
+        !own && launchdLabel == nil && !(launchdUnknown && parent.pid == 1)
+    }
     /// Why it is flagged: orphan first, then suspended, then idle.
     var reason: String? { orphanReason ?? suspendedReason ?? idleReason }
     var title: String { session?.title.flatMap { $0.isEmpty ? nil : $0 } ?? label }
@@ -106,6 +111,8 @@ struct ProcsReport: Decodable {
     let groups: [ProcGroup]
     let totals: Totals
     let energy: Bool
+    /// `launchctl list` failed: no PPID-1 group can be confirmed as a launchd job or ruled out as one.
+    let launchdUnknown: Bool
     let takenAt: String
     let elapsedMs: Int
     let warnings: [String]
@@ -159,7 +166,10 @@ final class AgentProcsStore: ObservableObject {
         didSet { HubDefaults.store.set(energy, forKey: AgentProcs.energyKey) }
     }
 
-    var orphans: [ProcGroup] { report?.groups.filter { $0.orphan && $0.stoppable } ?? [] }
+    var orphans: [ProcGroup] {
+        guard let report else { return [] }
+        return report.groups.filter { $0.orphan && $0.stoppable(launchdUnknown: report.launchdUnknown) }
+    }
     /// A refresh asked for while one loads (the energy switch, the list after a stop) runs once that load
     /// ends: the running one was built from the old arguments, or from the table before the stop.
     private var rerun = false
@@ -274,6 +284,7 @@ struct AgentProcsView: View {
                                 expanded: store.expanded.contains(group.id),
                                 stopping: store.stopping.contains(group.rootPid),
                                 energy: store.report?.energy ?? false,
+                                launchdUnknown: store.report?.launchdUnknown ?? false,
                                 toggle: { toggle(group) },
                                 reveal: { reveal(group) },
                                 stop: { pending = [group] }
@@ -418,10 +429,13 @@ struct AgentProcsRow: View {
     let expanded: Bool
     let stopping: Bool
     let energy: Bool
+    let launchdUnknown: Bool
     let toggle: () -> Void
     let reveal: () -> Void
     let stop: () -> Void
     @State private var hovering = false
+
+    private var reallyStoppable: Bool { group.stoppable(launchdUnknown: launchdUnknown) }
 
     private var tone: Color {
         if group.orphan { return ReviewPalette.removed }
@@ -505,7 +519,7 @@ struct AgentProcsRow: View {
             if group.session != nil {
                 Button("Show this session in the Sessions list", action: reveal)
             }
-            if group.stoppable && !stopping {
+            if reallyStoppable && !stopping {
                 Button("Stop this tree (asks first)", action: stop)
             }
         }
@@ -546,7 +560,7 @@ struct AgentProcsRow: View {
                 if group.session != nil {
                     IconButton(systemName: "arrow.right.circle", tooltip: "Show this session in the Sessions list", action: reveal)
                 }
-                if group.stoppable {
+                if reallyStoppable {
                     IconButton(systemName: "stop.circle", tooltip: "Stop this tree: SIGTERM, then SIGKILL after \(AgentProcs.graceSeconds) s (asks first)", action: stop)
                         .disabled(stopping)
                 }
