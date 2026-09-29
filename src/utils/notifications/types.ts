@@ -1,3 +1,5 @@
+import type { NotificationAction } from "@genesiscz/utils/macos/notifications";
+
 export interface SystemChannelConfig {
     enabled: boolean;
     sound?: string;
@@ -67,6 +69,13 @@ export interface NotificationEvent {
     ignoreDnD?: boolean;
     /** Custom icon path/URL (terminal-notifier only) */
     appIcon?: string;
+    /**
+     * Stable id, so the banner can be retracted or replaced later (`genesis-app` only, the
+     * `system` channel forwards it to {@link NotificationOptions.id}).
+     */
+    id?: string;
+    /** Buttons on the banner (`genesis-app` only, forwarded to {@link NotificationOptions.actions}). */
+    actions?: NotificationAction[];
     /**
      * Per-call channel allow-list. When set, only these channels may fire for
      * this event (still subject to each channel being enabled in config). When
