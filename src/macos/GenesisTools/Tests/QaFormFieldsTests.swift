@@ -10,6 +10,13 @@ final class QaFormFieldsTests: XCTestCase {
         XCTAssertEqual(QaFormFields.splitFileTags(""), [])
     }
 
+    func testABrowsedPathWithASpaceStaysOneTag() {
+        let token = QaFormFields.fileTagToken("src/My File.swift")
+        XCTAssertEqual(token, "\"src/My File.swift\"")
+        XCTAssertEqual(QaFormFields.splitFileTags("a.ts " + token + ",b.ts"), ["a.ts", "src/My File.swift", "b.ts"])
+        XCTAssertEqual(QaFormFields.fileTagToken("src/a.ts"), "src/a.ts")
+    }
+
     func testSplitFileTagsDropsBlanksBetweenSeparators() {
         XCTAssertEqual(QaFormFields.splitFileTags("a.ts,,  ,b.ts"), ["a.ts", "b.ts"])
     }
