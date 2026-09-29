@@ -32,6 +32,7 @@ body{font:14px sans-serif;margin:0;padding:10px}
 <label for="pw">Password</label><input id="pw" name="pw" type="password" value="preset-secret">
 <select name="ship" aria-label="Shipping" onchange="log('ship '+this.value)"><option>Standard</option><option>Express</option></select>
 <input type="checkbox" id="terms"><label for="terms">Terms</label>
+<label for="trap">Trap</label><input id="trap" onfocus="document.getElementById('email').focus()">
 </form>
 <ul><li id="row">Coldplay Oct 2 <button onclick="log('buy clicked')">Buy</button></li></ul>
 <select aria-label="Size" id="size"><option>Small</option><option>Large</option></select>
@@ -189,6 +190,15 @@ try {
     check(
         "a second fill replaces instead of appending",
         refilled.ok && find(await page.snapshot(), "Email", "fill").value === "bo@example.com"
+    );
+
+    const trapped = await page.fill(find(await page.snapshot(), "Trap", "fill"), "not-for-email");
+    check(
+        "a field whose focus handler moves focus elsewhere is refused before typing",
+        !trapped.ok &&
+            trapped.error.includes("focus moved") &&
+            find(await page.snapshot(), "Email", "fill").value === "bo@example.com",
+        trapped.ok ? "typed" : trapped.error
     );
 
     const beforeSelect = await page.snapshot();

@@ -176,7 +176,12 @@ class CdpTabDriver implements TabDriver {
     async navigate(tabId: string, url: string): Promise<boolean> {
         const conn = await this.connect(tabId);
         const load = eventWaiter(conn, "Page.loadEventFired", LOAD_DEADLINE_MS);
-        const reply = (await conn.send("Page.navigate", { url }).catch((error: unknown) => {
+        const sent = withTimeout(
+            conn.send("Page.navigate", { url }),
+            LOAD_DEADLINE_MS,
+            new Error(`Page.navigate did not answer within ${LOAD_DEADLINE_MS} ms`)
+        );
+        const reply = (await sent.catch((error: unknown) => {
             load.cancel();
             return this.failed(tabId, error);
         })) as { errorText?: string };
@@ -239,12 +244,16 @@ class CdpTabDriver implements TabDriver {
         this.networkWaits.set(conn, (this.networkWaits.get(conn) ?? 0) + 1);
         try {
             await conn.send("Network.enable").catch((error: unknown) => this.failed(tabId, error));
-            if (options.cause === "reload") {
-                await conn.send("Page.reload").catch((error: unknown) => this.failed(tabId, error));
-            } else if (options.cause) {
-                await conn
-                    .send("Page.navigate", { url: options.cause.navigate })
-                    .catch((error: unknown) => this.failed(tabId, error));
+            if (options.cause) {
+                const cause =
+                    options.cause === "reload"
+                        ? conn.send("Page.reload")
+                        : conn.send("Page.navigate", { url: options.cause.navigate });
+                await withTimeout(
+                    cause,
+                    LOAD_DEADLINE_MS,
+                    new Error(`the request wait's cause did not answer within ${LOAD_DEADLINE_MS} ms`)
+                ).catch((error: unknown) => this.failed(tabId, error));
             }
 
             const request = await found;
