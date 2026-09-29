@@ -1,6 +1,7 @@
 /**
  * In-page payloads for `play run` — JavaScript source strings evaluated inside an
- * open.spotify.com tab via chrome-devtools-mcp's `evaluate_script`.
+ * open.spotify.com tab. `TabDriver.evaluate` runs them in the page's main world over CDP
+ * and returns their value as a plain object, which `parsePayload` checks against a schema.
  *
  * The whole approach: pull the web player's OWN internal player (`playerAPI`) off the
  * React fiber tree once, cache it on `window.__playerAPI`, then drive playback through
@@ -14,6 +15,7 @@
 import type { PlayWindow } from "@app/spotify/lib/play/plan";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { z } from "zod";
 
 const log = logger.child({ component: "spotify:play" });
 
@@ -196,19 +198,46 @@ export const SKIP_NEXT = `async () => {
   return { ok: true, track: np() };
 }`;
 
-/**
- * chrome-devtools-mcp wraps `evaluate_script` return values in a \`\`\`json fence;
- * dig the object out, or null when the reply was not parseable at all.
- */
-export function parsePayloadResult<R>(raw: string): R | null {
-    const fenced = raw.match(/```json\s*([\s\S]*?)```/);
-    const candidate = fenced ? fenced[1] : raw.slice(raw.indexOf("{"));
+/** What FIND_PLAYER, LOAD_QUEUE, SAMPLE, PLAY_ONE and SKIP_NEXT return. */
+export const PayloadStatusSchema = z.object({
+    ok: z.boolean(),
+    error: z.string().optional(),
+    cached: z.boolean().optional(),
+    queued: z.number().optional(),
+    track: z.string().optional(),
+    heard: z.array(z.string()).optional(),
+    missed: z.number().optional(),
+});
+export type PayloadStatus = z.infer<typeof PayloadStatusSchema>;
 
-    try {
-        return SafeJSON.parse(candidate.trim(), { strict: true }) as R;
-    } catch (error) {
-        log.debug({ error, raw: raw.slice(0, 300) }, "unparsable evaluate_script result");
+export const VolumeResultSchema = z.object({
+    ok: z.boolean(),
+    how: z.string().optional(),
+    before: z.number().nullable().optional(),
+    after: z.number().optional(),
+    error: z.string().optional(),
+});
+
+/** A short printable form of a payload's value, for messages that must show what came back. */
+export function previewValue(value: unknown, max = 200): string {
+    const text = value === undefined ? "undefined" : SafeJSON.stringify(value);
+
+    return String(text).replace(/\s+/g, " ").slice(0, max);
+}
+
+/**
+ * The payload's value, checked against the shape the caller relies on, or null when it does
+ * not match. The value arrives as a plain object from the page, so a mismatch means the page
+ * code and this file disagree, which the debug log records with the value that came back.
+ */
+export function parsePayload<S extends z.ZodType>(schema: S, value: unknown): z.output<S> | null {
+    const parsed = schema.safeParse(value);
+
+    if (!parsed.success) {
+        log.debug({ issues: parsed.error.issues, value: previewValue(value, 300) }, "payload result has another shape");
 
         return null;
     }
+
+    return parsed.data;
 }

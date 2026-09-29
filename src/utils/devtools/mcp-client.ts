@@ -11,9 +11,10 @@
  * a specific browser on demand, with no persistent config change and no
  * restart.
  *
- * First user was the youtube extension tooling (`src/youtube/lib/devtools/`),
- * which keeps its own defaults on top of this; `tools spotify play` drives the
- * user's logged-in browser through the same client.
+ * Its one user is the explicit pass-through `tools chrome-devtools mcp` (and the
+ * `tools scripts` examples that show the MCP route). Tools that drive a browser
+ * for their own work (jev, spotify, the youtube extension harness) use the CDP
+ * client in `src/chrome-devtools/lib/` instead.
  */
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";

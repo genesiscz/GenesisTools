@@ -10,8 +10,8 @@
  * tens of minutes, and the question being asked is usually about the recent window, so
  * ordering them first makes the answer available long before the full run finishes.
  *
- * chrome-devtools-mcp wraps evaluate_script output in a ```json fence, which is stripped
- * here rather than by hand.
+ * A harvest saved through the old chrome-devtools-mcp manual path arrived wrapped in a
+ * ```json fence. Files like that may still be on disk, so the fence is still stripped here.
  */
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";

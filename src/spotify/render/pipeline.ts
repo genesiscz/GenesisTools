@@ -71,20 +71,25 @@ export function renderHarvestGuide(): void {
   per-track global stream counts the public Web API has never exposed. The requests must
   come from a logged-in tab; there is no headless login path worth building.
 
-  ${pc.bold("1.")} Attach chrome-devtools-mcp to a browser already signed into open.spotify.com.
+  ${pc.bold("1.")} Open the browser's own DevTools on a signed-in open.spotify.com tab.
   ${pc.bold("2.")} Read the tokens out of a request the app already made:
-       list_network_requests with resourceTypes ["fetch"]
-       pick any pathfinder/v2/query, then get_network_request <id>
-       its request headers carry ${pc.bold("authorization")} and ${pc.bold("client-token")}
-  ${pc.bold("3.")} Paste ${pc.bold("src/spotify/page/setupGql.ts")} into evaluate_script with those two values filled in.
-       It installs window.__gql and returns totalLikedTracks, so a 401 is visible immediately.
-  ${pc.bold("4.")} Paste ${pc.bold("src/spotify/page/harvestLibrary.ts")} with a filePath; the result is about 1 MB.
+       in the Network panel, filter on ${pc.bold("pathfinder")} and pick any pathfinder/v2/query
+       (reload the tab if the list is empty); its request headers carry
+       ${pc.bold("authorization")} and ${pc.bold("client-token")}
+  ${pc.bold("3.")} Paste the function in ${pc.bold("src/spotify/page/setupGql.ts")} into the DevTools Console with those
+       two values filled in, and run it. It installs window.__gql and returns
+       totalLikedTracks, so a 401 is visible immediately.
+  ${pc.bold("4.")} Run ${pc.bold("src/spotify/page/harvestLibrary.ts")} in the Console too, as
+       ${pc.bold("copy(await (<payload>)())")}, which puts the result (about 1 MB) on the clipboard.
+       Save it as ${pc.bold("sp_library_raw.json")} in the profile's data directory
+       (tools spotify profile show prints the path).
   ${pc.bold("5.")} tools spotify build --profile me
 
   ${pc.yellow("The tokens and the sp_dc / sp_key cookies authorise the whole account.")}
   ${pc.yellow("Keep them in page memory. Never write them to a file, a log, or a chat message.")}
 
-  Operation hashes rotate with every web-player release. When one starts failing, paste
-  ${pc.bold("src/spotify/page/extractOperations.ts")} to recover the whole catalogue from the live bundle.
+  Operation hashes rotate with every web-player release. When one starts failing, run
+  ${pc.bold("src/spotify/page/extractOperations.ts")} to recover the whole catalogue from the live bundle:
+  ${pc.bold("tools chrome-devtools eval --file src/spotify/page/extractOperations.ts --match open.spotify.com")}
 `);
 }

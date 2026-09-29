@@ -3,29 +3,33 @@
  * player's own playerAPI, then sample every planned track across its windows, journaling
  * progress after each one so a killed run resumes where it stopped.
  *
- * Ported from the mcp-scripting `spotifyPreview` script. The two survival lessons it
- * carries: (1) chrome-devtools-mcp's page selection follows the user around the browser,
- * so the Spotify tab is re-asserted before every track instead of trusted to stay put —
- * a tab switch otherwise reads exactly like "the player died" and once cost a 175-track
- * run; (2) losing the playerAPI handle usually means tab ids shifted, not that Spotify
- * died, so re-scan and re-select before the destructive fallback of reopening the URL.
+ * Ported from the mcp-scripting `spotifyPreview` script. Every payload runs in ONE tab,
+ * addressed by its CDP target id, so the user switching tabs mid-run no longer redirects
+ * the calls. (Under chrome-devtools-mcp it did: the selected page followed the user, and a
+ * tab switch read exactly like "the player died" and once cost a 175-track run.) The lesson
+ * that still applies: losing the playerAPI handle usually means the tab changed (closed,
+ * reloaded, replaced), not that Spotify died, so the tab is re-probed and re-found before
+ * the destructive fallback of reopening the URL.
  */
 
+import { cdpPortOf } from "@app/chrome-devtools/lib/cdp";
+import { createTabDriver, type TabDriver } from "@app/chrome-devtools/lib/tab-driver";
 import { SPOTIFY_HOST, SpotifyTab } from "@app/spotify/lib/browser/session";
 import { appendJournal, progressFor, writeState } from "@app/spotify/lib/play/journal";
 import {
     FIND_PLAYER,
     LOAD_QUEUE,
+    PayloadStatusSchema,
     PLAY_ONE,
-    parsePayloadResult,
+    parsePayload,
+    previewValue,
     SAMPLE,
     SET_VOLUME,
     SKIP_NEXT,
+    VolumeResultSchema,
 } from "@app/spotify/lib/play/payloads";
 import { loadTracks, type PlayTrack, type PlayWindow } from "@app/spotify/lib/play/plan";
-import { toolText, withDevtoolsClient } from "@genesiscz/utils/devtools/mcp-client";
 import { logger } from "@genesiscz/utils/logger";
-import type { Client } from "@modelcontextprotocol/client";
 
 const log = logger.child({ component: "spotify:play" });
 
@@ -50,12 +54,12 @@ export interface RunPreviewOptions {
     /** One human-readable progress line per event, already elapsed-stamped. */
     onLog: (line: string) => void;
     /**
-     * How to obtain the MCP session. Defaults to spawning chrome-devtools-mcp against
-     * `browserUrl`; the tests pass a fake so the run loop — queueing, skipping, sampling,
-     * resuming, and the recovery paths — can be exercised without a browser or a Spotify
-     * account. Those 250 lines were otherwise reachable only by hand.
+     * The browser's tabs. Defaults to a CDP driver on `browserUrl`'s port, closed when the run
+     * ends; a passed-in driver belongs to the caller. The tests pass a fake so the run loop —
+     * queueing, skipping, sampling, resuming, and the recovery paths — can be exercised without
+     * a browser or a Spotify account. Those 250 lines were otherwise reachable only by hand.
      */
-    withClient?: <T>(fn: (client: Client) => Promise<T>) => Promise<T>;
+    driver?: TabDriver;
 }
 
 export interface RunPreviewResult {
@@ -65,18 +69,15 @@ export interface RunPreviewResult {
     aborted: boolean;
 }
 
-interface PayloadStatus {
-    ok: boolean;
-    error?: string;
-    cached?: boolean;
-    queued?: number;
-    track?: string;
-    heard?: string[];
-    missed?: number;
-}
+/**
+ * How long SAMPLE may run: each window can be tried twice with about 1.3 s of seeking and
+ * settling around it, and playback gets up to 9 s to start first. A deadline that ignored
+ * the windows would cut a long sample off and report a healthy track as failed.
+ */
+export function sampleDeadlineMs(windows: PlayWindow[]): number {
+    const windowSeconds = windows.reduce((sum, [, duration]) => sum + (duration + 3) * 2, 0);
 
-async function evaluate(client: Client, fn: string): Promise<string> {
-    return toolText(await client.callTool({ name: "evaluate_script", arguments: { function: fn } }));
+    return (windowSeconds + 15) * 1000;
 }
 
 export interface EmptyRangeInput {
@@ -138,22 +139,30 @@ export async function runPreview(opts: RunPreviewOptions): Promise<RunPreviewRes
         return { total: 0, ok: 0, failed: [], aborted: false };
     }
 
-    const connect =
-        opts.withClient ??
-        (<T>(fn: (client: Client) => Promise<T>) =>
-            withDevtoolsClient(fn, { cdpUrl: opts.browserUrl, clientName: "genesis-spotify-play" }));
+    const driver = opts.driver ?? createTabDriver(cdpPortOf(opts.browserUrl));
 
-    return connect(async (client) => {
+    try {
         // The SHARED tab handling, not a second copy: this file had its own finder that
         // took the first Spotify tab by URL, so a browser with a stale signed-out tab open
         // (one this tool had itself opened earlier) was driven instead of the live player.
-        const tab = new SpotifyTab(client);
-        const pinSpotifyPage = (o: { rescan?: boolean } = {}) => tab.pin(o);
+        const tab = new SpotifyTab(driver);
 
-        const findPlayer = async (): Promise<PayloadStatus | null> =>
-            parsePayloadResult<PayloadStatus>(await evaluate(client, FIND_PLAYER));
+        // A page error or a closed tab rejects; turning it into a failed status lets the
+        // loop's own failure handling (journal, recovery ladder) run instead of the run dying.
+        const call = async (source: string, deadlineMs?: number): Promise<unknown> => {
+            try {
+                return await tab.evaluate(source, { deadlineMs });
+            } catch (error) {
+                log.debug({ error, tabId: tab.id }, "a player payload failed in the page");
 
-        if (await pinSpotifyPage({ rescan: true })) {
+                return { ok: false, error: error instanceof Error ? error.message : String(error) };
+            }
+        };
+        const status = async (source: string, deadlineMs?: number) =>
+            parsePayload(PayloadStatusSchema, await call(source, deadlineMs));
+        const findPlayer = () => status(FIND_PLAYER);
+
+        if (await tab.pin({ rescan: true })) {
             say(`page   : pinned tab ${tab.id} (${SPOTIFY_HOST})`);
         }
 
@@ -176,13 +185,7 @@ export async function runPreview(opts: RunPreviewOptions): Promise<RunPreviewRes
         // Before the queue loads, because loading it starts playback immediately.
         let restoreVolume: number | null = null;
         if (opts.volume !== undefined) {
-            const set = parsePayloadResult<{
-                ok: boolean;
-                how?: string;
-                before?: number | null;
-                after?: number;
-                error?: string;
-            }>(await evaluate(client, SET_VOLUME(opts.volume)));
+            const set = parsePayload(VolumeResultSchema, await call(SET_VOLUME(opts.volume)));
 
             if (!set?.ok) {
                 // Proceeding here means playing at whatever the volume already was, which is
@@ -207,13 +210,10 @@ export async function runPreview(opts: RunPreviewOptions): Promise<RunPreviewRes
         }
 
         if (opts.queue) {
-            const loaded = parsePayloadResult<PayloadStatus>(
-                await evaluate(
-                    client,
-                    LOAD_QUEUE(
-                        queue.map((t) => t.uri),
-                        0
-                    )
+            const loaded = await status(
+                LOAD_QUEUE(
+                    queue.map((t) => t.uri),
+                    0
                 )
             );
 
@@ -245,17 +245,16 @@ export async function runPreview(opts: RunPreviewOptions): Promise<RunPreviewRes
         for (const [n, t] of queue.entries()) {
             const name = t.name ?? t.uri;
             say(`[${t.i}] ▶ ${name}${t.artists ? ` — ${t.artists}` : ""}`);
-            await pinSpotifyPage();
 
             if (opts.queue) {
                 // already positioned on track 0; step forward for each subsequent one
                 if (n > 0) {
-                    const rawSkip = await evaluate(client, SKIP_NEXT);
-                    const skipped = parsePayloadResult<PayloadStatus>(rawSkip);
+                    const rawSkip = await call(SKIP_NEXT);
+                    const skipped = parsePayload(PayloadStatusSchema, rawSkip);
 
                     if (!skipped?.ok) {
                         // never hide the real output behind a generic message
-                        const detail = skipped?.error ?? `unparsable: ${rawSkip.replace(/\s+/g, " ").slice(0, 200)}`;
+                        const detail = skipped?.error ?? `unparsable: ${previewValue(rawSkip)}`;
                         say(`       ✗ skipToNext — ${detail}`);
                         failed.push(`${t.i} ${name}: ${detail}`);
                         // Journalled like every other failure. Without this, a queued run's
@@ -266,7 +265,7 @@ export async function runPreview(opts: RunPreviewOptions): Promise<RunPreviewRes
                     }
                 }
             } else {
-                const started = parsePayloadResult<PayloadStatus>(await evaluate(client, PLAY_ONE(t.uri)));
+                const started = await status(PLAY_ONE(t.uri));
 
                 if (!started?.ok) {
                     say(`       ✗ ${started?.error ?? "play failed"}`);
@@ -277,7 +276,7 @@ export async function runPreview(opts: RunPreviewOptions): Promise<RunPreviewRes
             }
 
             const windows = t.windows?.length ? t.windows : opts.windows;
-            const r = parsePayloadResult<PayloadStatus>(await evaluate(client, SAMPLE(windows)));
+            const r = await status(SAMPLE(windows), sampleDeadlineMs(windows));
 
             if (r?.ok) {
                 ok++;
@@ -291,11 +290,11 @@ export async function runPreview(opts: RunPreviewOptions): Promise<RunPreviewRes
                 journal(t, "fail", err);
                 let re = await findPlayer();
 
-                // Losing the handle usually means the tab ids shifted (a tab was closed), not
-                // that Spotify died. Re-scan and re-select before assuming the worst — that
-                // keeps the queue and playback position intact, which reopening would destroy.
-                if (!re?.ok && (await pinSpotifyPage({ rescan: true }))) {
-                    say(`       page drifted — re-pinned tab ${tab.id}`);
+                // Losing the handle usually means the tab changed (closed, reloaded, replaced),
+                // not that Spotify died. Re-find the tab before assuming the worst — another live
+                // player keeps the queue and playback position, which reopening would destroy.
+                if (!re?.ok && (await tab.pin({ rescan: true }))) {
+                    say(`       tab changed, re-found tab ${tab.id}`);
                     re = await findPlayer();
                 }
 
@@ -310,7 +309,7 @@ export async function runPreview(opts: RunPreviewOptions): Promise<RunPreviewRes
                         const rest = queue.slice(queue.findIndex((q) => q.i === t.i) + 1).map((q) => q.uri);
 
                         if (rest.length) {
-                            parsePayloadResult(await evaluate(client, LOAD_QUEUE(rest, 0)));
+                            await status(LOAD_QUEUE(rest, 0));
                             say(`       queue  : ${rest.length} remaining track(s) reloaded`);
                         }
                     }
@@ -357,7 +356,7 @@ export async function runPreview(opts: RunPreviewOptions): Promise<RunPreviewRes
         });
 
         if (restoreVolume !== null) {
-            parsePayloadResult(await evaluate(client, SET_VOLUME(restoreVolume)));
+            await call(SET_VOLUME(restoreVolume));
             say(`volume : restored to ${Math.round(restoreVolume * 100)}%`);
         }
 
@@ -373,5 +372,9 @@ export async function runPreview(opts: RunPreviewOptions): Promise<RunPreviewRes
         log.info({ ok, failed: failed.length, aborted }, "play run finished");
 
         return { total: queue.length, ok, failed, aborted };
-    });
+    } finally {
+        if (!opts.driver) {
+            driver.close();
+        }
+    }
 }

@@ -141,10 +141,10 @@ authentication. Serving this on another interface would need real authentication
   `tools spotify cache-clear` if you ever doubt it.
 - **Timestamps in the export are UTC.** Everything day- or hour-shaped converts to the
   profile's timezone first, which is why `clock` and `calendar` need `--tz` to be right.
-- **`evaluate_script` output arrives wrapped in a ```json fence** during a harvest. Strip it
-  before parsing; `build` already does.
+- **Old manual harvests may be wrapped in a ```json fence**: the chrome-devtools-mcp path
+  used before (historical) wrapped its output that way. `build` still strips it.
 - **Hooking `window.fetch` to sniff tokens does not work** — the app captured its own
-  reference at load. Read the network log instead.
+  reference at load. Read the tab's network requests instead.
 - **Do not follow up untagged MusicBrainz matches** with `inc=tags+genres`; verified to
   return empty, so it doubles the crawl for nothing.
 - **`everynoise.com` returns `403`** to curl and to Jina. It would be the best genre source
