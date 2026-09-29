@@ -101,7 +101,7 @@ export interface GrepEvaluatorOptions {
     policyVersion?: string;
     concurrency?: number;
     requestLimit?: number;
-    /** Stop before the next attempt once the booked list price reaches this many dollars. */
+    /** A ceiling in list-price dollars: no call starts whose estimated price would take booked plus in-flight spend past it. */
     maxCostUsd?: number;
     /** Tests only. Production uses `grepTimeoutFor(provider)`. */
     timeoutMs?: number;
@@ -165,8 +165,9 @@ export function createGrepEvaluator(options: GrepEvaluatorOptions): GrepEvaluato
     let cacheHits = 0;
     let cooldownUntil = 0;
     const spend = { inputTokens: 0, costUsd: 0, unpricedCalls: 0 };
-    // Dollars the calls in flight may still book. A call starts only while booked plus reserved spend is
-    // under the cap, so concurrent workers cannot all pass on a cost no answer has booked yet.
+    // Dollars the calls in flight may still book. A call starts only when its own estimate still fits
+    // under the cap beside booked and reserved spend, so concurrent workers cannot all pass on a cost no
+    // answer has booked yet, and the cap stays a ceiling.
     let reservedCostUsd = 0;
     // The highest price per estimated input token: the catalog's list price, raised by any booked call.
     // The estimate counts JSON bytes, which outnumber tokens, so a reservation errs high.
@@ -200,12 +201,17 @@ export function createGrepEvaluator(options: GrepEvaluatorOptions): GrepEvaluato
         }
     }
 
-    function assertBelowLimit(): void {
+    /** `nextCostUsd` is the estimate of the call about to start; 0 checks only what is already committed. */
+    function assertBelowLimit(nextCostUsd = 0): void {
         if (requests >= requestLimit) {
             throw new EvaluationFailure("request-limit");
         }
 
-        if (options.maxCostUsd !== undefined && spend.costUsd + reservedCostUsd >= options.maxCostUsd) {
+        const committed = spend.costUsd + reservedCostUsd;
+        if (
+            options.maxCostUsd !== undefined &&
+            (committed >= options.maxCostUsd || committed + nextCostUsd > options.maxCostUsd)
+        ) {
             throw new EvaluationFailure("request-limit", {
                 message: `Cost budget of $${options.maxCostUsd} reached`,
             });
@@ -253,9 +259,9 @@ export function createGrepEvaluator(options: GrepEvaluatorOptions): GrepEvaluato
             assertActive();
             if (cooldownUntil <= now() && (rateBudget?.waitMs(reservedTokens) ?? 0) <= 0) {
                 // Another worker may have spent the last request while this one waited.
-                assertBelowLimit();
-                requests++;
                 const costUsd = costTokens * usdPerToken;
+                assertBelowLimit(costUsd);
+                requests++;
                 reservedCostUsd += costUsd;
                 return { tokens: rateBudget?.reserve(reservedTokens), costUsd };
             }

@@ -1058,7 +1058,7 @@ describe("evaluator wrapper", () => {
         expect(build({ requestLimit: 5, maxCostUsd: 0.1 })).not.toThrow();
     });
 
-    test("concurrent calls reserve their estimated price, so a cost cap stops a wave before anything is booked", async () => {
+    test("concurrent calls reserve their estimated price, so a cost cap is a ceiling before anything is booked", async () => {
         const request = (index: number): EvaluationRequest => ({ ...one, state: { query: `q${index}` } });
         const usdPerToken = byId(GREP_TYPESAFE_MODEL, "jev-typesafe")!.pricing!.inputPer1M / 1_000_000;
         const perCall = estimatedInputTokens(request(0)) * usdPerToken;
@@ -1097,10 +1097,12 @@ describe("evaluator wrapper", () => {
                 )
             )
         );
-        expect(started).toBe(3);
-        expect(outcomes.filter((outcome) => outcome === "answered").length).toBe(3);
-        expect(outcomes.filter((outcome) => outcome === "request-limit").length).toBe(5);
-        expect(evaluator.spend?.costUsd).toBeCloseTo(perCall * 3, 12);
+        // Two estimates fit under 2.5; a third would pass the cap, so it never starts.
+        expect(started).toBe(2);
+        expect(outcomes.filter((outcome) => outcome === "answered").length).toBe(2);
+        expect(outcomes.filter((outcome) => outcome === "request-limit").length).toBe(6);
+        expect(evaluator.spend?.costUsd).toBeCloseTo(perCall * 2, 12);
+        expect(evaluator.spend?.costUsd).toBeLessThanOrEqual(perCall * 2.5);
     });
 
     test("the evaluation runners refuse infinite caps and never overwrite a result", () => {
