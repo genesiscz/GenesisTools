@@ -10,6 +10,7 @@ import {
     checkoutCache,
     headBranchFromEmbeddedData,
     menuTargetContext,
+    pageFocusTarget,
     quickCardMayClose,
     surfaceHoldsFocus,
 } from "../extension/content-dom";
@@ -363,6 +364,37 @@ describe("page text for the cards", () => {
         ]);
         expect(await known("https://github.com/c/d")).toBe(false);
         expect(asked).toEqual(["https://github.com/a/b", "https://github.com/a/b", "https://github.com/c/d"]);
+    });
+
+    it("says which pages still wait for a definite checkout answer, so focus can ask again", async () => {
+        const replies: HostResponse[] = [
+            { ok: false, code: "unavailable", error: "host down" },
+            { ok: false, code: "no-checkout", error: "none" },
+        ];
+        const cache = checkoutCache(async () => replies.shift() ?? { ok: false, code: "failed", error: "none left" });
+
+        expect(cache.answered("https://github.com/a/b")).toBe(false);
+        await cache("https://github.com/a/b");
+        // The host was down: nothing is kept, so a focus or a visible tab asks again.
+        expect(cache.answered("https://github.com/a/b")).toBe(false);
+        await cache("https://github.com/a/b");
+        expect(cache.answered("https://github.com/a/b")).toBe(true);
+    });
+
+    it("sends focus to the page's main landmark when the dock disappears under it", () => {
+        const attributes = new Map<string, string>();
+        const main = {
+            hasAttribute: (name: string) => attributes.has(name),
+            setAttribute: (name: string, value: string) => {
+                attributes.set(name, value);
+            },
+        };
+        const body = { hasAttribute: () => true, setAttribute: () => undefined };
+
+        expect(pageFocusTarget({ querySelector: () => main, body })).toBe(main);
+        // A landmark only takes focus with a tabindex; -1 keeps it out of the tab order.
+        expect(attributes.get("tabindex")).toBe("-1");
+        expect(pageFocusTarget({ querySelector: () => null, body })).toBe(body);
     });
 
     it("recovers a checkout probe that throws instead of keeping the rejection", async () => {

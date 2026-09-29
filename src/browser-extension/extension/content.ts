@@ -7,6 +7,7 @@ import {
     type DomContext,
     headBranch,
     menuTargetContext,
+    pageFocusTarget,
     quickCardMayClose,
     surfaceHoldsFocus,
 } from "./content-dom";
@@ -271,6 +272,15 @@ function start(): void {
         old?.remove();
 
         if (!show || !forge) {
+            // Hidden from its own × (or gone under the keyboard): focus goes back to the page, not nowhere.
+            if (hadFocus) {
+                const target = pageFocusTarget({
+                    querySelector: (selector) => document.querySelector<HTMLElement>(selector),
+                    body: document.body,
+                });
+                target.focus({ preventScroll: true });
+            }
+
             return;
         }
 
@@ -356,6 +366,16 @@ function start(): void {
         page = parseForgeUrl(location.href, [location.host]);
         void renderDock();
     };
+
+    // A host that was down gave no definite checkout answer; coming back to the tab asks again, so the
+    // dock settles once the host is up without waiting for a navigation.
+    const askAgain = () => {
+        if (page && !dockHidden && document.visibilityState === "visible" && !hasCheckout.answered(page.webBase)) {
+            void renderDock();
+        }
+    };
+    window.addEventListener("focus", askAgain);
+    document.addEventListener("visibilitychange", askAgain);
 
     const hideSelection = () => selectionRoot.querySelector(".gt-surface")?.remove();
 

@@ -131,12 +131,10 @@ export function menuTargetContext<T>(message: MenuMessage, read: () => T, empty:
  * Only a definite "no checkout" hides the dock; a host that is down or failed still shows it (a click
  * explains what is wrong), and that answer is not kept, so the next render asks again.
  */
-export function checkoutCache(
-    probe: (webBase: string) => Promise<HostResponse>
-): (webBase: string) => Promise<boolean> {
+export function checkoutCache(probe: (webBase: string) => Promise<HostResponse>): CheckoutCache {
     const known = new Map<string, Promise<boolean>>();
 
-    return (webBase) => {
+    const ask = (webBase: string) => {
         let answer = known.get(webBase);
 
         if (!answer) {
@@ -161,6 +159,32 @@ export function checkoutCache(
 
         return answer;
     };
+
+    // Held or in flight; false after a transient answer, which the caller asks again on a focus.
+    return Object.assign(ask, { answered: (webBase: string) => known.has(webBase) });
+}
+
+export type CheckoutCache = ((webBase: string) => Promise<boolean>) & {
+    /** A definite answer is held (or a probe is in flight) for `webBase`; false when the next render should ask. */
+    answered(webBase: string): boolean;
+};
+
+/** Where keyboard focus goes when the dock disappears under it: the page's main landmark, else the body. */
+export function pageFocusTarget<
+    T extends { hasAttribute(name: string): boolean; setAttribute(name: string, value: string): void },
+>(doc: { querySelector(selector: string): T | null; body: T }): T {
+    const main = doc.querySelector("main, [role='main']");
+
+    if (!main) {
+        return doc.body;
+    }
+
+    // A landmark takes focus only with a tabindex; -1 keeps it out of the tab order.
+    if (!main.hasAttribute("tabindex")) {
+        main.setAttribute("tabindex", "-1");
+    }
+
+    return main;
 }
 
 /** The parts of the result card the auto-close rule reads. */
