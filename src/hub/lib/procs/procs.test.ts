@@ -643,6 +643,29 @@ describe("stopTree", () => {
         expect(ops.sent.sort()).toEqual(["SIGTERM 310", "SIGTERM 320"]);
     });
 
+    test("stopOrphans checks each confirmed root again right before its stop", async () => {
+        // 320 becomes a launchd job while 310's grace period runs: the list the user confirmed is stale.
+        const rows = table();
+        const ops = fakeOps(rows, {});
+        let launchdReads = 0;
+        const sources: ProcsSources = {
+            ...fakeSources(rows),
+            launchd: async () => {
+                launchdReads++;
+                return launchdReads === 1
+                    ? new Map([[330, "com.example.mcp-gateway"]])
+                    : new Map([
+                          [330, "com.example.mcp-gateway"],
+                          [320, "com.example.adopted"],
+                      ]);
+            },
+        };
+        const outcomes = await stopOrphans({ only: [310, 320], sources, ops });
+
+        expect(ops.sent).toEqual(["SIGTERM 310"]);
+        expect(outcomes.find((outcome) => outcome.pid === 320)).toMatchObject({ stopped: false, signal: null });
+    });
+
     test("a failed launchctl list stops no adopted process: the report says so and nothing is signalled", async () => {
         const rows = table();
         const ops = fakeOps(rows, {});

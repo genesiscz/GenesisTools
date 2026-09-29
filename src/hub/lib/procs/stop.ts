@@ -315,9 +315,32 @@ export async function stopOrphans({
     const report = await readProcsReport({ sources });
     const outcomes: StopOutcome[] = [];
     const wanted = only ? new Set(only) : null;
+    const roots = report.groups.filter((entry) => entry.orphan && (!wanted || wanted.has(entry.rootPid)));
 
-    for (const group of report.groups.filter((entry) => entry.orphan && (!wanted || wanted.has(entry.rootPid)))) {
-        outcomes.push(await stopTree({ pid: group.rootPid, graceMs, sources, ops, report }));
+    for (const [index, root] of roots.entries()) {
+        // One tree's grace period can outlast another root's orphan status (reparented, or now a launchd
+        // job), so every stop after the first reads the table again, and `stopTree` refuses against it.
+        const current = index === 0 ? report : await readProcsReport({ sources });
+        const now = current.groups.find((entry) => entry.rootPid === root.rootPid);
+
+        if (!now?.orphan || now.startedAt !== root.startedAt || now.command !== root.command) {
+            log.info(
+                { pid: root.rootPid, orphan: now?.orphan ?? null },
+                "procs stop refused: no longer the confirmed orphan"
+            );
+            outcomes.push({
+                pid: root.rootPid,
+                label: root.label,
+                pids: [],
+                stopped: false,
+                signal: null,
+                survivors: [],
+                reason: `${root.rootPid} is no longer the orphan that was confirmed; look again`,
+            });
+            continue;
+        }
+
+        outcomes.push(await stopTree({ pid: root.rootPid, graceMs, sources, ops, report: current }));
     }
 
     return outcomes;
