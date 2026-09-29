@@ -109,6 +109,10 @@ struct SessionTranscriptList: View {
     // a row the document does not hold yet waits here until the host's window load brings it.
     @ObservedObject private var hubFilters = HubTranscriptFilters.shared
     @State private var pendingReveal: String?
+    // GenesisTools adaptation: a reveal is clearing the filters below and is about to scroll to its own
+    // row; the `onChange` handlers those clears trigger must not schedule a competing `.firstHit` scroll
+    // to the bottom in between (`Self.scroll`'s 120 ms / 350 ms retries could land after the reveal's).
+    @State private var revealing = false
 
     private var toolFilter: String? { hubFilters.tool(for: services.sessionId) }
 
@@ -151,9 +155,9 @@ struct SessionTranscriptList: View {
                 reveal(pending)
             }
         }
-        .onChange(of: chips) { recompute(.firstHit) }
+        .onChange(of: chips) { if !revealing { recompute(.firstHit) } }
         // GenesisTools adaptation: see `hubFilters`.
-        .onChange(of: toolFilter) { recompute(.firstHit) }
+        .onChange(of: toolFilter) { if !revealing { recompute(.firstHit) } }
         .onReceive(NotificationCenter.default.publisher(for: HubTranscriptBus.list)) { note in
             if case .reveal(let rowId)? = HubTranscriptBus.message(note, for: HubTranscriptBus.list, sessionId: services.sessionId) {
                 reveal(rowId)
@@ -167,7 +171,7 @@ struct SessionTranscriptList: View {
         .onChange(of: appliedQuery) {
             // GenesisTools adaptation: tell the host, which searches the whole session.
             services.onQuery?(appliedQuery)
-            recompute(.firstHit)
+            if !revealing { recompute(.firstHit) }
         }
         // GenesisTools adaptation: the host's services arrive after the first page, so a query applied
         // before that (a preset, fast typing) is sent again once they exist.
@@ -718,19 +722,29 @@ struct SessionTranscriptList: View {
         }
 
         if !HubTranscriptBus.contains(rowId, in: visible) {
+            revealing = true
             chips = []
             query = ""
             appliedQuery = ""
             hubFilters.setTool(nil, for: services.sessionId)
             recompute(.preserve)
         }
-        guard let shown = HubTranscriptBus.visibleRow(rowId, in: visible) else { return }
+        guard let shown = HubTranscriptBus.visibleRow(rowId, in: visible) else {
+            revealing = false
+            return
+        }
         if rowId.hasPrefix("t-") {
             expansion.expand([rowId, shown])
         }
         let target = rowId.hasPrefix("p-") ? Self.jumpTarget(promptId: rowId, in: visible) : shown
         DispatchQueue.main.async { request(target, anchor: .top) }
+        // GenesisTools adaptation: `revealing` outlives the filter handlers and `Self.scroll`'s 350 ms
+        // retry; clearing it in the hop above could run before SwiftUI delivers those `onChange` calls.
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.revealQuietSeconds) { revealing = false }
     }
+
+    /// Longer than `Self.scroll`'s last retry (0.35 s), so no `.firstHit` scroll lands after a reveal.
+    private static let revealQuietSeconds = 0.5
 
     private func request(_ id: String, anchor: UnitPoint) {
         // GenesisTools adaptation: a jump the list asks for is not undone by a prepend's hold.
