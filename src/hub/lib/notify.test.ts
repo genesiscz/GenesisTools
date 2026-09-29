@@ -6,6 +6,7 @@ import { loadConfig as loadDaemonConfig } from "@app/daemon/lib/config";
 import { parseInterval } from "@app/daemon/lib/interval";
 import { NOTIFY_TASK_NAME, registerNotifyCommands } from "@app/hub/commands/notify";
 import type { CommandRunner, ProjectRef } from "@genesiscz/utils/git";
+import type { RepoFacts } from "@genesiscz/utils/git/repo-facts";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { Command } from "commander";
 import { diffPr, isBotLogin, type PrMemory, type PrSnapshot, pruneMemory } from "./notify";
@@ -38,7 +39,6 @@ import {
     testNotification,
 } from "./notify-poll";
 import { isHubPrRef } from "./pr-ref";
-import type { RepoFacts } from "./repo";
 
 const ALL_ON = { thread: true, ciFailed: true, ciPassed: true, botReview: true, merged: true };
 const NOW = "2026-01-02T10:00:00.000Z";

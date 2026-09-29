@@ -8,7 +8,7 @@ import {
     prLookupCacheKey,
     readPrLookupCacheSeconds,
     writePrLookupCacheSeconds,
-} from "./pr-lookup-cache";
+} from "./lookup-cache";
 
 /** A fresh cache per test: the suite's real ~/.genesis-tools/hub is never touched. */
 let scratch = 0;

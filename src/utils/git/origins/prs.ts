@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { classifyOriginUrl } from "./detector";
@@ -194,6 +195,37 @@ export function parsePrUrl(url: string): { project: ProjectRef; number: number }
         project: { kind, host: host.toLowerCase(), path, web: `https://${host.toLowerCase()}/${path}` },
         number: Number(match[2]),
     };
+}
+
+/**
+ * `<url>`, `<repoPath>#<number>`, `<owner>/<repo>#<number>` for a GitHub repo when no such folder exists, or
+ * `<number>` / `#<number>` for the current folder's repo; null otherwise.
+ */
+export function parsePrRef(ref: string): { url: string } | { path: string; number: number } | null {
+    const trimmed = ref.trim();
+
+    if (/^https?:\/\//i.test(trimmed)) {
+        return { url: trimmed };
+    }
+
+    const bare = /^#?(\d+)$/.exec(trimmed);
+
+    if (bare) {
+        return { path: process.cwd(), number: Number(bare[1]) };
+    }
+
+    const match = /^(.+)#(\d+)$/.exec(trimmed);
+
+    if (!match) {
+        return null;
+    }
+
+    // The hub's own `--pr genesiscz/GenesisTools#424`: read as a folder, it failed with a bare `posix_spawn 'git'`.
+    if (/^[\w.-]+\/[\w.-]+$/.test(match[1]) && !existsSync(match[1])) {
+        return { url: `https://github.com/${match[1]}/pull/${match[2]}` };
+    }
+
+    return { path: match[1], number: Number(match[2]) };
 }
 
 function webUrls(kind: OriginKind, url: string): PrDetail["webUrls"] {

@@ -1,6 +1,7 @@
 import { type ExecResult, Executor } from "@genesiscz/utils/cli";
-import { classifyOriginUrl, type OriginKind } from "@genesiscz/utils/git/origins";
 import { logger } from "@genesiscz/utils/logger";
+import { classifyOriginUrl } from "./detector";
+import type { OriginKind } from "./types";
 
 const log = logger.child({ component: "hub/pr-fetch" });
 

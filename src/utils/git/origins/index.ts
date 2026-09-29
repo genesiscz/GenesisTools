@@ -25,6 +25,7 @@ export {
     parseGhPrView,
     parseGlabMrRows,
     parseGlabMrView,
+    parsePrRef,
     parsePrUrl,
     projectRefFromRemote,
     rollupCi,

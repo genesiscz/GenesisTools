@@ -1,5 +1,5 @@
-import { createGit } from "@genesiscz/utils/git";
 import { logger } from "@genesiscz/utils/logger";
+import { createGit } from "./core";
 
 const log = logger.child({ component: "hub/branches" });
 

@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { type ProjectRef, projectRefFromRemote } from "@genesiscz/utils/git";
+import { type RepoFacts, repoFactsMany } from "@genesiscz/utils/git/repo-facts";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { genesisAppBundlePath } from "@genesiscz/utils/macos/genesis-app";
@@ -18,7 +19,6 @@ import {
     watchedRepoPaths,
 } from "./notify-config";
 import { fetchGithubRepo, fetchGitlabRepo, HostError, type RepoFetch } from "./notify-fetch";
-import { type RepoFacts, repoFactsMany } from "./repo";
 
 // One poll of every watched repo: fetch, compare with the last poll, post what changed, save.
 // Runs from the daemon (`tools hub notify install` registers it) or by hand (`tools hub notify poll`).

@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { getMainRepoRootSync, listWorktrees } from "@genesiscz/utils/git/worktree";
+import { getMainRepoRootSync, listWorktrees, worktreeByBranch } from "@genesiscz/utils/git/worktree";
 
 /** `getMainRepoRootSync` answers "which checkout owns this directory" for two
  *  consumers that resolve durable state from it: the clones daemon registers
@@ -75,5 +75,22 @@ describe("getMainRepoRootSync", () => {
         } finally {
             rmSync(plain, { recursive: true, force: true });
         }
+    });
+});
+
+describe("worktreeByBranch", () => {
+    it("maps each branch to its worktree; the main checkout loses a tie and a bare entry is skipped", () => {
+        const byBranch = worktreeByBranch([
+            { path: "/work/app", head: "a", branch: "feat/x", isBare: false, isMain: true },
+            { path: "/work/app-x", head: "a", branch: "feat/x", isBare: false, isMain: false },
+            { path: "/work/app-y", head: "b", branch: "feat/y", isBare: false, isMain: false },
+            { path: "/work/app.git", head: "c", branch: "main", isBare: true, isMain: false },
+            { path: "/work/app-detached", head: "d", branch: null, isBare: false, isMain: false },
+        ]);
+
+        expect([...byBranch]).toEqual([
+            ["feat/x", "/work/app-x"],
+            ["feat/y", "/work/app-y"],
+        ]);
     });
 });
