@@ -1,4 +1,6 @@
 import { formatTokens } from "@genesiscz/utils/format";
+import { sliceWhole } from "@genesiscz/utils/string";
+import type { PromptPart } from "../prompt-parts";
 import type { TranscriptEnvelope, TranscriptTool, TranscriptTurn } from "../types";
 import { type RenderContext, settledTurns, TranscriptRenderer, windowStart } from "./renderer";
 
@@ -8,7 +10,7 @@ const ERROR_CHARS = 400;
 
 export function oneLine(text: string, max: number): string {
     const collapsed = text.replace(/\s+/g, " ").trim();
-    return collapsed.length > max ? `${collapsed.slice(0, max)}…` : collapsed;
+    return collapsed.length > max ? `${sliceWhole(collapsed, max)}…` : collapsed;
 }
 
 function resultSuffix(tool: TranscriptTool, ctx: RenderContext): string {
@@ -40,6 +42,26 @@ function eventLine(tag: string, turn: TranscriptTurn): string {
     }
 
     return `${tag} ⚑ ${oneLine(turn.text, ERROR_CHARS)}`;
+}
+
+/** One line per part of a prompt: the user's words as before, each delivery with its own marker. */
+function partLine(tag: string, part: PromptPart, ctx: RenderContext): string {
+    switch (part.kind) {
+        case "user":
+            return `${tag} 👤 ${part.midTurn ? "(while it worked) " : ""}${part.text.trim()}`;
+        case "teammate": {
+            const title = part.summary ?? part.type;
+            return `${tag} 📨 ${part.from}${title ? ` · ${title}` : ""}${part.body.trim() ? `: ${part.body.trim()}` : ""}`;
+        }
+        case "task": {
+            const head = [part.status ?? "task", part.summary, part.id].filter(Boolean).join(" · ");
+            return `${tag} 🔔 ${head}${part.result ? ` → ${oneLine(part.result, ctx.previewChars)}` : ""}`;
+        }
+        case "interrupt":
+            return `${tag} ⎋ ${part.text}`;
+        case "system":
+            return `${tag} ⚙ ${oneLine(part.text, SHORT_THOUGHT_CHARS)}`;
+    }
 }
 
 export function formatTotals(envelope: TranscriptEnvelope): string {
@@ -113,7 +135,9 @@ export class CompactRenderer extends TranscriptRenderer {
             lines.push(`${tag} 🧠 ${text}`);
         }
 
-        if (turn.text.trim()) {
+        if (turn.role === "user" && turn.parts) {
+            lines.push(...turn.parts.map((part) => partLine(tag, part, ctx)));
+        } else if (turn.text.trim()) {
             lines.push(`${tag} ${turn.role === "user" ? "👤" : "💬"} ${turn.text.trim()}`);
         }
 

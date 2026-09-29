@@ -99,6 +99,12 @@ export function grokNativeLinesToTurns(lines: readonly (string | unknown)[]): Tr
                 if (result) {
                     tool.result = clipResult(result);
                 }
+                // A search_replace completion carries only a diff part and a list_dir one
+                // only rawOutput. `result !== null` is what every renderer reads as
+                // "finished", so a terminal status without text still gets a string.
+                if (update.status === "completed" || update.status === "failed") {
+                    tool.result ??= "";
+                }
                 if (update.status === "failed") {
                     tool.isError = true;
                 }

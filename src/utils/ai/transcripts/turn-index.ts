@@ -44,7 +44,8 @@ import {
 } from "./types";
 
 export const INDEX_MIN_BYTES = 16 * 1024 * 1024;
-const INDEX_VERSION = 3;
+// 4: a task result and a message typed mid-turn became turns (prompt parts), which moves the offsets.
+const INDEX_VERSION = 4;
 const HEAD_BYTES = 4096;
 const TAIL_BYTES = 4096;
 const MAX_INDEX_FILES = 256;
@@ -376,6 +377,7 @@ export function indexedClaudeEnvelope(
             turns,
             totals: { ...index.totals },
             terminated: index.terminated,
+            turnCount: total,
         };
     }
 
@@ -417,5 +419,6 @@ export function indexedClaudeEnvelope(
         turns,
         totals: { ...index.totals },
         terminated: index.terminated,
+        turnCount: total,
     };
 }

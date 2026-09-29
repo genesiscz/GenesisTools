@@ -117,5 +117,6 @@ export async function transcriptEnvelope(
         turns: sliced.turns,
         totals: totalsOf(turns),
         terminated: terminatedOf(turns),
+        turnCount: turns.length,
     };
 }

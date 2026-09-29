@@ -79,6 +79,20 @@ describe("scanTurns", () => {
         expect(scanTurns([])).toBeNull();
     });
 
+    test("a task result after the question does not answer it; a peer's message can", () => {
+        const task: TranscriptTurn = {
+            ...turn("user", "<task-notification> <task-id>b1example</task-id> <status>completed</status>"),
+            parts: [{ kind: "task", id: "b1example", status: "completed" }],
+        };
+        const peer = turn("user", 'Another Claude session sent a message: <teammate-message teammate_id="lead">');
+        // The task result before the reply is not what was asked either.
+        const scan = scanTurns([turn("user", "go"), task, turn("assistant", ASK), task]);
+
+        expect(scan?.blocks[0]?.number).toBe(3);
+        expect(scan?.reply?.ask).toBe("go");
+        expect(scanTurns([turn("user", "go"), turn("assistant", ASK), peer])).toBeNull();
+    });
+
     test("a heading ends a block even before its options", () => {
         expect(parseDecisionBlocks("❓ DECISION 1: Rename?\n## Next\nsomething else")).toEqual([
             { number: 1, title: "Rename?", prompt: "Rename?", options: [] },

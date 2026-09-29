@@ -72,6 +72,33 @@ final class HubLogicTests: XCTestCase {
         XCTAssertNil(HubPRRef("seven"))
     }
 
+    /// The browser extension and pasted links hand the hub a page URL, often with a tab suffix.
+    func testAPRRefReadsAPRorMRPageURL() {
+        XCTAssertEqual(HubPRRef("https://github.com/acme/App/pull/424/files"), HubPRRef(project: "acme/App", number: 424))
+        XCTAssertEqual(HubPRRef("https://gitlab.example/group/sub/app/-/merge_requests/12"), HubPRRef(project: "group/sub/app", number: 12))
+        XCTAssertNil(HubPRRef("https://github.com/acme/app/issues/3"))
+        XCTAssertNil(HubPRRef("https://github.com/acme/app"))
+    }
+
+    func testAPRRefMatchesItsProjectInAnyLetterCase() throws {
+        let json = """
+        {"repo":"GenesisTools","repoRoot":null,"origin":{"kind":"github","host":"github.com","web":"https://github.com/genesiscz/GenesisTools"},
+         "number":424,"title":"t","state":"OPEN","draft":false,"author":"a","headBranch":"feat/x","baseBranch":"master",
+         "url":"https://github.com/genesiscz/GenesisTools/pull/424","labels":[],"reviewers":[],"headSha":null,"crossRepository":false,"headRepo":null}
+        """
+        let pr = try JSONDecoder().decode(HubPR.self, from: Data(json.utf8))
+        XCTAssertTrue(try XCTUnwrap(HubPRRef("genesiscz/genesistools#424")).matches(pr))
+        XCTAssertTrue(try XCTUnwrap(HubPRRef("genesistools#424")).matches(pr))
+        XCTAssertTrue(try XCTUnwrap(HubPRRef("https://github.com/GenesisCZ/GenesisTools/pull/424")).matches(pr))
+        XCTAssertFalse(try XCTUnwrap(HubPRRef("genesiscz/other#424")).matches(pr))
+    }
+
+    func testRevealNamesAFileOnlyTogetherWithAPR() {
+        let request = HubRequest(["--pr", "acme/app#7", "--reveal", "src/parse.ts"])
+        XCTAssertEqual(request.prReveal, PRReveal(ref: HubPRRef(project: "acme/app", number: 7), path: "src/parse.ts", threadID: nil))
+        XCTAssertNil(HubRequest(["--reveal", "src/parse.ts"]).prReveal)
+    }
+
     func testALiveLaunchIsNotScripted() {
         let request = HubRequest(["--session", "abc", "--no-activate"])
         XCTAssertFalse(request.isScripted)
@@ -283,6 +310,265 @@ final class HubLogicTests: XCTestCase {
         XCTAssertNil(skipped)
     }
 
+    /// A failed lookup is not cached, and the run gets ToolsBridge's scrubbed PATH (a GUI app's own
+    /// PATH has no bun, so `#!/usr/bin/env bun` failed).
+    func testAFailedChangeLookupIsAskedAgainWithTheScrubbedPath() async throws {
+        // A stand-in `tools`: fails on its first run, then prints one file whose path is its PATH.
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("tool-changes-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let script = dir.appendingPathComponent("tools")
+        try """
+        #!/bin/sh
+        if [ -f "$0.ran" ]; then printf '{"files":[{"path":"%s","diff":"@@ -1 +1 @@"}]}' "$PATH"; else touch "$0.ran"; exit 1; fi
+        """.write(to: script, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script.path)
+
+        let source = CLIToolChangeSource(toolsBinary: script.path, objectsDir: dir.path)
+        let first = await source.changes(sessionId: "s", toolUseId: "t")
+        XCTAssertTrue(first.isEmpty)
+        let second = await source.changes(sessionId: "s", toolUseId: "t")
+        XCTAssertEqual(second.count, 1, "the failed run was not cached")
+        XCTAssertTrue(second.first?.path.contains("/.bun/bin") == true, "the run gets ToolsBridge's scrubbed PATH")
+    }
+
+    // MARK: Session Details rendering and usage
+
+    /// A section ends at the next section's first turn; a turn the scan never indexed is not the end
+    /// of the file (that summed every later section's calls into this one).
+    func testNativeUsageStopsOnlyAtATurnInTheFile() throws {
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent("native-usage-\(UUID().uuidString).jsonl")
+        try """
+        {"type":"user","uuid":"u1","message":{"role":"user","content":"hi"}}
+        {"type":"assistant","uuid":"a1","message":{"id":"m1","model":"claude-opus-5-5","content":[],"usage":{"input_tokens":1,"output_tokens":2}}}
+        {"type":"assistant","uuid":"a2","message":{"id":"m2","model":"claude-opus-5-5","content":[],"usage":{"input_tokens":1,"output_tokens":2}}}
+        """.write(to: file, atomically: true, encoding: .utf8)
+        let summary = try XCTUnwrap(SessionNativeLog.scan(path: file.path)).summary
+
+        XCTAssertEqual(summary.usage(fromTurn: "a1", untilTurn: nil)?.modelCalls, 2, "nil runs to the end of the file")
+        XCTAssertEqual(summary.usage(fromTurn: "a1", untilTurn: "a2")?.modelCalls, 1)
+        XCTAssertNil(summary.usage(fromTurn: "a1", untilTurn: "not-in-the-file"), "an unknown end is not the end of the file")
+    }
+
+    /// A JSONL writer that puts spaces around the colon still gets its turns read (Claude Code
+    /// writes minified lines; the prefilter used to require that spelling).
+    func testNativeLogReadsLinesWithSpacesAroundTheColon() throws {
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent("native-spaced-\(UUID().uuidString).jsonl")
+        try """
+        {"type": "user", "uuid": "u1", "message": {"role": "user", "content": "hi"}}
+        {"type" : "assistant", "uuid": "a1", "message": {"id": "m1", "model": "claude-opus-5-5", "content": [], "usage": {"input_tokens": 1, "output_tokens": 2}}}
+        """.write(to: file, atomically: true, encoding: .utf8)
+        let summary = try XCTUnwrap(SessionNativeLog.scan(path: file.path)).summary
+        XCTAssertEqual(summary.total.modelCalls, 1)
+        XCTAssertEqual(summary.model(forTurn: "a1"), "opus")
+        XCTAssertEqual(summary.usage(fromTurn: "u1", untilTurn: nil)?.outputTokens, 2)
+    }
+
+    /// An opened tool call shows what the transcript envelope clipped (Martin, 2026-09-28: "show me the
+    /// entire input … the entire output"): the whole command and all 33 output lines of a Bash call
+    /// whose preview kept one line of output, and every argument of an Agent call whose preview is its
+    /// description.
+    func testAnOpenedToolCallCarriesItsWholeInputAndOutput() throws {
+        let command = "cd /tmp/atlas && swift build 2>&1 \\\n  | rg -n 'error:' \\\n  | head -40"
+        let output = (1...33).map { "line \($0)" }.joined(separator: "\n")
+        let prompt = "Read every file under src/parser and list the functions that take more than three parameters."
+        func json(_ object: Any) throws -> String {
+            String(decoding: try JSONSerialization.data(withJSONObject: object), as: UTF8.self)
+        }
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent("native-detail-\(UUID().uuidString).jsonl")
+        try [
+            json(["type": "assistant", "uuid": "a1", "message": ["id": "m1", "role": "assistant", "content": [
+                ["type": "tool_use", "id": "bash1", "name": "Bash", "input": ["command": command, "description": "Build"]],
+                ["type": "tool_use", "id": "short1", "name": "Bash", "input": ["command": "git status --short"]],
+                ["type": "tool_use", "id": "agent1", "name": "Agent", "input": ["description": "List long signatures", "prompt": prompt, "subagent_type": "Explore"]],
+            ]]]),
+            json(["type": "user", "uuid": "u1", "message": ["role": "user", "content": [
+                ["type": "tool_result", "tool_use_id": "bash1", "content": output],
+                ["type": "tool_result", "tool_use_id": "short1", "content": "M a.swift"],
+                ["type": "tool_result", "tool_use_id": "agent1", "content": "Done."],
+            ]]]),
+        ].joined(separator: "\n").write(to: file, atomically: true, encoding: .utf8)
+        let log = try XCTUnwrap(SessionNativeLog.scan(path: file.path))
+        func line(_ id: String, _ name: String, input: String, result: String) -> TranscriptToolLine {
+            TranscriptToolLine(
+                toolId: id, name: name, displayName: name, symbol: "terminal", keyArgument: input, input: input, result: result,
+                status: .ok, exitCode: nil, resultChars: nil, duration: nil
+            )
+        }
+        func present(_ line: TranscriptToolLine) throws -> ToolPresentation {
+            ToolPresentation.make(line: line, loaded: ToolLoaded(detail: try XCTUnwrap(log.detail(for: line.toolId))), context: 0, cwd: nil)
+        }
+
+        let bash = try present(line("bash1", "Bash", input: command, result: "line 1\nline 2…"))
+        XCTAssertEqual(bash.block?.lines.count, 33, "the whole output, not the envelope's clipped one")
+        XCTAssertEqual(bash.block?.lines.last?.text, "line 33")
+        XCTAssertEqual(bash.input?.lines.map(\.text).joined(separator: "\n"), command, "the whole command, line for line")
+
+        let short = try present(line("short1", "Bash", input: "git status --short", result: "M a.swift"))
+        XCTAssertNil(short.input, "a one-line command is shown whole in the header, not repeated below it")
+
+        let agent = try present(line("agent1", "Agent", input: "List long signatures", result: "Done."))
+        let arguments = try XCTUnwrap(agent.input?.lines.map(\.text).joined(separator: "\n"), "an Agent call opens to all of its input")
+        XCTAssertTrue(arguments.contains(prompt), "the prompt the preview left out")
+        XCTAssertTrue(arguments.contains("\"subagent_type\" : \"Explore\""), arguments)
+    }
+
+    /// A call the live tail brought in after the session file was scanned still opens to its whole
+    /// output, and a call that was running at the first look gets its result once it is written.
+    func testACallWrittenAfterTheScanHasItsDetail() throws {
+        func json(_ object: Any) throws -> String {
+            String(decoding: try JSONSerialization.data(withJSONObject: object), as: UTF8.self)
+        }
+        func use(_ id: String, _ command: String) throws -> String {
+            try json(["type": "assistant", "uuid": "a-\(id)", "message": ["id": "m-\(id)", "role": "assistant", "content": [
+                ["type": "tool_use", "id": id, "name": "Bash", "input": ["command": command]],
+            ]]])
+        }
+        func result(_ id: String, _ text: String) throws -> String {
+            try json(["type": "user", "uuid": "r-\(id)", "message": ["role": "user", "content": [
+                ["type": "tool_result", "tool_use_id": id, "content": text],
+            ]]])
+        }
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent("native-appended-\(UUID().uuidString).jsonl")
+        try [use("early", "ls"), result("early", "a.swift")].joined(separator: "\n").write(to: file, atomically: true, encoding: .utf8)
+        let log = try XCTUnwrap(SessionNativeLog.scan(path: file.path))
+        let output = (1...40).map { "compiled module \($0)" }.joined(separator: "\n")
+
+        let handle = try FileHandle(forWritingTo: file)
+        try handle.seekToEnd()
+        try handle.write(contentsOf: Data(("\n" + [use("late", "swift build"), result("late", output), use("running", "sleep 5")].joined(separator: "\n")).utf8))
+        XCTAssertEqual(log.detail(for: "late")?.fullResult, output, "a call written after the scan")
+        XCTAssertEqual(log.detail(for: "late")?.command, "swift build")
+        XCTAssertNil(log.detail(for: "running")?.fullResult)
+
+        try handle.write(contentsOf: Data(("\n" + result("running", "done")).utf8))
+        try handle.close()
+        XCTAssertEqual(log.detail(for: "running")?.fullResult, "done", "a running call is not cached without its result")
+        XCTAssertNil(log.detail(for: "never"), "an unknown id has no detail")
+    }
+
+    /// The lines written after the scan are read once each, however often the rows of a running call
+    /// ask for its detail (PR #429 t21: each ask scanned the whole appended part again), and a line
+    /// still being written is read once it is whole.
+    func testLinesWrittenAfterTheScanAreReadOnce() throws {
+        func json(_ object: Any) throws -> String {
+            String(decoding: try JSONSerialization.data(withJSONObject: object), as: UTF8.self)
+        }
+        let use = try json(["type": "assistant", "uuid": "a1", "message": ["id": "m1", "role": "assistant", "content": [
+            ["type": "tool_use", "id": "running", "name": "Bash", "input": ["command": "sleep 5"]],
+        ]]]) + "\n"
+        let result = try json(["type": "user", "uuid": "r1", "message": ["role": "user", "content": [
+            ["type": "tool_result", "tool_use_id": "running", "content": "done"],
+        ]]]) + "\n"
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent("native-once-\(UUID().uuidString).jsonl")
+        try "{\"type\":\"user\",\"uuid\":\"u0\",\"message\":{\"role\":\"user\",\"content\":\"hi\"}}\n".write(to: file, atomically: true, encoding: .utf8)
+        let log = try XCTUnwrap(SessionNativeLog.scan(path: file.path))
+        let handle = try FileHandle(forWritingTo: file)
+        defer { try? handle.close() }
+        try handle.seekToEnd()
+
+        try handle.write(contentsOf: Data(use.utf8))
+        for _ in 0..<5 {
+            XCTAssertEqual(log.detail(for: "running")?.command, "sleep 5")
+        }
+        XCTAssertEqual(log.appendedBytesRead, use.utf8.count, "five asks read the appended line once")
+
+        let half = result.utf8.count / 2
+        try handle.write(contentsOf: Data(result.utf8.prefix(half)))
+        XCTAssertNil(log.detail(for: "running")?.fullResult)
+        XCTAssertEqual(log.appendedBytesRead, use.utf8.count, "a line still being written is left for later")
+
+        try handle.write(contentsOf: Data(result.utf8.dropFirst(half)))
+        XCTAssertEqual(log.detail(for: "running")?.fullResult, "done")
+        XCTAssertEqual(log.appendedBytesRead, use.utf8.count + result.utf8.count)
+    }
+
+    /// A tool row the reader opened shows its whole body; one open by its level's default or by Expand
+    /// all stays trimmed, and "… +N lines" / "Show fewer lines" flips either.
+    @MainActor
+    func testARowOpenedByHandShowsItsWholeBody() {
+        let expansion = TranscriptExpansion()
+        XCTAssertFalse(expansion.showsAll("t-closed", byDefault: false))
+
+        expansion.toggle("t-hand")
+        XCTAssertTrue(expansion.showsAll("t-hand", byDefault: false), "opened by a click")
+        expansion.toggle("t-hand#all")
+        XCTAssertFalse(expansion.showsAll("t-hand", byDefault: false), "Show fewer lines")
+
+        XCTAssertFalse(expansion.showsAll("t-default", byDefault: true), "open at Inputs + output: trimmed")
+        expansion.toggle("t-default#all")
+        XCTAssertTrue(expansion.showsAll("t-default", byDefault: true), "… +N lines")
+
+        expansion.setAll(true)
+        XCTAssertFalse(expansion.showsAll("t-hand", byDefault: false), "Expand all does not untrim every output")
+    }
+
+    /// A search hit in a reply keeps its section's prompt as context; a section with no hit goes.
+    func testASearchKeepsThePromptOfEachHit() throws {
+        let json = """
+        [{"id":"u1","role":"user","text":"fix the export","tools":[],"index":0},
+         {"id":"a1","role":"assistant","text":"PrintButton was the cause","tools":[],"index":1},
+         {"id":"u2","role":"user","text":"thanks","tools":[],"index":2},
+         {"id":"a2","role":"assistant","text":"you are welcome","tools":[],"index":3}]
+        """
+        let document = TranscriptDocument.build(try JSONDecoder().decode([TranscriptTurn].self, from: Data(json.utf8)))
+        let hits = document.filtered([], query: "printbutton")
+        XCTAssertEqual(hits.flatMap(\.rows).map(\.id), ["p-u1", "a-a1"])
+    }
+
+    /// The plain draw on the main thread gives text to the first lines only, with the full height.
+    func testFirstDrawGivesTextToTheFirstLinesAndKeepsTheHeight() {
+        let block = CodeBlockBuilder.numbered((1...500).map { "line \($0)" }.joined(separator: "\n"), language: .plain)
+        let full = CodeBlockRenderer.attributed(block, limit: nil, highlight: false)
+        let first = CodeBlockRenderer.attributed(block, limit: nil, highlight: false, drawn: 200)
+        func lines(_ text: AttributedString) -> [String] {
+            String(text.characters).split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+        }
+
+        XCTAssertEqual(lines(first.body).count, 500, "the block keeps its full height")
+        XCTAssertEqual(Array(lines(first.body).prefix(200)), Array(lines(full.body).prefix(200)))
+        XCTAssertEqual(lines(first.body)[200], "")
+        XCTAssertEqual(lines(first.gutter).first, "  1", "the gutter is as wide as the last number")
+        XCTAssertEqual(lines(first.gutter).count, 500)
+        XCTAssertEqual(
+            lines(CodeBlockRenderer.attributed(block, limit: 10, highlight: false, drawn: 200).body).count, 10,
+            "a limit below the first draw draws every shown line"
+        )
+    }
+
+    /// The code block's cache key comes from this fingerprint, hashed once when the block is made.
+    func testTheFingerprintFollowsTheContent() {
+        let block = CodeBlockBuilder.numbered("a\nb", language: .plain)
+        XCTAssertEqual(block.fingerprint, CodeBlockBuilder.numbered("a\nb", language: .plain).fingerprint)
+        XCTAssertNotEqual(block.fingerprint, CodeBlockBuilder.numbered("a\nc", language: .plain).fingerprint, "same line count, new text")
+        XCTAssertNotEqual(block.fingerprint, CodeBlockBuilder.numbered("a\nb", language: .swift).fingerprint)
+        XCTAssertNotEqual(block.fingerprint, CodeBlockBuilder.numbered("a\nb", language: .plain, failed: true).fingerprint)
+    }
+
+    /// VoiceOver hears a diff's marks: the gutter that shows them is hidden from it.
+    func testDiffSpeaksItsMarks() {
+        let diff = CodeBlockBuilder.unifiedDiff("@@ -3,2 +3,2 @@\n keep\n-old\n+new", language: .plain)
+        XCTAssertEqual(CodeBlockRenderer.attributed(diff, limit: nil, highlight: false).spoken, "keep\nremoved: old\nadded: new")
+
+        let plain = CodeBlockBuilder.numbered("a\nb", language: .plain)
+        XCTAssertNil(CodeBlockRenderer.attributed(plain, limit: nil, highlight: false).spoken, "a block that is not a diff reads its text")
+    }
+
+    /// The bounded first draw leaves lines blank, and VoiceOver still hears every shown line of them.
+    func testFirstDrawStillSpeaksEveryShownLine() {
+        let changes = (1...300).map { "+line \($0)" }.joined(separator: "\n")
+        let diff = CodeBlockBuilder.unifiedDiff("@@ -1,0 +1,300 @@\n\(changes)", language: .plain)
+        let spokenDiff = CodeBlockRenderer.attributed(diff, limit: nil, highlight: false, drawn: 200).spoken ?? ""
+        XCTAssertEqual(spokenDiff.split(separator: "\n").count, 300)
+        XCTAssertTrue(spokenDiff.hasSuffix("added: line 300"), "the lines past the first draw are read too")
+
+        let plain = CodeBlockBuilder.numbered((1...300).map { "line \($0)" }.joined(separator: "\n"), language: .plain)
+        let spokenPlain = CodeBlockRenderer.attributed(plain, limit: nil, highlight: false, drawn: 200).spoken ?? ""
+        XCTAssertTrue(spokenPlain.hasSuffix("line 300"), "a cut plain block reads its hidden lines too")
+        XCTAssertEqual(
+            CodeBlockRenderer.attributed(plain, limit: 10, highlight: false, drawn: 200).spoken, nil,
+            "a block the first draw shows whole reads its text"
+        )
+    }
 
     // MARK: Tool-change batches
 

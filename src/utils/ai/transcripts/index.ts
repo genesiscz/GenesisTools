@@ -6,6 +6,15 @@ export { cleanPromptText, cleanTranscriptText } from "./clean-text";
 export { codexGtEventsToTurns, codexNativeLinesToTurns } from "./codex";
 export { grokNativeLinesToTurns, grokWorkerTextToTurns } from "./grok";
 export { allTranscriptTurns, transcriptEnvelope } from "./load";
+export type {
+    InterruptPromptPart,
+    PromptPart,
+    SystemPromptPart,
+    TaskPromptPart,
+    TeammatePromptPart,
+    UserPromptPart,
+} from "./prompt-parts";
+export { isHarnessDelivery, isTaskReport, parsePromptParts, structuredPromptParts } from "./prompt-parts";
 export type { ResolvedTranscript, TranscriptRoots, TranscriptSource } from "./resolve";
 export { defaultTranscriptRoots, resolveTranscript } from "./resolve";
 export type { TranscriptSearchOptions, TranscriptSearchResult } from "./search";

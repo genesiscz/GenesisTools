@@ -1,3 +1,4 @@
+import { isTaskReport } from "@genesiscz/utils/ai/transcripts/prompt-parts";
 import type { TranscriptTurn } from "@genesiscz/utils/ai/transcripts/types";
 import { looksLikeDump, whySentence } from "../decisions/delivery-text";
 import { parseDecisionBlocks } from "../decisions/read";
@@ -191,6 +192,12 @@ export function scanTurns(turns: readonly TranscriptTurn[], firstIndex: number |
             continue;
         }
 
+        // A task result that arrived after the question does not answer it. A peer's message can:
+        // a worker's decision is answered by its lead.
+        if (turn.role === "user" && isTaskReport(turn.parts)) {
+            continue;
+        }
+
         if (turn.role === "user" || !MARKER.test(turn.text)) {
             return null;
         }
@@ -204,7 +211,9 @@ export function scanTurns(turns: readonly TranscriptTurn[], firstIndex: number |
         const asked = turns
             .slice(0, index)
             .reverse()
-            .find((earlier) => earlier.role === "user" && earlier.text.trim().length > 0);
+            .find(
+                (earlier) => earlier.role === "user" && earlier.text.trim().length > 0 && !isTaskReport(earlier.parts)
+            );
 
         return {
             at: turn.at,

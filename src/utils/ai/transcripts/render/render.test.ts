@@ -72,6 +72,33 @@ describe("CompactRenderer", () => {
         ]);
     });
 
+    test("a prompt with parts prints one line per part instead of its raw text", () => {
+        const { ctx, lines } = capture();
+        const prompt: TranscriptTurn = {
+            id: "u1",
+            role: "user",
+            at: null,
+            text: 'Another Claude session sent a message: <teammate-message teammate_id="builder"> {"type":"idle_notification"}',
+            tools: [],
+            parts: [
+                { kind: "teammate", from: "builder", type: "idle_notification", body: "**Done.**" },
+                { kind: "task", id: "b1example", status: "completed", summary: "Tests passed" },
+                { kind: "interrupt", text: "Request interrupted by user" },
+                { kind: "system", text: "This came from another Claude session." },
+                { kind: "user", text: "so?", midTurn: true },
+            ],
+        };
+        rendererFor("compact").envelope(envelopeOf([prompt]), ctx);
+
+        expect(lines).toEqual([
+            "#1 📨 builder · idle_notification: **Done.**",
+            "#1 🔔 completed · Tests passed · b1example",
+            "#1 ⎋ Request interrupted by user",
+            "#1 ⚙ This came from another Claude session.",
+            "#1 👤 (while it worked) so?",
+        ]);
+    });
+
     test("a sparse envelope tags each turn with its own position", () => {
         const { ctx, lines, status } = capture();
         const renderer = rendererFor("compact");

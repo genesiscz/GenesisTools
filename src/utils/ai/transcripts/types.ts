@@ -1,4 +1,6 @@
 import type { AccountProviderAlias } from "@genesiscz/utils/ai/providers/alias-list";
+import { sliceWhole } from "@genesiscz/utils/string";
+import type { PromptPart } from "./prompt-parts";
 
 export type TranscriptProvider = AccountProviderAlias;
 
@@ -46,6 +48,11 @@ export interface TranscriptTurn {
     step?: number;
     /** 0-based position in the whole transcript; set only on the turns of a sparse (`turns`) envelope. */
     index?: number;
+    /**
+     * A user turn that holds more than the user's plain words (a peer's message, a task result, an Esc
+     * marker, a reminder), split in order. Absent on an ordinary prompt; `text` stays as it always was.
+     */
+    parts?: PromptPart[];
 }
 
 export interface TranscriptTotals extends TranscriptUsage {
@@ -65,6 +72,11 @@ export interface TranscriptEnvelope {
     totals?: TranscriptTotals;
     /** How the transcript ended, from its last terminal event; null while it is still running. */
     terminated?: "end" | "error" | null;
+    /**
+     * Turns in the whole transcript, so a window can tell whether it reaches the latest turn
+     * (`nextOffset === turnCount`). `truncated` cannot say that: any offset above 0 sets it.
+     */
+    turnCount?: number;
 }
 
 export function totalsOf(turns: readonly TranscriptTurn[]): TranscriptTotals {
@@ -160,7 +172,7 @@ export function clipResult(text: string, max = DEFAULT_RESULT_CHARS): string {
     if (text.length <= max) {
         return text;
     }
-    return `${text.slice(0, max - 1)}…`;
+    return `${sliceWhole(text, max - 1)}…`;
 }
 
 /** The widest epoch a JS Date accepts; beyond it `toISOString()` throws RangeError. */

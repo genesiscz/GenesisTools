@@ -1,3 +1,5 @@
+import { sliceWhole } from "@genesiscz/utils/string";
+
 /** Harness blocks whose CONTENT is noise, not something the user typed. */
 export const CLAUDE_HARNESS_TAGS = [
     "local-command-caveat",
@@ -116,5 +118,5 @@ export function cleanPromptText(raw: string | null | undefined): string | null {
     if (!cleaned) {
         return null;
     }
-    return cleaned.length > TITLE_MAX ? `${cleaned.slice(0, TITLE_MAX - 1)}…` : cleaned;
+    return cleaned.length > TITLE_MAX ? `${sliceWhole(cleaned, TITLE_MAX - 1)}…` : cleaned;
 }

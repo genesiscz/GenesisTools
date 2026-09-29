@@ -405,6 +405,22 @@ describe("stuckVerdict", () => {
         expect(stuckVerdict({ turns: reset, now: T0 + 60_000, thresholds })).toBeNull();
     });
 
+    test("a task result inside a loop does not break it", () => {
+        const loop: TranscriptTurn[] = [user("u1", "edit", 0)];
+
+        for (let i = 0; i < 5; i += 1) {
+            loop.push(assistant(`a${i}`, 10 + i, { tools: [tool(`e${i}`, "Edit", "/a.ts")] }));
+        }
+
+        const report: TranscriptTurn = {
+            ...user("u2", "<task-notification> <task-id>b1example</task-id>", 13),
+            parts: [{ kind: "task", id: "b1example", status: "completed" }],
+        };
+        const across = [...loop.slice(0, 3), report, ...loop.slice(3)];
+
+        expect(stuckVerdict({ turns: across, now: T0 + 60_000, thresholds })?.kind).toBe("repeat-loop");
+    });
+
     test("a waiting call wins over the loop it ends", () => {
         const turns: TranscriptTurn[] = [user("u1", "go", 0)];
 

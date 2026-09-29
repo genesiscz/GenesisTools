@@ -9,6 +9,7 @@ import type {
     UserMessage,
 } from "@genesiscz/utils/claude/types";
 import { cleanTranscriptText } from "./clean-text";
+import { type PromptPart, structuredPromptParts } from "./prompt-parts";
 import {
     clipResult,
     type SliceOptions,
@@ -46,6 +47,36 @@ function attachResults(tools: TranscriptTool[], results: ToolResultBlock[]): voi
     }
 }
 
+const DELIVERY_KINDS = new Set<PromptPart["kind"]>(["teammate", "task", "interrupt"]);
+
+/**
+ * A user turn's `text`, or "" when the turn shows nothing. A prompt that showed before keeps the text
+ * it always had, so a reader that knows no parts sees no change. A turn only its parts make visible
+ * gets the user's words (a message typed mid-turn, which Claude Code stores as meta), else the
+ * delivery itself (a task result the cleaner drops whole), which still opens with its harness marker
+ * so `isHarnessDeliveryText` keeps it out of the user's prompts.
+ */
+function userTurnText(input: { raw: string; parts: PromptPart[] | undefined; isMeta: boolean }): string {
+    const { raw, parts, isMeta } = input;
+    if (!isMeta) {
+        const cleaned = cleanTranscriptText(raw);
+        if (cleaned) {
+            return cleaned;
+        }
+    }
+
+    const own = (parts ?? []).flatMap((part) => (part.kind === "user" && (part.midTurn || !isMeta) ? [part.text] : []));
+    if (own.length > 0) {
+        return own.join(" ");
+    }
+
+    if (isMeta || !parts?.some((part) => DELIVERY_KINDS.has(part.kind))) {
+        return "";
+    }
+
+    return raw.replace(/\s+/g, " ").trim();
+}
+
 export function claudeMessagesToTurns(messages: ConversationMessage[]): TranscriptTurn[] {
     const turns: TranscriptTurn[] = [];
     let pendingTools: TranscriptTool[] = [];
@@ -63,11 +94,12 @@ export function claudeMessagesToTurns(messages: ConversationMessage[]): Transcri
                     flushPending();
                 }
             }
-            if (!userHasVisibleText(msg) || msg.isMeta) {
+            if (!userHasVisibleText(msg)) {
                 continue;
             }
             const raw = humanTextOf(msg.message.content);
-            const text = cleanTranscriptText(raw);
+            const parts = structuredPromptParts(raw);
+            const text = userTurnText({ raw, parts, isMeta: msg.isMeta === true });
             if (!text) {
                 continue;
             }
@@ -77,6 +109,7 @@ export function claudeMessagesToTurns(messages: ConversationMessage[]): Transcri
                 at: msg.timestamp ?? null,
                 text,
                 tools: [],
+                ...(parts ? { parts } : {}),
             });
             continue;
         }
@@ -134,5 +167,6 @@ export async function claudeTranscriptEnvelope(
         truncated: sliced.truncated,
         nextOffset: sliced.nextOffset,
         turns: sliced.turns,
+        turnCount: all.length,
     };
 }

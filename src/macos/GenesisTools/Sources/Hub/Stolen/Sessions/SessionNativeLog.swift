@@ -6,7 +6,9 @@
 //  Reads the provider's own session file (Claude `~/.claude/projects/**/<id>.jsonl`, Codex
 //  rollouts) for what `tools ai sessions tail --json` leaves out:
 //
-//  - token usage per model call, with cache writes, and the model that made each call;
+//  - token usage per model call, with cache writes, and the model that made each call. Claude
+//    files only: a Codex envelope already carries each turn's usage, and its turn ids are
+//    positions the GenesisTools reader assigns, so a Codex line cannot be matched to a turn here;
 //  - the full input of every tool call (Write content, Edit old/new strings, patches);
 //  - the full, unclipped tool result.
 //
@@ -98,6 +100,10 @@ struct ToolCallDetail: Equatable, Sendable {
     var command: String?
     /// The result as the provider stored it, before any clipping.
     var fullResult: String?
+    // GenesisTools adaptation: the whole input as indented JSON (keys sorted), for a call whose
+    // transcript preview is one field of it: an Agent's prompt, a SendMessage body, a Grep's path and
+    // flags. The envelope carries only the preview (Martin, 2026-09-28: "show me the entire input").
+    var arguments: String?
 }
 
 // MARK: - Summary (per-turn model, per-range usage)
@@ -108,7 +114,7 @@ struct SessionNativeSummary: Equatable, Sendable {
         let messageId: String
     }
 
-    /// Short model name per transcript turn id (`opus`, `sonnet`, `gpt-5.5`).
+    /// Short model name per transcript turn id (`opus`, `sonnet`). Claude files only (see the header).
     var models: [String: String] = [:]
     fileprivate var ordinals: [String: Int] = [:]
     fileprivate var calls: [Call] = []
@@ -118,10 +124,18 @@ struct SessionNativeSummary: Equatable, Sendable {
     func model(forTurn id: String) -> String? { models[id] }
 
     /// Usage of every model call from the line `fromTurn` up to, not including, `untilTurn`
-    /// (nil: to the end of the file). nil when `fromTurn` is not in the file.
+    /// (nil: to the end of the file). nil when `fromTurn`, or a given `untilTurn`, is not in the
+    /// file: summing to the end would count every later section's calls in this one.
+    // GenesisTools adaptation: an unknown `untilTurn` used to read as the end of the file.
     func usage(fromTurn: String, untilTurn: String?) -> SessionUsage? {
         guard let start = ordinals[fromTurn] else { return nil }
-        let end = untilTurn.flatMap { ordinals[$0] } ?? Int.max
+        let end: Int
+        if let untilTurn {
+            guard let found = ordinals[untilTurn] else { return nil }
+            end = found
+        } else {
+            end = Int.max
+        }
         var seen = Set<String>()
         var sum = SessionUsage()
         for call in calls where call.ordinal >= start && call.ordinal < end && seen.insert(call.messageId).inserted {
@@ -140,12 +154,30 @@ final class SessionNativeLog: @unchecked Sendable {
     private let toolResult: [String: Range<Int>]
     private let lock = NSLock()
     private var cache: [String: ToolCallDetail] = [:]
+    // GenesisTools adaptation: a call written after the scan (the hub's live tail appends turns to an
+    // open transcript, the scan runs once) is found in the lines written since (`indexAppended`); it
+    // used to have no detail at all, so its output stayed clipped. `appendedEnd` is where that index
+    // stops: the start of a line not written whole yet, else the file's end. Each whole line past the
+    // scan is read once (PR #429 t21: every look used to scan the whole appended part again).
+    private let appendLock = NSLock()
+    private var appendedEnd: Int
+    private var appendedRead = 0
+    private var appendedUse: [String: Range<Int>] = [:]
+    private var appendedResult: [String: Range<Int>] = [:]
 
-    private init(path: String, summary: SessionNativeSummary, toolUse: [String: Range<Int>], toolResult: [String: Range<Int>]) {
+    private init(path: String, summary: SessionNativeSummary, toolUse: [String: Range<Int>], toolResult: [String: Range<Int>], appendedStart: Int) {
         self.path = path
         self.summary = summary
         self.toolUse = toolUse
         self.toolResult = toolResult
+        appendedEnd = appendedStart
+    }
+
+    // GenesisTools adaptation: bytes read past the scan over this log's life (see `appendedEnd`).
+    var appendedBytesRead: Int {
+        appendLock.lock()
+        defer { appendLock.unlock() }
+        return appendedRead
     }
 
     var toolCount: Int { toolUse.count }
@@ -189,7 +221,10 @@ final class SessionNativeLog: @unchecked Sendable {
         for call in summary.calls {
             if let usage = summary.usageByMessage[call.messageId] { summary.total.add(usage) }
         }
-        return SessionNativeLog(path: path, summary: summary, toolUse: toolUse, toolResult: toolResult)
+        // GenesisTools adaptation: a last line with no newline may still be being written; the index of
+        // appended lines reads it again once it is whole.
+        let appendedStart = data.last == 0x0A ? data.count : (data.lastIndex(of: 0x0A).map { $0 + 1 } ?? 0)
+        return SessionNativeLog(path: path, summary: summary, toolUse: toolUse, toolResult: toolResult, appendedStart: appendedStart)
     }
 
     /// The input and full result of one tool call, read from disk on first use and cached.
@@ -201,14 +236,27 @@ final class SessionNativeLog: @unchecked Sendable {
         }
         lock.unlock()
 
-        guard toolUse[toolId] != nil || toolResult[toolId] != nil else { return nil }
+        // GenesisTools adaptation: a call the scan did not see, or saw still running, is looked up in
+        // the lines written since (`indexAppended`).
+        var use = toolUse[toolId]
+        var result = toolResult[toolId]
+        if use == nil || result == nil {
+            indexAppended()
+            lock.lock()
+            use = use ?? appendedUse[toolId]
+            result = result ?? appendedResult[toolId]
+            lock.unlock()
+        }
+        guard use != nil || result != nil else { return nil }
         var detail = ToolCallDetail()
-        if let range = toolUse[toolId], let object = readLine(range) {
+        if let range = use, let object = readLine(range) {
             Self.fillInput(&detail, from: object, toolId: toolId)
         }
-        if let range = toolResult[toolId], let object = readLine(range) {
+        if let range = result, let object = readLine(range) {
             detail.fullResult = Self.resultText(in: object, toolId: toolId)
         }
+        // GenesisTools adaptation: a call still running is read again once its result is written.
+        guard result != nil else { return detail }
 
         lock.lock()
         if cache.count > 400 { cache.removeAll() }
@@ -217,15 +265,94 @@ final class SessionNativeLog: @unchecked Sendable {
         return detail
     }
 
+    /// GenesisTools adaptation: indexes the whole lines written since the last look, with the scan's own
+    /// indexers, and moves `appendedEnd` past them. A last line with no newline is parsed on each look
+    /// but never passed: it may still be being written, or its writer ended the file without one.
+    private func indexAppended() {
+        appendLock.lock()
+        defer { appendLock.unlock() }
+        guard let data = try? Data(contentsOf: URL(fileURLWithPath: path), options: .alwaysMapped), data.count > appendedEnd else { return }
+        var summary = SessionNativeSummary()
+        var uses: [String: Range<Int>] = [:]
+        var results: [String: Range<Int>] = [:]
+        func index(_ line: UnsafeRawBufferPointer, _ range: Range<Int>) {
+            let kind = LineKind.of(line)
+            guard kind != .other, let object = try? JSONSerialization.jsonObject(with: Data(line)) as? [String: Any] else { return }
+            if kind == .claude {
+                Self.indexClaude(object, range: range, ordinal: 0, summary: &summary, toolUse: &uses, toolResult: &results)
+            } else {
+                Self.indexCodex(object, range: range, toolUse: &uses, toolResult: &results)
+            }
+        }
+        var end = appendedEnd
+        data.withUnsafeBytes { (raw: UnsafeRawBufferPointer) in
+            guard let base = raw.baseAddress else { return }
+            let count = raw.count
+            var start = end
+            while start < count, let newline = memchr(base + start, 0x0A, count - start) {
+                let lineEnd = base.distance(to: UnsafeRawPointer(newline))
+                if lineEnd > start {
+                    index(UnsafeRawBufferPointer(start: base + start, count: lineEnd - start), start..<lineEnd)
+                }
+                start = lineEnd + 1
+                end = start
+            }
+            if start < count {
+                index(UnsafeRawBufferPointer(start: base + start, count: count - start), start..<count)
+            }
+        }
+        appendedRead += end - appendedEnd
+        appendedEnd = end
+        lock.lock()
+        appendedUse.merge(uses) { _, new in new }
+        appendedResult.merge(results) { _, new in new }
+        lock.unlock()
+    }
+
     // MARK: Scan helpers
 
     private enum LineKind {
         case claude, codex, other
 
         static func of(_ line: UnsafeRawBufferPointer) -> LineKind {
-            if contains(line, #""type":"assistant""#) || contains(line, #""type":"user""#) { return .claude }
+            if hasClaudeType(line) { return .claude }
             if contains(line, #""response_item""#) { return .codex }
             return .other
+        }
+
+        /// `"type":"assistant"` or `"type":"user"`, with any spaces or tabs around the colon: Claude
+        /// Code writes its lines minified, but a JSONL writer may not. Byte work only, no JSON: most
+        /// lines of a session file are not turns and must be skipped cheaply.
+        // GenesisTools adaptation: the exact minified spelling used to be required.
+        private static func hasClaudeType(_ line: UnsafeRawBufferPointer) -> Bool {
+            guard let base = line.baseAddress else { return false }
+            let count = line.count
+            func skipBlanks(_ index: inout Int) {
+                while index < count, line[index] == 0x20 || line[index] == 0x09 { index += 1 }
+            }
+            func startsWith(_ needle: String, at index: Int) -> Bool {
+                var needle = needle
+                return needle.withUTF8 { bytes in
+                    index + bytes.count <= count && memcmp(base + index, bytes.baseAddress, bytes.count) == 0
+                }
+            }
+
+            var key = #""type""#
+            return key.withUTF8 { keyBytes in
+                var from = 0
+                while from < count, let hit = memmem(base + from, count - from, keyBytes.baseAddress, keyBytes.count) {
+                    let start = base.distance(to: UnsafeRawPointer(hit))
+                    var index = start + keyBytes.count
+                    skipBlanks(&index)
+                    if index < count, line[index] == UInt8(ascii: ":") {
+                        index += 1
+                        skipBlanks(&index)
+                        if startsWith(#""assistant""#, at: index) || startsWith(#""user""#, at: index) { return true }
+                    }
+                    from = start + 1
+                }
+                return false
+            }
         }
 
         private static func contains(_ line: UnsafeRawBufferPointer, _ needle: String) -> Bool {
@@ -322,6 +449,12 @@ final class SessionNativeLog: @unchecked Sendable {
             }
         }
 
+        // GenesisTools adaptation: see `ToolCallDetail.arguments`. One string field is what the
+        // preview already shows.
+        if input.count > 1 || (input.count == 1 && !(input.values.first is String)), JSONSerialization.isValidJSONObject(input),
+           let data = try? JSONSerialization.data(withJSONObject: input, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]) {
+            detail.arguments = String(decoding: data, as: UTF8.self)
+        }
         detail.filePath = (input["file_path"] ?? input["path"] ?? input["notebook_path"]) as? String
         detail.content = input["content"] as? String
         detail.command = (input["command"] as? String) ?? (input["cmd"] as? String)

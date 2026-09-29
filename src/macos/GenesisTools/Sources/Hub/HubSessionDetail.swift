@@ -43,6 +43,8 @@ struct HubSessionDetailHost: View {
     @State private var loadingEarlier = false
     @State private var banner: String?
     @State private var loadID = 0
+    /// The latest `rebuild()`; an older one that finishes later is dropped.
+    @State private var buildID = 0
     /// ⌘F over the whole session: the window plus the earlier turns that match, while a query is on.
     @State private var searchDocument: TranscriptDocument?
     @State private var searchNote: String?
@@ -258,7 +260,9 @@ struct HubSessionDetailHost: View {
     private var actions: SessionDetailActions {
         var actions = SessionDetailActions()
         actions.refresh = {
-            Task { await load(offset: windowStart > 0 ? windowStart : nil, limit: max(Self.pageSize, turns.count + Self.pageSize)) }
+            // An established window keeps its start, 0 included: a nil offset asks for the latest turns, which
+            // drops the earlier ones on screen once more turns arrived than the limit leaves room for.
+            Task { await load(offset: turns.isEmpty ? nil : windowStart, limit: max(Self.pageSize, turns.count + Self.pageSize), throughEnd: true) }
         }
         actions.copy = { text in PathOpener.copy(text) }
         // The header's "Copy the resume command" copied an empty string (it cleared the clipboard):
@@ -319,7 +323,9 @@ struct HubSessionDetailHost: View {
 
     // MARK: loading
 
-    private func load(offset: Int?, limit: Int) async {
+    /// `throughEnd`: the window must reach the latest turn (a refresh that keeps the earlier pages),
+    /// unlike a jump's window around one turn.
+    private func load(offset: Int?, limit: Int, throughEnd: Bool = false) async {
         loadID += 1
         let id = loadID
         // A new window (another session, a refresh): an earlier page or a tail still on its way
@@ -329,12 +335,25 @@ struct HubSessionDetailHost: View {
         let span = HubPerf.begin("transcript.page", "limit=\(limit) offset=\(offset.map(String.init) ?? "-")", awaits: true)
         defer { span.end("\(turns.count) turns") }
         do {
-            let fetched = try await SessionTranscriptClient.fetch(using: HubSource.bridge, sessionId: session.sessionId, limit: limit, offset: offset)
+            var limit = limit
+            var fetched = try await SessionTranscriptClient.fetch(using: HubSource.bridge, sessionId: session.sessionId, limit: limit, offset: offset)
+            // A window that stopped short of the latest turn (more turns arrived than the limit left
+            // room for) is fetched again from the same offset with exactly the room the transcript's
+            // turn count asks for. Bounded: a live session can grow between two fetches.
+            var tries = 0
+            while throughEnd, let start = offset, let count = fetched.turnCount, fetched.nextOffset < count, tries < 3 {
+                guard id == loadID else { return }
+                tries += 1
+                limit = count - start
+                fetched = try await SessionTranscriptClient.fetch(using: HubSource.bridge, sessionId: session.sessionId, limit: limit, offset: start)
+            }
             guard id == loadID else { return }
             envelope = fetched
             turns = fetched.turns
             windowStart = fetched.windowStart
             await rebuild()
+            // A newer load started while this one rebuilt: it owns the state, the notice and the tail.
+            guard id == loadID else { return }
             HubMainBusy.measure("transcript.page.render")
             loadState = .loaded
             NotificationCenter.default.post(name: Self.firstPageDone, object: session.id)
@@ -551,8 +570,12 @@ struct HubSessionDetailHost: View {
         }
     }
 
-    /// Off the main thread: a long session is thousands of rows with regex work per prompt.
+    /// Off the main thread: a long session is thousands of rows with regex work per prompt. Builds
+    /// overlap (a fetch, the native scan, an earlier page, the live tail), and only the latest may
+    /// land: an older one would drop turns added after it started.
     private func rebuild() async {
+        buildID += 1
+        let id = buildID
         let snapshot = turns
         let offset = windowStart
         let native = nativeLog?.summary
@@ -561,6 +584,7 @@ struct HubSessionDetailHost: View {
                 (TranscriptDocument.build(snapshot, turnOffset: offset, native: native), SessionActivityDigest.build(snapshot))
             }
         }.value
+        guard id == buildID else { return }
         document = built.0
         digest = built.1
     }

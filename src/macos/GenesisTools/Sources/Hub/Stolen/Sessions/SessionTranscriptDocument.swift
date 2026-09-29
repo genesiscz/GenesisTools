@@ -72,6 +72,8 @@ struct TranscriptRow: Identifiable, Equatable {
     /// A reply draws its author row ("Claude · opus · 14:32") only at the start of a run of
     /// replies, and again when the model changes. Set by `TranscriptDocument.filtered`.
     var showsAuthor = true
+    // GenesisTools adaptation: a prompt's peer messages, task results and reminders (Hub/HubPromptParts.swift).
+    var parts: [TranscriptPromptPart] = []
 
     var isPrompt: Bool {
         if case .prompt = kind { return true }
@@ -177,15 +179,21 @@ struct TranscriptDocument: Equatable {
 
     /// Sections with only the rows that pass the chips and contain the query, with the reply
     /// author rows decided. A prompt alone is context, not a hit: unless Chat is on, a section
-    /// whose only surviving row is its prompt is dropped.
+    /// whose only surviving row is its prompt is dropped. A prompt stays as the context of its
+    /// section's other hits even when the query is not in it.
     func filtered(_ chips: Set<TranscriptFilter>, query: String) -> [TranscriptSection] {
         let needle = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
 
         return sections.compactMap { section in
             var copy = section
             if !chips.isEmpty || !needle.isEmpty {
-                copy.rows = section.rows.filter { row in
+                // GenesisTools adaptation: the query used to drop a prompt that did not hold it.
+                let passes = section.rows.map { row in
                     row.matches(chips) && (needle.isEmpty || row.searchText.contains(needle))
+                }
+                let otherHit = zip(section.rows, passes).contains { row, passes in passes && !row.isPrompt }
+                copy.rows = zip(section.rows, passes).compactMap { row, passes in
+                    passes || (row.isPrompt && otherHit) ? row : nil
                 }
                 if !chips.isEmpty, !chips.contains(.chat) {
                     guard copy.rows.contains(where: { !$0.isPrompt }) else { return nil }
@@ -252,6 +260,14 @@ struct TranscriptDocument: Equatable {
         native: SessionNativeSummary? = nil,
         fileExists: (String) -> Bool = { FileManager.default.fileExists(atPath: $0) }) -> TranscriptDocument {
         let dates = turns.map { SessionFormat.parseISO($0.at) }
+        // GenesisTools adaptation: the first dated entry after each turn, in one pass from the end:
+        // a search of the rest per turn was quadratic when many entries carry no time.
+        var nextDates = [Date?](repeating: nil, count: dates.count)
+        var nextDate: Date?
+        for index in dates.indices.reversed() {
+            nextDates[index] = nextDate
+            if let date = dates[index] { nextDate = date }
+        }
         var sections: [TranscriptSection] = []
         var rows: [TranscriptRow] = []
         var sectionId = "s-lead"
@@ -300,7 +316,7 @@ struct TranscriptDocument: Equatable {
 
         for (index, turn) in turns.enumerated() {
             let at = dates[index]
-            let nextAt = dates[(index + 1)...].lazy.compactMap { $0 }.first
+            let nextAt = nextDates[index]
             let clock = at.map(SessionFormat.clock)
 
             // GenesisTools adaptation: search hits merged with the window are sparse. A reply or tool
@@ -325,12 +341,16 @@ struct TranscriptDocument: Equatable {
                 sectionId = "s-\(turn.id)"
                 sectionStart = at
                 let text = turn.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                // GenesisTools adaptation: a prompt with parts shows and searches the parts, not its raw text.
+                let parts = turn.parts ?? []
+                let own = parts.isEmpty ? text : HubPromptParts.userText(parts)
                 append(TranscriptRow(
                     id: "p-\(turn.id)",
-                    kind: .prompt(text: text, images: imageRefs(in: text, fileExists: fileExists)),
+                    kind: .prompt(text: text, images: imageRefs(in: own, fileExists: fileExists)),
                     at: at,
                     clock: clock,
-                    searchText: searchable(text)
+                    searchText: searchable(parts.isEmpty ? text : HubPromptParts.searchText(parts)),
+                    parts: parts
                 ))
                 continue
             }

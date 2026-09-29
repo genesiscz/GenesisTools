@@ -193,4 +193,11 @@ describe("clipResult", () => {
         expect(clipResult("abcde", 4)).toBe("abc…");
         expect(clipResult("ab", 4)).toBe("ab");
     });
+
+    test("never cuts an emoji in half, so no lone surrogate reaches the JSON a Swift reader parses", () => {
+        const clipped = clipResult("ab🧹cd", 4);
+
+        expect(clipped).toBe("ab…");
+        expect(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/.test(clipped)).toBe(false);
+    });
 });

@@ -120,6 +120,9 @@ public struct TranscriptTurn: Equatable, Sendable, Codable, Identifiable {
     // GenesisTools adaptation: the session-wide 0-based index, set by `tools ai sessions tail --turns`
     // (a sparse envelope) and by the hub when it merges search hits with its window.
     public var index: Int?
+    // GenesisTools adaptation: a user turn that holds peer messages, task results, an Esc marker or
+    // reminders, split in order (Hub/HubPromptParts.swift). Absent on an ordinary prompt and from an older `tools`.
+    public var parts: [TranscriptPromptPart]?
 }
 
 public struct TranscriptEnvelope: Equatable, Sendable, Codable {
@@ -134,6 +137,9 @@ public struct TranscriptEnvelope: Equatable, Sendable, Codable {
     public var totals: TranscriptTotals?
     /// How the session ended, when it has. `nil` means it is still open, and is a real answer.
     public var terminated: String?
+    // GenesisTools adaptation: turns in the whole transcript, so a refresh knows whether its window
+    // reaches the latest turn. Absent from an older `tools`.
+    public var turnCount: Int?
 
     /// Turn index of the first turn in this window. `nextOffset` is the index after the last one.
     public var windowStart: Int { max(0, nextOffset - turns.count) }

@@ -16,6 +16,14 @@ import SwiftUI
 /// A reader at the latest turn also stays there when the content grows below the viewport's top: a
 /// tool row whose changes arrive, a turn the live tail appends. The table kept its top, so the latest
 /// turn slid out of view by the growth (369 pt once in the bench).
+///
+/// Growth right after the reader's own click in the list is theirs (a tool call they opened, "… +N
+/// lines"): the rows keep their places and the content grows below, so what they clicked stays under
+/// the pointer. Pinned to the end, a call opened near the bottom slid its header off the top of the
+/// list by the height of its output.
+///
+/// It also measures the rows on screen again after rows are inserted or removed
+/// (`remeasureVisibleRows`): its own move inside an insert stops AppKit re-measuring them otherwise.
 @MainActor
 final class TranscriptScrollAnchor: ObservableObject {
     /// A view in the list's frame (`TranscriptScrollAnchorProbe`), to find the list's scroll view by.
@@ -32,6 +40,13 @@ final class TranscriptScrollAnchor: ObservableObject {
     private var adjusting = false
     /// Within this of the content's end is reading the latest turn (the list ends in a 12 pt spacer).
     private static let endSlack: CGFloat = 40
+    /// The reader's last click in the list, and how long the growth after it stays theirs (the row
+    /// opens on the next layout, its detail lands a few milliseconds later).
+    private var readerClickAt: Date?
+    private static let readerGrowth: TimeInterval = 1.5
+    /// The table's rows at the last resize: an insert or a removal changes the count.
+    private var rowCount = -1
+    private var remeasureScheduled = false
 
     /// Call before rows are inserted above the viewport. Until `seconds` pass, or the reader scrolls
     /// or clicks in the list, the viewport keeps its distance from the content's end.
@@ -88,6 +103,7 @@ final class TranscriptScrollAnchor: ObservableObject {
         scrollView = scroll
         guard let document = scroll.documentView else { return }
         documentHeight = document.frame.height
+        rowCount = (document as? NSTableView)?.numberOfRows ?? -1
         document.postsFrameChangedNotifications = true
         scroll.contentView.postsBoundsChangedNotifications = true
         let center = NotificationCenter.default
@@ -110,6 +126,9 @@ final class TranscriptScrollAnchor: ObservableObject {
                     : scroll.bounds.contains(scroll.convert(event.locationInWindow, from: nil))
                 if reader {
                     self.releaseHold()
+                    if event.type == .leftMouseDown {
+                        self.readerClickAt = Date()
+                    }
                 }
             }
             return event
@@ -124,9 +143,47 @@ final class TranscriptScrollAnchor: ObservableObject {
         documentHeight = height
         if let held {
             keep(held)
-        } else if before <= Self.endSlack {
+        } else if before <= Self.endSlack, !readerIsChanging {
             keep(max(0, before))
         }
+        if let table = document as? NSTableView, table.numberOfRows != rowCount {
+            rowCount = table.numberOfRows
+            scheduleRemeasure()
+        }
+    }
+
+    /// `keep` moves the viewport inside the resize of a row insert (the live tail appending turns while
+    /// the reader is at the latest one, the idle fill prepending them under a hold). That move leaves
+    /// each row view on screen without its automatic-row-height listener
+    /// (`NSTableRowView._layoutEngineChangeListener`, set up again only for a row that scrolls into
+    /// view). A row without it never reports a new height, and `noteHeightOfRows` returns the cached
+    /// one: a tool call opened after the transcript followed a running session kept its closed height
+    /// and its output drew under the rows below (Martin, 2026-09-28; `SessionTranscriptScrollTests`
+    /// `testARowOnScreenWhenTurnsArriveStillOpensToItsOutput`). Measured with this remeasure off: rows
+    /// streamed in under the move stuck 2 runs of 2, the same rows without the move opened 2 of 2.
+    /// The move cannot wait a turn, or the rows on screen would jump for one frame. So after every
+    /// change of the row count, automatic row heights go off and on: the rows on screen are measured
+    /// again and get their listeners back, rows off screen keep their heights. On the next turn of the
+    /// main queue, after the insert's own layout.
+    private func scheduleRemeasure() {
+        guard !remeasureScheduled else { return }
+        remeasureScheduled = true
+        DispatchQueue.main.async { [weak self] in
+            MainActor.assumeIsolated { self?.remeasureVisibleRows() }
+        }
+    }
+
+    private func remeasureVisibleRows() {
+        remeasureScheduled = false
+        guard let table = scrollView?.documentView as? NSTableView, table.usesAutomaticRowHeights else { return }
+        let span = HubPerf.begin("transcript.remeasureRows", "\(table.numberOfRows) rows")
+        table.usesAutomaticRowHeights = false
+        table.usesAutomaticRowHeights = true
+        span.end()
+    }
+
+    private var readerIsChanging: Bool {
+        readerClickAt.map { Date().timeIntervalSince($0) < Self.readerGrowth } ?? false
     }
 
     private func viewportMoved() {

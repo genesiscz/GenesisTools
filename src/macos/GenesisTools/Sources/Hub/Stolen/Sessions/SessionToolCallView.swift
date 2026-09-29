@@ -80,6 +80,8 @@ final class TranscriptServices: @unchecked Sendable {
     let cwd: String?
     let nativeLog: SessionNativeLog?
     let changes: ToolChangeSource?
+    /// "Open the Changes view at this file (and line)". nil hides every "Open diff" button.
+    /// Genesis leaves it nil; the GenesisTools hub wires it to its diff window.
     let showChange: ((String, Int?) -> Void)?
     // GenesisTools adaptation: the host hears the applied search query, so ⌘F can search the whole
     // session (`tools ai sessions grep`) and not only the loaded window. Never set on `.none`.
@@ -187,7 +189,11 @@ struct ToolPresentation: Equatable {
         )
         let count = resultBlock?.lines.count ?? 0
         let rawInput = detail?.command ?? line.input
-        if [.command, .search, .web, .agent, .skill, .mcp, .other].contains(kind), rawInput.contains("\n") || rawInput.count > 120 {
+        // GenesisTools adaptation: a call whose header shows one field of its input (an Agent's
+        // description, a Grep's pattern) opens to all of it (`ToolCallDetail.arguments`).
+        if [.search, .web, .agent, .skill, .mcp, .other].contains(kind), let arguments = detail?.arguments {
+            presentation.input = CodeBlockBuilder.numbered(arguments, language: .json)
+        } else if [.command, .search, .web, .agent, .skill, .mcp, .other].contains(kind), rawInput.contains("\n") || rawInput.count > 120 {
             presentation.input = CodeBlockBuilder.numbered(rawInput, language: kind == .command ? .shell : (looksLikeJSON(rawInput) ? .json : .plain))
         }
 
@@ -329,6 +335,9 @@ struct ToolCallRowView: View, Equatable {
     let onToggle: (String) -> Void
 
     @State private var loaded: ToolLoaded?
+    // GenesisTools adaptation: the services `loaded` came from. The rows appear before the session
+    // file is scanned (with `.none`), so a row opened by then loads again when the real services arrive.
+    @State private var loadedFrom: ObjectIdentifier?
     @State private var context = 0
 
     static func == (lhs: Self, rhs: Self) -> Bool {
@@ -344,7 +353,10 @@ struct ToolCallRowView: View, Equatable {
 
     var body: some View {
         // A recycled row starts from what was loaded before (see `TranscriptServices.loaded`).
-        let current = loaded ?? (open && finished ? services.loaded(toolId: toolId) : nil)
+        // GenesisTools adaptation: what the current services loaded wins over detail this row took
+        // from an earlier one.
+        let cached = open && finished ? services.loaded(toolId: toolId) : nil
+        let current = loadedFrom == ObjectIdentifier(services) ? (loaded ?? cached) : (cached ?? loaded)
         let presentation = ToolPresentation.make(line: line, loaded: current, context: context, cwd: services.cwd)
         VStack(alignment: .leading, spacing: 2) {
             Button { onToggle(rowId) } label: { header(presentation) }
@@ -357,6 +369,7 @@ struct ToolCallRowView: View, Equatable {
                     rowId: rowId,
                     presentation: presentation,
                     limit: showAll ? nil : verbosity.bodyLimit,
+                    expandedByReader: showAll && verbosity.bodyLimit != nil,
                     canAddContext: current?.fileLines != nil && (current?.detail.edits.count ?? 0) == 1,
                     onShowAll: { onToggle(rowId + "#all") },
                     onMoreContext: { context += 10 },
@@ -375,10 +388,27 @@ struct ToolCallRowView: View, Equatable {
         .padding(.leading, 24)
         .padding(.trailing, 12)
         .padding(.vertical, 0)
-        .task(id: open ? toolId : "") {
-            // A finished call loaded before is drawn from `services.loaded` already (see body).
-            guard open, loaded == nil, !finished || services.loaded(toolId: toolId) == nil else { return }
-            loaded = await services.load(toolId: toolId, finished: finished)
+        .task(id: open ? "\(toolId)|\(ObjectIdentifier(services))" : "") {
+            let source = ObjectIdentifier(services)
+            guard open, loaded == nil || loadedFrom != source else { return }
+            // A finished call the current services loaded before is drawn from `services.loaded`
+            // already (see body). GenesisTools adaptation: a row still holding an earlier source's
+            // detail takes that answer over; a recycled row with nothing loaded writes nothing, so it
+            // draws once.
+            if finished, let known = services.loaded(toolId: toolId) {
+                if loaded != nil {
+                    loaded = known
+                    loadedFrom = source
+                }
+                return
+            }
+            let result = await services.load(toolId: toolId, finished: finished)
+            // The detached load ignores cancellation: an older source's answer must not land late.
+            guard !Task.isCancelled else { return }
+            // The new source's answer replaces the old one, nil included (its scan had no detail),
+            // so a refresh never keeps the previous source's detail. Until it lands, the old one stays.
+            loaded = result
+            loadedFrom = source
         }
     }
 
@@ -395,7 +425,10 @@ struct ToolCallRowView: View, Equatable {
                 + Text(verbatim: presentation.argument.isEmpty ? "" : "(\(presentation.argument))")
                 .font(SessionPalette.mono(11.5))
                 .foregroundColor(SessionPalette.dim))
-                .lineLimit(open ? 1 : 3)
+                // GenesisTools adaptation: an open call with no input block below shows its whole
+                // input here; one line only when the block has it (a short command used to stay cut
+                // in a narrow pane).
+                .lineLimit(open ? (presentation.input == nil ? nil : 1) : 3)
                 .truncationMode(.middle)
             Spacer(minLength: 8)
             if let code = line.exitCode, code != 0 {
@@ -447,6 +480,9 @@ private struct ToolResultBody: View {
     let rowId: String
     let presentation: ToolPresentation
     let limit: Int?
+    // GenesisTools adaptation: the reader pressed "… +N lines" at a verbosity that trims the body.
+    // The "show fewer" link only makes sense then (it was hard-coded off).
+    let expandedByReader: Bool
     let canAddContext: Bool
     let onShowAll: () -> Void
     let onMoreContext: () -> Void
@@ -503,7 +539,7 @@ private struct ToolResultBody: View {
                     .padding(.leading, 16)
                     .instantTooltip("Show every line")
                     .accessibilityIdentifier("transcript-tool-show-all")
-                } else if limit == nil, block.lines.count > (TranscriptVerbosity.outputs.bodyLimit ?? 0), presentationIsExpandedByReader {
+                } else if limit == nil, block.lines.count > (TranscriptVerbosity.outputs.bodyLimit ?? 0), expandedByReader {
                     Button(action: onShowAll) {
                         Text("Show fewer lines")
                             .font(.system(size: 11, weight: .semibold))
@@ -517,9 +553,6 @@ private struct ToolResultBody: View {
         .padding(.leading, 20)
         .padding(.bottom, 6)
     }
-
-    /// The "show fewer" link only makes sense when the reader opened all lines themselves.
-    private var presentationIsExpandedByReader: Bool { false }
 
     private func smallButton(_ title: String, symbol: String, tip: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
@@ -586,7 +619,10 @@ struct ToolChangesView: View {
             guard files == nil else { return }
             let loaded = await source.changes(sessionId: sessionId, toolUseId: toolId)
             // GenesisTools adaptation: a row that left the screen got an empty answer; keep asking when it returns.
-            guard !Task.isCancelled else { return }
+            // Only an answer with files is kept: a source answers [] for "no change" and for a failed
+            // lookup alike, so an empty answer leaves `files` nil and the row asks again the next time it
+            // appears. The source's cache answers a successful empty lookup without a process.
+            guard !Task.isCancelled, !loaded.isEmpty else { return }
             files = loaded
         }
     }

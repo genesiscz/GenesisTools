@@ -52,6 +52,15 @@ final class TranscriptExpansion: ObservableObject {
         (all ?? open) != toggled.contains(id)
     }
 
+    // GenesisTools adaptation: a row the reader opened by hand shows its whole input and output
+    // (Martin, 2026-09-28: "show me the entire input … the entire output"); a row open by its level's
+    // default or by Expand all stays trimmed. Its "… +N lines" / "Show fewer lines" (`id#all`) flips
+    // either one.
+    func showsAll(_ id: String, byDefault open: Bool) -> Bool {
+        let openedByHand = toggled.contains(id) && isOpen(id, byDefault: open)
+        return toggled.contains(id + "#all") != openedByHand
+    }
+
     func expand(_ more: Set<String>) {
         toggled.formUnion(more)
     }
@@ -420,8 +429,13 @@ struct SessionTranscriptList: View {
         return "\(cursor + 1) / \(promptIds.count)"
     }
 
+    // GenesisTools adaptation: rows that hold the query. A prompt kept only as its section's context
+    // is not one.
     private var matchCount: Int {
-        visible.reduce(0) { $0 + $1.rows.count }
+        let needle = appliedQuery.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return visible.reduce(0) { total, section in
+            total + section.rows.filter { !$0.isPrompt || needle.isEmpty || $0.searchText.contains(needle) }.count
+        }
     }
 
     // MARK: Content
@@ -507,8 +521,12 @@ struct SessionTranscriptList: View {
                                     modelName: modelName,
                                     verbosity: verbosity,
                                     expanded: expansion.isOpen(row.id, byDefault: defaultOpen(row)),
-                                    showAll: expansion.isOpen(row.id + "#all"),
+                                    // GenesisTools adaptation: a row opened by hand, or the reader's own
+                                    // "… +N lines" (`TranscriptExpansion.showsAll`): Expand all opens rows,
+                                    // it does not untrim every output.
+                                    showAll: expansion.showsAll(row.id, byDefault: defaultOpen(row)),
                                     openMembers: openMembers(row),
+                                    fullMembers: fullMembers(row),
                                     services: services,
                                     onToggle: { expansion.toggle($0) }
                                 )
@@ -651,8 +669,19 @@ struct SessionTranscriptList: View {
 
     /// Which calls inside a folded group the reader opened.
     private func openMembers(_ row: TranscriptRow) -> Set<String> {
+        // GenesisTools adaptation: and which parts of a prompt (Hub/HubPromptParts.swift).
+        if !row.parts.isEmpty {
+            return Set(row.parts.indices.map { HubPromptParts.partId(row.id, $0) }.filter { expansion.isOpen($0) })
+        }
         guard case .toolGroup(let group) = row.kind else { return [] }
         return Set(group.members.map(\.id).filter { expansion.isOpen($0) })
+    }
+
+    // GenesisTools adaptation: the opened calls of a folded group that show their whole body (every
+    // one is opened by hand; see `TranscriptExpansion.showsAll`).
+    private func fullMembers(_ row: TranscriptRow) -> Set<String> {
+        guard case .toolGroup(let group) = row.kind else { return [] }
+        return Set(group.members.map(\.id).filter { expansion.isOpen($0) && expansion.showsAll($0, byDefault: false) })
     }
 
     private func recompute(_ intent: ScrollIntent) {
@@ -834,19 +863,26 @@ struct TranscriptRowView: View, Equatable {
     let expanded: Bool
     let showAll: Bool
     let openMembers: Set<String>
+    // GenesisTools adaptation: see `SessionTranscriptList.fullMembers`.
+    var fullMembers: Set<String> = []
     let services: TranscriptServices
     let onToggle: (String) -> Void
 
     static func == (lhs: Self, rhs: Self) -> Bool {
         lhs.row == rhs.row && lhs.expanded == rhs.expanded && lhs.showAll == rhs.showAll
             && lhs.provider == rhs.provider && lhs.modelName == rhs.modelName && lhs.verbosity == rhs.verbosity
-            && lhs.openMembers == rhs.openMembers && lhs.services === rhs.services
+            && lhs.openMembers == rhs.openMembers && lhs.fullMembers == rhs.fullMembers && lhs.services === rhs.services
     }
 
     var body: some View {
         switch row.kind {
         case .prompt(let text, let images):
-            PromptCard(id: row.id, text: text, images: images, clock: row.clock, expanded: expanded, onToggle: onToggle)
+            // GenesisTools adaptation: a prompt with peer messages, task results or reminders shows each part.
+            if row.parts.isEmpty {
+                PromptCard(id: row.id, text: text, images: images, clock: row.clock, expanded: expanded, onToggle: onToggle)
+            } else {
+                PromptPartsView(rowId: row.id, parts: row.parts, images: images, clock: row.clock, open: openMembers, onToggle: onToggle)
+            }
         case .reply(let text, let usage, let model):
             ReplyBlock(text: text, usage: usage, clock: row.clock, provider: provider, modelName: model ?? modelName, showsAuthor: row.showsAuthor)
         case .thinking(let text):
@@ -863,7 +899,7 @@ struct TranscriptRowView: View, Equatable {
                 onToggle: onToggle
             )
         case .toolGroup(let group):
-            ToolGroupRow(id: row.id, group: group, open: expanded, openMembers: openMembers, services: services, onToggle: onToggle)
+            ToolGroupRow(id: row.id, group: group, open: expanded, openMembers: openMembers, fullMembers: fullMembers, services: services, onToggle: onToggle)
         }
     }
 }
@@ -908,7 +944,8 @@ private struct Avatar: View {
     }
 }
 
-private struct PromptCard: View {
+// GenesisTools adaptation: not private, so a prompt's parts (Hub/HubPromptParts.swift) show the user's words in it.
+struct PromptCard: View {
     let id: String
     let text: String
     let images: [TranscriptImageRef]
@@ -1108,7 +1145,8 @@ private struct ThinkingLine: View {
     }
 }
 
-private struct Chevron: View {
+// GenesisTools adaptation: not private, shared with Hub/HubPromptParts.swift.
+struct Chevron: View {
     let expanded: Bool
 
     var body: some View {
@@ -1149,6 +1187,8 @@ private struct TranscriptThumbnail: View {
             }
             .buttonStyle(.genHoverPlain())
             .instantTooltip("Open \(image.label)")
+            // GenesisTools adaptation: VoiceOver names the file, not only the picture.
+            .accessibilityLabel(Text(verbatim: "Open \(image.label)"))
             .accessibilityIdentifier("transcript-image-thumbnail")
             .task(id: path) {
                 thumbnail = await TranscriptThumbnailCache.shared.thumbnail(for: path)
@@ -1199,6 +1239,8 @@ private struct ToolGroupRow: View {
     let group: TranscriptToolGroup
     let open: Bool
     let openMembers: Set<String>
+    // GenesisTools adaptation: see `SessionTranscriptList.fullMembers`.
+    let fullMembers: Set<String>
     let services: TranscriptServices
     let onToggle: (String) -> Void
 
@@ -1250,7 +1292,8 @@ private struct ToolGroupRow: View {
                             line: line,
                             verbosity: .inputs,
                             open: openMembers.contains(member.id),
-                            showAll: false,
+                            // GenesisTools adaptation: see `fullMembers`.
+                            showAll: fullMembers.contains(member.id),
                             services: services,
                             onToggle: onToggle
                         )
