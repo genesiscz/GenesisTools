@@ -190,8 +190,8 @@ export function QaPendingCard({ form, pinned }: { form: AskForm; pinned?: boolea
                     ) : null}
                     {item.allowImagePaste ? (
                         <p className="text-[10px] text-[var(--dd-text-muted)]">
-                            This question accepts pasted images. Paste is available in Genesis.app; answer the text here
-                            or attach the image there.
+                            This question accepts pasted images. Answer the text here, or attach an image from the
+                            GenesisTools hub's Inbox.
                         </p>
                     ) : null}
                     {missing?.has(item.id) ? (
