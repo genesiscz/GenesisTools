@@ -49,6 +49,9 @@ export interface PrMemory {
     botReviewIds: string[];
     /** `<sha>:<ci>` of the last CI result that was notified, or recorded as the baseline. */
     ciSeen: string | null;
+    /** The head and CI state of the last poll, which may be newer than `ciSeen`; absent in older state files. */
+    headSha?: string | null;
+    ci?: PrCi;
     notes: number | null;
     seenAt: string;
 }
@@ -62,6 +65,8 @@ export interface NotifyItem {
     url: string;
     title: string;
     message: string;
+    /** CI events: the head commit the result is about. */
+    sha?: string;
 }
 
 /** Ids kept per PR; a PR with more threads than this only forgets its oldest, which never come back. */
@@ -97,6 +102,8 @@ export function memoryOf(pr: PrSnapshot, previous: PrMemory | undefined, now: st
             pr.botReviews.map((r) => r.id)
         ),
         ciSeen: ciKey(pr) ?? previous?.ciSeen ?? null,
+        headSha: pr.headSha,
+        ci: pr.ci,
         notes: pr.notes ?? previous?.notes ?? null,
         seenAt: now,
     };
@@ -178,6 +185,7 @@ export function diffPr({
                 ...base,
                 type,
                 message: `CI ${pr.ci === "failed" ? "failed" : "passed"} on ${tag} at ${pr.headSha?.slice(0, 7)}`,
+                ...(pr.headSha ? { sha: pr.headSha } : {}),
             });
         }
     }

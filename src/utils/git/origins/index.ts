@@ -32,5 +32,5 @@ export {
     viewPr,
 } from "./prs";
 export { DRIVER_TIMEOUT_MS, spawnRunner } from "./runner";
-export type { CommandResult, CommandRunner, OriginDriver, OriginKind, PrInfo, PrState } from "./types";
+export type { CommandResult, CommandRunner, OriginDriver, OriginKind, PrInfo, PrLookup, PrState } from "./types";
 export { branchWebUrl, commitWebUrl, originWebBase } from "./web";

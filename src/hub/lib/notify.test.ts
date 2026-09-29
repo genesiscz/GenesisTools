@@ -122,7 +122,7 @@ describe("diffPr", () => {
     test("a first sighting records a baseline and posts nothing", () => {
         const pr = snap({ ci: "failed", threads: [{ id: "t1", author: "bob", bot: false, path: "a.ts" }] });
         expect(diff(undefined, pr)).toEqual([]);
-        expect(memory(pr)).toMatchObject({ threadIds: ["t1"], ciSeen: "aaaaaaa1:failed" });
+        expect(memory(pr)).toMatchObject({ threadIds: ["t1"], ciSeen: "aaaaaaa1:failed", ci: "failed" });
     });
 
     test("new threads from people; not mine, not a bot's", () => {
