@@ -115,6 +115,11 @@ export class Conn {
         this.listeners.push(fn);
     }
 
+    /** Removes a listener `on` added, so a finished wait stops receiving the page's events. */
+    off(fn: CdpEventListener): void {
+        this.listeners = this.listeners.filter((listener) => listener !== fn);
+    }
+
     close(): void {
         this.rejectPending("CDP connection closed by client");
         this.ws.close();
@@ -124,6 +129,52 @@ export class Conn {
 export interface RecordedNetworkEvent {
     kind: "request" | "redirect" | "response" | "failed" | "nav";
     [key: string]: unknown;
+}
+
+const LEADING_COMMENTS = /^(\s*(\/\*[\s\S]*?\*\/|\/\/[^\n]*))*\s*/;
+
+/**
+ * The expression that runs `source`: a function source is called, anything else is evaluated as it
+ * is. A payload file opens with a doc comment and ends with `;`, so both are skipped before the
+ * test; without that, `eval --file` evaluated the file to the function and never ran it.
+ */
+export function evaluationExpression(source: string): string {
+    const body = source.replace(LEADING_COMMENTS, "").replace(/;\s*$/, "");
+    return /^(\(|async\b|function\b)/.test(body) ? `(${body})()` : source;
+}
+
+const LOCAL_HOSTS = new Set(["127.0.0.1", "localhost", "[::1]"]);
+
+/**
+ * Accepts only a debugger socket on this machine and on the port we asked for. Another process can
+ * grab a freed port before the browser binds it; its "debugger URL" must never receive our input.
+ */
+export function localDebuggerUrl(target: Pick<Target, "webSocketDebuggerUrl">, port: number): string {
+    const url = new URL(target.webSocketDebuggerUrl);
+    if (!["ws:", "wss:"].includes(url.protocol) || !LOCAL_HOSTS.has(url.hostname) || Number(url.port) !== port) {
+        throw new Error(`Refusing a debugger URL that is not this machine's port ${port}: ${url.host}`);
+    }
+
+    return url.toString();
+}
+
+/**
+ * The port of a CDP endpoint URL such as `http://127.0.0.1:9222`. Every client in this tool dials
+ * 127.0.0.1, so an endpoint on another host is refused instead of being quietly replaced by this
+ * machine's port.
+ */
+export function cdpPortOf(endpoint: string): number {
+    const url = new URL(endpoint);
+    if (!LOCAL_HOSTS.has(url.hostname)) {
+        throw new Error(`Only a CDP endpoint on this machine is supported, got ${url.host}`);
+    }
+
+    const port = Number(url.port);
+    if (!Number.isInteger(port) || port < 1 || port > 65535) {
+        throw new Error(`The CDP endpoint ${endpoint} names no port`);
+    }
+
+    return port;
 }
 
 /** Page-level session: navigation, DOM, per-page network/console. */
@@ -155,9 +206,8 @@ export class Page {
 
     /** Pass a function source string (`"() => …"`) or a bare expression. */
     async evaluate(fnOrExpr: string): Promise<unknown> {
-        const expression = /^\s*(\(|async|function)/.test(fnOrExpr) ? `(${fnOrExpr})()` : fnOrExpr;
         const r = (await this.conn.send("Runtime.evaluate", {
-            expression,
+            expression: evaluationExpression(fnOrExpr),
             awaitPromise: true,
             returnByValue: true,
         })) as {

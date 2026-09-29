@@ -155,6 +155,7 @@ describe("help completeness", () => {
         attach: ["read at browser STARTUP", "--port <n>"],
         "net-panel": ["panel NetworkLog", "--full-urls", "resolved by TITLE"],
         restart: ["--profile-directory <dir>", "beforeunload", "--force"],
+        click: ["--nth <n>", "Node ids are not accepted", "Examples:"],
     };
 
     // One `bun index.ts <verb> --help` spawn costs ~0.5s. Looping every verb inside a

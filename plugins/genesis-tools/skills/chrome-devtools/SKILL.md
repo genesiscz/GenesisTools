@@ -242,6 +242,8 @@ The tool runs on macOS, Linux and Windows; on Windows the capture root is
 | Read page state | `eval '() => ({url: location.href, ls: {...localStorage}, ss: {...sessionStorage}})'` — quoting trouble or a hook blocking inline eval? write the JS to a file and use `eval --file <path>` |
 | Console messages incl. load-time ones | `console --match <substr> --reload` (attaches first — the MCP `list_console_messages` misses everything before ITS attach) |
 | Navigate / screenshot | `nav <url>` (reuses a tab) · `nav <url> --new` (opens one) · `shot /tmp/x.png [--full]` |
+| See the page's controls the way a person does (open shadow roots included) | `snapshot --match <substr> [--text] [--json]` |
+| Click, pick an option, fill, scroll by LABEL (guard + hit test, real input events) | `click "Save" [--nth 2] [--role button]` · `fill "Search" "text"` (or `--stdin`) · `scroll down` |
 | Surgical cookie delete | `rm-cookie --name X --domain Y --path /cas` |
 | Pixel-coordinate grid over a screenshot | `grid /tmp/g.png [--region x,y,w,h] [--step 60]` |
 | The real MCP tools, against ANY port | `mcp list` · `mcp navigate_page '{"url":"…"}'` |
@@ -342,7 +344,11 @@ tools youtube extension dev                            # rebuild + chrome.runtim
 tools youtube extension devtools launch --port 9333    # browser WITH the extension loaded
 ```
 
-Use `tools chrome-devtools open --extension <dist>` for plain extension loading.
+Drive it with the page verbs on its port: `snapshot`, `click`, `fill`, `eval`, `nav`, `shot`,
+`console`, all with `--port 9333 --match youtube.com`. The side panel lives in an open shadow
+root, which `snapshot` reads. The old `extension devtools list-tools` and `call` spawned
+chrome-devtools-mcp and are gone; the repo-local `chrome-extension-dev` skill has the full flow.
+
 Plain extension loading: `tools chrome-devtools open --extension <dist-dir>`.
 
 ## Writing it up

@@ -170,7 +170,55 @@ browser): `.claude/work/research/2026-08-26-CdpNativeHarExport.md`.
   tsconfig maps `@gt/chrome-devtools/*` to this tool's `lib/`.
 - `cheatsheet` prints the CDP scripting cheatsheet (also in the plugin skill's references).
 - `mcp [tool] [json]` calls the real chrome-devtools-mcp tools against any port, no session
-  config edit.
+  config edit. It is an explicit pass-through: no other tool in this repo drives a browser through
+  chrome-devtools-mcp any more (jev, spotify and the youtube extension harness use `lib/dom/` and
+  `lib/tab-driver.ts`).
+
+## Page agent (`lib/dom/`) and tabs (`lib/tabs.ts`)
+
+`DomPage.attach({ port, target })` drives one page over this tool's own CDP client, with no
+chrome-devtools-mcp. Every read is ONE `Runtime.evaluate` of `installPageAgent` (`lib/dom/in-page.ts`)
+in an isolated world, so page scripts can neither read nor replace it. A read returns the
+interactive elements in the viewport (page-scoped node ids that survive across reads, accessible
+names, one row per `<option>`), the visible text (capped), scroll room and a change marker.
+Password, one-time-code and payment fields are marked secret and their values are never read. A
+read also names every shown secret field in the document (`secretFields`), below the fold and past
+the action cap included, so a caller knows a page wants a secret before it presses anything.
+
+Before any input the agent re-checks the target: still attached, same guard hash (identity, name,
+value, state, and the text of its nearest row, form or dialog), enabled, shown, and the element
+under its centre point (`elementFromPoint`). Input is real `Input.dispatch*` events or
+`Input.insertText`, and a fill is read back inside the page. A select runs the same checks, then
+checks the option itself by its label and its disabled flag. Every CDP call, input and navigation
+sends included, has a 5 s deadline; an input whose send runs out is reported as
+`dispatch_uncertain` and never repeated. The wait after an act is event driven:
+a mutation observer resolves it once the page changed and stayed quiet for 50 ms, or at 300 ms.
+Focus emulation lets it work in a tab the user is not looking at.
+
+The agent reads every OPEN shadow root too (web components, and extension panels such as the youtube
+extension's side panel): candidates, visible text, `aria-labelledby` ids scoped to their root, the hit
+test (descending through `shadowRoot.elementFromPoint`, with containment that crosses shadow
+boundaries) and the settle observers. A closed shadow root stays invisible, as it is to the page.
+
+CLI: `snapshot`, `click "<label>"`, `fill "<label>" "<text>"` and `scroll [down|up]`. They find the
+control by its label in a fresh read (`lib/dom/find.ts`: exact before substring, an option row by
+its option). Node ids are not accepted on the command line: ids and guards belong to one isolated
+world, and each command is a new process with a new one. Several matches refuse and list them;
+`--nth` picks one.
+
+`lib/tab-driver.ts`: the page's MAIN world by tab id, for code that needs the page's own globals
+(spotify's player). `evaluate` with a deadline, `navigate` and `open` that wait for the load
+event, and `waitForRequest` over `Network.requestWillBeSent` (headers lower-cased; `cause` reloads or
+navigates once it listens). A closed tab raises `TabGoneError`.
+
+`lib/tabs.ts`: `listTabs`, `currentTab({ port, title })`, `activateTab`, `closeTab`, `tabTarget`.
+CDP has no "active tab" call, so `currentTab` matches the window title and otherwise takes the most
+recently active page (`/json/list` order).
+
+`bun src/chrome-devtools/scripts/dom-guards.ts` checks all of it against a HEADLESS Chrome on a
+throwaway profile and a loopback fixture (no model, no network). Measured 2026-09-28: a
+2000-link page reads in 11.8 ms median over 10 reads; a click that changes nothing settles at the
+300 ms cap; `back` from a back-forward-cache page returns in 5 to 11 ms.
 
 ## Do not
 
