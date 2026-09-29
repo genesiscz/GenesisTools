@@ -1368,6 +1368,22 @@ struct TimelineRowView: View {
             .popover(item: $popover, arrowEdge: .bottom) { item in
                 popoverContent(item)
             }
+            // The disclosure and action glyphs above draw as plain images while the row is closed
+            // (the perf note at the top of this file), so a keyboard or VoiceOver user gets the same
+            // set back here instead, independent of pointer hover.
+            .accessibilityElement(children: .combine)
+            .accessibilityActions {
+                Button(expanded ? "Fold the details" : "Show the details") { timeline.toggle(event) }
+                Button(openTooltip) { model.openTimelineEvent(event) }
+                if let project = event.project {
+                    Button(projectPicked ? "Show every project again" : "Only \(project)") {
+                        timeline.project = projectPicked ? nil : project
+                    }
+                }
+                ForEach(actions) { action in
+                    Button(action.title) { run(action) }.disabled(action.disabled)
+                }
+            }
             if expanded {
                 TimelineDetailView(model: model, timeline: timeline, event: event)
                     .padding(.leading, 62)
