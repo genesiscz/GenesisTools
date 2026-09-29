@@ -121,6 +121,27 @@ export function truncateText(text: string, maxLength: number = 100): string {
     return `${sliceWhole(text, maxLength - 3)}...`;
 }
 
+function collapse(text: string): string {
+    return text.replace(/\s+/g, " ").trim();
+}
+
+/** `text` cut to `max` characters around the first case-insensitive occurrence of a query word. */
+export function snippetAround(text: string, query: string, max = 180): string {
+    const flat = collapse(text);
+
+    if (flat.length <= max) {
+        return flat;
+    }
+
+    const lower = flat.toLowerCase();
+    const needles = [query, ...query.split(/\s+/)].map((word) => word.trim().toLowerCase()).filter(Boolean);
+    const at = needles.map((needle) => lower.indexOf(needle)).find((index) => index >= 0) ?? 0;
+    const start = Math.max(0, Math.min(at - Math.floor(max / 3), flat.length - max));
+    const end = Math.min(flat.length, start + max);
+
+    return `${start > 0 ? "…" : ""}${flat.slice(start, end).trim()}${end < flat.length ? "…" : ""}`;
+}
+
 /**
  * Remove control characters from text. Optionally strip ANSI escape codes.
  */

@@ -105,6 +105,22 @@ export function readParentPid(pid: number): number | null {
     return null;
 }
 
+/**
+ * This process and its ancestors, at most `maxDepth` of them: the tree that asked must never be
+ * stopped by, or counted in, its own request.
+ */
+export function ownLineage(maxDepth = 64): Set<number> {
+    const own = new Set<number>();
+    let pid: number | null = process.pid;
+
+    while (pid !== null && pid > 1 && !own.has(pid) && own.size < maxDepth) {
+        own.add(pid);
+        pid = readParentPid(pid);
+    }
+
+    return own;
+}
+
 /** Current working directory of `pid` as the kernel sees it right now. */
 export function readProcessCwd(pid: number): string | null {
     if (process.platform === "darwin") {

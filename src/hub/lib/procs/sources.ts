@@ -1,18 +1,16 @@
 import { realpathSync } from "node:fs";
 import { listAgentSessionRows, POLLED_LISTING_REUSE_MS } from "@app/ai/lib/sessions/agent-session-rows";
 import { logger } from "@genesiscz/utils/logger";
-import { readParentPid, readProcessCwd } from "@genesiscz/utils/process/cwd";
+import { ownLineage, readProcessCwd } from "@genesiscz/utils/process/cwd";
+import { parseLaunchctlList } from "@genesiscz/utils/process/launchctl";
 import { capture, listPsTable, type PsRow } from "@genesiscz/utils/process/ps";
+import { readTopEnergy } from "@genesiscz/utils/process/top";
 import { buildProcsReport, type ProcsReport, type SessionLike } from "./tree";
 
 const log = logger.child({ component: "hub/procs" });
 
 const PS_TIMEOUT_MS = 10_000;
 const LAUNCHCTL_TIMEOUT_MS = 5_000;
-/** Two `top` samples one second apart: the first sample's POWER column is always zero. */
-const TOP_TIMEOUT_MS = 8_000;
-/** How many of the most power-hungry processes one `top` sample lists; the rest read as 0. */
-const TOP_ROWS = 300;
 const SESSION_HOURS = 72;
 
 /** Everything the report reads from the machine; tests pass fakes, so nothing real is listed or signalled. */
@@ -35,79 +33,6 @@ function realpathOr(path: string): string {
         log.debug({ err, path }, "realpath failed; comparing the path as given");
         return path;
     }
-}
-
-/** `launchctl list`: `PID\tStatus\tLabel`, a `-` pid for a job that is not running. */
-export function parseLaunchctlList(stdout: string): Map<number, string> {
-    const jobs = new Map<number, string>();
-
-    for (const line of stdout.split("\n")) {
-        const [pid, , label] = line.split("\t");
-        const value = Number.parseInt(pid ?? "", 10);
-
-        if (Number.isInteger(value) && value > 0 && label) {
-            jobs.set(value, label.trim());
-        }
-    }
-
-    return jobs;
-}
-
-/**
- * Each pid's energy impact from `top`. A failed `top` gives an empty map, never its partial output: that
- * can end in the first sample, whose figures are all 0, and an empty map is what the report warns about.
- */
-export async function readTopEnergy(run: typeof capture = capture): Promise<Map<number, number>> {
-    try {
-        const result = await run(
-            "top",
-            ["-l", "2", "-s", "1", "-stats", "pid,power", "-o", "power", "-n", String(TOP_ROWS)],
-            { timeoutMs: TOP_TIMEOUT_MS }
-        );
-
-        if (result.status !== 0) {
-            log.warn({ status: result.status, stderr: result.stderr.trim() }, "top failed; energy stays unknown");
-            return new Map();
-        }
-
-        return parseTopPower(result.stdout);
-    } catch (err) {
-        log.warn({ err }, "top could not run; energy stays unknown");
-        return new Map();
-    }
-}
-
-/** The last `PID POWER` table of `top -l 2 -stats pid,power` (the first sample has no power figures). */
-export function parseTopPower(stdout: string): Map<number, number> {
-    const power = new Map<number, number>();
-    const at = stdout.lastIndexOf("PID");
-
-    if (at < 0) {
-        return power;
-    }
-
-    for (const line of stdout.slice(at).split("\n").slice(1)) {
-        const match = line.trim().match(/^(\d+)\s+([\d.]+)/);
-
-        if (match) {
-            power.set(Number.parseInt(match[1], 10), Number.parseFloat(match[2]));
-        }
-    }
-
-    return power;
-}
-
-/** This process and its ancestors: the tree that asked must never be stopped by its own request. */
-export function ownLineage(): Set<number> {
-    const own = new Set<number>();
-    let pid: number | null = process.pid;
-
-    while (pid !== null && pid > 1 && !own.has(pid) && own.size < 64) {
-        own.add(pid);
-        pid = readParentPid(pid);
-    }
-
-    return own;
 }
 
 export const realProcsSources: ProcsSources = {
@@ -148,7 +73,7 @@ export const realProcsSources: ProcsSources = {
         }
     },
     energy: () => readTopEnergy(),
-    own: ownLineage,
+    own: () => ownLineage(),
     realpath: realpathOr,
     now: () => Date.now(),
 };
