@@ -34,8 +34,12 @@ mock.module("@genesiscz/utils/macos/notifications", () => ({
     },
 }));
 
+let whileLinking: ((id: string) => void) | undefined;
 mock.module("@app/dev-dashboard/lib/qa-deep-link", () => ({
-    buildQaDeepLink: async (id: string) => `http://myhost.example.com/qa?id=${encodeURIComponent(id)}`,
+    buildQaDeepLink: async (id: string) => {
+        whileLinking?.(id);
+        return `http://myhost.example.com/qa?id=${encodeURIComponent(id)}`;
+    },
 }));
 
 import { type Migration, runMigrations } from "@genesiscz/utils/database/migrations";
@@ -123,7 +127,40 @@ describe("pending-form notification", () => {
 
         expect(actions.map((a) => a.id)).toEqual(["answer-Yes", "answer-No"]);
         const yes = actions.find((a) => a.id === "answer-Yes");
-        expect(yes?.execute).toBe(`tools question answer ${form.id} --choice Yes`);
+        expect(yes?.execute).toBe(`'tools' 'question' 'answer' '${form.id}' '--choice' 'Yes'`);
+    });
+
+    test("an optional item or one that also takes images gets no answer buttons", async () => {
+        await postAskForm(
+            {
+                projectPath: "/tmp/gt-notify-fixture",
+                items: [{ promptMarkdown: "Deploy?", choices: ["Yes", "No"], required: false }],
+            },
+            deps
+        );
+        await postAskForm(
+            {
+                projectPath: "/tmp/gt-notify-fixture",
+                items: [{ promptMarkdown: "Deploy?", choices: ["Yes", "No"], allowImagePaste: true }],
+            },
+            deps
+        );
+
+        expect(dispatched.map((event) => event.actions)).toEqual([[], []]);
+    });
+
+    test("a form cancelled while its banner is being built raises no banner", async () => {
+        whileLinking = (id) => {
+            whileLinking = undefined;
+            cancelAskForm(id, deps);
+        };
+        const form = await postAskForm(
+            { projectPath: "/tmp/gt-notify-fixture", items: [{ promptMarkdown: "Ship the PR?" }] },
+            deps
+        );
+
+        expect(form.id).toBeTruthy();
+        expect(dispatched).toHaveLength(0);
     });
 
     test("a staging/production form does NOT get binary buttons: neither label has a polarity", async () => {

@@ -135,7 +135,7 @@ export async function postAskForm(input: CreateAskFormInput, deps: AskDeps = {})
     const wantsNotify = deps.notify ?? loadConfig().sinks.notifyPending !== false;
 
     if (wantsNotify) {
-        await notifyPendingForm(form);
+        await notifyPendingForm(form, () => withStore(deps, (db) => getForm(db, form.id))?.status === "pending");
     }
 
     return form;
