@@ -126,6 +126,17 @@ describe("the prompts file", () => {
         expect(readFileSync(path, "utf8")).toBe('{ "prompts": [ half-edited');
     });
 
+    test("a write never drops an entry it cannot read, while listing still shows the readable ones", async () => {
+        const path = scratch();
+        const held =
+            '{ "prompts": [ { "name": "rebase", "text": "Rebase it" }, { "name": 7, "text": "a hand edit" } ] }';
+        writeFileSync(path, held);
+
+        expect(readPrompts(path).prompts.map((prompt) => prompt.name)).toEqual(["rebase"]);
+        await expect(addPrompt({ name: "ship", text: "Ship it", path })).rejects.toThrow(/entry 2 is not a prompt/);
+        expect(readFileSync(path, "utf8")).toBe(held);
+    });
+
     test("add keeps the defaults, refuses a duplicate without --replace, and replace keeps the use count", async () => {
         const path = scratch();
         await addPrompt({ name: "ship", text: "Ship {{branch}}", path });

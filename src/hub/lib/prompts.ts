@@ -127,7 +127,15 @@ export function readPrompts(path = promptsPath(), { strict = false }: { strict?:
             throw new Error("it holds no prompts list");
         }
 
-        return { version: 1, prompts: (list ?? []).map(normalizePrompt).filter((prompt) => prompt !== null) };
+        const prompts = (list ?? []).map(normalizePrompt);
+        const unreadable = prompts.findIndex((prompt) => prompt === null);
+
+        // Listing skips an entry it cannot read; a write would drop it from the file for good.
+        if (strict && unreadable !== -1) {
+            throw new Error(`entry ${unreadable + 1} is not a prompt: it needs a string name and a string text`);
+        }
+
+        return { version: 1, prompts: prompts.filter((prompt) => prompt !== null) };
     } catch (err) {
         if (strict) {
             throw new HubPromptError(
