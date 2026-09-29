@@ -14,8 +14,10 @@ final class HubQuestionSeamTests: XCTestCase {
     "blocking":true,"status":"waiting","option":null,"answer":null,"source":"store","at":"2026-09-24T21:43:25.504Z",
     "proposal":"keep","reasoning":"cheap","confidence":"high","excerpt":"line1\\nline2\\n",
     "refs":[{"path":"/tmp/gt/repo/a.txt","line":1}],"draft":null,"delivery":null},
-    {"kind":"form","id":"ask_1","source":"cli","questions":[{"itemId":"q1","prompt":"Ship it?",
-    "choices":[{"id":"yes","label":"yes"},{"id":"no","label":"no"}],"multiple":false,"freeText":true,"required":true}],
+    {"kind":"form","id":"ask_1","source":"cli","cwd":"/tmp/gt/repo","questions":[{"itemId":"q1","prompt":"Ship it?",
+    "choices":[{"id":"yes","label":"yes"},{"id":"no","label":"no"}],"multiple":false,"freeText":true,"required":true,
+    "fileTags":false,"imagePaste":false},{"itemId":"q2","prompt":"Attach a screenshot","choices":[],"multiple":false,
+    "freeText":false,"required":true,"fileTags":true,"imagePaste":true}],
     "status":"waiting","at":"2026-09-24T21:52:47.675Z"}]}],
     "scanned":{"sessions":73,"fromCache":72,"read":1,"failed":0},"elapsedMs":356}
     """
@@ -38,7 +40,15 @@ final class HubQuestionSeamTests: XCTestCase {
         let decision = session.items[0]
         XCTAssertEqual(decision.refs?.first?.line, 1)
         XCTAssertNotNil(decision.date, "the TS ISO timestamp with milliseconds parses")
-        XCTAssertEqual(session.items[1].questions?.first?.choices.map(\.id), ["yes", "no"])
+        let form = session.items[1]
+        XCTAssertEqual(form.cwd, "/tmp/gt/repo")
+        XCTAssertEqual(form.questions?.first?.choices.map(\.id), ["yes", "no"])
+        // q1 is a plain choice+freeText question; q2 wants a file tag and a pasted image and
+        // neither field was in this JSON shape before this test (the Hub used to have no way to
+        // even notice a form wanted them, see the parity audit's gap 2/3).
+        XCTAssertEqual(form.questions?.map(\.fileTags), [false, true])
+        XCTAssertEqual(form.questions?.map(\.imagePaste), [false, true])
+        XCTAssertNil(decision.cwd, "a decision carries no form cwd")
     }
 
     func testSessionDecisionsDecodeIntoPaneCardsWithTheirDelivery() throws {
@@ -93,5 +103,50 @@ final class HubQuestionSeamTests: XCTestCase {
         XCTAssertTrue(decoded[3].isQueued)
         XCTAssertTrue(decoded[4].isError)
         XCTAssertEqual(decoded[4].summary, "DECISION 9 is not waiting in session s")
+    }
+
+    /// One answer entry as `--answers` JSON carries it: enough of `AskAnswer`
+    /// (`src/question/lib/pending/types.ts`) to check what the Hub actually sends.
+    private struct SentAnswer: Decodable {
+        let itemId: String
+        let selectedChoices: [String]?
+        let freeText: String?
+        let fileTags: [String]?
+    }
+
+    /// `HubInboxModel.formAnswerArgs`: a choice, free text and a file tag ride the `--answers`
+    /// JSON; an attached image rides its own `--image itemId=path` instead, never as base64 in
+    /// argv (`kern.argmax` on this Mac is 1 MB; `MAX_IMAGE_BASE64_CHARS` alone is 2 MB of it).
+    func testFormAnswerArgsPutsChoicesTextAndFileTagsInJSONAndImagesInTheirOwnFlag() throws {
+        let questions = [
+            InboxQuestion(itemId: "q1", prompt: "Ship it?", choices: [InboxChoice(id: "yes", label: "yes", rationale: nil, recommended: nil)], multiple: false, freeText: true, required: true, fileTags: true, imagePaste: false),
+            InboxQuestion(itemId: "q2", prompt: "Attach a screenshot", choices: [], multiple: false, freeText: false, required: true, fileTags: false, imagePaste: true),
+        ]
+        let args = try XCTUnwrap(
+            HubInboxModel.formAnswerArgs(
+                formId: "ask_1",
+                questions: questions,
+                choices: ["q1": ["yes"]],
+                texts: ["q1": "looks good"],
+                fileTags: ["q1": ["src/a.ts"]],
+                imagePaths: ["q2": ["/tmp/shot.png"]]
+            )
+        )
+
+        XCTAssertEqual(Array(args.prefix(5)), ["question", "inbox", "answer", "--form", "ask_1"])
+        XCTAssertEqual(args[5], "--answers")
+
+        let answers = try JSONDecoder().decode([SentAnswer].self, from: Data(args[6].utf8))
+        let q1 = try XCTUnwrap(answers.first { $0.itemId == "q1" })
+        XCTAssertEqual(q1.selectedChoices, ["yes"])
+        XCTAssertEqual(q1.freeText, "looks good")
+        XCTAssertEqual(q1.fileTags, ["src/a.ts"])
+        // q2 has no choice, text or file tag: its image travels entirely through --image, so the
+        // JSON entry for it (if any) carries none of those fields.
+        XCTAssertNil(answers.first { $0.itemId == "q2" }?.selectedChoices)
+
+        let imageFlags = zip(args.dropFirst(6), args.dropFirst(7)).filter { $0.0 == "--image" }.map(\.1)
+        XCTAssertEqual(imageFlags, ["q2=/tmp/shot.png"])
+        XCTAssertFalse(args[6].contains("/tmp/shot.png"), "an image path must never ride the --answers JSON")
     }
 }
