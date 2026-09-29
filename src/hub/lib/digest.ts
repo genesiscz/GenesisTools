@@ -3,6 +3,7 @@ import { homedir } from "node:os";
 import { basename, join, resolve } from "node:path";
 import { decisionFiles } from "@app/question/lib/decisions/read";
 import { type DecisionRecord, readDecisions } from "@app/question/lib/decisions/store";
+import { concurrentMap } from "@genesiscz/utils/async";
 import { logger } from "@genesiscz/utils/logger";
 import { Storage } from "@genesiscz/utils/storage";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/storage";
@@ -92,6 +93,8 @@ export interface Digest {
  * it is not attributed to the session.
  */
 export const DIGEST_LIMITS = { paths: 12, attributionSlackMs: 10 * 60_000, activityGapMs: 3 * 60 * 60_000 };
+/** The same bound the timeline puts on its per-repo git reads. */
+const DIGEST_NUMSTAT_CONCURRENCY = 4;
 
 export interface DigestDeps {
     timeline: (window: DigestWindow, prs: boolean) => Promise<TimelineResult>;
@@ -433,20 +436,19 @@ export async function buildDigest({
         ),
     ];
 
-    const files = await Promise.all(
-        repos.map(async (repo) => {
-            try {
-                return repoFiles(repo, await deps.numstat(repo, window));
-            } catch (error) {
-                log.debug({ error, repo }, "digest: numstat failed");
-                digest.warnings.push(
-                    `files of ${basename(repo)}: ${error instanceof Error ? error.message : String(error)}`
-                );
-                return null;
-            }
-        })
-    );
-    const changed = files.filter((entry): entry is DigestRepoFiles => entry !== null && entry.files > 0);
+    // Each is a `git log --all --numstat` scan; a day across many repos must not start them all at once.
+    const files = await concurrentMap({
+        items: repos,
+        concurrency: DIGEST_NUMSTAT_CONCURRENCY,
+        fn: async (repo) => repoFiles(repo, await deps.numstat(repo, window)),
+        onError: (repo, error) => {
+            log.debug({ error, repo }, "digest: numstat failed");
+            digest.warnings.push(
+                `files of ${basename(repo)}: ${error instanceof Error ? error.message : String(error)}`
+            );
+        },
+    });
+    const changed = [...files.values()].filter((entry) => entry.files > 0);
     changed.sort((left, right) => right.files - left.files);
     digest.files = {
         total: changed.reduce((sum, entry) => sum + entry.files, 0),

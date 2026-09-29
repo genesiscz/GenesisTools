@@ -399,6 +399,30 @@ describe("digest", () => {
         expect(markdown).toContain("posted #1 Pick a cache TTL");
         expect(markdown).toContain("> [!warning] Incomplete");
     });
+
+    test("buildDigest runs at most four git numstat scans at once, and still reads every repo", async () => {
+        const repos = Array.from({ length: 9 }, (_, index) => `/work/repo${index}`);
+        let running = 0;
+        let peak = 0;
+        const read: string[] = [];
+        const deps: DigestDeps = {
+            timeline: async () => ({ ...timeline([]), repos }),
+            numstat: async (repo) => {
+                running++;
+                peak = Math.max(peak, running);
+                await Bun.sleep(1);
+                running--;
+                read.push(repo);
+                return "1\t0\ta.ts\n";
+            },
+            decisions: () => [],
+        };
+        const digest = await buildDigest({ window, deps, now: NOW });
+
+        expect(peak).toBeLessThanOrEqual(4);
+        expect(read.sort()).toEqual([...repos].sort());
+        expect(digest.files.repos).toHaveLength(9);
+    });
 });
 
 describe("forecast", () => {
