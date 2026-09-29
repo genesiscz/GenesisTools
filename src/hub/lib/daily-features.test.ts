@@ -646,9 +646,29 @@ describe("rules", () => {
         expect(refilled.firings).toHaveLength(1);
     });
 
-    test("contextWindowFor falls back to 200k and moves to the long-context window past it", () => {
-        expect(contextWindowFor(null, 10_000)).toBe(200_000);
-        expect(contextWindowFor(null, 450_000)).toBe(1_000_000);
+    test("context: a session past its 200k window crosses a 100% rule, not 20% of a guessed 1M", () => {
+        const config = { rules: [rule({ kind: "context", percent: 100 })] };
+        const seeded = { ...emptyRulesState(), seeded: { r_context: true } };
+        const past = session({
+            sessionId: "s2",
+            contextTokens: 201_000,
+            model: "claude-haiku-4-5-20251001",
+            lastActivityMs: minutesAgo(2),
+        });
+        const result = evaluateRules({ config, state: seeded, inputs: inputs({ sessions: [past] }), now: NOW });
+        expect(result.firings.map((firing) => firing.message)).toEqual(["Context at 100% (201k tokens)"]);
+    });
+
+    test("contextWindowFor reads the long-context variant from the catalog, never from the token count", () => {
+        // No model: the fallback window, so 450k reads over 100% instead of 45% of a guessed 1M.
+        expect(contextWindowFor(null)).toBe(200_000);
+        // Haiku 4.5 has no 1M variant: 201k of its 200k window must still cross a 100% rule.
+        expect(contextWindowFor("claude-haiku-4-5-20251001")).toBe(200_000);
+        // The catalog already lists the 1M window of a model that has one.
+        expect(contextWindowFor("claude-opus-5-5")).toBe(1_000_000);
+        // A model id that names the 1M variant, even one the catalog does not know.
+        expect(contextWindowFor("claude-opus-4-8[1m]")).toBe(1_000_000);
+        expect(contextWindowFor("some-model[1m]")).toBe(1_000_000);
     });
 
     test("ciFailed: a failing PR notifies unless the PR poller already posted it lately; the filter narrows", () => {

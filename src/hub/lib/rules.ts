@@ -368,11 +368,18 @@ function contains(haystack: Array<string | null | undefined>, needle: string | u
 const CONTEXT_FALLBACK_WINDOW = 200_000;
 const LARGE_CONTEXT_WINDOW = 1_000_000;
 
-/** The model's context window; a session already past it runs the long-context variant. */
-export function contextWindowFor(model: string | null, tokens: number): number {
+/**
+ * The model's context window, from the catalog (which lists 1M for a model that has it) or a `[1m]`
+ * model id. Never from `tokens`: reading 201k of a 200k window as a 1M variant would put a crossed
+ * threshold at 20%.
+ */
+export function contextWindowFor(model: string | null): number {
+    if (model?.endsWith("[1m]")) {
+        return LARGE_CONTEXT_WINDOW;
+    }
+
     const known = model ? byId(model)?.contextWindow : undefined;
-    const window = known && known > 0 ? known : CONTEXT_FALLBACK_WINDOW;
-    return tokens > window && window < LARGE_CONTEXT_WINDOW ? LARGE_CONTEXT_WINDOW : window;
+    return known && known > 0 ? known : CONTEXT_FALLBACK_WINDOW;
 }
 
 function formatMinutes(minutes: number): string {
@@ -479,7 +486,7 @@ function matchesFor(rule: HubRule, inputs: RuleInputs, now: number): { matches: 
                 .filter((session) => contains([session.project, session.cwd], rule.project))
                 .map((session) => {
                     const tokens = session.contextTokens ?? 0;
-                    const used = (tokens / contextWindowFor(session.model, tokens)) * 100;
+                    const used = (tokens / contextWindowFor(session.model)) * 100;
                     return { session, used };
                 })
                 .filter(({ used }) => used >= percent)
