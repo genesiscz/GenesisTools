@@ -12,6 +12,7 @@ import { type Approver, appApprover } from "./approve";
 import { describeClient, type ProcessLookup } from "./client-identity";
 import { appendAudit, findGrant, rememberGrant } from "./grants";
 import {
+    type ApprovalMethod,
     type ClientIdentity,
     type GateApiKeyProvider,
     GateDeniedError,
@@ -290,6 +291,10 @@ export async function requestAccountAccess(request: GateRequest, deps: GateDeps 
         : undefined;
     let grantedUntil: number | null = null;
     let prompted = false;
+    // Set on a fresh allow that is worth remembering; written to disk only after the token below
+    // actually resolves, so a broken or removed key never leaves behind a grant that skips the
+    // next approval anyway (the credential it would skip approval FOR is the one that just failed).
+    let pendingGrant: { rememberSeconds: number; method: ApprovalMethod } | null = null;
 
     if (remembered) {
         grantedUntil = remembered.until;
@@ -316,20 +321,7 @@ export async function requestAccountAccess(request: GateRequest, deps: GateDeps 
         }
 
         if (decision.rememberSeconds > 0 && identity.verified) {
-            grantedUntil = now() + decision.rememberSeconds * 1000;
-            await rememberGrant({
-                key: identity.key,
-                clientName: identity.name,
-                executable: identity.executable,
-                script: identity.script,
-                provider: request.provider,
-                accountId: account.id,
-                accountName: account.name,
-                grantedAt: now(),
-                until: grantedUntil,
-                method: decision.method,
-                tokenKind,
-            });
+            pendingGrant = { rememberSeconds: decision.rememberSeconds, method: decision.method };
         }
     }
 
@@ -347,6 +339,23 @@ export async function requestAccountAccess(request: GateRequest, deps: GateDeps 
             "token_kind_changed",
             `Access to "${account.name}" was approved for a ${tokenKind} token, but a ${token.kind} token came back; ask again.`
         );
+    }
+
+    if (pendingGrant) {
+        grantedUntil = now() + pendingGrant.rememberSeconds * 1000;
+        await rememberGrant({
+            key: identity.key,
+            clientName: identity.name,
+            executable: identity.executable,
+            script: identity.script,
+            provider: request.provider,
+            accountId: account.id,
+            accountName: account.name,
+            grantedAt: now(),
+            until: grantedUntil,
+            method: pendingGrant.method,
+            tokenKind,
+        });
     }
 
     return {

@@ -205,6 +205,48 @@ describe("requestAccountAccess", () => {
         expect(readFileSync(auditPath(), "utf8")).toContain("approved long-lived, resolver returned access");
     });
 
+    test("an allow with a duration is never remembered when the resolver fails: a broken key must keep asking", async () => {
+        const h = harness({ decision: "allow", rememberSeconds: 3600, method: "touch-id" });
+        h.deps.resolveToken = async () => {
+            throw new GateDeniedError("no_stored_key", "the vault would not open");
+        };
+
+        await expect(
+            requestAccountAccess(
+                { client: { name: "pi", pid: 700 }, provider: "anthropic-sub", account: "alice" },
+                h.deps
+            )
+        ).rejects.toMatchObject({ code: "no_stored_key" });
+        expect(listGrants(1_000_000)).toEqual([]);
+
+        // The vault recovers; the next request must still be asked, not served from a grant that
+        // was never written.
+        h.deps.resolveToken = async (_provider, entry, kind) => ({
+            accessToken: `tok-${entry.name}`,
+            expiresAt: 2_000_000,
+            kind,
+        });
+        const recovered = await requestAccountAccess(
+            { client: { name: "pi", pid: 700 }, provider: "anthropic-sub", account: "alice" },
+            h.deps
+        );
+        expect(recovered).toMatchObject({ prompted: true, accessToken: "tok-alice" });
+        expect(listGrants(1_000_000)).toHaveLength(1);
+    });
+
+    test("a resolver that returns another kind than approved never gets remembered either", async () => {
+        const h = harness({ decision: "allow", rememberSeconds: 3600, method: "touch-id" });
+        h.deps.resolveToken = async () => ({ accessToken: "tok-access", expiresAt: null, kind: "access" });
+
+        await expect(
+            requestAccountAccess(
+                { client: { name: "pi", pid: 700 }, provider: "anthropic-sub", account: "alice" },
+                h.deps
+            )
+        ).rejects.toMatchObject({ code: "token_kind_changed" });
+        expect(listGrants(1_000_000)).toEqual([]);
+    });
+
     test("the real resolver refuses a long-lived request it cannot honour instead of falling back", async () => {
         const openai = ACCOUNTS.find((entry) => entry.provider === "openai-sub");
 
