@@ -86,7 +86,12 @@ export interface Digest {
     generatedAt: string;
 }
 
-export const DIGEST_LIMITS = { paths: 12, attributionSlackMs: 10 * 60_000 };
+/**
+ * `activityGapMs`: the feed has a session's prompts, not its tool calls, so an autonomous turn of an
+ * hour or two shows no events; a quiet stretch longer than this is an idle gap, and a commit inside
+ * it is not attributed to the session.
+ */
+export const DIGEST_LIMITS = { paths: 12, attributionSlackMs: 10 * 60_000, activityGapMs: 3 * 60 * 60_000 };
 
 export interface DigestDeps {
     timeline: (window: DigestWindow, prs: boolean) => Promise<TimelineResult>;
@@ -250,6 +255,8 @@ interface SessionSpan {
     repo: string | null;
     from: number;
     to: number;
+    /** Stretches of work: an idle gap longer than `DIGEST_LIMITS.activityGapMs` starts a new one. */
+    stretches: Array<{ from: number; to: number }>;
 }
 
 /** The one session that worked in `repo` around `at`; null when none or several did. */
@@ -258,11 +265,11 @@ function attribute(spans: readonly SessionSpan[], repo: string | null, at: numbe
         return null;
     }
 
+    const slack = DIGEST_LIMITS.attributionSlackMs;
     const matches = spans.filter(
         (span) =>
             span.repo === repo &&
-            at >= span.from - DIGEST_LIMITS.attributionSlackMs &&
-            at <= span.to + DIGEST_LIMITS.attributionSlackMs
+            span.stretches.some((stretch) => at >= stretch.from - slack && at <= stretch.to + slack)
     );
     return matches.length === 1 ? matches[0].session.sessionId : null;
 }
@@ -303,6 +310,15 @@ export function digestFromTimeline({
         if (known) {
             known.from = Math.min(known.from, at);
             known.to = Math.max(known.to, at);
+            // Events arrive in time order, so only the last stretch can grow.
+            const last = known.stretches[known.stretches.length - 1];
+
+            if (last && at - last.to <= DIGEST_LIMITS.activityGapMs) {
+                last.to = Math.max(last.to, at);
+            } else {
+                known.stretches.push({ from: at, to: at });
+            }
+
             known.session.lastAt = new Date(known.to).toISOString();
             known.session.startedAt = event.kind === "session.start" ? event.at : known.session.startedAt;
             known.session.branch = event.branch ?? known.session.branch;
@@ -313,6 +329,7 @@ export function digestFromTimeline({
             repo: event.repo,
             from: at,
             to: at,
+            stretches: [{ from: at, to: at }],
             session: {
                 sessionId: event.sessionId,
                 provider: event.provider ?? null,

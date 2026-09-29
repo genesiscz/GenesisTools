@@ -328,6 +328,29 @@ describe("digest", () => {
         expect(digest.pushes).toBe(1);
     });
 
+    test("a commit in a session's idle gap is not the session's; one near its activity is", () => {
+        const turn = (id: string, at: string) =>
+            event({ id, kind: "session.turn", at, sessionId: "s3", provider: "claude", title: "Long day" });
+        const commit = (sha: string, at: string) =>
+            event({ id: `commit:${sha}`, kind: "commit", at, sha, title: sha, mine: true });
+        const digest = digestFromTimeline({
+            window,
+            timeline: timeline([
+                turn("turn:s3:a", "2026-03-02T08:00:00Z"),
+                turn("turn:s3:b", "2026-03-02T18:00:00Z"),
+                commit("early1", "2026-03-02T08:05:00Z"),
+                commit("noon22", "2026-03-02T13:00:00Z"),
+            ]),
+            decisions: [],
+            now: NOW,
+        });
+        expect(digest.commits.map((entry) => [entry.sha, entry.sessionId])).toEqual([
+            ["noon22", null],
+            ["early1", "s3"],
+        ]);
+        expect(digest.sessions[0]?.commits).toBe(1);
+    });
+
     test("decisions: posted by createdTs, answered by updatedTs in an answered state, todos skipped", () => {
         const rows = [
             decision({ id: "d1", createdTs: "2026-03-02T08:00:00Z" }),
