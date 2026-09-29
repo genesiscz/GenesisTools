@@ -109,19 +109,17 @@ export async function retrieve(input: SearchInput, evaluator: Evaluator): Promis
         return item;
     }
 
-    let validationQueue: Promise<void> = Promise.resolve();
+    // Each call re-reads its own donors right before each attempt, one file at a time. Upstream chained
+    // every call's validation behind every earlier one, so up to 32 workers holding a slot waited on
+    // one reader; calls in flight now read their donors side by side, at most one file each.
     function freshEvaluation(request: EvaluationRequest, sources: Donor[], navigation = false) {
-        const validate = async () => {
-            for (const source of new Map(sources.map((item) => [item.path, item])).values()) {
+        const unique = [...new Map(sources.map((item) => [item.path, item])).values()];
+        const beforeAttempt = async () => {
+            for (const source of unique) {
                 if (!(await unchanged(source))) {
                     throw new EvaluationFailure("source-invalid");
                 }
             }
-        };
-        const beforeAttempt = () => {
-            const pending = validationQueue.then(validate);
-            validationQueue = pending.catch(() => undefined);
-            return pending;
         };
         return evaluator.evaluate(request, { navigation, beforeAttempt, sources });
     }
