@@ -19,6 +19,7 @@ import {
     setTmuxSpawnSyncForTests,
     TMUX_CHILD_DEADLINE_MS,
     TMUX_SPAWN_GUARD,
+    tmuxServerBootstrapCwd,
 } from "@genesiscz/utils/tmux/sessions";
 
 /**
@@ -315,6 +316,28 @@ describe("tmux sessions", () => {
                     cmd.includes("truecolor")
             )
         ).toBe(true);
+    });
+
+    test("a new session's client runs in the home folder, and -c carries the pane's own folder", async () => {
+        setTmuxBinForTests("/mock/tmux");
+        const creates: Array<{ cmd: string[]; cwd?: string }> = [];
+        setTmuxSpawnSyncForTests((cmd, opts) => {
+            if (cmd.includes("new-session")) {
+                creates.push({ cmd, cwd: opts?.cwd });
+            }
+
+            return { exitCode: 0, stdout: "" };
+        });
+
+        await createTmuxSession("foo", "/tmp/soon-deleted-worktree", "/bin/zsh");
+        await createTmuxSessionRunning("bar", "/tmp/soon-deleted-worktree", ["claude"]);
+
+        expect(creates).toHaveLength(2);
+
+        for (const { cmd, cwd } of creates) {
+            expect(cwd).toBe(tmuxServerBootstrapCwd());
+            expect(cmd[cmd.indexOf("-c") + 1]).toBe("/tmp/soon-deleted-worktree");
+        }
     });
 
     test("createTmuxSessionRunning puts argv after -- instead of a login shell", async () => {
