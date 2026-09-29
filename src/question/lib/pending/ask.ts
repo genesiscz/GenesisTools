@@ -1,15 +1,14 @@
 import type { Database } from "bun:sqlite";
-import { buildQaDeepLink } from "@app/dev-dashboard/lib/qa-deep-link";
 import { type AgentRuntimeContext, gatherHarnessPoster } from "@genesiscz/utils/agent/runtime";
 import { logger } from "@genesiscz/utils/logger";
-import { dispatchNotification } from "@genesiscz/utils/notifications";
 import { isTestProcess } from "@genesiscz/utils/test-process";
 import { loadConfig } from "../config";
 import { recordAnswer } from "../record";
 import type { RecordResult } from "../types";
 import { appendPendingEvent } from "./events";
 import { createAskForm, missingRequiredItems, sanitizeAnswer } from "./form";
-import { renderFormAnswer, renderFormQuestion, summarizeForm } from "./render";
+import { notifyPendingForm, retractPendingNotification } from "./notify";
+import { renderFormAnswer, renderFormQuestion } from "./render";
 import {
     claimForm,
     expireDueForms,
@@ -91,6 +90,9 @@ function withStore<T>(deps: AskDeps, fn: (db: Database) => T): T {
 function sweep(db: Database, deps: AskDeps): void {
     for (const expired of expireDueForms(db)) {
         publishEvent("timeout", expired, deps);
+        // Fire-and-forget: `sweep` runs inside synchronous read paths (list/poll/get/cancel),
+        // and `retractPendingNotification` already swallows its own errors.
+        void retractPendingNotification(expired.id);
     }
 }
 
@@ -133,19 +135,7 @@ export async function postAskForm(input: CreateAskFormInput, deps: AskDeps = {})
     const wantsNotify = deps.notify ?? loadConfig().sinks.notifyPending !== false;
 
     if (wantsNotify) {
-        try {
-            await dispatchNotification({
-                app: "question",
-                title: "A question is waiting for you",
-                message: summarizeForm(form),
-                open: await buildQaDeepLink(form.id),
-            });
-        } catch (err) {
-            // The form is already persisted, so a banner that cannot be delivered must never
-            // lose the question. It is still visible on /qa and to every poller. The host-effect
-            // guard under `bun test` throws here, and so can a misconfigured notify channel.
-            log.warn({ err, id: form.id }, "could not notify about a new pending form; the form itself is fine");
-        }
+        await notifyPendingForm(form);
     }
 
     return form;
@@ -302,6 +292,7 @@ export async function answerAskForm(id: string, answers: AskAnswer[], deps: AskD
 
     publishEvent("answered", answered, deps);
     log.info({ id, entryId: recorded.id }, "pending ask form answered");
+    await retractPendingNotification(id);
 
     return { ok: true, form: answered, entryId: recorded.id };
 }
@@ -316,6 +307,9 @@ export function cancelAskForm(id: string, deps: AskDeps = {}): AskForm | null {
     if (cancelled) {
         publishEvent("cancelled", cancelled, deps);
         log.info({ id }, "pending ask form cancelled");
+        // Fire-and-forget, same reasoning as `sweep`: this function stays synchronous for its
+        // existing callers (CLI, MCP, the HTTP route), and the retraction already never throws.
+        void retractPendingNotification(id);
     }
 
     return cancelled;

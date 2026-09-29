@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, isAbsolute, join, normalize, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, join, normalize, resolve, sep } from "node:path";
+import { detectImageFormat } from "@genesiscz/utils/image/detect-format";
 import {
     type AskAnswer,
     type AskChoice,
@@ -224,6 +225,68 @@ export function sanitizeImages(images: AskImage[] | undefined): AskImage[] {
     }
 
     return out;
+}
+
+/**
+ * Reads image files straight into `AskAnswer.images`, mime sniffed from the bytes rather than
+ * trusted from the extension. Shared by the plain `answer <id> --image` flag and the inbox
+ * `--image itemId=path` flag, so a screenshot never needs to travel through argv as base64 —
+ * `kern.argmax` on this machine is 1MB, and one image alone can carry `MAX_IMAGE_BASE64_CHARS`
+ * (2MB) of base64.
+ */
+export function readImageAnswers(paths: string[]): AskImage[] {
+    return paths.slice(0, MAX_IMAGES_PER_ANSWER).map((path) => {
+        const buf = readFileSync(path);
+        const { mime } = detectImageFormat(buf);
+
+        return { name: basename(path), mime, base64: buf.toString("base64") };
+    });
+}
+
+/**
+ * Merges `itemId=path` image specs into an existing `AskAnswer[]`, reading each file in place.
+ *
+ * Exists for `inbox answer --form`, whose `--answers` JSON answers every item of a form at
+ * once (a partial submit is never stored, see `missingRequiredItems`) but cannot itself carry
+ * image bytes without blowing `kern.argmax`. An item with images and nothing else (no free
+ * text, no choice) gets a fresh answer entry; an item that already has one keeps its other
+ * fields and gains `images`.
+ */
+export function attachImageFiles(answers: AskAnswer[], specs: string[]): AskAnswer[] {
+    if (specs.length === 0) {
+        return answers;
+    }
+
+    const pathsByItem = new Map<string, string[]>();
+
+    for (const spec of specs) {
+        const eq = spec.indexOf("=");
+
+        if (eq <= 0) {
+            throw new Error(`--image expects itemId=path, got "${spec}"`);
+        }
+
+        const itemId = spec.slice(0, eq);
+        const path = spec.slice(eq + 1);
+        const paths = pathsByItem.get(itemId) ?? [];
+        paths.push(path);
+        pathsByItem.set(itemId, paths);
+    }
+
+    const merged = [...answers];
+
+    for (const [itemId, paths] of pathsByItem) {
+        const images = readImageAnswers(paths);
+        const index = merged.findIndex((answer) => answer.itemId === itemId);
+
+        if (index >= 0) {
+            merged[index] = { ...merged[index], images: [...(merged[index].images ?? []), ...images] };
+        } else {
+            merged.push({ itemId, images });
+        }
+    }
+
+    return merged;
 }
 
 /** Drop anything the item did not offer, so a client cannot smuggle a choice or a path in. */

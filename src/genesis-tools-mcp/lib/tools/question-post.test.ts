@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { AskDeps } from "@app/question/lib/pending/ask";
+import { type AskDeps, getAskForm } from "@app/question/lib/pending/ask";
 import { PENDING_MIGRATIONS } from "@app/question/lib/pending/store";
 import { type Migration, runMigrations } from "@genesiscz/utils/database/migrations";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -13,6 +13,7 @@ import {
     handleQuestionPost,
     handleQuestionRespond,
     handleQuestionWait,
+    QUESTION_RESPOND_INPUT_SCHEMA,
     type QuestionDeps,
 } from "./question-post";
 import { handleQuestionUpdate } from "./question-update";
@@ -104,6 +105,32 @@ describe("question_respond", () => {
 
         expect(text).toContain("incomplete");
         expect(text).toContain("missing: q2");
+    });
+
+    // The underlying AskAnswer/answerAskForm already accepted `images` end to end; only the
+    // MCP tool's OWN advertised schema was missing the field, so an agent driven purely by the
+    // schema had no way to discover it could send one.
+    test("the declared schema advertises images, not just itemId/freeText/selectedChoices/fileTags", () => {
+        const answerItem = QUESTION_RESPOND_INPUT_SCHEMA.properties.answers.items;
+
+        expect(answerItem.properties).toHaveProperty("images");
+    });
+
+    test("an image answer for an allowImagePaste item is stored, not silently dropped", async () => {
+        const posted = await handleQuestionPost(
+            { projectPath: "/tmp/gt-mcp-fixture", question: "Screenshot?", allowImagePaste: true },
+            deps
+        );
+        const id = idIn(posted);
+
+        await handleQuestionRespond(
+            { id, answers: [{ itemId: "q1", images: [{ name: "shot.png", mime: "image/png", base64: "aGVsbG8=" }] }] },
+            deps
+        );
+
+        expect(getAskForm(id, deps)?.answers?.q1.images).toEqual([
+            { name: "shot.png", mime: "image/png", base64: "aGVsbG8=" },
+        ]);
     });
 });
 

@@ -449,6 +449,32 @@ describe("pollAskForms", () => {
     });
 });
 
+describe("listPendingForms ordering", () => {
+    // Genesis sorts oldest-first so "a second agent's form doesn't jump ahead of one Martin is
+    // already looking at" (QaFormController.swift:27-31). `store.ts` used to read
+    // `ORDER BY created_at DESC`, which put the newest form first instead.
+    test("the oldest pending form is listed first", async () => {
+        const first = await postAskForm({ projectPath: PROJECT, items: [{ promptMarkdown: "First?" }] }, deps);
+        await Bun.sleep(2);
+        const second = await postAskForm({ projectPath: PROJECT, items: [{ promptMarkdown: "Second?" }] }, deps);
+        await Bun.sleep(2);
+        const third = await postAskForm({ projectPath: PROJECT, items: [{ promptMarkdown: "Third?" }] }, deps);
+
+        expect(listPendingForms(deps).map((f) => f.id)).toEqual([first.id, second.id, third.id]);
+    });
+
+    test("a limit keeps the NEWEST forms, still returned oldest-first", async () => {
+        const first = await postAskForm({ projectPath: PROJECT, items: [{ promptMarkdown: "First?" }] }, deps);
+        await Bun.sleep(2);
+        const second = await postAskForm({ projectPath: PROJECT, items: [{ promptMarkdown: "Second?" }] }, deps);
+        await Bun.sleep(2);
+        const third = await postAskForm({ projectPath: PROJECT, items: [{ promptMarkdown: "Third?" }] }, deps);
+
+        expect(listPendingForms(deps, 2).map((f) => f.id)).toEqual([second.id, third.id]);
+        expect(listPendingForms(deps, 2).map((f) => f.id)).not.toContain(first.id);
+    });
+});
+
 /**
  * A race duplicates the DURABLE write, so these assert on history itself rather than on the
  * outcome object. `recordAnswer` appends one JSONL line per call under `logBase`, and the read

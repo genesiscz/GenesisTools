@@ -82,12 +82,18 @@ export interface InboxQuestion {
     multiple: boolean;
     freeText: boolean;
     required: boolean;
+    /** Whether this item accepts an `@file` tag. */
+    fileTags: boolean;
+    /** Whether this item accepts a pasted/attached image. */
+    imagePaste: boolean;
 }
 
 export interface InboxForm {
     kind: "form";
     id: string;
     source: string | null;
+    /** Resolved form cwd; `@file` tags and a Hub file browser both root here. */
+    cwd: string;
     questions: InboxQuestion[];
     status: "waiting";
     at: string;
@@ -409,6 +415,7 @@ function fromForm(form: AskForm): InboxForm {
         kind: "form",
         id: form.id,
         source: form.source ?? null,
+        cwd: form.cwd,
         questions: form.items.map((item) => ({
             itemId: item.id,
             prompt: item.promptMarkdown,
@@ -421,6 +428,8 @@ function fromForm(form: AskForm): InboxForm {
             multiple: item.allowMultiple === true,
             freeText: item.allowFreeText !== false,
             required: item.required !== false,
+            fileTags: item.allowFileTags === true,
+            imagePaste: item.allowImagePaste === true,
         })),
         status: "waiting",
         at: new Date(form.createdAt).toISOString(),

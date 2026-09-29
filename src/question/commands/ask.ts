@@ -70,7 +70,8 @@ function splitList(value: string): string[] {
         .filter((part) => part.length > 0);
 }
 
-function collect(value: string, previous: string[] = []): string[] {
+/** Commander accumulator for a repeatable flag; also used by `inbox.ts`'s `--image`. */
+export function collect(value: string, previous: string[] = []): string[] {
     return [...previous, value];
 }
 
