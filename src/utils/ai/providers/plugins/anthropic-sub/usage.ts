@@ -1,4 +1,5 @@
 import { AIConfig } from "@genesiscz/utils/ai/AIConfig";
+import { LONG_TOKEN_MIN_LENGTH } from "@genesiscz/utils/claude/token-verify";
 import type { AIAccountEntry } from "@genesiscz/utils/config/ai.types";
 import { logger } from "@genesiscz/utils/logger";
 import type { AccountEntry } from "../../../config/schema";
@@ -272,12 +273,35 @@ export function classifyAnthropicFailure(err: unknown): UsageFailureClass | unde
     return { orgBlocked: true };
 }
 
+/**
+ * `account.credentials.longLivedToken` is a stored value, a vault `SecureRef`, or absent
+ * (`AccountEntry`'s v4 shape); `longLivedTokenUsable` in `token-verify.ts` wants a plain string and
+ * cannot be reused directly. Its length check only applies to the string case: a `SecureRef` names a
+ * real vault entry with no local text to measure, so presence stands in for it there. Expiry is a
+ * plain field either way and always applies.
+ */
+function longLivedCredentialUsable(credentials: AccountEntry["credentials"]): boolean {
+    const token = credentials.longLivedToken;
+
+    if (!token) {
+        return false;
+    }
+
+    if (typeof token === "string" && token.length < LONG_TOKEN_MIN_LENGTH) {
+        return false;
+    }
+
+    return !(credentials.longLivedTokenExpiresAt !== undefined && credentials.longLivedTokenExpiresAt <= Date.now());
+}
+
 export const anthropicUsage: AccountUsageFeature = {
     poll: pollAnthropicAccount,
     minIntervalMs: MIN_INTERVAL_MS,
     classifyFailure: classifyAnthropicFailure,
     // A long-lived token reads the rate-limit headers without the refresh path the gate guards,
-    // unless the header reading is what failed (a lapsed org answers 403 to every request).
+    // unless the header reading is what failed (a lapsed org answers 403 to every request). Presence
+    // alone is not enough: an expired or truncated token still polls here, then pollAccount rejects
+    // the gated read anyway.
     pollsWhileGated: (account, gate) =>
-        Boolean(account.credentials.longLivedToken) && !isQuotaHeaderFailure(gate.reason),
+        longLivedCredentialUsable(account.credentials) && !isQuotaHeaderFailure(gate.reason),
 };

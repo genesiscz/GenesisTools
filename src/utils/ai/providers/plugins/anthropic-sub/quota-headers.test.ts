@@ -1,4 +1,6 @@
 import { afterEach, describe, expect, it, mock } from "bun:test";
+import type { AIConfig } from "@genesiscz/utils/ai/AIConfig";
+import type { AccountEntry } from "@genesiscz/utils/ai/config/schema";
 import type { AIAccountEntry } from "@genesiscz/utils/config/ai.types";
 import { SafeJSON } from "@genesiscz/utils/json";
 
@@ -122,7 +124,7 @@ const withPair = () => account({ accessToken: "access-1", refreshToken: "refresh
 
 async function poll(entry: AIAccountEntry, extra: Record<string, unknown> = {}) {
     // `config` is only read by the profile paths, which the mocked subscription module never takes.
-    return pollAccount({ account: entry, config: {} as never, gate: {}, now: NOW, ...extra });
+    return pollAccount({ account: entry, config: {} as unknown as AIConfig, gate: {}, now: NOW, ...extra });
 }
 
 /** An endpoint reading with the Fable limit, as `/api/oauth/usage` answers it. */
@@ -291,16 +293,37 @@ describe("mergeHeaderReading", () => {
 });
 
 describe("anthropicUsage.pollsWhileGated", () => {
-    const gated = (reason: string, longLivedToken?: string) =>
-        anthropicUsage.pollsWhileGated?.({ credentials: { longLivedToken } } as never, { reason });
+    const gated = (reason: string, credentials: AccountEntry["credentials"] = {}) => {
+        const account = { credentials } as Pick<AccountEntry, "credentials"> as AccountEntry;
+        return anthropicUsage.pollsWhileGated?.(account, { reason });
+    };
+    const withToken = (reason: string, longLivedToken?: string) => gated(reason, { longLivedToken });
 
     it("reads a gated account through its long-lived token until the header reading itself fails", () => {
-        expect(gated("Error: Token expired (invalid_grant). Run: tools claude login work", LONG_LIVED)).toBe(true);
+        expect(withToken("Error: Token expired (invalid_grant). Run: tools claude login work", LONG_LIVED)).toBe(true);
         // A lapsed org answers 403 to every request: the backoff paces it, not every round.
         expect(
-            gated("UpstreamStatusError: Quota headers 403: OAuth authentication is currently not allowed", LONG_LIVED)
+            withToken(
+                "UpstreamStatusError: Quota headers 403: OAuth authentication is currently not allowed",
+                LONG_LIVED
+            )
         ).toBe(false);
-        expect(gated("Error: Token expired (invalid_grant)")).toBe(false);
+        expect(withToken("Error: Token expired (invalid_grant)")).toBe(false);
+    });
+
+    it("does not gate-poll a token too short to be a real long-lived token, or one already past its expiry", () => {
+        const reason = "Error: Token expired (invalid_grant). Run: tools claude login work";
+        expect(withToken(reason, "sk-ant-oat01-too-short")).toBe(false);
+        expect(gated(reason, { longLivedToken: LONG_LIVED, longLivedTokenExpiresAt: Date.now() - 1000 })).toBe(false);
+        expect(gated(reason, { longLivedToken: LONG_LIVED, longLivedTokenExpiresAt: Date.now() + 3_600_000 })).toBe(
+            true
+        );
+    });
+
+    it("a vault SecureRef counts as present, since there is no local text to measure its length", () => {
+        const reason = "Error: Token expired (invalid_grant). Run: tools claude login work";
+        const credentials = { longLivedToken: { type: "secure" as const, path: "ai/acc/longLivedToken" } };
+        expect(gated(reason, credentials)).toBe(true);
     });
 });
 
