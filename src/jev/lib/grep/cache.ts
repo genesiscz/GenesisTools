@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { constants } from "node:fs";
+import { constants, type Stats } from "node:fs";
 import { chmod, type FileHandle, lstat, mkdir, open, opendir, rename, rm, unlink } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -76,9 +76,14 @@ export function createGrepCache(options: GrepCacheOptions) {
     const warnings = new Map<CacheWarning, number>();
     let hits = 0;
     let misses = 0;
-    /** Bytes this process believes the entries directory holds; measured once, then kept by the writer. */
-    let storedBytes: number | undefined;
-    let opening: Promise<number> | undefined;
+    /**
+     * One entries directory, told apart by its inode, with the bytes this process believes it holds:
+     * measured once, then kept by the writers. A clear detaches the directory, so each write reserves in
+     * the generation it found and releases there, never in the one that replaced it.
+     */
+    type Generation = { ino: number; bytes: number };
+    let generation: Generation | undefined;
+    let opening: Promise<Generation> | undefined;
     /** Entry names with a write in flight: an identical second write would add nothing. */
     const writing = new Set<string>();
 
@@ -97,9 +102,12 @@ export function createGrepCache(options: GrepCacheOptions) {
             .digest("hex");
     }
 
-    /** True when `create` had to make the directory. */
-    async function checkDirectory(path: string, create: boolean): Promise<boolean> {
-        const created = create ? await mkdir(path, { recursive: true, mode: 0o700 }) : undefined;
+    /** The directory's lstat; `create` makes it first when it is missing. */
+    async function checkDirectory(path: string, create: boolean): Promise<Stats> {
+        if (create) {
+            await mkdir(path, { recursive: true, mode: 0o700 });
+        }
+
         const info = await lstat(path);
         if (!info.isDirectory() || info.isSymbolicLink()) {
             throw new Error("Cache path is not a directory");
@@ -109,7 +117,7 @@ export function createGrepCache(options: GrepCacheOptions) {
             await chmod(path, 0o700);
         }
 
-        return created !== undefined;
+        return info;
     }
 
     /** Bytes of the entry a write replaces; 0 when there is none. */
@@ -137,7 +145,7 @@ export function createGrepCache(options: GrepCacheOptions) {
     }
 
     /** Drop other schema generations and detached clears, prune expired and abandoned entries, sum the rest. */
-    async function openEntries(): Promise<number> {
+    async function openEntries(): Promise<Generation> {
         await checkDirectory(directory, true);
         for await (const entry of await opendir(directory)) {
             if (entry.name === ENTRIES || !(OTHER_SCHEMA.test(entry.name) || DETACHED_NAME.test(entry.name))) {
@@ -152,7 +160,7 @@ export function createGrepCache(options: GrepCacheOptions) {
             }
         }
 
-        await checkDirectory(entries, true);
+        const live = await checkDirectory(entries, true);
         let total = 0;
         for await (const entry of await opendir(entries)) {
             if (!ENTRY_NAME.test(entry.name) && !PENDING_NAME.test(entry.name)) {
@@ -180,7 +188,7 @@ export function createGrepCache(options: GrepCacheOptions) {
             }
         }
 
-        return total;
+        return { ino: live.ino, bytes: total };
     }
 
     async function get(input: CacheKeyInput): Promise<CacheAnswers | undefined> {
@@ -286,28 +294,30 @@ export function createGrepCache(options: GrepCacheOptions) {
         let temporary: string | undefined;
         let handle: FileHandle | undefined;
         let reserved = 0;
+        let owner: Generation | undefined;
         try {
             // A failed first scan is not kept: the next write scans again.
             opening ??= openEntries().catch((error: unknown) => {
                 opening = undefined;
                 throw error;
             });
-            const measured = await opening;
-            storedBytes ??= measured;
-            // A concurrent clear detaches the directory; the one recreated here starts an empty generation.
-            if (await checkDirectory(entries, true)) {
-                storedBytes = 0;
+            generation ??= await opening;
+            // A concurrent clear detaches the directory; the one recreated in its place starts empty.
+            const live = await checkDirectory(entries, true);
+            if (live.ino !== generation.ino) {
+                generation = { ino: live.ino, bytes: 0 };
             }
 
             // Rewriting a key replaces its file, so only the difference is new.
             const net = size - (await entryBytes(join(entries, name)));
             // Check and reserve in one synchronous step: up to 32 writers share this cap.
-            if (size > maxEntryBytes || storedBytes + net > maxBytes) {
+            owner = generation;
+            if (size > maxEntryBytes || owner.bytes + net > maxBytes) {
                 warn("cache_limit");
                 return;
             }
 
-            storedBytes += net;
+            owner.bytes += net;
             reserved = net;
             temporary = join(entries, `.pending-${randomUUID()}`);
             handle = await open(
@@ -321,12 +331,18 @@ export function createGrepCache(options: GrepCacheOptions) {
             await rename(temporary, join(entries, name));
             temporary = undefined;
             reserved = 0;
+            // The rename found the pending file, so the file sits in the directory now at `entries`. When a
+            // clear replaced the directory while this write was in flight, its bytes follow it there.
+            if (generation !== owner) {
+                owner.bytes -= net;
+                generation.bytes += net;
+            }
         } catch (error) {
             warn("cache_unavailable", error);
         } finally {
             writing.delete(name);
-            if (storedBytes !== undefined) {
-                storedBytes -= reserved;
+            if (owner) {
+                owner.bytes -= reserved;
             }
 
             try {
