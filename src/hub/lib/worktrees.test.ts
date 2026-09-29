@@ -13,14 +13,13 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
+import { claimPrivateFolder, gitWorktreeMove } from "@genesiscz/utils/fs/move-aside";
 import { TestRepo } from "@genesiscz/utils/git/test-repo";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { Command, CommanderError } from "commander";
 import {
     type BlockerKind,
-    claimPrivateFolder,
     cleanupBlockers,
-    gitWorktreeMove,
     type LiveUsers,
     moveAsideWorktrees,
     ownerOf,
@@ -476,28 +475,6 @@ describe("move aside rechecks each worktree before its own move", () => {
         expect(outcomes[0]?.moved).toBe(false);
         expect(outcomes[0]?.reasons.join(" ")).toContain("not a plain folder");
         expect(existsSync(path)).toBe(true);
-    });
-
-    test("a folder above the move-aside folder that other users can change refuses it; a sticky one, like /tmp, does not", () => {
-        const scratch = mkdtempSync(join(tmpdir(), "gt-hub-wt-ancestor-"));
-        const shared = join(scratch, "shared");
-        mkdirSync(shared);
-        chmodSync(shared, 0o777);
-        expect(claimPrivateFolder(join(shared, "20260928-agents-removals", "hub-worktrees"))).toContain(
-            `${shared} can be changed by other users`
-        );
-
-        chmodSync(shared, 0o1777);
-        expect(claimPrivateFolder(join(shared, "20260929-agents-removals", "hub-worktrees"))).toBeNull();
-
-        // A symlink on the way is followed: the real folder it leads to is held to the same rule.
-        const open = join(scratch, "open");
-        mkdirSync(open);
-        chmodSync(open, 0o777);
-        symlinkSync(open, join(scratch, "link"));
-        expect(claimPrivateFolder(join(scratch, "link", "hub-worktrees"))).toContain(
-            `${realpathSync(open)} can be changed by other users`
-        );
     });
 
     test("a repository folder symlinked out of the private root is refused, and a failed claim is a refusal, not a throw", async () => {

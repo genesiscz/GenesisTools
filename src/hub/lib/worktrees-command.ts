@@ -1,14 +1,15 @@
 import * as p from "@clack/prompts";
 import { isInteractive, parseNonNegativeInt, suggestCommand } from "@genesiscz/utils/cli";
 import { formatBytes } from "@genesiscz/utils/format";
+import { moveAsideRoot } from "@genesiscz/utils/fs/move-aside";
 import { out } from "@genesiscz/utils/logger";
 import { createBoxTable, formatDotStatus, renderCliHeader, truncateDisplay } from "@genesiscz/utils/table";
 import { type Command, InvalidArgumentError } from "commander";
 import pc from "picocolors";
 import {
     DEFAULT_LIVE_MINUTES,
+    MOVE_ASIDE_CONTEXT,
     moveAsideJournalPath,
-    moveAsideRoot,
     moveAsideWorktrees,
     removeWorktrees,
     scanWorktrees,
@@ -224,7 +225,7 @@ export function registerWorktreesCommand(program: Command): void {
     worktrees
         .command("move-aside")
         .description(
-            `Re-check each worktree and \`git worktree move\` the ones still removable into ${moveAsideRoot()} (deletes nothing; /tmp clears at reboot); prints the restore command`
+            `Re-check each worktree and \`git worktree move\` the ones still removable into ${moveAsideRoot({ context: MOVE_ASIDE_CONTEXT })} (deletes nothing; /tmp clears at reboot); prints the restore command`
         )
         .argument("<paths...>", "worktree folders")
         .option("--yes", "skip the confirmation (the hub asks its own first)")
@@ -252,7 +253,7 @@ export function registerWorktreesCommand(program: Command): void {
                 }
 
                 const ok = await p.confirm({
-                    message: `Move ${paths.length} worktree folder(s) into ${moveAsideRoot()}? They stay working worktrees there until /tmp is cleared at reboot.`,
+                    message: `Move ${paths.length} worktree folder(s) into ${moveAsideRoot({ context: MOVE_ASIDE_CONTEXT })}? They stay working worktrees there until /tmp is cleared at reboot.`,
                     initialValue: false,
                 });
 
