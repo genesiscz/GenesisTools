@@ -26,7 +26,7 @@ final class HubInboxTimelineTests: XCTestCase {
           "items": [
             {
               "kind": "form", "id": "ask_1", "source": null, "status": "waiting", "at": "2026-03-01T09:00:00.000Z",
-              "questions": [{ "itemId": "q1", "prompt": "Ship it?", "choices": [{ "id": "c1", "label": "yes" }], "multiple": false, "freeText": false, "required": true }]
+              "questions": [{ "itemId": "q1", "prompt": "Ship it?", "choices": [{ "id": "c1", "label": "yes" }], "multiple": false, "freeText": false, "required": true, "fileTags": false, "imagePaste": false }]
             }
           ]
         }

@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 // "Waiting for you" (`--mode inbox`): every session whose last reply asks a ❓ DECISION, every open
 // decision in the store and every pending question form, grouped by session. The list and the
@@ -85,6 +86,10 @@ struct InboxQuestion: Decodable, Hashable {
     let multiple: Bool
     let freeText: Bool
     let required: Bool
+    /// Whether this item accepts an `@file` tag (`AskItem.allowFileTags`, `src/question/lib/inbox/build.ts`).
+    let fileTags: Bool
+    /// Whether this item accepts a pasted/attached image (`AskItem.allowImagePaste`).
+    let imagePaste: Bool
 }
 
 /// One thing a session waits on: a decision (`number`, `choices`) or a question form (`questions`).
@@ -104,6 +109,9 @@ struct InboxItem: Decodable, Identifiable, Hashable {
     /// A decision: `transcript` or `store`. A form: who posted it.
     let source: String?
     let questions: [InboxQuestion]?
+    /// A form's resolved cwd (`AskForm.cwd`): `@file` tags and the file-browse picker both root
+    /// here. Null for a decision.
+    let cwd: String?
     /// The reply text that leads to this decision (the findings), markdown.
     let context: String?
     /// Text under the options about this decision.
@@ -630,9 +638,49 @@ final class HubInboxModel: ObservableObject {
         }
     }
 
-    /// Answers a form: one entry per question, the chosen choice ids and any text.
-    func answerForm(_ item: InboxItem, choices: [String: Set<String>], texts: [String: String]) {
-        let answers: [[String: Any]] = (item.questions ?? []).map { question in
+    /// Answers a form: one entry per question, the chosen choice ids, any text and any `@file`
+    /// tags. Images never ride the JSON: they go as `--image itemId=path` so a screenshot never
+    /// has to cross argv as base64 (`kern.argmax` on this Mac is 1 MB; one image alone can carry
+    /// `MAX_IMAGE_BASE64_CHARS`, 2 MB, of it). `tools question inbox answer` reads each file in
+    /// place (`src/question/lib/pending/form.ts` `attachImageFiles`).
+    func answerForm(
+        _ item: InboxItem,
+        choices: [String: Set<String>],
+        texts: [String: String],
+        fileTags: [String: [String]] = [:],
+        imagePaths: [String: [String]] = [:]
+    ) {
+        guard
+            let args = Self.formAnswerArgs(
+                formId: item.id,
+                questions: item.questions ?? [],
+                choices: choices,
+                texts: texts,
+                fileTags: fileTags,
+                imagePaths: imagePaths
+            )
+        else {
+            return
+        }
+
+        run(args, item: item)
+    }
+
+    /// Pure: the argv `answerForm` sends to `tools question inbox answer`
+    /// (`src/question/commands/inbox.ts`), so a wire-shape change is caught without spawning a
+    /// process. `--image itemId=path` never carries base64 — `attachImageFiles`
+    /// (`src/question/lib/pending/form.ts`) reads each file in place. `imagePaths`/`fileTags`
+    /// iterate a `Dictionary`, so a test should compare the decoded `--answers` JSON and a SET
+    /// of `--image` specs, not raw argv equality.
+    nonisolated static func formAnswerArgs(
+        formId: String,
+        questions: [InboxQuestion],
+        choices: [String: Set<String>],
+        texts: [String: String],
+        fileTags: [String: [String]],
+        imagePaths: [String: [String]]
+    ) -> [String]? {
+        let answers: [[String: Any]] = questions.map { question in
             var entry: [String: Any] = ["itemId": question.itemId]
             if let picked = choices[question.itemId], !picked.isEmpty {
                 entry["selectedChoices"] = question.choices.map(\.id).filter { picked.contains($0) }
@@ -640,10 +688,25 @@ final class HubInboxModel: ObservableObject {
             if let text = texts[question.itemId]?.trimmed, !text.isEmpty {
                 entry["freeText"] = text
             }
+            if let tags = fileTags[question.itemId], !tags.isEmpty {
+                entry["fileTags"] = tags
+            }
             return entry
         }
-        guard let data = try? JSONSerialization.data(withJSONObject: answers) else { return }
-        run(["question", "inbox", "answer", "--form", item.id, "--answers", String(decoding: data, as: UTF8.self)], item: item)
+
+        guard let data = try? JSONSerialization.data(withJSONObject: answers) else {
+            return nil
+        }
+
+        var args = ["question", "inbox", "answer", "--form", formId, "--answers", String(decoding: data, as: UTF8.self)]
+
+        for (itemId, paths) in imagePaths {
+            for path in paths {
+                args += ["--image", "\(itemId)=\(path)"]
+            }
+        }
+
+        return args
     }
 
     private func run(_ args: [String], item: InboxItem) {
@@ -1710,24 +1773,59 @@ struct InboxResumeSheet: View {
 
 /// A pending question form. One question with single-choice options sends on the click; anything
 /// else (several questions, multiple choice, free text) is staged and sent with Submit.
+/// One image attached to a QA answer: written to a private temp file as soon as it is pasted or
+/// picked, so it can be sent as `--image itemId=path` without ever crossing argv as base64.
+private struct QaAttachedImage: Identifiable {
+    let id = UUID()
+    let path: String
+    let thumbnail: NSImage
+}
+
 private struct InboxFormCard: View {
     @ObservedObject var inbox: HubInboxModel
     let item: InboxItem
     @State private var picked: [String: Set<String>] = [:]
     @State private var texts: [String: String] = [:]
+    @State private var fileTagsText: [String: String] = [:]
+    @State private var attachedImages: [String: [QaAttachedImage]] = [:]
+    @State private var fieldError: [String: String] = [:]
 
     private var questions: [InboxQuestion] { item.questions ?? [] }
     private var sending: Bool { inbox.sending.contains(item.id) }
 
-    /// One question, single choice: the click is the answer.
+    /// One question, single choice, nothing else to attach: the click is the answer.
     private var oneClick: Bool {
-        questions.count == 1 && questions[0].multiple == false && !questions[0].choices.isEmpty
+        questions.count == 1
+            && questions[0].multiple == false
+            && !questions[0].choices.isEmpty
+            && !questions[0].fileTags
+            && !questions[0].imagePaste
     }
 
     private var complete: Bool {
         questions.allSatisfy { question in
-            !question.required || !(picked[question.itemId] ?? []).isEmpty || !(texts[question.itemId]?.trimmed.isEmpty ?? true)
+            !question.required
+                || !(picked[question.itemId] ?? []).isEmpty
+                || !(texts[question.itemId]?.trimmed.isEmpty ?? true)
+                || !(attachedImages[question.itemId] ?? []).isEmpty
+                || !fileTags(for: question.itemId).isEmpty
         }
+    }
+
+    /// The `@file` tags for one item, the manual field split and capped the way the store is.
+    private func fileTags(for itemId: String) -> [String] {
+        Array(QaFormFields.splitFileTags(fileTagsText[itemId] ?? "").prefix(QaFormFields.maxFileTagsPerAnswer))
+    }
+
+    private func submit() {
+        let fileTagsByItem = Dictionary(uniqueKeysWithValues: questions.compactMap { question -> (String, [String])? in
+            let tags = fileTags(for: question.itemId)
+            return tags.isEmpty ? nil : (question.itemId, tags)
+        })
+        let imagePathsByItem = Dictionary(uniqueKeysWithValues: attachedImages.compactMap { itemId, images -> (String, [String])? in
+            images.isEmpty ? nil : (itemId, images.map(\.path))
+        })
+        inbox.answerForm(item, choices: picked, texts: texts, fileTags: fileTagsByItem, imagePaths: imagePathsByItem)
     }
 
     var body: some View {
@@ -1762,6 +1860,15 @@ private struct InboxFormCard: View {
                             .padding(7)
                             .background(RoundedRectangle(cornerRadius: 7).stroke(Color.white.opacity(0.12)))
                     }
+                    if question.fileTags {
+                        fileTagField(question)
+                    }
+                    if question.imagePaste {
+                        imageAttachField(question)
+                    }
+                    if let error = fieldError[question.itemId] {
+                        Text(error).font(.system(size: 10)).foregroundColor(ReviewPalette.removed)
+                    }
                 }
             }
             HStack(spacing: 8) {
@@ -1771,9 +1878,9 @@ private struct InboxFormCard: View {
                     InboxDeliveryLine(delivery: delivery)
                 }
                 Spacer()
-                if !oneClick || questions.contains(where: \.freeText) {
+                if !oneClick || questions.contains(where: { $0.freeText || $0.fileTags || $0.imagePaste }) {
                     Button {
-                        inbox.answerForm(item, choices: picked, texts: texts)
+                        submit()
                     } label: {
                         Label("Submit", systemImage: "paperplane.fill")
                             .font(.system(size: 12, weight: .semibold))
@@ -1805,7 +1912,7 @@ private struct InboxFormCard: View {
             }
             picked[question.itemId] = set
             if oneClick && !question.freeText && !set.isEmpty {
-                inbox.answerForm(item, choices: picked, texts: texts)
+                submit()
             }
         } label: {
             FindText(choice.label, field: "q:\(question.itemId):\(choice.id)")
@@ -1818,6 +1925,166 @@ private struct InboxFormCard: View {
         .buttonStyle(.genHoverPlain())
         .disabled(sending)
         .instantTooltip(oneClick && !question.freeText ? "Answer \"\(choice.label)\"" : chosen ? "Click again to unselect" : "Choose \"\(choice.label)\"")
+    }
+
+    // MARK: - `@file` tags
+
+    private func fileTagField(_ question: InboxQuestion) -> some View {
+        let itemId = question.itemId
+        let count = QaFormFields.splitFileTags(fileTagsText[itemId] ?? "").count
+        return VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 6) {
+                TextField("@file tags, space or comma separated", text: Binding(get: { fileTagsText[itemId] ?? "" }, set: { fileTagsText[itemId] = $0 }))
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 12))
+                    .padding(7)
+                    .background(RoundedRectangle(cornerRadius: 7).stroke(Color.white.opacity(0.12)))
+                Button("Browse…") { browseFileTag(question) }
+                    .buttonStyle(.genHoverPlain())
+                    .disabled((item.cwd ?? "").isEmpty)
+                    .instantTooltip((item.cwd).map { "Choose a file inside \($0)" } ?? "This form has no cwd to browse")
+            }
+            if count > QaFormFields.maxFileTagsPerAnswer {
+                Text("Only the first \(QaFormFields.maxFileTagsPerAnswer) tags are kept.")
+                    .font(.system(size: 10))
+                    .foregroundColor(ReviewPalette.dim)
+            }
+        }
+    }
+
+    private func browseFileTag(_ question: InboxQuestion) {
+        guard let cwd = item.cwd, !cwd.isEmpty else { return }
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        panel.directoryURL = URL(fileURLWithPath: cwd)
+        panel.prompt = "Attach"
+        panel.message = "Choose a file inside \(cwd)"
+        panel.begin { response in
+            guard response == .OK, let url = panel.url else { return }
+            guard let relative = QaFormFields.relativeFileTag(url.path, cwd: cwd) else {
+                fieldError[question.itemId] = "That file is outside the form's folder (\(cwd))."
+                return
+            }
+            fieldError[question.itemId] = nil
+            let existing = fileTagsText[question.itemId] ?? ""
+            fileTagsText[question.itemId] = existing.trimmed.isEmpty ? relative : existing + " " + relative
+        }
+    }
+
+    // MARK: - Image paste / attach
+
+    private func imageAttachField(_ question: InboxQuestion) -> some View {
+        let itemId = question.itemId
+        let images = attachedImages[itemId] ?? []
+        return VStack(alignment: .leading, spacing: 6) {
+            if !images.isEmpty {
+                HStack(spacing: 6) {
+                    ForEach(images) { image in
+                        ZStack(alignment: .topTrailing) {
+                            Image(nsImage: image.thumbnail)
+                                .resizable()
+                                .aspectRatio(contentMode: .fill)
+                                .frame(width: 40, height: 40)
+                                .clipShape(RoundedRectangle(cornerRadius: 5))
+                            Button {
+                                removeImage(itemId: itemId, id: image.id)
+                            } label: {
+                                Image(systemName: "xmark.circle.fill")
+                                    .font(.system(size: 12))
+                                    .foregroundColor(.white)
+                                    .background(Circle().fill(Color.black.opacity(0.6)))
+                            }
+                            .buttonStyle(.plain)
+                            .offset(x: 4, y: -4)
+                            .instantTooltip("Remove this image")
+                        }
+                    }
+                }
+            }
+            HStack(spacing: 6) {
+                Button("Choose image…") { chooseImage(itemId: itemId) }
+                    .buttonStyle(.genHoverPlain())
+                    .disabled(images.count >= QaFormFields.maxImagesPerAnswer)
+                Text("or paste one here (\(images.count)/\(QaFormFields.maxImagesPerAnswer))")
+                    .font(.system(size: 10))
+                    .foregroundColor(ReviewPalette.dim)
+            }
+        }
+        .padding(6)
+        .background(RoundedRectangle(cornerRadius: 7).stroke(Color.white.opacity(0.12), style: StrokeStyle(lineWidth: 1, dash: [3, 3])))
+        .onPasteCommand(of: [.image]) { providers in
+            for provider in providers {
+                _ = provider.loadObject(ofClass: NSImage.self) { image, _ in
+                    guard let image = image as? NSImage else { return }
+                    DispatchQueue.main.async { attachImage(itemId: itemId, image: image) }
+                }
+            }
+        }
+    }
+
+    private func chooseImage(itemId: String) {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = true
+        panel.allowedContentTypes = [.image]
+        panel.prompt = "Attach"
+        panel.message = "Choose an image to attach"
+        panel.begin { response in
+            guard response == .OK else { return }
+            for url in panel.urls {
+                if let image = NSImage(contentsOf: url) {
+                    attachImage(itemId: itemId, image: image)
+                }
+            }
+        }
+    }
+
+    private func attachImage(itemId: String, image: NSImage) {
+        let current = attachedImages[itemId] ?? []
+
+        guard current.count < QaFormFields.maxImagesPerAnswer else {
+            fieldError[itemId] = "Only \(QaFormFields.maxImagesPerAnswer) images per answer; remove one first."
+            return
+        }
+
+        guard let tiff = image.tiffRepresentation, let rep = NSBitmapImageRep(data: tiff),
+              let png = rep.representation(using: .png, properties: [:])
+        else {
+            fieldError[itemId] = "Could not read that image."
+            return
+        }
+
+        guard png.count <= QaFormFields.maxImageBytes else {
+            fieldError[itemId] = "That image is too large; the server keeps up to about 1.5 MB per image."
+            return
+        }
+
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("gt-qa-images", isDirectory: true)
+        let path = dir.appendingPathComponent("\(UUID().uuidString).png").path
+
+        do {
+            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            try png.write(to: URL(fileURLWithPath: path))
+        } catch {
+            fieldError[itemId] = "Could not save that image: \(error.localizedDescription)"
+            return
+        }
+
+        fieldError[itemId] = nil
+        let thumbnail = NSImage(data: png) ?? image
+        attachedImages[itemId] = current + [QaAttachedImage(path: path, thumbnail: thumbnail)]
+    }
+
+    private func removeImage(itemId: String, id: UUID) {
+        guard var list = attachedImages[itemId] else { return }
+        if let index = list.firstIndex(where: { $0.id == id }) {
+            try? FileManager.default.removeItem(atPath: list[index].path)
+            list.remove(at: index)
+        }
+        attachedImages[itemId] = list
     }
 }
 
