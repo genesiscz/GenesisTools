@@ -41,14 +41,12 @@ describe("detectImageFormat", () => {
         });
     });
 
-    test("an unknown signature falls back to image/png, never throws", () => {
-        expect(detectImageFormat(bytes(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12))).toEqual({
-            mime: "image/png",
-            ext: "png",
-        });
+    test("an unknown signature is no image, never a guessed PNG", () => {
+        expect(detectImageFormat(bytes(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12))).toBeNull();
+        expect(detectImageFormat(Buffer.from("#!/bin/sh\necho hi\n", "ascii"))).toBeNull();
     });
 
-    test("a buffer too short to carry any signature also falls back", () => {
-        expect(detectImageFormat(bytes(1, 2, 3))).toEqual({ mime: "image/png", ext: "png" });
+    test("a buffer too short to carry any signature is no image either", () => {
+        expect(detectImageFormat(bytes(1, 2, 3))).toBeNull();
     });
 });

@@ -6,13 +6,12 @@ export interface DetectedImageFormat {
 
 /**
  * Detect an image container from its leading magic bytes, never from a filename extension: a
- * caller handing this a user-picked path cannot be trusted to have named it honestly. Falls
- * back to `image/png` when the signature is unknown, matching `sanitizeImages`'
- * (`src/question/lib/pending/form.ts`) own default.
+ * caller handing this a user-picked path cannot be trusted to have named it honestly. Null when
+ * no known signature matches, so a text or executable file is never labelled an image.
  */
-export function detectImageFormat(buf: Buffer): DetectedImageFormat {
+export function detectImageFormat(buf: Buffer): DetectedImageFormat | null {
     if (buf.length < 12) {
-        return { mime: "image/png", ext: "png" };
+        return null;
     }
 
     // PNG: 0x89 "PNG\r\n\x1a\n"
@@ -40,5 +39,5 @@ export function detectImageFormat(buf: Buffer): DetectedImageFormat {
         return { mime: "image/bmp", ext: "bmp" };
     }
 
-    return { mime: "image/png", ext: "png" };
+    return null;
 }
