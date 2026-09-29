@@ -1024,6 +1024,41 @@ describe("evaluator wrapper", () => {
     });
 });
 
+describe("second selection pass", () => {
+    test("donors follow a stable order, not the order the first selections finished in", async () => {
+        const root = shopTree();
+        const donorOrders = async (slow: string) => {
+            const seen = new Set<string>();
+            const evaluator: Evaluator = {
+                get requests() {
+                    return 0;
+                },
+                async evaluate(request, policy) {
+                    await policy?.beforeAttempt?.();
+                    const state = stateOf(request);
+                    if (state.selectedEvidence) {
+                        const paths = (state.selectedEvidence as Array<{ path: string }>).map((entry) => entry.path);
+                        seen.add([...new Set(paths)].join(","));
+                    } else if (state.declarations && state.path === slow) {
+                        await Bun.sleep(30);
+                    }
+
+                    return shopAnswers(state, Object.keys(request.questions));
+                },
+            };
+            await retrieve(
+                { root, query: "How is the cart total computed?", signal: new AbortController().signal },
+                evaluator
+            );
+            return [...seen].sort();
+        };
+        const testFileSlow = await donorOrders("src/cart.test.ts");
+        const sourceSlow = await donorOrders("src/cart.ts");
+        expect(testFileSlow.length).toBeGreaterThan(0);
+        expect(sourceSlow).toEqual(testFileSlow);
+    });
+});
+
 describe("budgeted search", () => {
     const root = scratch("budget");
     tree(root, {

@@ -989,9 +989,9 @@ export async function retrieve(input: SearchInput, evaluator: Evaluator): Promis
             const selectEvidence = async (list: Candidate[]) => {
                 await select(list);
                 const evidence: Evidence[] = [];
-                // Donors follow selection completion order; concurrent completion can change the context.
-                for (const path of declarations.keys()) {
-                    const candidate = candidates.get(path)!;
+                // Donors follow score, then path. Upstream uses completion order, so the same tree could send
+                // a different context, and miss the cache, depending on which of 32 calls answered first.
+                for (const candidate of sortedCandidates().filter((entry) => declarations.has(entry.path))) {
                     if (stop || input.signal.aborted) {
                         break;
                     }
