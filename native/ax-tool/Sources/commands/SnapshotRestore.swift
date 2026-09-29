@@ -39,7 +39,8 @@ func cmdRestore(snapshotJson: String) {
     if let mouse = snap["mouse"] as? [String: Double],
        let mx = mouse["x"], let my = mouse["y"] {
         let point = CGPoint(x: mx, y: my)
-        CGWarpMouseCursorPosition(point)
+        // A user in the takeover corner owns the pointer now; moving it back would fight them.
+        gatedOrExit { try inputGate.post { _ = CGWarpMouseCursorPosition(point) } }
     }
 
     if let appName = snap["app"] as? String, !appName.isEmpty {

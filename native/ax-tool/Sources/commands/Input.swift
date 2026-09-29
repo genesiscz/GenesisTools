@@ -73,9 +73,9 @@ func postClick(at point: CGPoint, right: Bool, double: Bool) {
         ActionCursor.emit("click", point: point, target: "pixel")
         down.setIntegerValueField(.mouseEventClickState, value: Int64(i + 1))
         up.setIntegerValueField(.mouseEventClickState, value: Int64(i + 1))
-        down.postRouted()
+        let held = down.pressRouted(release: up)
         Thread.sleep(forTimeInterval: 0.03)
-        up.postRouted()
+        inputGate.release(held)
         if double && i == 0 { Thread.sleep(forTimeInterval: 0.03) }
     }
 }
@@ -154,8 +154,8 @@ func typeString(_ text: String, delayMs: Double, pid: pid_t? = nil) -> Int {
               let up = CGEvent(keyboardEventSource: src, virtualKey: 0, keyDown: false) else { return }
         down.keyboardSetUnicodeString(stringLength: chars.count, unicodeString: &chars)
         up.keyboardSetUnicodeString(stringLength: chars.count, unicodeString: &chars)
-        down.postRouted()
-        up.postRouted()
+        // Checked before every character, so a takeover mid-text stops at the next one.
+        inputGate.release(down.pressRouted(release: up))
         Thread.sleep(forTimeInterval: delayMs / 1000)
     }
 }
@@ -165,7 +165,7 @@ func tapKey(_ code: UInt16, flags: CGEventFlags = []) {
     guard let d = CGEvent(keyboardEventSource: src, virtualKey: code, keyDown: true),
           let u = CGEvent(keyboardEventSource: src, virtualKey: code, keyDown: false) else { return }
     d.flags = flags; u.flags = flags
-    d.postRouted(); u.postRouted()
+    inputGate.release(d.pressRouted(release: u))
 }
 
 func cmdTypeText(appName: String, text: String) {

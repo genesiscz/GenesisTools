@@ -213,6 +213,19 @@ final class ClipboardPasteTests: XCTestCase {
         try assertOriginal()
     }
 
+    func testATakeoverAtCmdVRestoresAndNamesItself() throws {
+        let transaction = try ClipboardTransaction(board: board)
+        let field = Field(board: board, value: "old")
+        var primitives = field.primitives(ours: "new")
+        primitives.postPaste = { throw UserTakeoverError(dispatched: true) }
+        XCTAssertThrowsError(try performClipboardPaste(transaction: transaction, text: "new", format: "text",
+                                                       replace: true, primitives: primitives)) { error in
+            XCTAssertEqual((error as? ClipboardPasteError)?.clipboardRestore, "restored")
+            XCTAssertEqual((error as? ClipboardPasteError)?.takeover?.category, .userTakeover)
+        }
+        try assertOriginal()
+    }
+
     func testFocusLossBeforePasteRestoresWithoutDispatch() throws {
         let field = Field(board: board, value: "old")
         field.focused = false

@@ -51,6 +51,8 @@ public struct ClipboardPasteError: Error, LocalizedError {
     public let message: String
     public let clipboardRestore: String
     public let dispatched: Bool
+    /// Set when a primitive stopped because the user took over, so the caller reports that refusal.
+    public var takeover: UserTakeoverError? = nil
     public var errorDescription: String? { message }
 }
 
@@ -179,7 +181,8 @@ public func performClipboardPaste(transaction: ClipboardTransaction, text: Strin
     let consumed: Bool
     switch attempt {
     case .failure(let error):
-        throw ClipboardPasteError(message: error.localizedDescription, clipboardRestore: restoration, dispatched: dispatched)
+        throw ClipboardPasteError(message: error.localizedDescription, clipboardRestore: restoration, dispatched: dispatched,
+                                  takeover: error as? UserTakeoverError)
     case .success(let result):
         value = result.value
         consumed = result.consumed

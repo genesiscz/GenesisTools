@@ -20,7 +20,7 @@ public struct WorkflowArguments {
         let flagOptions: Set<String>
         switch command {
         case "see":
-            valueOptions = ["--app", "--window-index", "--window-id", "--depth", "--path", "--scope", "--perception", "--perception-crop", "--perception-width", "--budget-ms", "--query", "--query-role"]
+            valueOptions = ["--app", "--window-index", "--window-id", "--depth", "--path", "--scope", "--perception", "--perception-crop", "--perception-width", "--perception-reuse", "--budget-ms", "--query", "--query-role"]
             flagOptions = ["--no-image"]
         case "act":
             valueOptions = [
@@ -79,6 +79,14 @@ public struct WorkflowArguments {
             if parsedValues["--perception-crop"] != nil || parsedValues["--perception-width"] != nil {
                 guard parsedValues["--perception"] == "ocr" else {
                     throw WorkflowArgumentError.invalid("perception transforms require --perception ocr")
+                }
+            }
+            if let path = parsedValues["--perception-reuse"] {
+                guard parsedValues["--perception"] == "ocr" else {
+                    throw WorkflowArgumentError.invalid("--perception-reuse requires --perception ocr")
+                }
+                guard !path.isEmpty, !path.hasSuffix("/") else {
+                    throw WorkflowArgumentError.invalid("--perception-reuse needs a cache file path")
                 }
             }
             if parsedFlags.contains("--no-image"), parsedValues["--perception"] != nil {

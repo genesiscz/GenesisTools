@@ -69,6 +69,11 @@ private func workflowFailure(_ message: String, category: SnapshotRefusal = .ref
 }
 
 private func workflowFailure(_ error: Error) -> Never {
+    if let takeover = error as? UserTakeoverError {
+        workflowDispatchState = takeover.dispatched ? "uncertain" : "not_started"
+        workflowFailure(takeover.localizedDescription, category: takeover.category)
+    }
+
     let category = (error as? SnapshotError)?.category ?? (error as? SnapshotDispatchError)?.category ?? (error as? VisualCaptureError)?.category ?? .refused
     workflowFailure(error.localizedDescription, category: category)
 }
@@ -327,7 +332,9 @@ private func workflowSnapshotOnce(appName: String, pid: pid_t, launch: Double, w
     var screenshot: [String: Any] = [:]
     var visual: VisualCaptureIdentity?
     var perceptionResult: [String: Any] = [:]
+    var gray: GrayImage?
     if let image {
+        gray = GrayImage(image)
         let path = requestedPath ?? FileManager.default.temporaryDirectory
             .appendingPathComponent("control-see-\(UUID().uuidString).png").path
         guard let png = NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:]) else {
@@ -342,7 +349,7 @@ private func workflowSnapshotOnce(appName: String, pid: pid_t, launch: Double, w
                   (scope == "chrome" && row["role"] as? String == "AXWebArea") else { return nil }
             return tree.frames[index]
         }
-        let result = try visualPerception(image: image, png: png, pid: pid, launch: launch, windowID: Int(window.id),
+        let result = try visualPerception(image: image, png: png, gray: gray, pid: pid, launch: launch, windowID: Int(window.id),
             bounds: window.bounds, capturedAt: capturedAt, options: perception, privateFrames: privateFrames)
         visual = result.0
         perceptionResult = result.1
@@ -357,7 +364,14 @@ private func workflowSnapshotOnce(appName: String, pid: pid_t, launch: Double, w
     } catch {
         throw ObservedTreeError("cannot encode snapshot token: \(error.localizedDescription)")
     }
-    let publicRows = tree.rows.map { row in row.filter { $0.key != "identity" } }
+    var publicRows = tree.rows.map { row in row.filter { $0.key != "identity" } }
+    // Added to the returned rows only, after the digest: whether pixels show a control is evidence
+    // about this capture, not part of the tree identity act validates against.
+    if let gray {
+        for index in undrawnRows(rows: tree.rows, frames: tree.frames, window: window.bounds, image: gray) {
+            publicRows[index]["drawn"] = false
+        }
+    }
     var queryReport: [String: Any] = [:]
     if scope == "query", let query = workflowQuery, let report = workflowQueryReport {
         queryReport = report.dictionary
@@ -654,7 +668,8 @@ func cmdSee(appName _: String) {
                 }
                 width = number
             }
-            perception = VisualPerceptionOptions(ocr: true, crop: crop, width: width)
+            perception = VisualPerceptionOptions(ocr: true, crop: crop, width: width,
+                                                 reusePath: workflowArgument("--perception-reuse"))
         }
         jsonOutput(try workflowSnapshot(appName: appName, pid: pid, launch: launch, window: window, index: index,
                                         depth: depth, scope: scope, path: workflowArgument("--path"), settled: nil, captureImage: !workflowFlag("--no-image"), perception: perception))
@@ -850,6 +865,11 @@ func cmdAct(appName _: String) {
     // read, so a caller who knows what an element is called never runs `see` at all.
     let byIdentifier = workflowArgument("--by-identifier")
     let action = workflowArgument("--action")!
+    // The user stops an agent by putting the pointer in the menu-bar corner. Checked before anything
+    // that changes the UI, the activation --prepare does included; the gate checks again per event.
+    if action != "get" {
+        do { try inputGate.check() } catch { workflowFailure(error) }
+    }
     workflowPermissions()
     let pid = resolveApp(appName)
     let launch = workflowLaunch(pid)
@@ -1410,19 +1430,22 @@ func cmdAct(appName _: String) {
                 let before = Set(tree.rows.compactMap { $0["AXTitle"] as? String }).union(
                     tree.rows.compactMap { $0["AXDescription"] as? String })
                 ActionCursor.emit("move", point: point, background: false, target: rawCoords == nil ? "ax" : "pixel")
-                CGWarpMouseCursorPosition(point)
+                // Checked before the warp: once it runs, the pointer is ours and no longer says
+                // where the user put it.
+                try inputGate.post { _ = CGWarpMouseCursorPosition(point) }
                 if let moved = CGEvent(mouseEventSource: nil, mouseType: .mouseMoved,
                                        mouseCursorPosition: point, mouseButton: .left) {
-                    moved.post(tap: .cghidEventTap)
+                    try inputGate.post { moved.post(tap: .cghidEventTap) }
                 }
-                Thread.sleep(forTimeInterval: Double(dwellMs) / 1000.0)
+                try inputGate.sleepWatching(Double(dwellMs) / 1000.0)
                 let during = workflowAfterState(appName: appName, pid: pid, launch: launch, window: window, token: token)
                 // --hold leaves the pointer on the target. A control revealed by hover exists only
                 // while the pointer is over it, so restoring here would delete the thing the next
                 // act wants to press. The caller owns putting it back, with `control restore`.
+                // A user who took over during the dwell keeps the pointer where they put it.
                 let hold = workflowFlag("--hold")
                 if let origin, !hold {
-                    CGWarpMouseCursorPosition(origin)
+                    try inputGate.post { _ = CGWarpMouseCursorPosition(origin) }
                 }
                 let rows = (during["elements"] as? [[String: Any]]) ?? []
                 let after = Set(rows.compactMap { $0["AXTitle"] as? String }).union(
@@ -1443,7 +1466,7 @@ func cmdAct(appName _: String) {
                     try validateAfterFeedback()
                     _ = try verifyPoint(point, pin: .element)
                     try admitVisualAction()
-                }, dispatch: { event.postToPid(pid) })
+                }, dispatch: { try inputGate.post { event.postToPid(pid) } })
                 Thread.sleep(forTimeInterval: 0.05)
             } else if action == "scroll" {
                 guard let direction = workflowArgument("--direction"), ["up", "down", "left", "right"].contains(direction) else {
@@ -1486,7 +1509,7 @@ func cmdAct(appName _: String) {
                 }
                 _ = try verifyPoint(point, pin: .element)
                 try admitVisualAction()
-                }, dispatch: { event.postToPid(pid) })
+                }, dispatch: { try inputGate.post { event.postToPid(pid) } })
                 Thread.sleep(forTimeInterval: 0.1)
             } else if action == "drag" {
                 guard let destination = workflowArgument("--to") else {
@@ -1505,13 +1528,16 @@ func cmdAct(appName _: String) {
                 }
                 ActionCursor.emit("drag", point: point, background: background, target: rawCoords == nil ? "ax" : "pixel")
                 try validateAfterFeedback()
+                // The takeover check runs in verify, which precedes every post but the closing
+                // release; the factory posts that release itself when verify throws.
                 try factory.drag(start: point, points: points, stepDelay: duration / Double(steps),
                                  verify: {
+                                     try inputGate.check()
                                      _ = try verifyPoint($0, pin: WindowEventFactory.dragVerifyTarget(point: $0, start: point))
                                      try admitVisualAction()
-                                 }, post: {
-                                     ActionCursor.emit("drag", point: $0.location, background: background, target: rawCoords == nil ? "ax" : "pixel", waitForPresentation: false)
-                                     $0.postToPid(pid)
+                                 }, post: { event in
+                                     ActionCursor.emit("drag", point: event.location, background: background, target: rawCoords == nil ? "ax" : "pixel", waitForPresentation: false)
+                                     inputGate.deliver { event.postToPid(pid) }
                                  })
                 Thread.sleep(forTimeInterval: 0.05)
             } else {
@@ -1537,15 +1563,15 @@ func cmdAct(appName _: String) {
                         down.setIntegerValueField(.mouseEventButtonNumber, value: 2)
                         up.setIntegerValueField(.mouseEventButtonNumber, value: 2)
                     }
-                    try dispatchAfterPresentation(present: {
+                    let held = try dispatchAfterPresentation(present: {
                         ActionCursor.emit("click", point: point, background: background, target: rawCoords == nil ? "ax" : "pixel")
                     }, validate: {
                         if click == 1 { try validateAfterFeedback() }
                         _ = try verifyPoint(point, pin: .element)
                         try admitVisualAction()
-                    }, dispatch: { down.postToPid(pid) })
+                    }, dispatch: { try inputGate.press({ down.postToPid(pid) }, release: { up.postToPid(pid) }) })
                     Thread.sleep(forTimeInterval: 0.03)
-                    up.postToPid(pid)
+                    inputGate.release(held)
                     Thread.sleep(forTimeInterval: 0.03)
                 }
             }
@@ -1565,9 +1591,9 @@ func cmdAct(appName _: String) {
             }
             down.flags = .maskCommand
             up.flags = .maskCommand
-            down.postToPid(pid)
+            let held = try inputGate.press({ down.postToPid(pid) }, release: { up.postToPid(pid) })
             Thread.sleep(forTimeInterval: 0.05)
-            up.postToPid(pid)
+            inputGate.release(held)
             Thread.sleep(forTimeInterval: 0.05)
         }
         let primitives = ClipboardPastePrimitives(
@@ -1627,9 +1653,11 @@ func cmdAct(appName _: String) {
             }
         } catch let failure as ClipboardPasteError {
             termination.cancel()
-            workflowDispatchState = failure.dispatched ? "uncertain" : "not_started"
-            workflowFailure(failure.message, extras: ["clipboardRestore": failure.clipboardRestore,
-                                                      "pasteDispatched": failure.dispatched])
+            // A takeover after cmd+a posted it, so that paste is uncertain even without cmd+v.
+            let partial = failure.dispatched || failure.takeover?.dispatched == true
+            workflowDispatchState = partial ? "uncertain" : "not_started"
+            workflowFailure(failure.message, category: failure.takeover?.category ?? .refused,
+                            extras: ["clipboardRestore": failure.clipboardRestore, "pasteDispatched": failure.dispatched])
         } catch {
             termination.cancel()
             workflowFailure(error)
@@ -1674,8 +1702,8 @@ func cmdAct(appName _: String) {
             }
             down.keyboardSetUnicodeString(stringLength: units.count, unicodeString: &units)
             up.keyboardSetUnicodeString(stringLength: units.count, unicodeString: &units)
-            down.postToPid(pid)
-            up.postToPid(pid)
+            // Checked before every character, so a takeover mid-text stops at the next one.
+            inputGate.release(try inputGate.press({ down.postToPid(pid) }, release: { up.postToPid(pid) }))
             Thread.sleep(forTimeInterval: 0.01)
         }
     case "key":
@@ -1702,9 +1730,9 @@ func cmdAct(appName _: String) {
             workflowFailure(refusal)
         }
         workflowDispatchState = "uncertain"
-        down.postToPid(pid)
+        let held = try inputGate.press({ down.postToPid(pid) }, release: { up.postToPid(pid) })
         Thread.sleep(forTimeInterval: 0.05)
-        up.postToPid(pid)
+        inputGate.release(held)
         Thread.sleep(forTimeInterval: 0.05)
     default:
         workflowFailure("unsupported action")
@@ -1754,6 +1782,16 @@ func cmdAct(appName _: String) {
     } catch {
         workflowFailure(error)
     }
+}
+
+/// Every session step fails before its press, so nothing was dispatched; a takeover names itself.
+private func sessionRefusal(_ error: Error) -> [String: Any] {
+    var result: [String: Any] = ["ok": false, "dispatchState": "not_started", "error": error.localizedDescription]
+    if let takeover = error as? UserTakeoverError {
+        result["refusal"] = takeover.category.rawValue
+    }
+
+    return result
 }
 
 private final class ControlNativeSession {
@@ -1879,6 +1917,9 @@ private final class ControlNativeSession {
                 throw ObservedTreeError("verification requires AXSelected, AXExpanded or boolean AXValue")
             }
         }
+        // A batch runs up to 200 presses; the takeover corner stops it before the next one, and
+        // before the activation a focused step does.
+        try inputGate.check()
         if input["focus"] as? Bool == true {
             guard bringFrontmost(pid), performActionWithTimeout(window.ax, action: "AXRaise", timeoutMs: 1000) == .success else {
                 throw ObservedTreeError("could not focus requested window")
@@ -1923,7 +1964,7 @@ private final class ControlNativeSession {
                 if delay > 0 { Thread.sleep(forTimeInterval: delay) }
                 var result: [String: Any]
                 do { result = try act(step) }
-                catch { result = ["ok": false, "dispatchState": "not_started", "error": error.localizedDescription] }
+                catch { result = sessionRefusal(error) }
                 result["atMs"] = (ProcessInfo.processInfo.systemUptime - start) * 1000
                 results.append(result)
                 if result["ok"] as? Bool != true { break }
@@ -1946,7 +1987,7 @@ func cmdControlSession(appName: String) {
             continue
         }
         do { jsonOutput(try session.handle(input)) }
-        catch { jsonOutput(["ok": false, "dispatchState": "not_started", "error": error.localizedDescription]) }
+        catch { jsonOutput(sessionRefusal(error)) }
         fflush(stdout)
     }
 }

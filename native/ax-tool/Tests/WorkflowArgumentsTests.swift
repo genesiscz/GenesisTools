@@ -173,6 +173,12 @@ final class PerceptionArgumentTests: XCTestCase {
         XCTAssertThrowsError(try WorkflowArguments(["--app", "Fixture", "--perception", "icons"], command: "see"))
         XCTAssertThrowsError(try WorkflowArguments(["--app", "Fixture", "--perception", "ocr", "--no-image"], command: "see"))
         XCTAssertThrowsError(try WorkflowArguments(["--app", "Fixture", "--perception-width", "800"], command: "see"))
+        let reuse = try WorkflowArguments(["--app", "Fixture", "--perception", "ocr", "--perception-reuse", "/tmp/ocr.json"],
+                                          command: "see")
+        XCTAssertEqual(reuse.values["--perception-reuse"], "/tmp/ocr.json")
+        XCTAssertThrowsError(try WorkflowArguments(["--app", "Fixture", "--perception-reuse", "/tmp/ocr.json"], command: "see"))
+        XCTAssertThrowsError(try WorkflowArguments(["--app", "Fixture", "--perception", "ocr", "--perception-reuse", ""],
+                                                   command: "see"))
         let action = ["--app", "Fixture", "--snapshot", "token", "--action", "click", "--region", "v0"]
         XCTAssertNoThrow(try WorkflowArguments(action, command: "act"))
         XCTAssertThrowsError(try WorkflowArguments(action + ["--coords", "1,2"], command: "act"))
