@@ -302,6 +302,42 @@ describe("stuckVerdict", () => {
         expect(result?.error).toBeDefined();
     });
 
+    test("a discovered session says whether a live agent process holds it, or null when ps fails", async () => {
+        const row = (sessionId: string) => ({
+            provider: "claude" as const,
+            sessionId,
+            title: null,
+            cwd: "/work/shop",
+            cwdShort: "shop",
+            project: "shop",
+            mtime: T0,
+            model: null,
+            account: null,
+            filePath: join(mkdtempSync(join(tmpdir(), "gt-stuck-")), "missing.jsonl"),
+        });
+        const rows = async () => [row("sess-live"), row("sess-exited")];
+        const found = await stuckSessions({
+            rows,
+            thresholds,
+            now: T0,
+            liveSessions: async () => new Set(["sess-live"]),
+        });
+
+        expect(found.map((entry) => [entry.sessionId, entry.running])).toEqual([
+            ["sess-live", true],
+            ["sess-exited", false],
+        ]);
+        const unknown = await stuckSessions({
+            rows,
+            thresholds,
+            now: T0,
+            liveSessions: async () => {
+                throw new Error("ps failed");
+            },
+        });
+        expect(unknown.map((entry) => entry.running)).toEqual([null, null]);
+    });
+
     test("flags a call waiting past the threshold, and not before it", () => {
         const turns = [
             user("u1", "go", 0),

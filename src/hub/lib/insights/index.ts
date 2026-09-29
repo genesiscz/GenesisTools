@@ -23,6 +23,7 @@ import { concurrentMap } from "@genesiscz/utils/async";
 import { logger } from "@genesiscz/utils/logger";
 import { Storage } from "@genesiscz/utils/storage";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/storage";
+import { readProcsReport } from "../procs/sources";
 import { composeHandoff, type HandoffDraft, type HandoffMeta, type HandoffRange } from "./handoff";
 import { codexModelOf, readTail, scanClaudeNative, toolInputKeys } from "./native";
 import { readStuckThresholds, stuckVerdict } from "./stuck";
@@ -269,6 +270,14 @@ export interface StuckOptions {
     now?: number;
     /** The recently active sessions to check when `sessionIds` is empty; tests pass their own rows. */
     rows?: (hours: number) => Promise<AgentSessionRow[]>;
+    /** Session ids a live agent process holds, read once per discovery; tests pass their own. */
+    liveSessions?: () => Promise<Set<string>>;
+}
+
+/** The sessions the process pane ties to a running agent (one `ps`), for the stuck scan's discovery. */
+async function liveAgentSessions(): Promise<Set<string>> {
+    const report = await readProcsReport();
+    return new Set(report.groups.flatMap((group) => (group.session ? [group.session.sessionId] : [])));
 }
 
 /** Verdicts for the given sessions, or for every recently active one. A session that fails to read carries `error`. */
@@ -341,7 +350,22 @@ export async function stuckSessions(options: StuckOptions = {}): Promise<Session
         },
     });
 
-    return targets.map((target) => results.get(target)).filter((entry): entry is SessionStuck => entry !== undefined);
+    const found = targets.map((target) => results.get(target)).filter((entry) => entry !== undefined);
+
+    if (options.sessionIds && options.sessionIds.length > 0) {
+        return found;
+    }
+
+    // Discovered from history, so a transcript alone does not prove an agent is still running it.
+    let live: Set<string> | null = null;
+
+    try {
+        live = await (options.liveSessions ?? liveAgentSessions)();
+    } catch (err) {
+        log.warn({ err }, "stuck: the process table could not be read; running is unknown");
+    }
+
+    return found.map((entry) => ({ ...entry, running: live ? live.has(entry.sessionId) : null }));
 }
 
 export interface HandoffOptions {

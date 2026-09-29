@@ -111,7 +111,9 @@ function printInsights(insights: SessionInsights): void {
 }
 
 function printStuck(results: SessionStuck[], thresholds: StuckThresholds): void {
-    const flagged = results.filter((result) => result.verdict !== null);
+    // A discovered session no agent process holds is an exited agent's transcript, not a stuck agent.
+    const flagged = results.filter((result) => result.verdict !== null && result.running !== false);
+    const exited = results.filter((result) => result.verdict !== null && result.running === false);
     renderCliHeader(
         "Stuck agents",
         `a call waiting ${thresholds.toolMinutes} min or longer, or ${thresholds.repeats} identical calls in a row`
@@ -141,6 +143,13 @@ function printStuck(results: SessionStuck[], thresholds: StuckThresholds): void 
         }
 
         out.println(table.toString());
+    }
+
+    if (exited.length > 0) {
+        const ids = exited.map((result) => result.sessionId.slice(0, 8)).join(", ");
+        out.println(
+            pc.dim(`Transcript only, no agent process holds it (an exited agent without an end record): ${ids}`)
+        );
     }
 
     const failed = results.filter((result) => result.error);

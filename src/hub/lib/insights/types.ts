@@ -127,6 +127,12 @@ export interface SessionStuck {
     verdict: StuckVerdict | null;
     /** Set when the session's transcript could not be read. */
     error?: string;
+    /**
+     * Discovery only: whether a live agent process holds the session (`tools hub procs`); a transcript
+     * without one is an exited agent that left no end record. Null when the process table could not be
+     * read; absent for sessions named explicitly (the hub names only its live ones).
+     */
+    running?: boolean | null;
 }
 
 export interface SessionInsights {
