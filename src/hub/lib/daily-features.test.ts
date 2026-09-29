@@ -305,6 +305,8 @@ describe("digest", () => {
         expect(digestDay("yesterday", local)?.since).toEqual(new Date(2026, 2, 1));
         expect(digestDay("2026-02-10", local)).toEqual({ since: new Date(2026, 1, 10), until: new Date(2026, 1, 11) });
         expect(digestDay("2026-02-30", local)).toBeNull();
+        expect(digestDay("2026-13-10", local)).toBeNull();
+        expect(digestDay("2026-00-10", local)).toBeNull();
         expect(digestDay("last week", local)).toBeNull();
     });
 

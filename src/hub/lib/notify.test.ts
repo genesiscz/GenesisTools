@@ -581,11 +581,18 @@ describe("the test notification", () => {
         );
         expect(testNotification(null).title).toContain("TEST");
 
-        for (const ref of ["42", "#42", "acme/web#42", "group/sub/app!12"]) {
+        for (const ref of [
+            "42",
+            "#42",
+            "acme/web#42",
+            "group/sub/app!12",
+            "https://github.com/acme/web/pull/42/files",
+            "https://gitlab.example/group/sub/app/-/merge_requests/12",
+        ]) {
             expect(isHubPrRef(ref)).toBe(true);
         }
 
-        for (const ref of ["web", "acme/web#", "#x", "42a", ""]) {
+        for (const ref of ["web", "acme/web#", "#x", "42a", "", "https://github.com/acme/web/issues/42"]) {
             expect(isHubPrRef(ref)).toBe(false);
         }
     });
