@@ -19,6 +19,8 @@ export async function dispatchSystem(event: NotificationEvent, config: SystemCha
             execute: event.execute,
             appIcon: event.appIcon,
             ignoreDnD: event.ignoreDnD ?? config.ignoreDnD,
+            id: event.id,
+            actions: event.actions,
         });
 
         return true;
