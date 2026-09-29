@@ -29,11 +29,14 @@ async function main(): Promise<void> {
     const status = required<HTMLElement>("#status");
     const onward = required<HTMLAnchorElement>("#continue");
     const run = required<HTMLButtonElement>("#run");
+    const close = required<HTMLButtonElement>("#close");
     required<HTMLElement>("#url").textContent = target;
+    close.addEventListener("click", () => void leave());
 
     const fail = (reply: HostResponse) => {
         status.className = "gt-error";
         status.textContent = reply.ok ? "unexpected reply" : reply.error;
+        close.hidden = false;
     };
 
     if (window.top !== window) {
@@ -55,6 +58,7 @@ async function main(): Promise<void> {
         status.className = "gt-muted";
         status.textContent = "No local route matches this link, so the router would only send it back to this browser.";
         onward.hidden = false;
+        close.hidden = false;
         onward.addEventListener("click", async (event) => {
             event.preventDefault();
             const bypass = await ext.runtime.sendMessage({ type: "router.bypass", url: target });

@@ -1,19 +1,30 @@
 import { afterAll, describe, expect, it } from "bun:test";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import type { OpenHubOptions, OpenHubResult } from "@app/hub/lib/open";
 import type { LocalCheckout } from "@genesiscz/utils/git/local-checkouts";
 import type { EditorTarget, RunResult, TerminalTarget } from "@genesiscz/utils/open-in";
 import { makeTempDir } from "@genesiscz/utils/paths";
 import { isProcessAlive } from "@genesiscz/utils/process-alive";
+import {
+    checkoutCache,
+    headBranchFromEmbeddedData,
+    menuTargetContext,
+    pageFocusTarget,
+    quickCardMayClose,
+    surfaceHoldsFocus,
+} from "../extension/content-dom";
 import { targetFromHash } from "../extension/shared/route-target";
 import { actionValues, runAction } from "./actions";
 import { ConfigError, parseConfig } from "./config";
 import { type Deps, type RunOptions, routedRunner, spawnArgv } from "./deps";
+import { cliTail } from "./errors";
 import { explainHunk } from "./explain";
 import { dispatch } from "./host/dispatch";
 import { extensionIdFromKey, pinnedExtensionId } from "./host/install";
-import { hostReplyDeadlineMs } from "./host/messages";
+import { type HostResponse, hostReplyDeadlineMs } from "./host/messages";
 import { encodeFrame, FrameReader } from "./host/protocol";
+import { openInHub } from "./hub";
 import { openFile } from "./open";
 import { parseForgeUrl, splitRefPath } from "./page-url";
 import { planReview, startReview } from "./review";
@@ -42,18 +53,21 @@ interface Calls {
     tools: string[][];
     editor: EditorTarget[];
     terminal: TerminalTarget[];
+    hub: OpenHubOptions[];
 }
 
 function fakeDeps({
     config = {},
     tools = () => ({ code: 0, stdout: "", stderr: "" }),
     run = () => ({ code: 0, stdout: "", stderr: "" }),
+    hub = (options) => ({ built: false, args: ["--hub", "--mode", options.mode ?? "sessions"] }),
 }: {
     config?: Record<string, unknown>;
     tools?: (args: string[]) => RunResult;
     run?: (argv: string[]) => RunResult;
+    hub?: (options: OpenHubOptions) => OpenHubResult;
 } = {}): { deps: Deps; calls: Calls } {
-    const calls: Calls = { run: [], tools: [], editor: [], terminal: [] };
+    const calls: Calls = { run: [], tools: [], editor: [], terminal: [], hub: [] };
     const parsed = parseConfig({ repoRoots: [], ...config });
     const deps: Deps = {
         config: async () => parsed,
@@ -84,6 +98,10 @@ function fakeDeps({
                 return { driver: "cmux", detail: "workspace:1" };
             },
         }),
+        hub: async (options) => {
+            calls.hub.push(options);
+            return hub(options);
+        },
         promptDir: join(base, "prompts"),
         now: () => new Date("2026-01-02T03:04:05Z"),
     };
@@ -261,6 +279,169 @@ describe("dispatch", () => {
         const { deps } = fakeDeps();
         const reply = await dispatch(deps, { command: "open.terminal", params: { url: "https://github.com/o/other" } });
         expect(reply).toMatchObject({ ok: false, code: "no-checkout" });
+    });
+});
+
+describe("open in GenesisTools", () => {
+    const mr = "https://gitlab.internal.example/group/app/-/merge_requests/7";
+
+    it("selects the MR in the hub's PRs mode, and opens a diff file in its review", async () => {
+        const { deps, calls } = fakeDeps();
+        expect(await openInHub(deps, { url: `${mr}/diffs` })).toMatchObject({ root });
+        expect(await openInHub(deps, { url: mr, path: "src/a.ts" })).toMatchObject({
+            detail: "GenesisTools shows group/app!7, src/a.ts",
+        });
+        expect(calls.hub).toEqual([
+            { mode: "prs", pr: "group/app!7", reveal: undefined },
+            { mode: "prs", pr: "group/app!7", reveal: "src/a.ts" },
+        ]);
+        await expect(openInHub(deps, { url: mr, path: "../app-feat/x" })).rejects.toThrow();
+        expect(calls.hub).toHaveLength(2);
+    });
+
+    it("opens any other project page in Worktrees, on the worktree of the page's branch", async () => {
+        const { deps, calls } = fakeDeps();
+        await openInHub(deps, { url: "https://gitlab.internal.example/group/app", branch: "feat/login" });
+        expect(calls.hub).toEqual([{ mode: "worktrees", worktree }]);
+    });
+
+    it("never reaches the hub for a project with no local checkout", async () => {
+        const { deps } = fakeDeps({
+            hub: () => {
+                throw new Error("the hub must not open for a project without a checkout");
+            },
+        });
+        const reply = await dispatch(deps, {
+            command: "hub.open",
+            params: { url: "https://github.com/o/other/pull/3" },
+        });
+        expect(reply).toMatchObject({ ok: false, code: "no-checkout" });
+    });
+});
+
+describe("page text for the cards", () => {
+    it("drops colour codes, clack glyphs and blank lines from a CLI failure, and keeps its end", () => {
+        expect(cliTail("\u001b[31m│\u001b[39m\n■  link used up\n\n")).toBe("link used up");
+        expect(cliTail(`${"x".repeat(400)}\nreason`, 20)).toBe(`…${"x".repeat(13)}\nreason`);
+    });
+
+    it("reads the right-clicked element for a menu entry and nothing for the keyboard shortcut", () => {
+        const read = (): { path?: string } => ({ path: "src/a.ts" });
+        const never = (): { path?: string } => {
+            throw new Error("the shortcut must not read an old right-click target");
+        };
+        expect(menuTargetContext({ type: "menu", item: "open-hub", source: "shortcut" }, never, {})).toEqual({});
+        expect(menuTargetContext({ type: "menu", item: "open-hub", source: "menu" }, read, {})).toEqual({
+            path: "src/a.ts",
+        });
+        expect(menuTargetContext({ type: "menu", item: "open-file" }, read, {})).toEqual({ path: "src/a.ts" });
+    });
+
+    it("keeps a definite checkout answer for the page's life and asks again after a host failure", async () => {
+        const replies: HostResponse[] = [
+            { ok: false, code: "unavailable", error: "host down" },
+            { ok: true, data: { root: "/tmp/x" } },
+            { ok: false, code: "no-checkout", error: "none" },
+        ];
+        const asked: string[] = [];
+        const known = checkoutCache(async (webBase) => {
+            asked.push(webBase);
+            const reply = replies.shift();
+
+            if (!reply) {
+                throw new Error(`asked again for ${webBase} after a definite answer`);
+            }
+
+            return reply;
+        });
+
+        expect(await known("https://github.com/a/b")).toBe(true);
+        expect(await known("https://github.com/a/b")).toBe(true);
+        expect(await known("https://github.com/a/b")).toBe(true);
+        expect(await Promise.all([known("https://github.com/c/d"), known("https://github.com/c/d")])).toEqual([
+            false,
+            false,
+        ]);
+        expect(await known("https://github.com/c/d")).toBe(false);
+        expect(asked).toEqual(["https://github.com/a/b", "https://github.com/a/b", "https://github.com/c/d"]);
+    });
+
+    it("says which pages still wait for a definite checkout answer, so focus can ask again", async () => {
+        const replies: HostResponse[] = [
+            { ok: false, code: "unavailable", error: "host down" },
+            { ok: false, code: "no-checkout", error: "none" },
+        ];
+        const cache = checkoutCache(async () => replies.shift() ?? { ok: false, code: "failed", error: "none left" });
+
+        expect(cache.answered("https://github.com/a/b")).toBe(false);
+        await cache("https://github.com/a/b");
+        // The host was down: nothing is kept, so a focus or a visible tab asks again.
+        expect(cache.answered("https://github.com/a/b")).toBe(false);
+        await cache("https://github.com/a/b");
+        expect(cache.answered("https://github.com/a/b")).toBe(true);
+    });
+
+    it("sends focus to the page's main landmark when the dock disappears under it", () => {
+        const attributes = new Map<string, string>();
+        const main = {
+            hasAttribute: (name: string) => attributes.has(name),
+            setAttribute: (name: string, value: string) => {
+                attributes.set(name, value);
+            },
+        };
+        const body = { hasAttribute: () => true, setAttribute: () => undefined };
+
+        expect(pageFocusTarget({ querySelector: () => main, body })).toBe(main);
+        // A landmark only takes focus with a tabindex; -1 keeps it out of the tab order.
+        expect(attributes.get("tabindex")).toBe("-1");
+        expect(pageFocusTarget({ querySelector: () => null, body })).toBe(body);
+    });
+
+    it("recovers a checkout probe that throws instead of keeping the rejection", async () => {
+        let calls = 0;
+        const known = checkoutCache(async () => {
+            calls++;
+
+            if (calls === 1) {
+                throw new Error("transport gone");
+            }
+
+            return { ok: false, code: "no-checkout", error: "none" };
+        });
+
+        expect(await known("https://github.com/a/b")).toBe(true);
+        expect(await known("https://github.com/a/b")).toBe(false);
+        expect(calls).toBe(2);
+    });
+
+    it("keeps a quick result open while it has the focus or the pointer", () => {
+        const inside = "close button";
+        const card = (hovered: boolean) => ({
+            contains: (node: string | null) => node === inside,
+            matches: (selector: string) => selector === ":hover" && hovered,
+        });
+
+        expect(quickCardMayClose(card(false), null)).toBe(true);
+        expect(quickCardMayClose(card(false), inside)).toBe(false);
+        expect(quickCardMayClose(card(true), null)).toBe(false);
+    });
+
+    it("hands focus to the new dock only when the replaced one held it", () => {
+        const toggle = "GT toggle";
+        const dock = { contains: (node: string | null) => node === toggle };
+
+        expect(surfaceHoldsFocus(dock, toggle)).toBe(true);
+        expect(surfaceHoldsFocus(dock, "a link on the page")).toBe(false);
+        expect(surfaceHoldsFocus(dock, null)).toBe(false);
+        expect(surfaceHoldsFocus(null, toggle)).toBe(false);
+    });
+
+    it("reads the PR head branch from GitHub's embedded page data only when it names this PR", () => {
+        const data =
+            '{"payload":{"pullRequest":{"number":424,"baseBranch":"master","headBranch":"feat/2026-09-26-enhancements"}}}';
+        expect(headBranchFromEmbeddedData(data, 424)).toBe("feat/2026-09-26-enhancements");
+        expect(headBranchFromEmbeddedData(data, 425)).toBeUndefined();
+        expect(headBranchFromEmbeddedData(undefined, 424)).toBeUndefined();
     });
 });
 

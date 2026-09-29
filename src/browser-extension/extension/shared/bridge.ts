@@ -7,14 +7,19 @@ export type BackgroundMessage =
     | { type: "gitlab.sync" }
     | { type: "router.bypass"; url: string };
 
-/** Background -> content script: a context-menu entry was clicked on this tab. */
+/** Background -> content script: a context-menu entry (or the keyboard shortcut) fired on this tab. */
 export interface MenuMessage {
     type: "menu";
     item: MenuItem;
     selectionText?: string;
+    /** The link that was right-clicked, when the menu opened on a link. */
+    linkUrl?: string;
+    /** "shortcut" for the keyboard command: no right-click happened, so no element is the target. */
+    source?: "menu" | "shortcut";
 }
 
-export type MenuItem = "open-file" | "open-terminal" | "explain" | "review";
+export const MENU_ITEMS = ["open-hub", "open-file", "open-terminal", "explain", "review"] as const;
+export type MenuItem = (typeof MENU_ITEMS)[number];
 
 export function isRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -44,10 +49,8 @@ export function isMenuMessage(value: unknown): value is MenuMessage {
     return (
         isRecord(value) &&
         value.type === "menu" &&
-        (value.item === "open-file" ||
-            value.item === "open-terminal" ||
-            value.item === "explain" ||
-            value.item === "review")
+        typeof value.item === "string" &&
+        (MENU_ITEMS as readonly string[]).includes(value.item)
     );
 }
 

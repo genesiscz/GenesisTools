@@ -2,6 +2,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { ext } from "./chrome";
 import { callHost, isRecord } from "./shared/bridge";
 import { mountPage, required } from "./shared/page";
+import { chip, el } from "./shared/theme";
 
 const EXAMPLE_ACTION = {
     id: "start-work-item",
@@ -90,13 +91,12 @@ async function main(): Promise<void> {
     required<HTMLElement>("#reload").addEventListener("click", () => void load());
     const host = required<HTMLElement>("#host");
     const ping = await callHost("ping");
-    host.className = ping.ok ? "gt-ok" : "gt-error";
-    host.textContent =
-        ping.ok && isRecord(ping.data)
-            ? `Connected (host ${String(ping.data.version)})`
-            : ping.ok
-              ? "Connected"
-              : ping.error;
+    const version = ping.ok && isRecord(ping.data) ? ` · host ${String(ping.data.version)}` : "";
+    host.className = "gt-row";
+    host.replaceChildren(
+        chip(ping.ok ? `connected${version}` : "host down", ping.ok ? "ok" : "err"),
+        ...(ping.ok ? [] : [el("span", { className: "gt-error", text: ping.error })])
+    );
     await load();
 }
 

@@ -5,7 +5,7 @@ import { expandTilde } from "@genesiscz/utils/paths";
 import { startSession } from "./agent";
 import type { ActionSpec, BrowserExtensionConfig } from "./config";
 import type { Deps } from "./deps";
-import { FeatureError } from "./errors";
+import { cliTail, FeatureError } from "./errors";
 import { checkPageValue, fillArgv, fillText, isRecord } from "./values";
 
 const log = logger.child({ component: "browser-extension/actions" });
@@ -117,7 +117,7 @@ export async function runAction(deps: Deps, request: ActionRequest): Promise<Act
         const res = await deps.run(argv, { cwd, timeoutMs: action.timeoutMs ?? 120_000 });
 
         if (res.code !== 0) {
-            throw new FeatureError("failed", `${argv[0]} exited ${res.code}: ${res.stderr.trim().slice(-500)}`);
+            throw new FeatureError("failed", `${argv[0]} exited ${res.code}: ${cliTail(res.stderr, 500)}`);
         }
 
         outcome.stdoutLastLine =

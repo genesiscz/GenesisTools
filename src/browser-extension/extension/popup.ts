@@ -3,6 +3,7 @@ import { parseForgeUrl } from "../lib/page-url";
 import { ext } from "./chrome";
 import { callHost, isRecord } from "./shared/bridge";
 import { describe, mountPage, required } from "./shared/page";
+import { chip, el } from "./shared/theme";
 
 interface PopupField {
     selector: string;
@@ -73,7 +74,7 @@ function actionsFrom(data: unknown): { actions: PopupAction[]; gitlabHosts: stri
 
 async function main(): Promise<void> {
     mountPage();
-    const host = required<HTMLElement>("#host");
+    const hostSlot = required<HTMLElement>("#host");
     const result = required<HTMLElement>("#result");
     required<HTMLElement>("#options").addEventListener("click", (event) => {
         event.preventDefault();
@@ -89,14 +90,13 @@ async function main(): Promise<void> {
     const ping = await callHost("ping");
 
     if (!ping.ok) {
-        host.className = "gt-error";
-        host.textContent = "host not reachable";
+        hostSlot.replaceChildren(chip("host down", "err"));
+        required<HTMLElement>("#host-help").hidden = false;
         show(ping, () => "");
         return;
     }
 
-    host.className = "gt-ok";
-    host.textContent = "host ok";
+    hostSlot.replaceChildren(chip(`host ${isRecord(ping.data) ? String(ping.data.version) : "ok"}`, "ok"));
     const [tab] = await ext.tabs.query({ active: true, currentWindow: true });
     const url = tab?.url ?? "";
     const configReply = await callHost("config.get");
@@ -105,40 +105,70 @@ async function main(): Promise<void> {
 
     if (page) {
         required<HTMLElement>("#page").hidden = false;
-        required<HTMLElement>("#page-info").textContent =
-            `${page.kind} ${page.project}${page.number ? ` #${page.number}` : ""}`;
-        const buttons = required<HTMLElement>("#page-buttons");
-        const add = (label: string, run: () => Promise<void>, primary = false) => {
-            const button = document.createElement("button");
-            button.className = primary ? "gt-btn primary" : "gt-btn";
-            button.textContent = label;
-            // A second click while the host works would start the same command again (two reviews).
-            button.addEventListener("click", async () => {
-                button.disabled = true;
+        const label = page.number
+            ? `${page.project} ${page.kind === "gitlab" ? "!" : "#"}${page.number}`
+            : page.project;
+        required<HTMLElement>("#page-info").replaceChildren(
+            el("span", { className: "gt-title", text: label }),
+            el("span", {
+                className: "gt-chip",
+                text: page.view === "pr" ? (page.kind === "gitlab" ? "MR" : "PR") : page.view,
+            })
+        );
+        const where = required<HTMLElement>("#page-checkout");
+        const checkout = await callHost("checkout.resolve", { url });
 
-                try {
-                    await run();
-                } finally {
-                    button.disabled = false;
-                }
-            });
-            buttons.append(button);
-        };
+        if (!checkout.ok) {
+            where.className = checkout.code === "no-checkout" ? "gt-muted" : "gt-error";
+            where.textContent = checkout.error;
+        } else {
+            const first =
+                isRecord(checkout.data) && Array.isArray(checkout.data.checkouts) ? checkout.data.checkouts[0] : null;
+            const root = isRecord(first) && typeof first.root === "string" ? first.root : "";
+            const branch = isRecord(first) && typeof first.branch === "string" ? first.branch : null;
+            where.replaceChildren(
+                el("span", { className: "gt-muted", text: "Local " }),
+                el("span", { className: "gt-code", text: root.split("/").pop() ?? root, title: root }),
+                ...(branch ? [el("span", { className: "gt-muted", text: ` on ${branch}` })] : [])
+            );
+            const buttons = required<HTMLElement>("#page-buttons");
+            const add = (label: string, run: () => Promise<void>, primary = false) => {
+                const button = el("button", { className: primary ? "gt-btn primary" : "gt-btn", text: label });
+                button.type = "button";
+                // A second click while the host works would start the same command again (two reviews).
+                button.addEventListener("click", async () => {
+                    button.disabled = true;
 
-        if (page.view === "pr") {
+                    try {
+                        await run();
+                    } finally {
+                        button.disabled = false;
+                    }
+                });
+                buttons.append(button);
+            };
+
             add(
-                "Review with agent",
+                "Open in GenesisTools",
                 async () =>
-                    show(
-                        await callHost("review.start", { url }),
-                        (data) => `Started: ${isRecord(data) ? String(data.detail) : ""}`
+                    show(await callHost("hub.open", { url }), (data) =>
+                        isRecord(data) ? String(data.detail) : "Opened"
                     ),
                 true
             );
-        }
 
-        add("Open locally", async () => show(await callHost("open.file", { url }), () => "Opened in the editor"));
-        add("Terminal", async () => show(await callHost("open.terminal", { url }), () => "Terminal opened"));
+            if (page.view === "pr") {
+                add("Review with agent", async () =>
+                    show(
+                        await callHost("review.start", { url }),
+                        (data) => `Started: ${isRecord(data) ? String(data.detail) : ""}`
+                    )
+                );
+            }
+
+            add("Open locally", async () => show(await callHost("open.file", { url }), () => "Opened in the editor"));
+            add("Terminal", async () => show(await callHost("open.terminal", { url }), () => "Terminal opened"));
+        }
     }
 
     // The host validated each pattern, but this engine may still refuse one: skip it, keep the others.
