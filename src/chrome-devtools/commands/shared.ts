@@ -4,7 +4,16 @@ import { suggestCommand } from "@genesiscz/utils/cli";
 import { logger, out } from "@genesiscz/utils/logger";
 import { inspectPidFile, writePidFile } from "@genesiscz/utils/process/pidfile";
 import type { Command } from "commander";
-import { AmbiguousTabError, attach, NoMatchingTabError, type Page, probe } from "../lib/cdp.ts";
+import {
+    AmbiguousTabError,
+    Conn,
+    NoMatchingTabError,
+    Page,
+    pickPageTarget,
+    probe,
+    type Target,
+    targets,
+} from "../lib/cdp.ts";
 import { DEFAULT_CAPTURE_CHANNELS } from "../lib/channels.ts";
 import { captureDir, ensureCaptureDir, readLastPort, recorderPidPath } from "../lib/paths.ts";
 import { artifactPath } from "../lib/platform.ts";
@@ -179,9 +188,18 @@ export async function resolvePort(opts: { port?: string }): Promise<number> {
 
 /** attach() with the no-random-tab contract; exits with guidance when the match misses. */
 export async function attachTab(opts: { port?: string; match?: string }): Promise<Page> {
+    const { target } = await pickTab(opts);
+    const page = new Page(new Conn(target.webSocketDebuggerUrl), target);
+    await page.enable();
+    return page;
+}
+
+/** The page target a verb acts on, chosen with the same no-guess rules; exits with guidance on a miss. */
+export async function pickTab(opts: { port?: string; match?: string }): Promise<{ port: number; target: Target }> {
     const port = await resolvePort(opts);
     try {
-        return await attach({ port, url: opts.match });
+        const pages = (await targets(port)).filter((target) => target.type === "page");
+        return { port, target: pickPageTarget(pages, { url: opts.match, port }) };
     } catch (err) {
         if (err instanceof NoMatchingTabError) {
             out.log.error(`${err.message} on port ${port}.`);

@@ -4,13 +4,94 @@ import {
     AmbiguousTabError,
     Browser,
     type CdpCookie,
+    cdpPortOf,
     classifyEvalError,
     closeTabCandidates,
+    evaluationExpression,
+    localDebuggerUrl,
     makeMatcher,
     NoMatchingTabError,
     newTab,
     pickPageTarget,
 } from "./cdp.ts";
+import { findTargets } from "./dom/find.ts";
+import type { DomAction, DomSnapshot } from "./dom/in-page.ts";
+
+test("a payload file's doc comment and trailing semicolon do not stop its function from running", () => {
+    const file = "/**\n * BROWSER PAYLOAD\n */\n// helper\nasync () => {\n    return 1;\n};\n";
+    expect(evaluationExpression(file)).toBe("(async () => {\n    return 1;\n})()");
+    expect(evaluationExpression("() => location.href")).toBe("(() => location.href)()");
+    expect(evaluationExpression("function () { return 2; }")).toBe("(function () { return 2; })()");
+    expect(evaluationExpression("document.title")).toBe("document.title");
+    expect(evaluationExpression("asyncValue + 1")).toBe("asyncValue + 1");
+});
+
+describe("a page-agent target named by its label", () => {
+    const action = (id: string, kind: DomAction["kind"], label: string, extra: Partial<DomAction> = {}): DomAction => ({
+        id,
+        node: Number(id.slice(1)),
+        kind,
+        role: kind === "fill" ? "textbox" : "button",
+        label,
+        guard: id,
+        ...extra,
+    });
+    const snapshot = (actions: DomAction[]): DomSnapshot => ({
+        url: "http://127.0.0.1/",
+        title: "Fixture",
+        text: "",
+        actions,
+        omitted: 0,
+        belowFold: 0,
+        belowFoldLabels: [],
+        secretFields: [],
+        canScrollDown: false,
+        canScrollUp: false,
+        historyLength: 1,
+        marker: "m",
+    });
+    const read = snapshot([
+        action("n1", "click", "Save"),
+        action("n2", "click", "Save as"),
+        action("n3", "fill", "Search"),
+        action("n4", "select", "Shipping", { role: "combobox", option: { index: 1, label: "Express" } }),
+        action("n5", "click", "Buy"),
+        action("n6", "click", "Buy"),
+    ]);
+
+    test("an exact label wins over a longer one that contains it", () => {
+        expect(findTargets(read, { text: "save", kinds: ["click"] }).map((row) => row.id)).toEqual(["n1"]);
+    });
+
+    test("a substring matches when no label is exact", () => {
+        expect(findTargets(read, { text: "as", kinds: ["click"] }).map((row) => row.id)).toEqual(["n2"]);
+    });
+
+    test("a select row is named by its option, and the kinds filter applies", () => {
+        expect(findTargets(read, { text: "Express", kinds: ["click", "select"] }).map((row) => row.id)).toEqual(["n4"]);
+        expect(findTargets(read, { text: "Search", kinds: ["click"] })).toEqual([]);
+    });
+
+    test("twins are all returned, so the caller refuses to guess", () => {
+        expect(findTargets(read, { text: "Buy", kinds: ["click"] })).toHaveLength(2);
+    });
+});
+
+test("a CDP endpoint names its port, and one on another host is refused", () => {
+    expect(cdpPortOf("http://127.0.0.1:9222")).toBe(9222);
+    expect(cdpPortOf("http://localhost:9333/")).toBe(9333);
+    expect(() => cdpPortOf("http://10.0.0.5:9222")).toThrow("this machine");
+    expect(() => cdpPortOf("http://127.0.0.1")).toThrow("names no port");
+    expect(() => cdpPortOf("not a url")).toThrow();
+});
+
+test("the DOM driver accepts only a debugger socket on this machine and the requested port", () => {
+    expect(localDebuggerUrl({ webSocketDebuggerUrl: "ws://127.0.0.1:9222/devtools/page/A" }, 9222)).toContain(
+        "127.0.0.1:9222"
+    );
+    expect(() => localDebuggerUrl({ webSocketDebuggerUrl: "ws://127.0.0.1:9333/devtools/page/A" }, 9222)).toThrow();
+    expect(() => localDebuggerUrl({ webSocketDebuggerUrl: "ws://evil.example:9222/devtools/page/A" }, 9222)).toThrow();
+});
 
 describe("pickPageTarget", () => {
     test("throws when no tab URL matches instead of returning the first tab", () => {

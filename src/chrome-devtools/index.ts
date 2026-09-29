@@ -12,6 +12,7 @@
  *   status       recorders, CPU/memory, buffers, endpoints
  *   doctor       read-only diagnosis · cleanup — the mutating counterpart
  *   cookies, console, eval, nav, shot, grid, trace, targets, rm-cookie
+ *   snapshot, click, fill, scroll — read a tab and act on it by label (the page agent)
  *   open, restart — launch/relaunch a browser WITH the debugging flag
  *   scaffold, cheatsheet, mcp — scripting doors
  */
@@ -25,6 +26,7 @@ import { registerFollow } from "./commands/follow.ts";
 import { registerHar } from "./commands/har.ts";
 import { registerInspect } from "./commands/inspect.ts";
 import { registerNetPanel } from "./commands/net-panel.ts";
+import { registerPage } from "./commands/page.ts";
 import { registerRecord, registerWatchTombstone } from "./commands/record.ts";
 import { registerScripting } from "./commands/scripting.ts";
 import { registerStatus } from "./commands/status.ts";
@@ -62,6 +64,7 @@ registerDoctor(program);
 registerCleanup(program);
 registerBrowse(program);
 registerInspect(program);
+registerPage(program);
 registerScripting(program);
 
 await runTool(program, { tool: "chrome-devtools" });

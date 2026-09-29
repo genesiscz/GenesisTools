@@ -18,6 +18,10 @@ eval '() => …'                run JS in the tab, JSON out (no value -> null, e
 nav <url> [--new]             navigate a tab (--new opens one instead of reusing)
 shot [png] [--full]           screenshot the tab
 grid [png] --step 60          screenshot with pixel-coordinate grid (for clicking into pages)
+snapshot [--text] [--json]    the tab's controls (role, label, value), open shadow roots included
+click "<label>" [--nth n]     click by label: guard + hit test, real mouse; an option label selects it
+fill "<label>" "<text>"       replace a field's text and read it back (--stdin keeps it off argv)
+scroll [down|up]              scroll most of a screen, so below-the-fold controls come into view
 trace --match X               quick one-tab docs+redirect chain to a file
 targets [--match X] [--json]  tab list, one line each (id, title, url); --json = the same list, as JSON
 open --fresh | restart        launch/relaunch a browser WITH the debugging flag
