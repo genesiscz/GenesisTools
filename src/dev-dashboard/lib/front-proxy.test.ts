@@ -7,6 +7,7 @@ import {
     makeBasicAuthHeader,
 } from "@app/dev-dashboard/lib/auth";
 import {
+    assetCacheControl,
     classifyUpstreamFailure,
     decideProxyAuth,
     fetchProxiedUpstream,
@@ -135,6 +136,20 @@ describe("LOCAL_ORIGIN_HEADER invariant", () => {
         // trust into a fail-open auth bypass — pin the value.
         expect(LOCAL_ORIGIN_HEADER).toBe("x-dd-local-origin");
         expect(LOCAL_ORIGIN_HEADER).toBe(LOCAL_ORIGIN_HEADER.toLowerCase());
+    });
+});
+
+describe("assetCacheControl", () => {
+    test("a hashed asset 200 is kept by the browser for a year, never by a shared cache", () => {
+        expect(assetCacheControl("/assets/index-Bx81kQ2a.js", 200)).toBe("private, max-age=31536000, immutable");
+    });
+
+    test("the SPA shell, API routes and non-200 answers keep the upstream header", () => {
+        expect(assetCacheControl("/", 200)).toBeUndefined();
+        expect(assetCacheControl("/index.html", 200)).toBeUndefined();
+        expect(assetCacheControl("/api/qa/decisions", 200)).toBeUndefined();
+        expect(assetCacheControl("/assets/index-Bx81kQ2a.js", 304)).toBeUndefined();
+        expect(assetCacheControl("/assets/missing.js", 404)).toBeUndefined();
     });
 });
 

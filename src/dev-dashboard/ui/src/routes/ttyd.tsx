@@ -1,9 +1,3 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useNavigate, useSearch } from "@tanstack/react-router";
-import { Layers, Plus, Send, X } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
-import { Mosaic, type MosaicNode, MosaicWindow } from "react-mosaic-component";
-import "react-mosaic-component/react-mosaic-component.css";
 import { ttydLabel } from "@app/dev-dashboard/lib/ttyd/label";
 import type { TtydSession } from "@app/dev-dashboard/lib/ttyd/types";
 import {
@@ -11,10 +5,15 @@ import {
     flattenMosaicLeaves,
     reconcileMosaicLayout,
 } from "@genesiscz/utils/ui/helpers/mosaic-layout";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useNavigate, useSearch } from "@tanstack/react-router";
 import { BlinkingBox } from "@ui/components/BlinkingBox";
 import { Button } from "@ui/components/button";
 import { IconButton } from "@ui/components/icon-button";
 import { cn } from "@ui/lib/utils";
+import { Layers, Plus, Send, X } from "lucide-react";
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
+import type { MosaicNode } from "react-mosaic-component";
 import { CmuxSendTargetDialog } from "@/components/CmuxSendTargetDialog";
 import { MobileKeyBar } from "@/components/MobileKeyBar";
 import { TmuxSessionsPanel } from "@/components/TmuxSessionsPanel";
@@ -41,6 +40,9 @@ import { invalidateTmuxAndTtyd } from "@/lib/query-keys";
 import { buildTtydTabs } from "@/lib/terminal-tabs";
 import { pickTtydActiveId, TTYD_TAB_SEARCH_KEY, writeTtydActiveId } from "@/lib/view-state";
 
+const loadTtydMosaic = () => import("@/components/TtydMosaic");
+const TtydMosaic = lazy(() => loadTtydMosaic().then((module) => ({ default: module.TtydMosaic })));
+
 function LayoutToggle({ mode, setMode }: { mode: "mosaic" | "focused"; setMode: (m: "mosaic" | "focused") => void }) {
     return (
         <Button
@@ -59,18 +61,33 @@ export function TtydRoute() {
     const navigate = useNavigate({ from: "/ttyd" });
     const { tab: urlTabId } = useSearch({ from: "/ttyd" });
     const { data } = useQuery({ queryKey: ["ttyd", "list"], queryFn: ttydApi.list });
-    const { sessions: tmuxHub } = useTmuxHubSessions({ listIntervalMs: 5000 });
     const sessions = data?.sessions ?? [];
+    const [layout, setLayout] = useState<MosaicNode<string> | null>(null);
+    const { mode, isMobile, setMode } = useLayoutMode("ttyd");
+    // Only the mosaic tile's "Send to cmux" tint reads this, and `inCmux` comes from the slow
+    // cmux query. The fast list therefore loads once (and again when a spawn, kill or rename
+    // invalidates it) instead of polling every 5 s, and focused mode does not fetch at all.
+    const { sessions: tmuxHub } = useTmuxHubSessions({ enabled: mode === "mosaic", listIntervalMs: false });
 
     const isSessionInCmux = (tmuxSessionName: string) =>
         tmuxHub.some((session) => session.name === tmuxSessionName && session.inCmux);
-    const [layout, setLayout] = useState<MosaicNode<string> | null>(null);
-    const { mode, isMobile, setMode } = useLayoutMode("ttyd");
     const focusedMobile = mode === "focused" && isMobile;
     useLockPageScroll(mode === "focused");
     useVisualViewportSize(focusedMobile);
     const [activeId, setActiveId] = useState<string | null>(null);
     const active = activeId ?? sessions[0]?.id ?? null;
+    // Focused mode stacks every terminal and shows one. Each iframe is a whole ttyd page
+    // (about 720 KB), an xterm and a tmux client, so a terminal now connects the first time
+    // it is shown instead of all of them at page open. A shown one stays mounted, so
+    // switching back to it is still instant.
+    const [shownIds, setShownIds] = useState<ReadonlySet<string>>(() => new Set());
+
+    useEffect(() => {
+        if (active && !shownIds.has(active)) {
+            setShownIds((current) => new Set(current).add(active));
+        }
+    }, [active, shownIds]);
+
     const [hubOpen, setHubOpen] = useState(false);
     const [closeTarget, setCloseTarget] = useState<TtydSession | null>(null);
     const [sendTarget, setSendTarget] = useState<TtydSession | null>(null);
@@ -162,6 +179,9 @@ export function TtydRoute() {
         if (mode !== "mosaic") {
             return;
         }
+
+        // Fetch the mosaic chunk beside the terminal list instead of after it.
+        void loadTtydMosaic();
 
         // Nudge react-mosaic to recompute once after the container paints. A
         // persistent "resize" listener that re-dispatches "resize" recurses
@@ -335,12 +355,14 @@ export function TtydRoute() {
                                         zIndex: s.id === active ? 1 : 0,
                                     }}
                                 >
-                                    <TtydFrame
-                                        id={s.id}
-                                        title={`ttyd-${s.id}`}
-                                        className="h-full w-full bg-black"
-                                        iframeRef={s.id === active ? activeIframeRef : undefined}
-                                    />
+                                    {s.id === active || shownIds.has(s.id) ? (
+                                        <TtydFrame
+                                            id={s.id}
+                                            title={`ttyd-${s.id}`}
+                                            className="h-full w-full bg-black"
+                                            iframeRef={s.id === active ? activeIframeRef : undefined}
+                                        />
+                                    ) : null}
                                     {s.id === active ? <TtydScrollPads iframeRef={activeIframeRef} /> : null}
                                     {s.id === active ? (
                                         <TtydScrollbar ttydId={active} iframeRef={activeIframeRef} />
@@ -383,69 +405,55 @@ export function TtydRoute() {
             </div>
             <div className="flex-1 overflow-hidden">
                 {layout && sessions.length > 0 ? (
-                    <Mosaic<string>
-                        value={layout}
-                        onChange={(next) => setLayout(next)}
-                        renderTile={(id, path) => {
-                            const session = sessions.find((candidate) => candidate.id === id);
-
-                            if (!session) {
-                                return (
-                                    <div className="dd-panel flex h-full items-center justify-center p-2 text-[var(--dd-text-muted)]">
-                                        session gone
-                                    </div>
-                                );
-                            }
-
-                            return (
-                                <MosaicWindow<string>
-                                    path={path}
-                                    // Name wins in the topbar; Claude's live topic is separate meta.
-                                    title={ttydLabel(session)}
-                                    additionalControls={null}
-                                    toolbarControls={
-                                        <div className="flex items-center gap-0.5">
-                                            {session.tmuxSessionName ? (
-                                                <IconButton
-                                                    size="icon-sm"
-                                                    variant="ghost"
-                                                    tooltip="Send to cmux"
-                                                    onClick={() => setSendTarget(session)}
-                                                    className={
-                                                        isSessionInCmux(session.tmuxSessionName)
-                                                            ? "text-muted-foreground hover:bg-accent hover:text-foreground"
-                                                            : "text-emerald-400 hover:bg-emerald-400/10 hover:text-emerald-300"
-                                                    }
-                                                >
-                                                    <Send size={12} />
-                                                </IconButton>
-                                            ) : null}
-                                            <IconButton
-                                                size="icon-sm"
-                                                variant="ghost"
-                                                tooltip="Close terminal"
-                                                className="text-[var(--dd-danger)] hover:bg-[var(--dd-danger)]/15 hover:text-[var(--dd-danger)]"
-                                                onClick={() => setCloseTarget(session)}
-                                            >
-                                                <X size={12} />
-                                            </IconButton>
-                                        </div>
-                                    }
-                                >
-                                    <BlinkingBox
-                                        active={highlightId === id}
-                                        variant="accent-glow"
-                                        iterations={1}
-                                        durationMs={2500}
-                                        className={cn("h-full", highlightId === id ? "dd-ttyd-highlight" : undefined)}
+                    <Suspense fallback={null}>
+                        <TtydMosaic
+                            layout={layout}
+                            onChange={(next) => setLayout(next)}
+                            sessions={sessions}
+                            renderToolbar={(session) => (
+                                <div className="flex items-center gap-0.5">
+                                    {session.tmuxSessionName ? (
+                                        <IconButton
+                                            size="icon-sm"
+                                            variant="ghost"
+                                            tooltip="Send to cmux"
+                                            onClick={() => setSendTarget(session)}
+                                            className={
+                                                isSessionInCmux(session.tmuxSessionName)
+                                                    ? "text-muted-foreground hover:bg-accent hover:text-foreground"
+                                                    : "text-emerald-400 hover:bg-emerald-400/10 hover:text-emerald-300"
+                                            }
+                                        >
+                                            <Send size={12} />
+                                        </IconButton>
+                                    ) : null}
+                                    <IconButton
+                                        size="icon-sm"
+                                        variant="ghost"
+                                        tooltip="Close terminal"
+                                        className="text-[var(--dd-danger)] hover:bg-[var(--dd-danger)]/15 hover:text-[var(--dd-danger)]"
+                                        onClick={() => setCloseTarget(session)}
                                     >
-                                        <TtydPane session={session} />
-                                    </BlinkingBox>
-                                </MosaicWindow>
-                            );
-                        }}
-                        className="dd-mosaic"
-                    />
+                                        <X size={12} />
+                                    </IconButton>
+                                </div>
+                            )}
+                            renderBody={(session) => (
+                                <BlinkingBox
+                                    active={highlightId === session.id}
+                                    variant="accent-glow"
+                                    iterations={1}
+                                    durationMs={2500}
+                                    className={cn(
+                                        "h-full",
+                                        highlightId === session.id ? "dd-ttyd-highlight" : undefined
+                                    )}
+                                >
+                                    <TtydPane session={session} />
+                                </BlinkingBox>
+                            )}
+                        />
+                    </Suspense>
                 ) : (
                     <div className="dd-panel flex h-full items-center justify-center text-[var(--dd-text-muted)]">
                         No terminals. Click "New terminal".

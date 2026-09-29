@@ -1,27 +1,14 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { createRootRoute, createRoute, createRouter, Outlet, redirect } from "@tanstack/react-router";
+import {
+    createRootRoute,
+    createRoute,
+    createRouter,
+    lazyRouteComponent,
+    Outlet,
+    redirect,
+} from "@tanstack/react-router";
 import { parseObsidianSearch } from "@/lib/obsidian-url-state";
 import { Shell } from "@/routes/__root";
-import { ActivityTimelineRoute } from "@/routes/activity-timeline";
-import { AiAccountsRoute } from "@/routes/ai-accounts";
-import { BoardRoute } from "@/routes/board";
-import { BoardsRoute } from "@/routes/boards";
-import { BuildLogTailRoute } from "@/routes/build-log-tail";
-import { CmuxRoute } from "@/routes/cmux";
-import { ContainersRoute } from "@/routes/containers";
-import { DaemonRoute } from "@/routes/daemon";
-import { DiskJanitorRoute } from "@/routes/disk-janitor";
-import { IndexRoute } from "@/routes/index";
-import { NeedsInputInboxRoute } from "@/routes/needs-input-inbox";
-import { NetworkStatusRoute } from "@/routes/network-status";
-import { ObsidianRoute } from "@/routes/obsidian";
-import { PortKillerRoute } from "@/routes/port-killer";
-import { ProcessMonitorRoute } from "@/routes/process-monitor";
-import { QaRoute } from "@/routes/qa";
-import { QuickCommandsRoute } from "@/routes/quick-commands";
-import { TmuxPresetsRoute } from "@/routes/tmux-presets";
-import { TodosRoute } from "@/routes/todos";
-import { TtydRoute } from "@/routes/ttyd";
 
 const queryClient = new QueryClient({
     defaultOptions: {
@@ -42,10 +29,13 @@ const rootRoute = createRootRoute({
     ),
 });
 
+// Every page is its own chunk, so opening the terminal page on a phone does not download
+// highlight.js, KaTeX and recharts, which only the QA, handoff and chart pages use. Hover
+// and touch preload a page's chunk through `defaultPreload: "intent"`.
 const indexRoute = createRoute({
     getParentRoute: () => rootRoute,
     path: "/",
-    component: IndexRoute,
+    component: lazyRouteComponent(() => import("@/routes/index"), "IndexRoute"),
 });
 
 const ttydRoute = createRoute({
@@ -60,26 +50,26 @@ const ttydRoute = createRoute({
 
         return {};
     },
-    component: TtydRoute,
+    component: lazyRouteComponent(() => import("@/routes/ttyd"), "TtydRoute"),
 });
 
 const cmuxRoute = createRoute({
     getParentRoute: () => rootRoute,
     path: "/cmux",
-    component: CmuxRoute,
+    component: lazyRouteComponent(() => import("@/routes/cmux"), "CmuxRoute"),
 });
 
 const obsidianRoute = createRoute({
     getParentRoute: () => rootRoute,
     path: "/obsidian",
     validateSearch: (search: Record<string, unknown>) => parseObsidianSearch(search),
-    component: ObsidianRoute,
+    component: lazyRouteComponent(() => import("@/routes/obsidian"), "ObsidianRoute"),
 });
 
 const aiAccountsRoute = createRoute({
     getParentRoute: () => rootRoute,
     path: "/ai/accounts",
-    component: AiAccountsRoute,
+    component: lazyRouteComponent(() => import("@/routes/ai-accounts"), "AiAccountsRoute"),
 });
 
 // The Claude-only usage page became the multi-provider /ai/accounts page. The old
@@ -95,91 +85,91 @@ const claudeRoute = createRoute({
 const daemonRoute = createRoute({
     getParentRoute: () => rootRoute,
     path: "/daemon",
-    component: DaemonRoute,
+    component: lazyRouteComponent(() => import("@/routes/daemon"), "DaemonRoute"),
 });
 
 const buildLogTailRoute = createRoute({
     getParentRoute: () => rootRoute,
     path: "/build-log-tail",
-    component: BuildLogTailRoute,
+    component: lazyRouteComponent(() => import("@/routes/build-log-tail"), "BuildLogTailRoute"),
 });
 
 const activityTimelineRoute = createRoute({
     getParentRoute: () => rootRoute,
     path: "/activity-timeline",
-    component: ActivityTimelineRoute,
+    component: lazyRouteComponent(() => import("@/routes/activity-timeline"), "ActivityTimelineRoute"),
 });
 
 const containersRoute = createRoute({
     getParentRoute: () => rootRoute,
     path: "/containers",
-    component: ContainersRoute,
+    component: lazyRouteComponent(() => import("@/routes/containers"), "ContainersRoute"),
 });
 
 const diskJanitorRoute = createRoute({
     getParentRoute: () => rootRoute,
     path: "/disk-janitor",
-    component: DiskJanitorRoute,
+    component: lazyRouteComponent(() => import("@/routes/disk-janitor"), "DiskJanitorRoute"),
 });
 
 const portKillerRoute = createRoute({
     getParentRoute: () => rootRoute,
     path: "/port-killer",
-    component: PortKillerRoute,
+    component: lazyRouteComponent(() => import("@/routes/port-killer"), "PortKillerRoute"),
 });
 
 const processMonitorRoute = createRoute({
     getParentRoute: () => rootRoute,
     path: "/process-monitor",
-    component: ProcessMonitorRoute,
+    component: lazyRouteComponent(() => import("@/routes/process-monitor"), "ProcessMonitorRoute"),
 });
 
 const todosRoute = createRoute({
     getParentRoute: () => rootRoute,
     path: "/todos",
-    component: TodosRoute,
+    component: lazyRouteComponent(() => import("@/routes/todos"), "TodosRoute"),
 });
 
 const qaRoute = createRoute({
     getParentRoute: () => rootRoute,
     path: "/qa",
-    component: QaRoute,
+    component: lazyRouteComponent(() => import("@/routes/qa"), "QaRoute"),
 });
 
 const needsInputInboxRoute = createRoute({
     getParentRoute: () => rootRoute,
     path: "/needs-input-inbox",
-    component: NeedsInputInboxRoute,
+    component: lazyRouteComponent(() => import("@/routes/needs-input-inbox"), "NeedsInputInboxRoute"),
 });
 
 const networkStatusRoute = createRoute({
     getParentRoute: () => rootRoute,
     path: "/network-status",
-    component: NetworkStatusRoute,
+    component: lazyRouteComponent(() => import("@/routes/network-status"), "NetworkStatusRoute"),
 });
 
 const tmuxPresetsRoute = createRoute({
     getParentRoute: () => rootRoute,
     path: "/tmux-presets",
-    component: TmuxPresetsRoute,
+    component: lazyRouteComponent(() => import("@/routes/tmux-presets"), "TmuxPresetsRoute"),
 });
 
 const quickCommandsRoute = createRoute({
     getParentRoute: () => rootRoute,
     path: "/quick-commands",
-    component: QuickCommandsRoute,
+    component: lazyRouteComponent(() => import("@/routes/quick-commands"), "QuickCommandsRoute"),
 });
 
 const boardsRoute = createRoute({
     getParentRoute: () => rootRoute,
     path: "/boards",
-    component: BoardsRoute,
+    component: lazyRouteComponent(() => import("@/routes/boards"), "BoardsRoute"),
 });
 
 const boardRoute = createRoute({
     getParentRoute: () => rootRoute,
     path: "/boards/$slug",
-    component: BoardRoute,
+    component: lazyRouteComponent(() => import("@/routes/board"), "BoardRoute"),
 });
 
 const routeTree = rootRoute.addChildren([

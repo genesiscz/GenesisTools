@@ -8,9 +8,15 @@ interface QaRecencyTimeProps {
 }
 
 export const QaRecencyTime = memo(function QaRecencyTime({ ts }: QaRecencyTimeProps) {
-    const now = useQaClock();
+    // One string, so the row re-renders only when the tier or the label moves.
+    const recency = useQaClock((now) => {
+        const { tier, relative } = resolveQaRecency(ts, now);
+        return `${tier} ${relative}`;
+    });
+    const tierEnd = recency.indexOf(" ");
+    const tier = recency.slice(0, tierEnd);
+    const relative = recency.slice(tierEnd + 1);
     const when = new Date(ts);
-    const { tier, relative } = resolveQaRecency(ts, now);
     const absolute = formatClock(when, { date: "short", seconds: true });
 
     return (

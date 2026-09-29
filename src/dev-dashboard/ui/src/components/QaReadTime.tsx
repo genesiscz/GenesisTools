@@ -7,8 +7,7 @@ interface QaReadTimeProps {
 }
 
 export const QaReadTime = memo(function QaReadTime({ readAt }: QaReadTimeProps) {
-    const now = useQaClock();
-    const elapsed = formatElapsedDhM(now - readAt);
+    const elapsed = useQaClock((now) => formatElapsedDhM(now - readAt));
 
     return (
         <span className="text-[var(--dd-text-muted)] tabular-nums" title="Marked read">

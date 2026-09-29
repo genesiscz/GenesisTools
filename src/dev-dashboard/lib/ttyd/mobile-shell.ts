@@ -319,7 +319,20 @@ const TTYD_MOBILE_SHELL_SCRIPT = `<script id="dd-ttyd-mobile-shell-js">
 })();
 </script>`;
 
-export function shouldInjectTtydMobileShell(pathname: string, contentType: string | null): boolean {
+/** A ttyd HTML document, fetched with a method that has a body: a HEAD probe (TtydFrame) stays headers-only. */
+export function shouldInjectTtydMobileShell({
+    method,
+    pathname,
+    contentType,
+}: {
+    method: string;
+    pathname: string;
+    contentType: string | null;
+}): boolean {
+    if (method === "HEAD") {
+        return false;
+    }
+
     if (!/^\/ttyd\/[0-9a-fA-F-]{36}(?:\/|$)/.test(pathname)) {
         return false;
     }

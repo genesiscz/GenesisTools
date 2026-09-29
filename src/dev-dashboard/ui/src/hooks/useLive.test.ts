@@ -1,6 +1,14 @@
 import { describe, expect, test } from "bun:test";
 import type { LiveChannel } from "@app/dev-dashboard/lib/live/types";
-import { AI_USAGE_KEYS, channelsFromKey, liveChannelsKey } from "./useLive";
+import { SafeJSON } from "@genesiscz/utils/json";
+import type { QueryClient } from "@tanstack/react-query";
+import {
+    AI_USAGE_KEYS,
+    channelsFromKey,
+    type LiveConnectionDeps,
+    liveChannelsKey,
+    openLiveConnection,
+} from "./useLive";
 
 /**
  * The reconnect storm (sweep 2026-09-04) was an effect that depended on the
@@ -68,5 +76,123 @@ describe("channelsFromKey", () => {
 
     test("an empty key means no channels, not one empty channel", () => {
         expect(channelsFromKey(liveChannelsKey([]))).toEqual([]);
+    });
+});
+
+/** Stands in for the browser `EventSource`: no network, just `onmessage`/`onerror`/`close`. */
+class FakeEventSource {
+    onmessage: ((ev: MessageEvent) => void) | null = null;
+    onerror: (() => void) | null = null;
+    closed = false;
+    readonly url: string;
+
+    constructor(url: string | URL) {
+        this.url = String(url);
+    }
+
+    close(): void {
+        this.closed = true;
+    }
+
+    hello(connId: string): void {
+        this.onmessage?.({
+            data: SafeJSON.stringify({ channel: "system", type: "hello", payload: { connId } }),
+        } as MessageEvent);
+    }
+}
+
+function fakeDeps(
+    created: FakeEventSource[]
+): LiveConnectionDeps & { connId: () => string | null; lastError: () => string | null } {
+    let connId: string | null = null;
+    let lastError: string | null = null;
+    const connIdRef = { current: null as string | null };
+
+    return {
+        qc: { setQueryData: () => {}, invalidateQueries: async () => {} } as unknown as QueryClient,
+        connIdRef,
+        setConnId: (id) => {
+            connId = id;
+        },
+        setLastError: (message) => {
+            lastError = message;
+        },
+        connId: () => connId,
+        lastError: () => lastError,
+        EventSourceCtor: class extends FakeEventSource {
+            constructor(url: string | URL) {
+                super(url);
+                created.push(this);
+            }
+        } as unknown as typeof EventSource,
+    };
+}
+
+/**
+ * Pins the idle-cost behavior a hidden tab must not defeat: the tab-visibility test the review
+ * asked for, run against `openLiveConnection` instead of a rendered hook, since this package has
+ * no DOM/hook renderer to mount `useLive` itself in (the `liveChannelsKey` tests above cover the
+ * rest of this file the same way, against a pure helper rather than a render).
+ */
+describe("openLiveConnection", () => {
+    test("hiding the tab closes the sole EventSource and clears the connection id", () => {
+        const created: FakeEventSource[] = [];
+        const deps = fakeDeps(created);
+
+        const cleanup = openLiveConnection("ports", true, deps);
+        created[0]?.hello("conn-1");
+        expect(deps.connId()).toBe("conn-1");
+        expect(deps.connIdRef.current).toBe("conn-1");
+
+        cleanup?.();
+        expect(created[0]?.closed).toBe(true);
+        expect(deps.connId()).toBeNull();
+        expect(deps.connIdRef.current).toBeNull();
+    });
+
+    test("a hidden tab opens no connection at all", () => {
+        const created: FakeEventSource[] = [];
+        const cleanup = openLiveConnection("ports", false, fakeDeps(created));
+
+        expect(cleanup).toBeUndefined();
+        expect(created).toHaveLength(0);
+    });
+
+    test("becoming visible again opens a fresh EventSource, not the closed one", () => {
+        const created: FakeEventSource[] = [];
+        const deps = fakeDeps(created);
+
+        const first = openLiveConnection("ports", true, deps);
+        first?.();
+        openLiveConnection("ports", true, deps);
+
+        expect(created).toHaveLength(2);
+        expect(created[0]?.closed).toBe(true);
+        expect(created[1]?.closed).toBe(false);
+    });
+
+    test("after a reconnect the connection id is stale until a fresh hello arrives", () => {
+        const created: FakeEventSource[] = [];
+        const deps = fakeDeps(created);
+
+        const first = openLiveConnection("ports", true, deps);
+        created[0]?.hello("conn-1");
+        first?.();
+
+        openLiveConnection("ports", true, deps);
+        // The cleanup already cleared connIdRef; a caller (setChannels) reading it right after
+        // reconnect and before the next `hello` correctly sees "not connected yet", not the stale id.
+        expect(deps.connIdRef.current).toBeNull();
+
+        created[1]?.hello("conn-2");
+        expect(deps.connIdRef.current).toBe("conn-2");
+    });
+
+    test("no channel subscribed opens no connection either", () => {
+        const created: FakeEventSource[] = [];
+        const cleanup = openLiveConnection("", true, fakeDeps(created));
+
+        expect(cleanup).toBeUndefined();
+        expect(created).toHaveLength(0);
     });
 });
