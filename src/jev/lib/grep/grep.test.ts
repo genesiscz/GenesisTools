@@ -165,6 +165,18 @@ describe("filesystem eligibility", () => {
         );
     });
 
+    test("a file over the size ceiling is an exclusion, not an issue that makes the search incomplete", async () => {
+        const big = scratch("ceiling");
+        tree(big, { "generated.ts": "x".repeat(2048), "small.ts": "export const a = 1;\n" });
+        const reader = await createFilesystem({ root: big, limits: { maxFileBytes: 1024 } });
+        const over = await reader.readSnapshot("generated.ts");
+        const under = await reader.readSnapshot("small.ts");
+        await reader.close();
+
+        expect(over).toEqual({ status: "excluded", reason: "too_large" });
+        expect(under.status).toBe("ok");
+    });
+
     test("snapshots hash the bytes, not the mtime", async () => {
         const reader = await createFilesystem({ root });
         const first = await reader.readSnapshot("keep.ts");

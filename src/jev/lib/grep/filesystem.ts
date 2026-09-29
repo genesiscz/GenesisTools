@@ -492,6 +492,12 @@ export async function createFilesystem(options: FilesystemOptions) {
             return excluded("not_file");
         }
 
+        // Over `maxFileBytes` is an exclusion (the spec's filesystem policy), so a large generated file
+        // does not turn a healthy search incomplete. One that grows past it mid-read is still an issue.
+        if (admitted.stat.size > BigInt(limits.maxFileBytes)) {
+            return excluded("too_large");
+        }
+
         if (options.maxBytes !== undefined && admitted.stat.size > BigInt(options.maxBytes)) {
             return excluded("over_sample_bytes");
         }
