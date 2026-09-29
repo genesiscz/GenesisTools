@@ -9,8 +9,10 @@ import {
     GENESIS_APP_NAME,
     genesisAppBundlePath,
     genesisAppDir,
+    genesisAppInstallMarkerPath,
     genesisAppLauncherPath,
 } from "@genesiscz/utils/macos/genesis-app";
+import { clearPidFile, writePidFile } from "@genesiscz/utils/process/pidfile";
 import { isProcessAlive } from "@genesiscz/utils/process-alive";
 import { withFileLock } from "@genesiscz/utils/storage";
 
@@ -217,18 +219,32 @@ export function stampInfoPlist(template: string, buildNumber: number): string {
  *
  * Serialized across processes: two concurrent `permissions build` runs share one `.previous`
  * backup, so without the lock the second run could delete the first run's backup and leave a
- * failed swap with nothing to restore. The timeout covers a cold `swift build`.
+ * failed swap with nothing to restore. The timeout covers a cold `swift build`. This lock only
+ * orders builds; native commands wait on the install marker, which covers the swap alone.
  */
 export async function buildApp(options?: { onStep?: (message: string) => void }): Promise<BuildResult> {
     mkdirSync(genesisAppDir(), { recursive: true });
+    const lockPath = join(genesisAppDir(), "build.lock");
+    const requestedAt = Date.now();
+    const caller = process.argv.slice(1).join(" ");
 
     return withFileLock(
-        join(genesisAppDir(), "build.lock"),
+        lockPath,
         async () => {
-            // Holding the lock means no other build owns a staging directory, so anything left
-            // here is debris from a crashed run and is safe to drop.
-            sweepAbandonedStaging();
-            return buildAppLocked(options);
+            const acquiredAt = Date.now();
+            logger.info({ lockPath, waitedMs: acquiredAt - requestedAt, caller }, "app build lock acquired");
+            let ok = false;
+
+            try {
+                // Holding the lock means no other build owns a staging directory, so anything left
+                // here is debris from a crashed run and is safe to drop.
+                sweepAbandonedStaging();
+                const result = await buildAppLocked(options);
+                ok = true;
+                return result;
+            } finally {
+                logger.info({ lockPath, heldMs: Date.now() - acquiredAt, ok, caller }, "app build lock released");
+            }
         },
         BUILD_LOCK_TIMEOUT_MS
     );
@@ -399,52 +415,54 @@ async function stageAndInstall(options: StageAndInstallOptions): Promise<BuildRe
     await Bun.write(join(staging, "manifest.json"), `${SafeJSON.stringify(manifest, null, 2)}\n`);
 
     step("install bundle");
-    // Builds before 2026-09-03 20:10 installed under ~/.genesis-tools/app; the bundle moved to
-    // ~/Applications so the Full Disk Access picker shows it. Drop the old copy: same identity,
-    // TCC rows are keyed by signature, and two copies would confuse the picker.
-    const legacy = join(appDir, `${GENESIS_APP_NAME}.app`);
+    withInstallMarker(() => {
+        // Builds before 2026-09-03 20:10 installed under ~/.genesis-tools/app; the bundle moved to
+        // ~/Applications so the Full Disk Access picker shows it. Drop the old copy: same identity,
+        // TCC rows are keyed by signature, and two copies would confuse the picker.
+        const legacy = join(appDir, `${GENESIS_APP_NAME}.app`);
 
-    if (legacy !== bundlePath && existsSync(legacy)) {
-        rmSync(legacy, { recursive: true, force: true });
-    }
-
-    const previous = `${bundlePath}.previous`;
-    rmSync(previous, { recursive: true, force: true });
-
-    if (existsSync(bundlePath)) {
-        renameSync(bundlePath, previous);
-    }
-
-    mkdirSync(dirname(bundlePath), { recursive: true });
-
-    try {
-        renameSync(stagedBundle, bundlePath);
-        renameSync(join(staging, "manifest.json"), join(appDir, "manifest.json"));
-    } catch (error) {
-        // Put the old bundle back so the launcher path keeps working, then surface the failure.
-        rmSync(bundlePath, { recursive: true, force: true });
-
-        if (existsSync(previous)) {
-            renameSync(previous, bundlePath);
+        if (legacy !== bundlePath && existsSync(legacy)) {
+            rmSync(legacy, { recursive: true, force: true });
         }
 
-        logger.error({ error, bundlePath }, "GenesisTools.app install failed; previous bundle restored");
-        throw error;
-    }
+        const previous = `${bundlePath}.previous`;
+        rmSync(previous, { recursive: true, force: true });
 
-    retirePreviousBundle(previous, appDir);
+        if (existsSync(bundlePath)) {
+            renameSync(bundlePath, previous);
+        }
 
-    // Launch Services must know the bundle, or every permission dialog falls back to the file
-    // name and says "GenesisTools.app" instead of the CFBundleDisplayName "GenesisTools".
-    step("register with Launch Services");
-    const lsregister = run([LSREGISTER, "-f", bundlePath]);
+        mkdirSync(dirname(bundlePath), { recursive: true });
 
-    if (lsregister.code !== 0) {
-        logger.warn(
-            { code: lsregister.code, stderr: lsregister.stderr },
-            "lsregister failed; dialogs may show the file name"
-        );
-    }
+        try {
+            renameSync(stagedBundle, bundlePath);
+            renameSync(join(staging, "manifest.json"), join(appDir, "manifest.json"));
+        } catch (error) {
+            // Put the old bundle back so the launcher path keeps working, then surface the failure.
+            rmSync(bundlePath, { recursive: true, force: true });
+
+            if (existsSync(previous)) {
+                renameSync(previous, bundlePath);
+            }
+
+            logger.error({ error, bundlePath }, "GenesisTools.app install failed; previous bundle restored");
+            throw error;
+        }
+
+        retirePreviousBundle(previous, appDir);
+
+        // Launch Services must know the bundle, or every permission dialog falls back to the file
+        // name and says "GenesisTools.app" instead of the CFBundleDisplayName "GenesisTools".
+        step("register with Launch Services");
+        const lsregister = run([LSREGISTER, "-f", bundlePath]);
+
+        if (lsregister.code !== 0) {
+            logger.warn(
+                { code: lsregister.code, stderr: lsregister.stderr },
+                "lsregister failed; dialogs may show the file name"
+            );
+        }
+    });
 
     step("reap stale app-face processes");
     await reapStaleAppFaces(step);
@@ -452,6 +470,24 @@ async function stageAndInstall(options: StageAndInstallOptions): Promise<BuildRe
     logger.info({ bundlePath, signedWith: signature.authority }, "GenesisTools.app built");
 
     return { bundlePath, identity, signature, manifest };
+}
+
+/**
+ * Holds the install marker around the bundle swap, so native commands refuse for this second only,
+ * not for the whole build. The owner and the window's length go to the log.
+ */
+function withInstallMarker(swap: () => void): void {
+    const markerPath = genesisAppInstallMarkerPath();
+    writePidFile(markerPath);
+    const openedAt = Date.now();
+    logger.info({ markerPath }, "app install window open: native commands are refused until the bundle is swapped");
+
+    try {
+        swap();
+    } finally {
+        clearPidFile(markerPath);
+        logger.info({ markerPath, ms: Date.now() - openedAt }, "app install window closed");
+    }
 }
 
 /**

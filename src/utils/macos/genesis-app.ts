@@ -1,6 +1,8 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
+import { logger } from "@genesiscz/utils/logger";
+import { inspectPidFile } from "@genesiscz/utils/process/pidfile";
 
 /**
  * GenesisTools.app is a tiny signed launcher (src/macos/GenesisTools) that becomes the macOS TCC
@@ -59,23 +61,82 @@ export function installedGenesisAppLauncher(): string | null {
     return existsSync(launcher) ? launcher : null;
 }
 
+/** A swap takes about a second, so an install marker that is still unreadable after this is debris. */
+const UNREADABLE_INSTALL_MARKER_MS = 60_000;
+
+/**
+ * Present only while `buildApp` swaps the installed bundle, and it names its owner. Between the two
+ * renames the launcher path is missing, so a command started then would run without the app's grants.
+ */
+export function genesisAppInstallMarkerPath(): string {
+    return join(genesisAppDir(), "install.lock");
+}
+
 export class GenesisAppUpdatingError extends Error {
-    constructor(readonly lockPath: string) {
+    constructor(
+        readonly lockPath: string,
+        readonly holderPid?: number
+    ) {
         super(
-            "GenesisTools.app is being rebuilt or its build lock remains. No native command was started. Wait for the build to finish; if its owner exited, run tools macos permissions build to recover the stale lock."
+            `GenesisTools.app is being replaced right now${holderPid ? ` (by pid ${holderPid})` : ""}. No native command was started. The swap takes about a second; try again.`
         );
         this.name = "GenesisAppUpdatingError";
     }
 }
 
-/** Read-only admission check; the installer owns lock cleanup and bundle replacement. */
+/**
+ * Read-only admission check. It refuses only while a live process swaps the bundle: a `swift build`
+ * (minutes) no longer blocks native commands, because the installed bundle stays the same until the
+ * swap. A marker whose owner is gone is logged and ignored, so a crashed build never blocks every
+ * native command until the next build.
+ */
 export function assertGenesisAppNotUpdating(): void {
     if (process.platform !== "darwin" || env.tools.isAppLauncherDisabled() || isGenesisAppDisabledByMarker()) {
         return;
     }
-    const lockPath = join(genesisAppDir(), "build.lock");
-    if (existsSync(lockPath)) {
-        throw new GenesisAppUpdatingError(lockPath);
+
+    const markerPath = genesisAppInstallMarkerPath();
+
+    if (!existsSync(markerPath)) {
+        return;
+    }
+
+    const state = inspectPidFile(markerPath);
+    const caller = process.argv.slice(1).join(" ");
+
+    if (state.status === "none") {
+        const ageMs = markerAgeMs(markerPath);
+
+        if (ageMs === null || ageMs > UNREADABLE_INSTALL_MARKER_MS) {
+            logger.warn({ markerPath, ageMs, caller }, "genesis app: unreadable install marker ignored");
+            return;
+        }
+
+        logger.warn({ markerPath, ageMs, caller }, "genesis app: native command refused, the install marker is new");
+        throw new GenesisAppUpdatingError(markerPath);
+    }
+
+    if (state.status === "dead" || state.status === "foreign") {
+        logger.warn(
+            { markerPath, holder: state.record, status: state.status, caller },
+            "genesis app: install marker left by a process that is gone; native command allowed"
+        );
+        return;
+    }
+
+    logger.warn(
+        { markerPath, holder: state.record, ageMs: Date.now() - state.record.writtenAt, caller },
+        "genesis app: native command refused while the bundle is being replaced"
+    );
+    throw new GenesisAppUpdatingError(markerPath, state.pid);
+}
+
+function markerAgeMs(path: string): number | null {
+    try {
+        return Date.now() - statSync(path).mtimeMs;
+    } catch (error) {
+        logger.debug({ error, path }, "genesis app: install marker vanished while it was read");
+        return null;
     }
 }
 
