@@ -264,8 +264,18 @@ export function startOfDay(now = new Date()): Date {
 
 /** A real day: `new Date` and `Date.parse` roll month 13 or February 30 into another date instead of failing. */
 function isCalendarDay(year: number, month: number, day: number): boolean {
-    const at = new Date(Date.UTC(year, month - 1, day));
+    // setUTCFullYear, not Date.UTC: Date.UTC reads years 0-99 as 1900-1999.
+    const at = new Date(0);
+    at.setUTCFullYear(year, month - 1, day);
     return at.getUTCFullYear() === year && at.getUTCMonth() === month - 1 && at.getUTCDate() === day;
+}
+
+/** Local midnight of a checked calendar day; `new Date(y, m, d)` would move years 0-99 to 1900-1999. */
+function localMidnight(year: number, month: number, day: number): Date {
+    const at = new Date(0);
+    at.setFullYear(year, month - 1, day);
+    at.setHours(0, 0, 0, 0);
+    return at;
 }
 
 /**
@@ -299,7 +309,7 @@ export function parseSince(value: string | undefined, now = new Date()): Date | 
     if (day) {
         // A bare date is that day's local midnight, like the default; `Date.parse` would read UTC.
         const [year, month, date] = [Number(day[1]), Number(day[2]), Number(day[3])];
-        return isCalendarDay(year, month, date) ? new Date(year, month - 1, date) : null;
+        return isCalendarDay(year, month, date) ? localMidnight(year, month, date) : null;
     }
 
     const stamp = /^(\d{4})-(\d{2})-(\d{2})(?:[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})?)?$/.exec(

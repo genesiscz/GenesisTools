@@ -190,6 +190,13 @@ describe("startOfDay, parseSince and parseUntil", () => {
         expect(parseSince("2026-03-01T10:00:00+02:00", NOW)?.toISOString()).toBe("2026-03-01T08:00:00.000Z");
     });
 
+    test("a year below 100 stays that year, not 19xx", () => {
+        // Date.UTC and new Date(y, m, d) read years 0-99 as 1900-1999.
+        expect(parseSince("0099-01-01T10:00:00Z", NOW)?.toISOString()).toBe("0099-01-01T10:00:00.000Z");
+        expect(parseSince("0099-01-01", NOW)?.getFullYear()).toBe(99);
+        expect(parseSince("0099-02-29", NOW)).toBeNull();
+    });
+
     test("parseUntil is now by default and the end of a bare day", () => {
         expect(parseUntil(undefined, NOW)).toBe(NOW);
         expect(parseUntil("2026-03-01", NOW)?.getTime()).toBe(new Date("2026-03-02T00:00:00").getTime() - 1);
