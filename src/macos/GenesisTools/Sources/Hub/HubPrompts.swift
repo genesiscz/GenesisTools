@@ -216,7 +216,7 @@ private struct HubPromptsModifier: ViewModifier {
             )
             .overlay {
                 if store.pickerOpen {
-                    PromptPickerView(isPresented: $store.pickerOpen, context: model.promptContext)
+                    PromptPickerView(isPresented: $store.pickerOpen, context: model.promptContext) { model.notice = $0 }
                 }
             }
     }
@@ -231,6 +231,9 @@ extension View {
 struct PromptPickerView: View {
     @Binding var isPresented: Bool
     let context: PromptContext
+    /// A "Sent" outlives the picker only in the hub's own notice: the picker's local pill unmounts
+    /// with the rest of this view the instant `isPresented` goes false.
+    let sentNotice: (String) -> Void
     @ObservedObject private var store = PromptLibraryStore.shared
     @State private var query = ""
     @State private var active = 0
@@ -506,7 +509,7 @@ struct PromptPickerView: View {
         Task {
             switch await store.send(prompt, session: session, values: values) {
             case .success(let result):
-                notice = (result.mode == "file" ? "Sent \(result.name) through \((result.file ?? "") as NSString).lastPathComponent)" : "Sent \(result.name)", false)
+                sentNotice(result.mode == "file" ? "Sent \(result.name) through \((result.file ?? "") as NSString).lastPathComponent)" : "Sent \(result.name)")
                 isPresented = false
             case .failure(let error):
                 notice = ("Not sent: \(error)", true)
