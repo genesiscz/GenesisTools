@@ -16,7 +16,9 @@ import {
 import { dismissDecision, draftDecision, sendDrafts } from "../lib/inbox/drafts";
 import { loadInbox, loadSessionDecisions, waitingBlock } from "../lib/inbox/load";
 import type { AskDeps } from "../lib/pending/ask";
+import { attachImageFiles } from "../lib/pending/form";
 import type { AskAnswer } from "../lib/pending/types";
+import { collect } from "./ask";
 
 const { log } = logger.scoped("question-inbox");
 
@@ -29,6 +31,8 @@ interface AnswerFlags {
     text?: string;
     form?: string;
     answers?: string;
+    /** `itemId=path`, repeatable: files read straight into that item's `AskAnswer.images`. */
+    image?: string[];
     batch?: string;
     dryRun?: boolean;
 }
@@ -94,9 +98,12 @@ async function answer(flags: AnswerFlags, deps: InboxCommandDeps): Promise<Inbox
             throw new Error("--form needs --answers");
         }
 
+        const parsed = formAnswers(flags.answers);
+        const answers = flags.image?.length ? attachImageFiles(parsed, flags.image) : parsed;
+
         return answerInboxForm({
             formId: flags.form,
-            answers: formAnswers(flags.answers),
+            answers,
             dryRun,
             ...(deps.forms ? { askDeps: deps.forms } : {}),
         });
@@ -186,6 +193,7 @@ export function registerInboxCommand(program: Command, deps: InboxCommandDeps = 
         .option("--text <answer>", "A free-text answer, or a note after the option")
         .option("--form <id>", "Answer this pending form instead")
         .option("--answers <json>", 'With --form: [{"itemId":"q1","selectedChoices":["c1"],"freeText":"…"}]')
+        .option("--image <spec>", "With --form: attach an image file to an item, itemId=path (repeatable)", collect, [])
         .option(
             "--batch <json>",
             'Several decisions of --session sent as one message: [{"number":3,"option":"b","text":"note"}]'

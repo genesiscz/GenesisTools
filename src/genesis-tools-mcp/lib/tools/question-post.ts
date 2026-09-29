@@ -365,6 +365,21 @@ export const QUESTION_RESPOND_INPUT_SCHEMA = {
                     freeText: { type: "string" },
                     selectedChoices: { type: "array", items: { type: "string" } },
                     fileTags: { type: "array", items: { type: "string" } },
+                    images: {
+                        type: "array",
+                        description:
+                            "pasted images for an allowImagePaste item; dropped past MAX_IMAGES_PER_ANSWER (4) " +
+                            "or MAX_IMAGE_BASE64_CHARS (2,000,000) per image",
+                        items: {
+                            type: "object",
+                            properties: {
+                                name: { type: "string" },
+                                mime: { type: "string", description: "must start with image/" },
+                                base64: { type: "string", description: "no data: prefix" },
+                            },
+                            required: ["base64"],
+                        },
+                    },
                 },
                 required: ["itemId"],
             },

@@ -44,6 +44,18 @@ A partial submit is never stored: `answer` refuses a form that still has a requi
 tools question answer ask_5f1c… --json '[{"itemId":"q1","freeText":"staging"},{"itemId":"q2","freeText":"after the migration"}]'
 ```
 
+### `answer` flags
+
+| Flag | Description |
+|------|-------------|
+| `-t, --text <text>` | Free-text answer |
+| `--choice <id>` | Selected choice id (repeatable) |
+| `--file <path>` | `@file` tag, relative to the form cwd (repeatable) |
+| `--item <itemId>` | Which item this answers (single-item forms default to the only one) |
+| `--json <answers>` | Answer several items at once: a JSON array of `AskAnswer` objects |
+
+### `ask` flags
+
 | Flag | Description |
 |------|-------------|
 | `-q, --q <question>` | The question, markdown allowed |
@@ -121,3 +133,10 @@ You rarely do. The normal writer is the `question_answer` tool on the genesis-to
 - The sound and notification settings fire when an entry is recorded, which turns the sink into a live signal that an agent answered something, not only an archive.
 - With Obsidian enabled, entries can be written into your vault as well, using the configured template.
 - Live feed for a dashboard rather than a terminal: the dev-dashboard exposes the same stream over SSE.
+
+## Pending-form order and notifications
+
+- **Oldest first.** `poll` and the dashboard's Pending section list forms oldest-created first, so a second agent's question never jumps ahead of one you are already looking at.
+- **Banner buttons.** For a form that is exactly one required item with two choices of opposite yes/no polarity ("Yes"/"No", "Accept"/"Reject", …), the banner carries one button per choice that answers the form directly, the same as running `tools question answer <id> --choice <id>`. A "staging"/"production" pair does not qualify: neither label has a polarity. Any other form's banner carries no buttons; the click itself already opens the form.
+- **Retraction.** Answering, cancelling, or timing out a form removes its banner from Notification Center, wherever it is still sitting.
+- **Not implemented: time-sensitive / break-through-DND banners.** The native layer supports `ignoreDnD`, but `GenesisTools.app`'s code-signing identity cannot carry the `timeSensitive` entitlement (`timeSensitiveSetting: notSupported` — see the repo's macOS notifications notes), so passing it would be silently ignored by the OS. A pending-form banner can still be swallowed by a system Focus mode.

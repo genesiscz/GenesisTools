@@ -140,6 +140,25 @@ describe("buildInbox", () => {
         expect(inbox[1]).toMatchObject({ project: "shop", cwd: "/tmp/gt-inbox/shop" });
     });
 
+    test("a form's cwd and each item's fileTags/imagePaste flags reach the Hub, not just choices/freeText", () => {
+        const withExtras = form({
+            id: "ask_extras",
+            cwd: "/tmp/gt-inbox/shop/nested",
+            items: [
+                { id: "q1", promptMarkdown: "Ship it?", choices: [{ id: "c1", label: "yes" }] },
+                { id: "q2", promptMarkdown: "Attach a screenshot", allowFileTags: true, allowImagePaste: true },
+            ],
+        });
+        const inbox = buildInbox({ sessions: [], scans: new Map(), rows: [], forms: [withExtras] });
+        const stored = inbox[0]?.items[0];
+
+        expect(stored).toMatchObject({ kind: "form", cwd: "/tmp/gt-inbox/shop/nested" });
+        expect(stored && "questions" in stored ? stored.questions : []).toEqual([
+            expect.objectContaining({ itemId: "q1", fileTags: false, imagePaste: false }),
+            expect.objectContaining({ itemId: "q2", fileTags: true, imagePaste: true }),
+        ]);
+    });
+
     test("a stored answer wins over the transcript and stays listed only while the reply still ends on it", () => {
         const sent: DecisionRecord = {
             id: "d_3_s-alpha",
@@ -754,6 +773,40 @@ describe("inbox answer: the hub's argv", () => {
 
         expect(printed).toMatchObject({ channel: "dry-run", delivered: false, text: `form ${posted.id}` });
         expect(getAskForm(posted.id, askDeps)?.status).toBe("pending");
+    });
+
+    test("--image itemId=path reads the file into that item's answer, never through argv as base64", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "gt-inbox-forms-image-"));
+        const askDeps: AskDeps = {
+            dbPath: join(dir, "qa.db"),
+            eventBase: join(dir, "events"),
+            logBase: join(dir, "log"),
+            notify: false,
+            env: {},
+        };
+        const posted = await postAskForm(
+            {
+                projectPath: dir,
+                items: [{ promptMarkdown: "Attach a screenshot", allowFreeText: false, allowImagePaste: true }],
+            },
+            askDeps
+        );
+        const itemId = posted.items[0]?.id ?? "";
+        const imagePath = join(dir, "shot.png");
+        writeFileSync(imagePath, Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3]));
+
+        const printed = await runInboxAnswer(
+            ["--form", posted.id, "--answers", "[]", "--image", `${itemId}=${imagePath}`],
+            { forms: askDeps }
+        );
+
+        expect(printed).toMatchObject({ channel: "form", delivered: true });
+
+        const stored = getAskForm(posted.id, askDeps);
+
+        expect(stored?.status).toBe("answered");
+        expect(stored?.answers?.[itemId]?.images).toHaveLength(1);
+        expect(stored?.answers?.[itemId]?.images?.[0].mime).toBe("image/png");
     });
 
     test("a number the session never asked is refused as not waiting, also when the session has no transcript", async () => {

@@ -183,12 +183,21 @@ export interface ListFormsOpts {
     limit?: number;
 }
 
+/**
+ * Oldest pending form first, so a second agent's form never jumps ahead of one Martin is
+ * already looking at (Genesis `QaFormController.swift:27-31`, Spec 02 P1-I). A `limit` still
+ * keeps the NEWEST rows (the inner query orders DESC before it caps), the outer query only
+ * re-orders that capped set to ascending for display.
+ */
 export function listForms(db: Database, opts: ListFormsOpts = {}): AskForm[] {
     const where = opts.status ? "WHERE status = ?" : "";
     const params: (string | number)[] = opts.status ? [opts.status] : [];
     params.push(opts.limit ?? 50);
     const rows = db
-        .query(`SELECT * FROM qa_pending ${where} ORDER BY created_at DESC LIMIT ?`)
+        .query(
+            `SELECT * FROM (SELECT * FROM qa_pending ${where} ORDER BY created_at DESC LIMIT ?) AS newest
+             ORDER BY created_at ASC`
+        )
         .all(...params) as PendingRow[];
 
     return rows.map(rowToForm);
