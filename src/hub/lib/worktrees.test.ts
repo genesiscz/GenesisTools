@@ -1,13 +1,26 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+    chmodSync,
+    existsSync,
+    mkdirSync,
+    mkdtempSync,
+    readFileSync,
+    realpathSync,
+    renameSync,
+    statSync,
+    symlinkSync,
+    writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { TestRepo } from "@genesiscz/utils/git/test-repo";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { Command, CommanderError } from "commander";
 import {
     type BlockerKind,
+    claimPrivateFolder,
     cleanupBlockers,
+    gitWorktreeMove,
     type LiveUsers,
     moveAsideWorktrees,
     ownerOf,
@@ -432,6 +445,143 @@ describe("move aside rechecks each worktree before its own move", () => {
         expect(byPath.get(second)?.moved).toBe(false);
         expect(byPath.get(second)?.reasons.join(" ")).toContain("vim (4242)");
         expect(existsSync(second)).toBe(true);
+    });
+
+    test("the move-aside folder is private: created 0700, an open one narrowed, a symlink refused", async () => {
+        const scratch = mkdtempSync(join(tmpdir(), "gt-hub-wt-private-"));
+        const fresh = join(scratch, "fresh");
+        expect(claimPrivateFolder(fresh)).toBeNull();
+        expect(statSync(fresh).mode & 0o777).toBe(0o700);
+
+        const open = join(scratch, "open");
+        mkdirSync(open, { mode: 0o755 });
+        chmodSync(open, 0o755);
+        expect(claimPrivateFolder(open)).toBeNull();
+        expect(statSync(open).mode & 0o777).toBe(0o700);
+
+        const linked = join(scratch, "linked");
+        symlinkSync(open, linked);
+        const path = await repo
+            .branch("feat/linked")
+            .then(() => repo.worktreeAdd({ name: "wt-linked", ref: "feat/linked" }));
+        const outcomes = await moveAsideWorktrees({
+            paths: [path],
+            base: "master",
+            live: { processes: [], sessions: [], sessionsError: null },
+            destRoot: linked,
+            journal: join(scratch, "moved-aside.jsonl"),
+            now: new Date(Date.now() + 30 * 86_400_000),
+        });
+
+        expect(outcomes[0]?.moved).toBe(false);
+        expect(outcomes[0]?.reasons.join(" ")).toContain("not a plain folder");
+        expect(existsSync(path)).toBe(true);
+    });
+
+    test("a folder above the move-aside folder that other users can change refuses it; a sticky one, like /tmp, does not", () => {
+        const scratch = mkdtempSync(join(tmpdir(), "gt-hub-wt-ancestor-"));
+        const shared = join(scratch, "shared");
+        mkdirSync(shared);
+        chmodSync(shared, 0o777);
+        expect(claimPrivateFolder(join(shared, "20260928-agents-removals", "hub-worktrees"))).toContain(
+            `${shared} can be changed by other users`
+        );
+
+        chmodSync(shared, 0o1777);
+        expect(claimPrivateFolder(join(shared, "20260929-agents-removals", "hub-worktrees"))).toBeNull();
+
+        // A symlink on the way is followed: the real folder it leads to is held to the same rule.
+        const open = join(scratch, "open");
+        mkdirSync(open);
+        chmodSync(open, 0o777);
+        symlinkSync(open, join(scratch, "link"));
+        expect(claimPrivateFolder(join(scratch, "link", "hub-worktrees"))).toContain(
+            `${realpathSync(open)} can be changed by other users`
+        );
+    });
+
+    test("a repository folder symlinked out of the private root is refused, and a failed claim is a refusal, not a throw", async () => {
+        const scratch = mkdtempSync(join(tmpdir(), "gt-hub-wt-repolink-"));
+        const root = join(scratch, "aside");
+        const outside = join(scratch, "public");
+        mkdirSync(outside);
+        expect(claimPrivateFolder(root)).toBeNull();
+        symlinkSync(outside, join(root, basename(realpathSync(repo.dir))));
+        const path = await repo
+            .branch("feat/repolink")
+            .then(() => repo.worktreeAdd({ name: "wt-repolink", ref: "feat/repolink" }));
+        const outcomes = await moveAsideWorktrees({
+            paths: [path],
+            base: "master",
+            live: { processes: [], sessions: [], sessionsError: null },
+            destRoot: root,
+            journal: join(scratch, "moved-aside.jsonl"),
+            now: new Date(Date.now() + 30 * 86_400_000),
+        });
+
+        expect(outcomes[0]?.moved).toBe(false);
+        expect(outcomes[0]?.reasons.join(" ")).toContain("not a plain folder inside");
+        expect(existsSync(path)).toBe(true);
+
+        const file = join(scratch, "a-file");
+        writeFileSync(file, "");
+        expect(claimPrivateFolder(join(file, "aside"))).toContain("could not be prepared");
+    });
+
+    test("a destination taken between the check and the move is retried under the next name; another failure is not", async () => {
+        const scratch = mkdtempSync(join(tmpdir(), "gt-hub-wt-retry-"));
+        const later = new Date(Date.now() + 30 * 86_400_000);
+        const live: LiveUsers = { processes: [], sessions: [], sessionsError: null };
+        const racedPath = await repo
+            .branch("feat/raced")
+            .then(() => repo.worktreeAdd({ name: "wt-raced", ref: "feat/raced" }));
+        const raced: string[] = [];
+        const outcomes = await moveAsideWorktrees({
+            paths: [racedPath],
+            base: "master",
+            live,
+            destRoot: join(scratch, "aside"),
+            journal: join(scratch, "moved-aside.jsonl"),
+            now: later,
+            moveWorktree: async (args) => {
+                raced.push(args.to);
+
+                if (raced.length === 1) {
+                    // Another move-aside takes the name first.
+                    mkdirSync(args.to, { recursive: true });
+                    return { success: false, stdout: "", stderr: `fatal: '${args.to}' already exists`, exitCode: 128 };
+                }
+
+                return gitWorktreeMove(args);
+            },
+        });
+
+        expect(raced).toHaveLength(2);
+        expect(raced[1]).toBe(`${raced[0]}-2`);
+        expect(outcomes[0]?.moved).toBe(true);
+        expect(outcomes[0]?.to).toBe(raced[1]);
+
+        const failedPath = await repo
+            .branch("feat/refused")
+            .then(() => repo.worktreeAdd({ name: "wt-refused", ref: "feat/refused" }));
+        const refused: string[] = [];
+        const failed = await moveAsideWorktrees({
+            paths: [failedPath],
+            base: "master",
+            live,
+            destRoot: join(scratch, "aside"),
+            journal: join(scratch, "moved-aside.jsonl"),
+            now: later,
+            moveWorktree: async (args) => {
+                refused.push(args.to);
+                return { success: false, stdout: "", stderr: "fatal: some other failure", exitCode: 128 };
+            },
+        });
+
+        expect(refused).toHaveLength(1);
+        expect(failed[0]?.moved).toBe(false);
+        expect(failed[0]?.reasons.join(" ")).toContain("some other failure");
+        expect(existsSync(failedPath)).toBe(true);
     });
 });
 
