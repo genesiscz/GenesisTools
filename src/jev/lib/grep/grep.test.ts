@@ -13,6 +13,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { byId } from "@genesiscz/utils/ai/catalog";
 import { EvaluationError } from "@genesiscz/utils/ai/evaluation/errors";
 import { evaluationSchema } from "@genesiscz/utils/ai/evaluation/evaluate";
 import type { EvaluationResponse, Evaluator as ServiceEvaluator } from "@genesiscz/utils/ai/evaluation/service";
@@ -20,7 +21,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { exitCodeFor, type GrepCliOptions, parseGrepCommand } from "../../commands/grep";
 import { clearGrepCache, createGrepCache } from "./cache";
 import { budgetArg, positiveCap, requestCap, writeResult } from "./evaluations/args";
-import { createGrepEvaluator, DEFAULT_REQUEST_LIMIT, GREP_TYPESAFE_MODEL } from "./evaluator";
+import { createGrepEvaluator, DEFAULT_REQUEST_LIMIT, estimatedInputTokens, GREP_TYPESAFE_MODEL } from "./evaluator";
 import { createFilesystem, type FilesystemPolicy } from "./filesystem";
 import { renderResult } from "./render";
 import { repositoryContext, withCurrentTestCommands } from "./repository-context";
@@ -1055,6 +1056,51 @@ describe("evaluator wrapper", () => {
         }
 
         expect(build({ requestLimit: 5, maxCostUsd: 0.1 })).not.toThrow();
+    });
+
+    test("concurrent calls reserve their estimated price, so a cost cap stops a wave before anything is booked", async () => {
+        const request = (index: number): EvaluationRequest => ({ ...one, state: { query: `q${index}` } });
+        const usdPerToken = byId(GREP_TYPESAFE_MODEL, "jev-typesafe")!.pricing!.inputPer1M / 1_000_000;
+        const perCall = estimatedInputTokens(request(0)) * usdPerToken;
+        let started = 0;
+        let refused = 0;
+        let finish!: () => void;
+        const answered = new Promise<void>((resolve) => {
+            finish = resolve;
+        });
+        const settled = () => {
+            if (started + refused === 8) {
+                finish();
+            }
+        };
+        const evaluator = createGrepEvaluator({
+            evaluate: async () => {
+                started++;
+                settled();
+                await answered;
+                return { ...response({ q0: 0.5 }), costUsd: perCall };
+            },
+            provider: "typesafe",
+            signal: new AbortController().signal,
+            concurrency: 8,
+            maxCostUsd: perCall * 2.5,
+        });
+        const outcomes = await Promise.all(
+            Array.from({ length: 8 }, (_, index) =>
+                evaluator.evaluate(request(index)).then(
+                    () => "answered",
+                    (error: unknown) => {
+                        refused++;
+                        settled();
+                        return error instanceof EvaluationFailure ? error.kind : "other";
+                    }
+                )
+            )
+        );
+        expect(started).toBe(3);
+        expect(outcomes.filter((outcome) => outcome === "answered").length).toBe(3);
+        expect(outcomes.filter((outcome) => outcome === "request-limit").length).toBe(5);
+        expect(evaluator.spend?.costUsd).toBeCloseTo(perCall * 3, 12);
     });
 
     test("the evaluation runners refuse infinite caps and never overwrite a result", () => {

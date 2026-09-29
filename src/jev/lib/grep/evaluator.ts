@@ -1,4 +1,5 @@
 import { setTimeout as delay } from "node:timers/promises";
+import { byId } from "@genesiscz/utils/ai/catalog";
 import { EvaluationError } from "@genesiscz/utils/ai/evaluation/errors";
 import { JEV_MODEL } from "@genesiscz/utils/ai/evaluation/evaluate";
 import type { Evaluator as ServiceEvaluator } from "@genesiscz/utils/ai/evaluation/service";
@@ -164,6 +165,12 @@ export function createGrepEvaluator(options: GrepEvaluatorOptions): GrepEvaluato
     let cacheHits = 0;
     let cooldownUntil = 0;
     const spend = { inputTokens: 0, costUsd: 0, unpricedCalls: 0 };
+    // Dollars the calls in flight may still book. A call starts only while booked plus reserved spend is
+    // under the cap, so concurrent workers cannot all pass on a cost no answer has booked yet.
+    let reservedCostUsd = 0;
+    // The highest price per estimated input token: the catalog's list price, raised by any booked call.
+    // The estimate counts JSON bytes, which outnumber tokens, so a reservation errs high.
+    let usdPerToken = (byId(model, `jev-${options.provider}`)?.pricing?.inputPer1M ?? 0) / 1_000_000;
     const rateBudget =
         options.provider === "typesafe"
             ? createRateBudget({ tokensPerSecond: 250_000, requestsPerMinute: 1_200 }, now)
@@ -198,7 +205,7 @@ export function createGrepEvaluator(options: GrepEvaluatorOptions): GrepEvaluato
             throw new EvaluationFailure("request-limit");
         }
 
-        if (options.maxCostUsd !== undefined && spend.costUsd >= options.maxCostUsd) {
+        if (options.maxCostUsd !== undefined && spend.costUsd + reservedCostUsd >= options.maxCostUsd) {
             throw new EvaluationFailure("request-limit", {
                 message: `Cost budget of $${options.maxCostUsd} reached`,
             });
@@ -225,10 +232,10 @@ export function createGrepEvaluator(options: GrepEvaluatorOptions): GrepEvaluato
 
     /**
      * Wait out a 429 cooldown and the rate budget, validate the donors, recheck both, then claim the
-     * request and its tokens in the same synchronous step as the check, so no other worker can spend
-     * them in between.
+     * request, its tokens and its estimated dollars in the same synchronous step as the check, so no
+     * other worker can spend them in between.
      */
-    async function claimSlot(reservedTokens: number, policy?: EvaluationPolicy) {
+    async function claimSlot(reservedTokens: number, costTokens: number, policy?: EvaluationPolicy) {
         for (;;) {
             const wait = Math.max(cooldownUntil - now(), rateBudget?.waitMs(reservedTokens) ?? 0);
             if (wait > 0) {
@@ -248,7 +255,9 @@ export function createGrepEvaluator(options: GrepEvaluatorOptions): GrepEvaluato
                 // Another worker may have spent the last request while this one waited.
                 assertBelowLimit();
                 requests++;
-                return rateBudget?.reserve(reservedTokens);
+                const costUsd = costTokens * usdPerToken;
+                reservedCostUsd += costUsd;
+                return { tokens: rateBudget?.reserve(reservedTokens), costUsd };
             }
         }
     }
@@ -298,24 +307,35 @@ export function createGrepEvaluator(options: GrepEvaluatorOptions): GrepEvaluato
             const navigation = policy?.navigation === true;
             const multiple = questionIds.length > 1;
             const reservedTokens = rateBudget ? estimatedInputTokens(request) : 0;
+            const costTokens = options.maxCostUsd === undefined ? 0 : estimatedInputTokens(request);
             let attemptLimit = navigation && multiple ? 1 : 2;
             for (let attempt = 0; attempt < attemptLimit; attempt++) {
                 assertActive();
                 assertBelowLimit();
                 const release = await acquire();
+                let heldUsd = 0;
+                const settle = () => {
+                    reservedCostUsd -= heldUsd;
+                    heldUsd = 0;
+                };
                 try {
                     assertActive();
-                    const reservation = await claimSlot(reservedTokens, policy);
+                    const claimed = await claimSlot(reservedTokens, costTokens, policy);
+                    heldUsd = claimed.costUsd;
                     const stop = prof.start("evaluate");
                     const response = await options
                         .evaluate({ input: request, timeoutMs, signal: stopped })
                         .finally(() => stop());
-                    reservation?.reconcile(response.usage.inputTokens);
+                    claimed.tokens?.reconcile(response.usage.inputTokens);
+                    settle();
                     spend.inputTokens += response.usage.inputTokens ?? 0;
                     if (response.costUsd === undefined) {
                         spend.unpricedCalls++;
                     } else {
                         spend.costUsd += response.costUsd;
+                        if (costTokens > 0) {
+                            usdPerToken = Math.max(usdPerToken, response.costUsd / costTokens);
+                        }
                     }
 
                     const scores = validScores(request, response.answers);
@@ -337,6 +357,7 @@ export function createGrepEvaluator(options: GrepEvaluatorOptions): GrepEvaluato
                     await options.cache?.put(keyInput(response.model), scores);
                     return scores;
                 } catch (error) {
+                    settle();
                     if (error instanceof EvaluationFailure) {
                         throw error;
                     }
@@ -383,6 +404,7 @@ export function createGrepEvaluator(options: GrepEvaluatorOptions): GrepEvaluato
                         });
                     }
                 } finally {
+                    settle();
                     release();
                 }
             }
