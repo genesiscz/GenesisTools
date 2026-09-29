@@ -149,7 +149,8 @@ export function cleanupBlockers(facts: WorktreeFacts): Blocker[] {
         blockers.push({ kind: "verdict-error", text: `Merge state unknown: ${facts.verdictError ?? "no verdict"}` });
     } else if (facts.verdict !== "MERGED" && facts.verdict !== "EMPTY") {
         const why = facts.verdict === "STALE" ? "stale, not merged" : "not merged";
-        blockers.push({ kind: "unmerged", text: `The branch is ${why} into ${facts.base ?? "the base"}` });
+        const what = facts.branch === null ? `Detached HEAD ${facts.head.slice(0, 9)} is` : "The branch is";
+        blockers.push({ kind: "unmerged", text: `${what} ${why} into ${facts.base ?? "the base"}` });
     }
 
     if (facts.statusError) {

@@ -11,10 +11,10 @@ import {
     type OnDiffLineEnterLeaveProps,
     type OnLineClickProps,
     type OnLineEnterLeaveProps,
-    parseDiffFromFile,
     type SelectedLineRange,
 } from "@pierre/diffs";
 import { WorkerPoolManager } from "@pierre/diffs/worker";
+import { parseFileDiff } from "./file-diff";
 
 /**
  * The web half of GenesisTools.app's diff renderer (PierreWebDiffRenderer.swift). Swift owns the
@@ -308,7 +308,9 @@ function foldChevron(path: string): HTMLElement {
     chevron.setAttribute("role", "button");
     chevron.setAttribute("aria-label", `${isFolded ? "Unfold" : "Fold"} ${path}`);
     chevron.setAttribute("aria-expanded", String(!isFolded));
-    chevron.title = isFolded ? "Click the file row to unfold it" : "Click the file row to fold it; ⌘-click opens it";
+    chevron.title = isFolded
+        ? "Click the file row (not its name) to unfold it"
+        : "Click the file row (not its name) to fold it; ⌘-click opens it";
     chevron.textContent = isFolded ? "▸" : "▾";
     chevron.style.cssText =
         "display:inline-block;width:14px;margin-right:4px;opacity:.7;cursor:pointer;user-select:none";
@@ -330,8 +332,10 @@ function toggleFold(path: string): void {
     }
 }
 
-/** The file path of the header row a click landed on, or null when it was not on a header. */
-function headerPathOf(event: MouseEvent): string | null {
+/** The header row a pointer event landed on: the file's path, and whether it landed on the path text. */
+function headerHitOf(event: Event): { path: string; onName: boolean } | null {
+    let onName = false;
+
     for (const node of event.composedPath()) {
         if (!(node instanceof Element)) {
             continue;
@@ -342,10 +346,15 @@ function headerPathOf(event: MouseEvent): string | null {
             return null;
         }
 
+        if (node.matches("[data-title], [data-prev-name]")) {
+            onName = true;
+        }
+
         if (node.hasAttribute("data-diffs-header")) {
             const root = node.getRootNode();
             const itemHost = root instanceof ShadowRoot ? root.host : node;
-            return itemHost.querySelector("[data-gt-fold]")?.getAttribute("data-gt-fold") ?? null;
+            const path = itemHost.querySelector("[data-gt-fold]")?.getAttribute("data-gt-fold");
+            return path ? { path, onName } : null;
         }
     }
 
@@ -374,6 +383,10 @@ function viewOptions(): CodeViewOptions<AnnotationMeta, undefined> {
         diffStyle: options.diffStyle,
         overflow: options.wrap ? "wrap" : "scroll",
         stickyHeaders: true,
+        // A click on a file's name selects the whole name and nothing else, so ⌘C copies exactly the
+        // path (a triple-click took the line break after it too).
+        unsafeCSS:
+            "[data-diffs-header] [data-title], [data-diffs-header] [data-prev-name] { -webkit-user-select: all; user-select: all; cursor: text; }",
         lineDiffType: "word-alt",
         hunkSeparators: "line-info",
         lineHoverHighlight: "both",
@@ -458,13 +471,13 @@ highlightWorkers
     .finally(() => viewer.render(true));
 
 host.addEventListener("click", (event) => {
-    const path = headerPathOf(event);
+    const hit = headerHitOf(event);
 
-    if (path === null) {
+    if (hit === null) {
         return;
     }
 
-    const file = files.find((candidate) => candidate.path === path);
+    const file = files.find((candidate) => candidate.path === hit.path);
 
     if (event.metaKey) {
         if (file) {
@@ -474,9 +487,30 @@ host.addEventListener("click", (event) => {
         return;
     }
 
+    // The path is text to select and copy: a click on the name, a double or triple click, or a
+    // drag that selected something never folds the file (a triple-click used to fold, unfold and
+    // fold again, re-rendering the header under the selection).
+    if (hit.onName || event.detail > 1 || (document.getSelection()?.toString() ?? "") !== "") {
+        return;
+    }
+
     event.preventDefault();
-    toggleFold(path);
-    post({ type: "log", message: `diff.fold ${folded.has(path) ? "folded" : "unfolded"} ${path}` });
+    toggleFold(hit.path);
+    post({ type: "log", message: `diff.fold ${folded.has(hit.path) ? "folded" : "unfolded"} ${hit.path}` });
+});
+
+// A right-click on a file's header shows a native menu (Copy path, Reveal in Finder, …): Swift
+// builds it from the file id (Review/ReviewWindow.swift, `showHeaderMenu`).
+host.addEventListener("contextmenu", (event) => {
+    const hit = headerHitOf(event);
+    const file = hit ? files.find((candidate) => candidate.path === hit.path) : undefined;
+
+    if (!file) {
+        return;
+    }
+
+    event.preventDefault();
+    post({ type: "header.menu", fileId: file.id, selection: document.getSelection()?.toString() ?? "" });
 });
 
 function annotationsFor(fileId: string): DiffLineAnnotation<AnnotationMeta>[] {
@@ -523,16 +557,7 @@ function toItem(file: BridgeFile): CodeViewItem<AnnotationMeta> {
     let fileDiff = cached?.key === file.key ? cached.fileDiff : undefined;
 
     if (!fileDiff) {
-        // A missing side (new or deleted file) is empty text: parseDiffFromFile's null path throws on
-        // `.split` in 1.4.3 even though its types accept null.
-        // The keys name the text for the workers' highlight cache.
-        const oldFile = {
-            name: file.oldPath ?? file.path,
-            contents: file.oldContents ?? "",
-            cacheKey: `${file.key}:old`,
-        };
-        const newFile = { name: file.path, contents: file.newContents ?? "", cacheKey: `${file.key}:new` };
-        fileDiff = parseDiffFromFile(oldFile, newFile);
+        fileDiff = parseFileDiff(file);
         parsed.set(file.id, { key: file.key, fileDiff });
     }
 

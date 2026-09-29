@@ -266,6 +266,16 @@ final class HubTimelineTests: XCTestCase {
         let pushRow = try JSONDecoder().decode(TimelineEnvelope.self, from: Data(sampleFeed.utf8)).events[5]
         XCTAssertEqual(pushRow.branch, "feat/parser")
         XCTAssertFalse(TimelineRowView.searchable(pushRow, detail: nil).fields.map(\.key).contains("branch"))
+        // A compact list (a narrow window) draws no branch on any row, so none is listed either.
+        let withBranch = """
+        { "since": "2026-03-02T00:00:00.000Z", "until": "2026-03-02T14:00:00.000Z", "before": null, "limit": 200, "repos": [], "counts": {},
+          "warnings": [], "elapsedMs": 1, "cached": false, "hasMore": false, "nextBefore": null, "truncated": [],
+          "events": [ { "id": "turn:s-beta", "kind": "session.turn", "at": "2026-03-02T13:00:00.000Z", "title": "parser work", "detail": "last turn",
+            "project": "app", "repo": "/tmp/gt/app", "sessionId": "s-beta", "provider": "claude", "cwd": "/tmp/gt/app", "mine": true, "branch": "feat/parser" } ] }
+        """
+        let branchRow = try XCTUnwrap(JSONDecoder().decode(TimelineEnvelope.self, from: Data(withBranch.utf8)).events.first)
+        XCTAssertEqual(TimelineRowView.searchable(branchRow, detail: nil).fields.map(\.key), ["project", "title", "detail", "branch"])
+        XCTAssertEqual(TimelineRowView.searchable(branchRow, detail: nil, compact: true).fields.map(\.key), ["project", "title", "detail"])
 
         let commit = """
         { "kind": "commit", "sha": "\(String(repeating: "a", count: 40))", "shortSha": "aaaaaaaa", "subject": "feat: parser", "body": "", "author": "Alice", "email": "alice@example.com",

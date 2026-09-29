@@ -180,10 +180,16 @@ final class PRsModel: ObservableObject {
     @Published private(set) var fetches: [String: PRFetchEntry] = [:]
     // Published and saved by hand: `@AppStorage` inside an ObservableObject never publishes.
     @Published var state = HubDefaults.store.string(forKey: "hub.prs.state") ?? "open" {
-        didSet { HubDefaults.store.set(state, forKey: "hub.prs.state") }
+        didSet {
+            HubDefaults.store.set(state, forKey: "hub.prs.state")
+            HubMainBusy.measure("prs.filter.state")
+        }
     }
     @Published var mineOnly = HubDefaults.store.bool(forKey: "hub.prs.mine") {
-        didSet { HubDefaults.store.set(mineOnly, forKey: "hub.prs.mine") }
+        didSet {
+            HubDefaults.store.set(mineOnly, forKey: "hub.prs.mine")
+            HubMainBusy.measure("prs.filter.mine")
+        }
     }
     /// Called once after a list load (the `--snapshot` launch waits on it).
     var onLoaded: (() -> Void)?
@@ -243,6 +249,7 @@ final class PRsModel: ObservableObject {
             switch result {
             case .success(let list):
                 span.end("\(list.prs.count) prs")
+                HubMainBusy.measure("prs.list.render")
                 prs = list.prs.sorted { ($0.updatedAt ?? "") > ($1.updatedAt ?? "") }
                 errors = list.repos.compactMap { repo in repo.error.map { "\(repo.repo): \($0)" } }
                 if let wanted {
@@ -351,7 +358,10 @@ final class PRsModel: ObservableObject {
         // The agent's drafts sit on the lines they are about, with accept / edit / reject.
         if let proposal = pr.proposal {
             do {
-                next.proposal = try ProposalDocument(url: URL(fileURLWithPath: proposal.path))
+                // On the main thread: the file is read and parsed before the review shows.
+                next.proposal = try HubPerf.measure("prs.proposal.read", proposal.path) {
+                    try ProposalDocument(url: URL(fileURLWithPath: proposal.path))
+                }
             } catch {
                 HubPerf.log("prs.proposal unreadable \(proposal.path): \(error)")
             }
@@ -621,10 +631,11 @@ struct PRListView: View {
                         .foregroundColor(Color.white.opacity(0.92))
                         .lineLimit(2)
                     HStack(spacing: 5) {
-                        Text(verbatim: pr.label).font(.system(size: 11, design: .monospaced))
+                        Text(verbatim: pr.label).font(.system(size: 11, design: .monospaced)).fixedSize()
                         Text(verbatim: pr.author ?? "")
-                        Text(verbatim: "·")
-                        Text(verbatim: HubFormat.ago(pr.updated))
+                        Text(verbatim: "·").fixedSize()
+                        // Whole, so the author truncates and the age never reads "4 hr. a…".
+                        LiveAgo(date: pr.updated).fixedSize()
                     }
                     .font(.system(size: 11))
                     .foregroundColor(ReviewPalette.dim)
@@ -822,6 +833,8 @@ struct PRDetailView: View {
                 Text(pr.title)
                     .font(.system(size: 15, weight: .semibold))
                     .lineLimit(1)
+                    .textSelection(.enabled)
+                    .instantTooltip(pr.title)
                 ExternalLink(text: pr.label, url: URL(string: pr.url), font: .system(size: 13, weight: .semibold), color: Color(red: 0.62, green: 0.78, blue: 1))
                 statePill
                 CIBadge(ci: pr.ci, url: detail?.webUrls?.checks.flatMap(URL.init(string:)))
@@ -1257,7 +1270,7 @@ struct PRCommitRow: View {
                 if let author = commit.author {
                     FindText(author, field: "author").font(.system(size: 11)).foregroundColor(ReviewPalette.dim).lineLimit(1)
                 }
-                Text(verbatim: HubFormat.ago(commit.when))
+                LiveAgo(date: commit.when)
                     .font(.system(size: 11))
                     .foregroundColor(ReviewPalette.dim)
                     .fixedSize()
@@ -1364,9 +1377,13 @@ struct PRSessionsSection: View {
         let loading = store.loading.contains(pr.id)
         PRSection(title: "Sessions", count: rows.count, folded: $folded, trailing: AnyView(
             HStack(spacing: 6) {
-                if loading {
-                    ProgressView().controlSize(.mini)
+                // A fixed slot, so the reload button beside it stays put.
+                ZStack {
+                    if loading {
+                        ProgressView().controlSize(.mini)
+                    }
                 }
+                .frame(width: 12, height: 12)
                 if pr.repoRoot != nil {
                     IconButton(systemName: "arrow.clockwise", tooltip: "Look for sessions again (tools hub pr sessions --no-cache)", size: 10) {
                         store.load(pr, detail: prs.details[pr.id], fresh: true)
@@ -1390,6 +1407,8 @@ struct PRSessionsSection: View {
                     .font(.system(size: 11))
                     .foregroundColor(ReviewPalette.removed)
                     .lineLimit(2)
+                    .textSelection(.enabled)
+                    .instantTooltip(error)
             }
         }
     }

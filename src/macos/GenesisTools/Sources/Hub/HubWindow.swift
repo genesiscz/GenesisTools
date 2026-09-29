@@ -146,6 +146,7 @@ func runHub(_ args: [String]) -> Never {
     let delegate = HubAppDelegate()
     app.delegate = delegate
     installBrowserURLForwarder()
+    MainActor.assumeIsolated { AppMainMenu.install() }
 
     let model = HubModel(wantedSession: wantedSession, tab: tab)
     model.initialMode = mode
@@ -213,6 +214,10 @@ func runHub(_ args: [String]) -> Never {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
                         let web = (review()?.renderer as? PierreWebDiffRenderer)?.webView
                         let showsDiff = model.mode == .prs || model.panes.contains(.changes)
+                        if let rows = HubBench.transcriptRowsLine(in: window) {
+                            PerfLog.mark("hub.snapshot \(rows)")
+                            FileHandle.standardError.write(Data("hub snapshot: \(rows)\n".utf8))
+                        }
                         ReviewSnapshot.write(window: window, webView: showsDiff ? web : nil, to: snapshotPath) {
                             exit(0)
                         }
@@ -348,7 +353,14 @@ final class HubModel: ObservableObject {
     }
     @Published var loadingSessions = false
     @Published var error: String?
-    @Published var filter = ""
+    /// The sidebar's filter text, which every mode's list applies.
+    @Published var filter = "" {
+        didSet {
+            if filter != oldValue {
+                MainActor.assumeIsolated { HubMainBusy.measure("filter.\(mode.rawValue)") }
+            }
+        }
+    }
     @Published var selectedID: String?
     /// The pane that was asked for last (`--tab`, "Open diff"); it is always among `panes`.
     @Published var tab: HubTab {
@@ -601,6 +613,8 @@ final class HubModel: ObservableObject {
     }
 
     func setMode(_ next: HubMode) {
+        // A switch costs the renders after it: the old mode's views go and the new mode's arrive.
+        MainActor.assumeIsolated { HubMainBusy.measure("mode.\(next.rawValue)") }
         mode = next
         if next == .inbox {
             MainActor.assumeIsolated { inbox.loadIfStale() }
@@ -1378,13 +1392,18 @@ private struct SessionListView: View {
                 Image(systemName: "magnifyingglass").foregroundColor(ReviewPalette.dim)
                 TextField(filterPlaceholder, text: $model.filter)
                     .textFieldStyle(.plain)
-                if model.loadingSessions {
-                    ProgressView().controlSize(.small)
+                // A slot that stays while idle: the spinner used to narrow the field on every refresh.
+                ZStack {
+                    if model.loadingSessions {
+                        ProgressView().controlSize(.small)
+                    }
                 }
+                .frame(width: 16, height: 16)
                 if model.mode == .sessions {
                     Menu {
                         ForEach(SessionGrouping.allCases, id: \.self) { option in
                             Button {
+                                HubMainBusy.measure("sessions.grouping")
                                 grouping = option.rawValue
                             } label: {
                                 if option == mode { Label(option.title, systemImage: "checkmark") } else { Text(option.title) }
@@ -1521,7 +1540,7 @@ private struct SessionRowView: View {
                             .background(Capsule().stroke(Color.white.opacity(0.15)))
                     }
                     Spacer(minLength: 0)
-                    Text(HubFormat.ago(session.lastActivity))
+                    LiveAgo(date: session.lastActivity)
                 }
                 .font(.system(size: 10.5))
                 .foregroundColor(ReviewPalette.dim)
@@ -1653,12 +1672,15 @@ private struct SessionDetailView: View {
 
     @Environment(\.hubGlass) private var glass
 
-    /// A small count on the button: changed files, open decisions.
-    private func badge(for tab: HubTab) -> Int? {
+    /// A small count on the button: changed files, open decisions. `.pending` keeps the badge's place
+    /// while there is no count yet, so the buttons do not move when the diff has loaded.
+    private func badge(for tab: HubTab) -> PaneBadge {
         switch tab {
-        case .changes, .files: return model.review.map(\.files.count).flatMap { $0 > 0 ? $0 : nil }
-        case .decisions: return model.decisions.filter(\.isOpen).count
-        case .transcript: return nil
+        case .changes, .files:
+            let count = model.review?.files.count ?? 0
+            return count > 0 ? .count(count) : .pending
+        case .decisions: return .count(model.decisions.filter(\.isOpen).count)
+        case .transcript: return .none
         }
     }
 
@@ -1673,7 +1695,13 @@ private struct SessionDetailView: View {
                     Circle()
                         .fill(session.isLive ? ReviewPalette.added : Color.white.opacity(0.25))
                         .frame(width: 7, height: 7)
-                    Text(session.isLive ? "live" : "idle · \(HubFormat.ago(session.lastActivity))")
+                    Group {
+                        if session.isLive {
+                            Text("live")
+                        } else {
+                            LiveAgo(date: session.lastActivity) { "idle · \($0)" }
+                        }
+                    }
                         .font(.system(size: 11.5))
                         .foregroundColor(ReviewPalette.dim)
                 }
@@ -1745,16 +1773,31 @@ private struct SessionDetailView: View {
 
 // MARK: - Pane toggle
 
+/// A pane button's count: none for a pane that never has one, a placeholder while there is no count.
+enum PaneBadge: Equatable {
+    case none
+    case pending
+    case count(Int)
+}
+
 /// One pane button: click shows or hides the pane (option-click: only this one); drag it onto
 /// another button and the two swap places. The target glows while something hovers over it.
 private struct PaneToggle: View {
     let tab: HubTab
     @ObservedObject var model: HubModel
-    let badge: Int?
+    let badge: PaneBadge
     @State private var targeted = false
 
     var body: some View {
         dragAndDrop(button)
+    }
+
+    private var badgeText: String {
+        if case .count(let count) = badge {
+            return "\(count)"
+        }
+
+        return "·"
     }
 
     private var button: some View {
@@ -1766,13 +1809,22 @@ private struct PaneToggle: View {
         } label: {
             HStack(spacing: 5) {
                 Image(systemName: tab.symbol).font(.system(size: 11))
-                Text(tab.title).font(.system(size: 12, weight: open ? .semibold : .regular))
-                if let badge {
-                    Text(verbatim: "\(badge)")
+                // The semibold width is always reserved: an open pane's bolder title used to move every
+                // button to its left.
+                ZStack(alignment: .leading) {
+                    Text(tab.title).font(.system(size: 12, weight: .semibold)).hidden()
+                    Text(tab.title).font(.system(size: 12, weight: open ? .semibold : .regular))
+                }
+                if badge != .none {
+                    // Three digits wide from the start, "·" until the count is known: the diff's file
+                    // count arriving no longer pushes the other buttons aside.
+                    Text(verbatim: badgeText)
                         .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                        .frame(minWidth: 19)
                         .padding(.horizontal, 5)
                         .padding(.vertical, 1)
                         .background(Capsule().fill(Color.white.opacity(open ? 0.16 : 0.08)))
+                        .opacity(badge == .pending ? 0.5 : 1)
                 }
             }
             .foregroundColor(open ? Color.white : ReviewPalette.dim)

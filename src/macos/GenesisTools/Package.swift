@@ -7,8 +7,9 @@ let package = Package(
     platforms: [.macOS(.v14)],
     targets: [
         .executableTarget(name: "GenesisTools", path: "Sources"),
-        // Pure logic only (settings, pane order, request parsing, proposals). Nothing here opens a
-        // window: UI is checked with `--snapshot` and `--bench` runs.
+        // Pure logic (settings, pane order, request parsing, proposals); UI is checked with `--snapshot`
+        // and `--bench` runs. The exceptions render into a window nobody sees (alpha 0, below the desktop,
+        // never activated): LiveTimeTests and SessionTranscriptScrollTests, copied from Genesis.
         .testTarget(name: "GenesisToolsTests", dependencies: ["GenesisTools"], path: "Tests"),
     ]
 )

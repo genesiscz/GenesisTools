@@ -273,7 +273,7 @@ struct PRTaskForm<Summary: View>: View {
                         .background(RoundedRectangle(cornerRadius: 4).fill(Color.white.opacity(0.1)))
                         .instantTooltip(owner.provider.capitalized)
                     Text(verbatim: owner.displayTitle).font(.system(size: 12)).lineLimit(1).truncationMode(.tail)
-                    Text(verbatim: HubFormat.ago(HubFormat.date(owner.mtime))).font(.system(size: 11)).foregroundColor(ReviewPalette.dim).fixedSize()
+                    LiveAgo(date: HubFormat.date(owner.mtime)).font(.system(size: 11)).foregroundColor(ReviewPalette.dim).fixedSize()
                     Text(verbatim: owner.reasons.joined(separator: " · ")).font(.system(size: 10.5)).foregroundColor(ReviewPalette.dim).lineLimit(1)
                     Spacer(minLength: 4)
                     Circle()

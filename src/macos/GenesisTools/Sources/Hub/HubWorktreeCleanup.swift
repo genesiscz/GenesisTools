@@ -362,7 +362,10 @@ struct WorktreeCleanupView: View {
                     ProgressView().controlSize(.small)
                     Text(verbatim: "Removing \(progress.done) of \(progress.total)…").font(.system(size: 11.5)).foregroundColor(ReviewPalette.dim)
                 }
-                Toggle("Show blocked (\(store.rows.count - removable.count))", isOn: $showBlocked)
+                Toggle("Show blocked (\(store.rows.count - removable.count))", isOn: Binding(get: { showBlocked }, set: { next in
+                    HubMainBusy.measure("worktrees.cleanup.showBlocked")
+                    showBlocked = next
+                }))
                     .toggleStyle(.checkbox)
                     .font(.system(size: 12))
                     .instantTooltip("Also list the worktrees that stay, each with the reason")
@@ -380,9 +383,13 @@ struct WorktreeCleanupView: View {
             }
             .buttonStyle(.genHoverPlain())
             HStack(spacing: 6) {
-                if store.loading {
-                    ProgressView().controlSize(.small)
+                // A fixed slot: the summary beside it stays put on every reload.
+                ZStack {
+                    if store.loading {
+                        ProgressView().controlSize(.small)
+                    }
                 }
+                .frame(width: 16, height: 16)
                 Text(verbatim: summary(removable: removable.count, sized: known.count, total: total, frees: frees))
                     .font(.system(size: 11.5))
                     .foregroundColor(ReviewPalette.dim)
@@ -443,7 +450,9 @@ struct WorktreeCleanupView: View {
         }
         .padding(.horizontal, 18)
         .padding(.vertical, 6)
-        .hubSurface(.content)
+        // A pinned header: `.bar` is frosted in glass mode, where `.content` let the row scrolled
+        // under it show through the text (snapshot 2026-09-25).
+        .hubSurface(.bar)
     }
 
     private func rowView(_ row: CleanupRow) -> some View {
@@ -469,6 +478,7 @@ struct WorktreeCleanupView: View {
                         .font(.system(size: 12.5, weight: .medium))
                         .lineLimit(1)
                         .truncationMode(.middle)
+                        .instantTooltip(row.title)
                     FindText(row.mergedHow, field: "merged")
                         .font(.system(size: 10.5, weight: .medium))
                         .foregroundColor(row.removable ? ReviewPalette.added : ReviewPalette.dim)
@@ -487,7 +497,7 @@ struct WorktreeCleanupView: View {
             }
             Spacer(minLength: 8)
             sizeCell(row)
-            Text(verbatim: HubFormat.ago(row.lastActivity))
+            LiveAgo(date: row.lastActivity)
                 .font(.system(size: 11))
                 .foregroundColor(ReviewPalette.dim)
                 .frame(width: 90, alignment: .trailing)

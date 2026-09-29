@@ -226,6 +226,7 @@ struct PRReviewBar: View {
                 .foregroundColor(ReviewPalette.removed)
                 .lineLimit(1)
                 .truncationMode(.tail)
+                .textSelection(.enabled)
                 .instantTooltip(error)
         } else {
             Text("Loading threads…").foregroundColor(ReviewPalette.dim)
@@ -419,7 +420,7 @@ private struct PRThreadRow: View {
                 if comment.author.name != comment.author.username {
                     Text(verbatim: "@\(comment.author.username)").foregroundColor(ReviewPalette.dim)
                 }
-                Text(verbatim: PRThreadRendering.ago(comment.createdAt))
+                LiveAgo(date: HubFormat.date(comment.createdAt), fallback: comment.createdAt)
                     .foregroundColor(ReviewPalette.dim)
                     .instantTooltip(comment.createdAt)
                 if comment.editedAt != nil {

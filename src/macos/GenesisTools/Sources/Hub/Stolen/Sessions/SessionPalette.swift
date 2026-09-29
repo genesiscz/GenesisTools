@@ -127,26 +127,15 @@ enum SessionFormat {
         value >= 100 ? String(format: "$%.0f", value) : String(format: "$%.2f", value)
     }
 
-    /// `850ms`, `12s`, `4m 12s`, `2h 05m`.
+    /// `850ms`, `12s`, `4m 12s`, `2h 05m` (`LiveTimeFormat` holds every time wording).
     static func duration(_ seconds: TimeInterval) -> String {
-        if seconds < 1 { return "\(Int((seconds * 1000).rounded()))ms" }
-        let total = Int(seconds.rounded())
-        if total < 60 { return "\(total)s" }
-        if total < 3600 { return "\(total / 60)m \(String(format: "%02d", total % 60))s" }
-        return "\(total / 3600)h \(String(format: "%02d", (total % 3600) / 60))m"
+        LiveTimeFormat.elapsed(seconds)
     }
 
-    /// `just now`, `45s ago`, `12m ago`, `7h 14m ago`, `3d ago`.
+    /// `just now`, `45s ago`, `12m ago`, `7h 14m ago`, `3d ago`. A label that must stay current
+    /// is a `LiveTime` instead.
     static func ago(_ seconds: TimeInterval) -> String {
-        let total = max(0, Int(seconds))
-        if total < 10 { return "just now" }
-        if total < 60 { return "\(total)s ago" }
-        if total < 3600 { return "\(total / 60)m ago" }
-        if total < 86400 {
-            let minutes = (total % 3600) / 60
-            return minutes == 0 ? "\(total / 3600)h ago" : "\(total / 3600)h \(minutes)m ago"
-        }
-        return "\(total / 86400)d ago"
+        LiveTimeFormat.ago(seconds)
     }
 
     static func chars(_ count: Int) -> String {

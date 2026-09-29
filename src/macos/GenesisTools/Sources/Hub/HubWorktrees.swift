@@ -145,8 +145,7 @@ enum HubMarkdownExport {
                 try markdown.write(to: output, options: .atomic)
                 return markdown
             }.value
-            NSPasteboard.general.clearContents()
-            NSPasteboard.general.setString(String(decoding: markdown, as: UTF8.self), forType: .string)
+            PathOpener.copy(String(decoding: markdown, as: UTF8.self), what: "markdown")
             let encoded = output.path.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? output.path
             if let url = URL(string: "genesis-md://open?path=\(encoded)") {
                 NSWorkspace.shared.open(url)
@@ -269,6 +268,15 @@ struct WorktreeListView: View {
         .padding(.horizontal, 6)
         .contentShape(Rectangle())
         .rowButton { model.selectWorktree(worktree) }
+        // The branch and the folder truncate in the row; the tooltip and the menu carry them whole.
+        .instantTooltip("\(worktree.branch)\n\(PathLabel.display(worktree.path))")
+        .contextMenu {
+            Button("Copy branch") { PathOpener.copy(worktree.branch, what: "branch") }
+            Button("Copy path") { PathOpener.copy(worktree.path, what: "path") }
+            Divider()
+            Button("Open in Finder") { PathOpener.finder(worktree.path) }
+            Button("Open in Cursor") { PathOpener.cursor(worktree.path) }
+        }
     }
 }
 
@@ -318,10 +326,19 @@ struct WorktreeDetailView: View {
                 .buttonStyle(.genHoverPlain())
                 PathLabel(path: worktree.path)
                 if !touching.isEmpty {
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 6) {
-                            ForEach(touching) { session in
-                                sessionChip(session)
+                    // The chips scroll sideways with no indicator, so the count says how many there
+                    // are: the row used to end in a cut "Open R" with nothing to say 30 more followed.
+                    HStack(spacing: 8) {
+                        Text(verbatim: "\(touching.count) session\(touching.count == 1 ? "" : "s")")
+                            .font(.system(size: 11))
+                            .foregroundColor(ReviewPalette.dim)
+                            .fixedSize()
+                            .instantTooltip("Agent sessions that worked in this worktree; the row scrolls sideways")
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(spacing: 6) {
+                                ForEach(touching) { session in
+                                    sessionChip(session)
+                                }
                             }
                         }
                     }
@@ -347,7 +364,7 @@ struct WorktreeDetailView: View {
                 .frame(width: 15, height: 15)
                 .background(RoundedRectangle(cornerRadius: 4).fill(Color.white.opacity(0.6)))
             Text(session.displayTitle).lineLimit(1).frame(maxWidth: 220, alignment: .leading)
-            Text(HubFormat.ago(session.lastActivity)).foregroundColor(ReviewPalette.dim)
+            LiveAgo(date: session.lastActivity).foregroundColor(ReviewPalette.dim)
             Button("Open") { model.openSession(session) }
                 .instantTooltip("Show this session's transcript, changes and decisions")
             Button("Resume") { resuming = session }

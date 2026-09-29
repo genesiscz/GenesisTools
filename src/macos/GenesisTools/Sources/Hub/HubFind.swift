@@ -169,10 +169,14 @@ struct HubFindPanel: View {
                         .focused($focused)
                         .onSubmit { find.search(roots: roots) }
                         .accessibilityIdentifier("hub-find-input")
-                    if find.running {
-                        ProgressView().controlSize(.small)
-                        IconButton(systemName: "stop.circle", tooltip: "Stop the search") { find.stop() }
+                    // A fixed slot: the field and the hit count keep their places while a search runs.
+                    HStack(spacing: 6) {
+                        if find.running {
+                            ProgressView().controlSize(.small)
+                            IconButton(systemName: "stop.circle", tooltip: "Stop the search") { find.stop() }
+                        }
                     }
+                    .frame(width: 40, alignment: .trailing)
                     Text(verbatim: find.truncated ? "\(find.hits.count)+ hits" : "\(find.hits.count) hits")
                         .font(.system(size: 11, design: .monospaced))
                         .foregroundColor(.settingsTextMuted)
@@ -197,6 +201,12 @@ struct HubFindPanel: View {
                             Text(verbatim: display(group.path))
                                 .font(.system(size: 11.5, weight: .semibold, design: .monospaced))
                                 .foregroundColor(.settingsText)
+                                .textSelection(.enabled)
+                                .contextMenu {
+                                    Button("Copy path") { PathOpener.copy(group.path, what: "path") }
+                                    Button("Reveal in Finder") { PathOpener.reveal(group.path) }
+                                    Button("Open in Cursor") { PathOpener.cursor(group.path) }
+                                }
                                 .padding(.horizontal, 12)
                                 .padding(.top, 8)
                                 .padding(.bottom, 2)

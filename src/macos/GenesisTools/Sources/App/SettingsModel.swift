@@ -58,8 +58,11 @@ final class SettingsModel: ObservableObject {
         NSWorkspace.shared.activateFileViewerSelecting([Bundle.main.bundleURL])
     }
 
+    /// Finder by name (Hub/HubPathActions.swift): opening the folder with its default app can land in
+    /// QuickTime Player when LaunchServices maps folders to it.
     func openAppDir() {
-        report(NSWorkspace.shared.open(URL(fileURLWithPath: Self.appDir)), what: "open \(Self.appDir)")
+        let opened = PathOpener.perform(.finder, Self.appDir)
+        report(opened != .missing(PathOpener.fileURL(Self.appDir).path), what: "open \(Self.appDir)")
     }
 
     func openPrivacySettings() {

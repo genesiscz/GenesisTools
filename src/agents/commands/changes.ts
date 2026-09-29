@@ -1,4 +1,5 @@
 import { existsSync } from "node:fs";
+import { resolveCachedSessionId, type SessionIdResolution } from "@genesiscz/utils/agent-sessions/cached-title";
 import { resolveTranscript } from "@genesiscz/utils/ai/transcripts/resolve";
 import { readJsonlRows } from "@genesiscz/utils/jsonl";
 import { logger, out } from "@genesiscz/utils/logger";
@@ -273,6 +274,32 @@ function diffFields(diff: FileDiff | undefined): Record<string, unknown> {
         : { diff: diff.diff, added: diff.added, removed: diff.removed };
 }
 
+/**
+ * The session argument as the change log and the transcript readers need it: a full id. A leading
+ * part of one is completed from the history index, like `ai-spend session --id`; before this,
+ * `agents changes 7399934a --json` answered an empty list with `transcript: null` and exit 0, which
+ * read as "this session changed nothing". An ambiguous prefix is refused with the candidates.
+ */
+export function resolveSessionArgument(
+    session: string,
+    resolve: (id: string) => SessionIdResolution = (id) => resolveCachedSessionId({ id })
+): { id: string; note?: string } | { error: string } {
+    const found = resolve(session);
+
+    if (found.kind === "unique") {
+        return { id: found.sessionId, note: `${session} is session ${found.sessionId}` };
+    }
+
+    if (found.kind === "ambiguous") {
+        const lines = found.candidates.map((row) =>
+            `  ${row.sessionId}  ${row.providerId ?? ""}  ${row.title ?? ""}`.trimEnd()
+        );
+        return { error: [`${session} matches more than one session. Pass more of the id:`, ...lines].join("\n") };
+    }
+
+    return { id: session };
+}
+
 export function registerChangesCommand(program: Command): void {
     program
         .command("changes")
@@ -295,7 +322,21 @@ export function registerChangesCommand(program: Command): void {
             "Also write the transcript's before and after blobs into the change-log object store, so `git --git-dir <objects>` can read every oid listed. Without it the command writes nothing."
         )
         .option("--json")
-        .action(async (session: string, options: ChangesOptions) => {
+        .action(async (sessionArgument: string, options: ChangesOptions) => {
+            const resolved = resolveSessionArgument(sessionArgument);
+
+            if ("error" in resolved) {
+                out.log.error(resolved.error);
+                process.exitCode = 1;
+                return;
+            }
+
+            if (resolved.note) {
+                out.log.info(resolved.note);
+            }
+
+            const session = resolved.id;
+
             if (options.tool && options.tools) {
                 // `--tools` used to win silently, so `--tool` was ignored without a word.
                 out.log.error("--tool and --tools cannot be combined: pass the one id inside --tools");

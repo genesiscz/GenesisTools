@@ -270,7 +270,7 @@ struct HubNotifySettings: View {
             VStack(alignment: .leading, spacing: 2) {
                 ForEach(status.recent.prefix(5)) { event in
                     HStack(spacing: 6) {
-                        Text(verbatim: HubFormat.ago(HubFormat.date(event.at))).font(.system(size: 10.5, design: .monospaced)).foregroundColor(ReviewPalette.dim).frame(width: 42, alignment: .leading)
+                        LiveAgo(date: HubFormat.date(event.at)).font(.system(size: 10.5, design: .monospaced)).foregroundColor(ReviewPalette.dim).frame(width: 42, alignment: .leading)
                         FindText(event.message, field: "message").font(.system(size: 11.5)).lineLimit(1).truncationMode(.tail)
                         Spacer(minLength: 0)
                     }

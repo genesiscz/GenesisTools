@@ -68,6 +68,14 @@ describe("cleanupBlockers: each rule blocks, and its absence does not", () => {
         expect(kinds({ verdict: null, verdictError: "no base branch" })).toEqual(["verdict-error"]);
     });
 
+    test("the unmerged blocker names the branch, or the detached commit when there is no branch", () => {
+        const text = (overrides: Partial<WorktreeFacts>) => cleanupBlockers(facts(overrides)).map((b) => b.text);
+        expect(text({ verdict: "UNMERGED", how: "none" })).toEqual(["The branch is not merged into origin/master"]);
+        expect(text({ verdict: "UNMERGED", how: "none", branch: null, head: "abcdef1234567890" })).toEqual([
+            "Detached HEAD abcdef123 is not merged into origin/master",
+        ]);
+    });
+
     test("uncommitted work: tracked changes, untracked entries, an unreadable status", () => {
         expect(kinds({ changedCount: 2, changed: ["a.ts", "b.ts"] })).toEqual(["changed"]);
         expect(kinds({ untrackedCount: 1, untracked: ["notes.md"] })).toEqual(["untracked"]);

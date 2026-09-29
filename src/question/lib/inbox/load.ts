@@ -105,10 +105,42 @@ export async function waitingBlock(
     return found?.blocks.find((block) => block.number === number) ?? null;
 }
 
+/**
+ * The folder of a session that has no stored row: the agent session list (the Inbox's own source), recent first.
+ * The exact id wins in either window; a prefix counts only when it names one session, never the first of several.
+ */
+export async function lookupSessionCwd(
+    session: string,
+    list: (hours: number) => Promise<AgentSessionRow[]> = (hours) => listAgentSessionRows({ hours })
+): Promise<string | null> {
+    let rows: AgentSessionRow[] = [];
+
+    for (const hours of [72, 24 * 90]) {
+        rows = await list(hours);
+        const exact = rows.find((candidate) => candidate.sessionId === session);
+
+        if (exact) {
+            return exact.cwd || null;
+        }
+    }
+
+    const prefixed = rows.filter((candidate) => candidate.sessionId.startsWith(session));
+
+    if (new Set(prefixed.map((candidate) => candidate.sessionId)).size !== 1) {
+        return null;
+    }
+
+    return prefixed[0].cwd || null;
+}
+
 /** Every decision of one session (the hub's Decisions pane). A transcript that cannot be read leaves the stored rows. */
 export async function loadSessionDecisions(
     session: string,
-    { rows = realInboxDeps.rows, scan = scanSession }: { rows?: () => DecisionRecord[]; scan?: typeof scanSession } = {}
+    {
+        rows = realInboxDeps.rows,
+        scan = scanSession,
+        sessionCwd = lookupSessionCwd,
+    }: { rows?: () => DecisionRecord[]; scan?: typeof scanSession; sessionCwd?: typeof lookupSessionCwd } = {}
 ): Promise<InboxDecision[]> {
     let found: TranscriptScan | null = null;
 
@@ -118,8 +150,16 @@ export async function loadSessionDecisions(
         log.debug({ error, session }, "session decisions: transcript not readable, stored rows only");
     }
 
-    const cwd = rows().find((row) => row.sessionId === session)?.cwd;
-    return withExcerpts(sessionDecisions({ sessionId: session, rows: rows(), scan: found }), cwd);
+    const stored = rows();
+    const decisions = sessionDecisions({ sessionId: session, rows: stored, scan: found });
+
+    // A decision harvested from the transcript has no stored row to carry the folder; without it
+    // every `file:line` of the Decisions pane read "file not found" while the Inbox showed the lines.
+    // The session listing is asked only when a reference needs a folder and no stored row has one.
+    const needsFolder = decisions.some((item) => item.refs.length > 0);
+    const storedCwd = stored.find((row) => row.sessionId === session && row.cwd)?.cwd;
+    const cwd = storedCwd || (needsFolder ? await sessionCwd(session) : null) || undefined;
+    return withExcerpts(decisions, cwd);
 }
 
 /** Reads each decision's `file:line` references from disk (bounded), off the hub's hot path. */

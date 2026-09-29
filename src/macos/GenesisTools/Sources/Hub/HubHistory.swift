@@ -137,7 +137,9 @@ struct HubHistorySection: View {
                                 .font(.system(size: 12, weight: .medium))
                                 .foregroundColor(Color.white.opacity(0.88))
                                 .lineLimit(1)
-                            Text(verbatim: [hit.project ?? (hit.cwd as NSString?)?.lastPathComponent, hit.when.map { HubFormat.ago($0) }].compactMap { $0 }.joined(separator: " · "))
+                            LiveAgo(date: hit.when) { ago in
+                                [hit.project ?? (hit.cwd as NSString?)?.lastPathComponent, ago.isEmpty ? nil : ago].compactMap { $0 }.joined(separator: " · ")
+                            }
                                 .font(.system(size: 10.5))
                                 .foregroundColor(ReviewPalette.dim)
                                 .lineLimit(1)

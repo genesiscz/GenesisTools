@@ -87,7 +87,10 @@ struct DecisionsView: View {
 
     private var toolbar: some View {
         HStack(spacing: 10) {
-            Picker("", selection: $filter) {
+            Picker("", selection: Binding(get: { filter }, set: { next in
+                HubMainBusy.measure("decisions.filter")
+                filter = next
+            })) {
                 Text("Open").tag("open")
                 Text("Answered").tag("answered")
                 Text("All").tag("all")
