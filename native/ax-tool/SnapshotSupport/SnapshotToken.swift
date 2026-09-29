@@ -69,6 +69,8 @@ public enum SnapshotRefusal: String, Codable {
     case missingTarget = "missing_target"
     case permission
     case refused
+    /// The user put the pointer in the takeover corner. Terminal: never retried, never recovered.
+    case userTakeover = "user_takeover"
 }
 
 public enum SnapshotError: Error, LocalizedError {

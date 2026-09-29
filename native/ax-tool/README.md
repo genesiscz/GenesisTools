@@ -129,6 +129,23 @@ Defaults are unchanged, but every disruptive behaviour can now be opted out of:
 Use all three when the tool runs unattended while someone is working. Leave
 them off for interactive use, where raising the app is what you asked for.
 
+## Taking over: the top-left corner
+
+Push the pointer into the top-left corner of the main display (a 4-point square, the menu-bar
+corner) and every command stops before its next synthetic event. Each click, key, character,
+wheel step, drag step, warp and hover dwell passes one gate (`SyntheticInputGate`,
+`Sources/utils/InputGate.swift`) that reads the physical pointer first. Before the command stops,
+the gate posts the up of every key or button it still holds, so nothing is left pressed. A drag
+posts its release at the last verified point. Typing stops between characters. `act` also checks
+once before it starts, so a corner pointer blocks activation and AX actions as well. The same
+applies to each press of a `control-session` batch.
+
+The refusal is `{"ok":false,"refusal":"user_takeover","dispatchState":...}`. `dispatchState` is
+`not_started` when nothing was posted, otherwise `uncertain`. The TypeScript runner never retries
+it and recovery never tries a remedy for it. `GENESIS_CONTROL_ABORT_CORNER=0` turns the check off
+(it is read once per process). A command that itself aims into that square (`click --coords 1,1`)
+leaves the pointer there, so the next command refuses until the pointer moves.
+
 ## Extended snapshot actions
 
 `drag` uses the left mouse button, `--to X,Y`, optional `--duration 0.1..5`, `--coords` and `--background`. Only `click` accepts `--button left|right|middle`.
@@ -151,6 +168,10 @@ a change under `native/ax-tool`.
 ### Visual evidence
 
 `see --perception ocr` uses native Vision OCR on the captured image. Optional `--perception-crop x,y,w,h` and `--perception-width N` preserve a source-pixel transform, and `act --region v0` targets the corresponding original-image region. Every image-backed snapshot carries a canonical pixel hash and PNG hash. Coordinate actions (and fixed drag destinations) revalidate pixels, dimensions, process/window and geometry, then claim a private one-use marker atomically. Visual evidence expires after 30 seconds. `see --no-image` remains the fast AX-only path and cannot authorize coordinate actions.
+
+`see --perception ocr --perception-reuse PATH` keeps the previous read in a cache file (JSON, owner-only, replaced atomically after every read) and re-reads only what changed. The capture is compared with the previous one on a 1/8 grayscale thumbnail in 256-pixel tiles. Changed tiles are grouped into blobs, and each blob becomes one rectangle, padded by a tile and grown past any known line it would cut. At most 4 rectangles are read. More than 60% of the tiles changed, or rectangles covering more than 60% of the region, means a full read. A different pid, launch, window, window bounds, crop or processed size is always a full read, and so is a missing or unreadable file. A previous line is kept only when no re-read rectangle touches it and the gray pixels under it are byte-identical in the new capture, so every returned region, reused or fresh, is text this capture shows and is bound to this capture's identity and pixel hash. The result reports `perception.ocrReuse`, for example `{"mode":"partial","rects":2,"readFraction":0.22}`, `{"mode":"unchanged","rects":0,"readFraction":0}` or `{"mode":"full","reason":"key_changed",...}`. The reasons are `no_cache`, `unreadable`, `key_changed`, `too_much_changed` and `rects_too_large`. The mechanism is ported from typesafe-computer-use (`perception.py`). This port adds two stricter checks: a tile with any single thumbnail pixel changed by more than 16 counts as changed, and the pixel check on each kept line.
+
+An image-backed `see` marks an actionable row `"drawn": false` when the capture shows nothing where the row says it is. That is a CSS-clipped panel or a closed dropdown's search box: Accessibility reports it as visible, but a press lands on empty page. Candidate rows are buttons, links, text fields and areas, combo boxes, pop-ups, checkboxes, radio buttons, menu buttons and cells, plus any row with an action other than AXScrollToVisible or AXShowMenu. A row qualifies only when it is visible in its scroll clip and its frame maps wholly into the capture. Blank means the inside and the left and right edge strips (read 4 pixels in from the top and bottom) all have a gray spread of 12 or less. A drawn or undecidable row gets no key. At most 400 rows are checked per snapshot. The key is added after the tree digest, so it never changes the snapshot token.
 
 No Codex Computer Use, Sky, Python or icon-parser API is used. AI target choice lives in the TypeScript Jev layer; the native layer accepts only observed region IDs or explicit caller-supplied coordinates and verifies the capture.
 

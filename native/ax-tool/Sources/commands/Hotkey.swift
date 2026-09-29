@@ -82,13 +82,14 @@ func cmdHotkey(keys: String) {
     // The cursor feedback above can take a glide; check the front again at the moment of posting,
     // because a global-tap combo lands in whatever app holds the front by then.
     let routedToPid = argValue("--to-pid") != nil
+    var held: SyntheticInputGate.Held?
     let posted = postWhileFrontmost([down], isTargetFront: { routedToPid || targetPid.map { frontmostPid() == $0 } ?? true },
-                                    post: { $0.postRouted() })
-    guard posted == 1 else {
+                                    post: { held = $0.pressRouted(release: up) })
+    guard posted == 1, let held else {
         errorExit("\(frontmostDescription()) took the front before the combo was sent; nothing was posted")
     }
     Thread.sleep(forTimeInterval: holdMs / 1000)
-    up.postRouted()
+    inputGate.release(held)
 
     jsonOutput(["ok": true, "action": "hotkey", "keys": keys])
 }

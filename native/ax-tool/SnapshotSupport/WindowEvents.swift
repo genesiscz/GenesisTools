@@ -86,6 +86,10 @@ public final class WindowEventFactory {
             }
         } catch {
             post(release)
+            // A takeover keeps its own type, so the caller reports it as the terminal refusal it is.
+            if error is UserTakeoverError {
+                throw error
+            }
             throw WindowEventError.unavailable("drag interrupted after mouse-down: \(error.localizedDescription); inspect the partial outcome")
         }
         post(release)
