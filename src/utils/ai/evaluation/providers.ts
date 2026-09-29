@@ -19,12 +19,21 @@ export class VercelEvaluationProvider implements EvaluationProvider {
     }
 }
 
+/** The alias listen, watch, route and verify evaluate against. */
+export const TYPESAFE_DEFAULT_MODEL = "jev-latest";
+
 export class TypeSafeEvaluationProvider implements EvaluationProvider {
     readonly id = "typesafe";
     private readonly model;
-    constructor(options: { apiKey: string; fetch?: TypeSafeAiProviderSettings["fetch"] }) {
-        this.model = createTypeSafeAi({ ...options, baseURL: "https://api.typesafe.ai/v1" }).evaluationModel(
-            "jev-latest"
+    /**
+     * `model` is a pin, passed only by `tools jev grep` (`jev-1.13.0`): its cache keys on the model
+     * id, and an alias that moves would keep serving old answers as fresh. Every other caller omits
+     * it and stays on `jev-latest`.
+     */
+    constructor(options: { apiKey: string; fetch?: TypeSafeAiProviderSettings["fetch"]; model?: string }) {
+        const { model, ...settings } = options;
+        this.model = createTypeSafeAi({ ...settings, baseURL: "https://api.typesafe.ai/v1" }).evaluationModel(
+            model ?? TYPESAFE_DEFAULT_MODEL
         );
     }
     async evaluate(options: EvaluationCall): Promise<EvaluationResponse> {

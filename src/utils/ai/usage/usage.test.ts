@@ -3,7 +3,10 @@ import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { openRouterPricingSync, resetOpenRouterCatalogCache } from "../catalog/openrouter";
+import { createEvaluatorWithProviderFactory } from "../evaluation/service";
+import { JEV_USAGE_APP, jevCalls, jevSpend, UNLABELED_JEV_USE } from "../evaluation/spend";
 import { dayFilePath, usageDir, utcDayOf } from "./paths";
 import { queryUsage } from "./query";
 import { recordUsage } from "./record";
@@ -468,5 +471,104 @@ describe("queryUsage grain", () => {
         // The canary: on a plain object the running totals land here instead.
         expect(Object.prototype).not.toHaveProperty("costUsd");
         expect(Object.prototype).not.toHaveProperty("events");
+    });
+});
+
+describe("Jev spend", () => {
+    test("a Jev call is priced from the catalog at write time: $0.042 per million input tokens, output free", async () => {
+        const event = await recordUsage(
+            input({
+                app: JEV_USAGE_APP,
+                provider: "jev-typesafe",
+                modelId: "jev-1.13.0",
+                inputTokens: 1_000_000,
+                outputTokens: 5_000,
+                costUsd: undefined,
+            })
+        );
+        expect(event.costUsd).toBeCloseTo(0.042, 9);
+        expect(event.costSource).toBe("catalog");
+    });
+
+    test("the service books each call with its price and label, and returns the price", async () => {
+        const evaluate = await createEvaluatorWithProviderFactory(
+            { provider: "typesafe", usageLabel: "grep" },
+            async () => ({
+                apiKey: "fixture-key",
+                adapter: {
+                    id: "typesafe",
+                    evaluate: async () => ({
+                        model: "jev-1.13.0",
+                        answers: { q0: { type: "boolean", probability: 0.9 } },
+                        usage: { inputTokens: 2_000_000, outputTokens: 10, totalTokens: 2_000_010 },
+                        warnings: [],
+                        rounding: undefined,
+                        providerMetadata: undefined,
+                    }),
+                },
+            })
+        );
+        const answered = await evaluate({
+            input: { state: "x", questions: { q0: { type: "boolean", instructions: "?" } } },
+        });
+        expect(answered.costUsd).toBeCloseTo(0.084, 9);
+        const summary = jevSpend({ from: "2000-01-01", to: new Date(Date.now() + 60_000).toISOString() });
+        expect(summary.byLabel.grep).toMatchObject({ calls: 1, inputTokens: 2_000_000 });
+        expect(summary.byLabel.grep.costUsd).toBeCloseTo(0.084, 9);
+    });
+
+    test("rows booked before the catalog knew Jev are priced on read; an unknown model stays unpriced", () => {
+        const day = "2026-09-18";
+        mkdirSync(usageDir(), { recursive: true });
+        const row = (modelId: string, label?: string) =>
+            SafeJSON.stringify(
+                {
+                    at: `${day}T10:00:00.000Z`,
+                    app: JEV_USAGE_APP,
+                    accountId: "jev:typesafe",
+                    provider: "jev-typesafe",
+                    modelId,
+                    inputTokens: 500_000,
+                    outputTokens: 1,
+                    meta: label ? { label } : { questions: 3 },
+                },
+                { jsonl: true }
+            );
+        writeFileSync(dayFilePath(day), `${row("jev-latest", "jev listen")}\n${row("jev-future")}\n`);
+        const { calls } = jevCalls({ from: day, to: "2026-09-19" });
+        expect(calls.map((call) => [call.label, call.costBasis])).toEqual([
+            ["jev listen", "catalog"],
+            [UNLABELED_JEV_USE, "unpriced"],
+        ]);
+        expect(calls[0]?.costUsd).toBeCloseTo(0.021, 9);
+        expect(calls[1]?.costUsd).toBeUndefined();
+        expect(jevSpend({ from: day, to: "2026-09-19" }).total).toMatchObject({ calls: 2, unpricedCalls: 1 });
+        // A window is compared as instants, not as text: "9/17/2026" sorts after "2026-..." as a string.
+        expect(jevCalls({ from: "9/17/2026", to: "2026-09-19" }).calls).toHaveLength(2);
+        expect(() => jevCalls({ from: "someday", to: "2026-09-19" })).toThrow("Not a date");
+    });
+
+    test("a ledger label named __proto__ is counted like any other label", () => {
+        const day = "2026-09-18";
+        mkdirSync(usageDir(), { recursive: true });
+        const row = SafeJSON.stringify(
+            {
+                at: `${day}T10:00:00.000Z`,
+                app: JEV_USAGE_APP,
+                accountId: "jev:typesafe",
+                provider: "jev-typesafe",
+                modelId: "jev-latest",
+                inputTokens: 1_000,
+                outputTokens: 0,
+                meta: { label: "__proto__" },
+            },
+            { jsonl: true }
+        );
+        writeFileSync(dayFilePath(day), `${row}\n`);
+        const summary = jevSpend({ from: day, to: "2026-09-19" });
+        expect(Object.entries(summary.byLabel)).toEqual([
+            ["__proto__", { calls: 1, inputTokens: 1_000, costUsd: expect.any(Number), unpricedCalls: 0 }],
+        ]);
+        expect(Object.hasOwn(Object.prototype, "calls")).toBe(false);
     });
 });

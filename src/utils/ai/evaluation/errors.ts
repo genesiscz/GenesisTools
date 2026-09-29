@@ -1,5 +1,115 @@
 export const GATEWAY_VERIFICATION_URL = "https://vercel.com/d?to=%2F%5Bteam%5D%2F%7E%2Fai%3Fmodal%3Dadd-credit-card";
 
+export type EvaluationErrorCode = "cancelled" | "authentication" | "rate-limit" | "provider" | "request-limit";
+
+/**
+ * A failed Jev call with a machine-readable `code`. The message is the string the evaluator threw
+ * before this class existed (`Evaluation stopped.` on abort, the describe*Failure text otherwise), so
+ * a caller that reads only `.message` sees no change. `tools jev grep` switches on `code`.
+ *
+ * It never carries the provider error as `cause`: an `APICallError` holds `requestBodyValues`, which
+ * is the whole evaluation state, and a logged cause would write that state into the log file.
+ */
+export class EvaluationError extends Error {
+    readonly code: EvaluationErrorCode;
+    readonly statusCode?: number;
+    /** From a 429's `Retry-After` header; undefined when the header was absent or unreadable. */
+    readonly retryAfterMs?: number;
+    /**
+     * A timeout, a reset connection, or HTTP 408, 429 or 5xx: the same request may succeed later.
+     * Only a caller that knows its batch can turn this into "split the batch".
+     */
+    readonly transient: boolean;
+
+    constructor(options: {
+        code: EvaluationErrorCode;
+        message: string;
+        statusCode?: number;
+        retryAfterMs?: number;
+        transient?: boolean;
+    }) {
+        super(options.message);
+        this.name = "EvaluationError";
+        this.code = options.code;
+        this.statusCode = options.statusCode;
+        this.retryAfterMs = options.retryAfterMs;
+        this.transient = options.transient ?? false;
+    }
+}
+
+function retryAfterMs(headers: unknown): number | undefined {
+    if (!headers || typeof headers !== "object") {
+        return undefined;
+    }
+
+    const raw = Object.entries(headers).find(([name]) => name.toLowerCase() === "retry-after")?.[1];
+    if (typeof raw !== "string") {
+        return undefined;
+    }
+
+    const seconds = Number(raw);
+    if (raw.trim() && Number.isFinite(seconds) && seconds >= 0) {
+        return seconds * 1000;
+    }
+
+    const date = Date.parse(raw);
+    return Number.isFinite(date) ? Math.max(0, date - Date.now()) : undefined;
+}
+
+/**
+ * Read the failure class from the provider error object itself, before it is flattened into a
+ * message. Walks the `cause` chain the same five levels `describeGatewayFailure` does, because the
+ * Gateway provider wraps the `APICallError` that carries the status and headers.
+ */
+export function classifyEvaluationFailure(
+    error: unknown
+): Pick<EvaluationError, "code" | "statusCode" | "retryAfterMs" | "transient"> {
+    let current: unknown = error;
+    let statusCode: number | undefined;
+    let retryAfter: number | undefined;
+    let timedOut = false;
+    let network = false;
+
+    for (let depth = 0; depth < 5 && current && typeof current === "object"; depth++) {
+        if ("statusCode" in current && typeof current.statusCode === "number") {
+            statusCode ??= current.statusCode;
+        }
+
+        if ("responseHeaders" in current) {
+            retryAfter ??= retryAfterMs(current.responseHeaders);
+        }
+
+        if ("name" in current && (current.name === "TimeoutError" || current.name === "AbortError")) {
+            timedOut = true;
+        }
+
+        if (
+            "isRetryable" in current &&
+            current.isRetryable === true &&
+            !("statusCode" in current && current.statusCode)
+        ) {
+            network = true;
+        }
+
+        current = "cause" in current ? current.cause : undefined;
+    }
+
+    if (statusCode === 401 || statusCode === 403) {
+        return { code: "authentication", statusCode, transient: false };
+    }
+
+    if (statusCode === 429) {
+        return { code: "rate-limit", statusCode, retryAfterMs: retryAfter, transient: true };
+    }
+
+    const transient =
+        timedOut ||
+        network ||
+        statusCode === 408 ||
+        (statusCode !== undefined && statusCode >= 500 && statusCode <= 599);
+    return { code: "provider", statusCode, transient };
+}
+
 export function describeGatewayFailure({
     error,
     timeoutMs,

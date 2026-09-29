@@ -146,6 +146,9 @@ When creating a new tool and writing helper functions, check if the utility is *
 - `src/utils/audio/converter.ts` - Audio transcode helpers: `convertToWhisperWav()`, `convertFileToMonoMp3()`, `MONO_MP3_BITRATE_KBPS`, `toFloat32Audio()`
 - `src/utils/audio/detect-format.ts` - Magic-byte audio sniffing: `detectAudioFormat()`, `sniffAudioExt()`
 - `src/utils/cli/quiet-spinner.ts` - No-op spinner for non-TTY (`createQuietSpinner()`); pair with `isQuietOutput()` from `src/utils/cli/output-mode.ts`
+- `src/utils/cli/interrupt.ts` - `withInterrupt(fn)`: Ctrl-C as an AbortSignal. Use it instead of `process.once("SIGINT")`: `./tools` and the app launcher forward each Ctrl-C, and a `once` listener lets the second copy kill the process mid-cleanup
+- `src/utils/repo-context/` - Repository context gatherers (agent instruction files, owning project + package manager + test runner, test commands) over a caller-supplied reader; `gatherRepoContext()`, `defaultGatherers()`
+- `src/utils/ai/evaluation/spend.ts` - All Jev spend from the usage ledger: `jevSpend()`, `jevCalls()` (by feature label, model, day)
 
 Tool-specific logic stays in the tool directory (e.g., `src/har-analyzer/core/`).
 

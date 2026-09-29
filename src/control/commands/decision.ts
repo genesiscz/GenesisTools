@@ -1,5 +1,6 @@
 import { addProviderOption, selectedProvider } from "@genesiscz/utils/ai/evaluation/cli";
 import { createEvaluator, type Evaluator, evaluateRequest } from "@genesiscz/utils/ai/evaluation/service";
+import { withInterrupt } from "@genesiscz/utils/cli/interrupt";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
@@ -67,15 +68,7 @@ export async function readObservation(options: ControlOptions, signal: AbortSign
  * and an unremoved handler leaks past the command that installed it.
  */
 export async function withSigintAbort<T>(body: (signal: AbortSignal) => Promise<T>): Promise<T> {
-    const controller = new AbortController();
-    const cancel = () => controller.abort();
-    process.once("SIGINT", cancel);
-
-    try {
-        return await body(controller.signal);
-    } finally {
-        process.off("SIGINT", cancel);
-    }
+    return withInterrupt(body);
 }
 
 /**

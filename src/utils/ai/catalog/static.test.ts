@@ -70,8 +70,15 @@ describe("static catalog", () => {
         expect(aliasMapFor("xai")).toEqual({});
     });
 
-    test("capability filtering reaches every chat model", () => {
-        expect(byCapability("chat").length).toBe(STATIC_CATALOG.length);
+    test("capability filtering reaches every chat model; only Jev is classify-only", () => {
+        const classifyOnly = byCapability("classify").filter((model) => !model.capabilities.has("chat"));
+        expect(classifyOnly.map((model) => `${model.provider}/${model.id}`)).toEqual([
+            "jev-typesafe/jev-1.13.0",
+            "jev-typesafe/jev-latest",
+            "jev-vercel/typesafe-ai/jev",
+        ]);
+        expect(classifyOnly.every((model) => model.flags?.hidden)).toBe(true);
+        expect(byCapability("chat").length).toBe(STATIC_CATALOG.length - classifyOnly.length);
         expect(byCapability("image")).toEqual([]);
     });
 

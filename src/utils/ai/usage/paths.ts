@@ -1,3 +1,4 @@
+import { existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { aiDataDir } from "../config/paths";
 
@@ -28,6 +29,18 @@ export function utcDayOf(at: Date): string {
 
 export function dayFilePath(day: string): string {
     return join(usageDir(), `${day}.jsonl`);
+}
+
+/** The oldest day file, as `YYYY-MM-DD`, so an all-time read starts where the ledger does. */
+export function firstUsageDay(): string | undefined {
+    if (!existsSync(usageDir())) {
+        return undefined;
+    }
+
+    return readdirSync(usageDir())
+        .filter((name) => /^\d{4}-\d{2}-\d{2}\.jsonl$/.test(name))
+        .sort()[0]
+        ?.slice(0, 10);
 }
 
 /**

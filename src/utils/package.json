@@ -95,6 +95,16 @@
             "types": "./cli/index.ts",
             "default": "./cli/index.ts"
         },
+        "./cli/current-command": {
+            "bun": "./cli/current-command.ts",
+            "types": "./cli/current-command.ts",
+            "default": "./cli/current-command.ts"
+        },
+        "./cli/interrupt": {
+            "bun": "./cli/interrupt.ts",
+            "types": "./cli/interrupt.ts",
+            "default": "./cli/interrupt.ts"
+        },
         "./cli/is-interactive": {
             "bun": "./cli/is-interactive.ts",
             "types": "./cli/is-interactive.ts",
@@ -375,6 +385,11 @@
             "bun": "./references.ts",
             "types": "./references.ts",
             "default": "./references.ts"
+        },
+        "./repo-context": {
+            "bun": "./repo-context/index.ts",
+            "types": "./repo-context/index.ts",
+            "default": "./repo-context/index.ts"
         },
         "./ripgrep": {
             "bun": "./ripgrep.ts",
