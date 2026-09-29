@@ -5,8 +5,10 @@ import { Command } from "commander";
 
 const program = new Command()
     .name("computer-use")
-    .description("Independent macOS Computer Use over native AX/CoreGraphics/Vision. No Codex or Sky dependency.");
-registerComputerUseCommands(program);
+    .description(
+        "macOS Computer Use for agents: MCP server, scripts and prepare, over the native AX/CoreGraphics/Vision core in src/control. No Codex or Sky dependency. `tools control` is the full CLI on the same core."
+    );
+registerComputerUseCommands(program, { primary: true });
 const run = program.commands.find((command) => command.name() === "computer-run");
 run?.name("run");
 await runTool(program, { tool: "computer-use" });

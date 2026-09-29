@@ -29,6 +29,7 @@ import { NativeObservationSource } from "../decision/observation-source";
 import { runNativeSequence } from "../decision/sequence";
 import { ControlSession } from "../decision/session";
 import { resolveVisualTarget, type VisualObservation, visualObservationSchema } from "../decision/visual";
+import { regionsCoveredByElements } from "../decision/visual-merge";
 import { replayWorkflow } from "../decision/workflow";
 import { type AxResult, runAxAsync } from "../runner";
 import { diffSnapshots, type SnapshotDiff } from "../snapshot-diff";
@@ -111,7 +112,11 @@ export interface ComputerState {
     visual?: {
         method: "vision-ocr";
         expiresAt: number;
-        regions: Array<VisualObservation["perception"]["regions"][number] & { ref: string }>;
+        /**
+         * `element_ref` names the actionable AX element that already shows this text. Prefer it: an
+         * AX press lands on the control even under an overlay, and needs no pixel evidence.
+         */
+        regions: Array<VisualObservation["perception"]["regions"][number] & { ref: string; element_ref?: string }>;
     };
     screenshot: {
         url: string;
@@ -307,12 +312,20 @@ function webActivationKey(rows: Observation["elements"], target: Observation["el
     }
     return undefined;
 }
+/**
+ * The computer-use API: stateful sessions over the native core, the class behind
+ * `tools computer-use mcp|run` and `tools control mcp`. Its API reference is
+ * `src/computer-use/README.md` (what `tools computer-use --readme` prints).
+ */
 export class ComputerUse {
     readonly target = "mac";
     private readonly native: NativeBridge;
     private readonly menus: NativeMenuSession;
     private readonly records = new Map<string, AppRecord>();
     private readonly artifacts: TemporaryArtifacts;
+    /** One OCR reuse cache per app, kept apart from screenshots so their rotation cannot evict it. */
+    private readonly ocrCaches: TemporaryArtifacts;
+    private readonly ocrCacheByApp = new Map<string, string>();
     private readonly evaluate: Evaluator;
     private readonly session = randomUUID().slice(0, 8);
     private sequence = 0;
@@ -333,6 +346,11 @@ export class ComputerUse {
         this.artifacts = new TemporaryArtifacts({
             prefix: "computer-use",
             maxFiles: 10,
+            parentDirectory: options.artifactDirectory,
+        });
+        this.ocrCaches = new TemporaryArtifacts({
+            prefix: "computer-use-ocr",
+            maxFiles: 8,
             parentDirectory: options.artifactDirectory,
         });
         this.timeoutMs = options.timeoutMs ?? 10000;
@@ -371,6 +389,13 @@ export class ComputerUse {
         if (image) {
             this.artifacts.release(image);
         }
+
+        const ocrCache = this.ocrCacheByApp.get(app);
+        if (ocrCache) {
+            this.ocrCaches.release(ocrCache);
+            this.ocrCacheByApp.delete(app);
+        }
+
         return this.records.delete(app);
     }
     private store({
@@ -548,10 +573,20 @@ export class ComputerUse {
                     ? {
                           method: "vision-ocr",
                           expiresAt: visual.data.perception.capture.created * 1000 + 30000,
-                          regions: visual.data.perception.regions.map((region) => ({
-                              ...region,
-                              ref: `${record.revision}:visual:${region.id}`,
-                          })),
+                          regions: (() => {
+                              const covered = regionsCoveredByElements({
+                                  observation: snapshot,
+                                  regions: visual.data.perception.regions,
+                              });
+                              return visual.data.perception.regions.map((region) => {
+                                  const cover = covered.get(region.id);
+                                  return {
+                                      ...region,
+                                      ref: `${record.revision}:visual:${region.id}`,
+                                      ...(cover ? { element_ref: `${record.revision}:${cover.element}` } : {}),
+                                  };
+                              });
+                          })(),
                       }
                     : undefined,
             screenshot:
@@ -609,6 +644,18 @@ export class ComputerUse {
             if (options.perception) {
                 args.push("--perception", options.perception);
             }
+
+            // A repeat OCR observation of the same window re-reads only the regions that changed.
+            if (options.perception === "ocr") {
+                let cache = this.ocrCacheByApp.get(options.app);
+                if (!cache) {
+                    cache = this.ocrCaches.allocate("ocr");
+                    this.ocrCacheByApp.set(options.app, cache);
+                }
+
+                args.push("--perception-reuse", cache);
+            }
+
             if (options.window_id !== undefined) {
                 args.push("--window-id", String(options.window_id));
             } else if (options.window_index !== undefined) {
@@ -1644,9 +1691,16 @@ export class ComputerUse {
                               });
                           },
             });
+            const cover = result.selected
+                ? regionsCoveredByElements({ observation: record.snapshot, regions: [result.selected] }).get(
+                      result.selected.id
+                  )
+                : undefined;
             return {
                 ...result,
                 region_ref: result.selected ? `${record.revision}:visual:${result.selected.id}` : null,
+                // The same text as an actionable AX element: press it through AX instead of its pixels.
+                element_ref: cover ? `${record.revision}:${cover.element}` : null,
                 revision: record.revision,
                 metrics: budget.snapshot(),
             };

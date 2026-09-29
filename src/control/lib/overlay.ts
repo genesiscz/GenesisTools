@@ -1,7 +1,7 @@
 import { savedJevSettings } from "@genesiscz/utils/ai/evaluation/settings";
 import { logger } from "@genesiscz/utils/logger";
 import { profiler } from "@genesiscz/utils/profile";
-import { runAx } from "./runner";
+import { RealMachineInTestError, runAx } from "./runner";
 
 const prof = profiler.scope("control-overlay");
 const { log } = logger.scoped("control-overlay");
@@ -52,6 +52,11 @@ export function emitClickOverlay(point: ScreenPoint): boolean {
         log.info({ x, y, ok: result.ok, error: result.error }, "click overlay emitted");
         return result.ok;
     } catch (error) {
+        // A test that reached this drew on the real screen; a surface under test injects its own overlay.
+        if (error instanceof RealMachineInTestError) {
+            throw error;
+        }
+
         log.debug({ error, x, y }, "cursor overlay emit failed");
         return false;
     } finally {

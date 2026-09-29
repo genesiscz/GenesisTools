@@ -12,6 +12,7 @@ import { wrapWithGenesisApp } from "@genesiscz/utils/macos/genesis-app";
 import { tmpdir } from "@genesiscz/utils/paths";
 import type { Coords, CropTarget, RelativeTo } from "./capture-plan";
 import { parseNativeWindowList, parseScreenList, type ScreenInfo, type WindowBounds } from "./native-record";
+import { refuseRealMachineInTest } from "./runner";
 
 export const CHROMIUM_APPS = new Set([
     "Brave Browser",
@@ -44,6 +45,9 @@ export function runCmd(cmd: string[], timeoutMs = 15_000): { ok: boolean; stdout
  * looks exactly like "the binary is not there".
  */
 export function runCmdFull(cmd: string[], timeoutMs = 15_000): { ok: boolean; stdout: string; stderr: string } {
+    // Every command this module runs acts on the real machine: ax-tool, osascript activation, `open`
+    // and Peekaboo capture. It spawns them itself, outside runner.ts, so it needs the guard too.
+    refuseRealMachineInTest(cmd.join(" ").slice(0, 160));
     const r = Bun.spawnSync(wrapWithGenesisApp(cmd), { timeout: timeoutMs, killSignal: "SIGKILL" });
     return {
         ok: r.exitCode === 0,
@@ -58,6 +62,7 @@ export function runPeekabooJson(
     args: string[],
     timeoutMs = 15_000
 ): { ok: boolean; data?: unknown; stdout: string; stderr: string } {
+    refuseRealMachineInTest(`peekaboo ${args.join(" ").slice(0, 150)}`);
     const r = Bun.spawnSync(wrapWithGenesisApp(["peekaboo", ...args, "--json"]), {
         timeout: timeoutMs,
         killSignal: "SIGKILL",

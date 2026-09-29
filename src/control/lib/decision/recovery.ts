@@ -18,9 +18,17 @@ export const refusalSchema = z.enum([
     "transport_uncertainty",
     "semantic_interruption",
     "refused",
+    /** The user put the pointer in the takeover corner; ax-tool stopped and released every held input. */
+    "user_takeover",
 ]);
 export type Refusal = z.infer<typeof refusalSchema>;
 export function actionRefusal(result: AxResult): Refusal {
+    // Named before the dispatch state: a takeover mid-text is also uncertain, but what the caller has
+    // to do is stop for the user, not inspect a transport.
+    if (result.refusal === "user_takeover") {
+        return "user_takeover";
+    }
+
     if (result.dispatchState !== "not_started") {
         return "transport_uncertainty";
     }
@@ -142,6 +150,11 @@ export class RecoveryController {
             reason: "No permitted remedy.",
         };
         this.attempts.push(attempt);
+        if (category === "user_takeover") {
+            attempt.reason = "The user took over the pointer; no automatic recovery until they hand control back.";
+            return null;
+        }
+
         if (["permission", "authentication", "scope_changed", "transport_uncertainty", "refused"].includes(category)) {
             attempt.reason = "This refusal requires inspection or user input; no automatic recovery.";
             return null;
