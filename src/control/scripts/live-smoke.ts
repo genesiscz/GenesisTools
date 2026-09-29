@@ -938,7 +938,9 @@ try {
             assert.equal(windows.windows.length, 2);
             assert.equal(new Set(windows.windows.map((window) => window.window_id)).size, 2);
             assert.ok(windows.windows.every((window) => window.window_id !== undefined));
-            assert.ok(windows.windows.every((window, index) => window.window_index === index && window.width > 0));
+            assert.ok(
+                windows.windows.every((window, index) => window.window_index === index && (window.width ?? 0) > 0)
+            );
             const launched = await computer.launch_app({ path: bundle, activate: false });
             assert.equal(launched.pid, fixturePid);
             checks.push("native NSWorkspace opens the exact fixture bundle without replacing its running process");

@@ -6,7 +6,7 @@ Consumed by the `tools control` TypeScript wrapper (`src/control/`). It builds a
 
 ## Observe and act
 
-`ax-tool see --app APP [--window-index N | --window-id ID] [--path PNG]` returns an indexed AX tree and screenshot for one explicit window, plus a 120-second observation token. Multiple windows require an index from the current candidates. `ax-tool act --app APP --snapshot TOKEN --element N --action press` resolves only that observation after validating process start time, CG window ID, tree digest, age and bounds. Run `see` again before the next action.
+`ax-tool see --app APP [--window-index N | --window-id ID] [--path PNG]` returns an indexed AX tree and screenshot for one explicit window, plus a 120-second observation token. Multiple windows require an index from the current candidates. `ax-tool act --app APP --snapshot TOKEN --element N --action press` resolves only that observation after validating process start time, CG window ID, tree digest, age and bounds. Run `see` again before the next action. Both accept `--budget-ms N`, the caller's deadline (the TypeScript runner passes each attempt's own): a walk that runs out stops with "observation budget ran out after N elements" rather than being killed, and the post-action refresh of `act --refresh` gets its own 4 s phase budget so a dispatched action always reports back. `window` lists each window's attached sheets.
 
 Actions: get, press, click, move, drag, set, perform, focus, scroll, type, key, select and paste. Read `ax-tool --help` for their arguments. Pointer actions always check geometry, scroll clipping and hit ownership; they require window focus unless `--background` is supplied. `type`/`key`/`paste` are process-targeted and require the intended input/window already focused. `set` writes AXValue and verifies it without a typing fallback. AX failures/timeouts fail explicitly; an acknowledgment still needs UI verification.
 
@@ -139,7 +139,7 @@ them off for interactive use, where raising the app is what you asked for.
 
 `paste --text PAYLOAD --format text|md|html` uses the focused input's current selection. Select another range or caret through `select → see → paste`; selection flags on paste are rejected. `type` rejects more than 256 UTF-16 code units before dispatch; use paste for longer text.
 
-Clipboard restoration skips observed competing writes, but remains best effort because AppKit has no atomic compare-and-swap. HTML paste also supplies raw markup as plain text, so rich rendering depends on the receiver.
+Clipboard restoration skips a genuinely newer copy, but not a clipboard-history app re-publishing our own payload. It waits for the field to show the paste (up to 3 s) and runs on every exit path, SIGTERM included; results carry `clipboardRestore`. `--replace` proves the whole-field selection before cmd+v. It remains best effort because AppKit has no atomic compare-and-swap. HTML paste also supplies raw markup as plain text, so rich rendering depends on the receiver.
 
 ## Tests
 

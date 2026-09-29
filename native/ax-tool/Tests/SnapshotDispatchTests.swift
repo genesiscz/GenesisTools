@@ -441,3 +441,18 @@ extension SnapshotDispatchTests {
         XCTAssertEqual(reads, 1)
     }
 }
+
+extension SnapshotDispatchTests {
+    /// A bare "focus changed" left the caller guessing, and it retried into a page that had moved.
+    func testInputRefusalNamesWhatHoldsFocus() {
+        let base = makeContext(inputFocused: false, operation: .input)
+        let context = SnapshotDispatchContext(
+            token: base.token, observedPID: base.observedPID, observedProcessLaunch: base.observedProcessLaunch,
+            observedWindowID: base.observedWindowID, observedTreeDigest: base.observedTreeDigest,
+            observedElementIndex: base.observedElementIndex, observedElementCount: base.observedElementCount,
+            observedAt: base.observedAt, targetEnabled: base.targetEnabled, windowFocused: base.windowFocused,
+            inputFocused: false, operation: .input, focusHolder: "AXList \"Suggestions\"")
+        assertRejected(context,
+                       message: "focus changed before input; no action dispatched; focus is on AXList \"Suggestions\", not the target")
+    }
+}

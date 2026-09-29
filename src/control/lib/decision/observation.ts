@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { z } from "zod";
 import type { ActionParameters, ControlAction } from "./action";
 
@@ -38,7 +39,7 @@ export const observationSchema = z
         snapshot: z.string().min(1),
         observationRecovery: z.object({ retries: z.number().int().min(1).max(2) }).optional(),
         window: z.object({ id: z.number().int().positive(), title: z.string() }).passthrough(),
-        scope: z.enum(["window", "chrome"]).default("window"),
+        scope: z.enum(["window", "chrome", "query"]).default("window"),
         elements: z.array(rowSchema).max(2000),
     })
     .refine(
@@ -90,6 +91,55 @@ export function primaryWebArea(elements: ObservedElement[]): ObservedElement | u
     const shallowest = documents.filter((element) => element.depth === minimumDepth);
     return shallowest.length === 1 ? shallowest[0] : undefined;
 }
+/**
+ * `--target-ordinal position/count` when several observed rows carry the key a dispatch pins.
+ * chrome://extensions shows one identical "Reload" button per extension card, and every key the
+ * backend computes is the same for all of them, so without the caller's position among the twins
+ * an exact ref from the newest observation was refused as ambiguous. `fields` is the order the
+ * backend tries: the prepared path matches targetKey only, element revalidation targetKey, then
+ * stableKey.
+ */
+export function targetOrdinalArgs({
+    rows,
+    row,
+    key,
+    fields,
+}: {
+    rows: ObservedElement[];
+    row: ObservedElement;
+    key: string;
+    fields: Array<"targetKey" | "stableKey">;
+}): string[] {
+    for (const field of fields) {
+        const matches = rows.filter((candidate) => candidate[field] === key);
+        if (matches.length === 0) {
+            continue;
+        }
+
+        const position = matches.findIndex((candidate) => candidate.index === row.index);
+        return matches.length > 1 && position >= 0 ? ["--target-ordinal", `${position}/${matches.length}`] : [];
+    }
+
+    return [];
+}
+
+const TEXT_INPUT_ROLES = new Set(["AXTextField", "AXTextArea", "AXComboBox", "AXSearchField"]);
+
+/**
+ * `--expect-value-sha256` for a key sent to a text input: the digest of the value the caller
+ * observed. The backend refuses Return or Enter when the field no longer holds it. Without it the
+ * check compared only against the act's own read, and a stable-key pin (an AXIdentifier, blind to
+ * the text) re-resolves a field whose text changed after the observation. A digest keeps the text
+ * off the command line, and a secure field sends nothing.
+ */
+export function expectedValueArgs(row: ObservedElement): string[] {
+    if (!TEXT_INPUT_ROLES.has(row.role) || row.AXSubrole === "AXSecureTextField" || typeof row.AXValue !== "string") {
+        return [];
+    }
+
+    return ["--expect-value-sha256", createHash("sha256").update(row.AXValue, "utf8").digest("hex")];
+}
+
 export function hasAncestorRole(elements: ObservedElement[], target: ObservedElement, role: string): boolean {
     let depth = target.depth;
     const position = elements.findIndex((row) => row.index === target.index);

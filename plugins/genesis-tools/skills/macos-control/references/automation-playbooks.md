@@ -16,6 +16,14 @@ nodeRepl.write(inventory.windows);
 ```
 
 Choose a unique regular, non-minimized window using its current title and `window_id`.
+`transient: true` marks popups (subrole `AXUnknown`, `AXHelpTag`, `AXFloatingWindow`, or at most
+50 pt tall); `get_app_state` without a window ignores them when exactly one other window is open.
+A window's `sheets` lists an attached open/save panel or alert, which blocks the window behind it.
+A window that reports no position or size stays in the list with a `reason`, and `screenLocked`
+says when the screen is locked (macOS reports no window geometry then); nothing can be observed
+or acted on until it unlocks.
+If a prepared action answers "app activation failed", macOS kept another app in front even after
+the LaunchServices fallback (the path `open -a` takes); the message names the frontmost app.
 Never assume the first window is the user's intended one. A window's active title can change
 while its desired tab remains open. For an existing browser tab, inspect `scope:"chrome"`
 and match its `AXRadioButton` label. A story number may also occur in a merge-request title:
@@ -26,6 +34,27 @@ Use `scope:"window"` for page links/forms. `element_limit` controls returned row
 tree traversal. `get_elements` pages a retained observation; `find` searches its full rows.
 Do not pass `text_limit` to `get_app_state`. A closed/offscreen window, oversized native tree
 or cancelled read requires fresh discovery/narrowing, not a claim that the app has no content.
+
+A GitHub pull request or an open panel over ~/Downloads exceeds the 4000-row snapshot limit, so a
+whole-window observation refuses. Target one element with a query instead:
+
+```ts
+const app = "com.brave.Browser";
+const state = await computer.get_app_state({ app, window_id: observedWindowId, query: "Review with agent", role: "AXButton", image: false });
+const matches = state.elements.filter((e) => e.role === "AXButton" && e.label === "Review with agent");
+if (matches.length !== 1) {
+    throw new Error(`Expected one button, found ${matches.length}. ${state.text.split("\n")[1]}`);
+}
+await computer.click({ app, element_ref: matches[0].ref });
+```
+
+The query walks the whole window but keeps only matching elements (title, description,
+identifier or value, case-insensitive; `role` is exact) and their ancestors. Later observations
+of the same app keep the query until you pass `scope`. The second line of `state.text` states
+how many elements were walked and how many subtrees the depth limit left unwalked; a match there
+is not listed, so zero matches with unwalked subtrees is not proof of absence. More than 200
+matches, or more than 60000 walked elements, refuse. The CLI equivalent is
+`control see --app APP --window-id ID --query TEXT --query-role AXButton`.
 
 ## 2. Draft a URL, verify it, restore it
 
@@ -106,6 +135,16 @@ and exact native readback, and requires preparation. `set_value` can also replac
 but Escape may leave such an AXValue write intact. Restore the captured original explicitly.
 If cleanup finds changed user text or a different document, stop and report instead of overwriting it.
 
+Submitting a field is guarded twice. `set_value` fails when the app rewrites the value within
+300 ms of the write (an address bar's autocomplete can), naming the written and the current text.
+`press_key` with Return or Enter on a text field reads the field right before posting and refuses,
+with both texts, when it no longer holds what the observation showed (the computer API sends the
+SHA-256 of the observed value, so a field pinned by its AXIdentifier cannot slip a changed text through): on 2026-09-28 Brave's
+omnibox lost its last character between `set_value` and a prepared Return, and the Return navigated
+to the shortened URL. Read the field again after such a refusal and submit only a text you verified.
+A field whose text cannot be read, when observed or now, is refused too: send the key to the window
+instead only if an unchecked submit is acceptable. A paste posts only cmd+a and cmd+v, never a submit key.
+
 ## 3. Handle a blocking sheet before navigation
 
 The Software Update incident exposed two separate issues: a modal blocked the sidebar, and
@@ -157,6 +196,17 @@ This is not a general “click OK on every dialog” policy. Installs, permissio
 destructive confirmations and external submissions need their own authorization. Read the
 message, not just the button. Reobserve the background pane after dismissal before navigating.
 `AXRaise` failure can be a symptom of a blocking sheet; repeated focus attempts are not a cure.
+
+A press that OPENS a modal (Brave's "Load unpacked" opens a file panel as a sheet) has two
+slow paths, and both now end inside the call's deadline with the action reported, never as a
+killed process. An AppKit button that runs the dialog inside its action holds AXPress until the
+dialog closes: the press returns after at most 2 s with `effect:"unknown"` and a message saying
+the dialog may be open. A browser answers AXPress at once, but the sheet can list thousands of
+files, so the post-action refresh gets its own 4 s budget: the result is `effect:"dispatched"`,
+no `state`, and a `note` saying the refresh did not finish. In both cases do not press again:
+call `list_windows` (it reports each window's sheets) and read the dialog with a query.
+`see` and `act` receive the attempt's deadline as `--budget-ms`, and a walk that runs out says
+how many elements it read ("observation budget ran out after N elements") instead of timing out.
 
 ## 4. Disambiguate meaning before spending a request
 
@@ -260,11 +310,31 @@ retry window does not kill a paste that has started. Successful calls report `re
 `elapsedMs`; workflow traces retain this receipt. No extra Jev request is made.
 
 This is not semantic rebinding. Changed values, documents, missing/ambiguous targets, modal barriers,
-permissions and expired tokens still stop. Coordinates and OCR regions are not retried. Unknown or
+permissions and expired tokens still stop. A retry that ends on a changed or missing target reports
+`dispatchState:"uncertain"` with `recovery.targetChanged` and each attempt's refusal: no attempt posted
+the input, but the UI moved after an earlier attempt activated and focused the target (on Brave, a
+page that navigated). Coordinates and OCR regions are not retried. Unknown or
 already-dispatched input never qualifies, including native crashes/timeouts. A failed paste readback
 cannot trigger a second paste. Replacement readback waits for the exact requested text, not the
-first intermediate value change, while keeping the clipboard available. `noRetry` in workflow
+first intermediate value change, while keeping the clipboard available. The clipboard comes back
+only after the field shows the paste landed (up to 3 s), and on every other exit path too. Check
+`clipboardRestore` on the result: a paste whose restore failed or went unreported returns
+`ok:false` with `CLIPBOARD NOT RESTORED` or `CLIPBOARD STATE UNKNOWN`. `noRetry` in workflow
 plans still forbids replaying dispatched steps.
+
+Three browser cases that used to refuse an exact, fresh ref:
+
+- **Identical twins.** chrome://extensions has one "Reload" button per extension card, and every key
+  the backend computes is the same for all of them. The computer API passes the observed position
+  (`--target-ordinal 1/3`, also on `control act`), so the ref resolves to that button. When the
+  number of twins changed it still refuses, even when only one is left, so a removed card never
+  shifts the press to a neighbour.
+- **Live browser chrome.** Brave's tab labels carry a live memory figure. A page element is checked
+  against the page subtree, not the whole window: tab churn is ignored, a changed page or a new
+  sheet still refuses. This covers `control act --snapshot --element N` without a target key.
+- **No AXPress on a page element.** A button exposing only AXScrollToVisible/AXShowMenu (the
+  extension card's "Reload") is clicked in front after the hit test, because a page ignores a
+  window-addressed background click. Pass `background:true` to force the old delivery.
 
 Unstable AX/screenshot reads retry up to twice in the same pinned process/window within a one-second
 read budget. This also repairs `act --refresh` observations without repeating the action. Permanent

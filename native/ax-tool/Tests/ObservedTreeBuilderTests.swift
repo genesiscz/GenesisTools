@@ -219,6 +219,26 @@ final class ObservedTreeBuilderTests: XCTestCase {
             XCTAssertEqual((error as? ObservedTreeError)?.message, "AX tree exceeds \(observedElementLimit) elements; snapshot refused rather than truncated")
         }
     }
+
+    /// A sheet listing thousands of files made each read slow enough that the walk outlived the
+    /// caller's deadline and was killed with the dispatched result. The deadline now stops the walk
+    /// itself, with an error that says how far it got, and never with a partial tree.
+    func testCallerDeadlineStopsTheWalkWithoutAPartialTree() {
+        let fake = FakeSource()
+        var children: [pid_t] = []
+        for pid in 2...pid_t(40) {
+            fake.nodes[pid] = FakeNode(role: "AXGroup")
+            children.append(pid)
+        }
+        fake.nodes[1] = FakeNode(role: "AXWindow", children: children)
+        var checks = 0
+        XCTAssertThrowsError(try buildObservedTree(root: fake.element(1), source: fake, depth: 5, scope: "window",
+                                                   expired: { checks += 1; return checks > 10 })) { error in
+            XCTAssertEqual((error as? ObservedTreeError)?.message, observationBudgetMessage(walked: 10))
+        }
+        XCTAssertNoThrow(try buildObservedTree(root: fake.element(1), source: fake, depth: 5, scope: "window",
+                                               expired: { false }))
+    }
 }
 
 final class BulkHierarchySourceTests: XCTestCase {
@@ -303,5 +323,235 @@ final class BulkHierarchySourceTests: XCTestCase {
         XCTAssertEqual(reader.keys.value, "value")
         XCTAssertEqual(reader.keys.incomplete, "incmplt")
         XCTAssertEqual(reader.keys.maxDepth, "AXCHMD")
+    }
+}
+
+/// A page far over the 4000-row snapshot limit, with one button deep inside it.
+final class QueryTreeTests: XCTestCase {
+    private func bigPage(rows: Int = 5000) -> FakeSource {
+        let fake = FakeSource()
+        let listRows = (0..<rows).map { pid_t(100 + $0) }
+        for pid in listRows {
+            fake.nodes[pid] = FakeNode(role: "AXStaticText", attributes: ["AXValue": "file \(pid)"],
+                                       frame: CGRect(x: 0, y: 0, width: 100, height: 10))
+        }
+        fake.nodes[1] = FakeNode(role: "AXWindow", attributes: ["AXTitle": "PR"], children: [2, 3],
+                                 frame: CGRect(x: 0, y: 0, width: 1000, height: 800))
+        fake.nodes[2] = FakeNode(role: "AXGroup", children: listRows, frame: CGRect(x: 0, y: 0, width: 1000, height: 700))
+        fake.nodes[3] = FakeNode(role: "AXToolbar", children: [4, 5], frame: CGRect(x: 0, y: 700, width: 1000, height: 100))
+        fake.nodes[4] = FakeNode(role: "AXButton", attributes: ["AXTitle": "Review with agent"], actions: ["AXPress"],
+                                 frame: CGRect(x: 10, y: 710, width: 120, height: 30))
+        fake.nodes[5] = FakeNode(role: "AXStaticText", attributes: ["AXValue": "Review with agent"],
+                                 frame: CGRect(x: 140, y: 710, width: 120, height: 30))
+        return fake
+    }
+
+    func testWholeWindowIsRefusedButTheQueryKeepsOnlyMatchesAndAncestors() throws {
+        let fake = bigPage()
+        XCTAssertThrowsError(try buildObservedTree(root: fake.element(1), source: fake, depth: 10, scope: "window"))
+        let result = try buildQueryTree(root: fake.element(1), source: fake, depth: 10,
+                                        query: TreeQuery(text: "review with AGENT", role: "AXButton"))
+        XCTAssertEqual(result.tree.rows.map { $0["role"] as? String }, ["AXWindow", "AXToolbar", "AXButton"])
+        XCTAssertEqual(result.report.matches, 1)
+        XCTAssertEqual(result.report.walked, 5005)
+        XCTAssertEqual(result.report.depthLimitedSubtrees, 0)
+        XCTAssertEqual(result.tree.rows.last?["actions"] as? [String], ["AXPress"])
+    }
+
+    /// `act` re-walks the same query, so the rows, indexes and digest must be the same every time.
+    func testTheSameQueryYieldsTheSameDigest() throws {
+        let fake = bigPage()
+        let query = TreeQuery(text: "Review with agent", role: nil)
+        let first = try buildQueryTree(root: fake.element(1), source: fake, depth: 10, query: query)
+        let second = try buildQueryTree(root: fake.element(1), source: fake, depth: 10, query: query)
+        XCTAssertEqual(first.tree.digest, second.tree.digest)
+        XCTAssertEqual(first.report.matches, 2)
+        XCTAssertEqual(first.tree.rows.count, 4)
+    }
+
+    /// Never silently partial: what the depth limit hid is counted and reported.
+    func testSubtreesBelowTheDepthLimitAreReportedNotHidden() throws {
+        let fake = bigPage(rows: 3)
+        let result = try buildQueryTree(root: fake.element(1), source: fake, depth: 1,
+                                        query: TreeQuery(text: "Review", role: "AXButton"))
+        XCTAssertEqual(result.report.matches, 0)
+        XCTAssertEqual(result.report.depthLimitedSubtrees, 2)
+        XCTAssertEqual(result.tree.rows.count, 1)
+    }
+
+    func testTooManyMatchesAreRefused() {
+        let fake = bigPage(rows: 300)
+        XCTAssertThrowsError(try buildQueryTree(root: fake.element(1), source: fake, depth: 10,
+                                                query: TreeQuery(text: "file", role: nil))) { error in
+            XCTAssertEqual((error as? ObservedTreeError)?.message,
+                           "query matches more than \(queryMatchLimit) elements; narrow it with a role or a longer query")
+        }
+    }
+
+    func testQueryTokensRoundTripAndValidate() throws {
+        let token = SnapshotToken(pid: 7, launch: 1, window: 3, depth: 50, digest: "d", created: 100, scope: "query",
+                                  query: TreeQuery(text: "Review with agent", role: "AXButton"))
+        let decoded = try JSONDecoder().decode(SnapshotToken.self, from: JSONEncoder().encode(token))
+        XCTAssertEqual(decoded.query, TreeQuery(text: "Review with agent", role: "AXButton"))
+        XCTAssertEqual(try decoded.validate(pid: 7, launch: 1, window: 3, digest: "d", element: 0, count: 3, now: 101), 0)
+        let bare = SnapshotToken(pid: 7, launch: 1, window: 3, depth: 50, digest: "d", created: 100, scope: "query")
+        XCTAssertThrowsError(try bare.validate(pid: 7, launch: 1, window: 3, digest: "d", element: 0, count: 3, now: 101))
+    }
+}
+
+extension QueryTreeTests {
+    /// Without the sheet in the rows, the modal barrier could not see it, and a query result would
+    /// let a click through to a button a file panel covers.
+    func testAModalSheetElsewhereIsKeptSoTheBarrierStillRefuses() throws {
+        let fake = FakeSource()
+        fake.nodes[1] = FakeNode(role: "AXWindow", children: [2, 3], frame: CGRect(x: 0, y: 0, width: 1000, height: 800))
+        fake.nodes[2] = FakeNode(role: "AXSheet", children: [4], frame: CGRect(x: 200, y: 50, width: 600, height: 400))
+        fake.nodes[4] = FakeNode(role: "AXButton", attributes: ["AXTitle": "Open"], actions: ["AXPress"],
+                                 frame: CGRect(x: 600, y: 400, width: 80, height: 30))
+        fake.nodes[3] = FakeNode(role: "AXButton", attributes: ["AXTitle": "Load unpacked"], actions: ["AXPress"],
+                                 frame: CGRect(x: 10, y: 10, width: 120, height: 30))
+        let result = try buildQueryTree(root: fake.element(1), source: fake, depth: 10,
+                                        query: TreeQuery(text: "Load unpacked", role: "AXButton"))
+        XCTAssertEqual(result.tree.rows.map { $0["role"] as? String }, ["AXWindow", "AXSheet", "AXButton"])
+        let target = try XCTUnwrap(result.tree.rows.firstIndex { $0["AXTitle"] as? String == "Load unpacked" })
+        XCTAssertThrowsError(try validateModalTarget(rows: result.tree.rows, target: target))
+    }
+}
+
+/// chrome://extensions: one card per extension, each with a heading and an identical "Reload"
+/// button whose parent holds no text, so every key the builder computes is the same for all.
+final class IdenticalTargetTests: XCTestCase {
+    private func extensionsPage(cards: [String]) -> FakeSource {
+        let fake = FakeSource()
+        var cardPids: [pid_t] = []
+        for (offset, name) in cards.enumerated() {
+            let base = pid_t(10 + offset * 10)
+            fake.nodes[base] = FakeNode(role: "AXGroup", children: [base + 1, base + 2],
+                                        frame: CGRect(x: 0, y: Double(offset) * 200, width: 400, height: 190))
+            fake.nodes[base + 1] = FakeNode(role: "AXHeading", attributes: ["AXTitle": name],
+                                            frame: CGRect(x: 10, y: Double(offset) * 200 + 5, width: 200, height: 20))
+            fake.nodes[base + 2] = FakeNode(role: "AXGroup", children: [base + 3],
+                                            frame: CGRect(x: 0, y: Double(offset) * 200 + 150, width: 400, height: 40))
+            fake.nodes[base + 3] = FakeNode(role: "AXButton", attributes: ["AXDescription": "Reload"],
+                                            actions: ["AXScrollToVisible", "AXShowMenu"],
+                                            frame: CGRect(x: 300, y: Double(offset) * 200 + 155, width: 30, height: 30))
+            cardPids.append(base)
+        }
+        fake.nodes[1] = FakeNode(role: "AXWindow", children: [2], frame: CGRect(x: 0, y: 0, width: 400, height: 900))
+        fake.nodes[2] = FakeNode(role: "AXWebArea", attributes: ["AXURL": URL(string: "chrome://extensions/")!],
+                                 children: cardPids, frame: CGRect(x: 0, y: 0, width: 400, height: 900))
+        return fake
+    }
+
+    private func reloads(_ tree: ObservedTreeData) -> [Int] {
+        tree.rows.indices.filter { tree.rows[$0]["AXDescription"] as? String == "Reload" }
+    }
+
+    func testAnExactRefToOneOfSeveralIdenticalButtonsResolvesToThatButton() throws {
+        let fake = extensionsPage(cards: ["GenesisTools", "7TV", "AdBlock"])
+        let tree = try buildObservedTree(root: fake.element(1), source: fake, depth: 10, scope: "window")
+        let buttons = reloads(tree)
+        let key = try XCTUnwrap(tree.rows[buttons[1]]["stableKey"] as? String)
+        XCTAssertEqual(Set(buttons.map { tree.rows[$0]["stableKey"] as? String }).count, 1, "the fixture must reproduce the shared key")
+        XCTAssertThrowsError(try resolvedTargetIndex(key: key, rows: tree.rows))
+        let ordinal = try XCTUnwrap(TargetOrdinal.of(buttons[1], rows: tree.rows, field: "stableKey"))
+        XCTAssertEqual(ordinal, TargetOrdinal(position: 1, count: 3))
+        let fresh = try buildObservedTree(root: fake.element(1), source: fake, depth: 10, scope: "window")
+        XCTAssertEqual(try resolvedTargetIndex(key: key, rows: fresh.rows, ordinal: ordinal), buttons[1])
+    }
+
+    /// One card fewer shifts which button is "second"; that must refuse, not press a neighbour.
+    func testAChangedNumberOfTwinsStillRefuses() throws {
+        let observed = try buildObservedTree(root: extensionsPage(cards: ["GenesisTools", "7TV", "AdBlock"]).element(1),
+                                             source: extensionsPage(cards: ["GenesisTools", "7TV", "AdBlock"]), depth: 10, scope: "window")
+        let button = reloads(observed)[2]
+        let key = try XCTUnwrap(observed.rows[button]["stableKey"] as? String)
+        let ordinal = try XCTUnwrap(TargetOrdinal.of(button, rows: observed.rows, field: "stableKey"))
+        let smaller = extensionsPage(cards: ["GenesisTools", "7TV"])
+        let fresh = try buildObservedTree(root: smaller.element(1), source: smaller, depth: 10, scope: "window")
+        XCTAssertThrowsError(try resolvedTargetIndex(key: key, rows: fresh.rows, ordinal: ordinal)) { error in
+            XCTAssertTrue(error.localizedDescription.contains("3 identical elements were observed and 2 are present now"),
+                          error.localizedDescription)
+        }
+    }
+
+    /// Three observed, two gone: the one left is a sole match, but not necessarily the pinned one.
+    /// Accepting the lone survivor before checking the ordinal pressed the wrong card's button.
+    func testTwinsShrinkingToOneStillRefuse() throws {
+        let three = extensionsPage(cards: ["GenesisTools", "7TV", "AdBlock"])
+        let observed = try buildObservedTree(root: three.element(1), source: three, depth: 10, scope: "window")
+        let button = reloads(observed)[1]
+        let key = try XCTUnwrap(observed.rows[button]["stableKey"] as? String)
+        let ordinal = try XCTUnwrap(TargetOrdinal.of(button, rows: observed.rows, field: "stableKey"))
+        let one = extensionsPage(cards: ["GenesisTools"])
+        let fresh = try buildObservedTree(root: one.element(1), source: one, depth: 10, scope: "window")
+        XCTAssertEqual(reloads(fresh).count, 1)
+        XCTAssertThrowsError(try resolvedTargetIndex(key: key, rows: fresh.rows, ordinal: ordinal)) { error in
+            XCTAssertTrue(error.localizedDescription.contains("3 identical elements were observed and 1 are present now"),
+                          error.localizedDescription)
+        }
+        XCTAssertEqual(try resolvedTargetIndex(key: key, rows: fresh.rows), reloads(fresh)[0],
+                       "without an ordinal a unique key still resolves")
+    }
+
+    func testOrdinalArgumentsAreParsedStrictly() {
+        XCTAssertEqual(TargetOrdinal("1/3"), TargetOrdinal(position: 1, count: 3))
+        for invalid in ["3/3", "0/1", "-1/3", "a/3", "1/", "01/3", "1/3/4"] {
+            XCTAssertNil(TargetOrdinal(invalid), invalid)
+        }
+    }
+}
+
+/// Brave's tab strip labels carry a live memory figure; the page beside them does not move.
+final class DocumentScopeTests: XCTestCase {
+    private func browser(tabs: [String], button: String = "Reload") -> FakeSource {
+        let fake = FakeSource()
+        let tabPids = tabs.indices.map { pid_t(100 + $0) }
+        for (offset, label) in tabs.enumerated() {
+            fake.nodes[tabPids[offset]] = FakeNode(role: "AXRadioButton", attributes: ["AXTitle": label],
+                                                   frame: CGRect(x: Double(offset) * 100, y: 0, width: 100, height: 30))
+        }
+        fake.nodes[1] = FakeNode(role: "AXWindow", children: [2, 3], frame: CGRect(x: 0, y: 0, width: 800, height: 600))
+        fake.nodes[2] = FakeNode(role: "AXTabGroup", children: tabPids, frame: CGRect(x: 0, y: 0, width: 800, height: 30))
+        fake.nodes[3] = FakeNode(role: "AXWebArea", attributes: ["AXURL": URL(string: "chrome://extensions/")!],
+                                 children: [4], frame: CGRect(x: 0, y: 40, width: 800, height: 560))
+        fake.nodes[4] = FakeNode(role: "AXGroup", children: [5], frame: CGRect(x: 0, y: 40, width: 800, height: 200))
+        fake.nodes[5] = FakeNode(role: "AXButton", attributes: ["AXDescription": button], actions: ["AXShowMenu"],
+                                 frame: CGRect(x: 10, y: 50, width: 60, height: 30))
+        return fake
+    }
+
+    private func tree(_ fake: FakeSource) throws -> ObservedTreeData {
+        try buildObservedTree(root: fake.element(1), source: fake, depth: 10, scope: "window")
+    }
+
+    private func button(_ tree: ObservedTreeData) -> Int {
+        tree.rows.firstIndex { $0["role"] as? String == "AXButton" }!
+    }
+
+    func testOnlyATabLabelChangedSoThePageTargetIsStillActionable() throws {
+        let observed = try tree(browser(tabs: ["Extensions - Memory usage - 166 MB"]))
+        let current = try tree(browser(tabs: ["Extensions - Memory usage - 171 MB"]))
+        XCTAssertNotEqual(observed.digest, current.digest, "the whole-window digest refused this before")
+        XCTAssertEqual(remapDocumentTarget(observedIndex: button(observed), observed: try documentScope(observed.rows),
+                                           current: try documentScope(current.rows)), button(current))
+    }
+
+    func testANewTabShiftsTheIndexAndTheTargetFollows() throws {
+        let observed = try tree(browser(tabs: ["Extensions"]))
+        let current = try tree(browser(tabs: ["Extensions", "New Tab"]))
+        XCTAssertEqual(remapDocumentTarget(observedIndex: button(observed), observed: try documentScope(observed.rows),
+                                           current: try documentScope(current.rows)), button(observed) + 1)
+    }
+
+    func testAChangedPageOrAChromeTargetStillRefuses() throws {
+        let observed = try tree(browser(tabs: ["Extensions"]))
+        let relabelled = try tree(browser(tabs: ["Extensions"], button: "Remove"))
+        XCTAssertNil(remapDocumentTarget(observedIndex: button(observed), observed: try documentScope(observed.rows),
+                                         current: try documentScope(relabelled.rows)))
+        let tab = observed.rows.firstIndex { $0["role"] as? String == "AXRadioButton" }!
+        let churned = try tree(browser(tabs: ["Extensions - 170 MB"]))
+        XCTAssertNil(remapDocumentTarget(observedIndex: tab, observed: try documentScope(observed.rows),
+                                         current: try documentScope(churned.rows)))
     }
 }

@@ -109,6 +109,18 @@ export const computerSchemas = {
             window_id: z.number().int().positive().optional(),
             window_index: z.number().int().nonnegative().optional(),
             scope: z.enum(["window", "chrome"]).optional(),
+            /**
+             * Observe only the elements whose title, description, identifier or value contains this
+             * text (plus their ancestors). The whole window is walked, so a page over the 4000-row
+             * snapshot limit still yields refs that click and press_key accept.
+             */
+            query: z.string().trim().min(1).max(300).optional(),
+            /** Narrows `query` to one exact AX role, e.g. "AXButton". */
+            role: z
+                .string()
+                .regex(/^AX[A-Za-z]+$/)
+                .max(100)
+                .optional(),
             image: z.boolean().default(true),
             element_limit: z.number().int().min(1).max(2000).default(100),
             perception: z.enum(["ocr"]).optional(),
@@ -142,7 +154,12 @@ export const computerSchemas = {
                 .array(z.enum(["cmd", "ctrl", "alt", "shift"]))
                 .max(4)
                 .default([]),
-            background: z.boolean().default(true),
+            /**
+             * Window-addressed delivery without activation. Unset means true, except for a pointer click
+             * on a browser-page element (one without AXPress, or physical:true): the page ignores a
+             * background click there, so that click is delivered in front, after the hit test.
+             */
+            background: z.boolean().optional(),
             physical: z.boolean().default(false),
             prepare: z.boolean().default(false),
             region_ref: z.string().min(1).max(200).optional(),

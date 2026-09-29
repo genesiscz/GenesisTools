@@ -20,7 +20,7 @@ public struct WorkflowArguments {
         let flagOptions: Set<String>
         switch command {
         case "see":
-            valueOptions = ["--app", "--window-index", "--window-id", "--depth", "--path", "--scope", "--perception", "--perception-crop", "--perception-width"]
+            valueOptions = ["--app", "--window-index", "--window-id", "--depth", "--path", "--scope", "--perception", "--perception-crop", "--perception-width", "--budget-ms", "--query", "--query-role"]
             flagOptions = ["--no-image"]
         case "act":
             valueOptions = [
@@ -28,6 +28,7 @@ public struct WorkflowArguments {
                 "--keys", "--coords", "--button", "--to", "--duration", "--pages", "--pixels", "--range", "--prefix",
                 "--suffix", "--selection", "--format", "--path", "--region", "--target-key", "--dwell",
                 "--revalidate-scope", "--frame", "--by-identifier", "--window-index", "--depth", "--modifiers",
+                "--budget-ms", "--target-ordinal", "--expect-value-sha256",
             ]
             flagOptions = ["--background", "--double", "--refresh", "--no-cursor", "--no-image", "--prepare", "--replace", "--hold", "--no-activate"]
         default:
@@ -61,6 +62,13 @@ public struct WorkflowArguments {
         guard parsedValues["--app"] != nil else {
             throw WorkflowArgumentError.invalid("--app required")
         }
+        // The caller's own deadline. Without it a slow tree (a file panel's thousands of rows read
+        // through a remote view) ran until the caller killed the process, taking the result with it.
+        if let raw = parsedValues["--budget-ms"] {
+            guard let budget = Int(raw), String(budget) == raw, (100...600_000).contains(budget) else {
+                throw WorkflowArgumentError.invalid("--budget-ms must be an integer from 100 to 600000")
+            }
+        }
         if command == "see", parsedFlags.contains("--no-image"), parsedValues["--path"] != nil {
             throw WorkflowArgumentError.invalid("--no-image cannot be combined with --path")
         }
@@ -75,6 +83,13 @@ public struct WorkflowArguments {
             }
             if parsedFlags.contains("--no-image"), parsedValues["--perception"] != nil {
                 throw WorkflowArgumentError.invalid("OCR perception requires an image")
+            }
+            let queried = parsedValues["--query"] != nil || parsedValues["--query-role"] != nil
+            if (parsedValues["--scope"] == "query") != (parsedValues["--query"] != nil) || (queried && parsedValues["--query"] == nil) {
+                throw WorkflowArgumentError.invalid("--scope query and --query go together; --query-role narrows a --query")
+            }
+            if let query = parsedValues["--query"], query.trimmingCharacters(in: .whitespaces).isEmpty || query.count > 300 {
+                throw WorkflowArgumentError.invalid("--query must be 1 to 300 characters")
             }
         }
         if command == "act" {
@@ -131,6 +146,11 @@ public struct WorkflowArguments {
         guard ["element", "window"].contains(revalidateScope) else {
             throw WorkflowArgumentError.invalid("--revalidate-scope must be element or window")
         }
+        if let ordinal = values["--target-ordinal"] {
+            guard values["--target-key"] != nil, TargetOrdinal(ordinal) != nil else {
+                throw WorkflowArgumentError.invalid("--target-ordinal takes position/count (e.g. 1/3) and needs --target-key")
+            }
+        }
         if let key = values["--target-key"] {
             guard flags.contains("--prepare") || revalidateScope == "element", key.count == 64,
                   key.allSatisfy({ $0.isHexDigit }) else {
@@ -185,6 +205,10 @@ public struct WorkflowArguments {
         try reject(["--pages", "--pixels", "--direction"], unless: ["scroll"])
         try reject(["--value"], unless: ["set"])
         try reject(["--keys"], unless: ["key"])
+        try reject(["--expect-value-sha256"], unless: ["key"])
+        if let digest = values["--expect-value-sha256"], digest.count != 64 || !digest.allSatisfy({ $0.isHexDigit }) {
+            throw WorkflowArgumentError.invalid("--expect-value-sha256 takes the 64-hex SHA-256 of the observed field value")
+        }
         try reject(["--ax-action"], unless: ["perform"])
         if action == "key" {
             guard let keys = values["--keys"] else { throw WorkflowArgumentError.invalid("key requires --keys") }

@@ -92,6 +92,9 @@ public struct SnapshotDispatchContext {
     /// window it would wait for can never arrive.
     public let windowCanBecomeKey: Bool
     public let operation: SnapshotDispatchOperation
+    /// What holds keyboard focus instead of the target (role and label), named in an input
+    /// refusal so the caller can see why, rather than retrying blind.
+    public let focusHolder: String?
 
     public init(
         token: SnapshotToken,
@@ -107,7 +110,8 @@ public struct SnapshotDispatchContext {
         inputFocused: Bool,
         allowUnfocusedInput: Bool = false,
         windowCanBecomeKey: Bool = true,
-        operation: SnapshotDispatchOperation
+        operation: SnapshotDispatchOperation,
+        focusHolder: String? = nil
     ) {
         self.token = token
         self.observedPID = observedPID
@@ -123,6 +127,7 @@ public struct SnapshotDispatchContext {
         self.allowUnfocusedInput = allowUnfocusedInput
         self.windowCanBecomeKey = windowCanBecomeKey
         self.operation = operation
+        self.focusHolder = focusHolder
     }
 }
 
@@ -154,7 +159,8 @@ public func dispatchSnapshotAction<Result>(
         throw SnapshotDispatchError.rejected("wrong frontmost app/window; focus explicitly, or pass --no-activate to deliver without taking focus", category: .focusMismatch)
     }
     if context.operation == .input, !context.inputFocused {
-        throw SnapshotDispatchError.rejected("focus changed before input; no action dispatched", category: .focusMismatch)
+        let holder = context.focusHolder.map { "; focus is on \($0), not the target" } ?? ""
+        throw SnapshotDispatchError.rejected("focus changed before input; no action dispatched\(holder)", category: .focusMismatch)
     }
 
     return try primitiveDispatch()

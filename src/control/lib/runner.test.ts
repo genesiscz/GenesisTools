@@ -1,9 +1,10 @@
 import { expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, unlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import { GenesisAppUpdatingError } from "@genesiscz/utils/macos/genesis-app";
+import { buildPidRecord, serializePidRecord } from "@genesiscz/utils/process/pidfile";
 import { skip } from "@genesiscz/utils/test/skip";
 import {
     type AxRunBoundary,
@@ -11,6 +12,7 @@ import {
     DEFAULT_AX_RUN_BOUNDARY,
     runAxAsyncWithRecovery,
     runAxWithBoundary,
+    withNativeBudget,
 } from "./runner";
 
 test("a build failure never reaches the native spawn boundary", () => {
@@ -49,6 +51,23 @@ test("a subprocess timeout reports a partial outcome without retrying", () => {
         error: "native execution timed out after 25ms; the action may have partially completed; no retry was attempted",
     });
     expect(spawnCalls).toBe(1);
+});
+
+test("a paste stopped at the deadline keeps only the clipboard status it printed on the way out", () => {
+    const timeout = Object.assign(new Error("fixture ETIMEDOUT"), { code: "ETIMEDOUT" });
+    const printed = '{"ok":false,"dispatchState":"dispatched","clipboardRestore":"restored"}';
+    const boundary: AxRunBoundary = {
+        ensureBinary: () => "/fixture/ax-tool",
+        spawn: () => ({ status: null, signal: "SIGTERM", stdout: `${printed}\n`, stderr: "", error: timeout }),
+    };
+
+    const result = runAxWithBoundary({ args: ["act"], timeoutMs: 25, boundary });
+
+    expect(result).toEqual({
+        ok: false,
+        error: "native execution timed out after 25ms; the action may have partially completed; no retry was attempted",
+        clipboardRestore: "restored",
+    });
 });
 
 test("a signaled subprocess overrides a success envelope as a partial outcome", () => {
@@ -193,27 +212,37 @@ test("a launcher replacement refusal is pre-dispatch and never retries", () => {
 });
 
 test.skipIf(skip.unlessMac)(
-    "launcher replacement never falls back to a bare native binary or removes the build lock",
+    "only a live bundle swap refuses a native command: never a build in progress, never a swap whose owner is gone",
     async () => {
         const taskHome = mkdtempSync(join(tmpdir(), "gt-ax-update-"));
         const appDir = join(taskHome, ".genesis-tools", "app");
         mkdirSync(appDir, { recursive: true });
-        const lock = join(appDir, "build.lock");
-        writeFileSync(lock, "fixture-holder");
+        const marker = join(appDir, "install.lock");
+        const live = serializePidRecord(buildPidRecord());
+        writeFileSync(join(appDir, "build.lock"), live);
+        writeFileSync(marker, live);
         await env.testing.withOverrides({ GENESIS_TOOLS_HOME: taskHome, GENESIS_TOOLS_NO_APP: undefined }, () => {
             expect(() => axCommandLine("/fixture/ax-tool", ["permissions"])).toThrow(GenesisAppUpdatingError);
-            expect(readFileSync(lock, "utf8")).toBe("fixture-holder");
+            expect(readFileSync(marker, "utf8")).toBe(live);
             const dir = join(taskHome, "Applications", "GenesisTools.app", "Contents", "MacOS");
             mkdirSync(dir, { recursive: true });
             const launcher = join(dir, "GenesisTools");
             writeFileSync(launcher, "");
+            const launched = [launcher, "/fixture/ax-tool", "permissions"];
             expect(() => axCommandLine("/fixture/ax-tool", ["permissions"])).toThrow(GenesisAppUpdatingError);
-            unlinkSync(lock);
-            expect(axCommandLine("/fixture/ax-tool", ["permissions"])).toEqual([
-                launcher,
-                "/fixture/ax-tool",
-                "permissions",
-            ]);
+
+            unlinkSync(marker);
+            expect(axCommandLine("/fixture/ax-tool", ["permissions"])).toEqual(launched);
+
+            const gone = { pid: 2_147_483_000, command: "gone", startedAt: null, writtenAt: Date.now() };
+            writeFileSync(marker, serializePidRecord(gone));
+            expect(axCommandLine("/fixture/ax-tool", ["permissions"])).toEqual(launched);
+
+            writeFileSync(marker, "");
+            expect(() => axCommandLine("/fixture/ax-tool", ["permissions"])).toThrow(GenesisAppUpdatingError);
+            const anHourAgo = new Date(Date.now() - 3_600_000);
+            utimesSync(marker, anHourAgo, anHourAgo);
+            expect(axCommandLine("/fixture/ax-tool", ["permissions"])).toEqual(launched);
         });
     }
 );
@@ -324,6 +353,25 @@ test("native deadlines round down to subprocess milliseconds and never become un
     expect(builds).toBe(1);
     expect(observedTimeouts).toHaveLength(1);
 });
+test("see and act carry the attempt's deadline to the native side, other commands do not", () => {
+    expect(withNativeBudget(["act", "--app", "Fixture"], 9876.5)).toEqual([
+        "act",
+        "--app",
+        "Fixture",
+        "--budget-ms",
+        "9876",
+    ]);
+    expect(withNativeBudget(["see", "--app", "Fixture"], 20)).toEqual([
+        "see",
+        "--app",
+        "Fixture",
+        "--budget-ms",
+        "100",
+    ]);
+    expect(withNativeBudget(["window", "--app", "Fixture"], 9000)).toEqual(["window", "--app", "Fixture"]);
+    expect(withNativeBudget(["act", "--budget-ms", "500"], 9000)).toEqual(["act", "--budget-ms", "500"]);
+});
+
 test("a throwing spawn is reported as uncertain and never retried", () => {
     let spawns = 0;
     const result = runAxWithBoundary({
@@ -350,7 +398,8 @@ test("prepared recovery resumes only the refused action and keeps its original a
         boundary: {
             ensureBinary: () => "/fixture/ax-tool",
             spawn: (call) => {
-                expect(call.args).toEqual(args);
+                // The same token and target key every time; only the attempt's own deadline differs.
+                expect(call.args).toEqual([...args, "--budget-ms", String(call.timeoutMs)]);
                 timeouts.push(call.timeoutMs);
                 attempts++;
                 return {
@@ -432,6 +481,54 @@ test("prepared recovery refuses unsafe states and cannot loop forever", async ()
         },
     });
     expect(calls).toBe(1);
+});
+
+test("a retry that finds the target changed reports uncertain delivery and names every attempt", async () => {
+    const args = ["act", "--prepare", "--target-key", "a".repeat(64)];
+    const replies = [
+        {
+            ok: false,
+            dispatchState: "not_started",
+            refusal: "focus_mismatch",
+            error: 'focus changed before input; no action dispatched; focus is on AXList "Suggestions", not the target',
+        },
+        {
+            ok: false,
+            dispatchState: "not_started",
+            refusal: "missing_target",
+            error: "observed target changed, disappeared or became ambiguous",
+        },
+    ];
+    let calls = 0;
+    const result = await runAxAsyncWithRecovery({
+        args,
+        timeoutMs: 2000,
+        run: async () => {
+            const reply = replies[calls++];
+            if (!reply) {
+                throw new Error("The input was attempted a third time");
+            }
+
+            return reply;
+        },
+    });
+    expect(calls).toBe(2);
+    expect(result.dispatchState).toBe("uncertain");
+    expect(result.recovery).toMatchObject({ retries: 1, targetChanged: true });
+    expect(result.error).toContain(
+        'attempt 1: focus changed before input; no action dispatched; focus is on AXList "Suggestions"'
+    );
+    expect(result.error).toContain("attempt 2: observed target changed");
+    expect(result.error).toContain("Observe before repeating the input.");
+
+    // The negative control: one refusal, no preparation retried, stays an honest not_started.
+    const single = await runAxAsyncWithRecovery({
+        args,
+        timeoutMs: 2000,
+        run: async () => ({ ok: false, dispatchState: "not_started", refusal: "missing_target", error: "gone" }),
+    });
+    expect(single.dispatchState).toBe("not_started");
+    expect(single.error).toBe("gone");
 });
 
 test("terminated native refusal cannot authorize an action retry", () => {

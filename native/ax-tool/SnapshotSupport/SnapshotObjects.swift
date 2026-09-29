@@ -13,4 +13,8 @@ public struct SnapshotObjectSet {
         buckets[hash, default: []].append(object)
         return true
     }
+
+    public func contains(_ object: CFTypeRef) -> Bool {
+        buckets[CFHash(object)]?.contains(where: { CFEqual($0, object) }) ?? false
+    }
 }

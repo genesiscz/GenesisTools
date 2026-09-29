@@ -200,20 +200,40 @@ func cmdWindow(appName: String) {
         var info: [String: Any] = ["title": axStringAttribute(w, "AXTitle") ?? "window-\(i)"]
         if let windowID = nativeAXWindowID(w) { info["window_id"] = Int(windowID) }
         if let id = axStringAttribute(w, "AXIdentifier") { info["id"] = id }
-        if let pos = axPointValue(w, "AXPosition") { info["x"] = pos.x; info["y"] = pos.y }
-        if let sz = axSizeValue(w, "AXSize") { info["width"] = sz.width; info["height"] = sz.height }
+        let pos = axPointValue(w, "AXPosition")
+        let sz = axSizeValue(w, "AXSize")
+        if let pos { info["x"] = pos.x; info["y"] = pos.y }
+        if let sz { info["width"] = sz.width; info["height"] = sz.height }
+        if pos == nil || sz == nil {
+            info["unavailable"] = "the window reported no position or size"
+        }
         if let role = axStringAttribute(w, "AXRole") { info["role"] = role }
         if let sub = axStringAttribute(w, "AXSubrole") { info["subrole"] = sub }
         if let val = axAttribute(w, "AXMinimized") as? NSNumber { info["minimized"] = val.boolValue }
         if let val = axAttribute(w, "AXFullScreen") as? NSNumber { info["fullscreen"] = val.boolValue }
         // Transient popups (find bars, tooltips, hover cards) pollute the list
         // and are easily mistaken for real windows.
-        let sub = axStringAttribute(w, "AXSubrole")
-        let height = axSizeValue(w, "AXSize")?.height ?? 0
-        if sub == "AXUnknown" || sub == "AXHelpTag" || height <= 50 {
+        // The rule see uses to choose a default window, so both commands call the same popups transient.
+        let candidate = WindowCandidate(index: i, windowID: nil, title: "", subrole: axStringAttribute(w, "AXSubrole"),
+                                        height: Double(axSizeValue(w, "AXSize")?.height ?? 0), minimized: false)
+        if candidate.secondary {
             info["transient"] = true
         }
+        // A sheet (an open or save panel, an alert attached to the window) is a child of its
+        // window, not a window of its own, so the list above never showed the file panel that
+        // "Load unpacked" had opened. Name it on its window: it blocks everything behind it.
+        let sheets = axChildren(w).filter { axStringAttribute($0, "AXRole") == "AXSheet" }.map { sheet -> [String: Any] in
+            var entry: [String: Any] = ["title": axStringAttribute(sheet, "AXTitle") ?? ""]
+            if let sub = axStringAttribute(sheet, "AXSubrole") { entry["subrole"] = sub }
+            if let identifier = axStringAttribute(sheet, "AXIdentifier") { entry["id"] = identifier }
+            let frame = axFrame(sheet)
+            entry["x"] = frame.minX; entry["y"] = frame.minY
+            entry["width"] = frame.width; entry["height"] = frame.height
+            return entry
+        }
+        if !sheets.isEmpty { info["sheets"] = sheets }
         infos.append(info)
     }
-    jsonOutput(["ok": true, "app": appName, "pid": pid, "count": infos.count, "windows": infos])
+    jsonOutput(["ok": true, "app": appName, "pid": pid, "count": infos.count, "windows": infos,
+                "screenLocked": sessionScreenLocked()])
 }

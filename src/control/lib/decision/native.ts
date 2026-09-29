@@ -5,12 +5,14 @@ import { type ActionParameters, nativeActionArguments } from "./action";
 import {
     type Candidate,
     candidatesFor,
+    expectedValueArgs,
     hasAncestorRole,
     type Observation,
     type ObservedElement,
     observationSchema,
     primaryWebArea,
     sameScope,
+    targetOrdinalArgs,
 } from "./observation";
 
 const { log } = logger.scoped("control-native");
@@ -336,15 +338,43 @@ export class NativeControlDriver implements ControlDriver {
         // rewritten to `perform` cannot take `--prepare`, and `focus` cannot take `--target-key`,
         // and native refuses either with "option is not valid" before anything is dispatched.
         const dispatched = actionArgs[1] ?? call.candidate.action;
+        if (dispatched === "key" && target) {
+            actionArgs.push(...expectedValueArgs(target));
+        }
 
         if (prepare && PREPARABLE_ACTIONS.has(dispatched)) {
-            actionArgs.push("--prepare", ...(target?.targetKey ? ["--target-key", target.targetKey] : []));
+            actionArgs.push(
+                "--prepare",
+                ...(target?.targetKey
+                    ? [
+                          "--target-key",
+                          target.targetKey,
+                          ...targetOrdinalArgs({
+                              rows: call.observation.elements,
+                              row: target,
+                              key: target.targetKey,
+                              fields: ["targetKey"],
+                          }),
+                      ]
+                    : [])
+            );
         } else if (target?.stableKey && TARGET_KEY_ACTIONS.has(dispatched)) {
             // Without this every act against a window with a clock in it refuses as
             // stale_observation: the whole-tree digest moves once a second, so the snapshot is
             // already out of date by the time the dispatch runs. Pinning the target's stable
             // identity checks the thing we are acting on instead of the whole screen.
-            actionArgs.push("--target-key", target.stableKey, "--revalidate-scope", "element");
+            actionArgs.push(
+                "--target-key",
+                target.stableKey,
+                "--revalidate-scope",
+                "element",
+                ...targetOrdinalArgs({
+                    rows: call.observation.elements,
+                    row: target,
+                    key: target.stableKey,
+                    fields: ["targetKey", "stableKey"],
+                })
+            );
         }
         log.info(
             {

@@ -3,7 +3,7 @@ import { logger, out } from "@genesiscz/utils/logger";
 import { isProcessAlive } from "@genesiscz/utils/process-alive";
 import type { Command } from "commander";
 import pc from "picocolors";
-import { runAx } from "../lib/runner";
+import { type AxResult, runAx } from "../lib/runner";
 import { addTargetOptions, targetArgs, targetLabel } from "../lib/target";
 
 /**
@@ -29,6 +29,30 @@ export function validateToPid(toPid: string | undefined): string | null {
     }
 
     return isProcessAlive(pid) ? null : `--to-pid ${pid} names no running process. No event was posted.`;
+}
+
+/**
+ * What `control type` may print. "typed N chars" is a claim that the text reached a field, so it
+ * is printed only when the native side read the field back. Measured 2026-09-28: `type --app
+ * "Brave Browser"` printed "typed 66 chars" while an open panel's field stayed empty, because the
+ * untargeted path verified nothing. Keys that were sent but not proven land exit 2, not 0.
+ */
+export function typeOutcome(result: AxResult, app: string): { line: string; exitCode: number } {
+    const count = String(result.length ?? "?");
+    const target = String(result.axId ?? result.desc ?? result.focused ?? app);
+    if (result.ok && result.verified === true) {
+        return { line: `${pc.green("typed")} ${pc.bold(count)} chars into ${pc.cyan(target)}`, exitCode: 0 };
+    }
+
+    if (!result.ok && result.unverified !== true) {
+        return { line: String(result.error ?? "typing failed"), exitCode: 1 };
+    }
+
+    const warning = typeof result.warning === "string" ? result.warning : "nothing read the text back";
+    return {
+        line: `${pc.yellow("sent")} ${pc.bold(count)} keystrokes toward ${pc.cyan(target)}, ${pc.yellow("UNVERIFIED")}: ${warning}`,
+        exitCode: 2,
+    };
 }
 
 /**
@@ -199,7 +223,7 @@ export function registerInteractCommands(program: Command): void {
         program
             .command("type")
             .description(
-                "Type keystrokes + HARD VERIFY. Inserts at the CURRENT cursor — use --end to jump to the end first, --clear to replace the whole field."
+                "Type keystrokes + HARD VERIFY. Inserts at the CURRENT cursor — use --end to jump to the end first, --clear to replace the whole field. Without a target the focused element is read back; exit 2 means the keys were sent but nothing proved where they landed."
             )
             .requiredOption("--app <name>", "app process name")
             .requiredOption("--text <text>", "text to type")
@@ -238,17 +262,17 @@ export function registerInteractCommands(program: Command): void {
                 axArgs.push("--delay", opts.delay);
             }
             const result = runAx(axArgs, 30_000);
+            const outcome = typeOutcome(result, opts.app);
             if (opts.json) {
                 out.println(SafeJSON.stringify(result, null, opts.pretty ? 2 : 0));
-                process.exit(result.ok === false ? 1 : 0);
+                process.exit(outcome.exitCode);
             }
-            if (!result.ok) {
-                logger.error(String(result.error));
+            if (outcome.exitCode === 1) {
+                logger.error(outcome.line);
                 process.exit(1);
             }
-            out.println(
-                `${pc.green("typed")} ${pc.bold(String(result.length))} chars into ${pc.cyan(String(result.axId ?? result.desc ?? opts.app))}`
-            );
+            out.println(outcome.line);
+            process.exitCode = outcome.exitCode;
         });
 
     program

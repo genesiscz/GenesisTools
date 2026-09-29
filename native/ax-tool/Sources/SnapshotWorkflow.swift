@@ -57,9 +57,12 @@ private struct ObservedWindow {
 
 private var workflowDispatchState: String?
 
-private func workflowFailure(_ message: String, category: SnapshotRefusal = .refused) -> Never {
+private func workflowFailure(_ message: String, category: SnapshotRefusal = .refused,
+                             extras: [String: Any] = [:]) -> Never {
     if let state = workflowDispatchState {
-        jsonOutput(["ok": false, "error": message, "dispatchState": state, "refusal": category.rawValue])
+        var payload: [String: Any] = ["ok": false, "error": message, "dispatchState": state, "refusal": category.rawValue]
+        payload.merge(extras) { _, new in new }
+        jsonOutput(payload)
         exit(1)
     }
     errorExit(message)
@@ -87,6 +90,26 @@ private func describeOutsideWindow(point: CGPoint, window: ObservedWindow) -> St
 
 private var workflowInput: WorkflowArguments?
 
+/// The caller's deadline (`--budget-ms`), less a margin for printing the result and exiting.
+private var workflowDeadline: TimeInterval?
+/// A tighter deadline for one phase, such as the post-action refresh.
+private var workflowPhaseDeadline: TimeInterval?
+
+private func workflowRemaining() -> TimeInterval? {
+    let now = ProcessInfo.processInfo.systemUptime
+    let ends = [workflowDeadline, workflowPhaseDeadline].compactMap { $0 }
+    return ends.min().map { $0 - now }
+}
+
+private func workflowExpired() -> Bool {
+    (workflowRemaining() ?? 1) <= 0
+}
+
+/// The query of a `query`-scoped observation, from `see --query` or from the token `act` holds.
+private var workflowQuery: TreeQuery?
+/// What the last query walk read and skipped, reported by `see`.
+private var workflowQueryReport: QueryWalkReport?
+
 private func workflowArgument(_ flag: String) -> String? {
     workflowInput?.values[flag]
 }
@@ -99,6 +122,12 @@ private func workflowParse(_ command: String) -> String {
     do {
         let parsed = try WorkflowArguments(Array(args.dropFirst(2)), command: command)
         workflowInput = parsed
+        if let budget = parsed.values["--budget-ms"].flatMap(Double.init) {
+            workflowDeadline = ProcessInfo.processInfo.systemUptime + budget / 1000 - min(0.35, budget / 4000)
+            // One stuck read (a busy app answers nothing for the default 6 s) must not eat the
+            // whole budget: bound every AX read of this process.
+            AXUIElementSetMessagingTimeout(AXUIElementCreateSystemWide(), Float(min(3, max(0.25, budget / 3000))))
+        }
         return parsed.values["--app"]!
     } catch {
         workflowFailure(error)
@@ -170,7 +199,8 @@ private func observedWindow(_ ax: AXUIElement, pid: pid_t) throws -> ObservedWin
     guard frame.origin.x.isFinite, frame.origin.y.isFinite,
           frame.width.isFinite, frame.height.isFinite, frame.width > 0, frame.height > 0,
           (axAttribute(ax, "AXMinimized") as? Bool) != true else {
-        throw ObservedTreeError("selected window is minimized or has no usable geometry; inspect again")
+        throw ObservedTreeError("selected window is minimized or has no usable geometry; inspect again"
+            + (sessionScreenLocked() ? " (the screen is locked, CGSSessionScreenIsLocked, and macOS reports no window geometry until it unlocks)" : ""))
     }
     let nativeID = nativeAXWindowID(ax)
     let matches = workflowWindows(pid).filter { info in
@@ -203,13 +233,21 @@ private func workflowWindow(_ ax: AXUIElement, pid: pid_t) -> ObservedWindow {
 
 private func observedTree(_ window: AXUIElement, depth: Int, scope: String) throws -> ObservedTreeData {
     workflowBulkUsed = false
+    if scope == "query" {
+        guard let query = workflowQuery else { throw ObservedTreeError("a query scope needs --query") }
+        let result = try buildQueryTree(root: window, source: LiveHierarchySource(root: window), depth: depth,
+                                        query: query, expired: workflowExpired)
+        workflowQueryReport = result.report
+        return result.tree
+    }
     // The bulk read cannot stop at a web area, so under chrome scope it would fetch the whole
     // page only for the builder to discard it; the walk never descends into it. Measured on
     // Brave 2026-09-11: walk 342-461 ms, bulk 544-911 ms for the same 125 rows.
+    guard !workflowExpired() else { throw ObservedTreeError(observationBudgetMessage(walked: 0)) }
     if scope != "chrome", ProcessInfo.processInfo.environment["AX_TOOL_NO_BULK"] == nil, let reader = BulkHierarchyReader() {
         do {
             let source = try reader.read(root: window, attributes: bulkAttributeList, maxDepth: depth + 2, maxArrayCount: observedElementLimit)
-            let tree = try buildObservedTree(root: window, source: source, depth: depth, scope: scope)
+            let tree = try buildObservedTree(root: window, source: source, depth: depth, scope: scope, expired: workflowExpired)
             workflowBulkUsed = true
             return tree
         } catch is BulkHierarchyError {
@@ -217,7 +255,8 @@ private func observedTree(_ window: AXUIElement, depth: Int, scope: String) thro
             // children list) is answered by the per-attribute walk, which is the ground truth.
         }
     }
-    return try buildObservedTree(root: window, source: LiveHierarchySource(root: window), depth: depth, scope: scope)
+    return try buildObservedTree(root: window, source: LiveHierarchySource(root: window), depth: depth, scope: scope,
+                                 expired: workflowExpired)
 }
 
 private func workflowTree(_ window: AXUIElement, depth: Int, scope: String) -> ObservedTreeData {
@@ -309,7 +348,9 @@ private func workflowSnapshotOnce(appName: String, pid: pid_t, launch: Double, w
         perceptionResult = result.1
     }
     let token = SnapshotToken(pid: pid, launch: launch, window: Int(window.id), depth: depth,
-                              digest: tree.digest, created: capturedAt, scope: scope, visual: visual)
+                              digest: tree.digest, created: capturedAt, scope: scope, visual: visual,
+                              query: scope == "query" ? workflowQuery : nil,
+                              document: scope == "window" ? try documentScope(tree.rows) : nil)
     let encoded: String
     do {
         encoded = try JSONEncoder().encode(token).base64EncodedString()
@@ -317,7 +358,14 @@ private func workflowSnapshotOnce(appName: String, pid: pid_t, launch: Double, w
         throw ObservedTreeError("cannot encode snapshot token: \(error.localizedDescription)")
     }
     let publicRows = tree.rows.map { row in row.filter { $0.key != "identity" } }
-    return ["ok": true, "app": appName, "pid": pid, "processLaunch": launch,
+    var queryReport: [String: Any] = [:]
+    if scope == "query", let query = workflowQuery, let report = workflowQueryReport {
+        queryReport = report.dictionary
+        queryReport["text"] = query.text
+        if let role = query.role { queryReport["role"] = role }
+        queryReport["depth"] = depth
+    }
+    var output: [String: Any] = ["ok": true, "app": appName, "pid": pid, "processLaunch": launch,
             "window": ["id": window.id, "index": index, "title": axStringAttribute(window.ax, "AXTitle") ?? "",
                        "x": window.bounds.minX, "y": window.bounds.minY,
                        "width": window.bounds.width, "height": window.bounds.height],
@@ -326,6 +374,11 @@ private func workflowSnapshotOnce(appName: String, pid: pid_t, launch: Double, w
             // The count of the tree these elements came from, not of the second read that checked it.
             "vanishedDuringWalk": tree.vanished,
             "elements": publicRows]
+    if !queryReport.isEmpty {
+        output["query"] = queryReport
+    }
+
+    return output
 }
 
 /// Wait until two consecutive reads agree, so a post-action snapshot describes a UI that has
@@ -537,13 +590,31 @@ func cmdSee(appName _: String) {
     if requested != nil && workflowArgument("--window-id") != nil {
         workflowFailure("choose --window-index or --window-id, not both")
     }
-    if windows.count > 1 && requested == nil && workflowArgument("--window-id") == nil {
-        jsonOutput(["ok": false, "error": "multiple windows; select --window-index from these current candidates",
-                    "pid": pid, "windows": windows.enumerated().map { index, window in
-                        ["index": index, "title": axStringAttribute(window, "AXTitle") ?? "",
-                         "width": axPx(axFrame(window).width), "height": axPx(axFrame(window).height)]
-                    }])
-        exit(1)
+    let candidates = windows.enumerated().map { index, window in
+        WindowCandidate(index: index, windowID: nativeAXWindowID(window).map { Int($0) },
+                        title: axStringAttribute(window, "AXTitle") ?? "",
+                        subrole: axStringAttribute(window, "AXSubrole"), height: Double(axFrame(window).height),
+                        minimized: (axAttribute(window, "AXMinimized") as? NSNumber)?.boolValue == true)
+    }
+    // A popup (a translate bubble, a hover card) is a window too; it must not make the one real
+    // window ambiguous. Anything else stays the caller's choice, named by window ID.
+    var chosenIndex: Int?
+    if requested == nil && workflowArgument("--window-id") == nil {
+        guard let only = defaultWindowIndex(candidates) else {
+            jsonOutput(["ok": false,
+                        "error": "multiple windows; choose one by window ID (the API's window_id, the CLI's --window-id) from these candidates",
+                        "pid": pid, "windows": candidates.map { candidate -> [String: Any] in
+                            var entry: [String: Any] = ["index": candidate.index, "title": candidate.title,
+                                                        "height": axPx(CGFloat(candidate.height)),
+                                                        "width": axPx(axFrame(windows[candidate.index]).width),
+                                                        "secondary": candidate.secondary, "minimized": candidate.minimized]
+                            if let id = candidate.windowID { entry["windowId"] = id }
+                            if let subrole = candidate.subrole { entry["subrole"] = subrole }
+                            return entry
+                        }])
+            exit(1)
+        }
+        chosenIndex = only
     }
     let index: Int
     let window: ObservedWindow
@@ -554,7 +625,7 @@ func cmdSee(appName _: String) {
         }
         index = found
     } else {
-        index = workflowInteger("--window-index", defaultValue: 0)
+        index = chosenIndex ?? workflowInteger("--window-index", defaultValue: 0)
         guard windows.indices.contains(index) else {
             workflowFailure("--window-index outside current window list")
         }
@@ -562,7 +633,10 @@ func cmdSee(appName _: String) {
     }
     let depth = workflowInteger("--depth", defaultValue: 20)
     let scope = workflowArgument("--scope") ?? "window"
-    guard ["window", "chrome"].contains(scope) else { workflowFailure("--scope must be window or chrome") }
+    guard ["window", "chrome", "query"].contains(scope) else { workflowFailure("--scope must be window, chrome or query") }
+    if scope == "query" {
+        workflowQuery = TreeQuery(text: workflowArgument("--query") ?? "", role: workflowArgument("--query-role"))
+    }
     do {
         var perception: VisualPerceptionOptions?
         if workflowArgument("--perception") == "ocr" {
@@ -615,13 +689,32 @@ private func workflowFrontWindow(_ window: ObservedWindow, pid: pid_t, element: 
     }
 }
 
+/// Role and label of whatever holds keyboard focus, for a refusal message.
+private func describeFocusHolder(_ focused: CFTypeRef?) -> String {
+    guard let focused, CFGetTypeID(focused) == AXUIElementGetTypeID() else { return "nothing readable" }
+    let element = focused as! AXUIElement
+    let role = axStringAttribute(element, "AXRole") ?? "an element without a role"
+    let label = [axStringAttribute(element, "AXTitle"), axStringAttribute(element, "AXDescription")]
+        .compactMap { $0 }.first { !$0.isEmpty }
+    return label.map { "\(role) \"\(String($0.prefix(60)))\"" } ?? role
+}
+
 private func workflowAXAction(_ element: AXUIElement, action: String) {
     guard axActionNames(element).contains(action) else {
         workflowFailure("element does not expose \(action); inspect actions in a fresh see result")
     }
     // AX messaging timeout is an uncertain outcome, never a synthetic success.
-    AXUIElementSetMessagingTimeout(element, 3)
+    let timeout = min(2, max(0.2, (workflowRemaining() ?? 3) - 0.3))
+    AXUIElementSetMessagingTimeout(element, Float(timeout))
     let result = AXUIElementPerformAction(element, action as CFString)
+    if result == .cannotComplete {
+        // AppKit runs a modal dialog (an open panel, an alert) inside the button's action, so the
+        // press does not return until the dialog closes. Brave's "Load unpacked" held the process
+        // for the caller's whole 10 s deadline this way, and the result was lost with it.
+        workflowFailure("\(action) did not return within \(String(format: "%.1f", timeout)) s (AX \(result.rawValue)). "
+            + "A control that opens a modal dialog holds its press until the dialog closes, so the dialog may be open now; "
+            + "observe (list_windows reports sheets) before pressing again")
+    }
     guard result == .success else {
         workflowFailure("\(action) failed or timed out (AX \(result.rawValue)); outcome may be uncertain, inspect before retrying")
     }
@@ -649,7 +742,11 @@ private func workflowRaise(_ window: ObservedWindow) {
 
 private func workflowFocus(_ window: ObservedWindow, pid: pid_t, element: AXUIElement) {
         guard bringFrontmost(pid) else {
-            workflowFailure("app activation failed")
+            let name = NSRunningApplication(processIdentifier: pid)?.localizedName ?? "the app"
+            workflowFailure("app activation failed: macOS kept \(frontmostDescription()) in front for 3 s, also through "
+                + "LaunchServices. This action needs \(name) frontmost: bring it forward yourself (click its window, "
+                + "or open -a \"\(name)\"), or send keys without focus (press_key with activate:false and no prepare), "
+                + "then observe again")
         }
         let focusedWindow = axAttribute(AXUIElementCreateApplication(pid), kAXFocusedWindowAttribute as String)
         let alreadyFocused = frontmostPid() == pid && focusedWindow.map {
@@ -773,6 +870,7 @@ func cmdAct(appName _: String) {
             workflowFailure("invalid --snapshot token; run see again")
         }
         token = decoded
+        workflowQuery = decoded.query
         elementIndex = workflowArgument("--coords") == nil && workflowArgument("--region") == nil
             ? workflowInteger("--element") : 0
         do {
@@ -803,11 +901,23 @@ func cmdAct(appName _: String) {
     if let key = workflowArgument("--target-key"), workflowFlag("--prepare") || revalidateScope == "element" {
         do {
             elementIndex = revalidateScope == "element"
-                ? try resolvedTargetIndex(key:key,rows:tree.rows)
-                : try preparedTargetIndex(key:key,rows:tree.rows)
+                ? try resolvedTargetIndex(key:key,rows:tree.rows,ordinal:workflowArgument("--target-ordinal").flatMap(TargetOrdinal.init))
+                : try preparedTargetIndex(key:key,rows:tree.rows,ordinal:workflowArgument("--target-ordinal").flatMap(TargetOrdinal.init))
             dispatchToken = SnapshotToken(pid:pid,launch:launch,window:Int(window.id),depth:token.depth,
-                digest:tree.digest,created:token.created,scope:token.effectiveScope)
+                digest:tree.digest,created:token.created,scope:token.effectiveScope,query:token.query)
         } catch { workflowFailure(error) }
+    }
+    // A page target is checked against the page, not the whole window: browser chrome churns on its
+    // own (a tab label's live memory figure). The page must be unchanged and the target keeps its
+    // position in it; anything else falls through to the whole-window refusal below.
+    var documentPin: DocumentScope?
+    if dispatchToken.digest != tree.digest, rawCoords == nil, let observed = token.document,
+       let current = try? documentScope(tree.rows),
+       let remapped = remapDocumentTarget(observedIndex: elementIndex, observed: observed, current: current) {
+        elementIndex = remapped
+        documentPin = current
+        dispatchToken = SnapshotToken(pid:pid,launch:launch,window:Int(window.id),depth:token.depth,
+            digest:tree.digest,created:token.created,scope:token.effectiveScope,query:token.query)
     }
     do {
         _ = try dispatchToken.validate(pid: pid, launch: launch, window: Int(window.id), digest: tree.digest,
@@ -853,13 +963,18 @@ func cmdAct(appName _: String) {
         do { try validateModalTarget(rows: tree.rows, target: elementIndex) }
         catch { workflowFailure(error) }
         dispatchToken = SnapshotToken(pid:pid,launch:launch,window:Int(window.id),depth:token.depth,
-            digest:tree.digest,created:token.created,scope:token.effectiveScope)
+            digest:tree.digest,created:token.created,scope:token.effectiveScope,query:token.query)
         workflowFrontWindow(window,pid:pid)
         prepared = true
     }
     if token.effectiveScope == "chrome", action != "get",
        axStringAttribute(element, "AXRole") == "AXWebArea" || (action == "key" && CFEqual(element, window.ax)) {
-        workflowFailure("this action requires window scope or an inspected browser-chrome input")
+        workflowFailure(action == "key"
+            ? "a key without an element targets the whole window, which a chrome-scope observation cannot address "
+              + "(the page is left out). Pass element_ref of a chrome input, such as the AXTextField \"Address and search "
+              + "bar\", or observe with scope \"window\" and act on a page element"
+            : "this element is the browser page, which a chrome-scope observation leaves out; observe with scope \"window\" "
+              + "to act inside the page")
     }
     // dispatchSnapshotAction owns the enabled-state boundary: "get" is the only .read
     // operation, and it applies the same unknown-as-enabled rule to every other one.
@@ -905,7 +1020,8 @@ func cmdAct(appName _: String) {
         targetEnabled: (axAttribute(element, "AXEnabled") as? Bool) != false,
         windowFocused: windowFocused, inputFocused: inputFocused,
         allowUnfocusedInput: workflowFlag("--no-activate") || nonActivatingPanel,
-        windowCanBecomeKey: !nonActivatingPanel, operation: operation)
+        windowCanBecomeKey: !nonActivatingPanel, operation: operation,
+        focusHolder: inputFocused ? nil : describeFocusHolder(focusedInput))
     func validateAfterFeedback() throws {
         let freshWindow = workflowWindowByID(token.window, pid: pid)
         let fresh = workflowTree(freshWindow.ax, depth: token.depth, scope: token.effectiveScope)
@@ -922,13 +1038,23 @@ func cmdAct(appName _: String) {
         let identityPinned = prepared || byIdentifier != nil
             || (revalidateScope == "element" && workflowArgument("--target-key") != nil)
         if identityPinned, let key = tree.rows[elementIndex][identityField] as? String {
-            let currentIndex = try preparedTargetIndex(key: key, rows: fresh.rows, field: identityField)
+            let currentIndex = try preparedTargetIndex(key: key, rows: fresh.rows, field: identityField,
+                ordinal: TargetOrdinal.of(elementIndex, rows: tree.rows, field: identityField))
 
             if prepared {
                 try validatePreparedTarget(before: tree.rows[elementIndex], after: fresh.rows[currentIndex],
                     sameElement: CFEqual(element, fresh.elements[currentIndex]))
             }
 
+            try validateModalTarget(rows: fresh.rows, target: currentIndex)
+            _ = try dispatchToken.validate(pid: pid, launch: observedLaunch(pid), window: Int(freshWindow.id),
+                digest: dispatchToken.digest, element: currentIndex, count: fresh.elements.count,
+                now: Date().timeIntervalSince1970)
+        } else if let documentPin {
+            guard let current = try documentScope(fresh.rows),
+                  let currentIndex = remapDocumentTarget(observedIndex: elementIndex, observed: documentPin, current: current) else {
+                throw SnapshotError.refusal(.staleObservation, "the page changed; run see again")
+            }
             try validateModalTarget(rows: fresh.rows, target: currentIndex)
             _ = try dispatchToken.validate(pid: pid, launch: observedLaunch(pid), window: Int(freshWindow.id),
                 digest: dispatchToken.digest, element: currentIndex, count: fresh.elements.count,
@@ -1030,6 +1156,10 @@ func cmdAct(appName _: String) {
         }
         guard axStringAttribute(element, "AXValue") == value else {
             workflowFailure("AXValue read-back differs; inspect actual state before retrying")
+        }
+        if let rewritten = valueRewrittenAfterWrite(written: value, read: { axStringAttribute(element, "AXValue") }) {
+            workflowFailure("the app rewrote the value right after the write: wrote \"\(value)\", now \"\(rewritten)\" "
+                + "(an address bar's autocomplete can do this); inspect it before submitting")
         }
     case "select":
         guard let value = axStringAttribute(element, "AXValue") else {
@@ -1423,60 +1553,85 @@ func cmdAct(appName _: String) {
             workflowFailure(error)
         }
     case "paste":
+        // Nothing is posted until performClipboardPaste reaches cmd+v, so a refusal before it is
+        // truthfully not_started; the clipboard helper says when it did post.
+        workflowDispatchState = "not_started"
         workflowFrontWindow(window, pid: pid, element: element)
         guard let text = workflowArgument("--text") else { workflowFailure("paste requires --text") }
-        do {
-            let transaction = try ClipboardTransaction(board: .general)
-            var restoration = "unchanged"
-            do {
-                defer { restoration = transaction.restore() }
-                try transaction.write(text: text, format: workflowArgument("--format") ?? "text")
-                // --no-activate waives the frontmost requirement here too, as in workflowFrontWindow;
-                // the focused-input check is what decides where the paste lands, so it always runs.
+        func postChord(_ key: CGKeyCode) throws {
+            guard let down = CGEvent(keyboardEventSource: nil, virtualKey: key, keyDown: true),
+                  let up = CGEvent(keyboardEventSource: nil, virtualKey: key, keyDown: false) else {
+                throw WindowEventError.unavailable("could not allocate paste keys")
+            }
+            down.flags = .maskCommand
+            up.flags = .maskCommand
+            down.postToPid(pid)
+            Thread.sleep(forTimeInterval: 0.05)
+            up.postToPid(pid)
+            Thread.sleep(forTimeInterval: 0.05)
+        }
+        let primitives = ClipboardPastePrimitives(
+            readValue: { axStringAttribute(element, "AXValue") },
+            // --no-activate waives the frontmost requirement here too, as in workflowFrontWindow;
+            // the focused-input check is what decides where the paste lands, so it always runs.
+            focusedOnTarget: {
                 guard workflowFlag("--no-activate") || frontmostPid() == pid,
                       let focused = axAttribute(AXUIElementCreateApplication(pid), "AXFocusedUIElement"),
-                      CFGetTypeID(focused) == AXUIElementGetTypeID(), CFEqual(focused, element) else {
-                    throw WindowEventError.unavailable("focus changed before paste; clipboard restored without dispatch")
-                }
-                guard let down = CGEvent(keyboardEventSource: nil, virtualKey: 9, keyDown: true),
-                      let up = CGEvent(keyboardEventSource: nil, virtualKey: 9, keyDown: false) else {
-                    throw WindowEventError.unavailable("could not allocate paste keys")
-                }
-                down.flags = .maskCommand
-                up.flags = .maskCommand
-                let before = axStringAttribute(element, "AXValue")
-                try transaction.dispatchPaste {
-                    if workflowFlag("--replace") {
-                        guard let selectDown = CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: true),
-                              let selectUp = CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: false) else {
-                            throw WindowEventError.unavailable("could not allocate select-all keys")
-                        }
-                        selectDown.flags = .maskCommand
-                        selectUp.flags = .maskCommand
-                        selectDown.postToPid(pid)
-                        Thread.sleep(forTimeInterval: 0.05)
-                        selectUp.postToPid(pid)
-                        Thread.sleep(forTimeInterval: 0.05)
-                    }
-                    down.postToPid(pid)
-                    Thread.sleep(forTimeInterval: 0.05)
-                    up.postToPid(pid)
-                }
-                // Keep the pasteboard available while the receiver consumes its queued shortcut.
-                let replacement = workflowFlag("--replace")
-                let readback = waitForPasteReadback(before: before, expected: replacement ? text : nil) {
-                    axStringAttribute(element, "AXValue")
-                }
-                if replacement, readback != text {
-                    throw WindowEventError.unavailable("paste replacement read-back differs; inspect before retrying")
-                }
+                      CFGetTypeID(focused) == AXUIElementGetTypeID() else { return false }
+                return CFEqual(focused, element)
+            },
+            setSelection: { length in
+                var settable = DarwinBoolean(false)
+                var range = CFRange(location: 0, length: length)
+                guard AXUIElementIsAttributeSettable(element, kAXSelectedTextRangeAttribute as CFString, &settable) == .success,
+                      settable.boolValue, let encoded = AXValueCreate(.cfRange, &range) else { return false }
+                return AXUIElementSetAttributeValue(element, kAXSelectedTextRangeAttribute as CFString, encoded) == .success
+            },
+            selectedRange: {
+                guard let raw = axAttribute(element, "AXSelectedTextRange"), CFGetTypeID(raw) == AXValueGetTypeID() else { return nil }
+                var range = CFRange(location: 0, length: 0)
+                guard AXValueGetValue(raw as! AXValue, .cfRange, &range) else { return nil }
+                return (range.location, range.length)
+            },
+            postSelectAll: {
+                workflowDispatchState = "uncertain"
+                try postChord(ClipboardPasteKeys.selectAll)
+            },
+            postPaste: {
+                workflowDispatchState = "uncertain"
+                try postChord(ClipboardPasteKeys.paste)
+            })
+        let transaction: ClipboardTransaction
+        do { transaction = try ClipboardTransaction(board: .general) } catch { workflowFailure(error) }
+        let termination = ClipboardTerminationGuard(transaction: transaction) { signal, restoration in
+            jsonOutput(["ok": false, "action": action, "dispatchState": workflowDispatchState ?? "uncertain",
+                        "refusal": SnapshotRefusal.refused.rawValue, "clipboardRestore": restoration,
+                        "error": "terminated by signal \(signal) during paste; clipboard \(restoration); inspect before retrying"])
+            exit(128 + signal)
+        }
+        defer { termination.cancel() }
+        do {
+            let outcome = try performClipboardPaste(transaction: transaction, text: text,
+                                                    format: workflowArgument("--format") ?? "text",
+                                                    replace: workflowFlag("--replace"), primitives: primitives)
+            termination.cancel()
+            actionExtras["clipboardRestore"] = outcome.clipboardRestore
+            actionExtras["pasteVerified"] = true
+            if let selection = outcome.selection { actionExtras["selection"] = selection }
+            if outcome.skipped {
+                actionExtras["note"] = "the field already held exactly this text; nothing was pasted"
             }
-            actionExtras["clipboardRestore"] = restoration
-            actionOK = restoration != "restore-failed"
-            if !actionOK {
+            if outcome.clipboardRestore == "restore-failed" {
+                actionOK = false
                 actionExtras["error"] = "paste dispatched but clipboard restoration failed; do not repeat the paste"
             }
+        } catch let failure as ClipboardPasteError {
+            termination.cancel()
+            workflowDispatchState = failure.dispatched ? "uncertain" : "not_started"
+            workflowFailure(failure.message, extras: ["clipboardRestore": failure.clipboardRestore,
+                                                      "pasteDispatched": failure.dispatched])
         } catch {
+            termination.cancel()
             workflowFailure(error)
         }
     case "type":
@@ -1484,6 +1639,32 @@ func cmdAct(appName _: String) {
             workflowFailure("type requires single-line --text; use an explicit key action to submit")
         }
         workflowFrontWindow(window, pid: pid, element: element)
+        let typedBefore = axStringAttribute(element, "AXValue")
+        defer {
+            // Read back what landed, so the result says verified only when it was; the keys were
+            // posted either way, so this changes the status, never the dispatch state.
+            var typedAfter = axStringAttribute(element, "AXValue")
+            let readDeadline = ProcessInfo.processInfo.systemUptime + 1
+            while typedAfter != nil, !typedTextLanded(before: typedBefore, after: typedAfter, text: text),
+                  ProcessInfo.processInfo.systemUptime < readDeadline {
+                Thread.sleep(forTimeInterval: 0.05)
+                typedAfter = axStringAttribute(element, "AXValue")
+            }
+            switch typedTextVerdict(element: axStringAttribute(element, "AXRole") ?? "target element", before: typedBefore,
+                                    after: typedAfter, text: text, replace: false) {
+            case .verified:
+                actionExtras["typedVerified"] = true
+            case .unverifiable(let reason):
+                // Sent is not typed: the same UNVERIFIED status the legacy verb returns.
+                actionExtras["typedVerified"] = false
+                actionOK = false
+                actionExtras["error"] = "UNVERIFIED: the typed text could not be read back (\(reason)); verify the field before typing again"
+            case .notLanded, .different:
+                actionExtras["typedVerified"] = false
+                actionOK = false
+                actionExtras["error"] = "the typed text did not appear in the field; inspect it before typing again"
+            }
+        }
         for character in text {
             workflowFrontWindow(window, pid: pid, element: element)
             var units = Array(String(character).utf16)
@@ -1498,6 +1679,9 @@ func cmdAct(appName _: String) {
             Thread.sleep(forTimeInterval: 0.01)
         }
     case "key":
+        // Every refusal below comes before the key is posted, so it is reported as not started;
+        // "uncertain" there told the caller a key might have landed when none had.
+        workflowDispatchState = "not_started"
         workflowFrontWindow(window, pid: pid, element: CFEqual(element, window.ax) ? nil : element)
         guard let keys = workflowArgument("--keys") else { workflowFailure("key requires --keys") }
         let chord: NativeKeyChord
@@ -1509,6 +1693,15 @@ func cmdAct(appName _: String) {
         }
         down.flags = chord.flags
         up.flags = chord.flags
+        // Last read before a submit: the field commits what it holds now, not what was observed.
+        if !CFEqual(element, window.ax),
+           let refusal = commitRefusal(role: axStringAttribute(element, "AXRole"), code: chord.code,
+                                       observed: tree.rows[elementIndex]["AXValue"] as? String,
+                                       live: axStringAttribute(element, "AXValue"),
+                                       expectedDigest: workflowArgument("--expect-value-sha256")) {
+            workflowFailure(refusal)
+        }
+        workflowDispatchState = "uncertain"
         down.postToPid(pid)
         Thread.sleep(forTimeInterval: 0.05)
         up.postToPid(pid)
@@ -1535,6 +1728,10 @@ func cmdAct(appName _: String) {
         let awaiting = opensMenu
             ? SettleExpectation(name: "the opened menu", timeout: 3, holds: { treeCarriesOpenMenu($0) })
             : nil
+        // The refresh is a courtesy after a dispatched action, so it gets a phase budget of its own:
+        // a sheet the action opened can make the window's tree slow enough to eat the caller's
+        // whole deadline, and the dispatched result must still come back.
+        workflowPhaseDeadline = ProcessInfo.processInfo.systemUptime + (opensMenu ? 5 : 4)
         let after = workflowAfterState(appName: appName, pid: pid, launch: launch, window: window, token: token,
                                        awaiting: awaiting)
         let refreshed = (after["ok"] as? Bool) ?? false
@@ -1542,7 +1739,10 @@ func cmdAct(appName _: String) {
         payload["after"] = after
 
         if !refreshed {
-            payload["note"] = "the refresh did not produce a new snapshot; run see again before acting"
+            let reason = (after["error"] as? String).map { " (\($0))" } ?? ""
+            payload["note"] = "the action was dispatched, but the refresh did not produce a new snapshot\(reason). "
+                + "If the action opened a dialog or sheet, its tree can be too slow or too large to read: "
+                + "list_windows reports sheets, and get_app_state with a query reads one element. Do not repeat the action"
         }
     } else {
         payload["refreshRequired"] = true

@@ -42,10 +42,34 @@ func frontmostPid() -> pid_t? {
 /// state can update too.
 func bringFrontmost(_ pid: pid_t) -> Bool {
     let runningApp = NSWorkspace.shared.runningApplications.first { $0.processIdentifier == pid }
-    for _ in 0..<30 {
-        if frontmostPid() == pid { return true }
-        runningApp?.activate(options: [.activateIgnoringOtherApps])
-        CFRunLoopRunInMode(.defaultMode, 0.1, false)
-    }
-    return frontmostPid() == pid
+    return activateFrontmost(
+        isFrontmost: { frontmostPid() == pid },
+        activate: { runningApp?.activate(options: [.activateIgnoringOtherApps]) },
+        openViaLaunchServices: {
+            guard let url = runningApp?.bundleURL else { return }
+            let configuration = NSWorkspace.OpenConfiguration()
+            configuration.activates = true
+            configuration.addsToRecentItems = false
+            configuration.promptsUserIfNeeded = false
+            NSWorkspace.shared.openApplication(at: url, configuration: configuration) { _, error in
+                if let error {
+                    fputs("LaunchServices activation of pid \(pid) failed: \(error.localizedDescription)\n", stderr)
+                }
+            }
+        },
+        pump: { CFRunLoopRunInMode(.defaultMode, $0, false) }).ok
+}
+
+/// True while the login session's screen is locked. macOS then reports no geometry for other apps'
+/// windows, which reads exactly like a broken window unless the reason is named.
+func sessionScreenLocked() -> Bool {
+    guard let session = CGSessionCopyCurrentDictionary() as? [String: Any] else { return false }
+    return (session["CGSSessionScreenIsLocked"] as? NSNumber)?.boolValue == true
+}
+
+/// "Name (pid N)" of the frontmost app, for a refusal that has to say who holds the front.
+func frontmostDescription() -> String {
+    guard let pid = frontmostPid() else { return "no frontmost app" }
+    let name = NSWorkspace.shared.runningApplications.first { $0.processIdentifier == pid }?.localizedName ?? "pid"
+    return "\(name) (pid \(pid))"
 }

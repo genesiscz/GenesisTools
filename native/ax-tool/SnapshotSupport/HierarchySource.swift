@@ -85,10 +85,18 @@ public func snapshotFrame(_ element: AXUIElement, source: HierarchySource) -> CG
     return CGRect(origin: position, size: size)
 }
 
+/// The message of a walk stopped by the caller's deadline. It names how far the walk got, because
+/// "timed out" alone reads the same as a hung app.
+public func observationBudgetMessage(walked: Int) -> String {
+    "observation budget ran out after \(walked) elements; the rest of the window was not walked, so this is no evidence about it"
+}
+
 /// Pre-order walk from `root`. Shared AX objects are visited once, window buttons are leaves,
 /// chrome scope omits web-area descendants, and a tree deeper than `depth` or larger than
-/// `observedElementLimit` is refused rather than truncated.
-public func buildObservedTree(root: AXUIElement, source: HierarchySource, depth: Int, scope: String) throws -> ObservedTreeData {
+/// `observedElementLimit` is refused rather than truncated. `expired` is the caller's deadline:
+/// once it answers true the walk stops with an error, never with a partial tree.
+public func buildObservedTree(root: AXUIElement, source: HierarchySource, depth: Int, scope: String,
+                              expired: () -> Bool = { false }) throws -> ObservedTreeData {
     guard (1...50).contains(depth) else {
         throw ObservedTreeError("--depth must be between 1 and 50")
     }
@@ -102,6 +110,9 @@ public func buildObservedTree(root: AXUIElement, source: HierarchySource, depth:
         }
         guard tree.elements.count < observedElementLimit else {
             throw ObservedTreeError("AX tree exceeds \(observedElementLimit) elements; snapshot refused rather than truncated")
+        }
+        guard !expired() else {
+            throw ObservedTreeError(observationBudgetMessage(walked: tree.elements.count))
         }
         let rawChildren: [AXUIElement]
         do {

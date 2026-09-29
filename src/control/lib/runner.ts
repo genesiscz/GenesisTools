@@ -83,6 +83,7 @@ export class PreparedActionRecovery {
     private readonly clock = new Stopwatch();
     private recoveryStarted?: number;
     private readonly refusals: string[] = [];
+    private readonly refusedAttempts: string[] = [];
     constructor(private readonly options: { args: string[]; timeoutMs: number; signal?: AbortSignal }) {}
 
     remaining(): number {
@@ -111,6 +112,7 @@ export class PreparedActionRecovery {
         }
         this.recoveryStarted ??= this.clock.elapsedMs;
         this.refusals.push(String(result.refusal));
+        this.refusedAttempts.push(String(result.error ?? result.refusal));
         logger.debug(
             { attempt: this.refusals.length + 1, refusal: result.refusal },
             "Retrying undispatched prepared action"
@@ -118,13 +120,38 @@ export class PreparedActionRecovery {
         return true;
     }
 
+    /**
+     * A retried call whose last attempt found the target changed or gone did not post its input, but
+     * it cannot claim that nothing happened: an earlier attempt had already activated, raised and
+     * focused the target, and the UI moved while the call ran. Measured 2026-09-28 on Brave: a
+     * prepared Return was refused at the focus gate, the retry found the omnibox changed, and the
+     * page had navigated. Reported as not started, that invites the caller to press Return again.
+     */
     finish(result: AxResult): AxResult {
-        return this.refusals.length
-            ? {
-                  ...result,
-                  recovery: { retries: this.refusals.length, refusals: this.refusals, elapsedMs: this.clock.elapsedMs },
-              }
-            : result;
+        if (!this.refusals.length) {
+            return result;
+        }
+
+        const recovery = { retries: this.refusals.length, refusals: this.refusals, elapsedMs: this.clock.elapsedMs };
+        const movedUnderUs =
+            result.dispatchState === "not_started" &&
+            ["missing_target", "stale_observation", "scope_changed"].includes(String(result.refusal));
+        if (!movedUnderUs) {
+            return { ...result, recovery };
+        }
+
+        const attempts = [...this.refusedAttempts, String(result.error ?? result.refusal)]
+            .map((error, index) => `attempt ${index + 1}: ${error}`)
+            .join("; ");
+        return {
+            ...result,
+            dispatchState: "uncertain",
+            recovery: { ...recovery, targetChanged: true },
+            error:
+                `No attempt posted the input (${attempts}). The target changed while this call ran, after an ` +
+                "earlier attempt had activated and focused it, so a preparation step or another actor changed the UI. " +
+                "Observe before repeating the input.",
+        };
     }
 }
 
@@ -231,6 +258,20 @@ export interface AxRunBoundary {
 export const AX_STDOUT_BUDGET_BYTES = 32 * 1024 * 1024;
 
 /** Argv the AX spawn will exec: launcher + binary + args when a launcher is installed. */
+/**
+ * `see` and `act` learn the deadline of the attempt they run in. Without it a slow tree (a sheet
+ * listing thousands of files, read through a remote view) walked until this side killed the
+ * process at its deadline, and the dispatched result died with it. Added per attempt, so a
+ * recovery retry carries its own, shorter deadline while every other argument stays the same.
+ */
+export function withNativeBudget(args: string[], timeoutMs: number): string[] {
+    if (!["see", "act"].includes(args[0] ?? "") || args.includes("--budget-ms")) {
+        return args;
+    }
+
+    return [...args, "--budget-ms", String(Math.min(600_000, Math.max(100, Math.floor(timeoutMs))))];
+}
+
 export function axCommandLine(binary: string, args: readonly string[]): string[] {
     assertGenesisAppNotUpdating();
     const launcher = installedGenesisAppLauncher();
@@ -318,7 +359,12 @@ export function runAxWithBoundary({
                     error: "Recovery deadline reached before dispatch.",
                 });
             }
-            r = boundary.spawn({ binary, args, timeoutMs: remainingMs, maxBufferBytes: AX_STDOUT_BUDGET_BYTES });
+            r = boundary.spawn({
+                binary,
+                args: withNativeBudget(args, remainingMs),
+                timeoutMs: remainingMs,
+                maxBufferBytes: AX_STDOUT_BUDGET_BYTES,
+            });
         } catch (error) {
             logger.warn({ error, command: args[0] }, "Native spawn failed; no retry");
             if (error instanceof GenesisAppUpdatingError) {
@@ -341,6 +387,29 @@ export function runAxWithBoundary({
     return recovery.finish(result);
 }
 
+/**
+ * A paste that is told to stop restores the clipboard and prints the outcome before it exits. The
+ * timeout result keeps only that field: the rest of a terminated process's envelope is not
+ * evidence of what the action did.
+ */
+function terminatedClipboard(stdout: string | null): { clipboardRestore?: string } {
+    const lastLine = (stdout ?? "").trim().split("\n").at(-1);
+    if (!lastLine) {
+        return {};
+    }
+
+    try {
+        const parsed: unknown = SafeJSON.parse(lastLine, { strict: true });
+        if (isAxResult(parsed) && typeof parsed.clipboardRestore === "string") {
+            return { clipboardRestore: parsed.clipboardRestore };
+        }
+    } catch (error) {
+        logger.debug({ error }, "terminated native command printed no parseable result");
+    }
+
+    return {};
+}
+
 export function interpretNativeResult({
     args,
     result: r,
@@ -361,6 +430,7 @@ export function interpretNativeResult({
         return {
             ok: false,
             error: `native execution timed out after ${timeoutMs}ms; the action may have partially completed; no retry was attempted`,
+            ...terminatedClipboard(r.stdout),
         };
     }
 
@@ -368,6 +438,7 @@ export function interpretNativeResult({
         return {
             ok: false,
             error: `native execution failed: ${r.error.message}; the action may have partially completed; no retry was attempted`,
+            ...terminatedClipboard(r.stdout),
         };
     }
 
@@ -479,7 +550,7 @@ export async function runAxAsync(options: {
             run: async (attemptTimeoutMs) => {
                 const result = await prof.measureAsync(`ax-${args[0]}`, () =>
                     boundedCommand({
-                        command: axCommandLine(binary, args),
+                        command: axCommandLine(binary, withNativeBudget(args, attemptTimeoutMs)),
                         timeoutMs: attemptTimeoutMs,
                         maxBufferBytes: AX_STDOUT_BUDGET_BYTES,
                         signal: options.signal,

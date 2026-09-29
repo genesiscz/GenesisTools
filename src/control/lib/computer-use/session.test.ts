@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { createHash } from "node:crypto";
 import { evaluationSchema } from "@genesiscz/utils/ai/evaluation/evaluate";
 import type { EvaluationResponse, Evaluator } from "@genesiscz/utils/ai/evaluation/service";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -6,6 +7,7 @@ import { Client } from "@modelcontextprotocol/client";
 import { InMemoryTransport } from "@modelcontextprotocol/server";
 import { createComputerMcpServer, invokeComputerTool } from "../../mcp/server";
 import type { Observation } from "../decision/observation";
+import type { AxResult } from "../runner";
 import { ComputerReplEngine } from "./repl";
 import { ComputerUse, type NativeBridge } from "./session";
 
@@ -755,6 +757,247 @@ test("explicit paste replacement requires preparation and does not alter default
     expect(f.calls.at(-1)).not.toContain("--replace");
 });
 
+test("a paste reports the clipboard restore on every path, and an unreported or failed restore is an error", async () => {
+    const f = fixture();
+    const original = f.native.run;
+    const replies: AxResult[] = [
+        // Refused before the clipboard was touched: quiet.
+        { ok: false, dispatchState: "not_started", refusal: "focus_mismatch", error: "wrong frontmost app/window" },
+        // Dispatched, readback differs, clipboard restored: the error is the paste's own.
+        {
+            ok: false,
+            dispatchState: "uncertain",
+            refusal: "refused",
+            clipboardRestore: "restored",
+            error: "paste replacement read-back differs; inspect before retrying",
+        },
+        // The paste landed but the restore failed: never ok.
+        { ok: true, dispatchState: "dispatched", clipboardRestore: "restore-failed" },
+        // Killed at the deadline without a report.
+        { ok: false, error: "native execution timed out after 10000ms; the action may have partially completed" },
+    ];
+    f.native.run = async (call) => {
+        if (call.args[0] === "act") {
+            const reply = replies.shift();
+            if (!reply) {
+                throw new Error("An extra paste was dispatched");
+            }
+
+            return reply;
+        }
+
+        return original(call);
+    };
+    const paste = async () => {
+        const state = await f.computer.get_app_state({ app: "Fixture", image: false });
+        const field = state.elements.find((row) => row.identifier === "name")!;
+        return f.computer.paste({ app: "Fixture", element_ref: field.ref, text: "new", replace: true, prepare: true });
+    };
+    const refused = await paste();
+    expect(refused.ok).toBe(false);
+    expect(refused.error).toBe("wrong frontmost app/window");
+    const mismatch = await paste();
+    expect(mismatch.error).toBe("paste replacement read-back differs; inspect before retrying");
+    expect(mismatch.clipboardRestore).toBe("restored");
+    const leaked = await paste();
+    expect(leaked.ok).toBe(false);
+    expect(leaked.error).toStartWith("CLIPBOARD NOT RESTORED");
+    const killed = await paste();
+    expect(killed.ok).toBe(false);
+    expect(killed.error).toStartWith("CLIPBOARD STATE UNKNOWN");
+    expect(killed.action.effect).toBe("unknown");
+    expect(replies).toHaveLength(0);
+});
+
+test("a dispatched press whose refresh ran out of budget comes back dispatched with the note, not as a timeout", async () => {
+    const f = fixture();
+    const original = f.native.run;
+    const acts: string[] = [];
+    f.native.run = async (call) => {
+        if (call.args[0] === "act") {
+            acts.push(call.args[call.args.indexOf("--action") + 1]);
+            return {
+                ok: true,
+                dispatchState: "dispatched",
+                refreshRequired: true,
+                after: { ok: false, error: "observation budget ran out after 2210 elements" },
+                note: "the action was dispatched, but the refresh did not produce a new snapshot. Do not repeat the action",
+            };
+        }
+
+        return original(call);
+    };
+    const state = await f.computer.get_app_state({ app: "Fixture", image: false });
+    const pressed = await f.computer.click({ app: "Fixture", element_ref: state.elements[1].ref });
+    expect(pressed.ok).toBe(true);
+    expect(pressed.action.effect).toBe("dispatched");
+    expect(pressed.state).toBeUndefined();
+    expect(pressed.note).toContain("Do not repeat the action");
+    expect(acts).toEqual(["press"]);
+});
+
+test("a query observation targets one element on a page too big to snapshot, and says what it did not walk", async () => {
+    const f = fixture();
+    const original = f.native.run;
+    f.native.run = async (call) => {
+        if (call.args[0] !== "see" || !call.args.includes("query")) {
+            return original(call);
+        }
+
+        const reply = await original(call);
+        return {
+            ...reply,
+            elements: [f.snapshot.elements[0], f.snapshot.elements[1]],
+            query: { text: "Save", role: "AXButton", walked: 9120, matches: 1, depthLimitedSubtrees: 3, depth: 50 },
+        };
+    };
+    await expect(f.computer.get_app_state({ app: "Fixture", query: "Save", scope: "window" })).rejects.toThrow(
+        "Choose scope or query"
+    );
+    await expect(f.computer.get_app_state({ app: "Fixture", role: "AXButton" })).rejects.toThrow("pass query");
+    const state = await f.computer.get_app_state({ app: "Fixture", query: "Save", role: "AXButton", image: false });
+    const see = f.calls.at(-1) ?? [];
+    expect(see.slice(see.indexOf("--scope"), see.indexOf("--depth"))).toEqual([
+        "--scope",
+        "query",
+        "--query",
+        "Save",
+        "--query-role",
+        "AXButton",
+    ]);
+    expect(state.scope).toBe("query");
+    expect(state.text).toContain('Query "Save" AXButton: 1 matches among 9120 walked elements');
+    expect(state.text).toContain("3 subtrees below depth 50 were NOT walked");
+    const pressed = await f.computer.click({ app: "Fixture", element_ref: state.elements[1].ref });
+    expect(pressed.ok).toBe(true);
+    await f.computer.get_app_state({ app: "Fixture", image: false });
+    expect(f.calls.at(-1)).toContain("--query");
+    await f.computer.get_app_state({ app: "Fixture", scope: "window", image: false });
+    expect(f.calls.at(-1)).not.toContain("--query");
+});
+
+test("an exact ref to one of several identical buttons carries its position, so the backend can resolve it", async () => {
+    const f = fixture();
+    const twin = (index: number, heading: string) => [
+        {
+            index,
+            depth: 1,
+            role: "AXHeading",
+            AXTitle: heading,
+            targetKey: String(index).repeat(64),
+            stableKey: String(index).repeat(64),
+        },
+        {
+            index: index + 1,
+            depth: 1,
+            role: "AXButton",
+            AXDescription: "Reload",
+            actions: ["AXScrollToVisible", "AXShowMenu"],
+            targetKey: "e".repeat(64),
+            stableKey: "e".repeat(64),
+        },
+    ];
+    f.snapshot.elements.splice(1, 3, ...twin(1, "GenesisTools"), ...twin(3, "7TV"));
+    const state = await f.computer.get_app_state({ app: "Fixture", image: false });
+    const reloads = state.elements.filter((row) => row.label === "Reload");
+    await f.computer.click({ app: "Fixture", element_ref: reloads[1].ref });
+    const act = f.calls.at(-1) ?? [];
+    expect(act.slice(act.indexOf("--target-key"))).toContain("--target-ordinal");
+    expect(act[act.indexOf("--target-ordinal") + 1]).toBe("1/2");
+    await f.computer.get_app_state({ app: "Fixture", image: false });
+    const unique = (await f.computer.get_app_state({ app: "Fixture", image: false })).elements.find(
+        (row) => row.label === "GenesisTools"
+    );
+    await f.computer.click({ app: "Fixture", element_ref: unique!.ref });
+    expect(f.calls.at(-1)).not.toContain("--target-ordinal");
+});
+
+test("a page element without AXPress is clicked in front after the hit test, never by a background event the page ignores", async () => {
+    const f = fixture();
+    f.snapshot.elements.splice(
+        1,
+        3,
+        { index: 1, depth: 1, role: "AXWebArea", AXURL: "chrome://extensions/", AXTitle: "Extensions" },
+        {
+            index: 2,
+            depth: 2,
+            role: "AXButton",
+            AXDescription: "Reload",
+            actions: ["AXScrollToVisible", "AXShowMenu"],
+            targetKey: "a".repeat(64),
+            stableKey: "a".repeat(64),
+        },
+        { index: 3, depth: 1, role: "AXButton", AXTitle: "Native", actions: ["AXShowMenu"] }
+    );
+    const clickArgs = async (label: string, extra: { background?: boolean } = {}) => {
+        const state = await f.computer.get_app_state({ app: "Fixture", image: false });
+        const row = state.elements.find((element) => element.label === label)!;
+        await f.computer.click({ app: "Fixture", element_ref: row.ref, ...extra });
+        return f.calls.at(-1) ?? [];
+    };
+    const page = await clickArgs("Reload");
+    expect(page[page.indexOf("--action") + 1]).toBe("click");
+    expect(page).toContain("--prepare");
+    expect(page).not.toContain("--background");
+    expect(page[page.indexOf("--target-key") + 1]).toBe("a".repeat(64));
+    const chosen = await clickArgs("Reload", { background: true });
+    expect(chosen).toContain("--background");
+    expect(chosen).not.toContain("--prepare");
+    const native = await clickArgs("Native");
+    expect(native).toContain("--background");
+    expect(native).not.toContain("--prepare");
+});
+
+test("typed text counts as verified only when the backend read it back in the field", async () => {
+    const f = fixture();
+    const original = f.native.run;
+    const replies: AxResult[] = [
+        { ok: true, dispatchState: "dispatched", typedVerified: true },
+        {
+            ok: false,
+            dispatchState: "dispatched",
+            typedVerified: false,
+            error: "UNVERIFIED: the typed text could not be read back (the focused AXTextField has no readable value)",
+        },
+        { ok: false, dispatchState: "dispatched", typedVerified: false, error: "the typed text did not appear" },
+    ];
+    f.native.run = async (call) => (call.args[0] === "act" ? (replies.shift() ?? { ok: false }) : original(call));
+    const type = async () => {
+        const state = await f.computer.get_app_state({ app: "Fixture", image: false });
+        const field = state.elements.find((row) => row.identifier === "name")!;
+        return f.computer.type_text({ app: "Fixture", element_ref: field.ref, text: "abc" });
+    };
+    expect((await type()).verification.status).toBe("verified");
+    const unread = await type();
+    expect(unread.ok).toBe(false);
+    expect(unread.verification.status).toBe("unverified");
+    expect(unread.action.effect).toBe("dispatched");
+    expect(unread.error).toStartWith("UNVERIFIED");
+    const missing = await type();
+    expect(missing.ok).toBe(false);
+    expect(missing.verification.status).toBe("unverified");
+    expect(missing.action.effect).toBe("dispatched");
+});
+
+test("a key to a text field carries the digest of the value the caller observed, never the text or a secret", async () => {
+    const f = fixture();
+    const keyArgs = async (index: number) => {
+        const state = await f.computer.get_app_state({ app: "Fixture", image: false });
+        const row = state.elements.find((element) => element.index === index)!;
+        await f.computer.press_key({ app: "Fixture", element_ref: row.ref, key: "Return" });
+        return f.calls.at(-1) ?? [];
+    };
+    const field = await keyArgs(2);
+    expect(field[field.indexOf("--expect-value-sha256") + 1]).toBe(
+        createHash("sha256").update("old", "utf8").digest("hex")
+    );
+    expect(field).not.toContain("old");
+    const secure = await keyArgs(3);
+    expect(secure).not.toContain("--expect-value-sha256");
+    const button = await keyArgs(1);
+    expect(button).not.toContain("--expect-value-sha256");
+});
+
 test("Jev target admission excludes controls behind a visible sheet", async () => {
     const f = fixture({
         evaluate: async (call) => {
@@ -994,6 +1237,69 @@ test("window inventory preserves native IDs independently of duplicate titles an
     expect(first.windows.map((window) => window.window_id)).toEqual([101, 202]);
     expect(second.windows.map((window) => window.window_id)).toEqual([202, 101]);
     expect(second.windows.map((window) => window.window_index)).toEqual([0, 1]);
+});
+test("a refusal to pick between windows names each candidate by window_id", async () => {
+    const computer = new ComputerUse({
+        native: {
+            run: async () => ({
+                ok: false,
+                error: "multiple windows; choose one by window ID (the API's window_id, the CLI's --window-id) from these candidates",
+                windows: [
+                    { index: 0, windowId: 201118, title: "PR 424", subrole: "AXStandardWindow", secondary: false },
+                    { index: 1, windowId: 201200, title: "Settings", subrole: "AXStandardWindow", secondary: false },
+                ],
+            }),
+        },
+    });
+    await expect(computer.get_app_state({ app: "Fixture", image: false })).rejects.toThrow(
+        'Pass one: window_id 201118 "PR 424" (AXStandardWindow); window_id 201200 "Settings" (AXStandardWindow).'
+    );
+});
+test("one window without bounds no longer fails the listing, and a locked screen is named", async () => {
+    const computer = new ComputerUse({
+        native: {
+            run: async () => ({
+                ok: true,
+                screenLocked: true,
+                windows: [
+                    { window_id: 201118, title: "Brave", unavailable: "the window reported no position or size" },
+                    { window_id: 201200, title: "Settings", x: 0, y: 0, width: 800, height: 600 },
+                ],
+            }),
+        },
+    });
+    const listed = await computer.list_windows({ app: "Fixture" });
+    expect(listed.screenLocked).toBe(true);
+    expect(listed.windows).toHaveLength(2);
+    expect(listed.windows[0].reason).toBe(
+        "the window reported no position or size; the screen is locked (CGSSessionScreenIsLocked), and macOS reports no window geometry until it unlocks"
+    );
+    expect(listed.windows[1]).toMatchObject({ window_id: 201200, width: 800, window_index: 1 });
+    expect("reason" in listed.windows[1]).toBe(false);
+});
+test("window inventory keeps the sheets a window carries, so an open file panel is visible", async () => {
+    const computer = new ComputerUse({
+        native: {
+            run: async () => ({
+                ok: true,
+                windows: [
+                    {
+                        window_id: 201118,
+                        title: "Extensions",
+                        subrole: "AXStandardWindow",
+                        x: 0,
+                        y: 0,
+                        width: 1400,
+                        height: 900,
+                        sheets: [{ title: "Open", width: 900, height: 600, x: 250, y: 60 }],
+                    },
+                ],
+            }),
+        },
+    });
+    const listed = await computer.list_windows({ app: "Fixture" });
+    expect(listed.windows[0].sheets).toEqual([{ title: "Open", width: 900, height: 600 }]);
+    expect(listed.windows[0].subrole).toBe("AXStandardWindow");
 });
 test("unnamed browser status text has an exact readable label without treating editable values as labels", async () => {
     const f = fixture({

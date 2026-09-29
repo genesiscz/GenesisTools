@@ -17,11 +17,13 @@ import { type ControlDriver, NativeControlDriver } from "../decision/native";
 import {
     candidatesFor,
     elementLabel,
+    expectedValueArgs,
     hasAncestorRole,
     type Observation,
     observationSchema,
     primaryWebArea,
     sameScope,
+    targetOrdinalArgs,
 } from "../decision/observation";
 import { NativeObservationSource } from "../decision/observation-source";
 import { runNativeSequence } from "../decision/sequence";
@@ -55,6 +57,16 @@ const snapshotSchema = observationSchema.and(
         perception: z
             .object({ capture: z.object({ pngHash: z.string(), id: z.string() }).passthrough().optional() })
             .passthrough()
+            .optional(),
+        query: z
+            .object({
+                text: z.string(),
+                role: z.string().optional(),
+                walked: z.number().int(),
+                matches: z.number().int(),
+                depthLimitedSubtrees: z.number().int(),
+                depth: z.number().int(),
+            })
             .optional(),
     })
 );
@@ -129,6 +141,8 @@ interface AppRecord {
     lastAccess: number;
     elementLimit: number;
     observedAt: string;
+    /** The query of a query-scoped observation, reused until the caller picks another scope. */
+    query?: { text: string; role?: string };
 }
 export interface NativeBridge {
     run(options: { args: string[]; timeoutMs?: number; signal?: AbortSignal }): Promise<AxResult>;
@@ -156,9 +170,129 @@ function safeRows(rows: Observation["elements"]): Observation["elements"] {
  * key goes first: targetKey folds in sibling text, so a clock beside the target changes it, while a
  * shared stable key is already promoted to the unique targetKey natively (promoteSharedStableKeys).
  */
-function rowPin(row: Observation["elements"][number]): string[] {
+function rowPin(row: Observation["elements"][number], rows: Observation["elements"]): string[] {
     const pin = row.stableKey ?? row.targetKey;
-    return pin ? ["--target-key", pin, "--revalidate-scope", "element"] : [];
+    return pin
+        ? [
+              "--target-key",
+              pin,
+              "--revalidate-scope",
+              "element",
+              ...targetOrdinalArgs({ rows, row, key: pin, fields: ["targetKey", "stableKey"] }),
+          ]
+        : [];
+}
+
+/** `--prepare` with the row's targetKey, and its position when identical twins share that key. */
+function preparedPin(row: Observation["elements"][number], rows: Observation["elements"]): string[] {
+    return [
+        "--prepare",
+        ...(row.targetKey
+            ? [
+                  "--target-key",
+                  row.targetKey,
+                  ...targetOrdinalArgs({ rows, row, key: row.targetKey, fields: ["targetKey"] }),
+              ]
+            : []),
+    ];
+}
+
+/**
+ * A paste owns the user's clipboard until it puts the original back. Only a reported restore, or a
+ * paste refused before it touched the clipboard, stays quiet; a failed or unreported restore is an
+ * error even when the paste itself landed.
+ */
+function clipboardProblem(action: string | undefined, result: AxResult): string | undefined {
+    if (action !== "paste") {
+        return undefined;
+    }
+
+    const status = result.clipboardRestore;
+    if (status === "restored" || status === "unchanged" || status === "skipped-concurrent-change") {
+        return undefined;
+    }
+
+    if (status === "restore-failed") {
+        return "CLIPBOARD NOT RESTORED: the pasted text is still on the system clipboard and the previous clipboard is lost.";
+    }
+
+    if (result.dispatchState === "not_started") {
+        return undefined;
+    }
+
+    return "CLIPBOARD STATE UNKNOWN: the paste ended without reporting a restore (terminated or timed out), so the pasted text may still be on the system clipboard.";
+}
+
+const windowCandidatesSchema = z.array(
+    z.object({
+        windowId: z.number().int().positive().optional(),
+        title: z.string(),
+        subrole: z.string().optional(),
+        secondary: z.boolean().optional(),
+        minimized: z.boolean().optional(),
+    })
+);
+
+/**
+ * A refusal to choose between windows names every candidate the way the API takes it. The native
+ * text alone ("multiple windows") left the caller to call list_windows and guess which one it meant.
+ */
+function describeWindowCandidates(result: AxResult): string | undefined {
+    const parsed = windowCandidatesSchema.safeParse(result.windows);
+    if (!parsed.success || parsed.data.length === 0) {
+        return undefined;
+    }
+
+    const listed = parsed.data.map((window) => {
+        const traits = [
+            window.subrole,
+            window.secondary ? "popup" : undefined,
+            window.minimized ? "minimized" : undefined,
+        ]
+            .filter(Boolean)
+            .join(", ");
+        const id = window.windowId === undefined ? "no window_id" : `window_id ${window.windowId}`;
+        return `${id} "${window.title}"${traits ? ` (${traits})` : ""}`;
+    });
+    return `Pass one: ${listed.join("; ")}.`;
+}
+
+/** A listed window; `reason` says why a window has no bounds. */
+type ListedWindow<Window> = Omit<Window, "unavailable"> & { window_index: number; reason?: string };
+
+/** The `see` scope flags, including the query a query-scoped observation re-reads. */
+function observationScopeArgs(scope: string, query: AppRecord["query"]): string[] {
+    if (scope !== "query") {
+        return ["--scope", scope];
+    }
+
+    if (!query) {
+        throw new ComputerUseError(
+            "INVALID_SCOPE",
+            "This query-scoped state lost its query; observe it again with query."
+        );
+    }
+
+    return ["--scope", "query", "--query", query.text, ...(query.role ? ["--query-role", query.role] : [])];
+}
+
+/** The scope a follow-up observation inherits; a query without its text cannot be inherited. */
+function priorScope(prior: AppRecord | undefined): string {
+    const scope = prior?.snapshot.scope ?? "window";
+    return scope === "query" && !prior?.query ? "window" : scope;
+}
+
+/**
+ * The line that says what a query-scoped observation did NOT read. A query walks the whole
+ * window but returns only its matches, so an empty result has to say whether depth hid anything.
+ */
+function describeQueryWalk(query: NonNullable<Snapshot["query"]>): string {
+    const role = query.role ? ` ${query.role}` : "";
+    const hidden =
+        query.depthLimitedSubtrees > 0
+            ? ` ${query.depthLimitedSubtrees} subtrees below depth ${query.depth} were NOT walked; a match there is not listed.`
+            : ` Every element to depth ${query.depth} was walked.`;
+    return `Query "${query.text}"${role}: ${query.matches} matches among ${query.walked} walked elements; rows are the matches, their ancestors and any sheet or modal container only.${hidden}`;
 }
 
 function webActivationKey(rows: Observation["elements"], target: Observation["elements"][number]) {
@@ -245,12 +379,14 @@ export class ComputerUse {
         implicitActionAllowed,
         image,
         elementLimit,
+        query,
     }: {
         app: string;
         snapshot: Snapshot;
         implicitActionAllowed: boolean;
         image?: boolean;
         elementLimit?: number;
+        query?: AppRecord["query"];
     }): AppRecord {
         if (!this.records.has(app) && this.records.size >= 8) {
             throw new ComputerUseError(
@@ -266,6 +402,7 @@ export class ComputerUse {
             lastAccess: Date.now(),
             elementLimit: elementLimit ?? this.records.get(app)?.elementLimit ?? 100,
             observedAt: new Date().toISOString(),
+            query: snapshot.scope === "query" ? (query ?? this.records.get(app)?.query) : undefined,
         };
         const previousImage = this.records.get(app)?.snapshot.screenshot.path;
         if (previousImage && previousImage !== snapshot.screenshot.path) {
@@ -367,6 +504,7 @@ export class ComputerUse {
             );
         const text = [
             `${app} · window ${snapshot.window.id} · revision ${record.revision}`,
+            ...(snapshot.query ? [describeQueryWalk(snapshot.query)] : []),
             changes
                 ? `Changes: +${fullChanges?.added.length} -${fullChanges?.removed.length} ~${fullChanges?.changed.length}; ${changes.unchanged} unchanged. Use current indexes or explicit refs; old refs are invalid.`
                 : `${allElements.length} observed elements.`,
@@ -439,12 +577,29 @@ export class ComputerUse {
                     "Eight apps are already retained. Close an unused session first."
                 );
             }
+            if (options.query !== undefined && options.scope !== undefined) {
+                throw new ComputerUseError(
+                    "INVALID_SCOPE",
+                    "Choose scope or query; a query observes the whole window."
+                );
+            }
+
+            if (options.role !== undefined && options.query === undefined) {
+                throw new ComputerUseError("INVALID_SCOPE", "role narrows a query; pass query as well.");
+            }
+
+            // A query scope persists like any scope; an explicit scope leaves it.
+            const query =
+                options.query !== undefined
+                    ? { text: options.query, role: options.role }
+                    : options.scope === undefined
+                      ? prior?.query
+                      : undefined;
             const args = [
                 "see",
                 "--app",
                 options.app,
-                "--scope",
-                options.scope ?? prior?.snapshot.scope ?? "window",
+                ...observationScopeArgs(query ? "query" : (options.scope ?? priorScope(prior)), query),
                 "--depth",
                 "50",
             ];
@@ -484,7 +639,9 @@ export class ComputerUse {
                 if (!result.ok) {
                     throw new ComputerUseError(
                         "OBSERVATION_FAILED",
-                        result.error ?? "Native observation failed.",
+                        [result.error ?? "Native observation failed.", describeWindowCandidates(result)]
+                            .filter(Boolean)
+                            .join(" "),
                         result
                     );
                 }
@@ -504,6 +661,7 @@ export class ComputerUse {
                     implicitActionAllowed: true,
                     image: options.image,
                     elementLimit: options.element_limit,
+                    query,
                 });
                 return this.state({
                     app: options.app,
@@ -543,16 +701,51 @@ export class ComputerUse {
                 z.object({
                     title: z.string(),
                     window_id: z.number().int().positive().optional(),
-                    x: z.number(),
-                    y: z.number(),
-                    width: z.number(),
-                    height: z.number(),
+                    // Absent while the screen is locked, or for a window that reports no geometry:
+                    // one such window used to fail the whole listing.
+                    x: z.number().optional(),
+                    y: z.number().optional(),
+                    width: z.number().optional(),
+                    height: z.number().optional(),
+                    unavailable: z.string().optional(),
                     minimized: z.boolean().optional(),
                     transient: z.boolean().optional(),
+                    subrole: z.string().optional(),
+                    /** Sheets attached to this window (an open panel, an alert). They block it. */
+                    sheets: z
+                        .array(
+                            z.object({
+                                title: z.string(),
+                                subrole: z.string().optional(),
+                                width: z.number(),
+                                height: z.number(),
+                            })
+                        )
+                        .optional(),
                 })
             )
             .parse(result.windows);
-        return { app: options.app, windows: windows.map((window, index) => ({ ...window, window_index: index })) };
+        const screenLocked = result.screenLocked === true;
+        return {
+            app: options.app,
+            screenLocked,
+            windows: windows.map((window, index): ListedWindow<typeof window> => {
+                const { unavailable, ...rest } = window;
+                const bounded = [window.x, window.y, window.width, window.height].every((value) => value !== undefined);
+                if (bounded) {
+                    return { ...rest, window_index: index };
+                }
+
+                const locked = screenLocked
+                    ? "; the screen is locked (CGSSessionScreenIsLocked), and macOS reports no window geometry until it unlocks"
+                    : "";
+                return {
+                    ...rest,
+                    window_index: index,
+                    reason: `${unavailable ?? "the window reported no position or size"}${locked}`,
+                };
+            }),
+        };
     }
     async list_apps(input: ComputerCall<"list_apps"> = {}) {
         const { options, signal } = parseCall("list_apps", input);
@@ -801,12 +994,23 @@ export class ComputerUse {
             if (capturePath && this.records.get(input.app)?.snapshot.screenshot.path !== capturePath) {
                 this.artifacts.release(capturePath);
             }
+            const clipboardIssue = clipboardProblem(argv[1], result);
             logger.debug(
-                { app: input.app, ok: result.ok, action: argv[1], refreshed: Boolean(state) },
+                {
+                    app: input.app,
+                    ok: result.ok,
+                    action: argv[1],
+                    refreshed: Boolean(state),
+                    clipboardRestore: result.clipboardRestore,
+                },
                 "Computer Use action completed"
             );
+            if (clipboardIssue) {
+                logger.warn({ app: input.app, clipboardRestore: result.clipboardRestore }, clipboardIssue);
+            }
+
             return {
-                ok: result.ok,
+                ok: result.ok && !clipboardIssue,
                 action: {
                     native: argv[1],
                     effect:
@@ -816,11 +1020,16 @@ export class ComputerUse {
                               ? ("not_started" as const)
                               : ("unknown" as const),
                 },
-                verification: { status: "unverified" as const },
-                error: result.error,
+                // Only a typed text the backend read back in the field counts as verified.
+                verification: {
+                    status:
+                        result.ok && result.typedVerified === true ? ("verified" as const) : ("unverified" as const),
+                },
+                error: clipboardIssue ? [clipboardIssue, result.error].filter(Boolean).join(" ") : result.error,
                 state,
                 clipboardRestore: result.clipboardRestore,
                 recovery: result.recovery,
+                note: typeof result.note === "string" ? result.note : undefined,
             };
         });
     }
@@ -871,7 +1080,7 @@ export class ComputerUse {
                         button,
                         ...(options.click_count === 2 ? ["--double"] : []),
                         ...(options.modifiers.length > 0 ? ["--modifiers", options.modifiers.join(",")] : []),
-                        ...(options.background ? ["--background"] : []),
+                        ...((options.background ?? true) ? ["--background"] : []),
                     ];
                 }
                 if (options.x !== undefined || options.y !== undefined) {
@@ -903,7 +1112,7 @@ export class ComputerUse {
                         button,
                         ...(options.click_count === 2 ? ["--double"] : []),
                         ...(options.modifiers.length > 0 ? ["--modifiers", options.modifiers.join(",")] : []),
-                        ...(options.background ? ["--background"] : []),
+                        ...((options.background ?? true) ? ["--background"] : []),
                     ];
                 }
                 const row = this.select({
@@ -929,10 +1138,18 @@ export class ComputerUse {
                         // Unprepared, AXPress is pinned like a background click: a default left click on
                         // a row that exposes AXPress lands here and never reaches that branch.
                         ...(options.prepare
-                            ? ["--prepare", ...(row.targetKey ? ["--target-key", row.targetKey] : [])]
-                            : rowPin(row)),
+                            ? preparedPin(row, record.snapshot.elements)
+                            : rowPin(row, record.snapshot.elements)),
                     ];
                 }
+                // A browser page ignores a window-addressed click, so a page element that exposes no
+                // AXPress (Brave's extension-card "Reload": AXScrollToVisible and AXShowMenu only)
+                // "succeeded" with no effect. Unless the caller chose, such a click is delivered in
+                // front: prepare focuses the window, scrolls the element in and hit-tests its centre.
+                const foreground =
+                    options.background === undefined &&
+                    (options.physical || !row.actions?.includes("AXPress")) &&
+                    hasAncestorRole(safeRows(record.snapshot.elements), row, "AXWebArea");
                 return [
                     "--action",
                     "click",
@@ -942,12 +1159,12 @@ export class ComputerUse {
                     button,
                     ...(options.click_count === 2 ? ["--double"] : []),
                     ...(options.modifiers.length > 0 ? ["--modifiers", options.modifiers.join(",")] : []),
-                    ...(options.prepare
-                        ? ["--prepare", ...(row.targetKey ? ["--target-key", row.targetKey] : [])]
-                        : options.background
+                    ...(options.prepare || foreground
+                        ? preparedPin(row, record.snapshot.elements)
+                        : (options.background ?? true)
                           ? // The post-feedback check resolves by stableKey anyway (SnapshotWorkflow
                             // validateAfterFeedback), so the pin adds no new way to fail.
-                            ["--background", ...rowPin(row)]
+                            ["--background", ...rowPin(row, record.snapshot.elements)]
                           : []),
                 ];
             },
@@ -1081,9 +1298,10 @@ export class ComputerUse {
                     "--element",
                     String(row.index),
                     ...flags,
+                    ...(action === "key" ? expectedValueArgs(row) : []),
                     ...(input.prepare
-                        ? ["--prepare", ...(row.targetKey ? ["--target-key", row.targetKey] : [])]
-                        : rowPin(row)),
+                        ? preparedPin(row, record.snapshot.elements)
+                        : rowPin(row, record.snapshot.elements)),
                 ];
             },
             signal,
@@ -1110,8 +1328,7 @@ export class ComputerUse {
                             "--format",
                             "text",
                             "--replace",
-                            "--prepare",
-                            ...(row.targetKey ? ["--target-key", row.targetKey] : []),
+                            ...preparedPin(row, record.snapshot.elements),
                         ];
                     }
                     return [
@@ -1121,8 +1338,7 @@ export class ComputerUse {
                         String(row.index),
                         "--value",
                         options.value,
-                        "--prepare",
-                        ...(row.targetKey ? ["--target-key", row.targetKey] : []),
+                        ...preparedPin(row, record.snapshot.elements),
                     ];
                 },
                 signal,
@@ -1458,8 +1674,7 @@ export class ComputerUse {
                         options.app,
                         "--window-id",
                         String(record.snapshot.window.id),
-                        "--scope",
-                        record.snapshot.scope,
+                        ...observationScopeArgs(record.snapshot.scope, record.query),
                         "--depth",
                         "50",
                         "--no-image",
@@ -1478,7 +1693,13 @@ export class ComputerUse {
                 if (!sameScope(record.snapshot, fresh)) {
                     throw new ComputerUseError("SCOPE_CHANGED", "Host handoff app/window changed.");
                 }
-                record = this.store({ app: options.app, snapshot: fresh, implicitActionAllowed: true, image: false });
+                record = this.store({
+                    app: options.app,
+                    snapshot: fresh,
+                    implicitActionAllowed: true,
+                    image: false,
+                    query: record.query,
+                });
                 if (rootKey) {
                     const roots = fresh.elements.filter((row) => row.targetKey === rootKey);
                     if (roots.length !== 1) {
@@ -1555,6 +1776,13 @@ export class ComputerUse {
         const { options, signal } = parseCall("await_condition", input);
         return this.exclusive(async () => {
             const previous = this.record(options).snapshot;
+            if (previous.scope === "query") {
+                throw new ComputerUseError(
+                    "INVALID_SCOPE",
+                    'await_condition re-reads a whole window or its browser chrome; observe with scope "window" or "chrome" first.'
+                );
+            }
+
             this.forget(options.app);
             this.menus.close(options.app);
             const nativeDriver = new NativeControlDriver({

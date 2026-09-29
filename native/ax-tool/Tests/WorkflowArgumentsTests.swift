@@ -209,3 +209,42 @@ extension WorkflowArgumentsTests {
                                                    "--action", "key", "--keys", "cmd,a,b"], command: "act"))
     }
 }
+
+extension WorkflowArgumentsTests {
+    func testSeeAndActAcceptTheCallerBudget() throws {
+        let see = try WorkflowArguments(["--app", "Brave", "--budget-ms", "9998"], command: "see")
+        XCTAssertEqual(see.values["--budget-ms"], "9998")
+        let act = try WorkflowArguments([
+            "--app", "Brave", "--snapshot", "token", "--element", "3", "--action", "press", "--budget-ms", "4000",
+        ], command: "act")
+        XCTAssertEqual(act.values["--budget-ms"], "4000")
+        for invalid in ["0", "99", "600001", "1.5", "soon"] {
+            XCTAssertThrowsError(try WorkflowArguments(["--app", "Brave", "--budget-ms", invalid], command: "see")) { error in
+                XCTAssertEqual(error.localizedDescription, "--budget-ms must be an integer from 100 to 600000")
+            }
+        }
+    }
+}
+
+extension WorkflowArgumentsTests {
+    func testTheObservedValueDigestIsOnlyForKeys() throws {
+        let digest = String(repeating: "a", count: 64)
+        let key = try WorkflowArguments(["--app", "Brave", "--snapshot", "t", "--element", "3", "--action", "key",
+                                         "--keys", "return", "--expect-value-sha256", digest], command: "act")
+        XCTAssertEqual(key.values["--expect-value-sha256"], digest)
+        XCTAssertThrowsError(try WorkflowArguments(["--app", "Brave", "--snapshot", "t", "--element", "3", "--action", "press",
+                                                    "--expect-value-sha256", digest], command: "act"))
+        XCTAssertThrowsError(try WorkflowArguments(["--app", "Brave", "--snapshot", "t", "--element", "3", "--action", "key",
+                                                    "--keys", "return", "--expect-value-sha256", "short"], command: "act"))
+    }
+
+    func testQueryScopeNeedsItsQuery() throws {
+        let see = try WorkflowArguments(["--app", "Brave", "--scope", "query", "--query", "Review with agent",
+                                         "--query-role", "AXButton"], command: "see")
+        XCTAssertEqual(see.values["--query"], "Review with agent")
+        for invalid in [["--scope", "query"], ["--query", "x"], ["--scope", "query", "--query", " "],
+                        ["--scope", "window", "--query-role", "AXButton"]] {
+            XCTAssertThrowsError(try WorkflowArguments(["--app", "Brave"] + invalid, command: "see"), "\(invalid)")
+        }
+    }
+}
