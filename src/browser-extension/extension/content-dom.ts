@@ -176,3 +176,15 @@ export interface CardPresence<T> {
 export function quickCardMayClose<T>(card: CardPresence<T>, focused: T | null): boolean {
     return !card.contains(focused) && !card.matches(":hover");
 }
+
+/**
+ * Focus is inside a surface about to be replaced. The dock is rebuilt on every toggle, so the focused
+ * button goes with the old surface; the caller then focuses the new toggle, and a keyboard user stays
+ * in the toolbar. `focused` is the dock's shadow root's `activeElement`, which sees inside it.
+ */
+export function surfaceHoldsFocus<T>(
+    surface: { contains(node: T | null): boolean } | null,
+    focused: T | null
+): boolean {
+    return surface !== null && focused !== null && surface.contains(focused);
+}

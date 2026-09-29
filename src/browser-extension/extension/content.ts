@@ -8,6 +8,7 @@ import {
     headBranch,
     menuTargetContext,
     quickCardMayClose,
+    surfaceHoldsFocus,
 } from "./content-dom";
 import { callHost, isMenuMessage, isRecord, type MenuItem } from "./shared/bridge";
 import { chip, el, shadowMount } from "./shared/theme";
@@ -265,7 +266,9 @@ function start(): void {
             return;
         }
 
-        dockRoot.querySelector(".gt-surface")?.remove();
+        const old = dockRoot.querySelector(".gt-surface");
+        const hadFocus = surfaceHoldsFocus(old, dockRoot.activeElement);
+        old?.remove();
 
         if (!show || !forge) {
             return;
@@ -338,6 +341,10 @@ function start(): void {
             zIndex: "2147483645",
         });
         dockRoot.append(dock);
+
+        if (hadFocus) {
+            toggle.focus();
+        }
     };
 
     const refresh = () => {

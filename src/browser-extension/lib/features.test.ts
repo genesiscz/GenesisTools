@@ -11,6 +11,7 @@ import {
     headBranchFromEmbeddedData,
     menuTargetContext,
     quickCardMayClose,
+    surfaceHoldsFocus,
 } from "../extension/content-dom";
 import { targetFromHash } from "../extension/shared/route-target";
 import { actionValues, runAction } from "./actions";
@@ -391,6 +392,16 @@ describe("page text for the cards", () => {
         expect(quickCardMayClose(card(false), null)).toBe(true);
         expect(quickCardMayClose(card(false), inside)).toBe(false);
         expect(quickCardMayClose(card(true), null)).toBe(false);
+    });
+
+    it("hands focus to the new dock only when the replaced one held it", () => {
+        const toggle = "GT toggle";
+        const dock = { contains: (node: string | null) => node === toggle };
+
+        expect(surfaceHoldsFocus(dock, toggle)).toBe(true);
+        expect(surfaceHoldsFocus(dock, "a link on the page")).toBe(false);
+        expect(surfaceHoldsFocus(dock, null)).toBe(false);
+        expect(surfaceHoldsFocus(null, toggle)).toBe(false);
     });
 
     it("reads the PR head branch from GitHub's embedded page data only when it names this PR", () => {
