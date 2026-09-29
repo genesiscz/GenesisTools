@@ -3,6 +3,7 @@ import { logger } from "@genesiscz/utils/logger";
 import type { NotificationAction } from "@genesiscz/utils/macos/notifications";
 import { removeNotifications } from "@genesiscz/utils/macos/notifications";
 import { dispatchNotification } from "@genesiscz/utils/notifications";
+import { shellCommandLine } from "@genesiscz/utils/shell/quote";
 import { summarizeForm } from "./render";
 import type { AskForm } from "./types";
 
@@ -86,6 +87,13 @@ export function isBinaryYesNo(form: AskForm): boolean {
     const [item] = form.items;
     const choices = item.choices;
 
+    // A button click answers the whole form at once, so an optional item, or one that also takes file
+    // tags, several choices or images, must open the form instead. Free text stays allowed: every
+    // item offers it by default as an optional note, and a plain yes/no is the case the buttons serve.
+    if (item.required === false || item.allowMultiple || item.allowFileTags || item.allowImagePaste) {
+        return false;
+    }
+
     if (choices?.length !== 2) {
         return false;
     }
@@ -114,7 +122,8 @@ export async function buildQaNotificationActions(form: AskForm): Promise<Notific
             actions.push({
                 id: `answer-${choice.id}`,
                 title: choice.label,
-                execute: `tools question answer ${form.id} --choice ${choice.id}`,
+                // Notify.swift runs this with /bin/sh -c, and a choice id comes from the form's caller.
+                execute: shellCommandLine(["tools", "question", "answer", form.id, "--choice", choice.id]),
             });
         }
     }
@@ -128,15 +137,24 @@ export async function buildQaNotificationActions(form: AskForm): Promise<Notific
  * question. Carries a stable {@link qaNotificationId} so {@link retractPendingNotification} can
  * find it again, and a (Yes…|No…) action button pair on a binary form.
  */
-export async function notifyPendingForm(form: AskForm): Promise<void> {
+export async function notifyPendingForm(form: AskForm, stillPending: () => boolean = () => true): Promise<void> {
     try {
+        const open = await buildQaDeepLink(form.id);
+        const actions = await buildQaNotificationActions(form);
+        // Another process can answer or cancel the form during those awaits; its retraction has then
+        // already run, so a banner posted now would stay behind.
+        if (!stillPending()) {
+            log.debug({ id: form.id }, "form resolved before its banner went out; not posting it");
+            return;
+        }
+
         await dispatchNotification({
             app: "question",
             title: "A question is waiting for you",
             message: summarizeForm(form),
-            open: await buildQaDeepLink(form.id),
+            open,
             id: qaNotificationId(form.id),
-            actions: await buildQaNotificationActions(form),
+            actions,
         });
     } catch (err) {
         log.warn({ err, id: form.id }, "could not notify about a pending form; the form itself is fine");
