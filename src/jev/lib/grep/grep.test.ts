@@ -499,6 +499,56 @@ describe("selection", () => {
         ]);
         expect(result.file.presentationSelected?.map((range) => [range.startLine, range.endLine])).toEqual([[1, 3]]);
     });
+
+    test("a file another call drops while its own selection awaits Jev stays dropped, even if its bytes come back", async () => {
+        const root = scratch("drop-wins");
+        const original = "export function cartTotal() {\n    return 1;\n}\n";
+        tree(root, { "a.ts": original, "b.ts": "export function cartTax() {\n    return 2;\n}\n" });
+        let changed!: () => void;
+        const aChanged = new Promise<void>((resolve) => {
+            changed = resolve;
+        });
+        let checked!: () => void;
+        const bChecked = new Promise<void>((resolve) => {
+            checked = resolve;
+        });
+        const evaluator: Evaluator = {
+            requests: 0,
+            async evaluate(request, policy) {
+                const state = stateOf(request);
+                const secondPass = state.declarations !== undefined && state.selectedEvidence !== undefined;
+                if (secondPass && state.path === "a.ts") {
+                    await policy?.beforeAttempt?.();
+                    writeFileSync(join(root, "a.ts"), original.replace("return 1", "return 7"));
+                    changed();
+                    await bChecked;
+                    writeFileSync(join(root, "a.ts"), original);
+                    return probabilities(request, () => 0.9);
+                }
+
+                if (secondPass && state.path === "b.ts") {
+                    await aChanged;
+                    try {
+                        await policy?.beforeAttempt?.();
+                    } finally {
+                        checked();
+                    }
+
+                    return probabilities(request, () => 0.9);
+                }
+
+                await policy?.beforeAttempt?.();
+                return probabilities(request, () => 0.9);
+            },
+        };
+        const result = await retrieve({ root, query: "cart", signal: new AbortController().signal }, evaluator);
+        const a = result.files.find((file) => file.path === "a.ts");
+        expect(a?.sourceOmitted).toBe(true);
+        expect(a?.excerpts).toEqual([]);
+        expect(a?.roles).toEqual([]);
+        expect(result.files.find((file) => file.path === "b.ts")?.excerpts.length).toBeGreaterThan(0);
+        expect(result.issues.some((entry) => entry.kind === "changed")).toBe(true);
+    });
 });
 
 describe("repository context", () => {

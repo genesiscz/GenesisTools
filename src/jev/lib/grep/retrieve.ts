@@ -940,6 +940,7 @@ export async function retrieve(input: SearchInput, evaluator: Evaluator): Promis
                         return;
                     }
 
+                    const started = files.get(candidate.path);
                     const run = () =>
                         selectFile({
                             snapshot: source,
@@ -973,11 +974,17 @@ export async function retrieve(input: SearchInput, evaluator: Evaluator): Promis
 
                                 return { evidence: await evidence?.() };
                             },
-                            previous: files.get(candidate.path),
+                            previous: started,
                         });
                     const selection = detailed ? await prof.measureAsync(`select ${candidate.path}`, run) : await run();
-                    files.set(candidate.path, selection.file);
-                    declarations.set(candidate.path, selection.declarations);
+                    // A freshness check can drop this file while its selection awaits Jev, and that drop is final.
+                    // Committing now would restore spans and roles read from bytes that changed; the final pass
+                    // would not notice if the bytes came back before it.
+                    if (files.get(candidate.path) === started) {
+                        files.set(candidate.path, selection.file);
+                        declarations.set(candidate.path, selection.declarations);
+                    }
+
                     for (const entry of selection.issues) {
                         if (entry.kind !== "source-invalid") {
                             issue(entry.kind, entry.count, selection.providerFailure);
