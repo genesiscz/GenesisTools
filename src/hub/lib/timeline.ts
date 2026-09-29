@@ -10,6 +10,7 @@ import { decisionFiles } from "@app/question/lib/decisions/read";
 import { type DecisionRecord, readDecisions } from "@app/question/lib/decisions/store";
 import { cleanSessionTitle } from "@genesiscz/utils/agent-sessions/user-text";
 import { concurrentMap } from "@genesiscz/utils/async";
+import { startOfDay } from "@genesiscz/utils/date";
 import { type CommandRunner, spawnRunner } from "@genesiscz/utils/git/origins";
 import { LOG_FORMAT, parseLogZ } from "@genesiscz/utils/git/porcelain";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -169,70 +170,6 @@ export interface TimelineDeps {
     decisions: () => DecisionRecord[];
     /** What the PR notifier posted or recorded, newest last (CI results carry a real time only here). */
     notifyItems: () => TimelineNotifyItem[];
-}
-
-export function startOfDay(now = new Date()): Date {
-    const day = new Date(now);
-    day.setHours(0, 0, 0, 0);
-    return day;
-}
-
-/**
- * `--since`: undefined = midnight, `HH:MM` = that time today, else an ISO date or time; null when
- * unreadable. `Date.parse` alone takes "9" and "Sep 24" as dates in 2001, and `setHours` rolls
- * "25:99" into tomorrow, so both forms are checked before they are read.
- */
-export function parseSince(value: string | undefined, now = new Date()): Date | null {
-    if (!value) {
-        return startOfDay(now);
-    }
-
-    const text = value.trim();
-    const clock = /^(\d{1,2}):(\d{2})$/.exec(text);
-
-    if (clock) {
-        const hours = Number(clock[1]);
-        const minutes = Number(clock[2]);
-
-        if (hours > 23 || minutes > 59) {
-            return null;
-        }
-
-        const at = startOfDay(now);
-        at.setHours(hours, minutes);
-        return at;
-    }
-
-    const day = /^(\d{4})-(\d{2})-(\d{2})$/.exec(text);
-
-    if (day) {
-        // A bare date is that day's local midnight, like the default; `Date.parse` would read UTC.
-        const at = new Date(Number(day[1]), Number(day[2]) - 1, Number(day[3]));
-        return at.getDate() === Number(day[3]) ? at : null;
-    }
-
-    if (!/^\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})?)?$/.test(text)) {
-        return null;
-    }
-
-    const parsed = Date.parse(text);
-    return Number.isFinite(parsed) ? new Date(parsed) : null;
-}
-
-/** `--until`: undefined = now; else the `--since` grammar. A bare date means the end of that day. */
-export function parseUntil(value: string | undefined, now = new Date()): Date | null {
-    if (!value) {
-        return now;
-    }
-
-    const parsed = parseSince(value, now);
-
-    if (parsed && /^\d{4}-\d{2}-\d{2}$/.test(value.trim())) {
-        parsed.setDate(parsed.getDate() + 1);
-        return new Date(parsed.getTime() - 1);
-    }
-
-    return parsed;
 }
 
 /** A named range: the last hour or 24 hours, today, yesterday, the last 7 or 30 days (ending now, or at midnight for yesterday). */

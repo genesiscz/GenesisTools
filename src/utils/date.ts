@@ -255,6 +255,91 @@ export function parseDate(value: string): Date {
     return d;
 }
 
+/** Local midnight of `now`'s day. */
+export function startOfDay(now = new Date()): Date {
+    const day = new Date(now);
+    day.setHours(0, 0, 0, 0);
+    return day;
+}
+
+/** A real day: `new Date` and `Date.parse` roll month 13 or February 30 into another date instead of failing. */
+function isCalendarDay(year: number, month: number, day: number): boolean {
+    // setUTCFullYear, not Date.UTC: Date.UTC reads years 0-99 as 1900-1999.
+    const at = new Date(0);
+    at.setUTCFullYear(year, month - 1, day);
+    return at.getUTCFullYear() === year && at.getUTCMonth() === month - 1 && at.getUTCDate() === day;
+}
+
+/** Local midnight of a checked calendar day; `new Date(y, m, d)` would move years 0-99 to 1900-1999. */
+function localMidnight(year: number, month: number, day: number): Date {
+    const at = new Date(0);
+    at.setFullYear(year, month - 1, day);
+    at.setHours(0, 0, 0, 0);
+    return at;
+}
+
+/**
+ * `--since`: undefined = midnight, `HH:MM` = that time today, else an ISO date or time; null when
+ * unreadable. `Date.parse` alone takes "9" and "Sep 24" as dates in 2001, and `setHours` rolls
+ * "25:99" into tomorrow, so both forms are checked before they are read.
+ */
+export function parseSince(value: string | undefined, now = new Date()): Date | null {
+    if (!value) {
+        return startOfDay(now);
+    }
+
+    const text = value.trim();
+    const clock = /^(\d{1,2}):(\d{2})$/.exec(text);
+
+    if (clock) {
+        const hours = Number(clock[1]);
+        const minutes = Number(clock[2]);
+
+        if (hours > 23 || minutes > 59) {
+            return null;
+        }
+
+        const at = startOfDay(now);
+        at.setHours(hours, minutes);
+        return at;
+    }
+
+    const day = /^(\d{4})-(\d{2})-(\d{2})$/.exec(text);
+
+    if (day) {
+        // A bare date is that day's local midnight, like the default; `Date.parse` would read UTC.
+        const [year, month, date] = [Number(day[1]), Number(day[2]), Number(day[3])];
+        return isCalendarDay(year, month, date) ? localMidnight(year, month, date) : null;
+    }
+
+    const stamp = /^(\d{4})-(\d{2})-(\d{2})(?:[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})?)?$/.exec(
+        text
+    );
+
+    if (!stamp || !isCalendarDay(Number(stamp[1]), Number(stamp[2]), Number(stamp[3]))) {
+        return null;
+    }
+
+    const parsed = Date.parse(text);
+    return Number.isFinite(parsed) ? new Date(parsed) : null;
+}
+
+/** `--until`: undefined = now; else the `--since` grammar. A bare date means the end of that day. */
+export function parseUntil(value: string | undefined, now = new Date()): Date | null {
+    if (!value) {
+        return now;
+    }
+
+    const parsed = parseSince(value, now);
+
+    if (parsed && /^\d{4}-\d{2}-\d{2}$/.test(value.trim())) {
+        parsed.setDate(parsed.getDate() + 1);
+        return new Date(parsed.getTime() - 1);
+    }
+
+    return parsed;
+}
+
 /**
  * Get the date range for a given month.
  * @param month - Month in "YYYY-MM" format

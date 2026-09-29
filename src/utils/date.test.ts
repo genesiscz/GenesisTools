@@ -8,6 +8,9 @@ import {
     getMonthDateRange,
     isDateInHalfOpenRange,
     parseDate,
+    parseSince,
+    parseUntil,
+    startOfDay,
 } from "./date";
 
 describe("parseDate", () => {
@@ -140,5 +143,64 @@ describe("getDaysInPeriodInclusive", () => {
         const days = getDaysInPeriodInclusive("2026-08-31T00:00:00", "2026-08-31T00:00:00");
 
         expect(days[0].label).toBe("Mon 31");
+    });
+});
+
+describe("startOfDay, parseSince and parseUntil", () => {
+    const NOW = new Date("2026-03-02T15:00:00");
+    const SINCE = new Date("2026-03-02T00:00:00");
+    const at = (clock: string) => new Date(`2026-03-02T${clock}`).getTime();
+
+    test("startOfDay is local midnight of the same day", () => {
+        expect(startOfDay(NOW)).toEqual(SINCE);
+    });
+
+    test("parseSince reads midnight, a clock time and an ISO time", () => {
+        expect(parseSince(undefined, NOW)?.getTime()).toBe(SINCE.getTime());
+        expect(parseSince("9:30", NOW)?.getTime()).toBe(at("09:30:00"));
+        expect(parseSince("2026-03-01T10:00:00.000Z", NOW)?.toISOString()).toBe("2026-03-01T10:00:00.000Z");
+        expect(parseSince("soon", NOW)).toBeNull();
+    });
+
+    test("parseSince refuses what Date.parse or setHours would silently misread", () => {
+        // Date.parse reads "9" and "Sep 24" as dates in 2001; setHours rolls 25:99 into tomorrow.
+        // new Date() rolls month 13 into next January and month 00 into last December with the same day,
+        // and Date.parse rolls February 30 into March 2 when a time follows the date.
+        for (const junk of [
+            "9",
+            "12",
+            "Sep 24",
+            "25:99",
+            "12:60",
+            "2026-13-45",
+            "2026-02-30",
+            "2026-13-01",
+            "2026-00-15",
+            "2026-02-30T10:00:00Z",
+            "2026-13-01T10:00",
+            "2026-04-31 10:00:00+00:00",
+        ]) {
+            expect(parseSince(junk, NOW)).toBeNull();
+            expect(parseUntil(junk, NOW)).toBeNull();
+        }
+
+        expect(parseSince("23:59", NOW)?.getTime()).toBe(at("23:59:00"));
+        // A bare date is local midnight, like the default, not UTC midnight.
+        expect(parseSince("2026-03-01", NOW)?.getTime()).toBe(new Date("2026-03-01T00:00:00").getTime());
+        expect(parseSince("2026-03-01T10:00:00+02:00", NOW)?.toISOString()).toBe("2026-03-01T08:00:00.000Z");
+    });
+
+    test("a year below 100 stays that year, not 19xx", () => {
+        // Date.UTC and new Date(y, m, d) read years 0-99 as 1900-1999.
+        expect(parseSince("0099-01-01T10:00:00Z", NOW)?.toISOString()).toBe("0099-01-01T10:00:00.000Z");
+        expect(parseSince("0099-01-01", NOW)?.getFullYear()).toBe(99);
+        expect(parseSince("0099-02-29", NOW)).toBeNull();
+    });
+
+    test("parseUntil is now by default and the end of a bare day", () => {
+        expect(parseUntil(undefined, NOW)).toBe(NOW);
+        expect(parseUntil("2026-03-01", NOW)?.getTime()).toBe(new Date("2026-03-02T00:00:00").getTime() - 1);
+        expect(parseUntil("12:00", NOW)?.getTime()).toBe(at("12:00:00"));
+        expect(parseUntil("later", NOW)).toBeNull();
     });
 });
