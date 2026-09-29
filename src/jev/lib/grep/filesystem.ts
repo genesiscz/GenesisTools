@@ -107,9 +107,18 @@ interface Eligible {
     absolute: string;
     stat: BigIntStats;
     ancestors: Array<{ path: string; stat: BigIntStats }>;
+    /** The ignore scopes above this path, so a directory's listing can check its children against them. */
+    scopes: Scope[];
 }
 
 type Eligibility = Eligible | Excluded | Issue;
+
+/** A descent in progress: the next name is checked below `directory`. */
+interface Walk {
+    directory: string;
+    scopes: Scope[];
+    ancestors: Eligible["ancestors"];
+}
 
 interface Cursor {
     directory: string;
@@ -284,6 +293,7 @@ export async function createFilesystem(options: FilesystemOptions) {
             absolute,
             stat,
             ancestors: [],
+            scopes: [],
         });
         try {
             const stat = await lstat(absolute, { bigint: true });
@@ -334,6 +344,102 @@ export async function createFilesystem(options: FilesystemOptions) {
         }
     }
 
+    /** Add `walk.directory`'s own ignore files to the walk, the way a descent into it does. */
+    async function enter(walk: Walk, path: string): Promise<Issue | undefined> {
+        if (policy.noIgnore) {
+            return undefined;
+        }
+
+        if (walk.directory !== root) {
+            try {
+                const git = await lstat(join(walk.directory, ".git"));
+                // A nested repository starts its own .gitignore chain; inherited .ignore stays.
+                if (git.isDirectory() || git.isFile()) {
+                    walk.scopes = walk.scopes.map((scope) => ({ directory: scope.directory, search: scope.search }));
+                }
+            } catch (error) {
+                if (errnoCode(error) !== "ENOENT") {
+                    return issue(errorKind(error), path);
+                }
+            }
+        }
+
+        const git = await ruleFile(walk.directory, ".gitignore");
+        if (git && "status" in git) {
+            return git;
+        }
+
+        const search = await ruleFile(walk.directory, ".ignore");
+        if (search && "status" in search) {
+            return search;
+        }
+
+        walk.scopes = [...walk.scopes, { directory: walk.directory, git, search }];
+        return undefined;
+    }
+
+    /** Check one name below `walk.directory`: protection, hidden, sensitive, file type, dependency and ignore rules. */
+    async function step(
+        walk: Walk,
+        name: string
+    ): Promise<{ status: "ok"; absolute: string; stat: BigIntStats } | Excluded> {
+        const absolute = join(walk.directory, name);
+        if (hardExcluded(absolute)) {
+            return excluded("protected");
+        }
+
+        if (!policy.hidden && name.startsWith(".")) {
+            return excluded("hidden");
+        }
+
+        if (!policy.includeSensitive && isSensitive(name)) {
+            return excluded("sensitive_name");
+        }
+
+        const stat = await lstat(absolute, { bigint: true });
+        if (stat.isSymbolicLink()) {
+            return excluded("symlink");
+        }
+
+        if (!stat.isDirectory() && !stat.isFile()) {
+            return excluded("special_file");
+        }
+
+        if (
+            stat.isDirectory() &&
+            !policy.includeDependencies &&
+            filesystemDefaults.dependencyDirectories.includes(name)
+        ) {
+            return excluded("dependency");
+        }
+
+        // Closer scopes come later, and `.ignore` follows `.gitignore` in the same scope, so the
+        // last matching rule wins in exactly the precedence the policy describes.
+        let ignored = false;
+        for (const scope of walk.scopes) {
+            const candidate =
+                relative(scope.directory, absolute).split(sep).join("/") + (stat.isDirectory() ? "/" : "");
+            for (const matcher of [scope.git, scope.search]) {
+                if (!matcher) {
+                    continue;
+                }
+
+                const result = matcher.test(candidate);
+                if (result.ignored) {
+                    ignored = true;
+                } else if (result.unignored) {
+                    ignored = false;
+                }
+            }
+        }
+
+        if (ignored) {
+            return excluded("ignored");
+        }
+
+        return { status: "ok", absolute, stat };
+    }
+
     async function eligibility(input: string, allowMissing = false): Promise<Eligibility> {
         const named = pathName(input);
         if (!named) {
@@ -350,9 +456,6 @@ export async function createFilesystem(options: FilesystemOptions) {
         }
 
         const components = named.path ? named.path.split("/") : [];
-        const scopes: Scope[] = [];
-        const ancestors: Eligible["ancestors"] = [];
-        let directory = root;
         try {
             const currentRoot = await lstat(root, { bigint: true });
             if (!currentRoot.isDirectory() || currentRoot.ino !== rootStat.ino || currentRoot.dev !== rootStat.dev) {
@@ -360,106 +463,37 @@ export async function createFilesystem(options: FilesystemOptions) {
             }
 
             if (!components.length) {
-                return { status: "eligible", ...named, stat: currentRoot, ancestors };
+                return { status: "eligible", ...named, stat: currentRoot, ancestors: [], scopes: [] };
             }
 
-            ancestors.push({ path: root, stat: currentRoot });
+            const walk: Walk = { directory: root, scopes: [], ancestors: [{ path: root, stat: currentRoot }] };
             for (let index = 0; index < components.length; index++) {
-                if (!policy.noIgnore) {
-                    if (directory !== root) {
-                        try {
-                            const git = await lstat(join(directory, ".git"));
-                            // A nested repository starts its own .gitignore chain; inherited .ignore stays.
-                            if (git.isDirectory() || git.isFile()) {
-                                for (const scope of scopes) {
-                                    delete scope.git;
-                                }
-                            }
-                        } catch (error) {
-                            if (errnoCode(error) !== "ENOENT") {
-                                return issue(errorKind(error), named.path);
-                            }
-                        }
-                    }
-
-                    const git = await ruleFile(directory, ".gitignore");
-                    if (git && "status" in git) {
-                        return git;
-                    }
-
-                    const search = await ruleFile(directory, ".ignore");
-                    if (search && "status" in search) {
-                        return search;
-                    }
-
-                    scopes.push({ directory, git, search });
+                const entered = await enter(walk, named.path);
+                if (entered) {
+                    return entered;
                 }
 
-                const name = components[index]!;
-                const absolute = join(directory, name);
-                if (hardExcluded(absolute)) {
-                    return excluded("protected");
-                }
-
-                if (!policy.hidden && name.startsWith(".")) {
-                    return excluded("hidden");
-                }
-
-                if (!policy.includeSensitive && isSensitive(name)) {
-                    return excluded("sensitive_name");
-                }
-
-                const stat = await lstat(absolute, { bigint: true });
-                if (stat.isSymbolicLink()) {
-                    return excluded("symlink");
-                }
-
-                if (!stat.isDirectory() && !stat.isFile()) {
-                    return excluded("special_file");
-                }
-
-                if (
-                    stat.isDirectory() &&
-                    !policy.includeDependencies &&
-                    filesystemDefaults.dependencyDirectories.includes(name)
-                ) {
-                    return excluded("dependency");
-                }
-
-                // Closer scopes come later, and `.ignore` follows `.gitignore` in the same scope, so the
-                // last matching rule wins in exactly the precedence the policy describes.
-                let ignored = false;
-                for (const scope of scopes) {
-                    const candidate =
-                        relative(scope.directory, absolute).split(sep).join("/") + (stat.isDirectory() ? "/" : "");
-                    for (const matcher of [scope.git, scope.search]) {
-                        if (!matcher) {
-                            continue;
-                        }
-
-                        const result = matcher.test(candidate);
-                        if (result.ignored) {
-                            ignored = true;
-                        } else if (result.unignored) {
-                            ignored = false;
-                        }
-                    }
-                }
-
-                if (ignored) {
-                    return excluded("ignored");
+                const next = await step(walk, components[index]!);
+                if (next.status === "excluded") {
+                    return next;
                 }
 
                 if (index === components.length - 1) {
-                    return { status: "eligible", ...named, stat, ancestors };
+                    return {
+                        status: "eligible",
+                        ...named,
+                        stat: next.stat,
+                        ancestors: walk.ancestors,
+                        scopes: walk.scopes,
+                    };
                 }
 
-                if (!stat.isDirectory()) {
+                if (!next.stat.isDirectory()) {
                     return excluded("not_directory");
                 }
 
-                ancestors.push({ path: absolute, stat });
-                directory = absolute;
+                walk.ancestors.push({ path: next.absolute, stat: next.stat });
+                walk.directory = next.absolute;
             }
 
             return excluded("outside_root");
@@ -469,6 +503,45 @@ export async function createFilesystem(options: FilesystemOptions) {
             }
 
             return issue(errorKind(error), named.path);
+        }
+    }
+
+    /** The walk a child of the directory `path` takes, with that directory's own ignore files entered. */
+    async function childWalk(path: string): Promise<{ status: "walk"; walk: Walk } | Excluded | Issue> {
+        const directory = await eligibility(path);
+        if (directory.status !== "eligible") {
+            return directory;
+        }
+
+        if (!directory.stat.isDirectory()) {
+            return excluded("not_directory");
+        }
+
+        const walk: Walk = {
+            directory: directory.absolute,
+            scopes: directory.scopes,
+            ancestors: [...directory.ancestors, { path: directory.absolute, stat: directory.stat }],
+        };
+        return (await enter(walk, path)) ?? { status: "walk", walk };
+    }
+
+    /** `eligibility` for one entry of a listed directory, reusing the directory's walk. */
+    async function childEligibility(walk: Walk, path: string, name: string): Promise<Eligibility> {
+        const interruption = stopped(path);
+        if (interruption) {
+            return interruption;
+        }
+
+        try {
+            const next = await step(walk, name);
+            if (next.status === "excluded") {
+                return next;
+            }
+
+            const { absolute, stat } = next;
+            return { status: "eligible", path, absolute, stat, ancestors: walk.ancestors, scopes: walk.scopes };
+        } catch (error) {
+            return issue(errorKind(error), path);
         }
     }
 
@@ -606,6 +679,16 @@ export async function createFilesystem(options: FilesystemOptions) {
                 return { entries, issues };
             }
 
+            // One ancestor walk per page, not per entry: every child shares the directory's ancestors and
+            // ignore scopes, so a deep tree no longer pays depth x (lstat .git + two rule files) per entry.
+            // An ignore file edited mid-page takes effect on the next page. The per-entry walk picked such
+            // an edit up just as silently, one entry later, so neither form ever made it an issue.
+            const walk = await childWalk(named.path);
+            if (walk.status !== "walk") {
+                await discard(active);
+                return { entries, issues: walk.status === "issue" ? [...issues, walk.issue] : issues };
+            }
+
             for (let scanned = 0; scanned < limits.pageSize; scanned++) {
                 const entry = await cursor.handle.read();
                 if (!entry) {
@@ -617,7 +700,7 @@ export async function createFilesystem(options: FilesystemOptions) {
                 }
 
                 const relativePath = named.path ? `${named.path}/${entry.name}` : entry.name;
-                const admitted = await eligibility(relativePath);
+                const admitted = await childEligibility(walk.walk, relativePath, entry.name);
                 if (admitted.status === "issue") {
                     issues.push(admitted.issue);
                     if (admitted.issue.kind === "interrupted") {
