@@ -221,7 +221,7 @@ function describeCeiling(report: GuardReport, explicitMs: number | undefined): s
 
 /** The ranking the CI "Slowest test files" step prints. Same parser as the ceiling guard. */
 export function formatTopRanking(ranked: Array<{ file: string; ms: number; tests: number }>, limit = 25): string {
-    const lines = ["Slowest 25 test files — sum of per-test ms under each file header"];
+    const lines = [`Slowest ${limit} test files — sum of per-test ms under each file header`];
 
     for (const row of ranked.slice(0, limit)) {
         const tests = row.tests === 1 ? "1" : String(row.tests);

@@ -128,6 +128,14 @@ describe("staleAppFacePids", () => {
         expect(staleAppFacePids("", launcher)).toEqual([]);
         expect(staleAppFacePids("  1 /sbin/launchd", launcher)).toEqual([]);
     });
+
+    it("never takes a sibling binary whose name only starts with the launcher's", () => {
+        const stdout = [`  777 ${launcher}-helper`, `  888 ${launcher}-helper --rpc`, `  999 ${launcher} --rpc`].join(
+            "\n"
+        );
+
+        expect(staleAppFacePids(stdout, launcher)).toEqual(["999"]);
+    });
 });
 
 describe("stampInfoPlist", () => {

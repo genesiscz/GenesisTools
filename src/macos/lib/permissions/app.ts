@@ -538,8 +538,12 @@ export function staleAppFacePids(psStdout: string, launcherPath: string): string
             continue;
         }
 
+        // The launcher path has to end at a word boundary: a sibling binary whose name merely
+        // starts with it (`GenesisTools-helper`) would otherwise leave a `-helper` rest and read
+        // as a flag-argument face.
         const command = match[2];
-        if (!command.startsWith(launcherPath)) {
+        const boundary = command[launcherPath.length];
+        if (!command.startsWith(launcherPath) || (boundary !== undefined && !/\s/.test(boundary))) {
             continue;
         }
 
