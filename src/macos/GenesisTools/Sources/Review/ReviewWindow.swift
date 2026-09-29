@@ -1651,26 +1651,30 @@ private struct ReviewHeader: View {
         viewMenu
     }
 
+    /// A drawn `MenuButton`: the compact and minimal controls are options of a ViewThatFits, which built a
+    /// new NSPopUpButton for a `Menu` on every measurement (each step of a divider drag).
     private var viewMenu: some View {
-        Menu {
-            Picker("Layout", selection: Binding(get: { model.options.diffStyle }, set: { model.setStyle($0) })) {
-                Text("Side by side").tag(DiffViewOptions.Style.split)
-                Text("One column").tag(DiffViewOptions.Style.unified)
-            }
-            Toggle("Wrap long lines", isOn: Binding(get: { model.options.wrap }, set: { _ in model.toggleWrap() }))
-            Divider()
-            Button("Larger text") { model.stepFont(1) }
-            Button("Smaller text") { model.stepFont(-1) }
-            Divider()
-            Button("Find in the Diff…") { model.find() }
-            Button("Reload") { model.reload() }
+        let model = model
+        return MenuButton(style: .genHoverIcon()) {
+            [
+                .action("Side by side", checked: model.options.diffStyle == .split) { model.setStyle(.split) },
+                .action("One column", checked: model.options.diffStyle == .unified) { model.setStyle(.unified) },
+                .action("Wrap long lines", checked: model.options.wrap) { model.toggleWrap() },
+                .divider,
+                .action("Larger text") { model.stepFont(1) },
+                .action("Smaller text") { model.stepFont(-1) },
+                .divider,
+                .action("Find in the Diff…") { model.find() },
+                .action("Reload") { model.reload() },
+            ]
         } label: {
             Image(systemName: "ellipsis.circle")
+                .font(.system(size: 12))
+                .frame(width: 16, height: 16)
         }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
         .fixedSize()
         .instantTooltip("Layout, wrap, text size, find, reload")
+        .accessibilityLabel(Text("Layout, wrap, text size, find, reload"))
     }
 }
 
@@ -1734,53 +1738,55 @@ private struct ScopeLink: View {
 }
 
 /// Codex's review source menu: what the diff compares.
-private struct ScopeMenu: View {
+struct ScopeMenu: View {
     @ObservedObject var model: ReviewModel
 
     var body: some View {
-        // Its own width when that fits, so the totals sit beside it (the flexible frame alone grew to
-        // 380 pt for "Uncommitted" and left a wide gap before them). It shrinks in a narrow pane instead
+        // Its own width when that fits, so the totals sit beside it; it shrinks in a narrow pane instead
         // of pushing the header past both edges: a PR range label
         // ("feature/next…chore/col-302921-repo-cleanup") is wider than the whole diff pane at 1000 pt.
-        ViewThatFits(in: .horizontal) {
-            menu.fixedSize()
-            menu.frame(minWidth: 80, maxWidth: 380, alignment: .leading)
+        // A drawn `MenuButton` shrinks like the text in it. The `Menu` it replaces needed a ViewThatFits of
+        // its own for that, and both ViewThatFits built new pop-up buttons on every measurement of the header.
+        MenuButton(items: { ScopeMenu.items(model: model) }) {
+            HStack(spacing: 4) {
+                Text(label)
+                    .font(.system(size: 12, weight: .medium))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 8, weight: .bold))
+                    .foregroundColor(ReviewPalette.dim)
+            }
         }
+        .frame(minWidth: 80, alignment: .leading)
         .fixedSize(horizontal: false, vertical: true)
         .instantTooltip("What this diff compares: \(label)")
     }
 
-    private var menu: some View {
-        Menu {
-            // Always offered with a session: a turn without changes is an empty panel that the next
-            // turn fills, not a greyed-out item.
-            scopeButton(.lastTurns(1))
-                .disabled(model.session == nil || model.remoteHead != nil)
-            Button("Last Turns…") { model.setScope(.lastTurns(3)) }
-                .disabled(model.session == nil || model.remoteHead != nil)
-            Divider()
-            scopeButton(.uncommitted)
-            scopeButton(.unstaged)
-            scopeButton(.staged)
-            Divider()
-            Menu("Committed") {
-                if model.commits.isEmpty {
-                    Text("No commits ahead of the base")
-                }
-                ForEach(model.commits) { commit in
-                    Button("\(commit.short)  \(commit.subject)  ·  \(commit.when)") {
-                        model.setScope(.commit(sha: commit.sha, title: commit.subject))
-                    }
+    /// The scope choices at the moment of the click.
+    @MainActor
+    static func items(model: ReviewModel) -> [MenuButtonItem] {
+        // Always offered with a session: a turn without changes is an empty panel that the next turn
+        // fills, not a greyed-out item.
+        let turns = model.session != nil && model.remoteHead == nil
+        let committed: [MenuButtonItem] = model.commits.isEmpty
+            ? [.note("No commits ahead of the base")]
+            : model.commits.map { commit in
+                .action("\(commit.short)  \(commit.subject)  ·  \(commit.when)") {
+                    model.setScope(.commit(sha: commit.sha, title: commit.subject))
                 }
             }
-            scopeButton(.branch)
-        } label: {
-            Text(label)
-                .font(.system(size: 12, weight: .medium))
-                .lineLimit(1)
-                .truncationMode(.middle)
-        }
-        .menuStyle(.borderlessButton)
+        return [
+            scopeItem(.lastTurns(1), model: model, enabled: turns),
+            .action("Last Turns…", enabled: turns) { model.setScope(.lastTurns(3)) },
+            .divider,
+            scopeItem(.uncommitted, model: model),
+            scopeItem(.unstaged, model: model),
+            scopeItem(.staged, model: model),
+            .divider,
+            .submenu("Committed", committed),
+            scopeItem(.branch, model: model),
+        ]
     }
 
     private var label: String {
@@ -1791,18 +1797,11 @@ private struct ScopeMenu: View {
         }
     }
 
-    private func scopeButton(_ scope: DiffScope) -> some View {
-        Button {
-            model.setScope(scope)
-        } label: {
-            if model.scope == scope {
-                Label(scope.title, systemImage: "checkmark")
-            } else {
-                Text(scope.title)
-            }
-        }
+    @MainActor
+    private static func scopeItem(_ scope: DiffScope, model: ReviewModel, enabled: Bool = true) -> MenuButtonItem {
         // No checkout holds the head: the working tree on disk belongs to another branch.
-        .disabled(model.remoteHead != nil && scope.readsTheCheckout)
+        let readable = !(model.remoteHead != nil && scope.readsTheCheckout)
+        return .action(scope.title, checked: model.scope == scope, enabled: enabled && readable) { model.setScope(scope) }
     }
 }
 
@@ -2516,7 +2515,7 @@ enum ReviewSnapshot {
         image.addRepresentation(rep)
 
         guard let webView else {
-            save(image, to: path)
+            save(withSheet(image, window: window), to: path)
             done()
             return
         }
@@ -2532,12 +2531,51 @@ enum ReviewSnapshot {
                 image.draw(in: bounds)
                 webImage.draw(in: frame)
                 composed.unlockFocus()
-                save(composed, to: path)
+                save(withSheet(composed, window: window), to: path)
             } else {
-                save(image, to: path)
+                save(withSheet(image, window: window), to: path)
             }
             done()
         }
+    }
+
+    /// A sheet (the handoff composer) is its own window, so `cacheDisplay` of the main one left it out.
+    /// It is drawn where it sits over the window; both frames are in screen points, origin bottom left.
+    private static func withSheet(_ image: NSImage, window: NSWindow) -> NSImage {
+        // An off-screen parent (a scripted run) gets SwiftUI's sheet as a window of its own, not attached.
+        let attached = window.attachedSheet ?? window.sheets.first
+        // Measured 2026-09-27: SwiftUI's sheet there is a `SheetPresentationWindow`, with isSheet false and no parent.
+        let sheet = attached ?? NSApp.windows.first {
+            $0 !== window && ($0.sheetParent === window || $0.isSheet || String(describing: type(of: $0)).contains("SheetPresentation"))
+        }
+        FileHandle.standardError.write(Data("hub snapshot: sheet \(attached != nil ? "attached" : sheet != nil ? "unattached" : "none")\n".utf8))
+        guard let sheet, let content = sheet.contentView,
+              let rep = content.bitmapImageRepForCachingDisplay(in: content.bounds)
+        else { return image }
+
+        content.cacheDisplay(in: content.bounds, to: rep)
+        let sheetImage = NSImage(size: content.bounds.size)
+        sheetImage.addRepresentation(rep)
+        // Attached: where it sits. Unattached: where a sheet appears, centred under the title bar.
+        let frame = attached != nil
+            ? NSRect(
+                x: sheet.frame.minX - window.frame.minX,
+                y: sheet.frame.minY - window.frame.minY,
+                width: sheet.frame.width,
+                height: sheet.frame.height
+            )
+            : NSRect(
+                x: (image.size.width - sheet.frame.width) / 2,
+                y: image.size.height - sheet.frame.height - 28,
+                width: sheet.frame.width,
+                height: sheet.frame.height
+            )
+        let composed = NSImage(size: image.size)
+        composed.lockFocus()
+        image.draw(in: NSRect(origin: .zero, size: image.size))
+        sheetImage.draw(in: frame)
+        composed.unlockFocus()
+        return composed
     }
 
     private static func save(_ image: NSImage, to path: String) {

@@ -21,6 +21,8 @@ struct HubSessionDetailHost: View {
     static let firstPage = ProcessInfo.processInfo.environment["GENESIS_HUB_FIRST_PAGE"].flatMap(Int.init) ?? 12
     /// The rest of the window arrives in chunks of this many turns while the reader is idle.
     static let fillChunk = 24
+    /// Posted when a window's first page has loaded or failed: a `--snapshot` or `--bench` run starts then.
+    static let firstPageDone = Notification.Name("hub.transcript.firstPageDone")
 
     @State private var nativeLog: SessionNativeLog?
     @State private var services = TranscriptServices.none
@@ -29,6 +31,8 @@ struct HubSessionDetailHost: View {
     @State private var branch: String?
     /// The branch web page arrives from `tools hub repo` after the first draw.
     @ObservedObject private var repos = RepoFactsStore.shared
+    /// The stuck-agent verdict for the header's alert line (Hub/HubStuck.swift).
+    @ObservedObject private var stuck = HubStuckStore.shared
 
     @State private var envelope: TranscriptEnvelope?
     @State private var turns: [TranscriptTurn] = []
@@ -75,9 +79,17 @@ struct HubSessionDetailHost: View {
             actions: actions
         ) {
             SessionTerminalSection(session: session)
+            // Cost per prompt, tool analytics, handoff composer (Hub/HubSessionInsights.swift).
+            SessionInsightsSection(session: session, turnCount: envelope?.nextOffset ?? 0)
         }
         // A click in the transcript keeps ⌘F on its own search (Hub/HubPanelFind.swift).
         .panelFindNative("transcript")
+        // The sidebar asks for a turn: load the window holding it when it is earlier, then reveal it.
+        .onReceive(NotificationCenter.default.publisher(for: HubTranscriptBus.request)) { note in
+            if case .jump(let index, let rowId)? = HubTranscriptBus.message(note, for: HubTranscriptBus.request, sessionId: session.sessionId) {
+                Task { await jump(toTurn: index, rowId: rowId) }
+            }
+        }
         .task(id: session.id) {
             tail?.stop()
             tail = nil
@@ -193,6 +205,10 @@ struct HubSessionDetailHost: View {
         info.turnCount = envelope.map(\.nextOffset) ?? document.turnCount
         info.toolCount = document.toolCount
         info.errorCount = document.errorCount
+        if let verdict = stuck.verdicts[session.sessionId] {
+            info.alert = verdict.line
+            info.alertIsSevere = verdict.isLoop
+        }
         return info
     }
 
@@ -271,7 +287,23 @@ struct HubSessionDetailHost: View {
         if let branch, let url = Self.branchURL(branch, facts: RepoFactsStore.shared.facts(for: session.cwd)) {
             actions.openBranch = { ExternalOpener.open(url) }
         }
+        if let verdict = stuck.verdicts[session.sessionId] {
+            actions.alertAction = { Task { await jump(toTurn: verdict.turnIndex, rowId: "t-\(verdict.toolId)") } }
+        }
         return actions
+    }
+
+    /// Shows one turn's row: a turn before the loaded window loads a window from it to the current end
+    /// (as the refresh does, so the newest turns stay), then the list reveals the row.
+    private func jump(toTurn index: Int, rowId: String) async {
+        HubPerf.log("transcript.jump turn=\(index) row=\(rowId.prefix(12)) window=\(windowStart)")
+        if index < windowStart {
+            let offset = max(0, index - 2)
+            let end = envelope?.nextOffset ?? windowStart + turns.count
+            await load(offset: offset, limit: max(Self.pageSize, end - offset))
+        }
+        // The list knows its session by the transcript's own id (`services.sessionId`).
+        HubTranscriptBus.post(HubTranscriptBus.list, sessionId: services.sessionId, .reveal(rowId: rowId))
     }
 
     /// Types one line into the session's cmux pane, off the main thread; a failure shows in the banner.
@@ -305,6 +337,7 @@ struct HubSessionDetailHost: View {
             await rebuild()
             HubMainBusy.measure("transcript.page.render")
             loadState = .loaded
+            NotificationCenter.default.post(name: Self.firstPageDone, object: session.id)
             if tail == nil, FileManager.default.fileExists(atPath: fetched.filePath) {
                 tail = HubTranscriptTail(path: fetched.filePath) {
                     Task { @MainActor in await followTail() }
@@ -343,6 +376,7 @@ struct HubSessionDetailHost: View {
             } else {
                 banner = error.localizedDescription
             }
+            NotificationCenter.default.post(name: Self.firstPageDone, object: session.id)
         }
     }
 

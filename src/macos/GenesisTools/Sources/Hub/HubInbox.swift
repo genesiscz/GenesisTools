@@ -1130,6 +1130,14 @@ struct InboxDecisionCard: View {
         showContext || (highlight?.current?.row == item.id && highlight?.current?.field == "context")
     }
 
+    static func confidenceColor(_ level: String) -> Color {
+        switch level.lowercased() {
+        case "high": return ReviewPalette.added
+        case "low": return ReviewPalette.removed
+        default: return ReviewPalette.modified
+        }
+    }
+
     private var heading: String {
         if let title = item.title, !title.trimmed.isEmpty { return title }
         return (item.prompt ?? "").split(separator: "\n").first.map(String.init) ?? "DECISION \(item.number ?? 0)"
@@ -1208,9 +1216,9 @@ struct InboxDecisionCard: View {
                 InboxTag(text: "blocking", color: ReviewPalette.removed)
             }
             if let confidence = item.confidence {
-                Text(verbatim: "[\(confidence)]")
-                    .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                    .foregroundColor(ReviewPalette.dim)
+                // Was a raw "[medium]" beside the title.
+                InboxTag(text: "\(confidence) confidence", color: Self.confidenceColor(confidence))
+                    .instantTooltip("How sure the agent is of its recommended option")
             }
             Spacer(minLength: 8)
             if item.isOpen {

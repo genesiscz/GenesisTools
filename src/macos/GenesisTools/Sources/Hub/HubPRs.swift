@@ -251,6 +251,8 @@ final class PRsModel: ObservableObject {
                 span.end("\(list.prs.count) prs")
                 HubMainBusy.measure("prs.list.render")
                 prs = list.prs.sorted { ($0.updatedAt ?? "") > ($1.updatedAt ?? "") }
+                // Once per list load, never on a timer (Hub/HubPRReadiness.swift).
+                PRReadinessStore.shared.refresh(prs)
                 errors = list.repos.compactMap { repo in repo.error.map { "\(repo.repo): \($0)" } }
                 if let wanted {
                     self.wanted = nil
@@ -524,6 +526,7 @@ struct PRListView: View {
     @ObservedObject var model: HubModel
     @ObservedObject var prs: PRsModel
     @StateObject private var prefs = GroupPrefs(key: "prs.repos")
+    @ObservedObject private var readiness = PRReadinessStore.shared
 
     private var statePicker: some View {
         Picker("", selection: Binding(get: { prs.state }, set: { prs.state = $0; prs.reload() })) {
@@ -622,53 +625,61 @@ struct PRListView: View {
 
     private func row(_ pr: HubPR) -> some View {
         let selected = prs.selectedID == pr.id
-        return Button { prs.select(pr) } label: {
-            HStack(alignment: .top, spacing: 8) {
-                PRStateIcon(pr: pr)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(pr.title)
-                        .font(.system(size: 12.5, weight: .medium))
-                        .foregroundColor(Color.white.opacity(0.92))
-                        .lineLimit(2)
-                    HStack(spacing: 5) {
-                        Text(verbatim: pr.label).font(.system(size: 11, design: .monospaced)).fixedSize()
-                        Text(verbatim: pr.author ?? "")
-                        Text(verbatim: "·").fixedSize()
-                        // Whole, so the author truncates and the age never reads "4 hr. a…".
-                        LiveAgo(date: pr.updated).fixedSize()
-                    }
-                    .font(.system(size: 11))
-                    .foregroundColor(ReviewPalette.dim)
-                    .lineLimit(1)
+        // The badges sit at the end of the meta line: as a right-hand column they took ~70 pt from a
+        // title that already had ~150, so most titles read "feat(flexi, col-…".
+        return HStack(alignment: .top, spacing: 8) {
+            PRStateIcon(pr: pr)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(pr.title)
+                    .font(.system(size: 12.5, weight: .medium))
+                    .foregroundColor(Color.white.opacity(0.92))
+                    .lineLimit(2)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                HStack(spacing: 5) {
+                    Text(verbatim: pr.label).font(.system(size: 11, design: .monospaced)).fixedSize()
+                    Text(verbatim: pr.author ?? "").lineLimit(1).layoutPriority(-1)
+                    Text(verbatim: "·").fixedSize()
+                    // Whole, so the author truncates and the age never reads "4 hr. a…".
+                    LiveAgo(date: pr.updated, style: .brief).fixedSize()
+                    Spacer(minLength: 4)
+                    badges(pr)
                 }
-                Spacer(minLength: 4)
-                VStack(alignment: .trailing, spacing: 3) {
-                    CIBadge(ci: pr.ci)
-                    if let proposal = pr.proposal {
-                        Label("\(proposal.pending)", systemImage: "text.bubble")
-                            .font(.system(size: 10.5, weight: .semibold))
-                            .foregroundColor(proposal.pending > 0 ? ReviewPalette.modified : ReviewPalette.dim)
-                            .instantTooltip("Agent review (\(proposal.decision.replacingOccurrences(of: "_", with: " "))): \(proposal.pending) of \(proposal.drafts) draft comments undecided")
-                    }
-                    if pr.localWorktree != nil {
-                        Image(systemName: "externaldrive.badge.checkmark")
-                            .font(.system(size: 10))
-                            .foregroundColor(ReviewPalette.dim)
-                            .instantTooltip("The branch is checked out locally: New session here works in its worktree")
-                    }
-                }
+                .font(.system(size: 11))
+                .foregroundColor(ReviewPalette.dim)
+                .lineLimit(1)
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 6)
-            .background(RoundedRectangle(cornerRadius: 8).fill(selected ? Color.white.opacity(0.08) : Color.clear))
-            .padding(.horizontal, 6)
-            .contentShape(Rectangle())
         }
-        .buttonStyle(.genHoverRow(accent: .white, cornerRadius: 8))
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .background(RoundedRectangle(cornerRadius: 8).fill(selected ? Color.white.opacity(0.08) : Color.clear))
+        .contentShape(Rectangle())
+        .rowButton(cornerRadius: 8) { prs.select(pr) }
+        .padding(.horizontal, 6)
         .instantTooltip("\(pr.label) \(pr.headBranch) → \(pr.baseBranch)\nRight-click for its web pages")
         // The row stays one button (select); its labels' web pages live here, since a link inside
         // the row would turn a click meant to select into a browser tab.
         .contextMenu { linksMenu(pr) }
+    }
+
+    @ViewBuilder
+    private func badges(_ pr: HubPR) -> some View {
+        HStack(spacing: 5) {
+            if let proposal = pr.proposal {
+                Label("\(proposal.pending)", systemImage: "text.bubble")
+                    .font(.system(size: 10.5, weight: .semibold))
+                    .foregroundColor(proposal.pending > 0 ? ReviewPalette.modified : ReviewPalette.dim)
+                    .instantTooltip("Agent review (\(proposal.decision.replacingOccurrences(of: "_", with: " "))): \(proposal.pending) of \(proposal.drafts) draft comments undecided")
+            }
+            if pr.localWorktree != nil {
+                Image(systemName: "externaldrive.badge.checkmark")
+                    .font(.system(size: 10))
+                    .foregroundColor(ReviewPalette.dim)
+                    .instantTooltip("The branch is checked out locally: New session here works in its worktree")
+            }
+            PRReadinessBadge(readiness: readiness.readiness(for: pr))
+            CIBadge(ci: pr.ci)
+        }
+        .fixedSize()
     }
 
     @ViewBuilder
@@ -838,6 +849,7 @@ struct PRDetailView: View {
                 ExternalLink(text: pr.label, url: URL(string: pr.url), font: .system(size: 13, weight: .semibold), color: Color(red: 0.62, green: 0.78, blue: 1))
                 statePill
                 CIBadge(ci: pr.ci, url: detail?.webUrls?.checks.flatMap(URL.init(string:)))
+                PRReadinessHeaderChip(pr: pr)
                 Spacer()
                 if let notice = model.notice {
                     NoticePill(text: notice, isError: notice.contains("failed") || notice.hasPrefix("cmux:")) { model.notice = nil }

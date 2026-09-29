@@ -45,6 +45,10 @@ struct SessionDetailInfo: Equatable {
     var errorCount = 0
     /// Explains why the session is missing from the recent list, when it is.
     var note: String?
+    // GenesisTools adaptation: a warning line under the header (the hub's stuck-agent verdict,
+    // Hub/HubStuck.swift); `alertIsSevere` draws it red instead of orange.
+    var alert: String?
+    var alertIsSevere = false
 
     var shortId: String { String(sessionId.prefix(8)) }
 
@@ -76,6 +80,8 @@ struct SessionDetailActions {
     /// "Open the Changes view at this file (and line)". nil hides every "Open diff" button.
     /// Genesis leaves it nil; the GenesisTools hub wires it to its diff window.
     var showChange: ((String, Int?) -> Void)?
+    // GenesisTools adaptation: a click on the header's alert line (the hub opens the stuck call).
+    var alertAction: (() -> Void)?
 }
 
 /// Window chrome the screen is drawn for: no title text, a transparent unified-compact titlebar
@@ -287,11 +293,40 @@ struct SessionDetailHeader: View {
             }
             .padding(.horizontal, 16)
             .frame(height: 28)
+            // GenesisTools adaptation: the alert line (see `SessionDetailInfo.alert`).
+            if let alert = info.alert {
+                alertRow(alert)
+            }
         }
         .overlay(alignment: .bottom) {
             Rectangle().fill(SessionPalette.hairline).frame(height: 1)
         }
         .accessibilityIdentifier("session-details-header")
+    }
+
+    // GenesisTools adaptation: one line, the whole row a button when the host gave an action.
+    private func alertRow(_ text: String) -> some View {
+        let color = info.alertIsSevere ? SessionPalette.red : SessionPalette.orange
+        return Button { actions.alertAction?() } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: 10))
+                Text(verbatim: text)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                Spacer(minLength: 0)
+            }
+            .font(.system(size: 11.5, weight: .medium))
+            .foregroundStyle(color)
+            .padding(.horizontal, 16)
+            .frame(height: 24)
+            .background(color.opacity(0.10))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.genHoverPlain())
+        .disabled(actions.alertAction == nil)
+        .instantTooltip(text + (actions.alertAction == nil ? "" : "\nClick to open the call in the transcript"))
+        .accessibilityIdentifier("session-details-alert")
     }
 
     private func metaRow(showStarted: Bool) -> some View {
@@ -505,8 +540,10 @@ struct SessionDetailSidebar<Extra: View>: View {
 
     @State private var showAllFiles = false
     @State private var showReads = false
+    @State private var showAllSubagents = false
 
     private static var fileLimit: Int { 10 }
+    private static var subagentLimit: Int { 6 }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -514,11 +551,13 @@ struct SessionDetailSidebar<Extra: View>: View {
                 VStack(alignment: .leading, spacing: 20) {
                     overview
                     usageGrid
+                    // Local change (GenesisTools hub): the extra slot holds cost per prompt and tool analytics,
+                    // which sat below every sub-agent row, out of sight in any session that had some.
+                    extra
                     status
                     files
                     if !digest.commits.isEmpty { commits }
                     if !digest.subagents.isEmpty { subagents }
-                    extra
                 }
                 .padding(.horizontal, 14)
                 .padding(.vertical, 14)
@@ -792,11 +831,18 @@ struct SessionDetailSidebar<Extra: View>: View {
         .accessibilityIdentifier("session-details-commits")
     }
 
+    // GenesisTools adaptation: a long run's sub-agents (89 in one session) pushed the hub's insight
+    // sections out of reach, so the list shows the live and failed ones first and caps the rest.
     private var subagents: some View {
-        VStack(alignment: .leading, spacing: 1) {
-            SessionSectionTitle(title: "Sub-agents", count: digest.subagents.count)
+        let all = digest.subagents
+        let open = all.filter { $0.state != .done }
+        let ordered = open + all.filter { $0.state == .done }
+        let limit = max(Self.subagentLimit, open.count)
+        let shown = showAllSubagents ? ordered : Array(ordered.prefix(limit))
+        return VStack(alignment: .leading, spacing: 1) {
+            SessionSectionTitle(title: "Sub-agents", count: all.count)
                 .padding(.bottom, 5)
-            ForEach(digest.subagents) { agent in
+            ForEach(shown) { agent in
                 HStack(spacing: 8) {
                     SessionStatusDot(color: color(agent.state))
                         .frame(width: 14)
@@ -812,6 +858,9 @@ struct SessionDetailSidebar<Extra: View>: View {
                 }
                 .frame(height: 26)
                 .instantTooltip(agent.summary)
+            }
+            if ordered.count > limit {
+                moreButton(showAllSubagents ? "Show fewer" : "Show \(ordered.count - limit) more") { showAllSubagents.toggle() }
             }
         }
         .accessibilityIdentifier("session-details-subagents")

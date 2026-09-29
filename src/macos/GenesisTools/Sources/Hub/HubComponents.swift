@@ -48,11 +48,13 @@ extension View {
 struct LiveAgo: View {
     let date: Date?
     var fallback = ""
+    /// `.brief` ("3d ago") for the narrow sidebar lists; `.short` ("3 days ago") elsewhere.
+    var style: LiveTimeStyle = .short
     var format: (String) -> String = { $0 }
 
     var body: some View {
         if let date {
-            LiveTime(date: date, style: .short, format: format)
+            LiveTime(date: date, style: style, format: format)
         } else {
             Text(verbatim: format(fallback))
         }

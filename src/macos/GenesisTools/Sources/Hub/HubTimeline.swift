@@ -1019,10 +1019,11 @@ struct TimelineMain: View {
         return formatter
     }()
 
+    // A fixed shape: the system styles mixed a Czech date with English words ("26. 9. 2026 at 16:15").
     private static let rangeFormat: DateFormatter = {
         let formatter = DateFormatter()
-        formatter.dateStyle = .medium
-        formatter.timeStyle = .short
+        formatter.locale = Locale(identifier: "en_GB")
+        formatter.dateFormat = "EEE d MMM HH:mm"
         return formatter
     }()
 
@@ -1345,7 +1346,8 @@ struct TimelineRowView: View {
                         .accessibilityHidden(true)
                     }
                 }
-                .opacity(live ? 1 : 0.55)
+                // Faint until the row is hovered: at 0.55 every row's five glyphs made the list busy.
+                .opacity(live ? 1 : 0.25)
             }
             .padding(.horizontal, 8)
             .frame(minHeight: 26)

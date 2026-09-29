@@ -16,6 +16,7 @@ install, reap stale faces). Swift UI you have not seen rendered is not done.
 | Open a file at a line | `PathOpener.cursor(path, line:)` | `open -a` without the line |
 | A side panel | `ResizableSidePanel(key:edge:title:minWidth:maxWidth:autoCollapse:fitWidth:)` (Hub/HubPanels.swift: grip on hover, release below the minimum collapses to a rail, width saved on release only; during a drag the layout keeps the start width and the panel draws over its neighbour, one reflow on release; the parent passes the room it has as `maxWidth` and `autoCollapse` when there is none, which shows the rail and opens the panel as a drawer; `fitWidth` opens it at its content's width, as the Files list does with `FileListFit`, until the reader drags it in that window) | a fixed `.frame(width:)` sidebar, a width written to `@AppStorage` on every drag step, or moving the neighbouring panes per step (each move of a focusable list makes SwiftUI rebuild the key view loop over every transcript row: 82 ms/step) |
 | A heavy pane (transcript, diff) | `.freezesWidthWhileResizing()`: keeps its size while `HubLiveResize` is active (panel drag, window live resize, pane divider) and reflows once at the end. `heavy: false` for a pane that should follow a pane-divider drag live (everything but the transcript list; frozen, it left a dark gap beside the divider) | letting a `List` re-measure every row per resize step (395 ms/step measured), or ending a divider drag on a local mouse-up monitor (NSSplitView's tracking loop swallows it; `HubLiveResize` polls the button instead) |
+| A pull-down menu in a header or toolbar | `MenuButton(items:label:)` (Hub/HubMenuButton.swift): a drawn label, the NSMenu is built at the click | a SwiftUI `Menu` (an NSPopUpButton) or any other AppKit control inside a `ViewThatFits`: it builds each option's platform views again for every measurement, a dozen pop-up buttons per step of a divider drag in the review header (bench `split` busy p50 46.7 → 23.5 ms, 2026-09-26) |
 | A list row that acts as a button | `.rowButton(cornerRadius:)` → `HubRowButtonStyle`: soft fill in the row's own frame; keep gaps and insets OUTSIDE the button so hover box = selection box | `genHoverRow(accent: .white)` (45 % white outline) or padding inside the button |
 | A background | `.hubSurface(.chrome / .content / .bar)`: opaque normally, translucent in glass mode (`HubGlass`, ⌘⇧G) | `ReviewPalette.sidebar` / `.background` directly |
 | A sidebar group header | `GroupHeader` + `GroupPrefs` (collapse, pin, move up/down, persisted) | an uppercase static label |
@@ -111,8 +112,10 @@ marked adaptation (`// GenesisTools adaptation: …`). Missing Genesis types go 
 - The open transcript follows its session file (Hub/HubTranscriptTail.swift, a file event source, no timer) and
   appends turns from the last known one; ⌘F searches the whole session (`tools ai sessions grep` + `tail --turns`).
 - To SEE the live window (not a snapshot), `tools control screenshot --app GenesisTools --path /tmp/x.png`: a window
-  capture with no accessibility walk, so it works while a transcript streams. A snapshot run paints the web diff on
-  top of every overlay, so an overlay that looks covered in a snapshot can be fine on screen: check it live.
+  capture with no accessibility walk, so it works while a transcript streams. Since 2026-09-27 (24a236c41) a
+  snapshot skips the web diff's own image under a modal panel (digest, rules, search, prompts, handoff, palette,
+  find) and draws a SwiftUI sheet, which an off-screen parent gets as an unattached `SheetPresentationWindow`.
+  A snapshot taken before a search or load finished shows its empty state: read `app-perf.log` for the span.
   One hub runs at a time: a second `GenesisTools --hub …` hands its flags to the running hub and exits
   (Hub/HubSingleInstance.swift: the hub holds a `flock` on `~/.genesis-tools/hub/hub.lock`, dropped by the kernel on exit).
 - A rebuild never deletes the replaced bundle: it moves to `~/.genesis-tools/app/retired/<ms>/` and is pruned once
@@ -121,5 +124,6 @@ marked adaptation (`// GenesisTools adaptation: …`). Missing Genesis types go 
   `tools` re-enters the current launcher when it differs (`genesisAppLauncher()`). A build that finds no signing
   identity while the installed app is Developer ID signed refuses to install ad-hoc (a sandboxed shell cannot read
   the keychain). Worktree builds install the same way and keep the grants.
-- After a rebuild, restart a running hub without stealing focus: `pkill -f 'MacOS/GenesisTools --hub'` then
-  `tools hub --no-activate`.
+- After a rebuild, restart a running hub without stealing focus, by its pid only (a `pkill -f` pattern also
+  killed other agents' snapshot runs, 2026-09-24): `kill <pid of MacOS/GenesisTools --hub>` if the build did not
+  reap it, then `tools hub open --no-activate` with the flags it had.
