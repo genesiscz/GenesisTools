@@ -302,14 +302,29 @@ export function createGrepCache(options: GrepCacheOptions) {
                 throw error;
             });
             generation ??= await opening;
-            // A concurrent clear detaches the directory; the one recreated in its place starts empty.
-            const live = await checkDirectory(entries, true);
-            if (live.ino !== generation.ino) {
-                generation = { ino: live.ino, bytes: 0 };
+            // Rewriting a key replaces its file, so only the difference is new. A concurrent clear detaches
+            // the directory, and the one recreated in its place starts empty; a clear during the measure
+            // could leave the old directory's copy of this key counted against the new one, so the same
+            // directory must hold the measure on both sides of it.
+            let replaced = 0;
+            for (let attempt = 0; ; attempt++) {
+                const before = await checkDirectory(entries, true);
+                replaced = await entryBytes(join(entries, name));
+                const after = await lstat(entries);
+                if (before.ino === after.ino) {
+                    if (after.ino !== generation.ino) {
+                        generation = { ino: after.ino, bytes: 0 };
+                    }
+
+                    break;
+                }
+
+                if (attempt === 2) {
+                    throw new Error("The cache directory kept changing while a write measured it");
+                }
             }
 
-            // Rewriting a key replaces its file, so only the difference is new.
-            const net = size - (await entryBytes(join(entries, name)));
+            const net = size - replaced;
             // Check and reserve in one synchronous step: up to 32 writers share this cap.
             owner = generation;
             if (size > maxEntryBytes || owner.bytes + net > maxBytes) {
