@@ -1,43 +1,69 @@
 import { describe, expect, test } from "bun:test";
-import type { BrowserMcp } from "../browser/session";
+import type { DomAction, DomSnapshot } from "@app/chrome-devtools/lib/dom/in-page";
+import type { DomActResult } from "@app/chrome-devtools/lib/dom/page";
+import type { DomPageDriver } from "../loop/browser";
 import { createBrowserListenSurface } from "./browser-surface";
 
-const SNAPSHOT = [
-    'uid=1_0 RootWebArea "Kick" url="https://kick.com/"',
-    '  uid=1_6 searchbox "Search"',
-    '  uid=1_8 button "Log In"',
-    '  uid=1_17 link "Odablock Old School RuneScape" url="https://kick.com/odablock"',
-].join("\n");
-
-function stubMcp(calls: { name: string; args: Record<string, unknown> }[]): BrowserMcp {
-    return {
-        connectionId: () => "test",
-        toolText: (result: unknown) => (result as { text: string }).text,
-        async callTool(name: string, args: Record<string, unknown>) {
-            calls.push({ name, args });
-            if (name === "list_pages") {
-                return { text: "0: https://kick.com/ [selected]" };
-            }
-
-            if (name === "take_snapshot") {
-                return { text: SNAPSHOT };
-            }
-
-            return { text: "ok" };
+const KICK: DomSnapshot = {
+    url: "https://kick.com/",
+    title: "Kick",
+    text: "Kick",
+    actions: [
+        { id: "n6f", node: 6, kind: "fill", role: "searchbox", label: "Search", guard: "g6", value: "" },
+        { id: "n8", node: 8, kind: "click", role: "button", label: "Log In", guard: "g8" },
+        {
+            id: "n17",
+            node: 17,
+            kind: "click",
+            role: "link",
+            label: "Odablock Old School RuneScape",
+            href: "https://kick.com/odablock",
+            guard: "g17",
         },
-        async close() {},
-    } as unknown as BrowserMcp;
+    ],
+    omitted: 0,
+    belowFold: 0,
+    belowFoldLabels: [],
+    secretFields: [],
+    canScrollDown: false,
+    canScrollUp: false,
+    historyLength: 1,
+    marker: "k1",
+};
+
+function scriptedPage(clicks: string[]): DomPageDriver {
+    const done = (): Promise<DomActResult> =>
+        Promise.resolve({ ok: true, settled: { reason: "quiet", mutations: 1, ms: 5 } });
+    return {
+        snapshot: async () => KICK,
+        click: (action: DomAction) => {
+            clicks.push(action.id);
+            return done();
+        },
+        fill: done,
+        select: done,
+        scroll: done,
+        wait: done,
+        back: done,
+        reload: done,
+        navigate: done,
+        close: () => {},
+    };
 }
 
 describe("the browser listen surface", () => {
-    test("a page node becomes a choosable row, and its uid is what the act path dispatches", async () => {
-        const calls: { name: string; args: Record<string, unknown> }[] = [];
-        const surface = createBrowserListenSurface({ port: 9222, pageIndex: 0, mcp: stubMcp(calls) });
+    test("a page node becomes a choosable row, and its id is what the act path dispatches", async () => {
+        const clicks: string[] = [];
+        const surface = createBrowserListenSurface({
+            port: 9222,
+            pageIndex: 0,
+            openPage: async () => scriptedPage(clicks),
+        });
 
         const view = await surface.see();
         expect(view.app).toBe("browser");
         expect(view.window).toContain("kick.com");
-        expect(view.snapshot.startsWith("cdp:9222:")).toBe(true);
+        expect(view.snapshot.startsWith("dom:9222:")).toBe(true);
 
         const labels = view.candidates.map((candidate) => candidate.label);
         expect(labels).toContain("Log In");
@@ -47,21 +73,26 @@ describe("the browser listen surface", () => {
         const link = view.candidates.find((candidate) => candidate.label.includes("Odablock"));
         const acted = await surface.act({ element: -1, action: "press", uid: link?.id }, view);
         expect(acted.ok).toBe(true);
-        expect(calls.some((call) => call.name === "click" && call.args.uid === "1_17")).toBe(true);
+        expect(clicks).toEqual(["n17"]);
     });
 
     test("a payload naming no row of the current snapshot is refused, not guessed at", async () => {
-        const surface = createBrowserListenSurface({ port: 9222, pageIndex: 0, mcp: stubMcp([]) });
+        const clicks: string[] = [];
+        const surface = createBrowserListenSurface({
+            port: 9222,
+            pageIndex: 0,
+            openPage: async () => scriptedPage(clicks),
+        });
         const blank = { app: "browser", window: "", snapshot: "", candidates: [], rows: [] };
-        expect(await surface.act({ element: -1, action: "press", uid: "1_17" }, blank)).toEqual({
+        expect(await surface.act({ element: -1, action: "press", uid: "n17" }, blank)).toEqual({
             ok: false,
             error: "no page snapshot yet; the surface has not been observed",
         });
 
-        const seen = await surface.see();
-        void seen;
-        const missing = await surface.act({ element: -1, action: "press", uid: "9_99" }, blank);
+        await surface.see();
+        const missing = await surface.act({ element: -1, action: "press", uid: "n99" }, blank);
         expect(missing.ok).toBe(false);
         expect(missing.error).toContain("not a row of the current page snapshot");
+        expect(clicks).toEqual([]);
     });
 });

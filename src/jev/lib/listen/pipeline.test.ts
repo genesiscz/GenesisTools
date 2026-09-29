@@ -4,7 +4,6 @@ import type { EvaluationResponse, Evaluator } from "@genesiscz/utils/ai/evaluati
 import type { LiveTranscriptEvent } from "@genesiscz/utils/ai/stt";
 import { SafeJSON } from "@genesiscz/utils/json";
 import type { PrefetchPayload } from "../prefetch";
-import { parsePageList } from "./chrome";
 import { axView, createListenPipeline, type ListenSurface } from "./pipeline";
 import { listenCandidates } from "./verbs";
 
@@ -315,26 +314,4 @@ test("wake mode jev: destructive commands hold until confirmed", async () => {
     const acted = await confirmed.decide(final("hey jev send it"));
     expect(acted.status).toBe("act");
     expect(acts).toBe(1);
-});
-
-test("parsePageList reads the chrome-devtools-mcp list_pages format", () => {
-    const pages = parsePageList(
-        [
-            "## Pages",
-            "1: Example Domain (https://example.com/) [selected]",
-            "2: Draft: refactor (col-1): sagas (https://gitlab.example/merge_requests/7404/diffs?commit_id=abc)",
-            "5: https://github.example/org/",
-            "54: Jev fixture page (http://127.0.0.1:3990/)",
-            "noise",
-        ].join("\n")
-    );
-    expect(pages).toHaveLength(4);
-    expect(pages[0]).toMatchObject({ index: 1, title: "Example Domain", url: "https://example.com/", selected: true });
-    expect(pages[1]).toMatchObject({
-        index: 2,
-        url: "https://gitlab.example/merge_requests/7404/diffs?commit_id=abc",
-        selected: false,
-    });
-    expect(pages[2]).toMatchObject({ index: 5, title: "", url: "https://github.example/org/" });
-    expect(pages[3]).toMatchObject({ index: 54, title: "Jev fixture page", url: "http://127.0.0.1:3990/" });
 });

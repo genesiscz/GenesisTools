@@ -5,11 +5,13 @@ import { ui } from "@genesiscz/utils/cli/ui";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
+import { createWriter } from "../lib/browser/writer";
 import { failPlain, parseEnum, printResult, withSigint } from "../lib/cli-output";
 import { createAutoSurface } from "../lib/loop/auto";
 import { createAxSurface } from "../lib/loop/ax";
 import { createBrowserSurface } from "../lib/loop/browser";
-import { runGoalLoop } from "../lib/loop/run";
+import { RunFolder } from "../lib/loop/record";
+import { callsLine, runGoalLoop, stepTimingLine } from "../lib/loop/run";
 import type { GoalSurface } from "../lib/loop/surface";
 import { compactResult } from "../lib/output-shape";
 
@@ -36,6 +38,10 @@ interface LoopOptions {
     maxSteps: string;
     yes?: boolean;
     json?: boolean;
+    /** False with `--no-record`. */
+    record: boolean;
+    /** `--writer [model]`: true for the default chat model, or a model ref. */
+    writer?: string | boolean;
 }
 
 export function registerLoop(program: Command): void {
@@ -50,7 +56,7 @@ export function registerLoop(program: Command): void {
         .option("--surface [kind]", "ax, browser, or auto (AX rows + CDP page rows in one state)")
         .option("--port <n>", "CDP port", "9222")
         .option("--page-url <substring>", "Select the CDP page whose URL contains this text before acting")
-        .option("--page-index <n>", "Select the CDP page by list_pages index before acting")
+        .option("--page-index <n>", "Select the CDP page by its index in the page list before acting")
         .option("--url <url>", "Open this URL as a NEW page before the first snapshot")
         .option(
             "--inputs <json>",
@@ -62,6 +68,14 @@ export function registerLoop(program: Command): void {
         .option("--max-steps <n>", "Action attempts", "8")
         .option("--yes", "Allow high-risk acts")
         .option("--json", "Full result including snapshot tokens")
+        .option(
+            "--writer [model]",
+            "Browser surface: let a small model write text for fields --inputs does not cover (never secrets or personal data); optional model ref"
+        )
+        .option(
+            "--no-record",
+            "Do not write the run folder (one file per step: inputs, exact Jev requests, answers, timing)"
+        )
         .action(async (options: LoopOptions) => {
             try {
                 await runLoop(program, options);
@@ -121,6 +135,14 @@ async function runLoop(program: Command, options: LoopOptions): Promise<void> {
                       pageIndex: options.pageIndex ? Number(options.pageIndex) : undefined,
                       url: options.url,
                       inputs: options.inputs ? parseInputs(options.inputs) : undefined,
+                      goal: options.goal,
+                      ...(options.writer
+                          ? {
+                                writer: createWriter({
+                                    model: typeof options.writer === "string" ? options.writer : undefined,
+                                }),
+                            }
+                          : {}),
                   })
                 : undefined;
         let surface: GoalSurface;
@@ -137,6 +159,7 @@ async function runLoop(program: Command, options: LoopOptions): Promise<void> {
         }
 
         try {
+            const record = options.record ? RunFolder.create({ goal: options.goal, surface: surfaceKind }) : undefined;
             const result = await runGoalLoop({
                 goal: options.goal,
                 surface,
@@ -144,11 +167,18 @@ async function runLoop(program: Command, options: LoopOptions): Promise<void> {
                 allowYes: options.yes === true,
                 signal,
                 evaluate: await createEvaluator({ provider: selectedProvider(program) }),
+                record,
             });
             for (const step of result.trace) {
                 ui.info(
                     `step ${step.step} ${step.status.padEnd(9)} ${step.reason.padEnd(20)} ${step.target ?? "-"}${step.dispatched === undefined ? "" : step.dispatched ? " dispatched" : ` failed: ${step.error ?? ""}`}`
                 );
+                ui.dim(`       ${stepTimingLine(step)}`);
+            }
+
+            ui.info(callsLine(result.calls));
+            if (result.runDir) {
+                ui.dim(`run folder ${result.runDir} (replay: tools jev replay ${result.runDir})`);
             }
 
             printResult(compactResult(result, { verbose: options.json === true }));
@@ -156,7 +186,7 @@ async function runLoop(program: Command, options: LoopOptions): Promise<void> {
                 process.exitCode = 1;
             }
         } finally {
-            // The MCP child would otherwise keep the event loop alive and the process would hang.
+            // The CDP socket would otherwise keep the event loop alive and the process would hang.
             await browser?.close();
         }
     });

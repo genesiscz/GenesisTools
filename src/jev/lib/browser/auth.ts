@@ -1,9 +1,7 @@
-import type { PageNode } from "@app/chrome-devtools/lib/page-snapshot";
 import { logger } from "@genesiscz/utils/logger";
+import { inputValueFor } from "./fields";
 
 const { log } = logger.scoped("jev-browser");
-
-const PASSWORD_KEY_RE = /\b(password|passwd|passphrase|heslo)\b/i;
 
 export interface PasswordWall {
     hit: boolean;
@@ -16,14 +14,37 @@ export interface PasswordWall {
  * password, and a goal loop must not hand a stranger's page an empty credential either, so the
  * surface reports no candidates and the loop ends on `no_candidates`.
  */
-export function passwordWall(nodes: PageNode[], inputs: Record<string, string>): PasswordWall {
-    const fields = nodes.filter((node) => node.password === true).map((node) => node.name || node.uid);
-    if (fields.length === 0) {
-        return { hit: false, fields: [] };
-    }
+export function passwordWall(
+    secrets: Array<{ label: string; field: { type: string; name: string; id: string; ariaLabel: string } }>,
+    inputs: Record<string, string>
+): PasswordWall {
+    // Checked field by field with the same match a fill uses: one password key must not unlock a
+    // page that also asks for a one-time code or a card number nobody supplied.
+    const fields = secrets
+        .filter(
+            (secret, index) =>
+                inputValueFor({
+                    node: { name: secret.label },
+                    field: { uid: `secret${index + 1}`, ...secret.field },
+                    inputs,
+                }) === undefined
+        )
+        .map((secret) => secret.label);
+    return { hit: fields.length > 0, fields };
+}
 
-    const supplied = Object.keys(inputs).some((key) => PASSWORD_KEY_RE.test(key));
-    return { hit: !supplied, fields };
+/**
+ * Whether following `href` from `page` would leave the page's origin. Only http(s) targets navigate
+ * away; a `#fragment` or `javascript:` link stays on the page.
+ */
+export function leavesOrigin(page: string, href: string): boolean {
+    try {
+        const target = new URL(href, page);
+        return (target.protocol === "http:" || target.protocol === "https:") && !sameOrigin(page, target.href);
+    } catch (error) {
+        log.debug({ error, page, href }, "link target did not parse; treating it as leaving the origin");
+        return true;
+    }
 }
 
 /**

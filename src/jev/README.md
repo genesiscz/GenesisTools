@@ -268,7 +268,10 @@ Reusable provider implementations, schema and credential access live in `src/uti
 These verbs keep Jev a decision workbench: it picks a command, a tool result to keep, or one
 observed `see`/`act` target. It never generates chat. Every verb shares three rules: `ok: true`
 means dispatched (never "the goal happened"), an act needs fresh observed evidence, and the
-admission thresholds (`minProbability` 0.8, `minMargin` 0.15, `minConfidence` 0.7) never move.
+admission thresholds (`minProbability` 0.8, `minMargin` 0.15, `minConfidence` 0.7) are fixed. The
+one exception is the goal-loop fan-out: an act whose risk score is below 0.5 (reversible) passes at 0.6
+with a 0.25 margin, and an act admitted more confidently than `done` is taken before the loop stops
+(`docs/benchmarks-jev-browser.md` has the runs that showed both).
 
 | Verb | What it does |
 |---|---|
@@ -277,10 +280,11 @@ admission thresholds (`minProbability` 0.8, `minMargin` 0.15, `minConfidence` 0.
 | `route [utterance]` | Picks a GenesisTools command from an introspected catalogue and binds argv from utterance spans. `--run` executes (destructive routes need `--yes`), `--plan` splits on "then", `--suggest` ranks, `--zsh` prints a widget. |
 | `compact [file]` | Keeps, truncates or drops tool results (never user or assistant text); `--llm` lets Jev overrule the heuristic, `--summaries` adds Jev-gated summaries. See below. |
 | `verify` / `screen` | Per-claim `supported`/`contradicted`/`sensitive` plus purpose templates over a document, a directory or a diff. `--sarif`, `--gate` (exit 2), `--only-changed`, `--custom`. |
-| `loop` | Goal-driven see/act loop; `--surface ax\|browser\|auto`. The browser surface acts on one CDP page (`--page-url` or `--page-index`) by snapshot uid only. Jev decides every step. |
+| `loop` | Goal-driven see/act loop; `--surface ax\|browser\|auto`. The browser surface acts on one CDP page (`--page-url` or `--page-index`), read with one in-page script per step through `DomPage` (`src/chrome-devtools/lib/dom/`, no chrome-devtools-mcp); rows are page-scoped node ids, never selectors, and each act re-checks its target and hit-tests it first. Jev decides every step. It stops as `stalled` after three acts that left the screen unchanged, and as `repeating` when it picks an act already taken on this same screen a second time in a row; labels already tried here reach Jev as `already_tried_on_this_screen`. A wait counts toward neither. Each step prints its time (`see · jev · act`) and the run ends with Jev's calls, seconds and tokens. Every run writes `~/.genesis-tools/jev/runs/<stamp>-<pid>-<goal>/` (one `step-NNN.json` with the inputs, the exact Jev requests, every answer, the decision and timing, plus `run.json`; the newest 30 are kept); `--no-record` skips it. `--writer [model]` lets a small model write the text for a field that `--inputs` does not cover (a search query the goal names): Jev still picks the row, secret, email, phone and credential-like fields are never offered, the answer is refused when it mentions a credential, and an identical request is asked once. |
+| `replay <runDir>` | Rebuilds each recorded step's decision with today's code and the SAVED answers, no Jev call. `same` means the request and the decision are unchanged; `CHANGED` names the step whose prompt or gate changed since the run. `--step <n>` for one step. |
 | `watch` | Bounded high-Hz policy on one window (`--hz`, `--max-seconds`, `--max-requests`); `--ocr` adds native OCR text to the state. |
 | `mcp` | Read-only stdio MCP server: `jev_route`, `jev_compact`, `jev_verify`, `jev_verify_templates`. |
-| `control observe` / `control assist` | One `see`, six questions in one request (target, verb, done, blocked, wait, risk); assist runs the fan-out by default with the double-toggle, recovery and no-change guards; `--no-fanout` restores the serial chooser. |
+| `control observe` / `control assist` | One `see`, five questions in one request (target, done, blocked, wait, risk; the act is the target's own action); assist runs the fan-out by default with the double-toggle, recovery and no-change guards; `--no-fanout` restores the serial chooser. |
 
 ```sh
 tools jev listen --stt deepgram --pcm-in mic --app Calculator --wake-mode contains
