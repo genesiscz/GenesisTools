@@ -1,4 +1,4 @@
-import { createEvaluator, type Evaluator } from "@genesiscz/utils/ai/evaluation/service";
+import { createEvaluator, type Evaluator, lazyEvaluator } from "@genesiscz/utils/ai/evaluation/service";
 import { DEFAULT_EVALUATION_PROVIDER } from "@genesiscz/utils/ai/evaluation/types";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
@@ -13,8 +13,9 @@ import {
 } from "@modelcontextprotocol/server";
 import { StdioServerTransport } from "@modelcontextprotocol/server/stdio";
 import { z } from "zod";
-import { JevMcpRegistry } from "./registry";
+import { JevMcpRegistry, JevMcpTextOutput } from "./registry";
 import { handleJevCompact, jevCompactInputSchema, jevCompactTool } from "./tools/compact";
+import { registerJevGrepTool } from "./tools/grep";
 import { type JevRouteDeps, registerJevRouteTool } from "./tools/route";
 import { handleJevVerify, handleJevVerifyTemplates, jevVerifyTemplatesTool, jevVerifyTool } from "./tools/verify";
 
@@ -45,15 +46,14 @@ const jevVerifyInput = z
  * so listing tools costs nothing and a host without a Jev key still gets `jev_verify_templates`.
  */
 function sharedEvaluator(deps: JevRouteDeps): Evaluator {
-    let shared: Promise<Evaluator> | undefined;
+    const shared = lazyEvaluator(() => createEvaluator({ provider: deps.provider ?? DEFAULT_EVALUATION_PROVIDER }));
     return (call) =>
         prof.measureAsync("mcp-evaluate", async () => {
             if (deps.evaluate) {
                 return deps.evaluate(call);
             }
 
-            shared ??= createEvaluator({ provider: deps.provider ?? DEFAULT_EVALUATION_PROVIDER });
-            return (await shared)(call);
+            return (await shared())(call);
         });
 }
 
@@ -81,6 +81,7 @@ export function registerJevMcpTools(registry: JevMcpRegistry, deps: JevRouteDeps
         readOnly: true,
         run: async () => handleJevVerifyTemplates(),
     });
+    registerJevGrepTool(registry, deps);
     return registry;
 }
 
@@ -106,6 +107,10 @@ export function createJevMcpServer(options: { registry?: JevMcpRegistry; deps?: 
 
         try {
             const result = await tool.run(request.params.arguments ?? {}, { signal: context.mcpReq.signal });
+            if (result instanceof JevMcpTextOutput) {
+                return { content: [{ type: "text", text: result.text }], structuredContent: result.structured };
+            }
+
             return { content: [{ type: "text", text: SafeJSON.stringify(result) }] };
         } catch (error) {
             log.warn({ error, tool: tool.name }, "Jev MCP tool failed");

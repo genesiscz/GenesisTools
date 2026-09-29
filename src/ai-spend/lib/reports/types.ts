@@ -17,6 +17,7 @@ export const SOURCE_IDS = [
     "qwen",
     "openclaw",
     "grok",
+    "jev",
 ] as const;
 
 export type SourceId = (typeof SOURCE_IDS)[number];
@@ -42,6 +43,7 @@ export const SOURCE_REPORTS: Record<SourceId, readonly ReportKind[]> = {
     qwen: ["daily", "monthly", "session"],
     openclaw: ["daily", "monthly", "session"],
     grok: ["daily", "monthly", "session"],
+    jev: ["daily", "monthly", "session"],
 };
 
 export interface SpendEvent {

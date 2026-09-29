@@ -2,7 +2,7 @@ import type { ToolEntry } from "@app/genesis-tools-mcp/lib/server";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { z } from "zod";
-import { JevMcpRegistry } from "./registry";
+import { JevMcpRegistry, JevMcpTextOutput } from "./registry";
 import { registerJevMcpTools } from "./server";
 
 const { log } = logger.scoped("jev-route");
@@ -23,7 +23,7 @@ export function jevToolEntries(): Record<string, ToolEntry> {
             inputSchema: z.toJSONSchema(tool.inputSchema, { io: "input" }),
             handler: async (args, context) => {
                 const result = await tool.run(args, { signal: context?.signal });
-                return SafeJSON.stringify(result);
+                return result instanceof JevMcpTextOutput ? result.text : SafeJSON.stringify(result);
             },
         };
     }

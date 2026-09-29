@@ -6,7 +6,7 @@ export function registerJevMcp(program: Command): void {
     program
         .command("mcp")
         .description(
-            "Start the read-only Jev MCP server on stdio (jev_route, jev_compact, jev_verify, jev_verify_templates)"
+            "Start the read-only Jev MCP server on stdio (jev_route, jev_compact, jev_verify, jev_verify_templates, jev_grep)"
         )
         .action(async () => {
             try {

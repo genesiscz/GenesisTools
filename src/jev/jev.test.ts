@@ -31,7 +31,7 @@ import { resolveApiKey, saveApiKey } from "./lib/auth";
 import { compileExperiment } from "./lib/compiler";
 import { CompilerRegistry } from "./lib/compilers/registry";
 import type { LanguageCompiler } from "./lib/compilers/types";
-import { describeGatewayFailure } from "./lib/errors";
+import { classifyEvaluationFailure, describeGatewayFailure } from "./lib/errors";
 import {
     createJevModel,
     demoInput,
@@ -983,6 +983,51 @@ describe("TypeSafe SDK adapter", () => {
                 },
             })
         ).rejects.toThrow();
+    });
+
+    test("asks for jev-latest unless a caller pins a model", async () => {
+        const models: unknown[] = [];
+        const fetchModel = Object.assign(
+            async (_url: RequestInfo | URL, init?: RequestInit) => {
+                models.push(SafeJSON.parse(String(init?.body)).model);
+                return Response.json({
+                    model: "fixture",
+                    answers: { refundRequested: { type: "noul", noul: 0.9 } },
+                    usage: { input_tokens: 1, output_tokens: 1 },
+                });
+            },
+            { preconnect: fetch.preconnect }
+        );
+        const input = { state: "fixture", questions: { refundRequested: demoInput.questions.refundRequested } };
+        await new TypeSafeEvaluationProvider({ apiKey: "fixture-key", fetch: fetchModel }).evaluate({ input });
+        await new TypeSafeEvaluationProvider({
+            apiKey: "fixture-key",
+            fetch: fetchModel,
+            model: "jev-1.13.0",
+        }).evaluate({
+            input,
+        });
+        expect(models).toEqual(["jev-latest", "jev-1.13.0"]);
+    });
+
+    test("classifies a failure from the provider error object, not its message", () => {
+        const apiError = (statusCode: number | undefined, extra: Record<string, unknown> = {}) =>
+            Object.assign(new Error("any wording"), { statusCode, ...extra });
+        expect(classifyEvaluationFailure(apiError(401)).code).toBe("authentication");
+        expect(classifyEvaluationFailure(apiError(403)).code).toBe("authentication");
+        expect(classifyEvaluationFailure(apiError(429, { responseHeaders: { "retry-after": "3" } }))).toEqual({
+            code: "rate-limit",
+            statusCode: 429,
+            retryAfterMs: 3000,
+            transient: true,
+        });
+        expect(classifyEvaluationFailure(apiError(503))).toMatchObject({ code: "provider", transient: true });
+        expect(classifyEvaluationFailure(apiError(400))).toMatchObject({ code: "provider", transient: false });
+        expect(classifyEvaluationFailure({ cause: apiError(undefined, { isRetryable: true }) })).toMatchObject({
+            code: "provider",
+            transient: true,
+        });
+        expect(classifyEvaluationFailure(new DOMException("slow", "TimeoutError")).transient).toBe(true);
     });
 
     test("saving either provider preserves the other credential", async () => {

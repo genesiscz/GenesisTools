@@ -16,6 +16,18 @@ export interface JevMcpTool {
     run(input: unknown, context: { signal?: AbortSignal }): Promise<unknown>;
 }
 
+/**
+ * A tool result whose text content is not JSON. The server sends `text` as the text content and
+ * `structured` as `structuredContent`, so `jev_grep` returns the same packet the CLI prints and the
+ * `--json` object beside it. Every other tool returns a plain value, sent as JSON text.
+ */
+export class JevMcpTextOutput {
+    constructor(
+        readonly text: string,
+        readonly structured: Record<string, unknown>
+    ) {}
+}
+
 export class JevMcpRegistry {
     private readonly tools = new Map<string, JevMcpTool>();
 
