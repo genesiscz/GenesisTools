@@ -9,8 +9,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { launchCdpBrowser } from "@app/chrome-devtools/lib/launch";
 import { buildExtension } from "@app/youtube/commands/extension";
+import { env } from "@genesiscz/utils/env.client";
 
 const DEFAULT_PORT = 9333;
+
+/** The ONE place this tool's endpoint default lives: an explicit URL, then $CDP_URL, then port 9333. */
+export function devtoolsCdpUrl(cdpUrl?: string): string {
+    return cdpUrl ?? env.extension.getCdpUrl() ?? `http://127.0.0.1:${DEFAULT_PORT}`;
+}
 
 export interface LaunchDevtoolsBrowserResult {
     pid: number;
@@ -21,10 +27,10 @@ export interface LaunchDevtoolsBrowserResult {
 
 /**
  * Launches Chrome/Brave with the built YouTube extension pre-loaded and a
- * remote-debugging port open, so an MCP client (see mcp-client.ts) or any
- * other CDP tool can attach to a browser that already has the extension
- * installed — no manual chrome://extensions "Load unpacked" step, no fragile
- * pixel-coordinate clicking to drive it.
+ * remote-debugging port open, so `tools chrome-devtools <verb> --port 9333`
+ * (snapshot, click, fill, eval, nav, shot, console) can drive a browser that
+ * already has the extension installed — no manual chrome://extensions "Load
+ * unpacked" step, no fragile pixel-coordinate clicking.
  *
  * Kill the returned pid (or its whole process tree — Chrome forks GPU/
  * renderer/utility helpers under the same --user-data-dir) when done; this

@@ -1,36 +1,44 @@
 import { copyFile, mkdir } from "node:fs/promises";
 import { relative, resolve } from "node:path";
+import { cdpPortOf } from "@app/chrome-devtools/lib/cdp";
 import { captureFrameGrid } from "@app/chrome-devtools/lib/frame-grid";
-import { launchDevtoolsBrowser } from "@app/youtube/lib/devtools/browser";
-import { devtoolsCdpUrl, withDevtoolsClient } from "@app/youtube/lib/devtools/mcp-client";
+import { devtoolsCdpUrl, launchDevtoolsBrowser } from "@app/youtube/lib/devtools/browser";
 import * as p from "@clack/prompts";
 import { createWatcher } from "@genesiscz/utils/fs/watcher";
-import { SafeJSON } from "@genesiscz/utils/json";
-import { logger, out } from "@genesiscz/utils/logger";
+import { logger } from "@genesiscz/utils/logger";
 import { toPosixPath } from "@genesiscz/utils/paths";
 import type { Command } from "commander";
 import pc from "picocolors";
 
 const DEV_RELOAD_PORT = 9877;
 
-/**
- * The port behind this tool's CDP endpoint.
- *
- * The MCP path takes a full URL; the shared frame-grid attaches by port. Same default
- * chain as mcp-client.ts: explicit flag, then $CDP_URL, then 9333.
- */
+/** The port behind this tool's CDP endpoint: explicit flag, then $CDP_URL, then 9333. */
 function cdpPortFrom(cdpUrl: string | undefined): number {
     const raw = devtoolsCdpUrl(cdpUrl);
 
     try {
-        const port = Number(new URL(raw).port);
-
-        return Number.isInteger(port) && port > 0 ? port : 9333;
-    } catch {
-        logger.debug({ raw }, "extension devtools: unparseable CDP url, defaulting to 9333");
+        return cdpPortOf(raw);
+    } catch (error) {
+        logger.debug({ raw, error }, "extension devtools: unusable CDP url, defaulting to 9333");
 
         return 9333;
     }
+}
+
+/** `list-tools` and `call` drove chrome-devtools-mcp; the same work now goes through our own CDP verbs. */
+function mcpTombstone(verb: string): void {
+    const port = String(cdpPortFrom(undefined));
+    const cdp = (args: string[]) => `tools chrome-devtools ${[...args, "--port", port].join(" ")}`;
+    p.log.error(`'extension devtools ${verb}' drove chrome-devtools-mcp, which this repo no longer relies on.
+Drive the extension browser with tools chrome-devtools on its port instead:
+  ${cdp(["snapshot", "--match", "youtube.com"])}
+  ${cdp(["click", '"Summarize"', "--match", "youtube.com"])}
+  ${cdp(["fill", '"<label>"', '"<text>"', "--match", "youtube.com"])}
+  ${cdp(["eval", "'() => location.href'", "--match", "youtube.com"])}
+  ${cdp(["nav", "https://www.youtube.com/watch?v=<id>", "--match", "youtube.com"])}
+  ${cdp(["shot", "<file.png>", "--match", "youtube.com"])}
+A real chrome-devtools-mcp tool is still one explicit call away: ${cdp(["mcp", "<tool>", "'<json>'"])}`);
+    process.exitCode = 1;
 }
 
 type DevReloadTarget = "tabs" | "runtime";
@@ -52,7 +60,9 @@ export function registerExtensionCommand(program: Command): void {
 
     const devtools = cmd
         .command("devtools")
-        .description("Drive a real, extension-loaded browser via chrome-devtools-mcp as our own MCP client");
+        .description(
+            "Launch a real, extension-loaded browser with a CDP port; drive it with tools chrome-devtools <verb> --port 9333"
+        );
 
     devtools
         .command("launch")
@@ -75,59 +85,17 @@ export function registerExtensionCommand(program: Command): void {
             p.log.info(pc.dim(`Kill it with: kill ${result.pid}`));
         });
 
-    devtools
-        .command("list-tools")
-        .description("List every tool chrome-devtools-mcp exposes")
-        .option("--cdp-url <url>", "CDP endpoint of a running browser (default: $CDP_URL or http://127.0.0.1:9333)")
-        .action(async (opts: { cdpUrl?: string }) => {
-            logger.debug({ cdpUrl: opts.cdpUrl ?? null }, "extension devtools: list-tools");
-            await withDevtoolsClient(
-                async (client) => {
-                    const { tools } = await client.listTools();
-                    logger.debug({ count: tools.length }, "extension devtools: tools listed");
-                    out.result(
-                        SafeJSON.stringify(
-                            tools.map((t) => ({ name: t.name, description: t.description })),
-                            { strict: true }
-                        )
-                    );
-                },
-                { cdpUrl: opts.cdpUrl }
-            );
-        });
-
-    devtools
-        .command("call <toolName> [argsJson]")
-        .description(
-            'Call one chrome-devtools-mcp tool directly, e.g. `call navigate_page \'{"url":"...","type":"url"}\'`'
-        )
-        .option("--cdp-url <url>", "CDP endpoint of a running browser (default: $CDP_URL or http://127.0.0.1:9333)")
-        .action(async (toolName: string, argsJson: string | undefined, opts: { cdpUrl?: string }) => {
-            const parsed: unknown = argsJson ? SafeJSON.parse(argsJson, { strict: true }) : {};
-
-            if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
-                p.log.error('argsJson must be a JSON object, e.g. \'{"url":"..."}\'.');
-                process.exitCode = 1;
-                return;
-            }
-
-            const args = parsed as Record<string, unknown>;
-            logger.info(
-                { toolName, argKeys: Object.keys(args), cdpUrl: opts.cdpUrl ?? null },
-                "extension devtools: call"
-            );
-            await withDevtoolsClient(
-                async (client) => {
-                    const result = await client.callTool({
-                        name: toolName,
-                        arguments: args,
-                    });
-                    logger.debug({ toolName, isError: result.isError === true }, "extension devtools: call finished");
-                    out.result(SafeJSON.stringify(result, { strict: true }));
-                },
-                { cdpUrl: opts.cdpUrl }
-            );
-        });
+    for (const verb of ["list-tools", "call"]) {
+        devtools
+            .command(verb, { hidden: true })
+            .allowUnknownOption(true)
+            .allowExcessArguments(true)
+            .description("removed: drive the browser with tools chrome-devtools <verb> --port 9333")
+            .action(() => {
+                logger.debug({ verb }, "extension devtools: removed MCP verb called");
+                mcpTombstone(verb);
+            });
+    }
 
     devtools
         .command("get-frame-grid <outPath>")
@@ -139,8 +107,6 @@ export function registerExtensionCommand(program: Command): void {
         .option("--cdp-url <url>", "CDP endpoint of a running browser (default: $CDP_URL or http://127.0.0.1:9333)")
         .action(async (outPath: string, opts: { region?: string; step: string; cdpUrl?: string }) => {
             logger.info({ outPath, region: opts.region ?? null, step: opts.step }, "extension devtools: frame grid");
-            // No MCP client here: the shared implementation screenshots over raw CDP, so
-            // this path no longer spawns a chrome-devtools-mcp server just to take a PNG.
             const written = await captureFrameGrid({
                 outPath,
                 region: opts.region,
