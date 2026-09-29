@@ -80,6 +80,10 @@ struct HubPRRef: Equatable {
 
     init?(_ raw: String) {
         let text = raw.trimmingCharacters(in: .whitespaces)
+        if let page = Self.fromPageURL(text) {
+            self = page
+            return
+        }
         guard let split = text.lastIndex(where: { $0 == "#" || $0 == "!" }) else {
             guard let number = Int(text) else { return nil }
             project = nil
@@ -92,11 +96,29 @@ struct HubPRRef: Equatable {
         self.number = number
     }
 
-    /// The project matches the folder name (`app`), the web path (`group/app`) or the whole key.
+    /// A PR or MR page: `https://github.com/owner/repo/pull/42/files`,
+    /// `https://gitlab.example/group/app/-/merge_requests/12`. The browser extension and links pass these.
+    private static func fromPageURL(_ text: String) -> HubPRRef? {
+        guard let url = URL(string: text), url.scheme == "https" || url.scheme == "http" else { return nil }
+        let parts = url.path.split(separator: "/").map(String.init)
+        if let at = parts.firstIndex(of: "pull"), at >= 2, at + 1 < parts.count, let number = Int(parts[at + 1]) {
+            return HubPRRef(project: parts[..<at].joined(separator: "/"), number: number)
+        }
+        if let at = parts.firstIndex(of: "merge_requests"), at >= 3, parts[at - 1] == "-", at + 1 < parts.count,
+           let number = Int(parts[at + 1]) {
+            return HubPRRef(project: parts[..<(at - 1)].joined(separator: "/"), number: number)
+        }
+        return nil
+    }
+
+    /// The project matches the folder name (`app`), the web path (`group/app`) or the whole key, in any
+    /// letter case: GitHub and GitLab paths are case-insensitive, and a typed or lowercased URL is common.
     func matches(_ pr: HubPR) -> Bool {
         guard pr.number == number else { return false }
         guard let project else { return true }
-        return pr.repo == project || pr.project == project || pr.project.hasSuffix("/" + project)
+        let wanted = project.lowercased()
+        let key = pr.project.lowercased()
+        return pr.repo.lowercased() == wanted || key == wanted || key.hasSuffix("/" + wanted)
     }
 
     var label: String { project.map { "\($0)#\(number)" } ?? "#\(number)" }
@@ -837,8 +859,9 @@ struct PRDetailView: View {
         }
     }
 
+    /// The first row sits in the window's title bar (`TitlebarHeader`).
     private var header: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        TitlebarHeader {
             HStack(spacing: 10) {
                 PRStateIcon(pr: pr)
                 Text(pr.title)
@@ -898,6 +921,7 @@ struct PRDetailView: View {
                     }
                 }
             }
+        } details: {
             HStack(spacing: 10) {
                 ExternalLink(
                     text: pr.author ?? "unknown",
@@ -945,11 +969,6 @@ struct PRDetailView: View {
             .font(.system(size: 11.5))
             .foregroundColor(ReviewPalette.dim)
         }
-        .padding(.leading, 18)
-        .padding(.trailing, 14)
-        .padding(.top, 34)
-        .padding(.bottom, 10)
-        .overlay(Rectangle().fill(ReviewPalette.hairline).frame(height: 1), alignment: .bottom)
     }
 
     /// Open / Draft / Merged / Closed in the same color as the state icon.
@@ -997,9 +1016,7 @@ struct PRDetailView: View {
         } else if let url {
             Button { ExternalOpener.open(url) } label: { label }
                 .buttonStyle(.genHoverPlain())
-                .onHover { inside in
-                    if inside { NSCursor.pointingHand.push() } else { NSCursor.pop() }
-                }
+                .hoverCursor(.pointingHand)
                 .instantTooltip("Lines added and removed: open the \(pr.isGitLab ? "MR's changes" : "PR's files") on the host\n\(url.absoluteString)")
                 .accessibilityRemoveTraits(.isButton)
                 .accessibilityAddTraits(.isLink)

@@ -814,7 +814,6 @@ struct InboxMain: View {
         let rows = inbox.sorted(InboxSort(rawValue: sortKey) ?? .recent, filter: model.filter)
         VStack(spacing: 0) {
             header(rows)
-            Rectangle().fill(ReviewPalette.hairline).frame(height: 1)
             // ⌘F: the shared find bar, wired around InboxMain (Hub/HubInboxFind.swift); draws nothing until opened.
             PanelFindBarSlot()
             ScrollViewReader { proxy in
@@ -887,27 +886,31 @@ struct InboxMain: View {
         return parts.joined(separator: " · ")
     }
 
+    /// In the window's title bar (`TitlebarHeader`): the list starts right under it.
     private func header(_ rows: [InboxSession]) -> some View {
-        HStack(spacing: 10) {
-            Image(systemName: "tray.full").foregroundColor(InboxStyle.accent)
-            Text("Waiting for you").font(.system(size: 14, weight: .semibold))
-            Text(verbatim: Self.summary(rows))
-                .font(.system(size: 12))
-                .foregroundColor(ReviewPalette.dim)
-            Spacer()
-            if let notice = model.notice {
-                NoticePill(text: notice) { model.notice = nil }
+        TitlebarHeader {
+            HStack(spacing: 10) {
+                Group {
+                    Image(systemName: "tray.full").foregroundColor(InboxStyle.accent)
+                    Text("Waiting for you").font(.system(size: 14, weight: .semibold))
+                    Text(verbatim: Self.summary(rows))
+                        .font(.system(size: 12))
+                        .foregroundColor(ReviewPalette.dim)
+                }
+                .titlebarLabel()
+                Spacer()
+                if let notice = model.notice {
+                    NoticePill(text: notice) { model.notice = nil }
+                }
+                if let loadedAt = inbox.loadedAt {
+                    LiveAgo(date: loadedAt) { "checked \($0)" }
+                        .font(.system(size: 11))
+                        .foregroundColor(ReviewPalette.dim)
+                        .titlebarLabel()
+                }
+                IconButton(systemName: "arrow.clockwise", tooltip: "Look for waiting sessions again") { inbox.load() }
             }
-            if let loadedAt = inbox.loadedAt {
-                LiveAgo(date: loadedAt) { "checked \($0)" }
-                    .font(.system(size: 11))
-                    .foregroundColor(ReviewPalette.dim)
-            }
-            IconButton(systemName: "arrow.clockwise", tooltip: "Look for waiting sessions again") { inbox.load() }
         }
-        .padding(.horizontal, 18)
-        .frame(height: 44)
-        .hubSurface(.bar)
     }
 }
 

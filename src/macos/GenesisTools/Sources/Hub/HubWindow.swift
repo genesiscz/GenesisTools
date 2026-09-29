@@ -24,6 +24,9 @@ struct HubRequest {
     var benchPath: String?
     var session: String?
     var pr: HubPRRef?
+    /// With `--pr`: this repo-relative file opens in that PR's review (`--reveal <path>`, the browser
+    /// extension's "Open in GenesisTools" on a diff file).
+    var reveal: String?
     var tab: HubTab?
     var mode: HubMode?
     var panes: [HubTab]?
@@ -69,6 +72,12 @@ struct HubRequest {
     var textSettings: [String: String] = [:]
     var activate = true
 
+    /// The file `--reveal` names, in the PR `--pr` names.
+    var prReveal: PRReveal? {
+        guard let pr, let reveal, !reveal.isEmpty else { return nil }
+        return PRReveal(ref: pr, path: reveal, threadID: nil)
+    }
+
     /// Off screen, never active, on scratch settings.
     var isScripted: Bool { snapshotPath != nil || benchPath != nil }
 
@@ -81,6 +90,7 @@ struct HubRequest {
             case "--bench": benchPath = value; index += 1
             case "--session": session = value; index += 1
             case "--pr": pr = value.flatMap(HubPRRef.init); index += 1
+            case "--reveal": reveal = value; index += 1
             case "--tab": tab = value.flatMap(HubTab.init(rawValue:)); index += 1
             case "--mode": mode = value.flatMap(HubMode.init(rawValue:)); index += 1
             case "--panes":
@@ -175,7 +185,7 @@ func runHub(_ args: [String]) -> Never {
     model.applyOverlays(request)
     MainActor.assumeIsolated {
         if let wantedPR {
-            model.prs.request(wantedPR)
+            model.prs.request(wantedPR, reveal: request.prReveal)
         }
         // The Inbox count in the mode switch; the Inbox mode itself loads when it opens.
         if !request.isScripted && mode != .inbox {
@@ -192,7 +202,8 @@ func runHub(_ args: [String]) -> Never {
     window.titlebarAppearsTransparent = true
     window.appearance = NSAppearance(named: .darkAqua)
     window.backgroundColor = ReviewPalette.background
-    window.contentView = HubGlass.makeContentView(root: HubRootView(model: model).defaultAppStorage(HubDefaults.store))
+    // The title bar strip zooms on a double-click and drags the window (WindowTitlebar.swift).
+    window.contentView = HubGlass.makeContentView(root: HubRootView(model: model).defaultAppStorage(HubDefaults.store).titlebarZone())
     window.center()
     if request.isScripted {
         // Start from the live hub's size, but never write a scripted resize back into it.
@@ -239,6 +250,14 @@ func runHub(_ args: [String]) -> Never {
                             PerfLog.mark("hub.snapshot \(rows)")
                             FileHandle.standardError.write(Data("hub snapshot: \(rows)\n".utf8))
                         }
+                        // Where a click on the title bar row lands: the empty strip must reach the zone, no
+                        // control may start under the traffic lights or the title, and a mode with a header
+                        // has its first row up there with no empty band under it. A modal panel's dim layer
+                        // covers the strip on purpose.
+                        let titlebar = (covered ? "(a modal panel covers it) " : "")
+                            + WindowTitlebar.audit(window, expectsRow: model.showsTitlebarHeader).line
+                        PerfLog.mark("hub.snapshot titlebar \(titlebar)")
+                        FileHandle.standardError.write(Data("hub snapshot: titlebar \(titlebar)\n".utf8))
                         ReviewSnapshot.write(window: window, webView: showsDiff && !covered ? web : nil, to: snapshotPath) {
                             exit(0)
                         }
@@ -1042,7 +1061,7 @@ final class HubModel: ObservableObject {
             selectedWorktree = WorktreeCleanup.selection(for: worktree)
         }
         if let ref = request.pr {
-            MainActor.assumeIsolated { prs.request(ref) }
+            MainActor.assumeIsolated { prs.request(ref, reveal: request.prReveal) }
             if request.mode == nil {
                 setMode(.prs)
             }
@@ -1374,6 +1393,22 @@ struct HubRootView: View {
         .hubPrompts(model: model)
         // `tools hub --handoff`: the composer over every pane (Hub/HubHandoffComposer.swift).
         .hubHandoff(model: model)
+    }
+}
+
+extension HubModel {
+    /// The main view on screen has a `TitlebarHeader`, so its first row belongs in the title bar; an
+    /// empty state ("Pick a PR or MR") has none. Follows the branches of `HubRootView.body`.
+    @MainActor
+    var showsTitlebarHeader: Bool {
+        switch mode {
+        case .prs: return prs.selected != nil
+        case .inbox, .timeline: return true
+        case .worktrees:
+            return worktrees.contains { $0.path == selectedWorktree }
+                || (selectedWorktree == WorktreeCleanup.selectionID && !loadingWorktrees)
+        case .sessions: return selectedID == AgentProcs.selectionID || selected != nil
+        }
     }
 }
 
@@ -1757,6 +1792,8 @@ private struct SessionDetailView: View {
                                 .frame(minWidth: tab.minPaneWidth, idealWidth: tab.idealPaneWidth, maxWidth: .infinity, maxHeight: .infinity)
                         }
                     }
+                    // The side panels' grip, target and cursor on the split's bare 1 pt dividers too.
+                    .overlay(PaneDividerGrips())
                     // The split view too: its frame changing per window-resize step made the root
                     // hosting view rebuild the key view loop each step (72 ms with two panes).
                     .freezesWidthWhileResizing()
@@ -1840,26 +1877,32 @@ private struct SessionDetailView: View {
         }
     }
 
+    /// The first row sits in the window's title bar, right of the traffic lights and the title, so the
+    /// panes start right under the title bar (Martin, 2026-09-28). Its empty part zooms and drags the
+    /// window (`TitlebarHeader`, `.titlebarZone()` on the root, WindowTitlebar.swift).
     private var header: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        TitlebarHeader(details: model.panes.contains(.transcript) ? nil : accountRow) {
             HStack(spacing: 10) {
                 if !model.panes.contains(.transcript) {
-                    ProviderBadge(provider: session.provider)
-                    Text(session.displayTitle)
-                        .font(.system(size: 15, weight: .semibold))
-                        .lineLimit(1)
-                    Circle()
-                        .fill(session.isLive ? ReviewPalette.added : Color.white.opacity(0.25))
-                        .frame(width: 7, height: 7)
                     Group {
-                        if session.isLive {
-                            Text("live")
-                        } else {
-                            LiveAgo(date: session.lastActivity) { "idle · \($0)" }
+                        ProviderBadge(provider: session.provider)
+                        Text(session.displayTitle)
+                            .font(.system(size: 15, weight: .semibold))
+                            .lineLimit(1)
+                        Circle()
+                            .fill(session.isLive ? ReviewPalette.added : Color.white.opacity(0.25))
+                            .frame(width: 7, height: 7)
+                        Group {
+                            if session.isLive {
+                                Text("live")
+                            } else {
+                                LiveAgo(date: session.lastActivity) { "idle · \($0)" }
+                            }
                         }
+                            .font(.system(size: 11.5))
+                            .foregroundColor(ReviewPalette.dim)
                     }
-                        .font(.system(size: 11.5))
-                        .foregroundColor(ReviewPalette.dim)
+                    .titlebarLabel()
                     if let verdict = stuck.verdicts[session.sessionId] {
                         StuckBadge(verdict: verdict)
                     }
@@ -1867,7 +1910,9 @@ private struct SessionDetailView: View {
                 Spacer()
                 if model.panes.contains(.transcript) {
                     // The account row below hides with the transcript open; the forecast stays in sight.
+                    // In a narrow window it gives way first, before the pane buttons' titles.
                     HubForecastChip(account: session.account)
+                        .layoutPriority(-1)
                 }
                 if let notice = model.notice {
                     NoticePill(text: notice, isError: notice.hasPrefix("cmux:") || notice.contains("failed")) { model.notice = nil }
@@ -1877,45 +1922,42 @@ private struct SessionDetailView: View {
                     Task { @MainActor in model.notice = await model.exportSession(session) }
                 }
             }
-            if !model.panes.contains(.transcript) {
-                HStack(spacing: 8) {
-                    chip("person.crop.circle", session.account ?? "no pin")
-                    HubForecastChip(account: session.account)
-                    if let sessionModel = session.model {
-                        chip("cpu", sessionModel)
+        }
+    }
+
+    /// Under the title bar row while the transcript is closed (the transcript shows the same facts).
+    private var accountRow: some View {
+        HStack(spacing: 8) {
+            chip("person.crop.circle", session.account ?? "no pin")
+            HubForecastChip(account: session.account)
+            if let sessionModel = session.model {
+                chip("cpu", sessionModel)
+            }
+            if !session.cwd.isEmpty {
+                PathLabel(path: session.cwd)
+                if let branch = HubSessionDetailHost.branch(of: session) {
+                    let facts = repos.facts(for: session.cwd, pr: true)
+                    ExternalLink(text: branch, url: HubSessionDetailHost.branchURL(branch, facts: facts), font: .system(size: 11))
+                    // The folder's PR belongs to the branch checked out there now.
+                    if facts?.branch == branch {
+                        CompareLink(facts: facts)
+                        PullRequestLink(facts: facts)
                     }
-                    if !session.cwd.isEmpty {
-                        PathLabel(path: session.cwd)
-                        if let branch = HubSessionDetailHost.branch(of: session) {
-                            let facts = repos.facts(for: session.cwd, pr: true)
-                            ExternalLink(text: branch, url: HubSessionDetailHost.branchURL(branch, facts: facts), font: .system(size: 11))
-                            // The folder's PR belongs to the branch checked out there now.
-                            if facts?.branch == branch {
-                                CompareLink(facts: facts)
-                                PullRequestLink(facts: facts)
-                            }
-                        }
-                    }
-                    if let totals = model.transcriptTotals {
-                        chip("sum", totals)
-                    }
-                    Button {
-                        PathOpener.copy(session.sessionId)
-                        model.notice = "Session id copied"
-                    } label: {
-                        chip("number", String(session.sessionId.prefix(8)))
-                    }
-                    .buttonStyle(.genHoverPlain())
-                    .instantTooltip("Copy the full session id")
-                    Spacer()
                 }
             }
+            if let totals = model.transcriptTotals {
+                chip("sum", totals)
+            }
+            Button {
+                PathOpener.copy(session.sessionId)
+                model.notice = "Session id copied"
+            } label: {
+                chip("number", String(session.sessionId.prefix(8)))
+            }
+            .buttonStyle(.genHoverPlain())
+            .instantTooltip("Copy the full session id")
+            Spacer()
         }
-        .padding(.leading, 18)
-        .padding(.trailing, 14)
-        .padding(.top, model.panes.contains(.transcript) ? 8 : 34)
-        .padding(.bottom, model.panes.contains(.transcript) ? 6 : 10)
-        .overlay(Rectangle().fill(ReviewPalette.hairline).frame(height: 1), alignment: .bottom)
     }
 
     private func chip(_ icon: String, _ text: String) -> some View {

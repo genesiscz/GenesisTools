@@ -517,10 +517,13 @@ struct WorktreeCleanupView: View {
         let total = known.reduce(0) { $0 + $1.bytes }
         let frees = known.reduce(0) { $0 + ($1.freeableBytes ?? 0) }
         let chosen = store.rows.filter { store.selected.contains($0.path) }
-        return VStack(alignment: .leading, spacing: 8) {
+        return TitlebarHeader {
             HStack(spacing: 10) {
-                Image(systemName: "trash").foregroundColor(ReviewPalette.dim)
-                Text("Clean up worktrees").font(.system(size: 15, weight: .semibold))
+                Group {
+                    Image(systemName: "trash").foregroundColor(ReviewPalette.dim)
+                    Text("Clean up worktrees").font(.system(size: 15, weight: .semibold))
+                }
+                .titlebarLabel()
                 Spacer()
                 if let notice = store.notice {
                     NoticePill(text: notice.text, isError: notice.isError) { store.notice = nil }
@@ -556,48 +559,46 @@ struct WorktreeCleanupView: View {
                 .disabled(store.loading)
             }
             .buttonStyle(.genHoverPlain())
-            HStack(spacing: 6) {
-                // A fixed slot: the summary beside it stays put on every reload.
-                ZStack {
-                    if store.loading {
+        } details: {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 6) {
+                    // A fixed slot: the summary beside it stays put on every reload.
+                    ZStack {
+                        if store.loading {
+                            ProgressView().controlSize(.small)
+                        }
+                    }
+                    .frame(width: 16, height: 16)
+                    Text(verbatim: summary(removable: removable.count, sized: known.count, total: total, frees: frees))
+                        .font(.system(size: 11.5))
+                        .foregroundColor(ReviewPalette.dim)
+                        .lineLimit(1)
+                    Spacer()
+                    if let progress = store.moving {
                         ProgressView().controlSize(.small)
+                        Text(verbatim: "Moving \(progress.done) of \(progress.total)…").font(.system(size: 11.5)).foregroundColor(ReviewPalette.dim)
+                    }
+                    Stepper(value: $store.olderThanDays, in: 0...90) {
+                        Text(verbatim: store.olderThanDays == 0 ? "any age" : "idle ≥ \(store.olderThanDays) d")
+                            .font(.system(size: 11.5, design: .monospaced))
+                    }
+                    .fixedSize()
+                    .disabled(store.loading)
+                    .instantTooltip("Only worktrees idle at least this many days count as removable (0: any age)")
+                    if !removable.isEmpty {
+                        Button(store.selected.count == removable.count ? "Select none" : "Select all removable") {
+                            store.selected = store.selected.count == removable.count ? [] : Set(removable.map(\.path))
+                        }
+                        .buttonStyle(.genHoverPlain())
+                        .font(.system(size: 11.5))
                     }
                 }
-                .frame(width: 16, height: 16)
-                Text(verbatim: summary(removable: removable.count, sized: known.count, total: total, frees: frees))
-                    .font(.system(size: 11.5))
+                Text("Removable: the branch is in the base (merged, rebased or squashed, or it has no commits), nothing is uncommitted or untracked, no stash names it, nothing runs in it, no agent session wrote in it in the last 30 minutes, and it is idle for the chosen number of days. Move aside deletes nothing; Remove runs `git worktree remove`.")
+                    .font(.system(size: 11))
                     .foregroundColor(ReviewPalette.dim)
-                    .lineLimit(1)
-                Spacer()
-                if let progress = store.moving {
-                    ProgressView().controlSize(.small)
-                    Text(verbatim: "Moving \(progress.done) of \(progress.total)…").font(.system(size: 11.5)).foregroundColor(ReviewPalette.dim)
-                }
-                Stepper(value: $store.olderThanDays, in: 0...90) {
-                    Text(verbatim: store.olderThanDays == 0 ? "any age" : "idle ≥ \(store.olderThanDays) d")
-                        .font(.system(size: 11.5, design: .monospaced))
-                }
-                .fixedSize()
-                .disabled(store.loading)
-                .instantTooltip("Only worktrees idle at least this many days count as removable (0: any age)")
-                if !removable.isEmpty {
-                    Button(store.selected.count == removable.count ? "Select none" : "Select all removable") {
-                        store.selected = store.selected.count == removable.count ? [] : Set(removable.map(\.path))
-                    }
-                    .buttonStyle(.genHoverPlain())
-                    .font(.system(size: 11.5))
-                }
+                    .fixedSize(horizontal: false, vertical: true)
             }
-            Text("Removable: the branch is in the base (merged, rebased or squashed, or it has no commits), nothing is uncommitted or untracked, no stash names it, nothing runs in it, no agent session wrote in it in the last 30 minutes, and it is idle for the chosen number of days. Move aside deletes nothing; Remove runs `git worktree remove`.")
-                .font(.system(size: 11))
-                .foregroundColor(ReviewPalette.dim)
-                .fixedSize(horizontal: false, vertical: true)
         }
-        .padding(.leading, 18)
-        .padding(.trailing, 14)
-        .padding(.top, 34)
-        .padding(.bottom, 10)
-        .overlay(Rectangle().fill(ReviewPalette.hairline).frame(height: 1), alignment: .bottom)
     }
 
     private func summary(removable: Int, sized: Int, total: Double, frees: Double) -> String {

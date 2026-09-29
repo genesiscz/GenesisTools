@@ -23,6 +23,8 @@ install, reap stale faces). Swift UI you have not seen rendered is not done.
 | A status message | `NoticePill` (fades, error stays) | a raw colored `Text` line |
 | A relative time on screen ("5 min. ago", "active 20s ago") | `LiveAgo(date:)` (HubComponents.swift) or `LiveTime(date:style:)` (Hub/Stolen/UI/LiveTime.swift, shared with Genesis): the label keeps its own clock, nothing above it re-renders per tick | `HubFormat.ago` in a body (formats once and goes stale), or a `Timer` / `TimelineView` above the label (re-renders the whole row or list per tick) |
 | Find inside a panel (⌘F) | Hub/HubPanelFind.swift: `@State` `PanelFindModel`, `PanelFindBar` under the header as its own row above the scroll view, `.panelFind(find, revision:rows:)` on the root, `.findRow(id)` per row, `FindText(text, field:)` for shown text (`MarkdownContentView` + `.findField(key)` for markdown). A pane with its own find registers with `.panelFindNative(scope)`, an overlay that owns the keyboard with `.panelFindModal()` | a bar in `.safeAreaInset(edge: .top)` (selectable text draws through it), a SwiftUI `.keyboardShortcut("f")` button or a local key monitor per view: `PanelFindRouter` is the one ⌘F / ⌘G / ⇧⌘G / Esc owner and sends the key to the panel of the last click |
+| A main view's header (every hub mode, and any new one) | `TitlebarHeader { row } details: { rows }` (Hub/HubComponents.swift): the first row goes into the title bar row, the rest under it, then the hairline; plain title text in the row gets `.titlebarLabel()` so a double-click on it zooms | a header with `.padding(.top, 34)` under the title bar: every hub mode had one, an empty band the `--snapshot` audit now names ("an empty band N pt tall under the title bar") |
+| A window whose content runs under the title bar (`.fullSizeContentView`, transparent title bar) | `.titlebarZone()` on the window's root view, `.titlebarBackground(fill)` for any fill that paints the strip (`.hubSurface` already does), `.titlebarRow()` for a row of controls placed in the strip (Sources/WindowTitlebar.swift) | a view, or a `.background(… .ignoresSafeArea(edges: .top))`, over the title bar without them: the double-click never reaches the window, so it does not zoom |
 | A PR/MR's review threads or any write to them | `ReviewModel.attachPR` → `PRThreadsStore` + `PRCommand` argv (Review/PRThreads.swift, fed by `tools hub pr`). The diff's thread cards carry Reply / Resolve / Edit / Delete (web/diff-viewer/main.ts, `renderLiveThread`): the page only posts `thread.action`, and Swift confirms, runs `tools`, then answers `threadDone`. The PR bar and threads list are in Review/PRThreadsPanel.swift. 🛑 `PRCommand.publish` has one caller, the Submit review confirmation (a test scans Sources for it) | `tools github …` / `tools gitlab …` calls from a view, or a second path to `publish` |
 
 **Every button has a hover effect.** Icon buttons: `IconButton` (uses `.genHoverIcon()`); text-like buttons and
@@ -30,6 +32,24 @@ links: `.buttonStyle(.genHoverPlain())`; list rows and menu rows: `.buttonStyle(
 Hub/Stolen/UI/GenHoverButton.swift). Never `.buttonStyle(.borderless)` on something clickable.
 
 **Every button that shows only an icon has a tooltip.** Check before you finish: `rg -n 'Image\(systemName' Sources | rg -v 'IconButton|instantTooltip'` and look at each hit.
+
+## 🛑 Every title bar zooms on a double-click and drags on empty chrome
+
+Martin, 2026-09-28: "the top of the window is not clickable to fill in the whole display.. this keeps reoccuring in
+all swift stuff you do". In a `.fullSizeContentView` window the SwiftUI hosting view covers the title bar, so every
+click there lands in SwiftUI (hit test: `NSHostingView`, never `NSTitlebarView`) and AppKit never zooms the window.
+The window server still drags it from anywhere in the strip, a control placed there included. So every window with
+a title bar gets, through Sources/WindowTitlebar.swift:
+
+- `.titlebarZone()` on its root view: the empty strip does what System Settings says on a double-click
+  (`AppleActionOnDoubleClick`: zoom, minimize or nothing) and drags the window; controls keep their clicks and drags.
+- `.titlebarBackground(fill)` for every fill that reaches up into the strip. A plain hit-testable fill there takes
+  the strip's clicks before the zone sees them.
+- `.titlebarRow()` for controls moved up into the strip: the strip's height, clear of the traffic lights and title.
+
+Never put a view over the title bar without these. A window with a standard (not full-size) title bar needs nothing.
+Check it: the `--hub` and `--review` snapshots print `titlebar …; ok` or the problem (`WindowTitlebar.audit`), and
+`swift test --filter WindowTitlebarTests` covers the behaviour.
 
 ## 🛑 Never block the main thread inside a view body
 
@@ -61,6 +81,13 @@ not the hub's models (`TimelineRowView`), and carry buttons, hover sensors and t
 pointer is on them (its `live`, `ExternalLink(interactive:)`). A list that inserts rows above the
 viewport holds it with `TranscriptScrollAnchor` (Hub/HubTranscriptAnchor.swift).
 
+🛑 Moving a SwiftUI `List`'s viewport inside the resize of a row insert (a frame-change observer that
+scrolls at once, as `TranscriptScrollAnchor` does to stay still) stops AppKit re-measuring the rows on
+screen: their height listener is gone and `noteHeightOfRows` returns the cached height. A row that grows
+later (an opened tool call) keeps its old height and draws over the rows below; with the live tail every
+row of a running session did it (2026-09-28). An insert without that move is fine (measured). Such a list
+needs `TranscriptScrollAnchor.remeasureVisibleRows` after each change of the row count.
+
 ## Look
 
 - Palette: `ReviewPalette` (Review/ReviewWindow.swift) for hub and review; `SessionPalette` inside the stolen session screen. Dark only, near-black background, white-alpha hairlines, green/red/orange/blue status colours.
@@ -86,8 +113,8 @@ marked adaptation (`// GenesisTools adaptation: …`). Missing Genesis types go 
   `activity` (the Activity rail's filters clicked) and `inbox` (the mode switch). 🛑 Measure clicks with
   `GENESIS_HUB_BENCH_AX=1`: the live hub always has an accessibility client (dictation, `tools control`), and with
   one SwiftUI walks every responder per changed accessibility node; a click that costs 90 ms without it costs 1.6 s.
-- Logic tests: `swift test` in this folder (Tests/). Only LiveTimeTests and SessionTranscriptScrollTests open a window, alpha 0
-  below the desktop and never activated; `SESSION_SCROLL_PERF=1` adds the transcript's scroll and idle cost lines.
+- Logic tests: `swift test` in this folder (Tests/). Only LiveTimeTests, SessionTranscriptScrollTests and WindowTitlebarTests
+  open a window, alpha 0 below the desktop and never activated; `SESSION_SCROLL_PERF=1` adds the transcript's scroll and idle cost lines.
 - Read the PNG. The web diff is composited from WKWebView's own snapshot, so it needs no Screen Recording grant.
 - A `--snapshot` run uses the `.prohibited` activation policy and an alpha-0 window (`orderInForSnapshot`): it never
   shows on screen and never takes the keyboard. Martin's typing once landed in the hub search field because a

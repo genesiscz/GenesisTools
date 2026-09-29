@@ -362,10 +362,13 @@ struct AgentProcsView: View {
 
     private var header: some View {
         let orphans = store.orphans
-        return VStack(alignment: .leading, spacing: 8) {
+        return TitlebarHeader {
             HStack(spacing: 10) {
-                Image(systemName: "cpu").foregroundColor(ReviewPalette.dim)
-                Text("Agent processes").font(.system(size: 15, weight: .semibold))
+                Group {
+                    Image(systemName: "cpu").foregroundColor(ReviewPalette.dim)
+                    Text("Agent processes").font(.system(size: 15, weight: .semibold))
+                }
+                .titlebarLabel()
                 Spacer()
                 if let notice = store.notice {
                     NoticePill(text: notice.text, isError: notice.isError) { store.notice = nil }
@@ -387,30 +390,28 @@ struct AgentProcsView: View {
                 .disabled(store.loading)
             }
             .buttonStyle(.genHoverPlain())
-            HStack(spacing: 6) {
-                // A fixed slot: the summary beside it stays put on every refresh.
-                ZStack {
-                    if store.loading {
-                        ProgressView().controlSize(.small)
+        } details: {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 6) {
+                    // A fixed slot: the summary beside it stays put on every refresh.
+                    ZStack {
+                        if store.loading {
+                            ProgressView().controlSize(.small)
+                        }
                     }
+                    .frame(width: 16, height: 16)
+                    Text(verbatim: store.report.map(ProcsFormat.summary) ?? "")
+                        .font(.system(size: 11.5))
+                        .foregroundColor(ReviewPalette.dim)
+                        .lineLimit(1)
+                    Spacer()
                 }
-                .frame(width: 16, height: 16)
-                Text(verbatim: store.report.map(ProcsFormat.summary) ?? "")
-                    .font(.system(size: 11.5))
+                Text("Orphan: an agent, MCP server, tool shell or `tools … run` wrapper whose parent is gone (launchd adopted it) and that is not a launchd job. Idle: its session wrote nothing for 2 h and the tree uses under 1 % CPU. Refreshes every 10 s while this pane is open.")
+                    .font(.system(size: 11))
                     .foregroundColor(ReviewPalette.dim)
-                    .lineLimit(1)
-                Spacer()
+                    .fixedSize(horizontal: false, vertical: true)
             }
-            Text("Orphan: an agent, MCP server, tool shell or `tools … run` wrapper whose parent is gone (launchd adopted it) and that is not a launchd job. Idle: its session wrote nothing for 2 h and the tree uses under 1 % CPU. Refreshes every 10 s while this pane is open.")
-                .font(.system(size: 11))
-                .foregroundColor(ReviewPalette.dim)
-                .fixedSize(horizontal: false, vertical: true)
         }
-        .padding(.leading, 18)
-        .padding(.trailing, 14)
-        .padding(.top, 34)
-        .padding(.bottom, 10)
-        .overlay(Rectangle().fill(ReviewPalette.hairline).frame(height: 1), alignment: .bottom)
     }
 
     /// What ⌘F searches in a row: the texts the row shows, under the keys its FindTexts use.
