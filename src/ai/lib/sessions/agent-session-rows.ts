@@ -7,7 +7,7 @@ import {
     listSessionRows,
     type SessionCmuxLocation,
 } from "@app/claude/lib/usage/session-rows";
-import { openHistoryService } from "@genesiscz/utils/agent-sessions/open-service";
+import { catalogHistory } from "@genesiscz/utils/agent-sessions/open-service";
 import type { SessionPin } from "@genesiscz/utils/agent-sessions/pins";
 import { loadPins } from "@genesiscz/utils/agent-sessions/pins";
 import type { AccountProviderAlias } from "@genesiscz/utils/ai/providers/aliases";
@@ -85,9 +85,28 @@ export interface AgentSessionRowsOptions {
     minRows?: number;
     limit?: number;
     now?: number;
+    /** `false` leaves Claude rows without token, model and cache data (see `ListSessionRowsOptions`). */
+    withUsage?: boolean;
+    /** Reuse another process's refresh of the same provider scope when it is this recent. */
+    maxDiscoveryAgeMs?: number;
+    /** `false` reads each index as it is, with no refresh: for a diagnostic, which must not write it. */
+    refresh?: boolean;
+    /**
+     * A provider that cannot be listed fails the whole listing instead of adding no rows. For a caller
+     * that decides from the list that nothing uses a folder (move-aside): a missing provider must not
+     * read as "no session there".
+     */
+    failClosed?: boolean;
 }
 
 const ALL: readonly AccountProviderAlias[] = ["claude", "codex", "grok"];
+
+/**
+ * How stale a polled who/where listing may be (the inbox, the hub timeline and worktrees). They
+ * poll every 20 to 30 s beside the Genesis session list, so within this window one refresh by any
+ * of them serves the rest, and a new session shows up at most this late.
+ */
+export const POLLED_LISTING_REUSE_MS = 30_000;
 
 function titleOf(record: {
     customTitle: string | null;
@@ -158,13 +177,17 @@ async function nativeRows(
     // Read-only: a session listing is a diagnostic and must not rewrite the journal, and a
     // provider-filtered load must never compact it (see `loadPins`).
     const pins = await loadPins({ readOnly: true, provider: alias });
-    const service = openHistoryService({ provider: PROVIDER_ALIASES[alias] });
     const now = options.now ?? Date.now();
     const cutoff = options.hours === undefined ? undefined : now - options.hours * 3_600_000;
-    const { metadata } = await service.catalog({
-        excludeAgents: true,
-        ...(options.limit === undefined ? {} : { limit: options.limit }),
-        ...(cutoff === undefined ? {} : { mtimeFrom: cutoff }),
+    const { metadata } = await catalogHistory({
+        provider: PROVIDER_ALIASES[alias],
+        filters: {
+            excludeAgents: true,
+            ...(options.limit === undefined ? {} : { limit: options.limit }),
+            ...(cutoff === undefined ? {} : { mtimeFrom: cutoff }),
+        },
+        ...(options.maxDiscoveryAgeMs === undefined ? {} : { maxDiscoveryAgeMs: options.maxDiscoveryAgeMs }),
+        ...(options.refresh === undefined ? {} : { refresh: options.refresh }),
     });
     // One config read for the whole listing, not one per grok row.
     const grokLookup = alias === "grok" ? await grokAccountNameLookup() : () => undefined;
@@ -224,27 +247,41 @@ async function nativeRows(
 /** Every provider's sessions in one list, newest first. */
 export async function listAgentSessionRows(options: AgentSessionRowsOptions = {}): Promise<AgentSessionRow[]> {
     const wanted = options.providers ?? ALL;
-    const rows: AgentSessionRow[] = [];
+    // Side by side, not one after another: each provider walks its own tree, so a caller paid the
+    // sum of three walks. Their SQLite writes are synchronous transactions on one connection, so
+    // they cannot interleave. Rows are joined in `wanted` order, so the sort sees the same input.
+    const perProvider = await Promise.all(
+        wanted.map(async (alias): Promise<AgentSessionRow[]> => {
+            try {
+                if (alias === "claude") {
+                    const claude = await listSessionRows({
+                        ...(options.hours === undefined ? {} : { hours: options.hours }),
+                        ...(options.minRows === undefined ? {} : { minRows: options.minRows }),
+                        ...(options.now === undefined ? {} : { now: options.now }),
+                        ...(options.withUsage === undefined ? {} : { withUsage: options.withUsage }),
+                        ...(options.maxDiscoveryAgeMs === undefined
+                            ? {}
+                            : { maxDiscoveryAgeMs: options.maxDiscoveryAgeMs }),
+                        ...(options.refresh === undefined ? {} : { refresh: options.refresh }),
+                    });
 
-    for (const alias of wanted) {
-        try {
-            if (alias === "claude") {
-                const claude = await listSessionRows({
-                    ...(options.hours === undefined ? {} : { hours: options.hours }),
-                    ...(options.minRows === undefined ? {} : { minRows: options.minRows }),
-                    ...(options.now === undefined ? {} : { now: options.now }),
-                });
+                    return claude.map((row) => ({ ...row, provider: "claude" as const }));
+                }
 
-                rows.push(...claude.map((row) => ({ ...row, provider: "claude" as const })));
-                continue;
+                return await nativeRows(alias, options);
+            } catch (error) {
+                // One provider's index being unreadable must not blank the other two.
+                logger.warn({ error, provider: alias }, "[ai] could not list this provider's sessions");
+
+                if (options.failClosed) {
+                    throw error;
+                }
+
+                return [];
             }
-
-            rows.push(...(await nativeRows(alias, options)));
-        } catch (error) {
-            // One provider's index being unreadable must not blank the other two.
-            logger.warn({ error, provider: alias }, "[ai] could not list this provider's sessions");
-        }
-    }
+        })
+    );
+    const rows = perProvider.flat();
 
     rows.sort((a, b) => b.mtime - a.mtime);
 

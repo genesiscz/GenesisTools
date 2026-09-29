@@ -1,6 +1,19 @@
 import { isBareSlashCommandText } from "@genesiscz/utils/ai/transcripts/clean-text";
 
 /**
+ * What the harness delivers into a running session as a user turn, never typed by the user: a peer's
+ * message, a background task's result, and the marker Claude Code stores for an Esc. A handoff quoted a
+ * whole teammate report as the session's goal, and "the last 2 prompts" spent one on an Esc marker.
+ */
+const HARNESS_DELIVERY_PREFIXES = [
+    "Another Claude session sent a message",
+    "<teammate-message",
+    "<task-notification>",
+    "[SYSTEM NOTIFICATION",
+    "[Request interrupted by user",
+] as const;
+
+/**
  * Codex and Grok wrap machine-generated context in a leading tag and send it as a user-role
  * message. Treating one as the session's own first prompt made 48 of 111 Codex sessions on this
  * machine list `<environment_context> <cwd>/Users/…` where the user's words belong. Three readers
@@ -17,15 +30,46 @@ const WRAPPER_PREFIXES = [
     // prompt: 97 open with the caveat block, 32 with a teammate message, 9 with a session-naming
     // reminder and 9 with a compaction header. That is 147 listings showing machinery.
     "<local-command-caveat>",
-    "<teammate-message",
     "<system-reminder>",
     "## Context Usage",
+    ...HARNESS_DELIVERY_PREFIXES,
 ] as const;
 
 // A slash command WITH arguments is kept: `/rename board-polish` is the user's own text, and the
 // command name reads better in a listing than the turn that happens to follow it. A command with
 // no arguments (`/clear`, `/compact`, `/model`) is dropped instead, because it names the harness
 // rather than the work: sessions were listing `/clear` where the first real prompt belongs.
+
+const NOISE_BLOCKS =
+    /<(system-reminder|local-command-caveat|local-command-stdout|command-name|command-message|command-args)>[\s\S]*?<\/\1>/gi;
+const ANY_TAG = /<\/?[A-Za-z][\w-]*[^>]*>/g;
+const IMAGE_MARK = /\[Image #\d+\]/g;
+
+/**
+ * A session title fit for a listing: the stored title is the first prompt, harness tags and all
+ * (`<pasted_content id="b643"> 3) Restock…` in the hub's digest). Mirrors the app's
+ * `TitleFormatter.cleanSessionTitle`: noise blocks go with their contents, any other tag goes but
+ * its text stays. null when nothing readable is left.
+ */
+export function cleanSessionTitle(raw: string | null | undefined): string | null {
+    if (!raw) {
+        return null;
+    }
+
+    const text = raw
+        .replace(IMAGE_MARK, " ")
+        .replace(NOISE_BLOCKS, " ")
+        .replace(ANY_TAG, " ")
+        .replace(/\s+/g, " ")
+        .trim();
+    return text || null;
+}
+
+/** A user-role turn the harness delivered (a peer's message, a task result, an Esc marker), not a prompt. */
+export function isHarnessDeliveryText(text: string): boolean {
+    const trimmed = text.trimStart();
+    return HARNESS_DELIVERY_PREFIXES.some((prefix) => trimmed.startsWith(prefix));
+}
 
 export function isWrapperUserText(text: string): boolean {
     const trimmed = text.trimStart();

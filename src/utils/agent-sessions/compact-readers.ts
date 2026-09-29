@@ -28,6 +28,9 @@ export const claudeHistoryReader = createCompactHistoryReader({
     kind: "claude",
     roots: () => nativeSessionRoots("claude"),
     discover: discoverClaudeHistorySources,
+    // One JSONL row per record, and a record's text reads only that row (a tool result's name,
+    // which comes from an earlier row, never enters the searched text).
+    lineLocalRecords: true,
     ...createClaudeHistoryOperations(),
     readStatistics: readClaudeStatistics,
 });
@@ -37,6 +40,8 @@ export const codexHistoryReader = createCompactHistoryReader({
     roots: () => nativeSessionRootsWithLegacyHomes("codex"),
     discover: discoverCodexHistorySources,
     searchMetadata: true,
+    // Metadata comes from the first header plus the state sidecars; a record never replays a header.
+    scanKeepsMetadata: true,
     ...createCodexHistoryOperations(),
     readStatistics: readCodexStatistics,
     importSession: importNativeCodexSession,

@@ -1,6 +1,10 @@
 import { expect, test } from "bun:test";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { CODEX_CACHE_TTL_MS, computeCacheStatus, GROK_CACHE_TTL_MS } from "@app/claude/lib/usage/session-rows";
-import type { AgentSessionRow } from "./agent-session-rows";
+import { env } from "@genesiscz/utils/env";
+import { type AgentSessionRow, listAgentSessionRows } from "./agent-session-rows";
 
 /**
  * The contract this file pins is the ROW SHAPE, because a reader outside this repo (the
@@ -101,4 +105,18 @@ test("a claude row is the same shape with the extra fields filled", () => {
     expect(claudeRow.cacheStatus).toBe("HOT");
     expect(claudeRow.cacheLifetimeSec).toBe(3600);
     expect(claudeRow.contextTokens).toBe(505_000);
+});
+
+test("a provider that cannot be listed adds no rows, or with failClosed fails the listing", async () => {
+    // A file where the tools home should be: the history index cannot be opened, so the provider throws.
+    const home = join(mkdtempSync(join(tmpdir(), "agent-rows-home-")), "not-a-folder");
+    writeFileSync(home, "");
+    env.testing.set("GENESIS_TOOLS_HOME", home);
+
+    try {
+        expect(await listAgentSessionRows({ providers: ["codex"], hours: 1 })).toEqual([]);
+        await expect(listAgentSessionRows({ providers: ["codex"], hours: 1, failClosed: true })).rejects.toThrow();
+    } finally {
+        env.testing.unset("GENESIS_TOOLS_HOME");
+    }
 });

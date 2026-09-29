@@ -448,7 +448,9 @@ export async function readClaudeMetadata(
         if (!sessionId && asText(row.sessionId)) {
             sessionId = asText(row.sessionId);
         }
-        if (!gitBranch && asText(row.gitBranch)) {
+        // The newest branch wins, as in the search path: a session that moved from one branch to another
+        // listed the branch it started on for days (the hub's Inbox showed a week-old branch).
+        if (asText(row.gitBranch)) {
             gitBranch = asText(row.gitBranch);
         }
         if (!cwd && asText(row.cwd)) {

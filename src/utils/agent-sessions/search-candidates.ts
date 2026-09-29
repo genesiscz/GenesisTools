@@ -1,5 +1,5 @@
 import { statSync } from "node:fs";
-import { dirname, isAbsolute, relative, resolve } from "node:path";
+import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import { concurrentMap } from "@genesiscz/utils/async";
 import { ripgrepBinary } from "@genesiscz/utils/ripgrep";
 import type { AgentSearchFilters, NativeSessionSource } from "./types";
@@ -62,6 +62,34 @@ interface SearchGroup {
     operands: string[];
     paths: string[];
     recursive: boolean;
+    maxDepth?: number;
+}
+
+/**
+ * What ripgrep walks under one root: the top-level entries that hold a member, no deeper than the
+ * deepest member. Walking `.` read every transcript under the root whatever the scope asked for:
+ * 12.6 GB of JSONL here for a main-sessions-only search whose sources hold 5.6 GB, or a one-project
+ * search whose sources hold 5.0 GB. Nothing left out can be a member, so no member's verdict moves.
+ */
+function rootOperands(root: string, members: string[]): Pick<SearchGroup, "operands" | "maxDepth"> {
+    const tops = new Set<string>();
+    let depth = 0;
+
+    for (const path of members) {
+        const parts = relative(root, path).split(sep);
+        tops.add(parts[0]);
+        depth = Math.max(depth, parts.length);
+    }
+
+    const operands = [...tops].sort();
+    const bytes = operands.reduce((total, operand) => total + Buffer.byteLength(operand) + 1, 0);
+
+    if (tops.has("") || bytes > 96 * 1024) {
+        return { operands: ["."] };
+    }
+
+    // `--max-depth` counts from each operand, and an operand is already one level below the root.
+    return { operands, maxDepth: depth - 1 };
 }
 
 function searchGroups(sources: NativeSessionSource<string>[], paths: string[]): SearchGroup[] {
@@ -81,7 +109,7 @@ function searchGroups(sources: NativeSessionSource<string>[], paths: string[]): 
         members.forEach((path) => {
             assigned.add(path);
         });
-        groups.push({ directory: root, operands: ["."], paths: members, recursive: true });
+        groups.push({ directory: root, ...rootOperands(root, members), paths: members, recursive: true });
     }
 
     const remaining = paths.filter((path) => !assigned.has(path));
@@ -120,10 +148,82 @@ function needleEscapes(needle: string | undefined): string[] {
     return [...escapes];
 }
 
-/** JSON escaping can hide a literal word: sources that escaped it always remain candidates. */
+/**
+ * A ripgrep pattern matching a line that can hold both of the two longest query words, or
+ * undefined when fewer than two distinct words remain.
+ *
+ * For a line-local reader a record is one line, and a hit needs every word inside one record, so a
+ * transcript where no single line can hold them all cannot match however often each word appears
+ * on its own. "battery guard" scanned 58 such transcripts (666 MB) for its 30 hits.
+ *
+ * A line qualifies when it holds any other raw form of a character of either word, or else both
+ * words literally: apart in either order, or sharing characters where a suffix of one is a prefix
+ * of the other (`use` and `session` in `usession`). The other forms are what the search lowercases
+ * into the character: its escape, the escape of its capital, and the two non-ASCII characters that
+ * lowercase into ASCII (`İ`, which ripgrep does not fold to `i`, and the Kelvin sign, which it folds
+ * to `k` but whose escape it cannot see). A word inside the other is implied by it. Two words are a
+ * sound test for any longer query, since a line holding all of them holds these two. `(?-u:.)`
+ * because the Unicode `.` stops at invalid UTF-8, which JS decodes.
+ */
+function sameLinePattern(words: string[]): string | undefined {
+    const distinct = [...new Set(words.map((word) => word.toLowerCase()))];
+    const [first, second] = distinct
+        .filter((word) => !distinct.some((other) => other !== word && other.includes(word)))
+        .sort((left, right) => right.length - left.length);
+
+    if (!first || !second) {
+        return;
+    }
+
+    const literal = (text: string) => text.replace(/[\\^$.*+?()[\]{}|]/g, "\\$&");
+    const escapes = new Set<string>();
+
+    for (const character of new Set(first + second)) {
+        const forms = [character, character.toUpperCase()];
+
+        if (character === "i") {
+            forms.push("İ");
+        } else if (character === "k") {
+            forms.push("K");
+        }
+
+        for (const form of forms) {
+            // `--ignore-case` already matches either case of the hex digits.
+            escapes.add(literal(`\\u${(form.codePointAt(0) ?? 0).toString(16).padStart(4, "0")}`));
+        }
+    }
+
+    const alternatives = [
+        ...escapes,
+        ...(escapes.has(literal("\\u0130")) ? ["İ"] : []),
+        `${literal(first)}(?-u:.)*${literal(second)}`,
+        `${literal(second)}(?-u:.)*${literal(first)}`,
+    ];
+
+    for (let size = 1; size < second.length; size++) {
+        if (first.endsWith(second.slice(0, size))) {
+            alternatives.push(literal(first + second.slice(size)));
+        }
+
+        if (second.endsWith(first.slice(0, size))) {
+            alternatives.push(literal(second + first.slice(size)));
+        }
+    }
+
+    return alternatives.join("|");
+}
+
+/**
+ * JSON escaping can hide a literal word: sources that escaped it always remain candidates.
+ *
+ * `sameLine` asks for a line that can hold the two longest query words together instead of the one
+ * longest word anywhere. Only a caller whose reader builds each record from its own line, and whose
+ * hits all need a record match, may pass it; a relevance count keeps counting the one word.
+ */
 export async function historyCandidates(options: {
     sources: NativeSessionSource<string>[];
     filters: AgentSearchFilters;
+    sameLine?: boolean;
 }): Promise<HistoryCandidate[]> {
     const { filters } = options;
     const queryWords = filters.regex ? [] : ((filters.query ?? "").match(/[a-z0-9_-]{3,}/gi) ?? []);
@@ -149,8 +249,13 @@ export async function historyCandidates(options: {
     // needs none of this: hex is never JSON-escaped, and the escapes would undo its narrowing.
     const escapedNeedles = queryNeedle ? needleEscapes(queryNeedle) : [];
     const counting = Boolean(filters.sortByRelevance);
+    const linePattern = options.sameLine && !counting ? sameLinePattern(queryWords) : undefined;
 
     if (needle && binary && paths.length) {
+        const patterns = linePattern
+            ? ["-e", linePattern]
+            : ["--fixed-strings", ...[needle, ...escapedNeedles].flatMap((pattern) => ["-e", pattern])];
+
         await concurrentMap({
             items: searchGroups(options.sources, paths),
             concurrency: 4,
@@ -173,14 +278,12 @@ export async function historyCandidates(options: {
                             "--hidden",
                             "--no-ignore",
                             ...(group.recursive ? ["--glob", "*.jsonl"] : []),
+                            ...(group.maxDepth === undefined ? [] : ["--max-depth", String(group.maxDepth)]),
                             counting ? "--count-matches" : "--files-with-matches",
                             "--max-count",
                             counting ? "20" : "1",
                             "--ignore-case",
-                            "--fixed-strings",
-                            "-e",
-                            needle,
-                            ...escapedNeedles.flatMap((pattern) => ["-e", pattern]),
+                            ...patterns,
                             "--",
                             ...group.operands,
                         ],

@@ -188,3 +188,58 @@ export function listRecentCachedSessions(options: {
         db.close();
     }
 }
+
+/**
+ * The working folder of a session named by its id or a leading part of it, from the history index
+ * (no schema work, no file walk). An exact id wins, then a main session over a subagent, then the
+ * newest; a prefix counts only when it names one session id, never the newest of several. Null when
+ * the index cannot answer, so the caller can fall back to a refreshed listing.
+ */
+export function readCachedSessionCwd(options: { sessionId: string; path?: string }): string | null {
+    const db = openHistoryReadOnly({ path: options.path });
+
+    if (!db) {
+        return null;
+    }
+
+    try {
+        const columns = new Set(
+            db
+                .query<{ name: string }, []>("PRAGMA table_info(session_metadata)")
+                .all()
+                .map((column) => column.name)
+        );
+
+        if (!hasColumns(columns, ["session_id", "cwd", "mtime", "is_subagent"])) {
+            return null;
+        }
+
+        // A range on session_id uses its index; LIKE would not (it folds case).
+        const end = `${options.sessionId}￿`;
+        const row = db
+            .query<{ session_id: string; cwd: string }, [string, string, string]>(`
+                SELECT session_id, cwd FROM session_metadata
+                WHERE session_id >= ? AND session_id < ? AND cwd IS NOT NULL AND cwd <> ''
+                ORDER BY (session_id = ?3) DESC, COALESCE(is_subagent, 0) ASC, mtime DESC
+                LIMIT 1
+            `)
+            .get(options.sessionId, end, options.sessionId);
+
+        if (!row || row.session_id === options.sessionId) {
+            return row?.cwd ?? null;
+        }
+
+        // Every other session the prefix names counts, one with no folder too: the listing fallback counts it.
+        const another = db
+            .query<{ one: number }, [string, string, string]>(`
+                SELECT 1 AS one FROM session_metadata
+                WHERE session_id >= ? AND session_id < ? AND session_id <> ?
+                LIMIT 1
+            `)
+            .get(options.sessionId, end, row.session_id);
+
+        return another ? null : row.cwd;
+    } finally {
+        db.close();
+    }
+}

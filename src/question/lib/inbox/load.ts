@@ -1,5 +1,11 @@
 import { statSync } from "node:fs";
-import { type AgentSessionRow, listAgentSessionRows } from "@app/ai/lib/sessions/agent-session-rows";
+import {
+    type AgentSessionRow,
+    type AgentSessionRowsOptions,
+    listAgentSessionRows,
+    POLLED_LISTING_REUSE_MS,
+} from "@app/ai/lib/sessions/agent-session-rows";
+import { readCachedSessionCwd } from "@genesiscz/utils/agent-sessions/cached-title";
 import { transcriptEnvelope } from "@genesiscz/utils/ai/transcripts/load";
 import { type ResolvedTranscript, resolveTranscript } from "@genesiscz/utils/ai/transcripts/resolve";
 import type { TranscriptTurn } from "@genesiscz/utils/ai/transcripts/types";
@@ -52,7 +58,7 @@ function storage(): Storage {
 }
 
 export const realInboxDeps: InboxDeps = {
-    sessions: (hours) => listAgentSessionRows({ hours }),
+    sessions: (hours) => listAgentSessionRows({ hours, withUsage: false, maxDiscoveryAgeMs: POLLED_LISTING_REUSE_MS }),
     tail: async (row) => {
         const resolved: ResolvedTranscript = {
             provider: row.provider,
@@ -105,17 +111,42 @@ export async function waitingBlock(
     return found?.blocks.find((block) => block.number === number) ?? null;
 }
 
+/** The listings a folder lookup reads when the index does not know the session: 72 hours, then 90 days. */
+const LOOKUP_WINDOWS_HOURS = [72, 24 * 90];
+
 /**
- * The folder of a session that has no stored row: the agent session list (the Inbox's own source), recent first.
- * The exact id wins in either window; a prefix counts only when it names one session, never the first of several.
+ * One listing of the lookup. Only the first may reuse a poller's refresh from the last seconds: that
+ * refresh covered its own window, never a session older than it that was not indexed yet, which is
+ * what the 90-day pass is there to find.
+ */
+export function lookupListing(hours: number): AgentSessionRowsOptions {
+    return {
+        hours,
+        withUsage: false,
+        ...(hours === LOOKUP_WINDOWS_HOURS[0] ? { maxDiscoveryAgeMs: POLLED_LISTING_REUSE_MS } : {}),
+    };
+}
+
+/**
+ * The folder of a session that has no stored row. The history index answers first: a hub session
+ * click used to list every provider's sessions, twice for one older than 72 h (0.7 to 1.2 s), to
+ * read one folder the index holds. The refreshed listing stays as the fallback for a session too
+ * new to be indexed yet; there the exact id wins in either window, and a prefix counts only when it
+ * names one session, never the first of several.
  */
 export async function lookupSessionCwd(
     session: string,
-    list: (hours: number) => Promise<AgentSessionRow[]> = (hours) => listAgentSessionRows({ hours })
+    list: (hours: number) => Promise<AgentSessionRow[]> = (hours) => listAgentSessionRows(lookupListing(hours))
 ): Promise<string | null> {
+    const cached = readCachedSessionCwd({ sessionId: session });
+
+    if (cached) {
+        return cached;
+    }
+
     let rows: AgentSessionRow[] = [];
 
-    for (const hours of [72, 24 * 90]) {
+    for (const hours of LOOKUP_WINDOWS_HOURS) {
         rows = await list(hours);
         const exact = rows.find((candidate) => candidate.sessionId === session);
 

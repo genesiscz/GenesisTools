@@ -197,6 +197,77 @@ test("source-stable native exclusion remains early while mutable public id and c
     }
 });
 
+describe.each([false, true])("a cwd search with relevance=%s", (sortByRelevance) => {
+    test.each([false, true])(
+        "tests the indexed cwd before scanning only when records cannot move it (warm index: %s)",
+        async (warm) => {
+            // A Codex search in its default cwd scope read 405 transcripts (1.7 GB) to keep 2. Its
+            // records never carry metadata changes, so the row's cwd is the one the result is tested on:
+            // on a cold index at the scan, on a warm one already before ripgrep in time order.
+            const root = mkdtempSync(join(tmpdir(), "gt-service-cwd-first-"));
+            const inside = fixtureSource({ root, name: "inside", nativeId: "inside-native", cwd: "/work" });
+            const outside = fixtureSource({ root, name: "outside", nativeId: "outside-native", cwd: "/elsewhere" });
+
+            for (const scanKeepsMetadata of [true, false]) {
+                const scanned: string[] = [];
+                const fixtures = fixtureReader({ fixtures: [inside, outside] });
+                const reader: NativeSessionReader<string> = {
+                    ...fixtures,
+                    scanKeepsMetadata,
+                    scan(source, readOptions) {
+                        scanned.push(source.filePath);
+                        return fixtures.scan!(source, readOptions);
+                    },
+                };
+                const current = service({ providerId: "fixture-provider", reader, roots: [root] });
+
+                try {
+                    if (warm) {
+                        await current.history.sync();
+                    }
+
+                    const response = await current.history.search({ query: "needle", cwd: "/work", sortByRelevance });
+
+                    expect(response.results.map((result) => result.metadata.nativeId)).toEqual(["inside-native"]);
+                    // The negative control: without the promise the outside transcript is still read.
+                    expect(scanned.sort()).toEqual(
+                        scanKeepsMetadata
+                            ? [inside.source.filePath]
+                            : [inside.source.filePath, outside.source.filePath].sort()
+                    );
+                } finally {
+                    current.database.close();
+                }
+            }
+        }
+    );
+
+    test("never prunes a session whose records move it into the cwd, even once its row is indexed elsewhere", async () => {
+        const root = mkdtempSync(join(tmpdir(), "gt-service-cwd-moved-"));
+        const moved = fixtureSource({
+            root,
+            name: "moved",
+            nativeId: "moved-native",
+            cwd: "/elsewhere",
+            metadataChanges: { cwd: "/work" },
+        });
+        const current = service({
+            providerId: "fixture-provider",
+            reader: fixtureReader({ fixtures: [moved] }),
+            roots: [root],
+        });
+
+        try {
+            await current.history.sync();
+            const response = await current.history.search({ query: "needle", cwd: "/work", sortByRelevance });
+
+            expect(response.results.map((result) => result.metadata.nativeId)).toEqual(["moved-native"]);
+        } finally {
+            current.database.close();
+        }
+    });
+});
+
 describe.each([false, true])("limit backfill with relevance=%s", (sortByRelevance) => {
     test.each(["incomplete", "changed"] as const)("hydrates the second match after the first is %s", async (mode) => {
         const root = mkdtempSync(join(tmpdir(), `gt-service-backfill-${mode}-`));
