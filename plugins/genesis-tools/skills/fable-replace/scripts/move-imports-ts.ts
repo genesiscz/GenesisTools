@@ -12,7 +12,10 @@
  */
 
 import * as fs from "node:fs";
+import { createRequire } from "node:module";
 import * as path from "node:path";
+import type * as TS from "typescript";
+
 import { scanComments } from "./comments";
 import { identifierPattern } from "./internal";
 import {
@@ -32,6 +35,7 @@ import {
     warnWithFix,
     withFix,
 } from "./move-imports-shared";
+import { compilerReader } from "./move-imports-ts-compiler";
 import type { FileEdit, Op } from "./types";
 
 export interface NamedSpecifier {
@@ -104,7 +108,7 @@ const parseNamed = (inner: string): NamedSpecifier[] =>
  * is the same span as written. A comment on its own line belongs to the entry below it, a comment
  * after an entry on its line belongs to that entry, so a re-rendered list loses no comment.
  */
-const parseNamedWithComments = (rawInner: string, inner: string): NamedSpecifier[] => {
+export const parseNamedWithComments = (rawInner: string, inner: string): NamedSpecifier[] => {
     const commentsIn = (from: number, to: number): string[] =>
         to <= from ? [] : scanComments(rawInner.slice(from, to)).map((span) => span.text.trim());
     const out: NamedSpecifier[] = [];
@@ -933,6 +937,18 @@ const planOps = (plan: FilePlan, label: string): Op[] => {
         });
     }
 
+    // Every import went and none came: the blank line under the old block would open the file.
+    // An optional op after all others, so it cannot collide with a cut that took a line already.
+    if (plan.statements.length > 0 && plan.removed.size === plan.statements.length && plan.additions.length === 0) {
+        ops.push({
+            kind: "regex",
+            find: /^\n+/g,
+            replace: "",
+            optional: true,
+            label: `${label}: no empty line above the code`,
+        });
+    }
+
     ops.push(...plan.extraOps);
     return ops;
 };
@@ -1012,6 +1028,77 @@ const namespaceFix = ({
 };
 
 /**
+ * How the planner reads TypeScript: which statements are imports, which declarations a text makes,
+ * and which names it refers to (its own import statements excluded). Two readers answer it: the
+ * compiler's syntax tree when a GenesisTools checkout provides `typescript`, else patterns.
+ */
+export interface TsReader {
+    kind: "compiler" | "text";
+    imports: (text: string, file: string) => ImportStatement[];
+    declarations: (text: string, file: string) => Declarations;
+    uses: (text: string, file: string) => (name: string) => boolean;
+}
+
+export const textReader: TsReader = {
+    kind: "text",
+    imports: (text) => parseImports(text),
+    declarations: (text) => {
+        const masked = maskNonCode(text);
+        return topLevelDeclarations(blankStatements(masked, parseImports(text, masked)), text);
+    },
+    uses: (text) => {
+        const masked = maskNonCode(text);
+        const body = blankStatements(masked, parseImports(text, masked));
+        return (name) => usesName(body, name);
+    },
+};
+
+let selected: { reader: TsReader; fallback?: string } | undefined;
+
+/**
+ * The compiler reader when a GenesisTools checkout with `typescript` is found, else the text
+ * reader and the reason. `FABLE_REPLACE_PARSER=text` forces the text reader (tests, comparisons).
+ */
+export const selectTsReader = (): { reader: TsReader; fallback?: string } => {
+    if (selected !== undefined) {
+        return selected;
+    }
+
+    // lint-rules-ignore: standalone plugin script without access to @genesiscz/utils/env
+    if (process.env.FABLE_REPLACE_PARSER === "text") {
+        selected = { reader: textReader };
+        return selected;
+    }
+
+    // Loaded, not imported: these scripts also run copied on their own, without the plugin's lib/.
+    const locatorFile = path.join(import.meta.dir, "..", "..", "..", "lib", "locate-genesis-tools.ts");
+    if (!fs.existsSync(locatorFile)) {
+        selected = {
+            reader: textReader,
+            fallback: `the plugin's lib/ folder is not beside these scripts (${locatorFile})`,
+        };
+        return selected;
+    }
+
+    const locator = createRequire(import.meta.url)(
+        locatorFile
+    ) as typeof import("../../../lib/locate-genesis-tools.ts");
+    const install = locator.locateGenesisTools();
+    if (install === null) {
+        selected = { reader: textReader, fallback: "no GenesisTools checkout with node_modules/typescript was found" };
+        return selected;
+    }
+
+    try {
+        selected = { reader: compilerReader(locator.requireTypeScript(install) as typeof TS) };
+    } catch (error) {
+        selected = { reader: textReader, fallback: `loading typescript from ${install.root} failed: ${String(error)}` };
+    }
+
+    return selected;
+};
+
+/**
  * The import half of every `imports=fix` move: edits for each source, each target, and each file
  * that imported a moved export. Every edit is a literal op on one import statement.
  */
@@ -1022,6 +1109,18 @@ export const planTsImportFixes = (params: PlanImportFixesParams): FileEdit[] => 
         return [];
     }
 
+    const { reader, fallback } = selectTsReader();
+    if (fallback !== undefined) {
+        warnWithFix(params, {
+            abs: cwd,
+            needles: [],
+            message: `imports=fix: ${fallback}, so TypeScript is read with patterns; a local name that shadows an import can then keep a spare import`,
+            fix: {
+                why: "install GenesisTools once and run any `tools` command (it records where it lives), or point GENESIS_TOOLS_PATH at a checkout that has node_modules: git clone https://github.com/genesiscz/GenesisTools.git ~/GenesisTools && cd ~/GenesisTools && ./install.sh",
+            },
+        });
+    }
+
     const resolver = createResolver(new Set(moves.map((move) => move.toAbs)));
     const display = (abs: string): string => toPosix(path.relative(cwd, abs));
     const plans = new Map<string, FilePlan>();
@@ -1029,8 +1128,7 @@ export const planTsImportFixes = (params: PlanImportFixesParams): FileEdit[] => 
         let plan = plans.get(abs);
         if (plan === undefined) {
             const text = read(abs) ?? "";
-            const masked = maskNonCode(text);
-            const statements = parseImports(text, masked);
+            const statements = reader.imports(text, abs);
             const bound = new Set<string>();
             for (const statement of statements) {
                 if (statement.keyword !== "import") {
@@ -1048,7 +1146,7 @@ export const planTsImportFixes = (params: PlanImportFixesParams): FileEdit[] => 
                 }
             }
 
-            for (const name of topLevelDeclarations(blankStatements(masked, statements)).names.keys()) {
+            for (const name of reader.declarations(text, abs).names.keys()) {
                 bound.add(name);
             }
 
@@ -1097,8 +1195,7 @@ export const planTsImportFixes = (params: PlanImportFixesParams): FileEdit[] => 
         const sourceMoves = fixing.filter((move) => move.fromAbs === sourceAbs);
         const moved = new Map<string, DeclarationInfo & { toAbs: string; move: PlannedMove }>();
         for (const move of sourceMoves) {
-            const masked = maskNonCode(move.blockText);
-            const inBlock = parseImports(move.blockText, masked);
+            const inBlock = reader.imports(move.blockText, move.fromAbs);
             if (inBlock.length > 0) {
                 throw new MoveError(
                     withFix(`move: ${move.label} includes an import statement`, importFreeRange(move, inBlock)),
@@ -1106,7 +1203,7 @@ export const planTsImportFixes = (params: PlanImportFixesParams): FileEdit[] => 
                 );
             }
 
-            const declared = topLevelDeclarations(masked, move.blockText);
+            const declared = reader.declarations(move.blockText, move.fromAbs);
             if (declared.exportDefault) {
                 throw new MoveError(
                     withFix(
@@ -1132,10 +1229,9 @@ export const planTsImportFixes = (params: PlanImportFixesParams): FileEdit[] => 
             remainingText = remainingText.replace(move.cutText, "");
         }
 
-        const remainingMasked = maskNonCode(remainingText);
-        const remainingBody = blankStatements(remainingMasked, parseImports(remainingText, remainingMasked));
-        const originalBody = blankStatements(maskNonCode(source.text), source.statements);
-        const remainingDeclarations = topLevelDeclarations(remainingBody, remainingText).names;
+        const usedBefore = reader.uses(source.text, sourceAbs);
+        const usedAfter = reader.uses(remainingText, sourceAbs);
+        const remainingDeclarations = reader.declarations(remainingText, sourceAbs).names;
         const sourceStyle = styleOf(source);
 
         // The source: bindings only the blocks used go; moved exports it still uses come back in.
@@ -1144,7 +1240,7 @@ export const planTsImportFixes = (params: PlanImportFixesParams): FileEdit[] => 
                 continue;
             }
 
-            const gone = (name: string): boolean => usesName(originalBody, name) && !usesName(remainingBody, name);
+            const gone = (name: string): boolean => usedBefore(name) && !usedAfter(name);
             const all = statement.named ?? [];
             const named = all.filter((entry) => !gone(entry.local));
             const heads = [statement.defaultName, statement.namespace].filter(
@@ -1168,7 +1264,7 @@ export const planTsImportFixes = (params: PlanImportFixesParams): FileEdit[] => 
         }
 
         for (const [name, info] of moved) {
-            if (!usesName(remainingBody, name)) {
+            if (!usedAfter(name)) {
                 continue;
             }
 
@@ -1202,11 +1298,10 @@ export const planTsImportFixes = (params: PlanImportFixesParams): FileEdit[] => 
         // Each target: the imports its new code uses, and the declarations it reaches back for.
         for (const targetAbs of [...new Set(sourceMoves.map((move) => move.toAbs))]) {
             const toTarget = sourceMoves.filter((move) => move.toAbs === targetAbs);
-            const blocks = maskNonCode(toTarget.map((move) => move.blockText).join("\n"));
+            const blockUses = reader.uses(toTarget.map((move) => move.blockText).join("\n"), sourceAbs);
             const target = planFor(targetAbs);
             const localHere = new Set([...moved].filter(([, info]) => info.toAbs === targetAbs).map(([name]) => name));
-            const needs = (name: string): boolean =>
-                usesName(blocks, name) && !localHere.has(name) && !target.bound.has(name);
+            const needs = (name: string): boolean => blockUses(name) && !localHere.has(name) && !target.bound.has(name);
 
             for (const statement of source.statements) {
                 if (statement.keyword !== "import") {
@@ -1327,7 +1422,7 @@ export const planTsImportFixes = (params: PlanImportFixesParams): FileEdit[] => 
                 continue;
             }
 
-            const statements = plans.get(file)?.statements ?? parseImports(text);
+            const statements = plans.get(file)?.statements ?? reader.imports(text, file);
             const hits = statements
                 .map((statement, index) => ({ statement, index }))
                 .filter(({ statement }) => resolver.resolve(file, statement.specifier)?.abs === sourceAbs);

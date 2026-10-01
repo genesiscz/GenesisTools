@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { FableReplaceError } from "./internal";
 import { blockEndLine, docCommentStart, expandMoves, locateBlock } from "./move-blocks";
+import { selectTsReader } from "./move-imports-ts";
 import { parseSpec } from "./spec";
 import { run } from "./sweep-many-files";
 
@@ -1066,5 +1067,65 @@ describe("attributes and decorators belong to their declaration", () => {
         expect(docCommentStart(ts, 3)).toBe(2);
         // A call statement ending in `)` above a declaration is not an attribute.
         expect(docCommentStart(["foo()", "export const a = 1;"], 1)).toBe(1);
+    });
+});
+describe("imports=fix reads TypeScript with the compiler when GenesisTools is found", () => {
+    const write = (dir: string, files: Record<string, string>): void => {
+        for (const [file, content] of Object.entries(files)) {
+            mkdirSync(dirname(join(dir, file)), { recursive: true });
+            writeFileSync(join(dir, file), content);
+        }
+    };
+    const read = (dir: string, file: string): string => readFileSync(join(dir, file), "utf8");
+
+    test("inside this repository the compiler reader is selected", () => {
+        if (process.env.FABLE_REPLACE_PARSER === "text") {
+            return;
+        }
+
+        expect(selectTsReader().reader.kind).toBe("compiler");
+    });
+
+    test("an import written without spaces is found and re-pointed", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "fr-compact-import-"));
+        write(dir, {
+            "lib/utils.ts": "export const keep = 1;\n\nexport const moved = 2;\n",
+            "user.ts": 'import{moved}from"./lib/utils";\n\nexport const y = moved;\n',
+        });
+        const edits = parseSpec({
+            text: "@@ lib/utils.ts\n<<< move to=lib/moved.ts symbol=moved imports=fix\n>>>\n",
+            cwd: dir,
+        });
+        await run({ cwd: dir, verbose: false, edits });
+        const user = read(dir, "user.ts");
+        if (selectTsReader().reader.kind === "compiler") {
+            expect(user).toBe('import{moved}from"./lib/moved";\n\nexport const y = moved;\n');
+        } else {
+            // The pattern reader needs a space after `import`; this is the gap the compiler closes.
+            expect(user).toBe('import{moved}from"./lib/utils";\n\nexport const y = moved;\n');
+        }
+    });
+
+    test("a parameter that shadows an import does not keep the import alive", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "fr-shadow-"));
+        write(dir, {
+            "a.ts": [
+                'import { join } from "node:path";',
+                "",
+                'export const paths = (root: string): string => join(root, "x");',
+                "",
+                "export const length = (join: string[]): number => join.length;",
+                "",
+            ].join("\n"),
+        });
+        const edits = parseSpec({ text: "@@ a.ts\n<<< move to=b.ts symbol=paths imports=fix\n>>>\n", cwd: dir });
+        await run({ cwd: dir, verbose: false, edits });
+        expect(read(dir, "b.ts")).toStartWith('import { join } from "node:path";\n');
+        const source = read(dir, "a.ts");
+        if (selectTsReader().reader.kind === "compiler") {
+            expect(source).toBe("export const length = (join: string[]): number => join.length;\n");
+        } else {
+            expect(source).toStartWith('import { join } from "node:path";');
+        }
     });
 });

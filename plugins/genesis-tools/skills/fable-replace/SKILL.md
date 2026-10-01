@@ -415,9 +415,18 @@ line, `\Old\Ns\Class` in code rewritten, and a class name in a string (a config)
 op. A new file starts with `<?php`, the source's `declare(strict_types=1)` and its PSR-4
 namespace; a class in a file of another name is warned (PSR-4 would not load it).
 
-It is lexical, not a type checker: a name counts as used when it appears as an identifier outside
-comments, strings, property access and object keys. Every doubt keeps an import, because a spare
-import fails a lint and a missing one fails the build. Run the typechecker in `--verify`.
+**How it reads the code.** TypeScript and JavaScript go through the TypeScript compiler's parser
+when a GenesisTools checkout is found: exact import spans in any formatting, exact declarations,
+and scope-aware use (a parameter or local that shadows an import no longer keeps it). The plugin
+copy finds the checkout through `GENESIS_TOOLS_PATH`, then `~/.genesis-tools/install.json` (every
+`tools` run keeps it current, `tools update` included), then its own folder, then Claude's
+directory marketplace, then `tools` on PATH (`plugins/genesis-tools/lib/locate-genesis-tools.ts`).
+Without a checkout it reads with patterns and prints one warning with the install command.
+`FABLE_REPLACE_PARSER=text` forces the pattern reader. Swift and PHP are read with patterns.
+
+It is not a type checker: Swift's implicit `self`, for one, stays a compiler question. Every doubt
+keeps an import, because a spare import fails a lint and a missing one fails the build. Run the
+typechecker or the build in `--verify`.
 
 ## Renames: the two forks
 
