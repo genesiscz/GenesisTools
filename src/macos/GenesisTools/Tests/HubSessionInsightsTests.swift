@@ -55,7 +55,7 @@ final class HubSessionInsightsTests: XCTestCase {
         InsightTurn(
             number: n, index: n - 1, turnId: "t\(n)", label: "p\(n)", at: nil, durationMs: nil,
             inputTokens: n, outputTokens: 1, cacheReadTokens: 100, cacheWriteTokens: 0, reasoningTokens: 0,
-            modelCalls: 1, costUsd: cost, models: [], toolCount: 0, errorCount: 0, rank: rank
+            modelCalls: 1, costUsd: cost, models: [], toolCount: 0, errorCount: 0, contextTokens: nil, rank: rank
         )
     }
 

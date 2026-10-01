@@ -96,8 +96,9 @@ final class HubSessionSeamsTests: XCTestCase {
         let rows = try HubSubagents.decode(Data(json.utf8))
 
         XCTAssertEqual(rows.map(\.id), ["toolu_1", "a2", "toolu_3"])
-        XCTAssertEqual(rows.map(\.state), [.done, .done, .running])
-        XCTAssertTrue(rows[1].summary.hasPrefix("fixer: a2 (stopped"))
+        // "stopped": its transcript stopped growing before it reported back, so it reads as idle.
+        XCTAssertEqual(rows.map(\.state), [.done, .idle, .running])
+        XCTAssertEqual(rows[1].summary, "fixer: a2")
         XCTAssertEqual(try HubSubagents.decode(Data(#"{"sessionId":"s-9","subagents":[]}"#.utf8)), [])
     }
 
