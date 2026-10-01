@@ -18,6 +18,19 @@ const echoDoor: CallDoor<string[]> = {
     run: async (words) => ({ stdout: `${words.join(" ")}\n`, stderr: "", exit: 0 }),
 };
 
+/** Waits until its signal aborts: a door that outlives any deadline. */
+const slowDoor: CallDoor<true> = {
+    kind: "call",
+    name: "slow",
+    match: (argv) => (argv[0] === "slow" ? true : null),
+    run: (_parsed, { signal }) =>
+        new Promise((resolve) => {
+            signal.addEventListener("abort", () => resolve({ stdout: "", stderr: "aborted\n", exit: 1 }), {
+                once: true,
+            });
+        }),
+};
+
 const throwDoor: CallDoor<true> = {
     kind: "call",
     name: "throw",
@@ -64,7 +77,7 @@ async function start(): Promise<{ socketPath: string; handle: HubServerHandle }>
     const socketPath = join(mkdtempSync(join(tmpdir(), "hubsrv-")), "s", "hub.sock");
     const handle = await startHubServer({
         socketPath,
-        doors: [echoDoor, throwDoor, ticksDoor, traceDoor],
+        doors: [echoDoor, throwDoor, ticksDoor, traceDoor, slowDoor],
         maxFootprintBytes: Number.MAX_SAFE_INTEGER,
         idleMs: 0,
         checkEveryMs: 60_000,
@@ -123,6 +136,10 @@ describe("hub server", () => {
 
         client.send({ id: 1, op: "call", argv: ["echo", "a", "b"] });
         expect(await client.next()).toMatchObject({ id: 1, ok: true, stdout: "a b\n", exit: 0 });
+
+        // A deadline answers 124 with its own message, never as a client cancel.
+        client.send({ id: 9, op: "call", argv: ["slow"], timeoutMs: 100 });
+        expect(await client.next()).toMatchObject({ id: 9, exit: 124 });
 
         client.send({ id: 2, op: "call", argv: ["nope"] });
         expect(await client.next()).toEqual({ id: 2, ok: false, code: "unsupported" });

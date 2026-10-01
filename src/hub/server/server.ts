@@ -202,8 +202,9 @@ async function startHubServerOwned(options: HubServerOptions): Promise<HubServer
             let timer: ReturnType<typeof setTimeout> | undefined;
             const timeout = new Promise<CallResult>((resolve) => {
                 timer = setTimeout(() => {
-                    controller.abort();
+                    // Resolved before the abort, so the race reports the deadline (124), never a client cancel.
                     resolve({ stdout: "", stderr: `hub server: ${door.name} exceeded ${deadline} ms\n`, exit: 124 });
+                    controller.abort();
                 }, deadline);
             });
             // A client cancel answers at once: the door stops at its next stage check, and nobody waits for it.
