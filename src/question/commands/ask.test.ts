@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { Command } from "commander";
-import { parseMs, registerAskCommand } from "./ask";
+import { parseItems, parseMs, registerAskCommand } from "./ask";
 
 describe("parseMs", () => {
     test("a non-numeric duration is refused instead of silently becoming NaN", () => {
@@ -57,5 +57,42 @@ describe("registerAskCommand", () => {
             // Behavior, not identity: the old inline parser returned NaN here without a word.
             expect(() => option?.parseArg?.("abc", undefined)).toThrow();
         }
+    });
+});
+
+describe("parseItems", () => {
+    test("a decision written with the store's names says which keys to use and points to --help", () => {
+        const json = '[{"type":"decision","prompt":"Keep?","options":["a","b"]}]';
+
+        expect(() => parseItems({ json })).toThrow(/unknown key "prompt" \(did you mean promptMarkdown\?\)/);
+        expect(() => parseItems({ json })).toThrow(/unknown key "options" \(did you mean choices\?\)/);
+        expect(() => parseItems({ json })).toThrow(/Run tools question ask --help/);
+    });
+
+    test("an item without promptMarkdown is refused, also inside a question_post payload", () => {
+        expect(() => parseItems({ json: '{"items":[{"type":"todo","title":"Rerun"}]}' })).toThrow(
+            /item 1: promptMarkdown must be a non-empty string/
+        );
+    });
+
+    test("a well-formed item passes through with the payload fields", () => {
+        const parsed = parseItems({
+            json: '{"items":[{"type":"decision","promptMarkdown":"Keep?","choices":["a"]}],"source":"test"}',
+        });
+
+        expect(parsed.items).toEqual([{ type: "decision", promptMarkdown: "Keep?", choices: ["a"] }]);
+        expect(parsed.fields).toEqual({ source: "test" });
+    });
+
+    test("--help lists the item fields and an example", () => {
+        const program = new Command();
+        registerAskCommand(program);
+        let help = "";
+        const ask = program.commands.find((command) => command.name() === "ask");
+        ask?.configureOutput({ writeOut: (text) => (help += text) });
+        ask?.outputHelp();
+
+        expect(help).toContain("promptMarkdown   required");
+        expect(help).toContain('"recommended":"a"');
     });
 });

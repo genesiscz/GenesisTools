@@ -1,4 +1,5 @@
 import { jevToolEntries } from "@app/jev/mcp/genesis-tools";
+import { loadConfig as loadQuestionConfig } from "@app/question/lib/config";
 import { env } from "@genesiscz/utils/env/envVariables";
 import { logger } from "@genesiscz/utils/logger";
 import {
@@ -85,7 +86,6 @@ import {
     QUESTION_CANCEL_INPUT_SCHEMA,
     QUESTION_POLL_DESCRIPTION,
     QUESTION_POLL_INPUT_SCHEMA,
-    QUESTION_POST_DESCRIPTION,
     QUESTION_POST_INPUT_SCHEMA,
     QUESTION_RESPOND_DESCRIPTION,
     QUESTION_RESPOND_INPUT_SCHEMA,
@@ -96,6 +96,7 @@ import {
     type QuestionPostArgs,
     type QuestionRespondArgs,
     type QuestionWaitArgs,
+    questionPostDescription,
 } from "./tools/question-post";
 import {
     handleQuestionUpdate,
@@ -112,97 +113,119 @@ const QUESTION_ANSWER_DESCRIPTION =
     "— or right after you answer a substantive question/directive/status-nudge the user interjected " +
     'mid-session. Not for routine task instructions you simply execute or pure acknowledgements ("ok", "thanks").';
 
-const SERVER_INSTRUCTIONS =
-    "Genesis Tools — question/answer server. TWO question surfaces, opposite directions:\n\n" +
-    "1. ASK THE USER (blocking, they answer): `question_post` creates a PENDING form — a question you " +
-    "need decided before you can continue. It lands on the dev-dashboard /qa Pending section and raises a " +
-    "notification. Default is NON-BLOCKING: you get a form id immediately and collect the answer with " +
-    "`question_wait` (returns waiter: answered | timeout | cancelled | budget_exhausted | not_found) or " +
-    "`question_poll` (no ids = everything still pending). `question_cancel` withdraws a form you no longer " +
-    "need. " +
-    "`question_respond` submits an answer — the USER normally does that on the dashboard, so use it only " +
-    "for automation or to relay an answer they gave you elsewhere; never invent one. Pass `wait: true` on " +
-    "question_post only when you genuinely cannot proceed, because a blocking-by-default ask hangs agent " +
-    "loops. Same surface from the CLI: `tools question ask|wait|poll|answer|cancel` (the CLI `answer` verb " +
-    "is `question_respond` here). Answering a form ALSO writes it into the Q→A history below, so /qa stays " +
-    "one list.\n" +
-    'DECISIONS AND TODOS: a `question_post` item with `type: "decision"` or `type: "todo"` is not a form. ' +
-    "It is numbered in this session's decision log (❓ DECISION N, TODO N; numbers never reused) and the " +
-    "result is the markdown section to paste into your reply. Post every ❓ DECISION this way. Record " +
-    "progress (acknowledged, implemented, commit refs, verdict, comments, a copy of a chat answer) with " +
-    "`question_update`, several items per call. CLI: `tools question ask --json -`, " +
-    "`tools question list|update|answers|answer|draft|send`.\n\n" +
-    "2. LOG YOUR OWN ANSWER (after the fact, no waiting): `question_answer`, described next.\n\n" +
-    "WHEN TO USE THE question_answer TOOL:\n" +
-    '- The user directly asks a question important enough to preserve for later review: rationale ("why did ' +
-    'you choose X over Y"), design/architecture decisions, "how does Y work", tradeoff explanations.\n' +
-    "- Immediately AFTER you answer a substantive question, directive, or status-nudge the user interjected " +
-    'mid-session (e.g. "what\'s left from the plan?", "pushed yet?", "did the tests pass?") — so the answer ' +
-    "isn't lost in scrollback.\n" +
-    "- Whenever the user invokes the /question skill directly.\n\n" +
-    "Call it with the user's question, your COMPLETE answer (markdown ok), a tag (question | directive | " +
-    "action), and optional refs. It persists to the local question store, browsable later with " +
-    "`tools question log` / `tools question tail`.\n\n" +
-    "DO NOT use for: routine task instructions you simply execute, pure acknowledgements " +
-    '("ok", "thanks", "continue"), or trivial lookups not worth preserving.\n\n' +
-    "HANDOFFS (cross-agent task handoff): `handoff_post` creates. `handoff_get` reads. `handoff_list` lists. " +
-    "`handoff_action` changes. To delegate work, handoff_post {title, tasks} → copy the returned `paste` block " +
-    "into the receiving agent's chat. Address it with target {sessionId|sessionName|agent}, where agent is the " +
-    "intended RECIPIENT harness (claude | codex | grok | copilot), and give it a readable name (or let one be " +
-    'derived from the title) so it can be fetched as handoff_get {name: "fix-active-filter"}; a name shared by ' +
-    "several handoffs is refused with the candidate ids instead of guessing. " +
-    'Receiving agent: handoff_get {id or name} (default include:["tasks"] — full task ' +
-    "array) → READ warnings[] FIRST: it fires when the handoff is addressed to another session or another " +
-    "harness, and then the task is not yours — do not work it unless your user explicitly says to. It is a " +
-    "warning, never a block, and a session whose own identity cannot be detected is told the check was " +
-    "unverifiable rather than being called a mismatch. → claim (claim: true) → work the tasks " +
-    "→ handoff_action check_task with proof per task (deny_task with reason for tasks you can't do; " +
-    "uncheck_task keeps prior proof) → " +
-    'finish_handoff when all resolved. Pass include:["events"] on handoff_get for a bare {events, info} ' +
-    "activity trace (editId-free; each event carries `outcome` — a refused action is journaled with " +
-    "outcome.applied false and the reason, so the trace never reads as though it happened). " +
-    "handoff_list is never recipient-filtered by default; agent: '<harness>' and session: '<id-or-name>' are " +
-    "opt-in filters on the intended recipient, usable alone or together. " +
-    "Poster edits anytime from its own session via handoff_action " +
-    "(add_tasks/modify_task/modify_handoff/cancel_handoff); from other sessions pass the editId. Progress is " +
-    'live on the dev-dashboard /qa "Agent tasks" tab (SSE via /api/qa/stream type=handoff).\n\n' +
-    "BOARDS (dev-dashboard annotation boards):\n" +
-    "- Boards live on the DEV-DASHBOARD server (base auto-resolved from its config; default " +
-    "http://127.0.0.1:3042, override BOARDS_BASE_URL). Other local dashboards on other ports (e.g. the " +
-    "log viewer on 7243) have NO boards API. Never hand the user a board link you assembled yourself — " +
-    "boards_list_boards / boards_create_board / boards_compose_board responses all carry the authoritative " +
-    "`url`; relay that.\n" +
-    "- The user annotates screenshots on /boards/<slug>; each dispatched annotation is a work item for you.\n" +
-    "- Work loop: boards_wait_for_work({board} or {project,branch}) → for each capsule: boards_set_status " +
-    "working → fix the app → push a new set version (tools boards push) → boards_attach_after → boards_reply " +
-    "(1-3 lines) → boards_set_status in_review. NEVER set resolved — that verdict belongs to the user.\n" +
-    "- ALWAYS scope wait/list calls to YOUR board or repo+branch; items on other boards belong to other " +
-    "sessions.\n" +
-    '- A 409 "cancelled" on any write means the user withdrew the item: revert its changes, no reply, move on.\n' +
-    "- Prefer the `tools boards watch` CLI via a background Monitor for idle listening (zero token cost); use " +
-    "boards_wait_for_work to DRAIN after a wake, with timeoutSec 1.\n\n" +
-    "BOARD VOCABULARY (AI expression layer): you can PRESENT on boards, not just answer. boards_compose_board " +
-    "places a whole thought in ONE call — markdown text cards (roles: heading/idea/pro/con/risk), data-only viz " +
-    "cards (table/matrix/flow/bars/timeline/line/stat — always cheaper than an HTML artifact), cluster frames " +
-    "grouping a direction, wires, and anchored multiple-choice questions (options carry {label,hint,recommended}; " +
-    "answers arrive staged and are only released onto the work wire once the user dispatches). Batch-or-bust: " +
-    "never place cards one call at a time. Never send coordinates — pick a layout (column/row/grid) and use " +
-    "boards_arrange to tidy (13 modes; save:true persists the layout so the server auto-reflows it forever). " +
-    'JOURNEY SECTIONS: name board regions after customer journeys with kind "section" frames ("Onboarding", ' +
-    '"Checkout") — always visible, auto-indexed (boards_list_sections), and every tool scopes to them: ' +
-    'boards_compose_board {section}, boards_arrange {scope:"section:Name"}, boards_scrape_board {section} for ' +
-    "an isolated digest. Sections are also the ITERATION surface: present the next pass of a journey as its own " +
-    'section beside the current one (boards_compose_board {journey,pass:"next"}) instead of mixing takes ' +
-    "together — boards_scrape_board {diff:[a,b]} then diffs two sections pairwise. boards_update_cards edits or " +
-    "trashes only your own AI-layer cards (plus section frames) — the user's shots and notes are untouchable. " +
-    "boards_ask_board asks a first-class multiple-choice question outside a compose batch. Need a fresh " +
-    "canvas? boards_create_board births a new board (compose never auto-creates). Call " +
-    "boards_get_templates once before structuring a new board and start from a matching skeleton instead of " +
-    "inventing structure.\n\n" +
-    "JEV (capability `jev`, read-only, the same tools `tools jev mcp` serves alone): `jev_route` maps a plain " +
-    "request to one GenesisTools command line without running it; `jev_compact` shrinks a transcript, log or " +
-    "diff with Jev-judged drops; `jev_verify` judges claims against a document per template " +
-    "(`jev_verify_templates` lists them). Every result is JSON text. None of them acts on the machine.";
+/** The ❓ DECISION sentence of the instructions; the nudge only with the user's opt-in (`tools question config`). */
+function decisionNudge(askViaQuestionTool: boolean): string {
+    if (askViaQuestionTool) {
+        return "Post every ❓ DECISION this way, and also write it in your reply: the log is a copy. ";
+    }
+
+    return (
+        "The user has NOT opted in to agents asking through question_post, so ask decisive questions with your " +
+        "native question tool (for example AskUserQuestion) and in your reply; a post here only adds a copy to " +
+        "the inbox. "
+    );
+}
+
+/**
+ * The server instructions, read once when the server starts. `askViaQuestionTool` is the question
+ * config's opt-in; no hook nudges agents toward question_post, only this text and its tool description.
+ */
+export function serverInstructions(askViaQuestionTool: boolean): string {
+    return (
+        "Genesis Tools — question/answer server. TWO question surfaces, opposite directions:\n\n" +
+        "1. ASK THE USER (blocking, they answer): `question_post` creates a PENDING form — a question you " +
+        "need decided before you can continue. It lands on the dev-dashboard /qa Pending section and raises a " +
+        "notification. Default is NON-BLOCKING: you get a form id immediately and collect the answer with " +
+        "`question_wait` (returns waiter: answered | timeout | cancelled | budget_exhausted | not_found) or " +
+        "`question_poll` (no ids = everything still pending). `question_cancel` withdraws a form you no longer " +
+        "need. " +
+        "`question_respond` submits an answer — the USER normally does that on the dashboard, so use it only " +
+        "for automation or to relay an answer they gave you elsewhere; never invent one. Pass `wait: true` on " +
+        "question_post only when you genuinely cannot proceed, because a blocking-by-default ask hangs agent " +
+        "loops. Same surface from the CLI: `tools question ask|wait|poll|answer|cancel` (the CLI `answer` verb " +
+        "is `question_respond` here). Answering a form ALSO writes it into the Q→A history below, so /qa stays " +
+        "one list.\n" +
+        'DECISIONS AND TODOS: a `question_post` item with `type: "decision"` or `type: "todo"` is not a form. ' +
+        "It is numbered in this session's decision log (❓ DECISION N, TODO N; numbers never reused) and the " +
+        "result is the markdown section to paste into your reply. " +
+        decisionNudge(askViaQuestionTool) +
+        "Record " +
+        "progress (acknowledged, implemented, commit refs, verdict, comments, a copy of a chat answer) with " +
+        "`question_update`, several items per call. CLI: `tools question ask --json -`, " +
+        "`tools question list|update|answers|answer|draft|send`.\n\n" +
+        "2. LOG YOUR OWN ANSWER (after the fact, no waiting): `question_answer`, described next.\n\n" +
+        "WHEN TO USE THE question_answer TOOL:\n" +
+        '- The user directly asks a question important enough to preserve for later review: rationale ("why did ' +
+        'you choose X over Y"), design/architecture decisions, "how does Y work", tradeoff explanations.\n' +
+        "- Immediately AFTER you answer a substantive question, directive, or status-nudge the user interjected " +
+        'mid-session (e.g. "what\'s left from the plan?", "pushed yet?", "did the tests pass?") — so the answer ' +
+        "isn't lost in scrollback.\n" +
+        "- Whenever the user invokes the /question skill directly.\n\n" +
+        "Call it with the user's question, your COMPLETE answer (markdown ok), a tag (question | directive | " +
+        "action), and optional refs. It persists to the local question store, browsable later with " +
+        "`tools question log` / `tools question tail`.\n\n" +
+        "DO NOT use for: routine task instructions you simply execute, pure acknowledgements " +
+        '("ok", "thanks", "continue"), or trivial lookups not worth preserving.\n\n' +
+        "HANDOFFS (cross-agent task handoff): `handoff_post` creates. `handoff_get` reads. `handoff_list` lists. " +
+        "`handoff_action` changes. To delegate work, handoff_post {title, tasks} → copy the returned `paste` block " +
+        "into the receiving agent's chat. Address it with target {sessionId|sessionName|agent}, where agent is the " +
+        "intended RECIPIENT harness (claude | codex | grok | copilot), and give it a readable name (or let one be " +
+        'derived from the title) so it can be fetched as handoff_get {name: "fix-active-filter"}; a name shared by ' +
+        "several handoffs is refused with the candidate ids instead of guessing. " +
+        'Receiving agent: handoff_get {id or name} (default include:["tasks"] — full task ' +
+        "array) → READ warnings[] FIRST: it fires when the handoff is addressed to another session or another " +
+        "harness, and then the task is not yours — do not work it unless your user explicitly says to. It is a " +
+        "warning, never a block, and a session whose own identity cannot be detected is told the check was " +
+        "unverifiable rather than being called a mismatch. → claim (claim: true) → work the tasks " +
+        "→ handoff_action check_task with proof per task (deny_task with reason for tasks you can't do; " +
+        "uncheck_task keeps prior proof) → " +
+        'finish_handoff when all resolved. Pass include:["events"] on handoff_get for a bare {events, info} ' +
+        "activity trace (editId-free; each event carries `outcome` — a refused action is journaled with " +
+        "outcome.applied false and the reason, so the trace never reads as though it happened). " +
+        "handoff_list is never recipient-filtered by default; agent: '<harness>' and session: '<id-or-name>' are " +
+        "opt-in filters on the intended recipient, usable alone or together. " +
+        "Poster edits anytime from its own session via handoff_action " +
+        "(add_tasks/modify_task/modify_handoff/cancel_handoff); from other sessions pass the editId. Progress is " +
+        'live on the dev-dashboard /qa "Agent tasks" tab (SSE via /api/qa/stream type=handoff).\n\n' +
+        "BOARDS (dev-dashboard annotation boards):\n" +
+        "- Boards live on the DEV-DASHBOARD server (base auto-resolved from its config; default " +
+        "http://127.0.0.1:3042, override BOARDS_BASE_URL). Other local dashboards on other ports (e.g. the " +
+        "log viewer on 7243) have NO boards API. Never hand the user a board link you assembled yourself — " +
+        "boards_list_boards / boards_create_board / boards_compose_board responses all carry the authoritative " +
+        "`url`; relay that.\n" +
+        "- The user annotates screenshots on /boards/<slug>; each dispatched annotation is a work item for you.\n" +
+        "- Work loop: boards_wait_for_work({board} or {project,branch}) → for each capsule: boards_set_status " +
+        "working → fix the app → push a new set version (tools boards push) → boards_attach_after → boards_reply " +
+        "(1-3 lines) → boards_set_status in_review. NEVER set resolved — that verdict belongs to the user.\n" +
+        "- ALWAYS scope wait/list calls to YOUR board or repo+branch; items on other boards belong to other " +
+        "sessions.\n" +
+        '- A 409 "cancelled" on any write means the user withdrew the item: revert its changes, no reply, move on.\n' +
+        "- Prefer the `tools boards watch` CLI via a background Monitor for idle listening (zero token cost); use " +
+        "boards_wait_for_work to DRAIN after a wake, with timeoutSec 1.\n\n" +
+        "BOARD VOCABULARY (AI expression layer): you can PRESENT on boards, not just answer. boards_compose_board " +
+        "places a whole thought in ONE call — markdown text cards (roles: heading/idea/pro/con/risk), data-only viz " +
+        "cards (table/matrix/flow/bars/timeline/line/stat — always cheaper than an HTML artifact), cluster frames " +
+        "grouping a direction, wires, and anchored multiple-choice questions (options carry {label,hint,recommended}; " +
+        "answers arrive staged and are only released onto the work wire once the user dispatches). Batch-or-bust: " +
+        "never place cards one call at a time. Never send coordinates — pick a layout (column/row/grid) and use " +
+        "boards_arrange to tidy (13 modes; save:true persists the layout so the server auto-reflows it forever). " +
+        'JOURNEY SECTIONS: name board regions after customer journeys with kind "section" frames ("Onboarding", ' +
+        '"Checkout") — always visible, auto-indexed (boards_list_sections), and every tool scopes to them: ' +
+        'boards_compose_board {section}, boards_arrange {scope:"section:Name"}, boards_scrape_board {section} for ' +
+        "an isolated digest. Sections are also the ITERATION surface: present the next pass of a journey as its own " +
+        'section beside the current one (boards_compose_board {journey,pass:"next"}) instead of mixing takes ' +
+        "together — boards_scrape_board {diff:[a,b]} then diffs two sections pairwise. boards_update_cards edits or " +
+        "trashes only your own AI-layer cards (plus section frames) — the user's shots and notes are untouchable. " +
+        "boards_ask_board asks a first-class multiple-choice question outside a compose batch. Need a fresh " +
+        "canvas? boards_create_board births a new board (compose never auto-creates). Call " +
+        "boards_get_templates once before structuring a new board and start from a matching skeleton instead of " +
+        "inventing structure.\n\n" +
+        "JEV (capability `jev`, read-only, the same tools `tools jev mcp` serves alone): `jev_route` maps a plain " +
+        "request to one GenesisTools command line without running it; `jev_compact` shrinks a transcript, log or " +
+        "diff with Jev-judged drops; `jev_verify` judges claims against a document per template " +
+        "(`jev_verify_templates` lists them). Every result is JSON text. None of them acts on the machine."
+    );
+}
 
 export interface ToolEntry {
     description: string;
@@ -211,7 +234,7 @@ export interface ToolEntry {
     handler: (args: Record<string, unknown>, context?: { signal?: AbortSignal }) => Promise<string>;
 }
 
-function buildToolRegistry(): Record<string, ToolEntry> {
+function buildToolRegistry(askViaQuestionTool: boolean): Record<string, ToolEntry> {
     return {
         ...jevToolEntries(),
         question_answer: {
@@ -223,7 +246,7 @@ function buildToolRegistry(): Record<string, ToolEntry> {
             },
         },
         question_post: {
-            description: QUESTION_POST_DESCRIPTION,
+            description: questionPostDescription(askViaQuestionTool),
             inputSchema: QUESTION_POST_INPUT_SCHEMA as unknown as Record<string, unknown>,
             handler: async (args) => handleQuestionPost(args as unknown as QuestionPostArgs),
         },
@@ -562,14 +585,15 @@ export function filterRegistryByCapabilities(registry: Record<string, ToolEntry>
 }
 
 export async function startMcpServer(): Promise<void> {
-    const registry = filterRegistryByCapabilities(buildToolRegistry());
+    const askViaQuestionTool = loadQuestionConfig().askViaQuestionTool === true;
+    const registry = filterRegistryByCapabilities(buildToolRegistry(askViaQuestionTool));
     log.info(
-        { capabilities: env.tools.getMcpCapabilities() ?? "all", tools: Object.keys(registry) },
+        { capabilities: env.tools.getMcpCapabilities() ?? "all", tools: Object.keys(registry), askViaQuestionTool },
         "genesis-tools MCP tool registry resolved"
     );
     const server = new Server(
         { name: "genesis-tools", version: "1.0.0" },
-        { capabilities: { tools: {} }, instructions: SERVER_INSTRUCTIONS }
+        { capabilities: { tools: {} }, instructions: serverInstructions(askViaQuestionTool) }
     );
 
     server.setRequestHandler(

@@ -69,7 +69,7 @@ tools question answer ask_5f1c… --json '[{"itemId":"q1","freeText":"staging"},
 | `--timeout <ms>` | Auto-retire the form after this long |
 | `--wait` / `--wait-timeout <ms>` | Block, and for how long (default 120000) |
 | `--source <name>` / `--session <id>` | Who is asking, and the session to attribute the answer to |
-| `--no-notify` | Do not raise a notification for this form |
+| `--no-notify` | Do not raise a notification for this form or these decisions |
 
 ## Quick start
 
@@ -115,6 +115,11 @@ tools question config --notify on --sound synth:soft
 | `--obsidian <onoff>` | `on` or `off` |
 | `--obsidian-vault <path>` | Set the Obsidian vault override |
 | `--list-sounds` | List every available sound, bundled and synth, then exit |
+| `--ask-via-question-tool [onoff]` | "Ask agents to use tools question instead of their native question tools?" `on` or `off`, default `off`. Without a value: a picker in a terminal, the possible values otherwise. Bare `tools question config` in a terminal opens the same picker. |
+
+### The agent opt-in (`--ask-via-question-tool`)
+
+No hook is involved. Agents learn about `tools question` from two texts of the genesis-tools MCP server: its server instructions and the `question_post` tool description, both read when the server starts. With the setting on, both tell agents to post every ❓ DECISION through `question_post` (or `tools question ask`). With it off (the default), both tell agents to ask with their native question tool (for example AskUserQuestion) and in their chat reply. A post still lands in the inbox either way, and its result says so. Every post's result also tells the agent that the inbox is a copy: the question must also be written in its own reply.
 
 ---
 
@@ -137,6 +142,7 @@ You rarely do. The normal writer is the `question_answer` tool on the genesis-to
 ## Pending-form order and notifications
 
 - **Oldest first.** `poll` and the dashboard's Pending section list forms oldest-created first, so a second agent's question never jumps ahead of one you are already looking at.
+- **Banners open the hub.** With GenesisTools.app installed, a new form's banner and the banner for posted decisions open the hub's Inbox at that card (`GenesisTools --hub --question <id>` / `--decision <id>`). Without the app, a form's banner opens /qa and decisions raise no banner. Decisions announce themselves when they wait for you: a decision unless its `for` names someone else, a todo only with `for: "human"`. One banner per post.
 - **Banner buttons.** For a form that is exactly one required item with two choices of opposite yes/no polarity ("Yes"/"No", "Accept"/"Reject", …), the banner carries one button per choice that answers the form directly, the same as running `tools question answer <id> --choice <id>`. A "staging"/"production" pair does not qualify: neither label has a polarity. Any other form's banner carries no buttons; the click itself already opens the form.
 - **Retraction.** Answering, cancelling, or timing out a form removes its banner from Notification Center, wherever it is still sitting.
 - **Not implemented: time-sensitive / break-through-DND banners.** The native layer supports `ignoreDnD`, but `GenesisTools.app`'s code-signing identity cannot carry the `timeSensitive` entitlement (`timeSensitiveSetting: notSupported` — see the repo's macOS notifications notes), so passing it would be silently ignored by the OS. A pending-form banner can still be swallowed by a system Focus mode.

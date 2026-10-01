@@ -4,12 +4,14 @@ import { logger, out } from "@genesiscz/utils/logger";
 import { createBoxTable, renderCliHeader, truncateDisplay } from "@genesiscz/utils/table";
 import { type Command, InvalidArgumentError } from "commander";
 import pc from "picocolors";
+import { agentNote } from "../lib/agent-note";
 import {
     checkDecisionItems,
     isDecisionId,
     postDecisionItems,
     type QuestionItemInput,
     splitItems,
+    validateQuestionItems,
 } from "../lib/decisions/items";
 import { decisionFiles } from "../lib/decisions/read";
 import { updateDecisions } from "../lib/decisions/store";
@@ -75,6 +77,30 @@ export function collect(value: string, previous: string[] = []): string[] {
     return [...previous, value];
 }
 
+const ASK_HELP_HINT = "Run tools question ask --help for the item shape.";
+
+/** `ask --help`: the `--json` item fields and one example, so an agent never guesses the names. */
+const ASK_JSON_HELP = `
+--json items (an array, or a question_post payload { items, projectPath?, source?, sessionHint?, timeoutMs? }):
+  promptMarkdown   required. The question, markdown ok. (Not "prompt" or "question".)
+  choices          answer options: labels, or { id, label } objects. (Not "options".)
+  type             question (default: a pending form) | decision (numbered ❓ DECISION N) | todo (TODO N)
+  title            decision/todo: short title shown after the number
+  recommended      decision: the recommended option letter, e.g. "b"
+  proposal         decision: what you would do
+  reasoning        decision: markdown reasoning
+  confidence       decision: high | medium | low
+  blocking         decision: true when you cannot continue without the answer
+  for              decision/todo: who acts on it, "human" (default for a decision), "agent" or a model name
+  reevaluateWhen   decision/todo: a condition that reopens it, e.g. "after the PR merges"
+  refs             decision: [{ path, line?, endLine?, sha? }]; the first ref's lines become the excerpt
+  id, allowMultiple, allowFreeText, allowFileTags, allowImagePaste, required   question items only
+
+Example:
+  echo '[{"type":"decision","title":"Cache","promptMarkdown":"Keep the cache?","choices":["Keep it","Drop it"],"recommended":"a","blocking":true}]' \\
+    | tools question ask --json -
+`;
+
 /** The question_post fields `ask --json -` honours besides `items`; a CLI flag still wins. */
 interface PostPayloadFields {
     projectPath?: string;
@@ -83,27 +109,60 @@ interface PostPayloadFields {
     timeoutMs?: number;
 }
 
+/** Only the known payload fields, each checked for its type: a bad value fails here, not deep in the post. */
+function payloadFields(payload: Record<string, unknown>): PostPayloadFields {
+    const fields: PostPayloadFields = {};
+
+    for (const key of ["projectPath", "source", "sessionHint"] as const) {
+        const value = payload[key];
+
+        if (value === undefined) {
+            continue;
+        }
+
+        if (typeof value !== "string") {
+            throw new Error(`question_post payload: ${key} must be a string. ${ASK_HELP_HINT}`);
+        }
+
+        fields[key] = value;
+    }
+
+    if (payload.timeoutMs !== undefined) {
+        const timeoutMs = payload.timeoutMs;
+
+        if (typeof timeoutMs !== "number" || !Number.isFinite(timeoutMs) || timeoutMs < 0) {
+            throw new Error(`question_post payload: timeoutMs must be a number of milliseconds. ${ASK_HELP_HINT}`);
+        }
+
+        fields.timeoutMs = timeoutMs;
+    }
+
+    return fields;
+}
+
 /**
  * `--json <items>` is an array of items. `--json -` reads stdin, and there it may also be the
  * whole question_post payload (`{ items, projectPath?, source?, sessionHint?, timeoutMs? }`), so an
  * agent pipes the same JSON it would send the MCP tool.
  */
-function parseItems(opts: Record<string, unknown>): { items: QuestionItemInput[]; fields: PostPayloadFields } {
+export function parseItems(opts: Record<string, unknown>): { items: QuestionItemInput[]; fields: PostPayloadFields } {
     const raw = opts.json === "-" ? readFileSync(0, "utf8") : opts.json;
 
     if (typeof raw === "string" && raw.trim()) {
         const parsed = SafeJSON.parse(raw, { strict: true });
 
         if (Array.isArray(parsed)) {
-            return { items: parsed as QuestionItemInput[], fields: {} };
+            return { items: validateQuestionItems(parsed, ASK_HELP_HINT), fields: {} };
         }
 
         if (typeof parsed === "object" && parsed !== null && Array.isArray((parsed as { items?: unknown }).items)) {
-            const { items, ...fields } = parsed as PostPayloadFields & { items: QuestionItemInput[] };
-            return { items, fields };
+            const payload = parsed as Record<string, unknown>;
+            return { items: validateQuestionItems(payload.items, ASK_HELP_HINT), fields: payloadFields(payload) };
         }
 
-        throw new Error("--json must be an array of items, or a question_post payload with an items array");
+        throw new Error(
+            `--json must be an array of items, or a question_post payload with an items array. ${ASK_HELP_HINT}`
+        );
     }
 
     const question = typeof opts.q === "string" ? opts.q : "";
@@ -239,8 +298,9 @@ export function registerAskCommand(program: Command): void {
         .option("--timeout <ms>", "auto-retire the form after this long", parseMs)
         .option("--wait", "block until the form is answered, cancelled or timed out")
         .option("--wait-timeout <ms>", "how long --wait blocks before giving up", parseMs)
-        .option("--no-notify", "do not raise a notification for this form")
+        .option("--no-notify", "do not raise a notification for this form or these decisions")
         .option("--format <fmt>", "human|json", "human")
+        .addHelpText("after", ASK_JSON_HELP)
         .action(async (opts: Record<string, unknown>) => {
             let parsed: ReturnType<typeof parseItems>;
 
@@ -257,13 +317,18 @@ export function registerAskCommand(program: Command): void {
             const { file, events } = decisionFiles();
             const hint = { sessionId: sessionHint, cwd: projectPath };
 
+            const notify = opts.notify !== false;
+            // The agent reads this: the inbox is a copy, and without the opt-in it should ask natively.
+            const note = agentNote();
+
             if (questions.length === 0) {
-                const posted = await postDecisionItems({ file, events, items: decisions, hint });
+                const posted = await postDecisionItems({ file, events, items: decisions, hint, notify });
 
                 if (opts.format === "json") {
-                    out.result(SafeJSON.stringify(posted, null, 2));
+                    out.result(SafeJSON.stringify({ ...posted, agentNote: note }, null, 2));
                 } else {
                     out.print(posted.markdown);
+                    out.printlnErr(pc.yellow(`Note for the agent: ${note}`));
                 }
 
                 process.exit(0);
@@ -279,19 +344,21 @@ export function registerAskCommand(program: Command): void {
                     source: flag(opts.source) ?? parsed.fields.source ?? "cli",
                     sessionHint,
                 },
-                { notify: opts.notify !== false }
+                { notify }
             );
-            const posted = await postDecisionItems({ file, events, items: decisions, hint });
+            const posted = await postDecisionItems({ file, events, items: decisions, hint, notify });
 
             if (opts.wait !== true) {
                 if (opts.format === "json") {
-                    out.result(SafeJSON.stringify({ form, ...posted }, null, 2));
+                    out.result(SafeJSON.stringify({ form, ...posted, agentNote: note }, null, 2));
                 } else {
                     renderForm(form);
 
                     if (posted.markdown) {
                         out.print(posted.markdown);
                     }
+
+                    out.printlnErr(pc.yellow(`Note for the agent: ${note}`));
                 }
 
                 process.exit(0);

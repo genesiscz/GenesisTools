@@ -1,9 +1,11 @@
+import { agentNote } from "@app/question/lib/agent-note";
 import {
     checkDecisionItems,
     isDecisionId,
     postDecisionItems,
     type QuestionItemInput,
     splitItems,
+    validateQuestionItems,
 } from "@app/question/lib/decisions/items";
 import { currentHarnessSession, decisionFiles, sessionAnswers } from "@app/question/lib/decisions/read";
 import { type DecisionRecord, type PostDecisionDeps, readDecisions } from "@app/question/lib/decisions/store";
@@ -44,7 +46,8 @@ export interface DecisionLogDeps {
     decisionLog?: { file: string; events: string; deps?: PostDecisionDeps; session?: string | null };
 }
 
-export type QuestionDeps = AskDeps & DecisionLogDeps;
+/** `askViaQuestionTool` overrides the question config's opt-in (tests); unset reads the config. */
+export type QuestionDeps = AskDeps & DecisionLogDeps & { askViaQuestionTool?: boolean };
 
 export interface QuestionWaitArgs {
     id: string;
@@ -66,7 +69,7 @@ export interface QuestionCancelArgs {
 
 function itemsFrom(args: QuestionPostArgs): QuestionItemInput[] {
     if (args.items?.length) {
-        return args.items;
+        return validateQuestionItems(args.items, "See the question_post input schema for the item fields.");
     }
 
     if (!args.question?.trim()) {
@@ -104,6 +107,7 @@ async function postDecisionHalf(args: QuestionPostArgs, items: QuestionItemInput
         items,
         hint: { sessionId: args.sessionHint, cwd: args.projectPath },
         deps: deps.decisionLog?.deps,
+        notify: deps.notify,
     });
 }
 
@@ -117,6 +121,11 @@ function describeDecisions(decisions: DecisionRecord[], markdown: string): strin
 }
 
 export async function handleQuestionPost(args: QuestionPostArgs, deps: QuestionDeps = {}): Promise<string> {
+    const text = await postQuestionItems(args, deps);
+    return `${text}\n\n${agentNote(deps.askViaQuestionTool)}`;
+}
+
+async function postQuestionItems(args: QuestionPostArgs, deps: QuestionDeps): Promise<string> {
     const { questions, decisions } = splitItems(itemsFrom(args));
 
     if (questions.length === 0) {
@@ -394,18 +403,32 @@ export const QUESTION_CANCEL_INPUT_SCHEMA = {
     required: ["id"],
 } as const;
 
-export const QUESTION_POST_DESCRIPTION =
-    "ASK the user a question and leave it PENDING until they answer it. Use this when you need a decision " +
-    "before you can continue — a choice between approaches, a go/no-go, a missing value only they know. The " +
-    "form appears on the dev-dashboard /qa Pending section and raises a notification. Default is " +
-    "NON-BLOCKING: you get a form id back immediately, and you collect the answer with question_wait or " +
-    "question_poll. Pass wait: true only when you truly cannot proceed without it. This is the opposite of " +
-    "question_answer, which LOGS a question you have already answered yourself.\n" +
-    'Items with type "decision" or "todo" are NOT a form: they are numbered in this session\'s decision log ' +
-    "(numbers are session-wide and never reused) and the result is the markdown ❓ DECISION / TODO section to " +
-    "paste into your reply. Post every ❓ DECISION you ask this way, several per call. The user answers them in " +
-    "the GenesisTools hub; answers reach you in a later prompt or through question_poll, and you record " +
-    "progress with question_update.";
+/**
+ * The question_post description. The "post every ❓ DECISION" nudge is there only when the user opted
+ * in (`tools question config --ask-via-question-tool on`); without it the text sends the agent to its
+ * native question tool. Either way the inbox is a copy and the question also goes in the reply.
+ */
+export function questionPostDescription(askViaQuestionTool: boolean): string {
+    const nudge = askViaQuestionTool
+        ? "Post every ❓ DECISION you ask this way, several per call. "
+        : "The user has NOT opted in to agents asking through this tool: ask decisive questions with your " +
+          "native question tool (for example AskUserQuestion) and in your reply; a post here only adds a copy " +
+          "to the inbox. ";
+
+    return (
+        "ASK the user a question and leave it PENDING until they answer it: a choice between approaches, a " +
+        "go/no-go, a missing value only they know. The form appears in the GenesisTools hub Inbox and on the " +
+        "dev-dashboard /qa Pending section, and raises a notification. Default is " +
+        "NON-BLOCKING: you get a form id back immediately, and you collect the answer with question_wait or " +
+        "question_poll. Pass wait: true only when you truly cannot proceed without it. This is the opposite of " +
+        "question_answer, which LOGS a question you have already answered yourself.\n" +
+        'Items with type "decision" or "todo" are NOT a form: they are numbered in this session\'s decision log ' +
+        "(numbers are session-wide and never reused) and the result is the markdown ❓ DECISION / TODO section to " +
+        `paste into your reply. ${nudge}The inbox is a copy: the question must also be written in your own ` +
+        "reply. The user answers them in the GenesisTools hub; answers reach you in a later prompt or through " +
+        "question_poll, and you record progress with question_update."
+    );
+}
 
 export const QUESTION_WAIT_DESCRIPTION =
     "Block until a pending form posted by question_post is answered, cancelled or times out. Returns " +

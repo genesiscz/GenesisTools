@@ -9,6 +9,7 @@ interface DispatchedEvent {
     title?: string;
     message: string;
     open?: string;
+    execute?: string;
     id?: string;
     actions?: { id: string; title: string; open?: string; execute?: string }[];
 }
@@ -34,6 +35,11 @@ mock.module("@genesiscz/utils/macos/notifications", () => ({
     },
 }));
 
+let hubInstalled = false;
+mock.module("../hub-link", () => ({
+    hubItemClickCommand: (kind: string, id: string) => (hubInstalled ? `open-hub --${kind} ${id}` : null),
+}));
+
 let whileLinking: ((id: string) => void) | undefined;
 mock.module("@app/dev-dashboard/lib/qa-deep-link", () => ({
     buildQaDeepLink: async (id: string) => {
@@ -53,6 +59,7 @@ let db: Database;
 beforeEach(() => {
     dispatched.length = 0;
     removed.length = 0;
+    hubInstalled = false;
     db = new Database(":memory:");
     runMigrations(db, PENDING_MIGRATIONS as Migration[], { tableName: "qa_pending" });
     const scratch = mkdtempSync(join(tmpdir(), "gt-ask-notify-"));
@@ -75,6 +82,18 @@ describe("pending-form notification", () => {
         expect(dispatched[0].title).toContain("waiting for you");
         expect(dispatched[0].message).toContain("Ship the PR?");
         expect(dispatched[0].open).toBe(`http://myhost.example.com/qa?id=${encodeURIComponent(form.id)}`);
+    });
+
+    test("with GenesisTools.app installed the click opens the hub's Inbox at the form, not /qa", async () => {
+        hubInstalled = true;
+        const form = await postAskForm(
+            { projectPath: "/tmp/gt-notify-fixture", items: [{ promptMarkdown: "Ship the PR?" }] },
+            deps
+        );
+
+        expect(dispatched).toHaveLength(1);
+        expect(dispatched[0].execute).toBe(`open-hub --question ${form.id}`);
+        expect(dispatched[0].open).toBeUndefined();
     });
 
     test("a multi-item form says how many more questions there are", async () => {

@@ -19,13 +19,35 @@ export interface QuestionConfig {
     obsidianPathTemplate: string;
     sound?: SoundChoice; // Phase 2
     soundVolume?: number; // Phase 2, 0..1
+    /** See {@link ASK_VIA_QUESTION_TOOL_DESCRIPTION}. Off unless the user opts in. */
+    askViaQuestionTool?: boolean;
 }
+
+export const ASK_VIA_QUESTION_TOOL_LABEL = "Ask agents to use tools question instead of their native question tools?";
+
+/**
+ * What the setting changes, shown by `tools question config`. Keep it in step with the texts it names:
+ * `serverInstructions()` in src/genesis-tools-mcp/lib/server.ts, `questionPostDescription()` in
+ * src/genesis-tools-mcp/lib/tools/question-post.ts and `agentNote()` in ./agent-note.ts.
+ */
+export const ASK_VIA_QUESTION_TOOL_DESCRIPTION = [
+    "No hook is involved. Agents learn about tools question from two texts of the genesis-tools MCP server:",
+    "its server instructions and the question_post tool description. Both are read when the server starts,",
+    "so a change reaches an agent session started after it.",
+    "On: both texts tell agents to post every ❓ DECISION with question_post (or tools question ask).",
+    "Off (the default): both texts tell agents to ask with their native question tool (for example",
+    "AskUserQuestion) and in their chat reply. A post still lands in the inbox, and its result reminds",
+    "the agent that you have not opted in.",
+    "Either way, every post tells the agent that the inbox holds a copy: the question must also be written",
+    "in its chat reply.",
+].join("\n");
 
 const DEFAULT: QuestionConfig = {
     sinks: { obsidian: true, sound: false, notify: false, notifyPending: true },
     obsidianPathTemplate: "{project}/Questions/{date}.md",
     sound: { kind: "bundled", name: "switch.wav" },
     soundVolume: 0.6,
+    askViaQuestionTool: false,
 };
 
 export function configPath(): string {

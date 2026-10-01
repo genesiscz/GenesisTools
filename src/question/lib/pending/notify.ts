@@ -4,6 +4,7 @@ import type { NotificationAction } from "@genesiscz/utils/macos/notifications";
 import { removeNotifications } from "@genesiscz/utils/macos/notifications";
 import { dispatchNotification } from "@genesiscz/utils/notifications";
 import { shellCommandLine } from "@genesiscz/utils/shell/quote";
+import { hubItemClickCommand } from "../hub-link";
 import { summarizeForm } from "./render";
 import type { AskForm } from "./types";
 
@@ -109,7 +110,7 @@ export function isBinaryYesNo(form: AskForm): boolean {
 /**
  * One button per choice on a detected binary yes/no form — clicking one answers the form
  * directly through the same path as `tools question answer`. The banner click itself already
- * opens the form (see {@link notifyPendingForm}'s own `open`), so a non-binary form gets no
+ * opens the form (see {@link notifyPendingForm}'s own click), so a non-binary form gets no
  * buttons at all.
  */
 export async function buildQaNotificationActions(form: AskForm): Promise<NotificationAction[]> {
@@ -139,7 +140,9 @@ export async function buildQaNotificationActions(form: AskForm): Promise<Notific
  */
 export async function notifyPendingForm(form: AskForm, stillPending: () => boolean = () => true): Promise<void> {
     try {
-        const open = await buildQaDeepLink(form.id);
+        // With GenesisTools.app installed the click opens the hub's Inbox at this form; without it, /qa.
+        const hub = hubItemClickCommand("question", form.id);
+        const open = hub ? undefined : await buildQaDeepLink(form.id);
         const actions = await buildQaNotificationActions(form);
         // Another process can answer or cancel the form during those awaits; its retraction has then
         // already run, so a banner posted now would stay behind.
@@ -153,6 +156,7 @@ export async function notifyPendingForm(form: AskForm, stillPending: () => boole
             title: "A question is waiting for you",
             message: summarizeForm(form),
             open,
+            ...(hub ? { execute: hub } : {}),
             id: qaNotificationId(form.id),
             actions,
         });
