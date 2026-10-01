@@ -530,6 +530,15 @@ async function resolveText(messageParts: string[], filePath?: string): Promise<s
     return messageParts.join(" ");
 }
 
+/** Books a synthesis' usage, best-effort: a failed booking is logged and never replaces a speech error or stops playback. */
+async function bookUsage(book?: () => Promise<void>): Promise<void> {
+    try {
+        await book?.();
+    } catch (error) {
+        logger.warn({ error }, "[say] could not record the account's usage; speech goes on");
+    }
+}
+
 interface SpeakCachedArgs {
     mgr: SayConfigManager;
     text: string;
@@ -591,7 +600,7 @@ async function speakCached(args: SpeakCachedArgs): Promise<{ cacheHit: boolean }
             });
         } finally {
             if (produced && provider !== "macos") {
-                await onSynthesized?.();
+                await bookUsage(onSynthesized);
             }
         }
 
@@ -672,7 +681,7 @@ async function speakCached(args: SpeakCachedArgs): Promise<{ cacheHit: boolean }
         apiKey,
     });
     // Paid as soon as it returned: a write or playback failure below does not undo the charge.
-    await onSynthesized?.();
+    await bookUsage(onSynthesized);
 
     // recordMiss writes to disk synchronously — wrap so a cache-write failure
     // (ENOSPC, permission, etc.) doesn't drop the audio the user just paid

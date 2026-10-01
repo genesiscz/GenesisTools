@@ -112,7 +112,9 @@ async function readCapped(
         reader.releaseLock();
     }
 
-    return new TextDecoder().decode(Buffer.concat(chunks));
+    // `stream: true` holds back an incomplete trailing character, so a cut inside one never adds a U+FFFD
+    // (3 bytes) and the text stays within the cap.
+    return new TextDecoder().decode(Buffer.concat(chunks), { stream: true });
 }
 
 /** Signals the process group our detached child leads; an ended group is logged, not an error. */
