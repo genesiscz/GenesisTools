@@ -24,6 +24,8 @@ export interface RefReport {
     kind: "path" | "branch" | "ref";
     branch: string | null;
     worktree: string | null;
+    /** Git's reason when that worktree is prunable (folder or `.git` file gone), else null. */
+    prunable: string | null;
     /** `status --porcelain` entries in the worktree; 0 when there is no worktree. */
     dirty: number;
     ahead: number;
@@ -95,14 +97,21 @@ export function isMainWorktree(wt: WorktreeInfo, repoRoot: string): boolean {
 export async function resolveRef(ctx: CollectContext, ref: string): Promise<ResolvedRef> {
     const git = createGit({ cwd: ctx.repoRoot });
 
-    if (existsSync(ref)) {
-        const wt = ctx.worktrees.find((w) => samePath(w.path, ref));
+    // A prunable entry still names a path, even when its folder is gone.
+    const exists = existsSync(ref);
+    const byPath = ctx.worktrees.find((w) => (exists || w.prunable) && samePath(w.path, ref));
 
-        if (wt) {
-            const abs = resolve(ref);
-            const label = abs.startsWith(`${ctx.repoRoot}/`) ? abs.slice(ctx.repoRoot.length + 1) : ref;
-            return { ref, label, kind: "path", branch: wt.branch, worktree: wt, target: wt.branch ?? wt.head };
-        }
+    if (byPath) {
+        const abs = resolve(ref);
+        const label = abs.startsWith(`${ctx.repoRoot}/`) ? abs.slice(ctx.repoRoot.length + 1) : ref;
+        return {
+            ref,
+            label,
+            kind: "path",
+            branch: byPath.branch,
+            worktree: byPath,
+            target: byPath.branch ?? byPath.head,
+        };
     }
 
     if (await git.branchExists(ref)) {
@@ -149,7 +158,9 @@ export async function collectRefReport(ctx: CollectContext, ref: string): Promis
     const { branch, worktree, target } = resolved;
     const base = (branch && ctx.baseFor ? await ctx.baseFor(branch) : null) ?? ctx.base;
 
-    const dirty = worktree ? (await git.status({ cwd: worktree.path })).entries.length : 0;
+    // A prunable worktree has no checkout left to be dirty: its folder or its `.git` file is gone.
+    const prunable = worktree?.prunable ?? null;
+    const dirty = worktree && !prunable ? (await git.status({ cwd: worktree.path })).entries.length : 0;
     const mergeBase = await git.mergeBase(base.ref, target);
     const { ahead, behind } = await git.aheadBehind(base.ref, target);
     const atBase = (await git.getSha(target)) === (await git.getSha(base.ref));
@@ -207,7 +218,8 @@ export async function collectRefReport(ctx: CollectContext, ref: string): Promis
     // and has to be named explicitly on --prune.
     if ((decision.verdict === "MERGED" || decision.verdict === "EMPTY") && dirty === 0) {
         if (worktree && !isMainWorktree(worktree, ctx.repoRoot)) {
-            commands.push(`git worktree remove ${SafeJSON.stringify(worktree.path)}`);
+            // `worktree remove` refuses an entry whose `.git` file is gone; prune drops every such entry.
+            commands.push(prunable ? "git worktree prune" : `git worktree remove ${SafeJSON.stringify(worktree.path)}`);
         }
 
         if (branch) {
@@ -236,6 +248,7 @@ export async function collectRefReport(ctx: CollectContext, ref: string): Promis
         kind: resolved.kind,
         branch,
         worktree: worktree?.path ?? null,
+        prunable,
         dirty,
         ahead,
         behind,

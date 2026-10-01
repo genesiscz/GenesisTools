@@ -16,6 +16,8 @@ export interface WorktreeInfo {
     branch: string | null;
     isBare: boolean;
     isMain: boolean;
+    /** Git's reason when the entry is prunable: its folder or its `.git` file is gone. */
+    prunable?: string | null;
 }
 
 export interface WorktreeCreateOptions {
@@ -84,6 +86,7 @@ export async function listWorktrees(cwd?: string): Promise<WorktreeInfo[]> {
         branch: w.branch,
         isBare: w.isBare,
         isMain: w.isMain,
+        prunable: w.prunable,
     }));
 }
 

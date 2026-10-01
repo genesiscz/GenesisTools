@@ -67,6 +67,7 @@ function flagsOf(r: RefReport): string {
     return [
         r.dirty > 0 ? `dirty:${r.dirty}` : "",
         r.worktree ? "worktree" : "",
+        r.prunable ? "prunable" : "",
         r.unpushed ? `unpushed:${r.unpushed}` : "",
         r.upstreamGone ? "gone" : "",
         r.upstream === null && r.branch ? "no-upstream" : "",
@@ -268,7 +269,8 @@ async function pruneRefs({
         const parts: string[] = [];
 
         if (plan.worktreePath) {
-            parts.push(`remove worktree ${plan.worktreePath}`);
+            const verb = plan.report.prunable ? "prune worktree entry" : "remove worktree";
+            parts.push(`${verb} ${plan.worktreePath}`);
         }
 
         if (plan.branch && plan.tipSha) {
@@ -308,6 +310,12 @@ async function pruneRefs({
     for (const o of outcomes) {
         if (o.removedWorktree) {
             out.log.success(`removed worktree ${o.removedWorktree}`);
+        }
+
+        if (o.leftFolder) {
+            out.log.warn(
+                `${o.leftFolder} is still on disk without a .git file; git no longer tracks it, so move it aside by hand`
+            );
         }
 
         if (o.deletedBranch) {

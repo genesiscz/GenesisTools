@@ -512,6 +512,47 @@ describe("prune", () => {
     });
 });
 
+describe("prunable worktrees", () => {
+    it("judges and prunes an entry whose folder is gone", async () => {
+        const r = await repoWithFeature();
+        await r.squashMerge("feat/x");
+        const wt = await r.worktreeAdd({ name: "wt-gone", ref: "feat/x", detach: true });
+        rmSync(wt, { recursive: true, force: true });
+
+        const ctx = await pruneCtxFor(r);
+        const report = await collectRefReport(ctx, wt);
+        expect(report).toMatchObject({ kind: "path", verdict: "MERGED", worktree: wt, dirty: 0 });
+        expect(report.prunable).not.toBeNull();
+        expect(report.commands).toEqual(["git worktree prune"]);
+        expect(await listAllRefs(ctx)).toContain(wt);
+
+        const { plans, refusals } = await planPrune(ctx, [wt]);
+        expect(refusals).toEqual([]);
+        const [outcome] = await executePrune(ctx, plans);
+        expect(outcome).toMatchObject({ removedWorktree: wt, leftFolder: null, failures: [] });
+        expect((await listWorktrees(r.dir)).some((w) => w.path === wt)).toBe(false);
+    });
+
+    it("prunes an entry whose folder lost its .git file and reports the folder it left", async () => {
+        const r = await repoWithFeature();
+        await r.squashMerge("feat/x");
+        const wt = await r.worktreeAdd({ name: "wt-nogit", ref: "feat/x" });
+        rmSync(join(wt, ".git"), { force: true });
+
+        const ctx = await pruneCtxFor(r);
+        const byPath = await collectRefReport(ctx, wt);
+        expect(byPath).toMatchObject({ kind: "path", branch: "feat/x", verdict: "MERGED", dirty: 0 });
+        expect(byPath.prunable).not.toBeNull();
+
+        const { plans } = await planPrune(ctx, ["feat/x"]);
+        const [outcome] = await executePrune(ctx, plans);
+        expect(outcome).toMatchObject({ removedWorktree: wt, leftFolder: wt, failures: [] });
+        expect(outcome.deletedBranch?.name).toBe("feat/x");
+        expect((await listWorktrees(r.dir)).some((w) => w.path === wt)).toBe(false);
+        expect(existsSync(wt)).toBe(true);
+    });
+});
+
 describe("pure verdict", () => {
     it("decides the cheap tiers and groups raw changes by path", () => {
         expect(quickVerdict({ ahead: 0, atBase: true, cherryPlus: 0 })?.verdict).toBe("EMPTY");

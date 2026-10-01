@@ -1,5 +1,6 @@
+import { existsSync } from "node:fs";
 import type { BranchPolicy } from "@genesiscz/utils/git";
-import { createGit } from "@genesiscz/utils/git";
+import { createGit, listWorktrees } from "@genesiscz/utils/git";
 import { logger } from "@genesiscz/utils/logger";
 import { type CollectContext, collectRefReport, isMainWorktree, type RefReport } from "./collect";
 
@@ -228,10 +229,43 @@ export interface PruneOutcome {
     deletedBranch: { name: string; sha: string } | null;
     /** The deleted `origin/<name>`, with the sha it pointed at so the restore push is printable. */
     deletedRemote: { name: string; sha: string } | null;
+    /** A prunable worktree whose folder is still on disk without its `.git` file; git no longer tracks it. */
+    leftFolder: string | null;
     failures: string[];
 }
 
-async function removeWorktree(ctx: PruneContext, path: string): Promise<string | null> {
+/**
+ * A prunable entry: `worktree remove` drops it when the folder is gone, but refuses it when only
+ * the `.git` file is gone. Then `worktree prune` is the only way, and it drops every prunable
+ * entry, which by definition no longer has a checkout. A locked entry survives prune.
+ */
+async function prunePrunable(ctx: PruneContext, path: string, reason: string): Promise<string | null> {
+    const git = createGit({ cwd: ctx.repoRoot });
+    const removed = await git.executor.exec(["worktree", "remove", path], { timeout: WORKTREE_REMOVE_TIMEOUT_MS });
+
+    if (removed.success) {
+        return null;
+    }
+
+    logger.debug(
+        { path, reason, stderr: removed.stderr },
+        "merged --prune: prunable entry refused remove, running worktree prune"
+    );
+    const pruned = await git.executor.exec(["worktree", "prune"], { timeout: WORKTREE_REMOVE_TIMEOUT_MS });
+
+    if (!pruned.success) {
+        return `worktree prune failed: ${pruned.stderr}`;
+    }
+
+    const still = (await listWorktrees(ctx.repoRoot)).some((w) => w.path === path);
+    return still ? `worktree prune kept the entry for ${path} (is it locked?)` : null;
+}
+
+async function removeWorktree(ctx: PruneContext, path: string, prunable: string | null): Promise<string | null> {
+    if (prunable) {
+        return prunePrunable(ctx, path, prunable);
+    }
+
     const git = createGit({ cwd: ctx.repoRoot });
     const first = await git.executor.exec(["worktree", "remove", path], { timeout: WORKTREE_REMOVE_TIMEOUT_MS });
 
@@ -264,16 +298,21 @@ export async function executePrune(ctx: PruneContext, plans: PrunePlan[]): Promi
             removedWorktree: null,
             deletedBranch: null,
             deletedRemote: null,
+            leftFolder: null,
             failures: [],
         };
 
         if (plan.worktreePath) {
-            const failure = await removeWorktree(ctx, plan.worktreePath);
+            const failure = await removeWorktree(ctx, plan.worktreePath, plan.report.prunable);
 
             if (failure) {
                 outcome.failures.push(failure);
             } else {
                 outcome.removedWorktree = plan.worktreePath;
+
+                if (plan.report.prunable && existsSync(plan.worktreePath)) {
+                    outcome.leftFolder = plan.worktreePath;
+                }
             }
         }
 
