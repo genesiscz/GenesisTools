@@ -78,6 +78,8 @@ enum HubMainBusy {
 
     static func measure(_ label: String, window: TimeInterval = 0.6) {
         guard open.insert(label).inserted else { return }
+        // Counted from here: the bodies this render evaluated (`GENESIS_RENDER_PROBE=1`).
+        _ = RenderProbe.take()
         let meter = Meter()
         meter.wokeAt = CFAbsoluteTimeGetCurrent()
         let wake = CFRunLoopObserverCreateWithHandler(kCFAllocatorDefault, CFRunLoopActivity.afterWaiting.rawValue, true, Int.min) { _, _ in
@@ -98,7 +100,7 @@ enum HubMainBusy {
             CFRunLoopRemoveObserver(CFRunLoopGetMain(), wake, .commonModes)
             CFRunLoopRemoveObserver(CFRunLoopGetMain(), sleep, .commonModes)
             open.remove(label)
-            HubPerf.log(String(format: "%@ main busy %.1f ms of %.0f ms", label, meter.busy * 1000, window * 1000))
+            HubPerf.log(String(format: "%@ main busy %.1f ms of %.0f ms", label, meter.busy * 1000, window * 1000) + RenderProbe.summary())
         }
     }
 }
