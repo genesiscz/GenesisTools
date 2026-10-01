@@ -41,6 +41,29 @@ export interface SpeakOptions extends TTSOptions {
     app?: string;
     /** See `SynthesizerCreateOptions.apiKey`. */
     apiKey?: string;
+    /**
+     * Called once, the moment a cloud provider has produced audio (the first streamed chunk, or a
+     * finished synthesis): from then on the request is paid for, whatever happens to playback. Never
+     * for a request rejected before any audio, and never for the local macOS voice.
+     */
+    onAudio?: () => void;
+}
+
+/** `audio`, calling `onFirst` once when its first chunk arrives. */
+export async function* notifyFirstChunk(
+    audio: AsyncIterable<Uint8Array>,
+    onFirst?: () => void
+): AsyncIterable<Uint8Array> {
+    let first = true;
+
+    for await (const chunk of audio) {
+        if (first) {
+            first = false;
+            onFirst?.();
+        }
+
+        yield chunk;
+    }
 }
 
 const MACOS_MIN_WPM = 80;
@@ -154,7 +177,7 @@ export class Synthesizer {
         // 2. Streaming → playStream.
         if (wantStream && provider.synthesizeStream) {
             const { audio, contentType } = provider.synthesizeStream(text, ttsOpts);
-            await playStream(audio, contentType, {
+            await playStream(notifyFirstChunk(audio, options?.onAudio), contentType, {
                 volume: options?.volume,
                 gainDb,
                 tempo,
@@ -165,6 +188,7 @@ export class Synthesizer {
 
         // 3. Fallback: synthesize → playBuffer.
         const result = await provider.synthesize(text, ttsOpts);
+        options?.onAudio?.();
         await playBuffer(result.audio, result.contentType, {
             volume: options?.volume,
             gainDb,

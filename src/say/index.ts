@@ -569,8 +569,9 @@ async function speakCached(args: SpeakCachedArgs): Promise<{ cacheHit: boolean }
     //     providers. Honor the flag instead.
     // `--output` needs a full buffer, so it never takes the stream-only path.
     if ((provider === "macos" || stream === true) && !outputPath) {
-        // A cloud stream is billed as it is consumed, so a stream that fails part-way still counts.
-        const billed = provider !== "macos";
+        // Booked once audio arrived (the synthesizer says so), so a stream that fails part-way still counts
+        // and a request rejected before any audio (too long, unresolvable provider, HTTP refusal) does not.
+        let produced = false;
 
         try {
             await ai.speak(text, {
@@ -584,9 +585,12 @@ async function speakCached(args: SpeakCachedArgs): Promise<{ cacheHit: boolean }
                 wait: opts.wait,
                 model: effective.model ?? undefined,
                 apiKey,
+                onAudio: () => {
+                    produced = true;
+                },
             });
         } finally {
-            if (billed) {
+            if (produced && provider !== "macos") {
                 await onSynthesized?.();
             }
         }
