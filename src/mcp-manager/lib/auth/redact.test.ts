@@ -72,3 +72,15 @@ describe("safeTokenErrorCode", () => {
         expect(safeTokenErrorCode({ nested: "object" }, 418)).toBe("HTTP 418");
     });
 });
+
+describe("redactConfigText TOML multiline strings", () => {
+    test("redacts a triple-quoted value in full, in both quote forms, and leaves the next key alone", () => {
+        const toml =
+            'PRIVATE_KEY = """\ninvented-secret\n"""\nNAME = "kept"\nAPI_TOKEN = \'\'\'\nabc-invented\n\'\'\'\n';
+        const out = redactConfigText(toml);
+
+        expect(out).not.toContain("invented-secret");
+        expect(out).not.toContain("abc-invented");
+        expect(out).toContain('NAME = "kept"');
+    });
+});

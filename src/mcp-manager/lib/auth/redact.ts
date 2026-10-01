@@ -8,10 +8,11 @@ const SECRET_KEY = `(?:${[...HEADER_KEYS].map((key) => key.replace(/[-]/g, "\\-"
  * `"<key>": "<value>"` (JSON) or `<key> = "<value>"` / `<key> = '<value>'` (TOML) where the key is a
  * credential header or an env name that reads like one (`OPENAI_API_KEY`, `DB_PASSWORD`,
  * `DOCKER_AUTH_CONFIG`). A double-quoted value runs to its closing quote past escaped quotes
- * (`\"`), so no tail of the secret survives; a TOML literal string ends at the next `'`.
+ * (`\"`), so no tail of the secret survives; a TOML literal string ends at the next `'`. A TOML
+ * multiline string (`"""` or `'''`) is matched first and redacted whole, across its lines.
  */
 const SECRET_VALUE_IN_TEXT = new RegExp(
-    `(${SECRET_KEY}["']?\\s*[:=]\\s*)(?:"(?:[^"\\\\\\n]|\\\\.)*"|'[^'\\n]*')`,
+    `(${SECRET_KEY}["']?\\s*[:=]\\s*)(?:"""[\\s\\S]*?"""|'''[\\s\\S]*?'''|"(?:[^"\\\\\\n]|\\\\.)*"|'[^'\\n]*')`,
     "gi"
 );
 
@@ -22,7 +23,8 @@ const SECRET_VALUE_IN_TEXT = new RegExp(
  */
 export function redactConfigText(text: string): string {
     return text.replace(SECRET_VALUE_IN_TEXT, (match: string, prefix: string) => {
-        const quote = match.slice(prefix.length, prefix.length + 1);
+        const value = match.slice(prefix.length);
+        const quote = value.startsWith('"""') || value.startsWith("'''") ? value.slice(0, 3) : value.slice(0, 1);
         return `${prefix}${quote}${REDACTED}${quote}`;
     });
 }
