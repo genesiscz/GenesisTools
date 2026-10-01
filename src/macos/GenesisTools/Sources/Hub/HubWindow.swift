@@ -1135,10 +1135,16 @@ final class HubModel: ObservableObject {
         case .newSession(let path):
             // openInTerminal blocks on the terminal host's CLI (up to its timeout): never on the main actor.
             let name = (path as NSString).lastPathComponent
-            notice = "Starting a new Claude session in \(name)…"
+            let starting = "Starting a new Claude session in \(name)…"
+            notice = starting
             Task.detached(priority: .userInitiated) {
                 let failure = AgentLauncher.openInTerminal(name: name, cwd: path, command: ["tools", "claude", "run"])
-                await MainActor.run { self.notice = failure ?? "Started a new Claude session in \(name)." }
+                // Only over its own "Starting…" line: a newer notice (a copied id, say) stays on screen.
+                await MainActor.run {
+                    if self.notice == starting {
+                        self.notice = failure ?? "Started a new Claude session in \(name)."
+                    }
+                }
             }
         case .findInFiles(let query, let root):
             findRoot = root

@@ -141,6 +141,11 @@ describe("hub server", () => {
         client.send({ id: 9, op: "call", argv: ["slow"], timeoutMs: 100 });
         expect(await client.next()).toMatchObject({ id: 9, exit: 124 });
 
+        // A client cancel of an in-flight call answers 130 at once, through the server's own cancel path.
+        client.send({ id: 10, op: "call", argv: ["slow"] });
+        client.send({ id: 10, op: "cancel" });
+        expect(await client.next()).toMatchObject({ id: 10, exit: 130 });
+
         client.send({ id: 2, op: "call", argv: ["nope"] });
         expect(await client.next()).toEqual({ id: 2, ok: false, code: "unsupported" });
 

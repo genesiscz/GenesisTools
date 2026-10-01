@@ -30,9 +30,9 @@ export const transcriptFetchDoor: CallDoor<FetchArgs> = {
         return { query: parsed.positionals[0], limit, offset };
     },
     async run(args, { signal }) {
-        const { resolveTranscript } = await import("@genesiscz/utils/ai/transcripts/resolve");
-        const { transcriptEnvelope } = await import("@genesiscz/utils/ai/transcripts/load");
         try {
+            const { resolveTranscript } = await import("@genesiscz/utils/ai/transcripts/resolve");
+            const { transcriptEnvelope } = await import("@genesiscz/utils/ai/transcripts/load");
             // A cancel stops the work at each stage: before resolving, and before reading the page.
             signal.throwIfAborted();
             const resolved = await resolveTranscript(args.query, {});
