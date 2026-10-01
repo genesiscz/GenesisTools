@@ -17,7 +17,7 @@ export type MintedLinkPlan =
     | { kind: "bundle"; urls: string[] };
 
 /**
- * Spends one use of a minted link (`https://genesis.tools/t/<id>`) and decides what to do with its URL.
+ * Spends one use of a minted link (`https://<linkHost>/t/<id>`) and decides what to do with its URL.
  * A decision that asks first goes back to GenesisTools.app, because only the app shows the approval
  * card; this process has no prompt of its own. A bundle is only peeked: a click above the tab cap
  * asks first, and a cancel must leave the use for another click.

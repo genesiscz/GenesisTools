@@ -8,7 +8,8 @@ import {
 } from "@app/handoff/executor";
 import type { HandoffActionInput, HandoffTarget, HandoffTaskInput } from "@app/handoff/types";
 import { linkFor, type PlannedLink, planMintedLink } from "@genesiscz/utils/browser-router/links";
-import { CMUX_LAUNCH_URL } from "@genesiscz/utils/browser-router/presets";
+import { cmuxLaunchUrl } from "@genesiscz/utils/browser-router/presets";
+import { routerStatus } from "@genesiscz/utils/browser-router/status";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { isTestProcess } from "@genesiscz/utils/test-process";
 
@@ -63,9 +64,10 @@ const RUN_LINK_INFO = "Show paste.runLink.markdown to the user so they can open 
  * out: `tools cmux launch` resolves the default Claude account when the link is clicked.
  */
 function cmuxLaunchDeps(planned: PlannedLink[]): HandoffDeps {
+    const status = routerStatus();
     return {
         linkFor(presetId) {
-            return linkFor({ presetId, url: CMUX_LAUNCH_URL, label: RUN_LINK_LABEL });
+            return linkFor({ presetId, path: "cmux/claude/run", label: RUN_LINK_LABEL }, status);
         },
         mintLaunchLink(input) {
             const params = new URLSearchParams();
@@ -81,7 +83,18 @@ function cmuxLaunchDeps(planned: PlannedLink[]): HandoffDeps {
                 params.set("account", input.account);
             }
 
-            const plan = planMintedLink({ target: `${CMUX_LAUNCH_URL}?${params.toString()}`, label: RUN_LINK_LABEL });
+            // Reached only after `linkFor` answered, and that needs a link host.
+            const linkHost = status.linkHost;
+
+            if (!linkHost) {
+                throw new Error("handoff: a run link was asked for without a link host");
+            }
+
+            const plan = planMintedLink({
+                target: `${cmuxLaunchUrl(linkHost)}?${params.toString()}`,
+                label: RUN_LINK_LABEL,
+                linkHost,
+            });
             planned.push(plan);
             return plan.link;
         },

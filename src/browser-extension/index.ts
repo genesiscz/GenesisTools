@@ -1,13 +1,19 @@
 #!/usr/bin/env bun
 
+import { resolve } from "node:path";
+import { reloadExtension, reloadSummary } from "@app/chrome-devtools/lib/extensions";
+import { extensionByKey } from "@genesiscz/utils/browser-extension/registry";
 import { runTool } from "@genesiscz/utils/cli";
+import { withInterrupt } from "@genesiscz/utils/cli/interrupt";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
+import { BROWSER_DEVTOOLS_PORT } from "@genesiscz/utils/net/ports";
 import { Command } from "commander";
 import { runAction } from "./lib/actions";
 import { buildExtension, DIST_DIR } from "./lib/build";
 import { configPath, loadConfig, saveConfig } from "./lib/config";
 import { liveDeps } from "./lib/deps";
+import { watchAndRebuild } from "./lib/dev";
 import { explainHunk } from "./lib/explain";
 import { dispatch } from "./lib/host/dispatch";
 import { hostStatus, installHost } from "./lib/host/install";
@@ -15,6 +21,7 @@ import { hubTarget, openInHub } from "./lib/hub";
 import { describeCheckouts, openFile, openTerminal } from "./lib/open";
 import { planReview, startReview } from "./lib/review";
 import { routeLink } from "./lib/router";
+import { verifyExtension } from "./lib/verify";
 
 const program = new Command()
     .name("browser-extension")
@@ -33,20 +40,100 @@ function lineOption(value: string | undefined): number | undefined {
     return value === undefined ? undefined : Number(value);
 }
 
+const ENTRY = extensionByKey("genesis-tools");
+
+/** Reloads the extension in the running browser over DevTools and says what happened. */
+async function reloadInBrowser(port: number): Promise<boolean> {
+    if (!ENTRY) {
+        return false;
+    }
+
+    const result = await reloadExtension({ id: ENTRY.id, page: ENTRY.reloadPage, port });
+    out.println(reloadSummary(result, ENTRY));
+    return result.ok;
+}
+
 program
     .command("build")
-    .description(`Bundle the extension into ${DIST_DIR}`)
+    .description(`Bundle the extension into ${DIST_DIR}, then reload it in the browser when DevTools is open`)
     .option("--out <dir>", "output folder", DIST_DIR)
-    .action(async (opts: { out: string }) => {
+    .option("--no-reload", "Do not reload the extension in the browser")
+    .option("--port <port>", "DevTools port of the running browser", String(BROWSER_DEVTOOLS_PORT))
+    .action(async (opts: { out: string; reload: boolean; port: string }) => {
         try {
             const built = await buildExtension({ outDir: opts.out });
             out.println(`Built ${built.files.length} files into ${built.outDir}`);
-            out.println(
-                "Load it: chrome://extensions (brave://extensions) > Developer mode > Load unpacked > that folder"
-            );
+
+            if (opts.reload && opts.out === DIST_DIR) {
+                await reloadInBrowser(Number(opts.port));
+            }
         } catch (error) {
             fail(error);
         }
+    });
+
+program
+    .command("reload")
+    .description("Reload the extension in the running browser over DevTools (no click)")
+    .option("--port <port>", "DevTools port of the running browser", String(BROWSER_DEVTOOLS_PORT))
+    .action(async (opts: { port: string }) => {
+        if (!(await reloadInBrowser(Number(opts.port)))) {
+            process.exitCode = 1;
+        }
+    });
+
+program
+    .command("verify")
+    .description("Load dist in a headless browser on a throwaway profile and check it works")
+    .option("--dist <dir>", "the build to check", DIST_DIR)
+    .action(async (opts: { dist: string }) => {
+        try {
+            const checks = await verifyExtension(opts.dist);
+
+            for (const check of checks) {
+                out.println(`${check.ok ? "ok  " : "FAIL"} ${check.name}: ${check.detail}`);
+            }
+
+            if (checks.length === 0 || checks.some((check) => !check.ok)) {
+                process.exitCode = 1;
+            }
+        } catch (error) {
+            fail(error);
+        }
+    });
+
+program
+    .command("dev")
+    .description("Rebuild on every change and reload the extension in the browser, until Ctrl-C")
+    .option("--port <port>", "DevTools port of the running browser", String(BROWSER_DEVTOOLS_PORT))
+    .action(async (opts: { port: string }) => {
+        const roots = [ENTRY?.sourceDir, resolve(DIST_DIR, "..", "..", "src", "browser-extension", "lib")].filter(
+            (root): root is string => root !== undefined
+        );
+        // One build and reload first: the watcher only reacts to changes, so dist would stay old until one.
+        try {
+            const built = await buildExtension();
+            out.println(`Built ${built.info.buildId.slice(0, 8)}`);
+            await reloadInBrowser(Number(opts.port));
+        } catch (error) {
+            fail(error);
+            return;
+        }
+
+        out.println(`Watching ${roots.join(", ")}. Ctrl-C stops.`);
+        await withInterrupt((signal) =>
+            watchAndRebuild({
+                roots,
+                signal,
+                build: async () => {
+                    const built = await buildExtension();
+                    out.println(`Built ${built.info.buildId.slice(0, 8)}`);
+                },
+                after: async () => {
+                    await reloadInBrowser(Number(opts.port));
+                },
+            })
+        );
     });
 
 program
@@ -246,8 +333,8 @@ program
 
 program
     .command("route")
-    .description("Hand a genesis.tools link to GenesisTools.app, as the extension does")
-    .argument("<url>", "https://genesis.tools/...")
+    .description("Hand a router link to GenesisTools.app, as the extension does")
+    .argument("<url>", "a link on the router's link host, or one of its configured hosts")
     .action(async (url: string) => {
         try {
             out.result(await routeLink(liveDeps(), url));

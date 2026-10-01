@@ -1,4 +1,5 @@
-import { serviceShortcutHosts } from "@genesiscz/utils/browser-router/services";
+import { readRouterConfig } from "@genesiscz/utils/browser-router/config";
+import { browserHosts } from "@genesiscz/utils/browser-router/services";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { GENESIS_APP_BUNDLE_ID } from "@genesiscz/utils/macos/genesis-app";
@@ -6,8 +7,12 @@ import type { Deps } from "./deps";
 import { cliTail, FeatureError } from "./errors";
 import { isRecord } from "./values";
 
-/** The public host whose links the extension hands to GenesisTools.app. */
-export const ROUTER_LINK_HOST = "genesis.tools";
+/** The hosts the router config wants caught in the browser: its link host, alias hosts, dashboard names. */
+export type RouterHosts = ReturnType<typeof browserHosts>;
+
+function currentHosts(): RouterHosts {
+    return browserHosts(readRouterConfig());
+}
 /** GenesisTools.app is the http(s) handler and routes links itself. */
 export const ROUTER_BUNDLE_ID = GENESIS_APP_BUNDLE_ID;
 
@@ -26,18 +31,21 @@ export interface RouteOutcome {
     routed: boolean;
 }
 
-export function checkRouterLink(value: unknown): string {
+export function checkRouterLink(value: unknown, wanted: RouterHosts = currentHosts()): string {
     if (typeof value !== "string" || value.length > 4000 || !URL.canParse(value)) {
         throw new FeatureError("invalid", "not a URL");
     }
 
     const url = new URL(value);
-    const routerLink = url.protocol === "https:" && url.hostname === ROUTER_LINK_HOST;
+    const linkHostLink =
+        (url.protocol === "https:" || url.protocol === "http:") &&
+        wanted.linkHost !== null &&
+        url.hostname === wanted.linkHost;
     const web = url.protocol === "https:" || url.protocol === "http:";
-    const shortcut = web && url.port === "" && serviceShortcutHosts().includes(url.hostname);
+    const routerHost = web && url.port === "" && wanted.hosts.includes(url.hostname);
 
-    if (!routerLink && !shortcut) {
-        throw new FeatureError("invalid", `only https://${ROUTER_LINK_HOST}/ links and short service hosts are routed`);
+    if (!linkHostLink && !routerHost) {
+        throw new FeatureError("invalid", "only the router's link host and its configured hosts are routed");
     }
 
     return url.href;
@@ -66,13 +74,17 @@ export function readDecision(stdout: string): { kind: string; via: string; summa
 }
 
 /**
- * What GenesisTools.app would do with a genesis.tools link, read through the router's own CLI door
+ * What GenesisTools.app would do with a router link, read through the router's own CLI door
  * (`explain`) so this code never re-implements its matching. No side effects. A link the router
  * would only forward to the default browser is `handled: false`: forwarding it would land in this
  * browser again and loop.
  */
-export async function explainLink(deps: Deps, rawUrl: unknown): Promise<RouteOutcome> {
-    const url = checkRouterLink(rawUrl);
+export async function explainLink(
+    deps: Deps,
+    rawUrl: unknown,
+    wanted: RouterHosts = currentHosts()
+): Promise<RouteOutcome> {
+    const url = checkRouterLink(rawUrl, wanted);
     const explained = await deps.tools(["browser-router", "explain", url, "--json"], { timeoutMs: 15_000 });
 
     if (explained.code !== 0) {
@@ -90,10 +102,14 @@ export async function explainLink(deps: Deps, rawUrl: unknown): Promise<RouteOut
     return { handled, runs, routed: false, ...decision };
 }
 
-/** Hands a genesis.tools link to GenesisTools.app, unless the router would only send it back here. */
-export async function routeLink(deps: Deps, rawUrl: unknown): Promise<RouteOutcome> {
-    const url = checkRouterLink(rawUrl);
-    const decision = await explainLink(deps, url);
+/** Hands a router link to GenesisTools.app, unless the router would only send it back here. */
+export async function routeLink(
+    deps: Deps,
+    rawUrl: unknown,
+    wanted: RouterHosts = currentHosts()
+): Promise<RouteOutcome> {
+    const url = checkRouterLink(rawUrl, wanted);
+    const decision = await explainLink(deps, url, wanted);
 
     if (!decision.handled) {
         return decision;

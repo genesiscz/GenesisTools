@@ -1,6 +1,7 @@
 import { answerAskForm, getAskForm } from "@app/question/lib/pending/ask";
 import { gatherHarnessPoster } from "@genesiscz/utils/agent/runtime";
 import { listRecentCachedSessions } from "@genesiscz/utils/agent-sessions/cached-title";
+import { readRouterConfig } from "@genesiscz/utils/browser-router/config";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
 import { logger, out } from "@genesiscz/utils/logger";
 import * as p from "@genesiscz/utils/prompts/p";
@@ -96,8 +97,18 @@ async function printLinks(options: DecideFlags & { options: string }): Promise<v
         },
     });
     const target = validateTarget({ session, decision: options.decision ?? "" });
+    const linkHost = readRouterConfig()?.linkHost;
+
+    if (!linkHost) {
+        out.error("The browser router has no link host, so decision links cannot be built.");
+        out.info(suggestCommand("tools browser-router", { replaceCommand: ["link-host", "<host>"] }));
+        process.exitCode = 1;
+        return;
+    }
+
     out.print(
         `${decisionLinks({
+            linkHost,
             session: target.session,
             decision: target.decision,
             options: options.options.split(","),

@@ -1,6 +1,6 @@
 import { existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-import { DECIDE_PATTERN } from "@genesiscz/utils/browser-router/presets";
+import { decidePattern } from "@genesiscz/utils/browser-router/presets";
 import { compileRoutePattern } from "@genesiscz/utils/browser-router/route";
 import { PROJECTS_DIR } from "@genesiscz/utils/claude/projects";
 import { formatRelativeTime } from "@genesiscz/utils/format";
@@ -175,12 +175,15 @@ export function buildQuestionAnswer(
 }
 
 export function decisionLinks({
+    linkHost,
     session,
     decision,
     options,
     labels = [],
     question,
 }: {
+    /** The router's link host (`tools browser-router link-host`). */
+    linkHost: string;
     session: string;
     decision: number;
     options: string[];
@@ -192,7 +195,7 @@ export function decisionLinks({
     }
 
     const query = question ? `?q=${encodeURIComponent(question)}` : "";
-    const routable = compileRoutePattern(DECIDE_PATTERN);
+    const routable = compileRoutePattern(decidePattern(linkHost));
 
     return options
         .map((option, index) => {
@@ -205,7 +208,7 @@ export function decisionLinks({
             const label = labels[index]?.trim() || letter;
             // A label with brackets would end the markdown link early.
             const safe = label.replace(/[[\]]/g, "");
-            const url = `https://genesis.tools/decide/${session}/${decision}/${letter}${query}`;
+            const url = `https://${linkHost}/decide/${session}/${decision}/${letter}${query}`;
 
             // The decide preset bounds the session (64 chars) and the number (6 digits); past them a
             // click is not routed and opens the URL in the browser instead of answering.

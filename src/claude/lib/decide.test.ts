@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { presetById } from "@genesiscz/utils/browser-router/presets";
+import { presetById, presets } from "@genesiscz/utils/browser-router/presets";
 import { defaultRouterConfig, parseConfig, route } from "@genesiscz/utils/browser-router/route";
 import {
     answerDecision,
@@ -25,6 +25,8 @@ const SESSION = "3f2a9c1e-0000-4000-8000-00000000abcd";
 const neverSend: DecideDeps["send"] = (session, text) => {
     throw new Error(`typed "${text}" into ${session}`);
 };
+
+const LINK_HOST = "links.example.test";
 
 describe("decide", () => {
     test("the text is the exact decision line", () => {
@@ -93,15 +95,16 @@ describe("decide", () => {
         });
     });
 
-    test("links use the genesis.tools shape, with labels and the question id", () => {
-        expect(decisionLinks({ session: "abc", decision: 1, options: ["a", "b"] })).toBe(
+    test("links use the links.example.test shape, with labels and the question id", () => {
+        expect(decisionLinks({ linkHost: LINK_HOST, session: "abc", decision: 1, options: ["a", "b"] })).toBe(
             [
-                "**a)** [a](https://genesis.tools/decide/abc/1/a)",
-                "**b)** [b](https://genesis.tools/decide/abc/1/b)",
+                "**a)** [a](https://links.example.test/decide/abc/1/a)",
+                "**b)** [b](https://links.example.test/decide/abc/1/b)",
             ].join("\n")
         );
         expect(
             decisionLinks({
+                linkHost: LINK_HOST,
                 session: "abc",
                 decision: 4,
                 options: ["a", "b"],
@@ -110,19 +113,34 @@ describe("decide", () => {
             })
         ).toBe(
             [
-                "**a)** [Keep it](https://genesis.tools/decide/abc/4/a?q=ask_1)",
-                "**b)** [Drop](https://genesis.tools/decide/abc/4/b?q=ask_1)",
+                "**a)** [Keep it](https://links.example.test/decide/abc/4/a?q=ask_1)",
+                "**b)** [Drop](https://links.example.test/decide/abc/4/b?q=ask_1)",
             ].join("\n")
         );
-        expect(() => decisionLinks({ session: "abc", decision: 1, options: ["ab"] })).toThrow("single letter");
+        expect(() => decisionLinks({ linkHost: LINK_HOST, session: "abc", decision: 1, options: ["ab"] })).toThrow(
+            "single letter"
+        );
     });
 
     test("every printed link is one the decide preset routes back to this exact answer", () => {
         const config = parseConfig({
             ...defaultRouterConfig(),
-            routes: presetById("decide", () => true)?.routes ?? [],
+            routes:
+                presetById(
+                    "decide",
+                    presets({
+                        config: { ...defaultRouterConfig(), linkHost: LINK_HOST, presets: { decide: {} } },
+                        check: () => true,
+                    })
+                )?.routes ?? [],
         });
-        const printed = decisionLinks({ session: SESSION, decision: 12, options: ["a", "c"], question: "ask_7" });
+        const printed = decisionLinks({
+            linkHost: LINK_HOST,
+            session: SESSION,
+            decision: 12,
+            options: ["a", "c"],
+            question: "ask_7",
+        });
         const urls = [...printed.matchAll(/\((https:[^)]+)\)/g)].map((match) => match[1] ?? "");
 
         expect(urls.map((url) => route(url, config))).toMatchObject(
@@ -146,12 +164,16 @@ describe("decide", () => {
     });
 
     test("a link the decide preset would not route is refused, not printed as a dead link", () => {
-        // A dead link opens https://genesis.tools/decide/... in the browser instead of answering.
-        expect(() => decisionLinks({ session: "s".repeat(65), decision: 1, options: ["a"] })).toThrow("decide link");
-        expect(() => decisionLinks({ session: SESSION, decision: 1_234_567, options: ["a"] })).toThrow("decide link");
-        expect(() => decisionLinks({ session: SESSION, decision: 1, options: ["a"], question: "a b" })).toThrow(
-            "question must be a form id"
-        );
+        // A dead link opens https://links.example.test/decide/... in the browser instead of answering.
+        expect(() =>
+            decisionLinks({ linkHost: LINK_HOST, session: "s".repeat(65), decision: 1, options: ["a"] })
+        ).toThrow("decide link");
+        expect(() =>
+            decisionLinks({ linkHost: LINK_HOST, session: SESSION, decision: 1_234_567, options: ["a"] })
+        ).toThrow("decide link");
+        expect(() =>
+            decisionLinks({ linkHost: LINK_HOST, session: SESSION, decision: 1, options: ["a"], question: "a b" })
+        ).toThrow("question must be a form id");
     });
 
     test("a session exists when its transcript does", () => {

@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { getDashboard, getWebService } from "@genesiscz/utils/ui/dashboards";
+import { getDashboard } from "@genesiscz/utils/ui/dashboards";
+import { applyPresets, presets } from "./presets";
 import {
     compileRoutePattern,
     compileUrlTemplate,
@@ -10,13 +11,21 @@ import {
     route,
     substitute,
 } from "./route";
-import { routerServices, serviceShortcutHosts } from "./services";
+import { browserHosts } from "./services";
 
-const config = defaultRouterConfig();
+const LINK_HOST = "links.example.test";
+
+/** A config as `ensureBuiltinRoutes` would write it: the presets' routes on the invented link host. */
+function withPresets(chosen: RouterConfig["presets"]): RouterConfig {
+    const base: RouterConfig = { ...defaultRouterConfig(), linkHost: LINK_HOST, presets: chosen };
+    return { ...base, routes: applyPresets([], presets({ config: base, check: () => true })) };
+}
+
+const config = withPresets({ "genesis-md": {} });
 
 describe("route", () => {
-    test("localhost:6666 becomes a genesis-md open", () => {
-        const decision = route("https://localhost:6666/open?path=%2Ftmp%2Fa%20b.md", config);
+    test("/md/ on the link host becomes a genesis-md open", () => {
+        const decision = route("https://links.example.test/md/open?path=%2Ftmp%2Fa%20b.md", config);
 
         expect(decision.kind).toBe("open");
         expect(decision.url).toBe("genesis-md://open?path=%2Ftmp%2Fa%20b.md");
@@ -34,106 +43,113 @@ describe("route", () => {
         expect(decision.via).toBe("route");
     });
 
-    test("127.0.0.1 uses the same rule", () => {
-        const decision = route("http://127.0.0.1:6666/panel/chat", config);
+    test("http on the link host uses the same rule", () => {
+        const decision = route("http://links.example.test/md/panel/chat", config);
 
         expect(decision.url).toBe("genesis-md://panel/chat");
     });
 
     test("a pattern does not match when the URL merely contains it", () => {
-        const decision = route("https://evil.test/?next=https://localhost:6666/open", config);
+        const decision = route("https://evil.test/?next=https://links.example.test/md/open", config);
 
         expect(decision.kind).toBe("forward");
-        expect(decision.url).toBe("https://evil.test/?next=https://localhost:6666/open");
+        expect(decision.url).toBe("https://evil.test/?next=https://links.example.test/md/open");
     });
 
-    test("a registered local port is started before the page opens", () => {
-        const custom = { ...config, services: [{ port: 3999, name: "Example" }] };
-        const decision = route("http://127.0.0.1:3999/x", custom);
-        expect(decision).toMatchObject({
+    test("no preset is on by default, and without a link host nothing is routed", () => {
+        const bare = defaultRouterConfig();
+        const all = presets({ config: bare, check: () => true });
+
+        expect(bare.routes).toEqual([]);
+        expect(all.filter((preset) => preset.enabled)).toEqual([]);
+        expect(all.find((preset) => preset.id === "core")?.missing).toEqual([
+            "a link host (tools browser-router link-host <host>)",
+        ]);
+        expect(route("http://localhost:3000/", bare)).toMatchObject({ kind: "forward", via: "default" });
+        expect(route("https://dashboard/", bare)).toMatchObject({ kind: "forward", via: "default" });
+    });
+
+    test("local-services starts a registered port before the page opens", () => {
+        const dashboard = getDashboard("personal-dashboard");
+        const custom = withPresets({ "local-services": {} });
+
+        expect(route(`http://127.0.0.1:${dashboard.port}/x?y=1`, custom)).toMatchObject({
             kind: "run",
-            argv: ["tools", "browser-router", "ensure", "3999"],
-            notify: "Starting Example",
-            open: "http://127.0.0.1:3999/x",
+            argv: ["tools", "browser-router", "ensure", String(dashboard.port)],
+            notify: `Starting ${dashboard.name}`,
+            open: `http://localhost:${dashboard.port}/x?y=1`,
             approval: "allow",
             needsApproval: false,
+            service: { port: dashboard.port, name: dashboard.name },
         });
-        expect(route("http://localhost:3999/", custom).kind).toBe("run");
-    });
-
-    test("the Personal Dashboard's short host and port come from the registry", () => {
-        const dashboard = getDashboard("dashboard");
-        expect(routerServices()).toContainEqual({ port: dashboard.port, name: dashboard.name, host: "dashboard" });
-        // An API service keeps its port route but gets no short host.
-        expect(
-            routerServices().find((service) => service.name === getWebService("ai-proxy").name)?.host
-        ).toBeUndefined();
-        expect(serviceShortcutHosts()).toContain("dev-dashboard");
-    });
-
-    test("a service's short host starts it and opens its loopback port, path and query kept", () => {
-        const custom = { ...config, services: [{ port: 3999, name: "Example", host: "example" }] };
-
-        expect(route("https://example/tasks?x=1#top", custom)).toMatchObject({
-            kind: "run",
-            argv: ["tools", "browser-router", "ensure", "3999"],
-            url: "http://localhost:3999/tasks?x=1#top",
-            open: "http://localhost:3999/tasks?x=1#top",
-            needsApproval: false,
-            service: { port: 3999, name: "Example" },
-        });
-        expect(route("http://EXAMPLE/", custom)).toMatchObject({ kind: "run", open: "http://localhost:3999/" });
-        // Only the exact host, without a port of its own.
-        expect(route("https://examplexyz/", custom)).toMatchObject({ kind: "forward", via: "default" });
-        expect(route("https://example.com/", custom)).toMatchObject({ kind: "forward", via: "default" });
-        expect(route("http://example:8080/", custom)).toMatchObject({ kind: "forward", via: "default" });
-    });
-
-    test("an alias onto a registered port starts that server and wins over the short host", () => {
-        const custom = {
-            ...config,
-            aliases: [{ host: "example", base: "http://localhost:3096" }],
-            services: [
-                { port: 3999, name: "Example", host: "example" },
-                { port: 3096, name: "Library" },
-            ],
-        };
-
-        expect(route("https://example/a/x?y=1", custom)).toMatchObject({
-            kind: "run",
-            argv: ["tools", "browser-router", "ensure", "3096"],
-            open: "http://localhost:3096/a/x?y=1",
-            service: { port: 3096, name: "Library" },
-        });
-    });
-
-    test("an unregistered port and the router's own 6666 keep today's routing", () => {
-        const custom = {
-            ...config,
-            services: [
-                { port: 3999, name: "Example" },
-                { port: 6666, name: "Router" },
-            ],
-        };
-
         expect(route("http://127.0.0.1:4555/x", custom)).toMatchObject({ kind: "forward", via: "default" });
-        expect(route("http://127.0.0.1:6666/panel/chat", custom)).toMatchObject({
-            kind: "open",
-            url: "genesis-md://panel/chat",
+    });
+
+    test("dashboard-names: a registry key as a host and as a path on the link host", () => {
+        const dashboard = getDashboard("dev-dashboard");
+        const custom = withPresets({ "dashboard-names": {} });
+        const opened = `http://localhost:${dashboard.port}/tasks?x=1#top`;
+
+        expect(route("https://dev-dashboard/tasks?x=1#top", custom)).toMatchObject({ kind: "run", open: opened });
+        expect(route("https://links.example.test/dev-dashboard/tasks?x=1#top", custom)).toMatchObject({
+            kind: "run",
+            open: opened,
         });
-        // A saved route still wins over the registry: routes and aliases come first.
-        const routed = {
-            ...custom,
-            routes: [
-                {
-                    pattern: "https?://127\\.0\\.0\\.1:3999/special",
-                    action: { type: "open" as const, to: "genesis-md://x" },
-                },
-                ...custom.routes,
-            ],
+        expect(route("http://DEV-DASHBOARD", custom)).toMatchObject({ open: `http://localhost:${dashboard.port}/` });
+        // Only the exact name, without a port of its own.
+        expect(route("https://dev-dashboardxyz/", custom)).toMatchObject({ kind: "forward", via: "default" });
+        expect(route("http://dev-dashboard:8080/", custom)).toMatchObject({ kind: "forward", via: "default" });
+        // `only` narrows the names.
+        const narrowed = withPresets({ "dashboard-names": { only: ["jev"] } });
+        expect(route("https://dev-dashboard/", narrowed)).toMatchObject({ kind: "forward", via: "default" });
+        expect(browserHosts(narrowed).hosts).toEqual(["jev"]);
+    });
+
+    test("a names entry gives a registry dashboard an extra name, as a host and as a path", () => {
+        const library = getDashboard("artifact-library");
+        const custom = withPresets({ "dashboard-names": { names: { dashboard: "artifact-library" } } });
+
+        expect(route("https://dashboard/x", custom)).toMatchObject({ open: `http://localhost:${library.port}/x` });
+        expect(route("https://links.example.test/dashboard/", custom)).toMatchObject({
+            open: `http://localhost:${library.port}/`,
+        });
+        expect(browserHosts(custom).hosts).toContain("dashboard");
+        expect(() =>
+            parseConfig({ defaultBrowser: "Safari", presets: { "dashboard-names": { names: { "bad host": "x" } } } })
+        ).toThrow("host name");
+    });
+
+    test("the artifact preset's /artifact/<name>/ links are not shadowed by the artifact dashboard's name", () => {
+        const custom = withPresets({ artifact: {}, "dashboard-names": {} });
+
+        expect(route("https://links.example.test/artifact/notes/index.html", custom)).toMatchObject({
+            kind: "run",
+            argv: expect.arrayContaining(["artifact", "open", "--", "notes", "index.html"]),
+        });
+    });
+
+    test("an alias renames the host first, so it wins over the name's own route", () => {
+        const library = getDashboard("artifact-library");
+        const custom = {
+            ...withPresets({ "local-services": {}, "dashboard-names": {} }),
+            aliases: [{ host: "dashboard", base: `http://localhost:${library.port}` }],
         };
-        expect(route("http://127.0.0.1:3999/special", routed).kind).toBe("open");
-        expect(route("https://example.com:3999/x", custom).kind).toBe("forward");
+
+        expect(route("https://dashboard/a/x?y=1", custom)).toMatchObject({
+            kind: "run",
+            argv: ["tools", "browser-router", "ensure", String(library.port)],
+            open: `http://localhost:${library.port}/a/x?y=1`,
+        });
+        expect(browserHosts(custom).hosts).toContain("dashboard");
+        // A saved route of the user's own still wins over a preset for the same URL.
+        const own = {
+            ...custom,
+            routes: applyPresets(
+                [{ pattern: "https?://jev/special", action: { type: "open" as const, to: "genesis-md://x" } }],
+                presets({ config: custom, check: () => true })
+            ),
+        };
+        expect(route("https://jev/special", own).kind).toBe("open");
     });
 
     test("a raw cmux launch asks and names the prompt; a minted one does not", () => {
@@ -141,7 +157,7 @@ describe("route", () => {
             ...config,
             routes: [
                 {
-                    pattern: "https?://genesis\\.tools/cmux/claude/run",
+                    pattern: "https?://links\\.example\\.test/cmux/claude/run",
                     action: {
                         type: "run",
                         argv: ["tools", "cmux", "launch", "--account", "{account}", "--prompt", "{prompt}"],
@@ -153,7 +169,7 @@ describe("route", () => {
             ],
         };
         const url =
-            "https://genesis.tools/cmux/claude/run?account=work&prompt=do%20it&cwd=%2Ftmp&resume=abc&name=h&model=opus&surface=split&arg=--permission-mode&arg=plan";
+            "https://links.example.test/cmux/claude/run?account=work&prompt=do%20it&cwd=%2Ftmp&resume=abc&name=h&model=opus&surface=split&arg=--permission-mode&arg=plan";
         const raw = route(url, custom);
 
         expect(raw.kind).toBe("run");
@@ -215,17 +231,17 @@ describe("route", () => {
         expect(decision.via).toBe("loop-guard");
     });
 
-    test("the user's genesis.tools pattern keeps only the capture", () => {
+    test("the user's links.example.test pattern keeps only the capture", () => {
         const custom: RouterConfig = {
             defaultBrowser: "com.brave.Browser",
             routes: [
                 {
-                    pattern: "https?://genesis.tools/open-genesis/(.*)",
+                    pattern: "https?://links.example.test/open-genesis/(.*)",
                     action: { type: "open", to: "genesis-md://$1" },
                 },
             ],
         };
-        const decision = route("https://genesis.tools/open-genesis/open?path=%2Ftmp%2Fa.md", custom);
+        const decision = route("https://links.example.test/open-genesis/open?path=%2Ftmp%2Fa.md", custom);
 
         expect(decision.url).toBe("genesis-md://open?path=%2Ftmp%2Fa.md");
     });
@@ -235,12 +251,12 @@ describe("route", () => {
             defaultBrowser: "Safari",
             routes: [
                 {
-                    pattern: "https://genesis.tools/run/([a-z0-9-]+)/(.*)",
+                    pattern: "https://links.example.test/run/([a-z0-9-]+)/(.*)",
                     action: { type: "tool", tool: "mail", args: ["$1", "$2"], approval: "ask" },
                 },
             ],
         };
-        const decision = route("https://genesis.tools/run/search/inbox", custom);
+        const decision = route("https://links.example.test/run/search/inbox", custom);
 
         expect(decision).toMatchObject({
             kind: "tool",
@@ -263,13 +279,15 @@ describe("route", () => {
         expect(route("https://example.com/second", custom).url).toBe("genesis-md://first");
     });
 
-    test("genesis.tools is an alias of the local router when aliases are allowed", () => {
-        const decision = route("https://genesis.tools/open?path=/tmp/a.md", config);
-        expect(decision.url).toBe("genesis-md://open?path=/tmp/a.md");
+    test("an alias rewrites the host onto its base, unless aliases are off", () => {
+        const aliased = { ...config, aliases: [{ host: "notes.example.test", base: "https://links.example.test/md" }] };
+        expect(route("https://notes.example.test/open?path=/tmp/a.md", aliased).url).toBe(
+            "genesis-md://open?path=/tmp/a.md"
+        );
 
-        const blocked = route("https://genesis.tools/open?path=/tmp/a.md", { ...config, allowAliases: false });
+        const blocked = route("https://notes.example.test/open?path=/tmp/a.md", { ...aliased, allowAliases: false });
         expect(blocked.kind).toBe("forward");
-        expect(blocked.url).toBe("https://genesis.tools/open?path=/tmp/a.md");
+        expect(blocked.url).toBe("https://notes.example.test/open?path=/tmp/a.md");
     });
 
     test("a :name template compiles without a handwritten regular expression", () => {
@@ -299,7 +317,7 @@ describe("route", () => {
     });
 
     test("a wrapped genesis-md link opens Genesis Markdown", () => {
-        const wrapped = `https://127.0.0.1:6666/link/${encodeURIComponent("genesis-md://open?path=/tmp/a.md")}`;
+        const wrapped = `https://links.example.test/link/${encodeURIComponent("genesis-md://open?path=/tmp/a.md")}`;
         const decision = route(wrapped, config);
 
         expect(decision.kind).toBe("open");
@@ -393,7 +411,7 @@ describe("route", () => {
     });
 
     test("anchors a pattern that the user wrote without them", () => {
-        const expression = compileRoutePattern("https?://genesis.tools/open-genesis/(.*)");
+        const expression = compileRoutePattern("https?://links.example.test/open-genesis/(.*)");
 
         expect(expression.source.startsWith("^")).toBe(true);
         expect(expression.source.endsWith("$")).toBe(true);
@@ -402,7 +420,7 @@ describe("route", () => {
 
 describe("built-in routes", () => {
     test("the tabs link that `tabs save` prints runs `tabs open`", () => {
-        const decision = route("https://genesis.tools/tabs/morning", config);
+        const decision = route("https://links.example.test/tabs/morning", config);
 
         expect(decision.kind).toBe("run");
         expect(decision.kind === "run" ? decision.argv : []).toEqual([
@@ -417,11 +435,11 @@ describe("built-in routes", () => {
 
     test("a wrapped link opens only http(s) and genesis-md, never another scheme handler", () => {
         for (const inner of ["file:///tmp/x.command", "x-apple.systempreferences:com.apple.preference.security"]) {
-            const wrapped = `https://genesis.tools/link/${encodeURIComponent(inner)}`;
+            const wrapped = `https://links.example.test/link/${encodeURIComponent(inner)}`;
             expect(() => route(wrapped, config)).toThrow("only http(s) and genesis-md links are unwrapped");
         }
 
-        const md = `https://genesis.tools/link/${encodeURIComponent("genesis-md://open?path=/tmp/a.md")}`;
+        const md = `https://links.example.test/link/${encodeURIComponent("genesis-md://open?path=/tmp/a.md")}`;
         expect(route(md, config).url).toBe("genesis-md://open?path=/tmp/a.md");
     });
 });

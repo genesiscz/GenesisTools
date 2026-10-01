@@ -22,6 +22,7 @@ export interface BrowserTarget {
  * `unwrap` decodes $1 and routes that URL. Used by `links --convert`.
  * `run` is an argv list, not a shell. `{qty}` is a query parameter, `{ids*}` splits on commas.
  * `tool` is recorded and not executed.
+ * `service` starts a registered local server (`tools browser-router ensure <port>`), then opens `to`.
  */
 export type RouteAction =
     | { type: "open"; to: string }
@@ -39,41 +40,26 @@ export type RouteAction =
           /** A redeemed one-use link may skip the prompt. A raw URL that carries a prompt never does. */
           trustMinted?: boolean;
       }
-    | { type: "tool"; tool: string; args: string[]; approval: ApprovalMode };
+    | { type: "tool"; tool: string; args: string[]; approval: ApprovalMode }
+    | { type: "service"; port: number; name: string; to: string };
 
-export const UNWRAP_PATTERN = "https?://(?:localhost|127\\.0\\.0\\.1):6666/link/(.+)";
-export const TOKEN_PATTERN = "https?://(?:localhost|127\\.0\\.0\\.1):6666/t/([A-Za-z0-9_-]+)";
-/** `https://genesis.tools/tabs/<name>`, the link `tabs save` prints. */
-export const TABS_PATTERN = "https?://(?:localhost|127\\.0\\.0\\.1):6666/tabs/([A-Za-z0-9_-]+)";
-/** The untagged catch-all an older default config carried; the genesis-md preset replaces it. */
-export const LEGACY_LOCAL_CATCH_ALL = "https?://(?:localhost|127\\.0\\.0\\.1):6666/(.*)";
-
-/** Built-in routes every config starts with, in this order, ahead of the user's routes. */
-export function builtinRoutes(): RouteRule[] {
-    return [
-        { pattern: TOKEN_PATTERN, action: { type: "token" } },
-        { pattern: UNWRAP_PATTERN, action: { type: "unwrap" } },
-        {
-            pattern: TABS_PATTERN,
-            name: "Open tabs",
-            action: { type: "run", argv: ["tools", "browser-router", "tabs", "open", "$1"], approval: "allow" },
-        },
-    ];
+/** A host name as a regular expression: dots escaped, nothing else allowed in. */
+export function hostPattern(host: string): string {
+    return host.replace(/\./g, "\\.");
 }
 
-export const ROUTER_ALIAS_HOST = "genesis.tools";
-export const ROUTER_ALIAS_BASE = "https://127.0.0.1:6666";
-
-/**
- * A registered local server. `host` is a short name (the registry key, such as `dashboard`):
- * `https://dashboard/tasks` then opens `http://localhost:<port>/tasks` after the same start.
- */
-export interface RouterService {
-    port: number;
-    name: string;
-    host?: string;
+/** `https?://<host>/<path>` for a route pattern; `path` is already a regular expression. */
+export function linkPattern(host: string, path: string): string {
+    return `https?://${hostPattern(host)}/${path}`;
 }
 
+const HOST_NAME = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)*$/;
+
+export function isHostName(value: string): boolean {
+    return HOST_NAME.test(value);
+}
+
+/** An alias renames a host before routing: `dashboard` -> `http://localhost:3096`. */
 export interface RouterAlias {
     host: string;
     base: string;
@@ -92,15 +78,29 @@ export interface RouteRule {
     preset?: string;
 }
 
+/**
+ * Options an installable preset accepts. `only` narrows a list the preset would otherwise take
+ * whole; `names` adds a name for an entry (`dashboard` -> `artifact-library`).
+ */
+export interface PresetOptions {
+    only?: string[];
+    names?: Record<string, string>;
+}
+
 export interface RouterConfig {
     defaultBrowser: BrowserTarget | string;
-    /** When true, hosts in `aliases` are rewritten onto the local router before a second match. */
+    /**
+     * The host every printed link is built on (`https://<linkHost>/t/<id>`). Unset: no links are
+     * printed. A link the router does not catch goes to whoever serves this host.
+     */
+    linkHost?: string;
+    /** When false, `aliases` are ignored. */
     allowAliases?: boolean;
     aliases?: RouterAlias[];
-    /** Center-screen card shown when a click opens or runs something. */
+    /** The card in the bottom-left corner shown when a click opens or runs something. */
     toast?: ToastSettings;
-    /** Registered local servers. A click on one starts it before the page opens. */
-    services?: RouterService[];
+    /** Installable presets switched on, with their options. Default presets are always on. */
+    presets?: Record<string, PresetOptions>;
     /** Unwrap safelinks and strip tracking parameters. Default on. */
     clean?: boolean;
     routes: RouteRule[];
@@ -183,12 +183,10 @@ export function defaultRouterConfig(
     return {
         defaultBrowser: browser,
         allowAliases: true,
-        aliases: [{ host: ROUTER_ALIAS_HOST, base: ROUTER_ALIAS_BASE }],
+        aliases: [],
         toast: { enabled: true, seconds: 5 },
-        routes: [
-            ...builtinRoutes(),
-            { pattern: LEGACY_LOCAL_CATCH_ALL, action: { type: "open", to: "genesis-md://$1" } },
-        ],
+        presets: {},
+        routes: [],
     };
 }
 
@@ -207,12 +205,19 @@ export function parseConfig(value: unknown): RouterConfig {
         throw new RouteError("config.routes must be an array");
     }
 
+    const linkHost = readOptionalString(value.linkHost, "config.linkHost");
+
+    if (linkHost !== undefined && !isHostName(linkHost)) {
+        throw new RouteError(`config.linkHost must be a host name, e.g. links.example.com (got ${linkHost})`);
+    }
+
     return {
         defaultBrowser: parseBrowser(value.defaultBrowser, "defaultBrowser"),
+        ...(linkHost === undefined ? {} : { linkHost }),
         allowAliases: value.allowAliases !== false,
-        aliases: value.aliases === undefined ? defaultAliases() : parseAliases(value.aliases),
+        aliases: value.aliases === undefined ? [] : parseAliases(value.aliases),
         ...(value.toast === undefined ? {} : { toast: parseToast(value.toast, "toast") }),
-        ...(value.services === undefined ? {} : { services: parseServices(value.services) }),
+        ...(value.presets === undefined ? {} : { presets: parsePresets(value.presets) }),
         clean: value.clean !== false,
         routes: routes.map((route, index) => parseRoute(route, index)),
     };
@@ -244,80 +249,15 @@ export function route(
     trusted = false
 ): RouteDecision {
     const original = parseHttpUrl(config.clean === false ? raw : cleanUrl(raw), "url");
-    const direct = firstMatch(original, raw, config, allowUnwrap, consumeToken, trusted);
-
-    if (direct) {
-        return direct;
-    }
-
+    // An alias renames the host first, so it wins over any route for the old name.
     const aliased = applyAlias(original, config);
+    const matched = firstMatch(aliased, raw, config, allowUnwrap, consumeToken, trusted);
 
-    if (aliased.href !== original.href) {
-        const second = firstMatch(aliased, raw, config, allowUnwrap, consumeToken, trusted);
-
-        if (second) {
-            return second;
-        }
+    if (matched) {
+        return matched;
     }
 
-    // An alias onto a registered port (`dashboard` -> `http://localhost:3096`) starts that server,
-    // and wins over the host's own short name.
-    const viaAlias = aliased.href === original.href ? null : registeredService(aliased, config);
-    const registered = viaAlias ?? registeredService(original, config);
-
-    if (registered) {
-        const { service, target } = registered;
-        const opened = forward(config.defaultBrowser, target, raw, "route", null);
-        return {
-            kind: "run",
-            original: raw,
-            url: target,
-            argv: ["tools", "browser-router", "ensure", String(service.port)],
-            approval: "allow",
-            needsApproval: false,
-            touchId: false,
-            open: target,
-            notify: `Starting ${service.name}`,
-            browserArguments: opened.openArguments,
-            via: "route",
-            routeIndex: null,
-            service: { port: service.port, name: service.name },
-        };
-    }
-
-    return forward(config.defaultBrowser, original.href, raw, "default", null);
-}
-
-/** A loopback URL on a registered port, or a service's short host (`https://dashboard/x`). */
-function registeredService(url: URL, config: RouterConfig): { service: RouterService; target: string } | null {
-    if (url.protocol !== "http:" && url.protocol !== "https:") {
-        return null;
-    }
-
-    const services = config.services ?? [];
-    const host = url.hostname.toLowerCase();
-
-    if (url.port === "") {
-        const named = services.find((service) => service.host === host && service.port !== 6666);
-
-        if (named) {
-            const target = `http://localhost:${named.port}${url.pathname}${url.search}${url.hash}`;
-            return { service: named, target };
-        }
-    }
-
-    if (host !== "localhost" && host !== "127.0.0.1") {
-        return null;
-    }
-
-    const port = Number(url.port);
-
-    if (!port || port === 6666) {
-        return null;
-    }
-
-    const service = services.find((item) => item.port === port);
-    return service ? { service, target: url.href } : null;
+    return forward(config.defaultBrowser, aliased.href, raw, "default", null);
 }
 
 function firstMatch(
@@ -354,19 +294,16 @@ export function applyAlias(url: URL, config: RouterConfig): URL {
         return url;
     }
 
-    const aliases = config.aliases ?? defaultAliases();
-    const alias = aliases.find((item) => item.host.toLowerCase() === url.hostname.toLowerCase());
+    const alias = (config.aliases ?? []).find((item) => item.host.toLowerCase() === url.hostname.toLowerCase());
 
     if (!alias) {
         return url;
     }
 
-    const base = new URL(alias.base.endsWith("/") ? alias.base : `${alias.base}/`);
-    return new URL(`${url.pathname}${url.search}${url.hash}`, base);
-}
-
-export function defaultAliases(): RouterAlias[] {
-    return [{ host: ROUTER_ALIAS_HOST, base: ROUTER_ALIAS_BASE }];
+    // The base's own path is a prefix: `https://links.example.com/md` + `/a` is `/md/a`.
+    const base = new URL(alias.base);
+    const prefix = base.pathname.replace(/\/$/, "");
+    return new URL(`${prefix}${url.pathname}${url.search}${url.hash}`, base.origin);
 }
 
 /** A URL with `:name` placeholders. Returns null when the string is already a regular expression. */
@@ -661,6 +598,33 @@ function applyAction(
         };
     }
 
+    if (action.type === "service") {
+        const parsed = parseHttpUrl(substitute(action.to, match, url), "service target");
+
+        // Router.swift opens only http(s) service targets; another scheme must not become a browser launch here.
+        if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+            throw new RouteError(`service target must be http(s): ${parsed.href}`);
+        }
+
+        const target = parsed.href;
+        const opened = forward(config.defaultBrowser, target, raw, "route", routeIndex);
+        return {
+            kind: "run",
+            original: raw,
+            url: target,
+            argv: ["tools", "browser-router", "ensure", String(action.port)],
+            approval: "allow",
+            needsApproval: false,
+            touchId: false,
+            open: target,
+            notify: `Starting ${action.name}`,
+            browserArguments: opened.openArguments,
+            via: "route",
+            routeIndex,
+            service: { port: action.port, name: action.name },
+        };
+    }
+
     if (action.type === "tool") {
         return {
             kind: "tool",
@@ -915,22 +879,62 @@ function parseAction(value: Record<string, unknown>, index: number): RouteAction
         };
     }
 
-    throw new RouteError(`routes[${index}].action.type must be open, forward, unwrap, token, run, or tool`);
-}
-
-function parseServices(value: unknown): RouterService[] {
-    if (!Array.isArray(value)) {
-        throw new RouteError("config.services must be an array");
-    }
-
-    return value.map((item, index) => {
-        if (!isRecord(item) || typeof item.port !== "number" || typeof item.name !== "string") {
-            throw new RouteError(`services[${index}] needs a port and a name`);
+    if (value.type === "service") {
+        if (typeof value.port !== "number" || !Number.isInteger(value.port) || value.port < 1 || value.port > 65535) {
+            throw new RouteError(`routes[${index}].action.port must be a port number`);
         }
 
-        const host = typeof item.host === "string" ? item.host.toLowerCase() : undefined;
-        return { port: item.port, name: item.name, ...(host === undefined ? {} : { host }) };
-    });
+        if (typeof value.name !== "string" || typeof value.to !== "string" || value.to.length === 0) {
+            throw new RouteError(`routes[${index}].action needs name and to`);
+        }
+
+        return { type: "service", port: value.port, name: value.name, to: value.to };
+    }
+
+    throw new RouteError(`routes[${index}].action.type must be open, forward, unwrap, token, run, tool, or service`);
+}
+
+function parseNames(value: unknown, id: string): Record<string, string> {
+    if (!isRecord(value)) {
+        throw new RouteError(`presets.${id}.names must map a host name to a registry key`);
+    }
+
+    const names: Record<string, string> = {};
+
+    for (const [name, key] of Object.entries(value)) {
+        if (typeof key !== "string" || !isHostName(name.toLowerCase())) {
+            throw new RouteError(`presets.${id}.names.${name} must be a host name mapped to a registry key`);
+        }
+
+        names[name.toLowerCase()] = key;
+    }
+
+    return names;
+}
+
+function parsePresets(value: unknown): Record<string, PresetOptions> {
+    if (!isRecord(value)) {
+        throw new RouteError("config.presets must be an object of preset id to options");
+    }
+
+    const parsed: Record<string, PresetOptions> = {};
+
+    for (const [id, options] of Object.entries(value)) {
+        if (!isRecord(options)) {
+            throw new RouteError(`presets.${id} must be an object ({} for no options)`);
+        }
+
+        const only = options.only;
+
+        if (only !== undefined && (!Array.isArray(only) || only.some((item) => typeof item !== "string"))) {
+            throw new RouteError(`presets.${id}.only must be a list of strings`);
+        }
+
+        const names = options.names === undefined ? undefined : parseNames(options.names, id);
+        parsed[id] = { ...(only === undefined ? {} : { only }), ...(names === undefined ? {} : { names }) };
+    }
+
+    return parsed;
 }
 
 function parseAliases(value: unknown): RouterAlias[] {

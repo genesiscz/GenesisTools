@@ -7,27 +7,33 @@ export interface RunLink {
     markdown: string;
 }
 
-export function tokenLink(id: string): string {
-    return `https://genesis.tools/t/${id}`;
+export function tokenLink(id: string, linkHost: string): string {
+    return `https://${linkHost}/t/${id}`;
 }
 
 /** A link for a preset works only when the router app is installed, owns https, and routes that preset. */
 export function presetEnabled(presetId: string, status: RouterStatus): boolean {
-    return status.installed && status.defaultHandler && status.enabledPresets.includes(presetId);
+    return (
+        status.linkHost !== null &&
+        status.installed &&
+        status.defaultHandler &&
+        status.enabledPresets.includes(presetId)
+    );
 }
 
 /**
- * One door for clickable links. Returns null when the link would not work on this Mac, so the
- * caller prints the plain command instead of a dead link.
+ * One door for clickable links: `path` on the configured link host. Returns null when the link would
+ * not work on this Mac, so the caller prints the plain command instead of a dead link.
  */
 export function linkFor(
-    { presetId, url, label }: { presetId: string; url: string; label: string },
+    { presetId, path, label }: { presetId: string; path: string; label: string },
     status: RouterStatus = routerStatus()
 ): RunLink | null {
-    if (!presetEnabled(presetId, status)) {
+    if (!presetEnabled(presetId, status) || status.linkHost === null) {
         return null;
     }
 
+    const url = `https://${status.linkHost}/${path.replace(/^\//, "")}`;
     return { url, markdown: `[${label}](${url})` };
 }
 
@@ -36,13 +42,15 @@ export async function mintLink({
     target,
     uses = 1,
     label,
+    linkHost,
 }: {
     target: string;
     uses?: number;
     label: string;
+    linkHost: string;
 }): Promise<RunLink> {
     const id = await withTokenLock(() => mintToken(target, uses));
-    const url = tokenLink(id);
+    const url = tokenLink(id, linkHost);
     return { url, markdown: `[${label}](${url})` };
 }
 
@@ -60,13 +68,15 @@ export function planMintedLink({
     target,
     uses = 1,
     label,
+    linkHost,
 }: {
     target: string;
     uses?: number;
     label: string;
+    linkHost: string;
 }): PlannedLink {
     const id = newTokenId();
-    const url = tokenLink(id);
+    const url = tokenLink(id, linkHost);
     const link = { url, markdown: `[${label}](${url})` };
 
     return {

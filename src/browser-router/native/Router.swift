@@ -64,43 +64,22 @@ private func routeParsed(_ raw: String, config: ParsedConfig, allowUnwrap: Bool)
     guard let original = URL(string: cleaned), let scheme = original.scheme, !scheme.isEmpty else {
         throw RouteFailure.message("url is not a URL: \(raw)")
     }
-    if let direct = try matchRoutes(raw, href: original.absoluteString, config: config, allowUnwrap: allowUnwrap) {
-        return direct
+    // An alias renames the host first (`route` in route.ts), so it wins over any route for the old name.
+    // `new URL()` in route.ts gives a bare host the path "/", both for matching and forwarding.
+    let aliased = withRootPath(try aliasURL(original, aliases: config.aliases) ?? original)
+    if let matched = try matchRoutes(raw, href: aliased.absoluteString, config: config, allowUnwrap: allowUnwrap) {
+        return matched
     }
-    let aliased = try aliasURL(original, aliases: config.aliases).flatMap { $0.absoluteString == original.absoluteString ? nil : $0 }
-    if let aliased, let second = try matchRoutes(raw, href: aliased.absoluteString, config: config, allowUnwrap: allowUnwrap) {
-        return second
-    }
-    // An alias onto a registered port starts that server, and wins over the host's own short name.
-    let viaAlias = aliased.flatMap { serviceMatch($0, services: config.services) }
-    if let (service, target) = viaAlias ?? serviceMatch(original, services: config.services) {
-        let opened = try forward(config.defaultBrowser, url: target, original: raw, via: "route", routeIndex: nil)
-        return RouteDecision(
-            kind: "run", original: raw, url: target, browser: opened.browser,
-            openArguments: [], via: "route", routeIndex: nil, tool: nil, args: nil, approval: "allow",
-            needsApproval: false, argv: ["tools", "browser-router", "ensure", String(service.port)],
-            open: target, notify: "Starting \(service.name)", browserArguments: opened.openArguments,
-            touchId: false
-        )
-    }
-    return try forward(config.defaultBrowser, url: original.absoluteString, original: raw, via: "default", routeIndex: nil)
+    return try forward(config.defaultBrowser, url: aliased.absoluteString, original: raw, via: "default", routeIndex: nil)
 }
 
-/// A loopback URL on a registered port, or a service's short host (`registeredService` in route.ts).
-private func serviceMatch(_ url: URL, services: [ServiceRef]) -> (ServiceRef, String)? {
-    guard url.scheme == "http" || url.scheme == "https" else { return nil }
-    let host = url.host?.lowercased() ?? ""
-    if url.port == nil, let named = services.first(where: { $0.host == host && $0.port != 6666 }),
-       let components = URLComponents(url: url, resolvingAgainstBaseURL: false) {
-        let path = components.percentEncodedPath.isEmpty ? "/" : components.percentEncodedPath
-        let query = components.percentEncodedQuery.map { "?\($0)" } ?? ""
-        let fragment = components.percentEncodedFragment.map { "#\($0)" } ?? ""
-        return (named, "http://localhost:\(named.port)\(path)\(query)\(fragment)")
+/// `new URL()` in route.ts gives a bare host the path "/"; `URL(string:)` leaves it empty.
+private func withRootPath(_ url: URL) -> URL {
+    guard var components = URLComponents(url: url, resolvingAgainstBaseURL: false), components.percentEncodedPath.isEmpty else {
+        return url
     }
-    guard host == "localhost" || host == "127.0.0.1" else { return nil }
-    guard let port = url.port, port != 6666 else { return nil }
-    guard let service = services.first(where: { $0.port == port }) else { return nil }
-    return (service, url.absoluteString)
+    components.percentEncodedPath = "/"
+    return components.url ?? url
 }
 
 private func matchRoutes(_ raw: String, href: String, config: ParsedConfig, allowUnwrap: Bool) throws -> RouteDecision? {
@@ -151,16 +130,21 @@ private func aliasURL(_ url: URL, aliases: [AliasRef]) throws -> URL? {
         return nil
     }
     // `new URL(base)` in route.ts throws on a base that is not an absolute URL; so does this.
-    guard let base = URL(string: alias.base.hasSuffix("/") ? alias.base : "\(alias.base)/"), base.scheme != nil else {
+    guard let base = URL(string: alias.base), base.scheme != nil, base.host != nil,
+          var joined = URLComponents(url: base, resolvingAgainstBaseURL: false) else {
         throw RouteFailure.message("aliases: base \(alias.base) for \(alias.host) is not an absolute URL")
     }
     // The percent-encoded parts, as `pathname`/`search`/`hash` in route.ts: `url.path` is decoded, so a
-    // wrapped link's inner `%26` came out as `&` after the unwrap decoded it a second time.
+    // wrapped link's inner `%26` came out as `&` after the unwrap decoded it a second time. The base's
+    // own path is a prefix, as in route.ts.
     let parts = URLComponents(url: url, resolvingAgainstBaseURL: false)
     let path = parts?.percentEncodedPath ?? url.path
-    let query = parts?.percentEncodedQuery.map { "?\($0)" } ?? ""
-    let fragment = parts?.percentEncodedFragment.map { "#\($0)" } ?? ""
-    return URL(string: "\(path)\(query)\(fragment)", relativeTo: base)?.absoluteURL
+    var prefix = joined.percentEncodedPath
+    if prefix.hasSuffix("/") { prefix.removeLast() }
+    joined.percentEncodedPath = prefix + (path.isEmpty ? "/" : path)
+    joined.percentEncodedQuery = parts?.percentEncodedQuery
+    joined.percentEncodedFragment = parts?.percentEncodedFragment
+    return joined.url
 }
 
 func decisionJSON(_ decision: RouteDecision) throws -> String {
@@ -169,24 +153,14 @@ func decisionJSON(_ decision: RouteDecision) throws -> String {
     return String(decoding: try encoder.encode(decision), as: UTF8.self)
 }
 
-private struct ServiceRef {
-    var port: Int
-    var name: String
-    var host: String?
-}
-
 private struct AliasRef {
     var host: String
     var base: String
 }
 
-/// The default when a config has no `aliases` key (`defaultAliases()` in route.ts).
-private let defaultAliasRefs = [AliasRef(host: "genesis.tools", base: "https://127.0.0.1:6666")]
-
 private struct ParsedConfig {
     var defaultBrowser: BrowserInput
     var routes: [ParsedRoute]
-    var services: [ServiceRef]
     /// Empty when `allowAliases` is false.
     var aliases: [AliasRef]
     var clean: Bool
@@ -207,6 +181,7 @@ private enum ParsedAction {
     case token
     case run(argv: [String], approval: String, open: String?, notify: String?, touchId: Bool)
     case tool(tool: String, args: [String], approval: String)
+    case service(port: Int, name: String, to: String)
 }
 
 private enum BrowserInput {
@@ -239,24 +214,13 @@ private func parseConfig(_ data: Data) throws -> ParsedConfig {
                 return nil
             }
         },
-        services: parseServices(object["services"]),
         aliases: object["allowAliases"] as? Bool == false ? [] : try parseAliases(object["aliases"]),
         clean: object["clean"] as? Bool ?? true
     )
 }
 
-private func parseServices(_ value: Any?) -> [ServiceRef] {
-    guard let rows = value as? [Any] else { return [] }
-    return rows.compactMap { row in
-        guard let object = row as? [String: Any], let port = object["port"] as? Int, let name = object["name"] as? String else {
-            return nil
-        }
-        return ServiceRef(port: port, name: name, host: (object["host"] as? String)?.lowercased())
-    }
-}
-
 private func parseAliases(_ value: Any?) throws -> [AliasRef] {
-    guard let value else { return defaultAliasRefs }
+    guard let value else { return [] }
     guard let rows = value as? [Any] else {
         throw RouteFailure.message("config.aliases must be an array")
     }
@@ -326,7 +290,16 @@ private func parseAction(_ value: [String: Any], type: String, index: Int) throw
         }
         return .tool(tool: tool, args: args, approval: approval)
     }
-    throw RouteFailure.message("routes[\(index)].action.type must be open, forward, unwrap, run, or tool")
+    if type == "service" {
+        guard let port = value["port"] as? Int, (1...65535).contains(port) else {
+            throw RouteFailure.message("routes[\(index)].action.port must be a port number")
+        }
+        guard let name = value["name"] as? String, let to = value["to"] as? String, !to.isEmpty else {
+            throw RouteFailure.message("routes[\(index)].action needs name and to")
+        }
+        return .service(port: port, name: name, to: to)
+    }
+    throw RouteFailure.message("routes[\(index)].action.type must be open, forward, unwrap, token, run, tool, or service")
 }
 
 private func parseBrowser(_ value: Any, label: String) throws -> BrowserInput {
@@ -428,6 +401,20 @@ private func apply(_ action: ParsedAction, match: NSTextCheckingResult, href: St
             routeIndex: routeIndex, tool: nil, args: nil, approval: asks ? "ask" : approval, needsApproval: asks,
             argv: filled, open: openValue, notify: notify.map { substitute($0, href: href, match: match, url: url) },
             browserArguments: browserArguments, touchId: touchId
+        )
+    case .service(let port, let name, let to):
+        let target = substitute(to, href: href, match: match, url: url)
+        guard let parsed = URL(string: target), let scheme = parsed.scheme?.lowercased(),
+              scheme == "http" || scheme == "https", parsed.host != nil else {
+            throw RouteFailure.message("service target is not an http(s) URL: \(target)")
+        }
+        let opened = withRootPath(parsed).absoluteString
+        let forwarded = try forward(config.defaultBrowser, url: opened, original: raw, via: "route", routeIndex: routeIndex)
+        return RouteDecision(
+            kind: "run", original: raw, url: opened, browser: forwarded.browser, openArguments: [], via: "route",
+            routeIndex: routeIndex, tool: nil, args: nil, approval: "allow", needsApproval: false,
+            argv: ["tools", "browser-router", "ensure", String(port)], open: opened, notify: "Starting \(name)",
+            browserArguments: forwarded.openArguments, touchId: false
         )
     case .tool(let tool, let args, let approval):
         return RouteDecision(

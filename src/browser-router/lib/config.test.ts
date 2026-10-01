@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "n
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { tokenLink } from "@genesiscz/utils/browser-router/links";
-import { presetById } from "@genesiscz/utils/browser-router/presets";
+import { applyPresets, presetById, presets } from "@genesiscz/utils/browser-router/presets";
 import { defaultRouterConfig, type RouterConfig, route } from "@genesiscz/utils/browser-router/route";
 import { routerStatus } from "@genesiscz/utils/browser-router/status";
 import {
@@ -16,10 +16,28 @@ import {
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { Storage } from "@genesiscz/utils/storage";
-import { deleteRoute, enablePreset, loadConfig, routeFromFlags, saveConfig, upsertRoute } from "./config";
+import {
+    deleteRoute,
+    disablePreset,
+    enablePreset,
+    ensureBuiltinRoutes,
+    loadConfig,
+    routeFromFlags,
+    saveConfig,
+    setLinkHost,
+    upsertRoute,
+} from "./config";
 import { openMintedLink, openUrl, redeemMintedLink, runChecked } from "./launch";
 import { convertMarkdown } from "./links";
 import { bundleLink, bundleUrls, openBundle, saveBundle, TAB_CAP } from "./tabs";
+
+const LINK_HOST = "links.example.test";
+
+/** A config on the invented link host with these presets on, routes as `ensureBuiltinRoutes` writes them. */
+function presetConfig(chosen: RouterConfig["presets"] = {}): RouterConfig & { linkHost: string } {
+    const base = { ...defaultRouterConfig("Safari"), linkHost: LINK_HOST, presets: chosen };
+    return { ...base, routes: applyPresets([], presets({ config: base, check: () => true })) };
+}
 
 function mint(url: string, uses: number): Promise<string> {
     return withTokenLock(() => mintToken(url, uses));
@@ -30,7 +48,7 @@ describe("config", () => {
         const home = mkdtempSync(join(tmpdir(), "browser-router-"));
         await env.testing.withOverrides({ GENESIS_TOOLS_HOME: home }, async () => {
             await saveConfig(defaultRouterConfig("Safari"));
-            const patterns = [1, 2, 3, 4, 5].map((n) => `https://genesis\\.tools/race/${n}`);
+            const patterns = [1, 2, 3, 4, 5].map((n) => `https://links\\.example\\.test/race/${n}`);
             await Promise.all(
                 patterns.map((pattern) => upsertRoute({ pattern, action: { type: "open", to: "genesis-md://x" } }))
             );
@@ -45,11 +63,11 @@ describe("config", () => {
         await env.testing.withOverrides({ GENESIS_TOOLS_HOME: home }, async () => {
             await saveConfig(defaultRouterConfig({ name: "Example Browser", appType: "appName" }));
             await upsertRoute({
-                pattern: "https://genesis.tools/open-genesis/(.*)",
+                pattern: "https://links.example.test/open-genesis/(.*)",
                 action: { type: "open", to: "genesis-md://$1" },
             });
             await upsertRoute({
-                pattern: "https://genesis.tools/open-genesis/(.*)",
+                pattern: "https://links.example.test/open-genesis/(.*)",
                 action: { type: "open", to: "genesis-md://again/$1" },
             });
             const loaded = await loadConfig();
@@ -57,9 +75,9 @@ describe("config", () => {
             const defaults = defaultRouterConfig().routes.length;
             expect(loaded?.routes).toHaveLength(defaults + 1);
             expect(loaded?.routes.at(-1)?.action).toEqual({ type: "open", to: "genesis-md://again/$1" });
-            expect(route("https://genesis.tools/open-genesis/open", loaded!).url).toBe("genesis-md://again/open");
+            expect(route("https://links.example.test/open-genesis/open", loaded!).url).toBe("genesis-md://again/open");
 
-            await deleteRoute("https://genesis.tools/open-genesis/(.*)");
+            await deleteRoute("https://links.example.test/open-genesis/(.*)");
             expect((await loadConfig())?.routes).toHaveLength(defaults);
         });
     });
@@ -67,15 +85,15 @@ describe("config", () => {
 
 function mintedConfig(): RouterConfig {
     return {
-        ...defaultRouterConfig("Safari"),
+        ...presetConfig(),
         routes: [
-            ...defaultRouterConfig("Safari").routes,
+            ...presetConfig().routes,
             {
-                pattern: "https://genesis\\.tools/done/(\\d+)",
+                pattern: "https://links\\.example\\.test/done/(\\d+)",
                 action: { type: "run", argv: ["/usr/bin/true", "$1"], approval: "allow" },
             },
             {
-                pattern: "https://genesis\\.tools/ask/(\\d+)",
+                pattern: "https://links\\.example\\.test/ask/(\\d+)",
                 action: { type: "run", argv: ["/usr/bin/true", "$1"], approval: "ask" },
             },
         ],
@@ -109,10 +127,10 @@ describe("minted links", () => {
         const home = mkdtempSync(join(tmpdir(), "browser-router-"));
         await env.testing.withOverrides({ GENESIS_TOOLS_HOME: home }, async () => {
             const config = mintedConfig();
-            const id = await mint("https://genesis.tools/done/7", 1);
+            const id = await mint("https://links.example.test/done/7", 1);
 
             // explain peeks without spending (the negative control for the spend below).
-            expect(route(tokenLink(id), config).kind).toBe("run");
+            expect(route(tokenLink(id, LINK_HOST), config).kind).toBe("run");
             expect(takeToken(id, false)?.usesLeft).toBe(1);
 
             const plan = await redeemMintedLink(id, config);
@@ -129,11 +147,11 @@ describe("minted links", () => {
     test("links --convert --uses on a genesis-md link opens Genesis Markdown, never the browser", async () => {
         const home = mkdtempSync(join(tmpdir(), "browser-router-"));
         await env.testing.withOverrides({ GENESIS_TOOLS_HOME: home }, async () => {
-            const config = defaultRouterConfig();
+            const config = presetConfig({ "genesis-md": {} });
             const converted = await withTokenLock(() =>
-                convertMarkdown("[md](genesis-md://open?path=/tmp/a.md) [cursor](cursor://file/a.ts)", 1, config)
+                convertMarkdown("[md](genesis-md://open?path=/tmp/a.md) [cursor](cursor://file/a.ts)", config, 1)
             );
-            const link = /\[md\]\((https:\/\/genesis\.tools\/t\/[A-Za-z0-9_-]+)\)/.exec(converted)?.[1] ?? "";
+            const link = /\[md\]\((https:\/\/links\.example\.test\/t\/[A-Za-z0-9_-]+)\)/.exec(converted)?.[1] ?? "";
             const id = link.split("/t/")[1] ?? "";
 
             expect(converted).toContain("[cursor](cursor://file/a.ts)");
@@ -154,11 +172,11 @@ describe("minted links", () => {
     test("a minted link whose route asks goes back to the app, and its use is still spent", async () => {
         const home = mkdtempSync(join(tmpdir(), "browser-router-"));
         await env.testing.withOverrides({ GENESIS_TOOLS_HOME: home }, async () => {
-            const id = await mint("https://genesis.tools/ask/3", 2);
+            const id = await mint("https://links.example.test/ask/3", 2);
 
             expect(await redeemMintedLink(id, mintedConfig())).toEqual({
                 kind: "app",
-                url: "https://genesis.tools/ask/3",
+                url: "https://links.example.test/ask/3",
             });
             expect(takeToken(id, false)?.usesLeft).toBe(1);
         });
@@ -167,11 +185,14 @@ describe("minted links", () => {
 
 describe("cmux launch links", () => {
     function launchConfig(): RouterConfig {
-        const preset = presetById("cmux-claude", () => true);
+        const preset = presetById(
+            "cmux-claude",
+            presets({ config: presetConfig({ "cmux-claude": {} }), check: () => true })
+        );
         return { ...mintedConfig(), routes: [...(preset?.routes ?? []), ...mintedConfig().routes] };
     }
 
-    const raw = "https://genesis.tools/cmux/claude/run?prompt=do%20the%20handoff&name=handoff%20h_x&surface=new";
+    const raw = "https://links.example.test/cmux/claude/run?prompt=do%20the%20handoff&name=handoff%20h_x&surface=new";
 
     test("a raw link with a prompt never reaches the launch: it asks, and the spawn spy throws if reached", async () => {
         const spawn = spyOn(Bun, "spawn").mockImplementation(() => {
@@ -208,12 +229,12 @@ describe("tools browser-router open", () => {
         const home = mkdtempSync(join(tmpdir(), "browser-router-"));
         await env.testing.withOverrides({ GENESIS_TOOLS_HOME: home }, async () => {
             const config = mintedConfig();
-            const allowed = await mint("https://genesis.tools/done/1", 1);
-            await openUrl(tokenLink(allowed), config);
+            const allowed = await mint("https://links.example.test/done/1", 1);
+            await openUrl(tokenLink(allowed, LINK_HOST), config);
             expect(takeToken(allowed, false)).toBeNull();
 
-            const asking = await mint("https://genesis.tools/ask/1", 1);
-            await expect(openUrl(tokenLink(asking), config)).rejects.toThrow("asks before it runs");
+            const asking = await mint("https://links.example.test/ask/1", 1);
+            await expect(openUrl(tokenLink(asking, LINK_HOST), config)).rejects.toThrow("asks before it runs");
             expect(takeToken(asking, false)?.usesLeft).toBe(1);
         });
     });
@@ -223,14 +244,14 @@ describe("routeFromFlags toast", () => {
     test("--no-toast (commander sets toast: false) saves toast: false", () => {
         const flags = { run: "/usr/bin/true", approval: "allow" };
 
-        expect(routeFromFlags("https://genesis.tools/x", { ...flags, toast: false }).toast).toBe(false);
-        expect(routeFromFlags("https://genesis.tools/x", { ...flags, toast: true }).toast).toBeUndefined();
+        expect(routeFromFlags("https://links.example.test/x", { ...flags, toast: false }).toast).toBe(false);
+        expect(routeFromFlags("https://links.example.test/x", { ...flags, toast: true }).toast).toBeUndefined();
     });
 });
 
 describe("route --name", () => {
     test("every action kind saves the card headline, and it survives a save and a load", async () => {
-        const pattern = "https://genesis.tools/named/(\\d+)";
+        const pattern = "https://links.example.test/named/(\\d+)";
 
         expect(routeFromFlags(pattern, { routeTo: "https://example.com/$1", name: "Open item" }).name).toBe(
             "Open item"
@@ -255,7 +276,7 @@ describe("token lock", () => {
     test("two clicks at once on a one-use link run it once", async () => {
         const home = mkdtempSync(join(tmpdir(), "browser-router-"));
         await env.testing.withOverrides({ GENESIS_TOOLS_HOME: home }, async () => {
-            const id = await mint("https://genesis.tools/done/9", 1);
+            const id = await mint("https://links.example.test/done/9", 1);
             const results = await Promise.allSettled([
                 redeemMintedLink(id, mintedConfig()),
                 redeemMintedLink(id, mintedConfig()),
@@ -325,7 +346,7 @@ describe("tab bundles", () => {
             }
 
             await saveBundle("morning-2", ["https://example.com/"]);
-            const decision = route(bundleLink("morning-2"), defaultRouterConfig());
+            const decision = route(bundleLink("morning-2", LINK_HOST), presetConfig());
             expect(decision.kind === "run" ? decision.argv : []).toEqual([
                 "tools",
                 "browser-router",
@@ -344,7 +365,10 @@ function mustNotRun(what: string) {
 }
 
 describe("opening a bundle", () => {
-    const brave = defaultRouterConfig({ name: "com.brave.Browser", appType: "bundleId" });
+    const brave = {
+        ...defaultRouterConfig({ name: "com.brave.Browser", appType: "bundleId" }),
+        linkHost: LINK_HOST,
+    };
     const pages = [1, 2, 3, 4, 5].map((n) => `https://example.com/page/${n}`);
 
     test("five pages open in one new browser window, without asking", async () => {
@@ -392,9 +416,9 @@ describe("opening a bundle", () => {
         const calls: string[][] = [];
         const plan = await openBundle(
             [
-                "https://genesis.tools/tabs/morning",
-                "http://127.0.0.1:6666/tabs/morning",
-                "https://genesis.tools/t/bundletoken1",
+                "https://links.example.test/tabs/morning",
+                "http://links.example.test/tabs/morning",
+                "https://links.example.test/t/bundletoken1",
                 "https://example.com/a",
             ],
             brave,
@@ -411,16 +435,16 @@ describe("opening a bundle", () => {
         );
 
         expect(plan.skipped.map((item) => item.url)).toEqual([
-            "https://genesis.tools/tabs/morning",
-            "http://127.0.0.1:6666/tabs/morning",
-            "https://genesis.tools/t/bundletoken1",
+            "https://links.example.test/tabs/morning",
+            "http://links.example.test/tabs/morning",
+            "https://links.example.test/t/bundletoken1",
         ]);
         expect(calls).toEqual([["-n", "-b", "com.brave.Browser", "--args", "--new-window", "https://example.com/a"]]);
     });
 
     test("a link with its own route goes to GenesisTools.app, which routes it as a click", async () => {
         const calls: string[][] = [];
-        await openBundle(["https://genesis.tools/done/7", "https://example.com/a"], mintedConfig(), {
+        await openBundle(["https://links.example.test/done/7", "https://example.com/a"], mintedConfig(), {
             open: async (args) => {
                 calls.push(args);
             },
@@ -430,7 +454,7 @@ describe("opening a bundle", () => {
 
         expect(calls).toEqual([
             ["-a", "Safari", "https://example.com/a"],
-            ["-b", "com.genesiscz.genesistools", "https://genesis.tools/done/7"],
+            ["-b", "com.genesiscz.genesistools", "https://links.example.test/done/7"],
         ]);
     });
 });
@@ -455,7 +479,7 @@ describe("bundle tokens", () => {
             const id = await withTokenLock(() => mintBundleToken(urls, 2));
             const { opened, deps } = recorder();
 
-            expect(route(tokenLink(id), mintedConfig())).toMatchObject({
+            expect(route(tokenLink(id, LINK_HOST), mintedConfig())).toMatchObject({
                 kind: "run",
                 argv: ["tools", "browser-router", "token", "open", id],
                 needsApproval: false,
@@ -475,7 +499,7 @@ describe("bundle tokens", () => {
 
             writeFileSync(
                 tokenFile(),
-                `${SafeJSON.stringify({ legacy1: { url: "https://genesis.tools/done/3", usesLeft: 1 } })}\n`
+                `${SafeJSON.stringify({ legacy1: { url: "https://links.example.test/done/3", usesLeft: 1 } })}\n`
             );
             const legacy = await redeemMintedLink("legacy1", mintedConfig());
             expect(legacy.kind === "perform" && legacy.decision.kind === "run" ? legacy.decision.argv : []).toEqual([
@@ -524,7 +548,7 @@ describe("bundle tokens", () => {
             const id = await withTokenLock(() => mintBundleToken(urls, 1));
 
             // What `openUrl` does before it runs the decision: route under the lock, consuming.
-            const decision = await withTokenLock(() => route(tokenLink(id), mintedConfig(), true, true));
+            const decision = await withTokenLock(() => route(tokenLink(id, LINK_HOST), mintedConfig(), true, true));
             expect(decision).toMatchObject({ kind: "run", argv: ["tools", "browser-router", "token", "open", id] });
             expect(takeToken(id, false)?.usesLeft).toBe(1);
 
@@ -534,8 +558,8 @@ describe("bundle tokens", () => {
             expect(takeToken(id, false)).toBeNull();
 
             // Negative control: the consuming route still spends a single-link token.
-            const single = await mint("https://genesis.tools/done/5", 1);
-            await withTokenLock(() => route(tokenLink(single), mintedConfig(), true, true));
+            const single = await mint("https://links.example.test/done/5", 1);
+            await withTokenLock(() => route(tokenLink(single, LINK_HOST), mintedConfig(), true, true));
             expect(takeToken(single, false)).toBeNull();
         });
     });
@@ -549,53 +573,68 @@ describe("runChecked", () => {
     });
 });
 
-describe("preset drift fix", () => {
-    test("the fix status prints clears the drift: a changed action and a pattern the preset dropped", async () => {
+describe("presets in the saved config", () => {
+    test("enable, disable, link host and sync rewrite the routes; a hand-edited preset route is put back", async () => {
         const home = mkdtempSync(join(tmpdir(), "browser-router-"));
         await env.testing.withOverrides({ GENESIS_TOOLS_HOME: home }, async () => {
-            const own = presetById("decide", () => true)?.routes[0];
+            const check = () => true;
+            await saveConfig(defaultRouterConfig("Safari"));
 
-            if (own?.action.type !== "run") {
+            // Nothing is on, and decide cannot be switched on before a link host exists.
+            await expect(enablePreset({ id: "decide", check })).rejects.toThrow("a link host");
+            await setLinkHost(LINK_HOST, check);
+            expect((await loadConfig())?.routes.map((rule) => rule.preset)).toEqual(["core", "core", "core"]);
+
+            await enablePreset({ id: "decide", check });
+            await expect(enablePreset({ id: "core", check })).rejects.toThrow("default preset");
+            await expect(enablePreset({ id: "decide", options: { only: ["x"] }, check })).rejects.toThrow(
+                "takes no option only"
+            );
+            await enablePreset({ id: "dashboard-names", options: { only: ["jev"] }, check });
+
+            const saved = await loadConfig();
+            const own = saved?.routes.find((rule) => rule.preset === "decide");
+            expect(saved?.presets).toEqual({ decide: {}, "dashboard-names": { only: ["jev"] } });
+            expect(saved?.routes.filter((rule) => rule.preset === "dashboard-names")).toHaveLength(2);
+
+            if (!saved || own?.action.type !== "run") {
                 throw new Error("decide ships one run route");
             }
 
+            // A hand edit shows as drift, and `presets sync` (ensureBuiltinRoutes) puts it back.
             const changed = { ...own, action: { ...own.action, notify: "an older notify" } };
-            const dropped = { ...own, pattern: "https?://genesis\\.tools/answer/([a-z0-9-]+)/(\\d+)/([a-z])" };
-            await saveConfig({ ...defaultRouterConfig("Safari"), routes: [dropped, changed] });
-            const before = routerStatus({ check: () => true, config: await loadConfig(), handler: null });
-            const row = before.presets.find((item) => item.id === "decide");
-
-            expect(row?.drift).toEqual([
+            await saveConfig({ ...saved, routes: saved.routes.map((rule) => (rule === own ? changed : rule)) });
+            const before = routerStatus({ check, config: await loadConfig(), handler: null });
+            expect(before.presets.find((item) => item.id === "decide")?.drift).toEqual([
                 "Answer a decision: action differs from the preset",
-                `${dropped.pattern}: no longer in the preset`,
             ]);
-            expect(row?.fix).toBe("tools browser-router presets enable decide");
-
-            await enablePreset("decide", () => true);
-            const after = routerStatus({ check: () => true, config: await loadConfig(), handler: null });
-
+            await ensureBuiltinRoutes();
+            const after = routerStatus({ check, config: await loadConfig(), handler: null });
             expect(after.presets.find((item) => item.id === "decide")?.drift).toEqual([]);
-            expect((await loadConfig())?.routes.filter((rule) => rule.preset === "decide")).toEqual([own]);
+
+            await disablePreset("decide", check);
+            expect((await loadConfig())?.routes.some((rule) => rule.preset === "decide")).toBe(false);
+            await expect(disablePreset("decide", check)).rejects.toThrow("not enabled");
+
+            // Without the link host, everything built on it goes; a user's own route stays.
+            await upsertRoute({ pattern: "https://example\\.com/x", action: { type: "open", to: "genesis-md://x" } });
+            await setLinkHost(null, check);
+            expect((await loadConfig())?.routes.map((rule) => rule.preset ?? "user")).toEqual([
+                "user",
+                "dashboard-names",
+            ]);
         });
     });
 
-    test("a preset that is not available names what it needs instead of a fix that refuses", () => {
-        const own = presetById("cmux-claude", () => true)?.routes[0];
-
-        if (own?.action.type !== "run") {
-            throw new Error("cmux-claude ships one run route");
-        }
-
-        const drifted = { ...own, action: { ...own.action, argv: own.action.argv.slice(0, 4) } };
+    test("a preset that is not available names what it needs", () => {
+        const config = presetConfig({ "cmux-claude": {} });
         const status = routerStatus({
             check: (capability) => capability !== "cmux:installed",
-            config: { ...defaultRouterConfig(), routes: [drifted] },
+            config,
             handler: null,
         });
         const row = status.presets.find((item) => item.id === "cmux-claude");
 
-        expect(row?.drift).toEqual(["Run Claude in cmux: action differs from the preset"]);
-        expect(row?.fix).toBeUndefined();
-        expect(row?.missing).toEqual(["cmux:installed"]);
+        expect(row).toMatchObject({ enabled: false, missing: ["cmux:installed"] });
     });
 });

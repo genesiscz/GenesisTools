@@ -1,13 +1,12 @@
 import { mkdirSync, readFileSync } from "node:fs";
 import { dirname } from "node:path";
+import { corePatterns } from "@genesiscz/utils/browser-router/presets";
 import {
     applyAlias,
     compileRoutePattern,
     type NormalizedBrowser,
     type RouterConfig,
     route,
-    TABS_PATTERN,
-    TOKEN_PATTERN,
 } from "@genesiscz/utils/browser-router/route";
 import { type TokenRecord, takeToken } from "@genesiscz/utils/browser-router/tokens";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -25,8 +24,8 @@ function bundleFile(): string {
     return `${new Storage("browser-router").getBaseDir()}/bundles.json`;
 }
 
-export function bundleLink(name: string): string {
-    return `https://genesis.tools/tabs/${name}`;
+export function bundleLink(name: string, linkHost: string): string {
+    return `https://${linkHost}/tabs/${name}`;
 }
 
 /** Only absolute http(s) links: a bundle opens pages, never another scheme's handler. */
@@ -85,7 +84,7 @@ export function bundleNames(): string[] {
 export interface BundlePlan {
     /** Plain pages, one new window per browser. */
     windows: { browser: NormalizedBrowser; urls: string[] }[];
-    /** Links with a route of their own (a genesis.tools action, a minted link): GenesisTools.app routes each. */
+    /** Links with a route of their own (an action on the link host, a minted link): GenesisTools.app routes each. */
     routed: string[];
     skipped: { url: string; reason: string }[];
 }
@@ -151,12 +150,18 @@ function isBundleLink(url: string, config: RouterConfig, peek: PeekToken): boole
         return false;
     }
 
+    if (!config.linkHost) {
+        return false;
+    }
+
+    const patterns = corePatterns(config.linkHost);
+
     for (const candidate of [parsed.href, applyAlias(parsed, config).href]) {
-        if (compileRoutePattern(TABS_PATTERN).test(candidate)) {
+        if (compileRoutePattern(patterns.tabs).test(candidate)) {
             return true;
         }
 
-        const token = compileRoutePattern(TOKEN_PATTERN).exec(candidate);
+        const token = compileRoutePattern(patterns.token).exec(candidate);
 
         if (token?.[1] && peek(token[1])?.urls) {
             return true;

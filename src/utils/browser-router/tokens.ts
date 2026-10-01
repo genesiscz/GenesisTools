@@ -22,7 +22,7 @@ export function tokenFile(): string {
     return `${new Storage("browser-router").getBaseDir()}/tokens.json`;
 }
 
-/** A fresh id for `https://genesis.tools/t/<id>`: 72 random bits. */
+/** A fresh id for `https://<linkHost>/t/<id>`: 72 random bits. */
 export function newTokenId(): string {
     return randomBytes(9).toString("base64url");
 }

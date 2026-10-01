@@ -36,7 +36,7 @@ export interface OpenArtifactResult {
 
 /**
  * Open an artifact in the browser, starting its server first when none is running.
- * This is what a `https://genesis.tools/artifact/<name>/<page>` click runs.
+ * This is what a `https://<linkHost>/artifact/<name>/<page>` click runs.
  */
 export async function openArtifact(options: OpenArtifactOptions): Promise<OpenArtifactResult> {
     const timeoutMs = options.timeoutMs ?? 20_000;

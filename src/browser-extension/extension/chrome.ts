@@ -52,7 +52,6 @@ export interface ChromeApi {
         id: string;
         lastError?: { message?: string };
         getURL(path: string): string;
-        getManifest(): { host_permissions?: string[] };
         sendMessage(message: unknown): Promise<unknown>;
         connectNative(name: string): NativePort;
         openOptionsPage(): Promise<void>;
@@ -67,6 +66,13 @@ export interface ChromeApi {
         };
         onInstalled: { addListener(listener: () => void): void };
         onStartup: { addListener(listener: () => void): void };
+        /** Reloads the extension from its folder, the same as the Reload button on its card. */
+        reload(): void;
+    };
+    action: {
+        setBadgeText(details: { text: string }): Promise<void>;
+        setBadgeBackgroundColor(details: { color: string }): Promise<void>;
+        setTitle(details: { title: string }): Promise<void>;
     };
     tabs: {
         query(info: { active?: boolean; currentWindow?: boolean }): Promise<Tab[]>;
@@ -82,6 +88,11 @@ export interface ChromeApi {
     };
     storage: {
         local: {
+            get(keys: string[]): Promise<Record<string, unknown>>;
+            set(items: Record<string, unknown>): Promise<void>;
+        };
+        /** Cleared when the browser closes. */
+        session: {
             get(keys: string[]): Promise<Record<string, unknown>>;
             set(items: Record<string, unknown>): Promise<void>;
         };

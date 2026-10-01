@@ -7,6 +7,7 @@ import {
 } from "../lib/host/messages";
 import { type ContextMenuInfo, type DnrRule, ext, type MessageSender, type Tab } from "./chrome";
 import { type BackgroundMessage, isBackgroundMessage, isHostResponse, isRecord, type MenuItem } from "./shared/bridge";
+import { freshnessFromReply, showFreshness } from "./shared/freshness";
 
 const ROUTER_RULE_ID = 1;
 const SHORTCUT_RULE_ID = 2;
@@ -79,34 +80,59 @@ function caseInsensitive(pattern: string): string {
     return pattern.replace(/[a-z]/gi, (letter) => `[${letter.toLowerCase()}${letter.toUpperCase()}]`);
 }
 
-/** Short service hosts (`dashboard`): the build grants each one, so the manifest is the list. */
-function shortcutHosts(): string[] {
-    const granted = ext.runtime.getManifest().host_permissions ?? [];
-    const hosts = granted.flatMap((pattern) => /^https?:\/\/([a-z0-9-]+)\/\*$/.exec(pattern)?.[1] ?? []);
-    return [...new Set(hosts)];
+interface RouterHosts {
+    linkHost: string | null;
+    hosts: string[];
+}
+
+/** The build's `router-hosts.json`: the link host, and the hosts the router config wants caught. */
+async function routerHosts(): Promise<RouterHosts> {
+    try {
+        const response = await fetch(ext.runtime.getURL("router-hosts.json"));
+        const data: unknown = await response.json();
+
+        if (isRecord(data)) {
+            const linkHost = typeof data.linkHost === "string" ? data.linkHost : null;
+            const hosts = Array.isArray(data.hosts)
+                ? data.hosts.filter((host): host is string => typeof host === "string")
+                : [];
+            return { linkHost, hosts };
+        }
+    } catch (error) {
+        console.warn("[genesis-tools] router-hosts.json is missing or unreadable", error);
+    }
+
+    return { linkHost: null, hosts: [] };
 }
 
 function routeRedirect(): DnrRule["action"] {
     return { type: "redirect", redirect: { regexSubstitution: `${ext.runtime.getURL("route.html")}#\\0` } };
 }
 
-/** genesis.tools links and short service hosts open route.html before any request leaves the browser. */
+/** Link-host links and the router's other hosts open route.html before any request leaves the browser. */
 async function installRouterRule(): Promise<void> {
+    const { linkHost, hosts } = await routerHosts();
     await ext.declarativeNetRequest.updateDynamicRules({
         removeRuleIds: [ROUTER_RULE_ID],
-        addRules: [
-            {
-                id: ROUTER_RULE_ID,
-                priority: 1,
-                action: routeRedirect(),
-                condition: { regexFilter: "^https://genesis\\.tools/.*$", resourceTypes: ["main_frame"] },
-            },
-        ],
+        addRules: linkHost
+            ? [
+                  {
+                      id: ROUTER_RULE_ID,
+                      priority: 1,
+                      action: routeRedirect(),
+                      condition: {
+                          // The router's link pattern takes both protocols, so the rule does too.
+                          regexFilter: `^https?://${escapeRegex(linkHost)}/.*$`,
+                          resourceTypes: ["main_frame"],
+                      },
+                  },
+              ]
+            : [],
     });
-    await installShortcutRule().catch((error: unknown) => {
-        console.warn("[genesis-tools] short service host rule failed", error);
+    await installHostRule(hosts).catch((error: unknown) => {
+        console.warn("[genesis-tools] router host rule failed", error);
     });
-    await installSearchRules().catch((error: unknown) => {
+    await installSearchRules(hosts.filter((host) => !host.includes("."))).catch((error: unknown) => {
         console.warn("[genesis-tools] short host search rules failed", error);
     });
 }
@@ -119,13 +145,13 @@ async function installRouterRule(): Promise<void> {
  * it too, `artifact-library` and `dev-dashboard-cloud` passed Chrome's regex memory limit. Each
  * rule has its own call, since one refused rule fails every other rule in the same call.
  */
-async function installSearchRules(): Promise<void> {
+async function installSearchRules(hosts: string[]): Promise<void> {
     const stale = (await ext.declarativeNetRequest.getDynamicRules())
         .map((rule) => rule.id)
         .filter((id) => id >= SEARCH_RULE_BASE && id < BYPASS_RULE_BASE);
     await ext.declarativeNetRequest.updateDynamicRules({ removeRuleIds: stale });
 
-    for (const [index, host] of shortcutHosts().entries()) {
+    for (const [index, host] of hosts.entries()) {
         const rule: DnrRule = {
             id: SEARCH_RULE_BASE + index,
             priority: 1,
@@ -144,13 +170,11 @@ async function installSearchRules(): Promise<void> {
 }
 
 /**
- * Its own rule, so a failure here never costs the genesis.tools one. The host list goes in
+ * Its own rule, so a failure here never costs the link-host one. The host list goes in
  * `requestDomains`, not the regex: an alternation of every host passes Chrome's 2 KB compiled
  * regex limit (seen at 14 hosts), while this regex stays the same size for any number of them.
- * `requestDomains` also matches subdomains, which the one-label regex then excludes.
  */
-async function installShortcutRule(): Promise<void> {
-    const hosts = shortcutHosts();
+async function installHostRule(hosts: string[]): Promise<void> {
     await ext.declarativeNetRequest.updateDynamicRules({
         removeRuleIds: [SHORTCUT_RULE_ID],
         addRules:
@@ -162,7 +186,7 @@ async function installShortcutRule(): Promise<void> {
                           priority: 1,
                           action: routeRedirect(),
                           condition: {
-                              regexFilter: "^https?://[a-z0-9-]+/.*$",
+                              regexFilter: "^https?://[^/:]+/.*$",
                               requestDomains: hosts,
                               resourceTypes: ["main_frame"],
                           },
@@ -371,7 +395,15 @@ ext.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
 });
 
+/** On every browser start and install: a `!` badge when this build is behind `dist` or the sources. */
+async function checkFreshness(): Promise<void> {
+    await showFreshness(freshnessFromReply(await callNative({ command: "extension.status" })));
+}
+
 async function setup(): Promise<void> {
+    void checkFreshness().catch((error: unknown) => {
+        console.warn("[genesis-tools] freshness check failed", error);
+    });
     await installRouterRule();
     await syncGitlabScripts().catch(async (error: unknown) => {
         console.warn("[genesis-tools] GitLab script sync failed", error);

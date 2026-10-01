@@ -3,12 +3,12 @@ import { spawnSync } from "node:child_process";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { presetById } from "@genesiscz/utils/browser-router/presets";
+import { applyPresets, presetById, presets } from "@genesiscz/utils/browser-router/presets";
 import {
-    defaultAliases,
     defaultRouterConfig,
     parseConfig,
     type RouteDecision,
+    type RouterConfig,
     route,
 } from "@genesiscz/utils/browser-router/route";
 import { CLEAN_CASES } from "@genesiscz/utils/browser-router/testing/clean-cases";
@@ -25,11 +25,15 @@ describe.skipIf(!canCompile)("swift router parity", () => {
         const home = mkdtempSync(join(tmpdir(), "browser-router-swift-"));
         const configPath = join(home, "config.json");
         const binary = join(home, "router-cli");
-        const parityConfig = {
+        // Every preset on the invented link host, plus an alias onto a registered port.
+        const chosen = { "local-services": {}, "dashboard-names": {}, "genesis-md": {}, decide: {}, artifact: {} };
+        const base: RouterConfig = {
             ...defaultRouterConfig(),
-            aliases: [...defaultAliases(), { host: "lib", base: "http://localhost:3999" }],
-            services: [{ port: 3999, name: "Example", host: "example" }],
+            linkHost: "links.example.test",
+            presets: chosen,
+            aliases: [{ host: "lib", base: "http://localhost:3096" }],
         };
+        const parityConfig = { ...base, routes: applyPresets([], presets({ config: base, check: () => true })) };
         writeFileSync(configPath, `${SafeJSON.stringify(parityConfig, null, 2)}\n`);
         const compiled = spawnSync(
             "swiftc",
@@ -45,22 +49,24 @@ describe.skipIf(!canCompile)("swift router parity", () => {
         expect(compiled.status, compiled.stderr).toBe(0);
         const samples = [
             "https://example.com/a",
-            "https://localhost:6666/open?path=%2Ftmp%2Fa%20b.md",
-            "http://127.0.0.1:6666/panel/chat",
-            "http://127.0.0.1:3999/x",
+            "https://links.example.test/md/open?path=%2Ftmp%2Fa%20b.md",
+            "http://links.example.test/md/panel/chat",
+            "http://127.0.0.1:3000/x",
             "https://example.com/a?utm_source=newsletter",
-            `https://127.0.0.1:6666/link/${encodeURIComponent("genesis-md://open?path=/tmp/a.md")}`,
-            "https://genesis.tools/tabs/morning",
+            `https://links.example.test/link/${encodeURIComponent("genesis-md://open?path=/tmp/a.md")}`,
+            "https://links.example.test/tabs/morning",
             `https://nam.safelinks.protection.outlook.com/x?url=${encodeURIComponent(
                 `https://www.google.com/url?q=${encodeURIComponent("https://shop.example/item?id=1")}`
             )}`,
             // An unregistered local port keeps today's routing; only a registered one is started.
             "http://127.0.0.1:4555/x",
-            "http://localhost:3999/",
-            // A service's short host opens its loopback port, path and query kept.
-            "https://example",
-            "http://example/tasks?x=1#top",
-            "https://examplexyz/",
+            "http://localhost:3000/",
+            // A dashboard's name as a host and as a path, path and query kept.
+            "https://dashboard",
+            "http://dashboard/tasks?x=1#top",
+            "https://dashboardxyz/",
+            "https://links.example.test/dev-dashboard/x?y=1",
+            "https://links.example.test/artifact/notes/index.html",
             // An alias onto a registered port starts it too.
             "https://lib/a/x?y=1",
             // One sample per link-cleaner rule.
@@ -84,16 +90,13 @@ describe.skipIf(!canCompile)("swift router parity", () => {
             }
         }
 
-        // Alias settings: `allowAliases: false` turns the default genesis.tools alias off, and a custom
-        // alias list replaces it.
-        const aliasConfigs = {
-            off: { ...defaultRouterConfig(), allowAliases: false },
-            custom: {
-                ...defaultRouterConfig(),
-                aliases: [{ host: "links.example.test", base: "https://127.0.0.1:6666" }],
-            },
+        // Alias settings: an alias base's path is a prefix, and `allowAliases: false` turns aliases off.
+        const aliased = {
+            ...parityConfig,
+            aliases: [{ host: "notes.example.test", base: "https://links.example.test/md" }],
         };
-        const aliasSamples = ["https://genesis.tools/panel/chat", "https://links.example.test/panel/chat"];
+        const aliasConfigs = { off: { ...aliased, allowAliases: false }, custom: aliased };
+        const aliasSamples = ["https://notes.example.test/panel/chat", "https://links.example.test/md/panel/chat"];
 
         for (const [name, config] of Object.entries(aliasConfigs)) {
             const path = join(home, `alias-${name}.json`);
@@ -114,15 +117,15 @@ describe.skipIf(!canCompile)("swift router parity", () => {
             }
         }
 
-        expect(route("https://links.example.test/panel/chat", aliasConfigs.custom).url).toBe("genesis-md://panel/chat");
-        expect(route("https://genesis.tools/panel/chat", aliasConfigs.off).via).toBe("default");
+        expect(route("https://notes.example.test/panel/chat", aliasConfigs.custom).url).toBe("genesis-md://panel/chat");
+        expect(route("https://notes.example.test/panel/chat", aliasConfigs.off).via).toBe("default");
 
         // An alias whose base is not an absolute URL fails in both routers instead of being ignored.
-        const badAlias = { ...defaultRouterConfig(), aliases: [{ host: "genesis.tools", base: "not-a-url" }] };
+        const badAlias = { ...defaultRouterConfig(), aliases: [{ host: "links.example.test", base: "not-a-url" }] };
         const badAliasPath = join(home, "alias-bad.json");
         writeFileSync(badAliasPath, `${SafeJSON.stringify(badAlias, null, 2)}\n`);
-        expect(() => route("https://genesis.tools/panel/chat", badAlias)).toThrow();
-        const badRun = spawnSync(binary, [badAliasPath, "https://genesis.tools/panel/chat"], {
+        expect(() => route("https://links.example.test/panel/chat", badAlias)).toThrow();
+        const badRun = spawnSync(binary, [badAliasPath, "https://links.example.test/panel/chat"], {
             encoding: "utf8",
             env: process.env,
         });
@@ -134,16 +137,16 @@ describe.skipIf(!canCompile)("swift router parity", () => {
         const skipConfig = {
             defaultBrowser: "Safari",
             routes: [
-                { pattern: "https?://genesis\\.tools/new/(\\d+)", action: { type: "from-the-future" } },
+                { pattern: "https?://links\\.example\\.test/new/(\\d+)", action: { type: "from-the-future" } },
                 {
-                    pattern: "https?://genesis\\.tools/mail/show/(\\d+)",
+                    pattern: "https?://links\\.example\\.test/mail/show/(\\d+)",
                     action: { type: "run", argv: ["/usr/bin/true", "$1"], approval: "allow" },
                 },
             ],
         };
         const skipPath = join(home, "skip.json");
         writeFileSync(skipPath, `${SafeJSON.stringify(skipConfig, null, 2)}\n`);
-        const skipped = spawnSync(binary, [skipPath, "https://genesis.tools/mail/show/42"], {
+        const skipped = spawnSync(binary, [skipPath, "https://links.example.test/mail/show/42"], {
             encoding: "utf8",
             env: process.env,
         });
@@ -158,7 +161,7 @@ describe.skipIf(!canCompile)("swift router parity", () => {
         expect(skippedDecision.routeIndex).toBe(1);
 
         // A wrapped link to another scheme is refused by both routers.
-        const fileLink = `https://genesis.tools/link/${encodeURIComponent("file:///tmp/x.command")}`;
+        const fileLink = `https://links.example.test/link/${encodeURIComponent("file:///tmp/x.command")}`;
         expect(() => route(fileLink, parityConfig)).toThrow("only http(s) and genesis-md");
         const refused = spawnSync(binary, [configPath, fileLink], { encoding: "utf8", env: process.env });
         expect(refused.status).toBe(1);
@@ -170,7 +173,7 @@ describe.skipIf(!canCompile)("swift router parity", () => {
             ...defaultRouterConfig(),
             routes: [
                 {
-                    pattern: "https?://genesis\\.tools/cmux/claude/run",
+                    pattern: "https?://links\\.example\\.test/cmux/claude/run",
                     action: {
                         type: "run",
                         argv: ["tools", "cmux", "launch", "--prompt", "{prompt}"],
@@ -183,8 +186,8 @@ describe.skipIf(!canCompile)("swift router parity", () => {
         writeFileSync(launchPath, `${SafeJSON.stringify(launchConfig, null, 2)}\n`);
 
         for (const sample of [
-            "https://genesis.tools/cmux/claude/run?prompt=hello&arg=--verbose&run=make",
-            "https://genesis.tools/cmux/claude/run?arg=--verbose",
+            "https://links.example.test/cmux/claude/run?prompt=hello&arg=--verbose&run=make",
+            "https://links.example.test/cmux/claude/run?arg=--verbose",
         ]) {
             const expected = route(sample, parseConfig(launchConfig));
             const ran = spawnSync(binary, [launchPath, sample], { encoding: "utf8", env: process.env });
@@ -196,22 +199,27 @@ describe.skipIf(!canCompile)("swift router parity", () => {
             ).toEqual(expected.kind === "run" ? [expected.argv, expected.needsApproval] : null);
         }
 
-        expect(route("https://genesis.tools/cmux/claude/run?prompt=hello", parseConfig(launchConfig))).toMatchObject({
+        expect(
+            route("https://links.example.test/cmux/claude/run?prompt=hello", parseConfig(launchConfig))
+        ).toMatchObject({
             needsApproval: true,
         });
 
         // The decide preset: a session id, a number and one letter run the fixed command; anything
         // else (extra segments, text in the option) does not match in either router.
-        const decideConfig = { ...defaultRouterConfig(), routes: presetById("decide", () => true)?.routes ?? [] };
+        const decideConfig = {
+            ...defaultRouterConfig(),
+            routes: presetById("decide", presets({ config: base, check: () => true }))?.routes ?? [],
+        };
         const decidePath = join(home, "decide.json");
         writeFileSync(decidePath, `${SafeJSON.stringify(decideConfig, null, 2)}\n`);
         const session = "3f2a9c1e-0000-4000-8000-00000000abcd";
 
         for (const sample of [
-            `https://genesis.tools/decide/${session}/4/b`,
-            `https://genesis.tools/decide/${session}/4/b/extra`,
-            `https://genesis.tools/decide/${session}/4/bb`,
-            `https://genesis.tools/decide/${session}/4/b%20now`,
+            `https://links.example.test/decide/${session}/4/b`,
+            `https://links.example.test/decide/${session}/4/b/extra`,
+            `https://links.example.test/decide/${session}/4/bb`,
+            `https://links.example.test/decide/${session}/4/b%20now`,
         ]) {
             const expected = route(sample, parseConfig(decideConfig));
             const ran = spawnSync(binary, [decidePath, sample], { encoding: "utf8", env: process.env });
@@ -230,7 +238,7 @@ describe.skipIf(!canCompile)("swift router parity", () => {
             });
         }
 
-        expect(route(`https://genesis.tools/decide/${session}/4/b`, parseConfig(decideConfig)).kind).toBe("run");
+        expect(route(`https://links.example.test/decide/${session}/4/b`, parseConfig(decideConfig)).kind).toBe("run");
 
         // A template with an emoji before its placeholders: regex offsets are UTF-16 units, and the
         // Swift substitution once applied them as Character counts.
@@ -238,7 +246,7 @@ describe.skipIf(!canCompile)("swift router parity", () => {
             ...defaultRouterConfig(),
             routes: [
                 {
-                    pattern: "https?://genesis\\.tools/emoji/(\\d+)",
+                    pattern: "https?://links\\.example\\.test/emoji/(\\d+)",
                     action: {
                         type: "run",
                         argv: ["/usr/bin/true", "📦 $1 👍 {qty}"],
@@ -250,7 +258,7 @@ describe.skipIf(!canCompile)("swift router parity", () => {
         };
         const emojiPath = join(home, "emoji.json");
         writeFileSync(emojiPath, `${SafeJSON.stringify(emojiConfig, null, 2)}\n`);
-        const emojiSample = "https://genesis.tools/emoji/42?qty=3";
+        const emojiSample = "https://links.example.test/emoji/42?qty=3";
         const emojiExpected = route(emojiSample, parseConfig(emojiConfig));
         const emojiRan = spawnSync(binary, [emojiPath, emojiSample], { encoding: "utf8", env: process.env });
         expect(emojiRan.status, emojiRan.stderr).toBe(0);
@@ -270,7 +278,7 @@ describe.skipIf(!canCompile)("swift router parity", () => {
             ...defaultRouterConfig(),
             routes: [
                 {
-                    pattern: "https?://genesis\\.tools/md-open",
+                    pattern: "https?://links\\.example\\.test/md-open",
                     action: { type: "open", to: "genesis-md://open?path={file}" },
                 },
                 ...defaultRouterConfig().routes,
@@ -280,8 +288,8 @@ describe.skipIf(!canCompile)("swift router parity", () => {
         writeFileSync(placeholderPath, `${SafeJSON.stringify(placeholderConfig, null, 2)}\n`);
 
         for (const sample of [
-            "https://genesis.tools/md-open?file=/tmp/a.md",
-            `https://genesis.tools/link/${encodeURIComponent("https://example.com/?q=a%26b")}`,
+            "https://links.example.test/md-open?file=/tmp/a.md",
+            `https://links.example.test/link/${encodeURIComponent("https://example.com/?q=a%26b")}`,
         ]) {
             const expected = route(sample, parseConfig(placeholderConfig));
             const ran = spawnSync(binary, [placeholderPath, sample], { encoding: "utf8", env: process.env });
@@ -290,7 +298,7 @@ describe.skipIf(!canCompile)("swift router parity", () => {
             expect({ sample, url: actual.url }).toEqual({ sample, url: expected.url });
         }
 
-        expect(route("https://genesis.tools/md-open?file=/tmp/a.md", parseConfig(placeholderConfig)).url).toBe(
+        expect(route("https://links.example.test/md-open?file=/tmp/a.md", parseConfig(placeholderConfig)).url).toBe(
             "genesis-md://open?path=/tmp/a.md"
         );
 
@@ -305,14 +313,14 @@ describe.skipIf(!canCompile)("swift router parity", () => {
                 ...defaultRouterConfig(),
                 routes: [
                     {
-                        pattern: "https?://genesis\\.tools/done/(\\d+)",
+                        pattern: "https?://links\\.example\\.test/done/(\\d+)",
                         action: { type: "run", argv: ["/usr/bin/true", "$1"], approval: "allow", open },
                     },
                 ],
             };
             const openPath = join(home, "open-target.json");
             writeFileSync(openPath, `${SafeJSON.stringify(openConfig, null, 2)}\n`);
-            const sample = "https://genesis.tools/done/1";
+            const sample = "https://links.example.test/done/1";
             const ran = spawnSync(binary, [openPath, sample], { encoding: "utf8", env: process.env });
 
             if (message === null) {

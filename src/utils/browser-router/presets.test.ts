@@ -1,130 +1,101 @@
 import { describe, expect, test } from "bun:test";
 import type { Capability } from "./capabilities";
-import { applyPresets, type Preset, presetById, presetRouted, presets } from "./presets";
-import { defaultRouterConfig, LEGACY_LOCAL_CATCH_ALL, type RouteRule, type RouterConfig, route } from "./route";
+import { applyPresets, presetById, presetRouted, presets } from "./presets";
+import { defaultRouterConfig, type RouteRule, type RouterConfig, route } from "./route";
 
-const genesis: Preset = {
-    id: "genesis-md",
-    title: "Genesis Markdown",
-    enabledIf: ["file:/Applications/Example.app"],
-    available: true,
-    installed: true,
-    routes: [
-        {
-            preset: "genesis-md",
-            pattern: "https?://127.0.0.1:6666/md/(.*)",
-            action: { type: "open", to: "genesis-md://$1" },
-        },
-    ],
-};
+const LINK_HOST = "links.example.test";
+const all = (value: boolean) => () => value;
 
-describe("applyPresets", () => {
-    test("hides a preset whose app is not installed", () => {
-        const routes: RouteRule[] = [
-            {
-                preset: "genesis-md",
-                pattern: "https?://127.0.0.1:6666/(.*)",
-                action: { type: "open", to: "genesis-md://$1" },
-            },
-            { pattern: "https://example.com/.*", action: { type: "forward", browser: "Safari" } },
-        ];
-        const hidden = applyPresets(routes, [{ ...genesis, available: false, installed: false }]);
-
-        expect(hidden.map((route) => route.pattern)).toEqual(["https://example.com/.*"]);
-    });
-
-    test("adds the preset route when the app is installed", () => {
-        const added = applyPresets([], [genesis]);
-
-        expect(added).toEqual(genesis.routes);
-    });
-
-    test("a saved preset route follows the catalog; an untagged route with the same pattern stays the user's", () => {
-        const pattern = "https?://127.0.0.1:6666/md/(.*)";
-        const stale: RouteRule = { preset: "genesis-md", pattern, action: { type: "open", to: "genesis-md://old/$1" } };
-        const users: RouteRule = { pattern, action: { type: "open", to: "genesis-md://mine/$1" } };
-
-        expect(applyPresets([stale], [genesis])).toEqual(genesis.routes);
-        expect(applyPresets([users], [genesis])).toEqual([users]);
-    });
-});
-
-describe("applyPresets keeps the user's routes", () => {
-    test("a user route to genesis-md survives; the legacy catch-all and a stale preset pattern go", () => {
-        const user: RouteRule = {
-            pattern: "https?://genesis\\.tools/open-genesis/(.*)",
-            action: { type: "open", to: "genesis-md://$1" },
-        };
-        const routes: RouteRule[] = [
-            user,
-            { pattern: LEGACY_LOCAL_CATCH_ALL, action: { type: "open", to: "genesis-md://$1" } },
-            {
-                preset: "genesis-md",
-                pattern: "https?://127.0.0.1:6666/old/(.*)",
-                action: { type: "open", to: "genesis-md://$1" },
-            },
-        ];
-
-        expect(applyPresets(routes, [genesis]).map((route) => route.pattern)).toEqual([
-            user.pattern,
-            "https?://127.0.0.1:6666/md/(.*)",
-        ]);
-        expect(
-            applyPresets(routes, [{ ...genesis, available: false, installed: false }]).map((route) => route.pattern)
-        ).toEqual([user.pattern]);
-    });
-});
-
-describe("capabilities", () => {
-    const all = (value: boolean) => () => value;
-
-    test("a preset is installed only when every capability holds", () => {
-        const on = presets(all(true));
-        const off = presets(all(false));
-
-        expect(on.find((preset) => preset.id === "cmux-claude")?.installed).toBe(true);
-        expect(off.every((preset) => !preset.installed && !preset.available)).toBe(true);
-    });
-
-    test("cmux-claude needs both cmux and the router app", () => {
-        const only = (capability: Capability) => (asked: Capability) => asked === capability;
-
-        expect(presetById("cmux-claude", only("cmux:installed"))?.installed).toBe(false);
-        expect(presetById("cmux-claude", only("browser-router:installed"))?.installed).toBe(false);
-    });
-
-    test("an opt-in preset is never installed, even when available, and stays once the user enabled it", () => {
-        const decide = presetById("decide", all(true));
-
-        expect(decide?.available).toBe(true);
-        expect(decide?.installed).toBe(false);
-        expect(applyPresets([], presets(all(true))).some((route) => route.preset === "decide")).toBe(false);
-
-        const enabled = decide?.routes ?? [];
-        expect(applyPresets(enabled, presets(all(true))).filter((route) => route.preset === "decide")).toEqual(enabled);
-        expect(applyPresets(enabled, presets(all(false))).some((route) => route.preset === "decide")).toBe(false);
-    });
-
-    test("existing presets keep their routes: the same patterns as before capabilities existed", () => {
-        const ids = presets(all(true))
-            .filter((preset) => preset.installed)
-            .map((preset) => preset.id);
-
-        expect(ids).toEqual(["genesis-md", "mail", "cmux-claude", "artifact", "rohlik"]);
-        expect(presetById("mail", all(true))?.routes[0]?.pattern).toBe("https?://genesis\\.tools/mail/show/(\\d+)");
-    });
-});
-
-const LINK = "https?://genesis\\.tools/cmux/claude/run";
-const open: RouteRule["action"] = { type: "open", to: "https://example.com/" };
-const launch: RouteRule["action"] = { type: "run", argv: ["tools", "cmux", "launch", "--open"], approval: "allow" };
-
-function withRoutes(...routes: RouteRule[]): RouterConfig {
-    return { ...defaultRouterConfig(), routes };
+function configWith(chosen: RouterConfig["presets"], linkHost: string | null = LINK_HOST): RouterConfig {
+    return { ...defaultRouterConfig(), ...(linkHost ? { linkHost } : {}), presets: chosen };
 }
 
+function ids(config: RouterConfig, check = all(true)): string[] {
+    return presets({ config, check })
+        .filter((preset) => preset.enabled)
+        .map((preset) => preset.id);
+}
+
+describe("preset kinds", () => {
+    test("only the default core preset is on until an installable one is enabled", () => {
+        expect(ids(configWith({}))).toEqual(["core"]);
+        expect(ids(configWith({ decide: {}, "local-services": {} }))).toEqual(["core", "local-services", "decide"]);
+    });
+
+    test("presets on the link host are unavailable without one, and say why", () => {
+        const catalogue = presets({ config: configWith({ decide: {} }, null), check: all(true) });
+
+        expect(catalogue.filter((preset) => preset.enabled).map((preset) => preset.id)).toEqual([]);
+        expect(presetById("decide", catalogue)?.missing).toEqual([
+            "a link host (tools browser-router link-host <host>)",
+        ]);
+        // local-services needs no link host.
+        expect(ids(configWith({ "local-services": {} }, null))).toEqual(["local-services"]);
+    });
+
+    test("cmux-claude needs both cmux and the router app, and mail needs macOS", () => {
+        const only = (capability: Capability) => (asked: Capability) => asked === capability;
+        const config = configWith({ "cmux-claude": {}, mail: {} });
+
+        expect(presetById("cmux-claude", presets({ config, check: only("cmux:installed") }))?.enabled).toBe(false);
+        expect(
+            presetById("cmux-claude", presets({ config, check: only("browser-router:installed") }))?.missing
+        ).toEqual(["cmux:installed"]);
+        expect(presetById("mail", presets({ config, check: only("platform:darwin") }))?.enabled).toBe(true);
+    });
+
+    test("the catalog ships no personal presets", () => {
+        const catalogue = presets({ config: configWith({}), check: all(true) }).map((preset) => preset.id);
+
+        expect(catalogue).toEqual([
+            "core",
+            "local-services",
+            "genesis-md",
+            "mail",
+            "decide",
+            "cmux-claude",
+            "artifact",
+            "dashboard-names",
+        ]);
+    });
+});
+
+describe("applyPresets", () => {
+    const user: RouteRule = { pattern: "https://example.com/.*", action: { type: "forward", browser: "Safari" } };
+
+    test("default routes first, the user's own next, installable last; a tagged route not enabled goes", () => {
+        const config = configWith({ "genesis-md": {} });
+        const stale: RouteRule = { preset: "decide", pattern: "https?://old/(.*)", action: { type: "open", to: "x" } };
+        const routes = applyPresets([stale, user], presets({ config, check: all(true) }));
+
+        expect(routes.map((rule) => rule.preset ?? "user")).toEqual(["core", "core", "core", "user", "genesis-md"]);
+    });
+
+    test("a user route with a preset's pattern replaces the preset's", () => {
+        const config = configWith({ "genesis-md": {} });
+        const pattern = presetById("genesis-md", presets({ config, check: all(true) }))?.routes[0]?.pattern ?? "";
+        const mine: RouteRule = { pattern, action: { type: "open", to: "genesis-md://mine/$1" } };
+        const routes = applyPresets([mine], presets({ config, check: all(true) }));
+
+        expect(routes.filter((rule) => rule.pattern === pattern)).toEqual([mine]);
+    });
+
+    test("an enabled preset whose capability went away drops its routes", () => {
+        const config = configWith({ decide: {} });
+
+        expect(applyPresets([], presets({ config, check: all(false) })).some((rule) => rule.preset === "decide")).toBe(
+            false
+        );
+    });
+});
+
 describe("presetRouted", () => {
-    const cmux = presetById("cmux-claude", () => true);
+    const config = configWith({ "cmux-claude": {} });
+    const cmux = presetById("cmux-claude", presets({ config, check: all(true) }));
+    const LINK = "https?://links\\.example\\.test/cmux/claude/run";
+    const open: RouteRule["action"] = { type: "open", to: "https://example.com/" };
+    const launch: RouteRule["action"] = { type: "run", argv: ["tools", "cmux", "launch", "--open"], approval: "allow" };
+    const withRoutes = (...routes: RouteRule[]): RouterConfig => ({ ...config, routes });
 
     if (!cmux) {
         throw new Error("the catalog has no cmux-claude preset");
@@ -136,12 +107,15 @@ describe("presetRouted", () => {
         expect(presetRouted(withRoutes({ pattern: LINK, action: open }), cmux)).toBe(false);
         // Anchored at `run$`: it matches the bare URL but not a minted link with its query.
         expect(
-            presetRouted(withRoutes({ pattern: "^https://genesis\\.tools/cmux/claude/run$", action: launch }), cmux)
+            presetRouted(
+                withRoutes({ pattern: "^https://links\\.example\\.test/cmux/claude/run$", action: launch }),
+                cmux
+            )
         ).toBe(false);
         expect(
             presetRouted(
                 withRoutes(
-                    { pattern: "https?://genesis\\.tools/.*", action: open },
+                    { pattern: "https?://links\\.example\\.test/.*", action: open },
                     { pattern: LINK, preset: "cmux-claude", action: launch }
                 ),
                 cmux
@@ -156,17 +130,17 @@ describe("presetRouted", () => {
                 cmux
             )
         ).toBe(false);
-        expect(presetRouted(defaultRouterConfig(), cmux)).toBe(false);
+        expect(presetRouted(withRoutes(), cmux)).toBe(false);
     });
 });
 
 describe("decide preset route", () => {
-    const decide = presetById("decide", () => true);
-    const config = withRoutes(...(decide?.routes ?? []));
+    const base = configWith({ decide: {} });
+    const config = { ...base, routes: applyPresets([], presets({ config: base, check: all(true) })) };
     const session = "3f2a9c1e-0000-4000-8000-00000000abcd";
 
     test("a session id, a number and one letter become the decide command", () => {
-        const decision = route(`https://genesis.tools/decide/${session}/4/b`, config);
+        const decision = route(`https://links.example.test/decide/${session}/4/b`, config);
 
         expect(decision).toMatchObject({
             kind: "run",
@@ -186,7 +160,7 @@ describe("decide preset route", () => {
             needsApproval: false,
             notify: "Answered DECISION 4: b)",
         });
-        expect(route(`https://genesis.tools/decide/${session}/4/b?q=ask_1`, config)).toMatchObject({
+        expect(route(`https://links.example.test/decide/${session}/4/b?q=ask_1`, config)).toMatchObject({
             argv: [
                 "tools",
                 "claude",
@@ -205,13 +179,23 @@ describe("decide preset route", () => {
 
     test("extra path segments, text in the option, or a non-number never match", () => {
         for (const url of [
-            `https://genesis.tools/decide/${session}/4/b/extra`,
-            `https://genesis.tools/decide/${session}/4/bb`,
-            `https://genesis.tools/decide/${session}/4/b%20and%20more`,
-            `https://genesis.tools/decide/${session}/four/b`,
-            `https://genesis.tools/decide/a%20b/4/b`,
+            `https://links.example.test/decide/${session}/4/b/extra`,
+            `https://links.example.test/decide/${session}/4/bb`,
+            `https://links.example.test/decide/${session}/4/b%20and%20more`,
+            `https://links.example.test/decide/${session}/four/b`,
+            `https://links.example.test/decide/a%20b/4/b`,
         ]) {
             expect({ url, kind: route(url, config).kind }).toEqual({ url, kind: "forward" });
         }
+    });
+
+    test("the mail preset runs tools macos mail open", () => {
+        const mailBase = configWith({ mail: {} });
+        const mail = { ...mailBase, routes: applyPresets([], presets({ config: mailBase, check: all(true) })) };
+
+        expect(route("https://links.example.test/mail/show/4711", mail)).toMatchObject({
+            kind: "run",
+            argv: ["tools", "macos", "mail", "open", "4711"],
+        });
     });
 });

@@ -2,24 +2,41 @@ import { existsSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { type CapabilityCheck, hasCapability } from "@genesiscz/utils/browser-router/capabilities";
 import { browserRouterStorage, configFile } from "@genesiscz/utils/browser-router/config";
-import { applyPresets, presetById } from "@genesiscz/utils/browser-router/presets";
+import { applyPresets, presetById, presets } from "@genesiscz/utils/browser-router/presets";
 import {
     type BrowserTarget,
     bindTemplateNames,
-    builtinRoutes,
     compileUrlTemplate,
-    defaultAliases,
     defaultRouterConfig,
+    isHostName,
+    type PresetOptions,
     parseConfig,
     type RouteAction,
     type RouteRule,
     type RouterConfig,
     type ToastSettings,
 } from "@genesiscz/utils/browser-router/route";
-import { routerServices } from "@genesiscz/utils/browser-router/services";
+import { suggestCommand } from "@genesiscz/utils/cli";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { withFileLock } from "@genesiscz/utils/storage";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/storage";
+
+/** Printed wherever a link host is chosen: a link the router misses goes to that host's server. */
+export const LINK_HOST_RISK =
+    "A link the router does not catch (opened on a phone, on another computer, or in a browser without the extension) goes to whoever serves this host, path and all. A minted link's path is a one-use token. Pick a host you control, or accept that.";
+
+/** The link host, or an error naming the command that sets it. */
+export function requireLinkHost(config: RouterConfig | null): string {
+    if (config?.linkHost) {
+        return config.linkHost;
+    }
+
+    throw new Error(
+        `No link host is set, so no link can be printed. Set one: ${suggestCommand("tools browser-router", {
+            replaceCommand: ["link-host", "<host>"],
+        })}`
+    );
+}
 
 export function stateFile(name: string): string {
     return `${browserRouterStorage().getBaseDir()}/${name}`;
@@ -56,39 +73,26 @@ export function ensureBuiltinRoutes(): Promise<RouterConfig> {
     return withConfigLock(ensureBuiltinRoutesLocked);
 }
 
-async function ensureBuiltinRoutesLocked(): Promise<RouterConfig> {
+/**
+ * The saved routes rebuilt from the presets: default presets first, the user's own routes, then the
+ * installable presets `config.presets` switched on. Only a change is written.
+ */
+async function ensureBuiltinRoutesLocked(check: CapabilityCheck = hasCapability): Promise<RouterConfig> {
     const config = await ensureConfig();
-    const builtins = builtinRoutes();
-    const seen = new Set<string>(builtins.map((route) => route.pattern));
-    const rest = config.routes.filter((route) => {
-        if (seen.has(route.pattern)) {
-            return false;
-        }
-        seen.add(route.pattern);
-        return true;
-    });
-    const routes: RouteRule[] = applyPresets([...builtins, ...rest]);
-    const next = {
-        ...config,
-        allowAliases: config.allowAliases !== false,
-        aliases: config.aliases ?? defaultAliases(),
-        toast: config.toast === undefined ? { enabled: true, seconds: 5 } : config.toast,
-        services: routerServices(),
-        routes,
-    };
+    const next = withPresetRoutes(
+        { ...config, toast: config.toast === undefined ? { enabled: true, seconds: 5 } : config.toast },
+        check
+    );
 
-    const changed =
-        SafeJSON.stringify(next.routes) !== SafeJSON.stringify(config.routes) ||
-        next.allowAliases !== config.allowAliases ||
-        SafeJSON.stringify(next.aliases) !== SafeJSON.stringify(config.aliases) ||
-        SafeJSON.stringify(next.toast) !== SafeJSON.stringify(config.toast) ||
-        SafeJSON.stringify(next.services) !== SafeJSON.stringify(config.services);
-
-    if (changed) {
+    if (SafeJSON.stringify(next) !== SafeJSON.stringify(config)) {
         await saveConfig(next);
     }
 
     return next;
+}
+
+function withPresetRoutes(config: RouterConfig, check: CapabilityCheck): RouterConfig {
+    return { ...config, routes: applyPresets(config.routes, presets({ config, check })) };
 }
 
 export async function ensureConfig(): Promise<RouterConfig> {
@@ -103,33 +107,73 @@ export async function ensureConfig(): Promise<RouterConfig> {
     return created;
 }
 
-/**
- * Writes a preset's routes into the saved config, tagged with its id, so `install` keeps them while
- * the preset's capabilities hold. The way to switch on an opt-in preset such as `decide`.
- */
-export function enablePreset(id: string, check: CapabilityCheck = hasCapability): Promise<RouterConfig> {
+/** Switches an installable preset on (with its options) and rewrites the routes. */
+export function enablePreset({
+    id,
+    options = {},
+    check = hasCapability,
+}: {
+    id: string;
+    options?: PresetOptions;
+    check?: CapabilityCheck;
+}): Promise<RouterConfig> {
     return withConfigLock(async () => {
-        const preset = presetById(id, check);
+        const config = await ensureConfig();
+        const catalogue = presets({ config, check });
+        const preset = presetById(id, catalogue);
 
         if (!preset) {
-            throw new Error(`no preset named ${id}. See: tools browser-router presets`);
+            throw new Error(`no preset named ${id}; the presets are ${catalogue.map((item) => item.id).join(", ")}`);
+        }
+
+        if (preset.kind === "default") {
+            throw new Error(`${id} is a default preset: it is always on when it can be`);
+        }
+
+        const unknown = Object.keys(options).filter((name) => !preset.options?.includes(name as keyof PresetOptions));
+
+        if (unknown.length > 0) {
+            throw new Error(`${id} takes no option ${unknown.join(", ")}`);
         }
 
         if (!preset.available) {
-            throw new Error(`${id} needs ${preset.enabledIf.join(", ")} on this Mac`);
+            throw new Error(`${id} needs ${preset.missing.join(", ")}`);
         }
 
+        const next = withPresetRoutes({ ...config, presets: { ...config.presets, [id]: options } }, check);
+        await saveConfig(next);
+        return next;
+    });
+}
+
+/** Switches an installable preset off and removes its routes. */
+export function disablePreset(id: string, check: CapabilityCheck = hasCapability): Promise<RouterConfig> {
+    return withConfigLock(async () => {
         const config = await ensureConfig();
-        const patterns = new Set(preset.routes.map((rule) => rule.pattern));
-        // A route tagged with this preset belongs to it, so one whose pattern it dropped goes too
-        // (`status` reports it as drift and names this command as the fix).
-        const next = {
-            ...config,
-            routes: [
-                ...config.routes.filter((rule) => !patterns.has(rule.pattern) && rule.preset !== id),
-                ...preset.routes,
-            ],
-        };
+
+        if (config.presets?.[id] === undefined) {
+            throw new Error(`${id} is not enabled`);
+        }
+
+        const { [id]: _removed, ...rest } = config.presets;
+        const next = withPresetRoutes({ ...config, presets: rest }, check);
+        await saveConfig(next);
+        return next;
+    });
+}
+
+/** Sets (or, with null, clears) the host printed links are built on, and rewrites the routes. */
+export function setLinkHost(host: string | null, check: CapabilityCheck = hasCapability): Promise<RouterConfig> {
+    return withConfigLock(async () => {
+        const config = await ensureConfig();
+        const value = host?.trim().toLowerCase() ?? null;
+
+        if (value !== null && !isHostName(value)) {
+            throw new Error(`${host} is not a host name, e.g. links.example.com`);
+        }
+
+        const { linkHost: _old, ...rest } = config;
+        const next = withPresetRoutes(value === null ? rest : { ...rest, linkHost: value }, check);
         await saveConfig(next);
         return next;
     });

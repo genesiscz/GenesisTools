@@ -19,7 +19,7 @@ const TARGETS: ReadonlyArray<{ key: string; args: string[] }> = [
     { key: "shops", args: ["shops", "ui"] },
     { key: "reas", args: ["internal", "reas", "ui"] },
     { key: "claude-history", args: ["claude", "history", "dashboard"] },
-    { key: "dashboard", args: ["dashboard"] },
+    { key: "personal-dashboard", args: ["dashboard"] },
 ];
 
 function parseExcept(raw: string | undefined): Set<string> {

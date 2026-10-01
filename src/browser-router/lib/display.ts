@@ -1,6 +1,7 @@
 import { type CapabilityCheck, hasCapability } from "@genesiscz/utils/browser-router/capabilities";
 import { presets } from "@genesiscz/utils/browser-router/presets";
-import type { RouteAction, RouteRule } from "@genesiscz/utils/browser-router/route";
+import type { RouteAction, RouteRule, RouterConfig } from "@genesiscz/utils/browser-router/route";
+import { suggestCommand } from "@genesiscz/utils/cli";
 import { out } from "@genesiscz/utils/logger";
 import { createBoxTable, formatDotStatus, renderCliHeader, truncateDisplay } from "@genesiscz/utils/table";
 import pc from "picocolors";
@@ -32,29 +33,39 @@ export function actionSummary(action: RouteAction): string {
         return `tool ${[action.tool, ...action.args].join(" ")}`;
     }
 
+    if (action.type === "service") {
+        return `start :${action.port}, open ${action.to}`;
+    }
+
     return `run ${action.argv.join(" ")}`;
 }
 
 /**
- * Whether this route's preset is available on this Mac. A route with no `preset` tag is the user's
- * own and always counts as available. A preset-tagged route follows its preset's `available`: the
- * same check `install` uses to keep or drop it. The native matcher does not read it, so a saved
- * route whose preset is unavailable still fires until `install` drops it.
+ * Whether this route fires with this Mac's current capabilities. A route with no `preset` tag is
+ * the user's own and always enabled. A preset-tagged route follows its preset's `enabled`, so a
+ * route can be saved but stale until `presets sync` rewrites the routes.
  */
-export function isEnabled(route: RouteRule, check: CapabilityCheck): boolean {
+export function isEnabled(route: RouteRule, config: RouterConfig, check: CapabilityCheck): boolean {
     if (!route.preset) {
         return true;
     }
 
-    return presets(check).find((preset) => preset.id === route.preset)?.available ?? false;
+    return presets({ config, check }).find((preset) => preset.id === route.preset)?.enabled ?? false;
 }
 
 /** Human table for `tools browser-router routes`. The raw array is still available via --format json. */
-export function displayRoutesTable(routes: RouteRule[], check: CapabilityCheck = hasCapability): void {
+export function displayRoutesTable(config: RouterConfig, check: CapabilityCheck = hasCapability): void {
+    const routes = config.routes;
     renderCliHeader("Browser Router Routes", `${routes.length} saved route(s)`);
 
     if (routes.length === 0) {
-        out.println(pc.dim("  No routes saved yet. Save one: tools browser-router route <pattern> --route-to <url>"));
+        out.println(
+            pc.dim(
+                `  No routes saved yet. Save one: ${suggestCommand("tools browser-router", {
+                    replaceCommand: ["route", "<pattern>", "--route-to", "<url>"],
+                })}`
+            )
+        );
         return;
     }
 
@@ -66,7 +77,7 @@ export function displayRoutesTable(routes: RouteRule[], check: CapabilityCheck =
             truncateDisplay(route.name, NAME_WIDTH),
             truncateDisplay(actionSummary(route.action), ACTION_WIDTH),
             route.preset ? pc.blue(route.preset) : pc.dim("—"),
-            isEnabled(route, check) ? formatDotStatus("ok", "yes") : formatDotStatus("warn", "stale"),
+            isEnabled(route, config, check) ? formatDotStatus("ok", "yes") : formatDotStatus("warn", "stale"),
         ]);
     }
 

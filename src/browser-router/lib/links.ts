@@ -1,5 +1,5 @@
 import { tokenLink } from "@genesiscz/utils/browser-router/links";
-import { type RouterConfig, route, UNWRAP_PATTERN } from "@genesiscz/utils/browser-router/route";
+import { type RouterConfig, route } from "@genesiscz/utils/browser-router/route";
 import { mintToken } from "@genesiscz/utils/browser-router/tokens";
 
 const FENCE = /^(```|~~~)/;
@@ -69,23 +69,25 @@ export function isLocalLink(href: string): boolean {
     return host.endsWith(".local") || host.endsWith(".localhost") || host.endsWith(".internal");
 }
 
-export function isRouterLink(href: string): boolean {
+/** Already a link on the router's own link host. */
+export function isRouterLink(href: string, linkHost: string): boolean {
     try {
         const url = new URL(href);
-        const host = url.hostname.toLowerCase();
-        const routerHost =
-            host === "genesis.tools" || ((host === "127.0.0.1" || host === "localhost") && url.port === "6666");
-        return (url.protocol === "http:" || url.protocol === "https:") && routerHost;
+        return (url.protocol === "http:" || url.protocol === "https:") && url.hostname.toLowerCase() === linkHost;
     } catch {
         return false;
     }
 }
 
-export function wrapLink(href: string): string {
-    return `https://genesis.tools/link/${encodeURIComponent(href)}`;
+export function wrapLink(href: string, linkHost: string): string {
+    return `https://${linkHost}/link/${encodeURIComponent(href)}`;
 }
 
-export function convertMarkdown(markdown: string, uses?: number, config?: RouterConfig): string {
+/**
+ * Rewrites every local link (localhost, custom schemes) into a link on `config.linkHost` that a
+ * click routes back to it. With `uses`, each becomes a minted `/t/<id>` link instead.
+ */
+export function convertMarkdown(markdown: string, config: RouterConfig & { linkHost: string }, uses?: number): string {
     const lines = markdown.split("\n");
     let fenced = false;
 
@@ -101,18 +103,18 @@ export function convertMarkdown(markdown: string, uses?: number, config?: Router
             }
 
             const linked = line.replace(MARKDOWN_LINK, (whole, text: string, href: string) => {
-                const next = convertHref(href, uses, config);
+                const next = convertHref(href, config, uses);
                 return next === href ? whole : `[${text}](${next})`;
             });
             const autolinked = linked.replace(AUTOLINK, (whole, href: string) => {
-                const next = convertHref(href, uses, config);
+                const next = convertHref(href, config, uses);
                 return next === href ? whole : `<${next}>`;
             });
 
             return autolinked.replace(
                 /(^|[^\w(/])(genesis-md:\/\/[^\s<>)\]]+)/g,
                 (whole, before: string, href: string) => {
-                    const next = convertHref(href, uses, config);
+                    const next = convertHref(href, config, uses);
                     return next === href ? whole : `${before}${next}`;
                 }
             );
@@ -120,24 +122,16 @@ export function convertMarkdown(markdown: string, uses?: number, config?: Router
         .join("\n");
 }
 
-function convertHref(href: string, uses?: number, config?: RouterConfig): string {
-    if (!isLocalLink(href) || isRouterLink(href)) {
+function convertHref(href: string, config: RouterConfig & { linkHost: string }, uses?: number): string {
+    if (!isLocalLink(href) || isRouterLink(href, config.linkHost)) {
         return href;
     }
 
     if (uses !== undefined) {
-        return tokenLink(mintToken(href, uses));
+        return tokenLink(mintToken(href, uses), config.linkHost);
     }
 
-    if (config) {
-        const pretty = httpsForLocal(href, config);
-
-        if (pretty) {
-            return pretty;
-        }
-    }
-
-    return wrapLink(href);
+    return httpsForLocal(href, config) ?? wrapLink(href, config.linkHost);
 }
 
 /** An https URL that a saved `open` route turns back into this exact link. */
@@ -161,7 +155,7 @@ export function httpsForLocal(href: string, config: RouterConfig): string | null
             continue;
         }
 
-        for (const candidate of candidateUrls(caps, config)) {
+        for (const candidate of candidateUrls(rule.pattern, caps)) {
             try {
                 const decision = route(candidate, config);
 
@@ -202,25 +196,20 @@ function matchOpenTemplate(template: string, href: string): string[] | null {
     return match ? match.slice(1) : null;
 }
 
-function candidateUrls(captures: string[], config: RouterConfig): string[] {
-    if (captures.length !== 1) {
+/**
+ * The https URL a route pattern made of a literal prefix and one `(.*)` would match for this capture
+ * (`https?://links\.example\.com/md/(.*)` gives `https://links.example.com/md/<rest>`).
+ */
+function candidateUrls(pattern: string, captures: string[]): string[] {
+    const prefix = /^https\?:\/\/((?:[^\\()[\]{}.*+?^$|]|\\.)+)\(\.\*\)$/.exec(pattern);
+
+    if (captures.length !== 1 || !prefix) {
         return [];
     }
 
-    const rest = captures[0];
-    const urls = [`https://127.0.0.1:6666/${rest}`, `http://127.0.0.1:6666/${rest}`, `http://localhost:6666/${rest}`];
-
-    if (config.allowAliases !== false) {
-        for (const alias of config.aliases ?? []) {
-            urls.unshift(`https://${alias.host}/${rest}`);
-        }
-    }
-
-    return urls;
+    return [`https://${prefix[1].replace(/\\(.)/g, "$1")}${captures[0]}`];
 }
 
 function escapeRegExp(value: string): string {
     return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
-
-export { UNWRAP_PATTERN };

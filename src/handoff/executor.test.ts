@@ -42,7 +42,7 @@ describe("handoff_post (§8.1)", () => {
     test("the launch link opens in the resolved actor's repo when no actor is injected", () => {
         const env = freshEnv();
         const seen: Array<string | null> = [];
-        const link = { url: "https://genesis.tools/cmux/claude/run", markdown: "cmux-claude" };
+        const link = { url: "https://links.example.test/cmux/claude/run", markdown: "cmux-claude" };
 
         postHandoff(
             { title: "T", tasks: [{ text: "one" }] },
@@ -63,7 +63,7 @@ describe("handoff_post (§8.1)", () => {
     });
 
     test("a Claude launch link is offered only when Claude may work the handoff", () => {
-        const link = { url: "https://genesis.tools/cmux/claude/run", markdown: "cmux-claude" };
+        const link = { url: "https://links.example.test/cmux/claude/run", markdown: "cmux-claude" };
         const minted = (target?: { agent: string }) => {
             const env = freshEnv();
             let calls = 0;

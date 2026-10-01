@@ -2,7 +2,12 @@ import { afterAll, describe, expect, it } from "bun:test";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { OpenHubOptions, OpenHubResult } from "@app/hub/lib/open";
+import { buildStamp } from "@genesiscz/utils/browser-extension/build-info";
+import { extensionProfiles } from "@genesiscz/utils/browser-extension/profiles";
+import { GENESIS_EXTENSION_ID } from "@genesiscz/utils/browser-extension/registry";
+import { freshnessOf } from "@genesiscz/utils/browser-extension/runtime/freshness";
 import type { LocalCheckout } from "@genesiscz/utils/git/local-checkouts";
+import { SafeJSON } from "@genesiscz/utils/json";
 import type { EditorTarget, RunResult, TerminalTarget } from "@genesiscz/utils/open-in";
 import { makeTempDir } from "@genesiscz/utils/paths";
 import { isProcessAlive } from "@genesiscz/utils/process-alive";
@@ -135,8 +140,8 @@ describe("parseForgeUrl", () => {
     });
 
     it("the route page's target is the encoded URL the bypass rule and the host see", () => {
-        expect(targetFromHash("#https://genesis.tools/a%20b")).toBe("https://genesis.tools/a%20b");
-        expect(targetFromHash("#https://genesis.tools/a b?q=1")).toBe("https://genesis.tools/a%20b?q=1");
+        expect(targetFromHash("#https://links.example.test/a%20b")).toBe("https://links.example.test/a%20b");
+        expect(targetFromHash("#https://links.example.test/a b?q=1")).toBe("https://links.example.test/a%20b?q=1");
     });
 
     it("a malformed percent escape in a blob path is a project page, not a throw", () => {
@@ -264,6 +269,8 @@ describe("native messaging frames", () => {
         expect(extensionIdFromKey(Buffer.from("key").toString("base64"))).toMatch(/^[a-p]{32}$/);
         // Computed from the manifest key with `openssl rsa -pubout -outform DER | shasum -a 256`.
         expect(pinnedExtensionId()).toBe("nhjllpnekfohbnljgelfpcdfhagbojne");
+        // The router's capability check reads the same id from utils.
+        expect(pinnedExtensionId()).toBe(GENESIS_EXTENSION_ID);
     });
 });
 
@@ -584,27 +591,76 @@ describe("configured argv runner", () => {
     });
 });
 
+describe("extension profiles", () => {
+    it("finds a loaded, a disabled and an older build from Secure Preferences", () => {
+        const home = makeTempDir("gt-ext-profiles-");
+        const brave = join(home, "Library", "Application Support", "BraveSoftware", "Brave-Browser");
+        const write = (profile: string, entry: unknown) => {
+            mkdirSync(join(brave, profile), { recursive: true });
+            writeFileSync(
+                join(brave, profile, "Secure Preferences"),
+                SafeJSON.stringify({ extensions: { settings: { abc: entry } } }, { strict: true })
+            );
+        };
+        // 13435269976674978 µs since 1601 is 2026-09-30 19:26:16.674 UTC.
+        write("Default", {
+            granted_permissions: { explicit_host: ["https://a/*", "https://b/*"] },
+            last_update_time: "13435269976674978",
+        });
+        write("Profile 4", {
+            granted_permissions: { explicit_host: ["https://a/*", "https://b/*"] },
+            last_update_time: "13435260000000000",
+        });
+        write("Profile 1", { granted_permissions: { explicit_host: ["https://a/*"] } });
+        write("Profile 2", { disable_reasons: [1] });
+        mkdirSync(join(brave, "Profile 3"), { recursive: true });
+
+        const loadedAt = Date.UTC(2026, 8, 30, 19, 26, 16, 674);
+        const builtAt = Date.UTC(2026, 8, 30, 19, 0, 0);
+        const rows = extensionProfiles({ home, extensionId: "abc", wanted: ["https://a/*", "https://b/*"], builtAt });
+        expect(rows).toEqual([
+            { browser: "Brave", profile: "Default", loaded: true, stale: false, loadedAt },
+            { browser: "Brave", profile: "Profile 1", loaded: true, stale: true, loadedAt: null },
+            { browser: "Brave", profile: "Profile 2", loaded: false, stale: false, loadedAt: null },
+            // Loaded before the build: the same hosts, but an older worker.
+            { browser: "Brave", profile: "Profile 4", loaded: true, stale: true, loadedAt: expect.any(Number) },
+        ]);
+        rmSync(home, { recursive: true, force: true });
+    });
+});
+
+/** Never the machine's router config: a test must not depend on this Mac. */
+const HOSTS = { linkHost: "links.example.test", hosts: ["dashboard"] };
+
 describe("router", () => {
     it("hands a routed link to GenesisTools.app and keeps an unrouted one in the browser", async () => {
         const routed = fakeDeps({
             tools: () => ({ code: 0, stdout: '{"kind":"run","via":"route","argv":["tools","x"]}', stderr: "" }),
         });
-        const explained = await explainLink(routed.deps, "https://genesis.tools/tabs/work");
+        const explained = await explainLink(routed.deps, "https://links.example.test/tabs/work", HOSTS);
         expect(explained).toMatchObject({ handled: true, runs: true, routed: false, summary: "tools x" });
         expect(routed.calls.run).toEqual([]);
-        expect(await routeLink(routed.deps, "https://genesis.tools/tabs/work")).toMatchObject({ routed: true });
+        expect(await routeLink(routed.deps, "https://links.example.test/tabs/work", HOSTS)).toMatchObject({
+            routed: true,
+        });
         expect(routed.calls.run[0]?.argv.slice(0, 3)).toEqual(["/usr/bin/open", "-b", "com.genesiscz.genesistools"]);
+        // The link host takes plain http too, as the router's own link pattern does.
+        expect(await explainLink(routed.deps, "http://links.example.test/tabs/work", HOSTS)).toMatchObject({
+            handled: true,
+        });
 
         const unrouted = fakeDeps({
             tools: () => ({
                 code: 0,
-                stdout: '{"kind":"open","via":"default","url":"https://genesis.tools/x"}',
+                stdout: '{"kind":"open","via":"default","url":"https://links.example.test/x"}',
                 stderr: "",
             }),
         });
-        expect(await routeLink(unrouted.deps, "https://genesis.tools/x")).toMatchObject({ handled: false });
+        expect(await routeLink(unrouted.deps, "https://links.example.test/x", HOSTS)).toMatchObject({ handled: false });
         expect(unrouted.calls.run).toEqual([]);
-        await expect(routeLink(unrouted.deps, "https://evil.example/x")).rejects.toThrow("only https://genesis.tools");
+        await expect(routeLink(unrouted.deps, "https://evil.example/x", HOSTS)).rejects.toThrow(
+            "only the router's link host"
+        );
     });
 
     it("takes a short service host and starts the server without asking for a click", async () => {
@@ -615,7 +671,7 @@ describe("router", () => {
                 stderr: "",
             }),
         });
-        expect(await explainLink(started.deps, "http://dashboard/")).toMatchObject({
+        expect(await explainLink(started.deps, "http://dashboard/", HOSTS)).toMatchObject({
             handled: true,
             runs: false,
             summary: "start and open Personal Dashboard (http://localhost:3000/)",
@@ -624,8 +680,31 @@ describe("router", () => {
         const saved = fakeDeps({
             tools: () => ({ code: 0, stdout: '{"kind":"run","via":"route","argv":["tools","x"]}', stderr: "" }),
         });
-        expect(await explainLink(saved.deps, "https://dashboard/")).toMatchObject({ runs: true });
-        await expect(explainLink(saved.deps, "https://dashboardxyz/")).rejects.toThrow("only https://genesis.tools");
-        await expect(explainLink(saved.deps, "http://dashboard:8080/")).rejects.toThrow("only https://genesis.tools");
+        expect(await explainLink(saved.deps, "https://dashboard/", HOSTS)).toMatchObject({ runs: true });
+        await expect(explainLink(saved.deps, "https://dashboardxyz/", HOSTS)).rejects.toThrow(
+            "only the router's link host"
+        );
+        await expect(explainLink(saved.deps, "http://dashboard:8080/", HOSTS)).rejects.toThrow(
+            "only the router's link host"
+        );
+    });
+});
+
+describe("extension freshness", () => {
+    it("rebuild when dist is stale, reload when dist is newer than the running build, else current", () => {
+        expect(freshnessOf("b1", { distBuildId: "b1", stale: true })).toBe("rebuild");
+        expect(freshnessOf("b1", { distBuildId: "b2", stale: false })).toBe("reload");
+        expect(freshnessOf("b1", { distBuildId: "b1", stale: false })).toBe("current");
+    });
+
+    it("two builds of the same inputs have the same stamp, and a changed file does not", async () => {
+        const dir = makeTempDir("gt-ext-stamp-");
+        writeFileSync(join(dir, "a.js"), 'const build = "id-one";');
+        const first = await buildStamp(dir, "id-one");
+        writeFileSync(join(dir, "a.js"), 'const build = "id-two";');
+        expect(await buildStamp(dir, "id-two")).toBe(first);
+        writeFileSync(join(dir, "a.js"), 'const build = "id-two"; const extra = 1;');
+        expect(await buildStamp(dir, "id-two")).not.toBe(first);
+        rmSync(dir, { recursive: true, force: true });
     });
 });

@@ -102,7 +102,7 @@ final class RouteToastCard: NSPanel {
         becomesKeyOnlyIfNeeded = false
         contentView = body
         alphaValue = 0
-        placeInTheMiddle()
+        placeBottomLeft()
         restingOrigin = frame.origin
     }
 
@@ -150,12 +150,14 @@ final class RouteToastCard: NSPanel {
         }
     }
 
-    private func placeInTheMiddle() {
+    /// Bottom-left corner of the screen under the mouse, clear of the Dock: out of the way of
+    /// what was clicked. The approval card (RouteApproval) stays centered, since it asks.
+    private func placeBottomLeft() {
         let mouse = NSEvent.mouseLocation
         let screen = NSScreen.screens.first { $0.frame.contains(mouse) } ?? NSScreen.main ?? NSScreen.screens.first
         guard let visible = screen?.visibleFrame else { return }
-        let size = frame.size
-        setFrameOrigin(NSPoint(x: visible.midX - size.width / 2, y: visible.midY - size.height / 2))
+        let margin: CGFloat = 24
+        setFrameOrigin(NSPoint(x: visible.minX + margin, y: visible.minY + margin))
     }
 }
 

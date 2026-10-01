@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { extensionProfiles } from "@genesiscz/utils/browser-extension/profiles";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { GENESIS_APP_BUNDLE_ID, genesisAppBundlePath } from "@genesiscz/utils/macos/genesis-app";
@@ -9,6 +10,8 @@ import { GENESIS_APP_BUNDLE_ID, genesisAppBundlePath } from "@genesiscz/utils/ma
 export type Capability =
     | "browser-router:installed"
     | "browser-router:default"
+    | "browser-extension:installed"
+    | "platform:darwin"
     | "cmux:installed"
     | "claude:installed"
     | "codex:installed"
@@ -47,6 +50,10 @@ function evaluate(capability: Capability): boolean {
             return existsSync(genesisAppBundlePath());
         case "browser-router:default":
             return httpsHandler() === GENESIS_APP_BUNDLE_ID;
+        case "browser-extension:installed":
+            return extensionProfiles().some((profile) => profile.loaded);
+        case "platform:darwin":
+            return process.platform === "darwin";
         case "cmux:installed":
             return cmuxBinary() !== undefined;
         case "claude:installed":

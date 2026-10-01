@@ -1,6 +1,17 @@
-import { copyFile, mkdir, readdir } from "node:fs/promises";
+import { rmSync } from "node:fs";
+import { copyFile, mkdir, mkdtemp } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { serviceShortcutHosts } from "@genesiscz/utils/browser-router/services";
+import {
+    type BuildInfo,
+    buildIdDefine,
+    missingManifestFiles,
+    newBuildId,
+    readBuildInfo,
+    writeBuildInfo,
+} from "@genesiscz/utils/browser-extension/build-info";
+import { readRouterConfig } from "@genesiscz/utils/browser-router/config";
+import { browserHosts } from "@genesiscz/utils/browser-router/services";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { EXTENSION_SOURCE_DIR } from "./host/install";
@@ -23,7 +34,17 @@ export function asciiOnly(code: string): string {
     return code.replace(/[\u0080-￿]/g, (char) => `\\u${char.charCodeAt(0).toString(16).padStart(4, "0")}`);
 }
 
-async function bundle(entrypoints: string[], outDir: string, format: "esm" | "iife"): Promise<string[]> {
+async function bundle({
+    entrypoints,
+    outDir,
+    format,
+    buildId,
+}: {
+    entrypoints: string[];
+    outDir: string;
+    format: "esm" | "iife";
+    buildId: string;
+}): Promise<string[]> {
     const result = await Bun.build({
         entrypoints: entrypoints.map((entry) => join(EXTENSION_SOURCE_DIR, entry)),
         outdir: outDir,
@@ -32,6 +53,7 @@ async function bundle(entrypoints: string[], outDir: string, format: "esm" | "ii
         splitting: false,
         minify: false,
         naming: { entry: "[name].js" },
+        define: buildIdDefine(buildId),
     });
 
     if (!result.success) {
@@ -48,61 +70,90 @@ async function bundle(entrypoints: string[], outDir: string, format: "esm" | "ii
     return written;
 }
 
-/** Every file the manifest points at must exist in the build, or the browser refuses to load it. */
-export async function checkBuild(outDir: string): Promise<string[]> {
-    const manifest: unknown = SafeJSON.parse(await Bun.file(join(outDir, "manifest.json")).text(), { strict: true });
-    const text = SafeJSON.stringify(manifest, { strict: true });
-    const referenced = [...text.matchAll(/"([\w/-]+\.(?:js|html|png))"/g)].map((match) => match[1]);
-    const present = new Set([
-        ...(await readdir(outDir)),
-        ...(await readdir(join(outDir, "icons"))).map((name) => `icons/${name}`),
-    ]);
-    return [...new Set(referenced)].filter((file) => !present.has(file));
-}
+/** Written next to the manifest; the background worker builds its redirect rules from it. */
+export const ROUTER_HOSTS_FILE = "router-hosts.json";
 
 /**
- * The router's short service hosts (`https://dashboard`) come from the dashboard registry, so the
- * build grants them: a redirect rule only fires on a host the extension may access. The background
- * worker reads its rule's host list back from these permissions.
+ * The hosts the router config wants caught in the browser (the link host, alias hosts, dashboard
+ * names) are granted in the manifest, since a redirect rule only fires on a host the extension may
+ * access, and listed in `router-hosts.json` for the worker. A config change needs a rebuild and a
+ * Reload; `tools browser-router status` reports an older build.
  */
-async function grantShortcutHosts(manifestPath: string): Promise<void> {
+async function grantRouterHosts(outDir: string): Promise<string> {
+    const manifestPath = join(outDir, "manifest.json");
     const manifest: unknown = SafeJSON.parse(await Bun.file(manifestPath).text(), { strict: true });
 
     if (!isRecord(manifest) || !Array.isArray(manifest.host_permissions)) {
         throw new Error("manifest.json has no host_permissions array");
     }
 
-    const granted = serviceShortcutHosts().flatMap((host) => [`http://${host}/*`, `https://${host}/*`]);
+    const wanted = browserHosts(readRouterConfig());
+    const granted = [
+        ...(wanted.linkHost ? [`https://${wanted.linkHost}/*`, `http://${wanted.linkHost}/*`] : []),
+        ...wanted.hosts.flatMap((host) => [`http://${host}/*`, `https://${host}/*`]),
+    ];
     manifest.host_permissions = [...new Set([...manifest.host_permissions, ...granted])];
     await Bun.write(manifestPath, `${SafeJSON.stringify(manifest, null, 4)}\n`);
-    log.info({ hosts: granted.length / 2 }, "extension: granted short service hosts");
+    const hostsPath = join(outDir, ROUTER_HOSTS_FILE);
+    await Bun.write(hostsPath, `${SafeJSON.stringify(wanted, null, 4)}\n`);
+    log.info({ linkHost: wanted.linkHost, hosts: wanted.hosts.length }, "extension: granted router hosts");
+    return hostsPath;
+}
+
+export interface Freshness {
+    /** The build in `dist`, or null when there is none. */
+    dist: BuildInfo | null;
+    /** A build from the current sources and router config would differ from `dist`. */
+    stale: boolean;
+}
+
+/**
+ * Whether `dist` still matches what a build would write now: builds into a temporary folder and
+ * compares the stamps, so a changed source file, dependency or router host all count.
+ */
+export async function extensionFreshness(): Promise<Freshness> {
+    const dist = await readBuildInfo(DIST_DIR);
+    const scratch = await mkdtemp(join(tmpdir(), "gt-extension-fresh-"));
+
+    try {
+        const fresh = await buildExtension({ outDir: scratch });
+        return { dist, stale: dist === null || fresh.info.stamp !== dist.stamp };
+    } finally {
+        rmSync(scratch, { recursive: true, force: true });
+    }
 }
 
 export async function buildExtension({ outDir = DIST_DIR }: { outDir?: string } = {}): Promise<{
     outDir: string;
     files: string[];
+    info: BuildInfo;
 }> {
     await mkdir(join(outDir, "icons"), { recursive: true });
-    const files = [...(await bundle(MODULE_ENTRIES, outDir, "esm")), ...(await bundle(["content.ts"], outDir, "iife"))];
+    const buildId = newBuildId();
+    const files = [
+        ...(await bundle({ entrypoints: MODULE_ENTRIES, outDir, format: "esm", buildId })),
+        ...(await bundle({ entrypoints: ["content.ts"], outDir, format: "iife", buildId })),
+    ];
 
     for (const name of STATIC_FILES) {
         await copyFile(join(EXTENSION_SOURCE_DIR, name), join(outDir, name));
         files.push(join(outDir, name));
     }
 
-    await grantShortcutHosts(join(outDir, "manifest.json"));
+    files.push(await grantRouterHosts(outDir));
 
     for (const name of ICONS) {
         await copyFile(join(EXTENSION_SOURCE_DIR, "icons", name), join(outDir, "icons", name));
         files.push(join(outDir, "icons", name));
     }
 
-    const missing = await checkBuild(outDir);
+    const missing = await missingManifestFiles(outDir);
 
     if (missing.length > 0) {
         throw new Error(`the manifest points at files the build did not write: ${missing.join(", ")}`);
     }
 
-    log.info({ outDir, files: files.length }, "extension built");
-    return { outDir, files };
+    const info = await writeBuildInfo(outDir, buildId);
+    log.info({ outDir, files: files.length, buildId }, "extension built");
+    return { outDir, files, info };
 }

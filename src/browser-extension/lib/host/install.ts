@@ -2,6 +2,7 @@ import { chmodSync, existsSync, readFileSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
+import { chromiumBrowsers } from "@genesiscz/utils/browser-extension/profiles";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
@@ -43,17 +44,10 @@ export interface BrowserHostDir {
 }
 
 export function browserHostDirs(home = homedir()): BrowserHostDir[] {
-    const support = join(home, "Library", "Application Support");
-    const browsers: [string, string][] = [
-        ["Brave", join(support, "BraveSoftware", "Brave-Browser")],
-        ["Chrome", join(support, "Google", "Chrome")],
-        ["Chromium", join(support, "Chromium")],
-    ];
-
-    return browsers.map(([browser, profileDir]) => ({
+    return chromiumBrowsers(home).map(({ browser, userDataDir }) => ({
         browser,
-        profileDir,
-        hostDir: join(profileDir, "NativeMessagingHosts"),
+        profileDir: userDataDir,
+        hostDir: join(userDataDir, "NativeMessagingHosts"),
     }));
 }
 

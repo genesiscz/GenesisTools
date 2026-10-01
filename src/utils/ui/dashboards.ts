@@ -178,8 +178,10 @@ export const DASHBOARDS = {
         auth: "none",
         matchProcess: matchGenesisTool("claude-history", "claude/history", "history dashboard"),
     },
-    dashboard: {
-        key: "dashboard",
+    // Not `dashboard`: that short name is free for a user's own alias (the browser router's
+    // `dashboard-names` preset turns every key here into a host).
+    "personal-dashboard": {
+        key: "personal-dashboard",
         name: "Personal Dashboard",
         description: "Tasks, timers, activity log, focus modes.",
         port: 3000,

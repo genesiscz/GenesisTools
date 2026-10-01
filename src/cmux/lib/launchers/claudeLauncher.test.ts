@@ -1,9 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { CMUX_LAUNCH_URL, presetById } from "@genesiscz/utils/browser-router/presets";
+import { cmuxLaunchUrl, presetById, presets } from "@genesiscz/utils/browser-router/presets";
 import { defaultRouterConfig, parseConfig, route } from "@genesiscz/utils/browser-router/route";
 import { Command } from "commander";
 import { assertLauncherExists, registerLaunchCommand } from "../../commands/launch";
 import { buildClaudeArgv, buildCmuxCommand, shellQuote } from "./claudeLauncher";
+
+const LINK_HOST = "links.example.test";
 
 describe("cmux launch agents", () => {
     test("an agent without a launcher names the file that would add it; claude and no agent pass", () => {
@@ -105,7 +107,8 @@ describe("cmux claude launcher", () => {
  * root that owns `-v, --verbose` (as `tools cmux` does). The action never runs: the hook stops it.
  */
 async function parseRoutedLaunch(url: string): Promise<Record<string, unknown>> {
-    const preset = presetById("cmux-claude", () => true);
+    const config = { ...defaultRouterConfig(), linkHost: LINK_HOST, presets: { "cmux-claude": {} } };
+    const preset = presetById("cmux-claude", presets({ config, check: () => true }));
     const decision = route(
         url,
         parseConfig({ ...defaultRouterConfig(), routes: preset?.routes ?? [] }),
@@ -140,7 +143,7 @@ describe("a routed cmux launch link", () => {
         params.append("arg", "--verbose");
         params.append("arg", "-v");
         params.append("run", "--readme");
-        const opts = await parseRoutedLaunch(`${CMUX_LAUNCH_URL}?${params}`);
+        const opts = await parseRoutedLaunch(`${cmuxLaunchUrl(LINK_HOST)}?${params}`);
 
         expect(opts.claudeArg).toEqual(["--verbose", "-v"]);
         expect(opts.runArg).toEqual(["--readme"]);
