@@ -18,10 +18,25 @@ protocol TerminalHost: Sendable {
     func tree() -> CmuxTree?
     /// Blocking. An error message, or nil when it opened.
     func open(_ launch: TerminalLaunch, at target: CmuxTarget) -> String?
-    /// Blocking. Raise the surface a session runs in.
-    func focus(sessionId: String) -> String?
+    /// Blocking. Raise the surface a session runs in. `provider` picks the agent's own resolver.
+    func focus(sessionId: String, provider: String?) -> String?
     /// Blocking. Type one line into the session's pane and press Enter.
-    func send(sessionId: String, text: String) -> String?
+    func send(sessionId: String, provider: String?, text: String) -> String?
+}
+
+/// A caller that knows no provider (the review window's session) goes through Claude's resolver.
+extension TerminalHost {
+    func focus(sessionId: String) -> String? { focus(sessionId: sessionId, provider: nil) }
+    func send(sessionId: String, text: String) -> String? { send(sessionId: sessionId, provider: nil, text: text) }
+}
+
+/// The `tools <agent>` that owns a session's cmux resolver: `tools codex cmux` and `tools grok cmux` know
+/// their own history (Grok has no journal and its own fallback); anything else goes through Claude's.
+func cmuxTool(provider: String?) -> String {
+    switch provider {
+    case "codex", "grok": return provider ?? "claude"
+    default: return "claude"
+    }
 }
 
 enum TerminalHosts {
@@ -59,9 +74,9 @@ struct CmuxHost: TerminalHost {
         }
     }
 
-    func focus(sessionId: String) -> String? {
+    func focus(sessionId: String, provider: String?) -> String? {
         do {
-            let capture = try ToolsCLIRunner.capture(["claude", "cmux", "focus", sessionId, "--first", "--json"])
+            let capture = try ToolsCLIRunner.capture([cmuxTool(provider: provider), "cmux", "focus", sessionId, "--first", "--json"])
             return Self.focusFailure(status: capture.status, stdout: capture.stdout, stderr: capture.stderr)
         } catch {
             return "\(error)"
@@ -94,10 +109,10 @@ struct CmuxHost: TerminalHost {
 
     static let paneGone = "That cmux pane is gone. Choose a pane to resume the session in."
 
-    func send(sessionId: String, text: String) -> String? {
+    func send(sessionId: String, provider: String?, text: String) -> String? {
         do {
             // After `--`: a line that starts with a hyphen ("- fix this") is text, not an unknown option.
-            _ = try ToolsCLIRunner.run(["claude", "cmux", "send", "--first", "--", sessionId, text])
+            _ = try ToolsCLIRunner.run([cmuxTool(provider: provider), "cmux", "send", "--first", "--", sessionId, text])
             return nil
         } catch {
             return "\(error)"
@@ -255,7 +270,7 @@ struct SessionTerminalSection: View {
             notice: $notice,
             modeKey: HubCmuxPicker.modeKey,
             modeStore: HubDefaults.store,
-            focus: { Task { await perform { $0.focus(sessionId: session.sessionId) } } },
+            focus: { Task { await perform { $0.focus(sessionId: session.sessionId, provider: session.provider) } } },
             open: { target in Task { await perform { $0.open(.resume(session), at: target) } } },
             reload: { model.load() }
         )

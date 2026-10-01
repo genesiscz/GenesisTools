@@ -732,8 +732,9 @@ extension HubModel {
     @MainActor
     func focusTimelinePane(_ event: TimelineEvent) {
         guard let id = event.sessionId else { return }
+        let provider = event.provider
         DispatchQueue.global(qos: .userInitiated).async {
-            let failure = TerminalHosts.current.focus(sessionId: id)
+            let failure = TerminalHosts.current.focus(sessionId: id, provider: provider)
             DispatchQueue.main.async { [weak self] in
                 self?.notice = failure.map { "No cmux pane found for this session: \($0.suffix(120))" } ?? "Focused the session's cmux pane"
             }

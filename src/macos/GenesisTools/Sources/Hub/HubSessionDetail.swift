@@ -314,11 +314,12 @@ struct HubSessionDetailHost: View {
         }
         if session.cmux != nil, ["claude", "codex", "grok"].contains(session.provider) {
             let id = session.sessionId
+            let provider = session.provider
             // Off the main thread: it spawns `tools`, and a wait in a button action still spins the run loop.
             // A failure shows in the banner in words: a closed tab says the pane is gone, never cmux's RPC error.
             actions.focus = {
                 Task {
-                    let error = await Task.detached(priority: .userInitiated) { TerminalHosts.current.focus(sessionId: id) }.value
+                    let error = await Task.detached(priority: .userInitiated) { TerminalHosts.current.focus(sessionId: id, provider: provider) }.value
                     if let error {
                         HubPerf.log("session.focus \(id.prefix(8)) failed: \(error)")
                         banner = error
@@ -354,9 +355,10 @@ struct HubSessionDetailHost: View {
 
     /// Types one line into the session's cmux pane, off the main thread; a failure shows in the banner.
     private func poke(_ sessionId: String, text: String, what: String) {
+        let provider = session.provider
         HubPerf.log("session.\(what.lowercased()) \(sessionId.prefix(8))")
         Task {
-            let error = await Task.detached(priority: .userInitiated) { TerminalHosts.current.send(sessionId: sessionId, text: text) }.value
+            let error = await Task.detached(priority: .userInitiated) { TerminalHosts.current.send(sessionId: sessionId, provider: provider, text: text) }.value
             if let error {
                 banner = "\(what) failed: \(error)"
             }

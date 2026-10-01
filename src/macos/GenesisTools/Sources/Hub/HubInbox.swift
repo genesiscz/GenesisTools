@@ -759,12 +759,13 @@ final class HubInboxModel: ObservableObject {
         }
     }
 
-    /// Brings the session's cmux pane forward (`tools claude cmux focus`), for a Claude session.
+    /// Brings the session's cmux pane forward through its own agent's resolver (`tools <agent> cmux focus`).
     func focusPane(_ session: InboxSession, notice: @escaping (String) -> Void) {
         guard let sessionId = session.sessionId else { return }
+        let tool = cmuxTool(provider: session.provider)
         DispatchQueue.global(qos: .userInitiated).async {
             // --first as CmuxHost.focus passes it: without a terminal, a session open in two panes fails.
-            let capture = try? ToolsCLIRunner.capture(["claude", "cmux", "focus", sessionId, "--first"])
+            let capture = try? ToolsCLIRunner.capture([tool, "cmux", "focus", sessionId, "--first"])
             let failed = capture.map { $0.status != 0 } ?? true
             let message = failed
                 ? "No cmux pane found for this session: " + (capture.map { String(decoding: $0.stderr, as: UTF8.self).trimmed.suffix(120) } ?? "tools did not run")

@@ -1133,8 +1133,13 @@ final class HubModel: ObservableObject {
         case .openTerminal(let path):
             PathOpener.cmux(path)
         case .newSession(let path):
-            notice = AgentLauncher.openInTerminal(name: (path as NSString).lastPathComponent, cwd: path, command: ["tools", "claude", "run"])
-                ?? "Started a new Claude session in \((path as NSString).lastPathComponent)."
+            // openInTerminal blocks on the terminal host's CLI (up to its timeout): never on the main actor.
+            let name = (path as NSString).lastPathComponent
+            notice = "Starting a new Claude session in \(name)…"
+            Task.detached(priority: .userInitiated) {
+                let failure = AgentLauncher.openInTerminal(name: name, cwd: path, command: ["tools", "claude", "run"])
+                await MainActor.run { self.notice = failure ?? "Started a new Claude session in \(name)." }
+            }
         case .findInFiles(let query, let root):
             findRoot = root
             findQuery = query
