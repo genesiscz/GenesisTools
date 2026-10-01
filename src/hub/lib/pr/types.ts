@@ -58,6 +58,8 @@ export interface ThreadComment {
     /** My pending review comment (GitHub) or draft note (GitLab); only I can see it until `publish`. */
     isDraft: boolean;
     reactions?: Array<{ emoji: string; count: number; mine: boolean }>;
+    /** The comment on the provider's web page; absent for a draft, which only its author can see. */
+    url?: string;
 }
 
 export interface PrThread {

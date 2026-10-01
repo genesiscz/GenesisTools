@@ -1,5 +1,5 @@
 // biome-ignore-all lint/plugin: test fixture intentionally uses /tmp/ or /Users/ string literals — production plugins do not apply to test code
-import { describe, expect, it } from "bun:test";
+import { afterAll, describe, expect, it } from "bun:test";
 import { statSync } from "node:fs";
 import { detectBunCapabilities } from "@genesiscz/utils/bun";
 import { skip } from "@genesiscz/utils/test/skip";
@@ -9,6 +9,28 @@ import { WebViewPool } from "./WebViewPool";
 
 const caps = detectBunCapabilities();
 const maybeIt = caps.headlessBrowser ? it : it.skip;
+
+/**
+ * The integration tests load a page served on loopback, never the internet. They used example.com
+ * until it changed on 2026-09-29: it dropped its <h1> (so every waitForSelector("h1") ran out its
+ * timeout) and now asks not to be used for testing.
+ */
+const FIXTURE_HTML =
+    "<!doctype html><html><head><title>WebView fixture</title></head><body><h1>WebView fixture</h1><p>Loopback page for the integration tests.</p></body></html>";
+let fixtureServer: ReturnType<typeof Bun.serve> | undefined;
+
+function fixtureUrl(): string {
+    fixtureServer ??= Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        fetch: () => new Response(FIXTURE_HTML, { headers: { "content-type": "text/html; charset=utf-8" } }),
+    });
+    return `http://127.0.0.1:${fixtureServer.port}/`;
+}
+
+afterAll(() => {
+    fixtureServer?.stop(true);
+});
 
 describe("WebViewError", () => {
     it("sets name, message, instanceId", () => {
@@ -68,14 +90,14 @@ describe.skipIf(skip.unlessMac)("WebView (integration)", () => {
         expect(wv.closed).toBe(false);
     });
 
-    maybeIt("navigate to example.com succeeds", async () => {
+    maybeIt("navigate to the loopback fixture succeeds", async () => {
         await using wv = new WebView();
-        await wv.navigate("https://example.com", { timeoutMs: 15_000 });
+        await wv.navigate(fixtureUrl(), { timeoutMs: 15_000 });
         expect(wv.closed).toBe(false);
     });
 
     maybeIt("evaluate returns document.title", async () => {
-        await using wv = new WebView({ url: "https://example.com" });
+        await using wv = new WebView({ url: fixtureUrl() });
         await wv.waitForSelector("h1", { timeoutMs: 15_000 });
         const title = await wv.evaluate<string>("document.title");
         expect(typeof title).toBe("string");
@@ -83,7 +105,7 @@ describe.skipIf(skip.unlessMac)("WebView (integration)", () => {
     });
 
     it.skip("evaluate queues calls sequentially (skipped: bun WebView close emits orphan exit-time error)", async () => {
-        await using wv = new WebView({ url: "https://example.com" });
+        await using wv = new WebView({ url: fixtureUrl() });
         const results = await Promise.all([
             wv.evaluate<number>("1 + 1"),
             wv.evaluate<number>("2 + 2"),
@@ -102,14 +124,14 @@ describe.skipIf(skip.unlessMac)("WebView (integration)", () => {
     it.skip("methods throw WebViewError after close() (skipped: bun WebView close emits orphan exit-time error)", async () => {
         const wv = new WebView({ url: "about:blank" });
         wv.close();
-        await expect(wv.navigate("https://example.com")).rejects.toThrow(WebViewError);
+        await expect(wv.navigate(fixtureUrl())).rejects.toThrow(WebViewError);
     });
 
     maybeIt("AbortSignal pre-aborted cancels navigate immediately", async () => {
         const controller = new AbortController();
         const wv = new WebView();
         controller.abort();
-        await expect(wv.navigate("https://example.com", { signal: controller.signal })).rejects.toThrow(WebViewError);
+        await expect(wv.navigate(fixtureUrl(), { signal: controller.signal })).rejects.toThrow(WebViewError);
         wv.close();
     });
 });
@@ -118,7 +140,7 @@ describe.skipIf(skip.unlessMac)("WebView -- consolePipe (integration)", () => {
     it.skip("page console.log does not throw when consolePipe: true (skipped: bun WebView close emits orphan exit-time error)", async () => {
         await using wv = new WebView({
             consolePipe: true,
-            url: "https://example.com",
+            url: fixtureUrl(),
         });
         await wv.evaluate("console.log('webview-test-ping')");
         expect(wv.closed).toBe(false);
@@ -139,7 +161,7 @@ describe.skipIf(skip.unlessMac)("WebView -- persistent profile (integration)", (
 
 describe.skipIf(skip.unlessMac)("WebView -- screenshot (integration)", () => {
     maybeIt("returns base64 png data", async () => {
-        await using wv = new WebView({ url: "https://example.com" });
+        await using wv = new WebView({ url: fixtureUrl() });
         await wv.waitForSelector("h1", { timeoutMs: 15_000 });
         const result = await wv.screenshot({ format: "png", encoding: "base64" });
         expect(result.format).toBe("png");
@@ -149,7 +171,7 @@ describe.skipIf(skip.unlessMac)("WebView -- screenshot (integration)", () => {
     });
 
     maybeIt("screenshotToFile writes a file", async () => {
-        await using wv = new WebView({ url: "https://example.com" });
+        await using wv = new WebView({ url: fixtureUrl() });
         await wv.waitForSelector("h1", { timeoutMs: 15_000 });
         const filePath = "/tmp/webview-test-screenshot.png";
         await wv.screenshotToFile(filePath);
@@ -219,7 +241,7 @@ describe.skipIf(skip.unlessMac)("WebViewPool (integration)", () => {
         const results = await Promise.all(
             Array.from({ length: 5 }, (_, i) =>
                 pool.withInstance(async (wv) => {
-                    await wv.navigate("https://example.com", { timeoutMs: 15_000 });
+                    await wv.navigate(fixtureUrl(), { timeoutMs: 15_000 });
                     return wv.evaluate<number>(`${i} * 2`);
                 })
             )

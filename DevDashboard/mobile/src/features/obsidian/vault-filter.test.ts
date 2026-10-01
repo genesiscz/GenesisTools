@@ -45,4 +45,35 @@ describe("filterVaultEntries", () => {
     it("drops everything when nothing matches", () => {
         expect(filterVaultEntries(tree, "zzz")).toEqual([]);
     });
+
+    // Regression test: mac.foltyn.dev/obsidian search — a vault-relative path must show that note
+    it("shows the note named by a folder/file path and hides its siblings", () => {
+        const nested: VaultEntry[] = [
+            {
+                name: "col-187136-pr-7455-billing-snapshots",
+                relativePath: "col-187136-pr-7455-billing-snapshots",
+                isDirectory: true,
+                children: [
+                    {
+                        name: "ADO-187136-title-description.md",
+                        relativePath: "col-187136-pr-7455-billing-snapshots/ADO-187136-title-description.md",
+                        isDirectory: false,
+                    },
+                    {
+                        name: "other.md",
+                        relativePath: "col-187136-pr-7455-billing-snapshots/other.md",
+                        isDirectory: false,
+                    },
+                ],
+            },
+        ];
+
+        const fullPath = "col-187136-pr-7455-billing-snapshots/ADO-187136-title-description.md";
+        const out = filterVaultEntries(nested, fullPath);
+        const partial = filterVaultEntries(nested, "billing-snapshots/ADO-187136");
+
+        expect(out).toHaveLength(1);
+        expect(out[0]?.children?.map((entry) => entry.name)).toEqual(["ADO-187136-title-description.md"]);
+        expect(partial[0]?.children?.map((entry) => entry.name)).toEqual(["ADO-187136-title-description.md"]);
+    });
 });

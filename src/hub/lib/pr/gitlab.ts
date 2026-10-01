@@ -167,6 +167,7 @@ export function gitlabThreads({
                 bodyMarkdown: note.body ?? "",
                 createdAt: note.created_at ?? "",
                 isDraft: false,
+                url: pr.webUrl ? `${pr.webUrl}#note_${note.id}` : undefined,
             })),
         };
         threads.push(thread);

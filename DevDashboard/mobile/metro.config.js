@@ -35,6 +35,10 @@ config.resolver.nodeModulesPaths = [
 const aliasResolvers = [
     { match: "@genesiscz/utils/json", target: path.resolve(projectRoot, "src/shims/safe-json.ts") },
     { match: "@genesiscz/utils/logger", target: path.resolve(projectRoot, "src/shims/logger.ts") },
+    {
+        match: "@genesiscz/utils/obsidian/vault-filter",
+        target: path.resolve(workspaceRoot, "src/utils/obsidian/vault-filter.ts"),
+    },
     { prefix: "@dd/", target: path.resolve(workspaceRoot, "src/dev-dashboard") },
     { prefix: "@/", target: path.resolve(projectRoot, "src") },
     { prefix: "@app/", target: path.resolve(workspaceRoot, "src") },

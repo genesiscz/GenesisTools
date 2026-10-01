@@ -288,6 +288,7 @@ const glPr: FoundPr = {
 function ghComment(over: Record<string, unknown> = {}) {
     return {
         id: "C_1",
+        url: "https://github.com/acme/web/pull/7#discussion_r101",
         body: "Rename this.",
         createdAt: "2026-01-01T00:00:00Z",
         lastEditedAt: null,
@@ -355,6 +356,11 @@ describe("GitHub position mapping", () => {
 
         const pending = githubThread(ghThread({ comments: { nodes: [ghComment({ state: "PENDING" })] } }));
         expect(pending.comments[0].isDraft).toBe(true);
+        expect(pending.comments[0].url).toBeUndefined();
+    });
+
+    test("a submitted comment carries its permalink", () => {
+        expect(githubThread(ghThread()).comments[0].url).toBe("https://github.com/acme/web/pull/7#discussion_r101");
     });
 });
 
@@ -443,6 +449,11 @@ describe("GitLab position mapping", () => {
         expect(threads[1]).toMatchObject({ outdated: true, side: "deletions", line: 2, commitSha: "OLD" });
         expect(threads[2]).toMatchObject({ path: "b.ts", line: 7, resolvable: false });
         expect(threads[2].comments[0]).toMatchObject({ isDraft: true, bodyMarkdown: "new line" });
+        expect(threads[0].comments.map((comment) => comment.url)).toEqual([
+            "https://gitlab.example.com/group/app/-/merge_requests/7#note_1",
+            "https://gitlab.example.com/group/app/-/merge_requests/7#note_3",
+            undefined,
+        ]);
     });
 });
 

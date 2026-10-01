@@ -41,7 +41,7 @@ query($owner: String!, $repo: String!, $number: Int!, $cursor: String) {
           path diffSide startDiffSide line startLine originalLine originalStartLine
           comments(first: 100) {
             nodes {
-              id body createdAt lastEditedAt state authorAssociation diffHunk
+              id url body createdAt lastEditedAt state authorAssociation diffHunk
               commit { oid } originalCommit { oid }
               author { login avatarUrl ... on User { name } }
               reactionGroups { content viewerHasReacted reactors { totalCount } }
@@ -109,6 +109,7 @@ mutation($pullRequestId: ID!, $commitOID: GitObjectID!, $event: PullRequestRevie
 
 interface RawComment {
     id: string;
+    url?: string | null;
     body: string;
     createdAt: string;
     lastEditedAt: string | null;
@@ -180,6 +181,7 @@ function toComment(raw: RawComment): ThreadComment {
         editedAt: raw.lastEditedAt ?? undefined,
         isDraft: raw.state === "PENDING",
         reactions: reactions.length > 0 ? reactions : undefined,
+        url: raw.state === "PENDING" ? undefined : (raw.url ?? undefined),
     };
 }
 

@@ -1,4 +1,5 @@
 import type { VaultEntry } from "@app/dev-dashboard/lib/obsidian/types";
+import { filterVaultEntries } from "@genesiscz/utils/obsidian/vault-filter";
 import { IconButton } from "@ui/components/icon-button";
 import { Input } from "@ui/components/input";
 import { cn } from "@ui/lib/utils";
@@ -22,26 +23,6 @@ interface Props {
     /** Controlled expand state (URL-synced on /obsidian). Omit for local-only expand. */
     expandedDirs?: ReadonlySet<string>;
     onFolderToggle?: (dir: string, expanded: boolean) => void;
-}
-
-function filterEntries(entries: VaultEntry[], query: string): VaultEntry[] {
-    if (!query) {
-        return entries;
-    }
-
-    return entries.flatMap((entry) => {
-        if (entry.isDirectory) {
-            const children = filterEntries(entry.children ?? [], query);
-
-            if (children.length > 0 || entry.name.toLowerCase().includes(query)) {
-                return [{ ...entry, children }];
-            }
-
-            return [];
-        }
-
-        return entry.name.toLowerCase().includes(query) ? [entry] : [];
-    });
 }
 
 const rowButtonClass =
@@ -195,7 +176,7 @@ export function ObsidianTree({
     const [query, setQuery] = useState("");
     const [addFolderOpen, setAddFolderOpen] = useState(false);
     const normalizedQuery = query.trim().toLowerCase();
-    const filtered = useMemo(() => filterEntries(entries, normalizedQuery), [entries, normalizedQuery]);
+    const filtered = useMemo(() => filterVaultEntries(entries, normalizedQuery), [entries, normalizedQuery]);
 
     const parentDir =
         selection === "directory" && selected
