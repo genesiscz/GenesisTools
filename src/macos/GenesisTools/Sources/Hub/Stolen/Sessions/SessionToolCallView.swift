@@ -71,6 +71,24 @@ enum TranscriptVerbosity: String, CaseIterable, Identifiable, Sendable {
     var bodyLimit: Int? { self == .verbose ? nil : 10 }
 }
 
+// GenesisTools adaptation: which code blocks of a tool call wrap their long lines instead of scrolling
+// sideways (Martin, 2026-09-30: long commands were clipped). Persisted by the transcript's toolbar.
+struct TranscriptWrap: Equatable, Sendable {
+    var inputs = false
+    var outputs = false
+
+    var any: Bool { inputs || outputs }
+
+    var detail: String {
+        switch (inputs, outputs) {
+        case (true, true): return "tool inputs and outputs wrap"
+        case (true, false): return "tool inputs wrap, outputs scroll sideways"
+        case (false, true): return "tool outputs wrap, inputs scroll sideways"
+        case (false, false): return "long lines scroll sideways"
+        }
+    }
+}
+
 // MARK: - Services
 
 /// What rows need beyond their own value: the session file for full inputs and results, the change
@@ -160,6 +178,11 @@ struct ToolPresentation: Equatable {
     var block: CodeBlock?
     /// The call's full input when it does not fit the header (a multi-line command, long JSON).
     var input: CodeBlock?
+    // GenesisTools adaptation: `input` is the header's argument in full (a command), not other fields
+    // (an Agent's JSON). An open header then leaves the argument out, so the command shows once.
+    var inputRepeatsArgument = false
+    // GenesisTools adaptation: input lines after the one `argument` shows (a multi-line command).
+    var moreInputLines = 0
     var failed: Bool
     var filePath: String?
     /// Line to open the file's diff at.
@@ -195,6 +218,10 @@ struct ToolPresentation: Equatable {
             presentation.input = CodeBlockBuilder.numbered(arguments, language: .json)
         } else if [.command, .search, .web, .agent, .skill, .mcp, .other].contains(kind), rawInput.contains("\n") || rawInput.count > 120 {
             presentation.input = CodeBlockBuilder.numbered(rawInput, language: kind == .command ? .shell : (looksLikeJSON(rawInput) ? .json : .plain))
+            presentation.inputRepeatsArgument = shownPath == nil
+        }
+        if shownPath == nil {
+            presentation.moreInputLines = max(0, inputLines(detail?.command ?? line.input) - 1)
         }
 
         if line.status == .pending {
@@ -289,12 +316,19 @@ struct ToolPresentation: Equatable {
         return CodeBlock(lines: lines, language: language)
     }
 
-    /// The first three input lines; a closed row shows them all, an open row the first one.
+    // GenesisTools adaptation: the first input line only. The first three, joined, put the command's
+    // first line in the header right after the paren and its next lines under it with no closing paren,
+    // and an open row then printed them all again in the numbered input (Martin, 2026-09-30). The header
+    // counts the rest (`moreInputLines`); the numbered input shows the whole command once.
     private static func argument(_ line: TranscriptToolLine, detail: ToolCallDetail?) -> String {
         let source = detail?.command ?? line.input
-        let lines = source.split(separator: "\n", omittingEmptySubsequences: true).prefix(3)
-        let joined = lines.map { $0.trimmingCharacters(in: .whitespaces) }.joined(separator: "\n")
-        return joined.utf8.count > 400 ? String(decoding: joined.utf8.prefix(400), as: UTF8.self) + "…" : joined
+        let first = source.split(separator: "\n", omittingEmptySubsequences: true).first.map { $0.trimmingCharacters(in: .whitespaces) } ?? ""
+        return first.utf8.count > 400 ? String(decoding: first.utf8.prefix(400), as: UTF8.self) + "…" : first
+    }
+
+    // GenesisTools adaptation: non-empty lines of an input, as `argument` counts them.
+    private static func inputLines(_ source: String) -> Int {
+        source.split(separator: "\n", omittingEmptySubsequences: true).count
     }
 
     static func relative(_ path: String, to cwd: String?) -> String {
@@ -331,6 +365,8 @@ struct ToolCallRowView: View, Equatable {
     let verbosity: TranscriptVerbosity
     let open: Bool
     let showAll: Bool
+    // GenesisTools adaptation: see `TranscriptWrap`.
+    var wrap = TranscriptWrap()
     let services: TranscriptServices
     let onToggle: (String) -> Void
 
@@ -342,7 +378,7 @@ struct ToolCallRowView: View, Equatable {
 
     static func == (lhs: Self, rhs: Self) -> Bool {
         lhs.rowId == rhs.rowId && lhs.line == rhs.line && lhs.verbosity == rhs.verbosity && lhs.open == rhs.open
-            && lhs.showAll == rhs.showAll && lhs.services === rhs.services
+            && lhs.showAll == rhs.showAll && lhs.wrap == rhs.wrap && lhs.services === rhs.services
     }
 
     private var finished: Bool { line.status != .pending }
@@ -370,6 +406,7 @@ struct ToolCallRowView: View, Equatable {
                     presentation: presentation,
                     limit: showAll ? nil : verbosity.bodyLimit,
                     expandedByReader: showAll && verbosity.bodyLimit != nil,
+                    wrap: wrap,
                     canAddContext: current?.fileLines != nil && (current?.detail.edits.count ?? 0) == 1,
                     onShowAll: { onToggle(rowId + "#all") },
                     onMoreContext: { context += 10 },
@@ -419,16 +456,27 @@ struct ToolCallRowView: View, Equatable {
                 .font(.system(size: 10.5))
                 .foregroundStyle(SessionPalette.faint)
                 .frame(width: 13)
+            // GenesisTools adaptation: an open call whose numbered input holds the command shows only the
+            // tool name and a line count here, so the command is printed once. A closed one shows the
+            // first line and counts the rest. See `ToolPresentation.argument`.
+            let argumentInBlock = open && presentation.inputRepeatsArgument && presentation.input != nil
+            let shownArgument = argumentInBlock || presentation.argument.isEmpty ? "" : "(\(presentation.argument))"
+            let lineCount = presentation.moreInputLines > 0
+                ? (argumentInBlock ? " \(presentation.moreInputLines + 1) lines" : " +\(presentation.moreInputLines) lines")
+                : ""
             (Text(verbatim: presentation.name)
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundColor(line.status == .failed ? SessionPalette.red : SessionPalette.text)
-                + Text(verbatim: presentation.argument.isEmpty ? "" : "(\(presentation.argument))")
+                + Text(verbatim: shownArgument)
                 .font(SessionPalette.mono(11.5))
-                .foregroundColor(SessionPalette.dim))
+                .foregroundColor(SessionPalette.dim)
+                + Text(verbatim: lineCount)
+                .font(SessionPalette.mono(10.5))
+                .foregroundColor(SessionPalette.faint))
                 // GenesisTools adaptation: an open call with no input block below shows its whole
                 // input here; one line only when the block has it (a short command used to stay cut
-                // in a narrow pane).
-                .lineLimit(open ? (presentation.input == nil ? nil : 1) : 3)
+                // in a narrow pane). A multi-line command's header is one line.
+                .lineLimit(presentation.moreInputLines > 0 ? 1 : (open ? (presentation.input == nil ? nil : 1) : 3))
                 .truncationMode(.middle)
             Spacer(minLength: 8)
             if let code = line.exitCode, code != 0 {
@@ -483,6 +531,8 @@ private struct ToolResultBody: View {
     // GenesisTools adaptation: the reader pressed "… +N lines" at a verbosity that trims the body.
     // The "show fewer" link only makes sense then (it was hard-coded off).
     let expandedByReader: Bool
+    // GenesisTools adaptation: see `TranscriptWrap`.
+    let wrap: TranscriptWrap
     let canAddContext: Bool
     let onShowAll: () -> Void
     let onMoreContext: () -> Void
@@ -493,7 +543,7 @@ private struct ToolResultBody: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             if let input = presentation.input {
-                CodeBlockText(block: input, limit: limit, cacheKey: rowId + "#in")
+                CodeBlockText(block: input, limit: limit, cacheKey: rowId + "#in", wrap: wrap.inputs)
                     .padding(.leading, 16)
                     .padding(.bottom, 2)
                 if let limit, input.lines.count > limit {
@@ -526,7 +576,7 @@ private struct ToolResultBody: View {
                 }
             }
             if let block = presentation.block, !block.lines.isEmpty {
-                CodeBlockText(block: block, limit: limit, cacheKey: rowId)
+                CodeBlockText(block: block, limit: limit, cacheKey: rowId, wrap: wrap.outputs)
                     .padding(.leading, 16)
                     .background(ClickUpCatcher(action: onCollapse))
                 if let limit, block.lines.count > limit {

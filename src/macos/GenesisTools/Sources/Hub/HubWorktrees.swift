@@ -254,12 +254,7 @@ struct WorktreeListView: View {
             }
             Spacer(minLength: 4)
             if count > 0 {
-                Text(verbatim: "\(count)")
-                    .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 1)
-                    .background(Capsule().fill(Color.white.opacity(0.08)))
-                    .instantTooltip("\(count) agent sessions worked here")
+                CountBadge(count, tooltip: "\(count) agent sessions worked here")
             }
         }
         .padding(.horizontal, 10)
@@ -272,10 +267,8 @@ struct WorktreeListView: View {
         .instantTooltip("\(worktree.branch)\n\(PathLabel.display(worktree.path))")
         .contextMenu {
             Button("Copy branch") { PathOpener.copy(worktree.branch, what: "branch") }
-            Button("Copy path") { PathOpener.copy(worktree.path, what: "path") }
             Divider()
-            Button("Open in Finder") { PathOpener.finder(worktree.path) }
-            Button("Open in Cursor") { PathOpener.cursor(worktree.path) }
+            PathActionsMenu(path: worktree.path)
         }
     }
 }
@@ -370,11 +363,7 @@ struct WorktreeDetailView: View {
 
     private func sessionChip(_ session: HubSession) -> some View {
         HStack(spacing: 6) {
-            Text(session.provider.prefix(1).uppercased())
-                .font(.system(size: 9.5, weight: .bold))
-                .foregroundColor(.black.opacity(0.8))
-                .frame(width: 15, height: 15)
-                .background(RoundedRectangle(cornerRadius: 4).fill(Color.white.opacity(0.6)))
+            ProviderBadge(provider: session.provider, size: 15)
             Text(session.displayTitle).lineLimit(1).frame(maxWidth: 220, alignment: .leading)
             LiveAgo(date: session.lastActivity).foregroundColor(ReviewPalette.dim)
             Button("Open") { model.openSession(session) }

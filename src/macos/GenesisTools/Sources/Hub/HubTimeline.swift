@@ -857,7 +857,7 @@ struct TimelineListView: View {
 
     private func rangeRow(_ range: TimelineRange) -> some View {
         let selected = timeline.range == range
-        let subtitle: String? = range == .sinceLastVisit ? (timeline.lastVisit.map { "from \(HubFormat.ago($0))" } ?? "no earlier visit: last 24 hours") : nil
+        let subtitle: String? = range == .sinceLastVisit ? (timeline.lastVisit == nil ? "no earlier visit: last 24 hours" : "") : nil
         return HStack(spacing: 8) {
             Image(systemName: selected ? "largecircle.fill.circle" : "circle")
                 .foregroundColor(selected ? ReviewPalette.renamed : ReviewPalette.dim)
@@ -866,7 +866,8 @@ struct TimelineListView: View {
             VStack(alignment: .leading, spacing: 1) {
                 Text(range.title).font(.system(size: 12.5, weight: selected ? .semibold : .regular)).lineLimit(1).fixedSize()
                 if let subtitle {
-                    Text(subtitle).font(.system(size: 10.5)).foregroundColor(ReviewPalette.dim).lineLimit(2)
+                    LiveAgo(date: timeline.lastVisit, fallback: subtitle) { timeline.lastVisit == nil ? $0 : "from \($0)" }
+                        .font(.system(size: 10.5)).foregroundColor(ReviewPalette.dim).lineLimit(2)
                 }
             }
             Spacer(minLength: 0)

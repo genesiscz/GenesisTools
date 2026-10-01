@@ -254,7 +254,7 @@ struct ResizableSidePanel<Content: View>: View {
             .frame(maxHeight: .infinity)
             .contentShape(Rectangle())
         }
-        .buttonStyle(HubRowButtonStyle(cornerRadius: 0))
+        .buttonStyle(RowButtonStyle(cornerRadius: 0))
         .hubSurface(.chrome)
         .instantTooltip(autoCollapse && !collapsed ? "Show \(title) over the content (the window is too narrow to fit it)" : "Show \(title)")
         .accessibilityLabel(Text("Show \(title)"))
@@ -408,41 +408,10 @@ struct PaneRail: View {
             .frame(maxHeight: .infinity)
             .contentShape(Rectangle())
         }
-        .buttonStyle(HubRowButtonStyle(cornerRadius: 0))
+        .buttonStyle(RowButtonStyle(cornerRadius: 0))
         .hubSurface(.chrome)
         .instantTooltip(open ? "Hide \(tab.title)" : "Show \(tab.title) over the other panes (the window is too narrow to fit it beside them)")
         .accessibilityLabel(Text(open ? "Hide \(tab.title)" : "Show \(tab.title)"))
-    }
-}
-
-// MARK: - Row hover
-
-/// The hover for list rows: a soft fill in the row's own shape, no outline, no lift. The shape is
-/// the row's full frame, so the hover box and the selection box are the same box.
-struct HubRowButtonStyle: ButtonStyle {
-    var cornerRadius: CGFloat = 6
-
-    func makeBody(configuration: Configuration) -> some View {
-        HubRowButtonBody(configuration: configuration, cornerRadius: cornerRadius)
-    }
-}
-
-private struct HubRowButtonBody: View {
-    let configuration: ButtonStyleConfiguration
-    let cornerRadius: CGFloat
-    @State private var hovering = false
-
-    var body: some View {
-        configuration.label
-            .background(
-                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                    .fill(Color.white.opacity(configuration.isPressed ? 0.10 : (hovering ? 0.055 : 0)))
-            )
-            .contentShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
-            .onHover { hovering = $0 }
-            // A row that scrolls out from under a still pointer gets no exit event; reset it when
-            // the row leaves the screen so it does not come back highlighted.
-            .onDisappear { hovering = false }
     }
 }
 

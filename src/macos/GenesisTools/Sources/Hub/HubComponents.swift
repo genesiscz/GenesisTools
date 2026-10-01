@@ -5,61 +5,9 @@ import UniformTypeIdentifiers
 // Shared building blocks for every GenesisTools.app window (hub, review). See ../../CLAUDE.md:
 // every icon-only control gets `.instantTooltip`, every external URL is an `ExternalLink`, every
 // path is a `PathLabel`, every side panel is a `ResizableSidePanel`, every status line is a `NoticePill`.
+// The ones Genesis.app shares (IconButton, PathLabel, PathActionsMenu, CopyChip, NoticePill, LiveAgo,
+// MenuButton, badges) live in GenesisKit (../../../GenesisKit).
 
-// MARK: - Icon button with tooltip
-
-/// The only way to put an icon-only button in these windows: it always carries an instant tooltip.
-struct IconButton: View {
-    let systemName: String
-    let tooltip: String
-    var size: CGFloat = 12
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            Image(systemName: systemName)
-                .font(.system(size: size))
-                .frame(width: 16, height: 16)
-                .contentShape(Rectangle())
-        }
-        // The same hover disc as the stolen Genesis screen (Hub/Stolen/UI/GenHoverButton.swift).
-        .buttonStyle(.genHoverIcon())
-        .instantTooltip(tooltip)
-        // The tooltip is also the name VoiceOver and UI automation read.
-        .accessibilityLabel(Text(tooltip))
-    }
-}
-
-extension View {
-    /// A clickable list row: a real button (keyboard, VoiceOver, automation) with the row hover,
-    /// instead of an `onTapGesture` that none of them see.
-    func rowButton(cornerRadius: CGFloat = 8, _ action: @escaping () -> Void) -> some View {
-        Button(action: action) { self }
-            .buttonStyle(HubRowButtonStyle(cornerRadius: cornerRadius))
-    }
-}
-
-// MARK: - Relative times
-
-/// `HubFormat.ago` that stays current on screen: a `LiveTime` (Hub/Stolen/UI/LiveTime.swift) in the
-/// system's short words ("20 sec. ago", "5 min. ago"). The label keeps its own clock (each second
-/// under a minute, then on the minute), so nothing above it re-renders per tick. `format` builds the
-/// whole text around the time ("read \($0)"); without a date it gets `fallback`.
-struct LiveAgo: View {
-    let date: Date?
-    var fallback = ""
-    /// `.brief` ("3d ago") for the narrow sidebar lists; `.short` ("3 days ago") elsewhere.
-    var style: LiveTimeStyle = .short
-    var format: (String) -> String = { $0 }
-
-    var body: some View {
-        if let date {
-            LiveTime(date: date, style: style, format: format)
-        } else {
-            Text(verbatim: format(fallback))
-        }
-    }
-}
 
 // MARK: - External links
 
@@ -326,75 +274,6 @@ extension NSWindow {
     }
 }
 
-// MARK: - Paths
-
-// `PathOpener` (Finder, reveal, open, Cursor, cmux, copy) lives in Hub/HubPathActions.swift.
-
-/// A path you can act on: click for Finder / Cursor / cmux / copy, plus quick copy and reveal icons.
-/// A popover, not a SwiftUI `Menu`: a Menu whose label truncates inside a header HStack sent
-/// AttributeGraph into a layout cycle and crashed the hub (2026-09-24).
-struct PathLabel: View {
-    let path: String
-    var font: Font = .system(size: 11, design: .monospaced)
-    var showIcons = true
-    /// The key a panel find row lists this path under (a row with several paths names each one).
-    var findField = "path"
-    @State private var showingActions = false
-
-    private var display: String { Self.display(path) }
-
-    /// The shown text ("~/…"): what a panel find row lists under `findField`.
-    static func display(_ path: String) -> String {
-        let home = FileManager.default.homeDirectoryForCurrentUser.path
-        return path.hasPrefix(home) ? "~" + path.dropFirst(home.count) : path
-    }
-
-    var body: some View {
-        HStack(spacing: 2) {
-            Button {
-                showingActions = true
-            } label: {
-                FindText(display, field: findField).font(font).foregroundColor(ReviewPalette.dim).lineLimit(1).truncationMode(.middle)
-            }
-            .buttonStyle(.genHoverPlain())
-            .instantTooltip("Open or copy \(display)")
-            .popover(isPresented: $showingActions, arrowEdge: .bottom) {
-                VStack(alignment: .leading, spacing: 2) {
-                    action("folder", "Open in Finder") { PathOpener.finder(path) }
-                    action("chevron.left.forwardslash.chevron.right", "Open in Cursor") { PathOpener.cursor(path) }
-                    action("terminal", "Open in a new cmux workspace") { PathOpener.cmux(path) }
-                    Divider().padding(.vertical, 2)
-                    action("doc.on.doc", "Copy path") { PathOpener.copy(path, what: "path") }
-                    action("doc.on.doc", "Copy ~ path") { PathOpener.copy(display, what: "path") }
-                }
-                .padding(8)
-                .frame(width: 240)
-                .onAppear { HubPerf.log("pathLabel.actions shown for \(display)") }
-            }
-            if showIcons {
-                IconButton(systemName: "doc.on.doc", tooltip: "Copy path", size: 10) { PathOpener.copy(path, what: "path") }
-                IconButton(systemName: "folder", tooltip: "Reveal in Finder", size: 10) { PathOpener.reveal(path) }
-                IconButton(systemName: "chevron.left.forwardslash.chevron.right", tooltip: "Open in Cursor", size: 10) { PathOpener.cursor(path) }
-            }
-        }
-    }
-
-    private func action(_ icon: String, _ title: String, perform: @escaping () -> Void) -> some View {
-        Button {
-            showingActions = false
-            perform()
-        } label: {
-            Label(title, systemImage: icon)
-                .font(.system(size: 12))
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.vertical, 4)
-                .padding(.horizontal, 6)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.genHoverRow())
-    }
-}
-
 // MARK: - Side split
 
 /// Two children: the main view and a `ResizableSidePanel` on `panelEdge`. The panel gets its ideal
@@ -474,78 +353,6 @@ extension TitlebarHeader where Details == EmptyView {
     init(@ViewBuilder row: () -> Row) {
         self.row = row()
         self.details = nil
-    }
-}
-
-// MARK: - Notice pill
-
-/// A short status line that fades after a few seconds: icon, message, optional dim detail.
-struct NoticePill: View {
-    let text: String
-    var detail: String?
-    var isError = false
-    let dismiss: () -> Void
-
-    var body: some View {
-        HStack(spacing: 8) {
-            Image(systemName: isError ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
-                .foregroundColor(isError ? ReviewPalette.removed : ReviewPalette.added)
-            Text(text).font(.system(size: 12, weight: .medium)).lineLimit(1)
-            if let detail {
-                Text(detail).font(.system(size: 11.5)).foregroundColor(ReviewPalette.dim).lineLimit(1).truncationMode(.middle)
-            }
-            IconButton(systemName: "xmark", tooltip: "Dismiss", size: 9, action: dismiss)
-        }
-        .padding(.leading, 10)
-        .padding(.trailing, 4)
-        .padding(.vertical, 3)
-        .background(Capsule().fill(Color.white.opacity(0.06)))
-        .overlay(Capsule().stroke(Color.white.opacity(0.1)))
-        .task(id: text) {
-            try? await Task.sleep(nanoseconds: 6_000_000_000)
-            if !isError { dismiss() }
-        }
-    }
-}
-
-// MARK: - Copy chip
-
-/// A short monospaced value (a session id's first 8 characters) that copies the full value on
-/// click. The copy toast confirms it; the chip only turns its icon into a check, in a fixed slot,
-/// so the text beside it never moves (the label used to become "Copied" and push its neighbours).
-struct CopyChip: View {
-    let label: String
-    let value: String
-    let tooltip: String
-    @State private var copied = false
-
-    var body: some View {
-        Button {
-            PathOpener.copy(value)
-            withAnimation(.easeOut(duration: 0.15)) { copied = true }
-        } label: {
-            HStack(spacing: 4) {
-                Image(systemName: copied ? "checkmark" : "number")
-                    .font(.system(size: 9.5, weight: .semibold))
-                    .foregroundColor(copied ? ReviewPalette.added : ReviewPalette.dim)
-                    .frame(width: 11)
-                Text(verbatim: label)
-                    .font(.system(size: 11, design: .monospaced))
-                    .foregroundColor(copied ? ReviewPalette.added : Color.white.opacity(0.8))
-            }
-            .padding(.horizontal, 7)
-            .padding(.vertical, 2)
-            .background(RoundedRectangle(cornerRadius: 5).fill(Color.white.opacity(0.06)))
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.genHoverPlain())
-        .instantTooltip(tooltip)
-        .accessibilityLabel(Text(tooltip))
-        .task(id: copied) {
-            guard copied else { return }
-            try? await Task.sleep(for: .milliseconds(1400))
-            withAnimation(.easeOut(duration: 0.2)) { copied = false }
-        }
     }
 }
 

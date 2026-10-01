@@ -23,6 +23,22 @@ import XCTest
 ///   tail --json output>` measures a real one instead, with its session file for the full results.
 @MainActor
 final class SessionTranscriptScrollTests: XCTestCase {
+    /// The wrap preferences live in the standard defaults: every test starts unwrapped (sideways
+    /// blocks, which `Rig.codeBlocks` finds), and the user's values come back afterwards.
+    private static let wrapKeys = ["sessionTranscript.wrapInputs", "sessionTranscript.wrapOutputs"]
+    private var savedWrap: [Any?] = []
+
+    override func setUp() {
+        super.setUp()
+        savedWrap = Self.wrapKeys.map { UserDefaults.standard.object(forKey: $0) }
+        Self.wrapKeys.forEach { UserDefaults.standard.set(false, forKey: $0) }
+    }
+
+    override func tearDown() {
+        zip(Self.wrapKeys, savedWrap).forEach { UserDefaults.standard.set($1, forKey: $0) }
+        super.tearDown()
+    }
+
     // MARK: Behaviour
 
     func testVerticalWheelOverAToolOutputScrollsTheTranscript() throws {
@@ -125,6 +141,137 @@ final class SessionTranscriptScrollTests: XCTestCase {
         try rig.opensWholeOutput(row: row, lines: output, in: table)
     }
 
+    // GenesisTools adaptation: Martin, 2026-09-30: "the Verbose and all other picker items are literally not
+    // doing anything". The level is picked while the transcript is on screen, so each pick must re-measure
+    // the rows it opens or trims, not only the first draw at a level.
+    func testPickingALevelChangesTheRowsOnScreen() throws {
+        let key = "sessionTranscript.verbosity"
+        let saved = UserDefaults.standard.object(forKey: key)
+        defer { UserDefaults.standard.set(saved, forKey: key) }
+        let session = try InventedSession.make(sections: 3)
+        let rig = Rig(session.list(verbosity: .inputs), size: NSSize(width: 700, height: 700))
+        defer { rig.close() }
+        rig.settle(1.5)
+        let list = try XCTUnwrap(rig.transcript, "no transcript scroll view")
+        let table = try XCTUnwrap(list.documentView as? NSTableView, "the transcript is not a table")
+        let rows = session.tableRows()
+        let row = try XCTUnwrap(rows.indices.first { index in
+            guard let id = rows[index], let tool = session.tool(id), tool.name == "Bash" else { return false }
+            return (session.fullOutputLines(id) ?? 0) > 40 && table.rect(ofRow: index).minY > list.contentView.bounds.minY + 40
+        }, "no long Bash call on screen")
+        rig.scrollTranscript(to: table.rect(ofRow: row).minY - 60)
+        rig.settle(0.6)
+        let closed = table.rect(ofRow: row).height
+
+        UserDefaults.standard.set(TranscriptVerbosity.outputs.rawValue, forKey: key)
+        rig.settle(1.5)
+        let trimmed = table.rect(ofRow: row).height
+        XCTAssertGreaterThan(trimmed, closed + 10 * 14, "Inputs + output must open the call to its first ten lines")
+        XCTAssertEqual(table.rect(ofRow: row + 1).minY, table.rect(ofRow: row).maxY, accuracy: 1, "the next row must start where the opened one ends")
+
+        UserDefaults.standard.set(TranscriptVerbosity.verbose.rawValue, forKey: key)
+        rig.settle(1.5)
+        let whole = table.rect(ofRow: row).height
+        XCTAssertGreaterThan(whole, trimmed + 20 * 14, "Verbose must show the whole output")
+
+        UserDefaults.standard.set(TranscriptVerbosity.inputs.rawValue, forKey: key)
+        rig.settle(1.5)
+        XCTAssertEqual(table.rect(ofRow: row).height, closed, accuracy: 1, "Tool inputs must close the call again")
+
+        UserDefaults.standard.set(TranscriptVerbosity.minimal.rawValue, forKey: key)
+        rig.settle(1.5)
+        XCTAssertLessThan(table.numberOfRows, rows.count, "Minimal must fold each run of tool calls into one row")
+    }
+
+    /// The same pick while the reader is at the latest turn, where the transcript opens. The anchor keeps
+    /// the end in view by moving the viewport inside the resize, which stops AppKit re-measuring the rows
+    /// on screen: they kept their closed heights and the pick looked like it did nothing.
+    func testPickingALevelAtTheLatestTurnOpensTheRowsOnScreen() throws {
+        let key = "sessionTranscript.verbosity"
+        let saved = UserDefaults.standard.object(forKey: key)
+        defer { UserDefaults.standard.set(saved, forKey: key) }
+        let session = try InventedSession.make(sections: 3)
+        let rig = Rig(session.list(verbosity: .inputs), size: NSSize(width: 700, height: 700))
+        defer { rig.close() }
+        rig.settle(1.5)
+        let list = try XCTUnwrap(rig.transcript, "no transcript scroll view")
+        let table = try XCTUnwrap(list.documentView as? NSTableView, "the transcript is not a table")
+        let rows = session.tableRows()
+        let visible = list.contentView.bounds
+        XCTAssertLessThan(table.bounds.maxY - visible.maxY, 40, "the transcript must open at its latest turn")
+        let row = try XCTUnwrap(rows.indices.last { index in
+            guard let id = rows[index], session.tool(id)?.name == "Bash", (session.fullOutputLines(id) ?? 0) > 20 else { return false }
+            let rect = table.rect(ofRow: index)
+            return rect.minY > visible.minY && rect.maxY < visible.maxY
+        }, "no long Bash call on screen")
+        let closed = table.rect(ofRow: row).height
+
+        UserDefaults.standard.set(TranscriptVerbosity.outputs.rawValue, forKey: key)
+        rig.settle(1.5)
+        let opened = table.rect(ofRow: row)
+        XCTAssertGreaterThan(opened.height, closed + 10 * 14, "Inputs + output must open the call on screen")
+        XCTAssertEqual(table.rect(ofRow: row + 1).minY, opened.maxY, accuracy: 1, "the next row must start where the opened one ends")
+    }
+
+    /// Wrapping tool inputs and outputs turns the sideways-scrolling blocks into wrapped ones: no block
+    /// keeps its sideways scroller and the transcript grows by the wrapped rows.
+    func testWrappingToolCallsWrapsTheLongLines() throws {
+        let keys = Self.wrapKeys
+        let session = try InventedSession.make(sections: 2)
+        let rig = Rig(session.list(), size: NSSize(width: 560, height: 700))
+        defer { rig.close() }
+        rig.settle(1.5)
+        let list = try XCTUnwrap(rig.transcript, "no transcript scroll view")
+        let table = try XCTUnwrap(list.documentView as? NSTableView, "the transcript is not a table")
+        XCTAssertFalse(rig.codeBlocks(in: table).isEmpty, "the outputs scroll sideways before")
+        let before = table.bounds.height
+
+        keys.forEach { UserDefaults.standard.set(true, forKey: $0) }
+        rig.settle(1.5)
+        XCTAssertTrue(rig.codeBlocks(in: table).isEmpty, "a wrapped block has no sideways scroller")
+        XCTAssertGreaterThan(table.bounds.height, before + 100, "the long lines take more rows")
+    }
+
+    /// A filter chip keeps its width when turned on. A wider chip made the toolbar's ViewThatFits switch
+    /// layout under the pointer, so a second click on the same spot hit another control.
+    func testAFilterChipKeepsItsWidthWhenTurnedOn() {
+        for title in ["All", "Chat", "Tools", "Errors"] {
+            let off = NSHostingView(rootView: FilterChip(title: title, isOn: false) {}).fittingSize
+            let on = NSHostingView(rootView: FilterChip(title: title, isOn: true) {}).fittingSize
+            XCTAssertEqual(on.width, off.width, accuracy: 0.01, "\(title) must not change width")
+        }
+    }
+
+    /// The same pick after turns streamed in at the latest turn, as in a running session.
+    func testPickingALevelAfterTurnsArrivedOpensTheRowsOnScreen() throws {
+        let key = "sessionTranscript.verbosity"
+        let saved = UserDefaults.standard.object(forKey: key)
+        defer { UserDefaults.standard.set(saved, forKey: key) }
+        let session = try InventedSession.make(sections: 3)
+        let rig = Rig(Streaming(session: session), size: NSSize(width: 560, height: 700))
+        defer { rig.close() }
+        rig.settle(4.5)
+        let list = try XCTUnwrap(rig.transcript, "no transcript scroll view")
+        let table = try XCTUnwrap(list.documentView as? NSTableView, "the transcript is not a table")
+        let rows = session.tableRows()
+        XCTAssertEqual(table.numberOfRows, rows.count, "not every streamed row arrived")
+        let visible = list.contentView.bounds
+        let row = try XCTUnwrap(rows.indices.last { index in
+            guard let id = rows[index], session.tool(id)?.name == "Bash", (session.fullOutputLines(id) ?? 0) > 20 else { return false }
+            let rect = table.rect(ofRow: index)
+            return rect.minY > visible.minY && rect.maxY < visible.maxY
+        }, "no long Bash call on screen")
+        let closed = table.rect(ofRow: row).height
+
+        UserDefaults.standard.set(TranscriptVerbosity.outputs.rawValue, forKey: key)
+        rig.settle(1.5)
+        let opened = table.rect(ofRow: row)
+        XCTAssertGreaterThan(opened.height, closed + 10 * 14, "Inputs + output must open the call on screen")
+        XCTAssertEqual(table.rect(ofRow: row + 1).minY, opened.maxY, accuracy: 1, "the next row must start where the opened one ends")
+        let output = try XCTUnwrap(rig.codeBlocks(in: table).last { $0.minY >= opened.minY && $0.minY < opened.maxY }, "no output drawn in the opened row")
+        XCTAssertLessThanOrEqual(output.maxY, opened.maxY + 1, "the output must fit inside its row")
+    }
+
     // MARK: Cost
 
     func testScrollCost() throws {
@@ -215,6 +362,28 @@ final class SessionTranscriptScrollTests: XCTestCase {
         RenderProbe.enabled = false
     }
 
+    // GenesisTools adaptation: what a running session costs while its turns stream in at the latest turn
+    // (the live tail), the case of most of the hub's main-thread stalls (2026-09-30: the table re-measured
+    // its visible rows after each move of the scroll anchor). `SCROLLPERF streaming-<level>` lines.
+    func testStreamingCost() throws {
+        guard ProcessInfo.processInfo.environment["SESSION_SCROLL_PERF"] == "1" else {
+            throw XCTSkip("set SESSION_SCROLL_PERF=1 to measure")
+        }
+        for level in [TranscriptVerbosity.inputs, .outputs] {
+            let session = try InventedSession.make(sections: 12)
+            let rig = Rig(Streaming(session: session, verbosity: level), size: NSSize(width: 900, height: 820))
+            RenderProbe.enabled = true
+            _ = RenderProbe.take()
+            let cpu = rig.mainCPU()
+            rig.settle(3.5)
+            let spent = rig.mainCPU() - cpu
+            let counts = RenderProbe.take().sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }.joined(separator: " ")
+            print("SCROLLPERF streaming-\(level.rawValue) mainCPU=\(String(format: "%.0f", spent))ms over 3.5 s \(counts)")
+            RenderProbe.enabled = false
+            rig.close()
+        }
+    }
+
     private func reportIdle(_ label: String, _ counts: [String: Int], seconds: Double, cpu: Double) {
         let perSecond = counts.sorted { $0.key < $1.key }.map { String(format: "%@=%.2f/s", $0.key, Double($0.value) / seconds) }.joined(separator: " ")
         print("SCROLLPERF \(label) seconds=\(Int(seconds)) mainCPU=\(String(format: "%.2f", cpu / seconds))ms/s \(perSecond.isEmpty ? "nothing counted" : perSecond)")
@@ -261,6 +430,8 @@ final class SessionTranscriptScrollTests: XCTestCase {
 // tool call first running and then finished, the way the hub's live tail brings a working session in.
 private struct Streaming: View {
     let session: InventedSession
+    // GenesisTools adaptation: the level the rows stream in at (`testStreamingCost`).
+    var verbosity: TranscriptVerbosity = .inputs
     @State private var step = 0
 
     private var document: TranscriptDocument {
@@ -290,7 +461,7 @@ private struct Streaming: View {
             loadingEarlier: false,
             windowNote: nil,
             onLoadEarlier: {},
-            preset: TranscriptPreset(verbosity: .inputs),
+            preset: TranscriptPreset(verbosity: verbosity),
             services: session.services
         )
         .environment(\.colorScheme, .dark)

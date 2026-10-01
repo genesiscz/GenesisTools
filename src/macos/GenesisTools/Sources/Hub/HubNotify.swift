@@ -226,7 +226,9 @@ struct HubNotifySettings: View {
             Spacer()
             if store.busy { ProgressView().controlSize(.small) }
         }
-        Text(pollLine(status))
+        LiveAgo(date: HubFormat.date(status.lastPollAt), fallback: "Never polled") { ago in
+            pollLine(status, ago: ago)
+        }
             .font(.system(size: 11))
             .foregroundColor(ReviewPalette.dim)
             .fixedSize(horizontal: false, vertical: true)
@@ -310,8 +312,9 @@ struct HubNotifySettings: View {
         }
     }
 
-    private func pollLine(_ status: HubNotifyStatus) -> String {
-        let last = status.lastPollAt.map { "Last poll \(HubFormat.ago(HubFormat.date($0)))" } ?? "Never polled"
+    /// `ago`: the live "5 min. ago" of the last poll, or "Never polled" (`LiveAgo`'s fallback).
+    private func pollLine(_ status: HubNotifyStatus, ago: String) -> String {
+        let last = HubFormat.date(status.lastPollAt) == nil ? ago : "Last poll \(ago)"
         return "\(last) · \(status.pollsLastHour) polls, \(status.requestsLastHour) host requests in the last hour"
     }
 
@@ -337,23 +340,25 @@ struct HubNotifySettings: View {
             }
             Spacer(minLength: 4)
             if watched {
-                Menu {
-                    ForEach(HubNotifyEvent.allCases) { event in
+                MenuButton(items: {
+                    HubNotifyEvent.allCases.map { event -> MenuButtonItem in
                         let own = repo?.events?[event.rawValue]
                         let effective = own ?? config.events[event.rawValue] ?? false
-                        Button {
+                        return .action("\(event.title)\(own == nil ? "" : " (this repo)")", checked: effective) {
                             store.set(["--repo", path, "--event", "\(event.rawValue)=\(effective ? "off" : "on")"])
-                        } label: {
-                            Label("\(event.title)\(own == nil ? "" : " (this repo)")", systemImage: effective ? "checkmark.square" : "square")
                         }
+                    } + [
+                        .divider,
+                        .action("Follow the global switches", enabled: repo?.events != nil) {
+                            store.set(["--repo", path, "--reset-repo-events"])
+                        },
+                    ]
+                }) {
+                    HStack(spacing: 3) {
+                        Text(repo?.events == nil ? "All events" : "Own events").font(.system(size: 11))
+                        Image(systemName: "chevron.down").font(.system(size: 8, weight: .semibold))
                     }
-                    Divider()
-                    Button("Follow the global switches") { store.set(["--repo", path, "--reset-repo-events"]) }
-                        .disabled(repo?.events == nil)
-                } label: {
-                    Text(repo?.events == nil ? "All events" : "Own events").font(.system(size: 11))
                 }
-                .menuStyle(.borderlessButton)
                 .fixedSize()
                 .instantTooltip("Which events this repo posts; the global switches apply unless you change one here")
             }

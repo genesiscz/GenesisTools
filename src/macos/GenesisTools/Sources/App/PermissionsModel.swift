@@ -143,7 +143,7 @@ final class PermissionsModel: ObservableObject {
     }
 
     func revealApp() {
-        NSWorkspace.shared.activateFileViewerSelecting([Bundle.main.bundleURL])
+        PathOpener.reveal(Bundle.main.bundlePath)
     }
 
     private func finish(_ row: PermissionRow, _ error: Error?) {

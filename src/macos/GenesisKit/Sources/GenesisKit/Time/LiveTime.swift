@@ -1,7 +1,4 @@
-// Copied from /Users/Martin/Tresors/Projects/GenesisPlayground/Genesis/apps/Genesis/Sources/Genesis/UI/LiveTime.swift at 2026-09-25T22:22:02+02:00 at commit hash 09d2ee1252400c65d735e279aecd931735f57e5f
-//
-//  LiveTime.swift
-//  Genesis
+//  From Genesis UI/LiveTime.swift (commit 09d2ee12), the copy both apps used; now the one copy.
 //
 //  A time label that keeps itself current ("active 20s ago", "4m 12s", "in 12m") and nothing
 //  else does. Its clock is its own `TimelineView`, so a tick redraws this label only: no model,
@@ -15,7 +12,7 @@ import Foundation
 import SwiftUI
 
 /// How a live time reads.
-enum LiveTimeStyle: Sendable, Equatable {
+public enum LiveTimeStyle: Sendable, Equatable {
     /// `just now`, `45s ago`, `12m ago`, `7h 14m ago`, `3d ago` (Session Details).
     case ago
     /// `12s`, `4m 12s`, `2h 05m` since the date: a turn that is still running.
@@ -42,15 +39,22 @@ enum LiveTimeStyle: Sendable, Equatable {
 /// The width comes from a hidden copy of the text with every digit a zero, and the digits are
 /// tabular, so a tick that changes only digits changes no size: the views around the label are
 /// not laid out again. Only a new digit or unit (9s to 10s, 59s to 1m) resizes it.
-struct LiveTime: View {
+public struct LiveTime: View {
     let date: Date
-    var style: LiveTimeStyle = .ago
-    var alignment: Alignment = .leading
-    var format: (String) -> String = { $0 }
+    var style: LiveTimeStyle
+    var alignment: Alignment
+    var format: (String) -> String
 
-    var body: some View {
+    public init(date: Date, style: LiveTimeStyle = .ago, alignment: Alignment = .leading, format: @escaping (String) -> String = { $0 }) {
+        self.date = date
+        self.style = style
+        self.alignment = alignment
+        self.format = format
+    }
+
+    public var body: some View {
         TimelineView(LiveTimeSchedule(date: date, style: style)) { context in
-            let _ = RenderProbe.hit("liveTime.tick")
+            let _ = GenesisKit.renderProbe?("liveTime.tick")
             let text = format(LiveTimeFormat.text(style, date, now: context.date) ?? "")
             Text(verbatim: LiveTimeFormat.widthTemplate(text))
                 .hidden()
@@ -65,20 +69,25 @@ struct LiveTime: View {
 }
 
 /// The moments `LiveTime`'s text can change, and no others.
-struct LiveTimeSchedule: TimelineSchedule {
+public struct LiveTimeSchedule: TimelineSchedule {
     let date: Date
     let style: LiveTimeStyle
 
-    func entries(from start: Date, mode: TimelineScheduleMode) -> Entries {
+    public init(date: Date, style: LiveTimeStyle) {
+        self.date = date
+        self.style = style
+    }
+
+    public func entries(from start: Date, mode: TimelineScheduleMode) -> Entries {
         Entries(date: date, style: style, upcoming: start)
     }
 
-    struct Entries: Sequence, IteratorProtocol {
+    public struct Entries: Sequence, IteratorProtocol {
         let date: Date
         let style: LiveTimeStyle
         var upcoming: Date?
 
-        mutating func next() -> Date? {
+        public mutating func next() -> Date? {
             guard let current = upcoming else { return nil }
             upcoming = LiveTimeFormat.nextChange(style, date, after: current)
             return current
@@ -87,9 +96,9 @@ struct LiveTimeSchedule: TimelineSchedule {
 }
 
 /// The wording of every relative time, and when it next changes.
-enum LiveTimeFormat {
+public enum LiveTimeFormat {
     /// `date` in `style` as seen at `now`; nil for `until` once the date has passed.
-    static func text(_ style: LiveTimeStyle, _ date: Date, now: Date) -> String? {
+    public static func text(_ style: LiveTimeStyle, _ date: Date, now: Date) -> String? {
         let age = now.timeIntervalSince(date)
         switch style {
         case .ago: return ago(age)
@@ -104,7 +113,7 @@ enum LiveTimeFormat {
     }
 
     /// The first moment after `now` when `text` can read differently; nil when it never will.
-    static func nextChange(_ style: LiveTimeStyle, _ date: Date, after now: Date) -> Date? {
+    public static func nextChange(_ style: LiveTimeStyle, _ date: Date, after now: Date) -> Date? {
         let age = now.timeIntervalSince(date)
         // The next whole `unit` of age, strictly after now.
         func next(_ unit: TimeInterval) -> Date {
@@ -137,14 +146,14 @@ enum LiveTimeFormat {
     }
 
     /// `text` with every digit a zero: as wide as `text` in tabular digits.
-    static func widthTemplate(_ text: String) -> String {
+    public static func widthTemplate(_ text: String) -> String {
         String(text.map { $0.isNumber ? "0" : $0 })
     }
 
     // MARK: Wordings
 
     /// `just now`, `45s ago`, `12m ago`, `7h 14m ago`, `3d ago`.
-    static func ago(_ seconds: TimeInterval) -> String {
+    public static func ago(_ seconds: TimeInterval) -> String {
         let total = max(0, Int(seconds))
         if total < 10 { return "just now" }
         if total < 60 { return "\(total)s ago" }
@@ -157,7 +166,7 @@ enum LiveTimeFormat {
     }
 
     /// `850ms`, `12s`, `4m 12s`, `2h 05m`.
-    static func elapsed(_ seconds: TimeInterval) -> String {
+    public static func elapsed(_ seconds: TimeInterval) -> String {
         if seconds < 1 { return "\(Int((max(0, seconds) * 1000).rounded()))ms" }
         let total = Int(seconds.rounded())
         if total < 60 { return "\(total)s" }
@@ -166,7 +175,7 @@ enum LiveTimeFormat {
     }
 
     /// `just now`, `4m`, `2h 05m`, `3d`.
-    static func compact(_ seconds: TimeInterval) -> String {
+    public static func compact(_ seconds: TimeInterval) -> String {
         let seconds = max(0, seconds)
         if seconds < 45 { return "just now" }
         if seconds < 3600 { return "\(Int(seconds / 60))m" }
@@ -178,7 +187,7 @@ enum LiveTimeFormat {
     }
 
     /// `in 12m`, `in 2h 05m`; nil when `seconds` (time left) is not positive.
-    static func until(_ seconds: TimeInterval) -> String? {
+    public static func until(_ seconds: TimeInterval) -> String? {
         guard seconds > 0 else { return nil }
         if seconds < 3600 { return "in \(max(1, Int(seconds / 60)))m" }
         let minutes = Int(seconds.truncatingRemainder(dividingBy: 3600) / 60)
@@ -186,7 +195,7 @@ enum LiveTimeFormat {
     }
 
     /// `now`, `5m ago`, `2h ago`, `3d ago`, `2w ago`.
-    static func brief(_ seconds: TimeInterval) -> String {
+    public static func brief(_ seconds: TimeInterval) -> String {
         let s = max(0, Int(seconds))
         if s < 60 { return "now" }
         let m = s / 60
@@ -199,7 +208,7 @@ enum LiveTimeFormat {
     }
 
     /// `now`, `5m`, `2h`, `3d`, `2w`, `1y`.
-    static func briefCompact(_ seconds: TimeInterval) -> String {
+    public static func briefCompact(_ seconds: TimeInterval) -> String {
         let s = max(0, Int(seconds))
         if s < 60 { return "now" }
         let m = s / 60
@@ -213,7 +222,7 @@ enum LiveTimeFormat {
     }
 
     /// `now` under a minute and a half, then `5m ago`, `2h ago`, `2d ago`.
-    static func spelled(_ date: Date, now: Date) -> String {
+    public static func spelled(_ date: Date, now: Date) -> String {
         if now.timeIntervalSince(date) < 90 { return "now" }
         return spelledFormatter.localizedString(for: date, relativeTo: now)
     }

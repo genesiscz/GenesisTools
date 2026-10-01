@@ -1,4 +1,3 @@
-// Copied from /Users/Martin/Tresors/Projects/GenesisPlayground.worktrees/genesis-session-redesign/Genesis/lib/GenesisAIMonitorKit/Sources/GenesisAIMonitorKit/InstantTooltip.swift at 2026-09-24T05:05:15+02:00 at commit hash 786292605d31a39fe795dafe34fb0f8d6f96d0a1
 import AppKit
 import SwiftUI
 
@@ -53,7 +52,7 @@ public final class TooltipPresenter {
 
     func show(owner: UUID, text: String, anchorView: NSView, below: Bool) {
         guard !text.isEmpty, let window = anchorView.window else { return }
-        guard TooltipGuard.allows(owner, in: window) else { return } // GenesisTools adaptation: never over an open menu or popover (Hub/HubTooltipGuard.swift).
+        guard TooltipGuard.allows(owner, in: window) else { return } // never over an open menu or popover (TooltipGuard.swift).
         let anchorScreenRect = window.convertToScreen(anchorView.convert(anchorView.bounds, to: nil))
         // An enclosing control (a whole row) must not replace the tooltip of
         // a control inside it. Both sensors get `mouseEntered` together when
@@ -254,7 +253,7 @@ private struct TooltipHoverSensor: NSViewRepresentable {
 
         override func hitTest(_ point: NSPoint) -> NSView? { nil } // clicks pass through
 
-        // GenesisTools adaptation: the sensor is created under the pointer (see `InstantTooltip`), and a
+        // the sensor is created under the pointer (see `InstantTooltip`), and a
         // tracking area added there never reports the entry. Arriving counts as entering, leaving as exiting.
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
@@ -292,7 +291,7 @@ private struct TooltipHoverSensor: NSViewRepresentable {
         }
 
         private func entered() {
-            TooltipGuard.entered(tooltipToken, view: self) // GenesisTools adaptation: a click on this control mutes its bubble (Hub/HubTooltipGuard.swift).
+            TooltipGuard.entered(tooltipToken, view: self) // a click on this control mutes its bubble (TooltipGuard.swift).
             pending?.cancel()
             let work = DispatchWorkItem { [weak self] in self?.present() }
             pending = work
@@ -300,7 +299,7 @@ private struct TooltipHoverSensor: NSViewRepresentable {
         }
 
         private func exited() {
-            TooltipGuard.exited(tooltipToken) // GenesisTools adaptation: leaving the control unmutes it (Hub/HubTooltipGuard.swift).
+            TooltipGuard.exited(tooltipToken) // leaving the control unmutes it (TooltipGuard.swift).
             pending?.cancel()
             TooltipPresenter.shared.hide(owner: tooltipToken)
         }
@@ -340,7 +339,7 @@ public struct InstantTooltip: ViewModifier {
         self.below = below
     }
 
-    // GenesisTools adaptation: the sensor (an NSView) exists only while the pointer is over the view.
+    // the sensor (an NSView) exists only while the pointer is over the view.
     // Every NSViewRepresentable is a platform responder, and SwiftUI walks all of them whenever the
     // accessibility focus updates: folding a PR group with #424 open cost 900 ms of main thread, 440 ms
     // without the sensors (2026-09-24, `HubMainBusy` "groups.prs.repos.toggle").
@@ -359,8 +358,8 @@ public struct InstantTooltip: ViewModifier {
     }
 }
 
-extension View {
-    /// Instant hover label for kit surfaces (usage popup, session rows).
+public extension View {
+    /// The instant hover label every control in both apps uses (a floating panel, no delay).
     func instantTooltip(_ text: String, below: Bool = true) -> some View {
         modifier(InstantTooltip(text: text, below: below))
     }

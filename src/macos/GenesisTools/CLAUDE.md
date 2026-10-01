@@ -4,24 +4,34 @@ Loaded automatically when you work under `src/macos/GenesisTools/`. The root CLA
 applies: after ANY edit to `Sources/**`, `web/**` or `Info.plist`, run `bun run app` (build, sign,
 install, reap stale faces). Swift UI you have not seen rendered is not done.
 
-## Use the shared components (Sources/Hub/HubComponents.swift), never hand-roll these
+## Use the shared components (GenesisKit + Sources/Hub/HubComponents.swift), never hand-roll these
+
+The components both apps use live in **`../GenesisKit`** (`src/macos/GenesisKit`), a SwiftPM package Genesis.app
+depends on too; its README lists them. That is `IconButton`, `.instantTooltip`, the `.genHover*` button styles,
+`.rowButton` / `RowButtonStyle`, `PathLabel`, `PathActionsMenu`, `PathOpener`, `Clipboard` / `CopyToast`, `CopyChip`,
+`NoticePill`, `LiveAgo` / `LiveTime`, `MenuButton`, `ProviderBadge`, `Badge` / `CountBadge`, `GhostButton`,
+`EmptyState`, `InfoStrip`, `.kicker` and the cmux picker (`CmuxTree`, `CmuxTargetPicker`, `CmuxSessionPanel`).
+Change them there, never in a copy here: a second copy of a modifier or button style (`.instantTooltip`,
+`.genHoverPlain()`) makes every call to it ambiguous. `Hub/GenesisKitHost.swift` re-exports the package and gives it
+this app's log, cmux and panel find. Hub-only pieces (`ExternalLink`, `TitlebarHeader`, `GroupHeader`, …) stay in
+Hub/HubComponents.swift.
 
 | Need | Use | Never |
 |---|---|---|
 | An icon-only button | `IconButton(systemName:tooltip:action:)` | a bare `Button { Image(...) }` without a tooltip |
-| Any other control that is not self-explanatory | `.instantTooltip("…")` (Hub/Stolen/UI/InstantTooltip.swift) | `.help(...)` alone: it shows after a long delay and is easy to miss |
+| Any other control that is not self-explanatory | `.instantTooltip("…")` (GenesisKit) | `.help(...)` alone: it shows after a long delay and is easy to miss |
 | A link to a web page (repo, branch, PR, commit) | `ExternalLink(text:url:)` (opens in Brave, shows the ↗ glyph) | plain text that happens to be a URL |
 | Repo / branch web URLs, the branch's PR/MR | `RepoFactsStore.shared.facts(for: path, pr:)` (fed by `tools hub repo --json`) + `PullRequestLink` | parsing `git remote` in Swift, or any `Process` in a view body |
-| A file or folder path | `PathLabel(path:)` (menu: Finder, Cursor, cmux, copy; plus copy / reveal / Cursor icons) | a bare `Text(path)` |
+| A file or folder path | `PathLabel(path:line:title:)`: a click opens by kind (`PathOpener.primary`: folder in Finder, file in Cursor at `line`), right-click lists Finder, reveal, Cursor, cmux, copy (`PathActionsMenu`), plus copy / reveal / Cursor icons | a bare `Text(path)`, `NSWorkspace.open` on a folder (LaunchServices handed folders to QuickTime), `activateFileViewerSelecting` by hand |
 | Open a file at a line | `PathOpener.cursor(path, line:)` | `open -a` without the line |
 | A side panel | `ResizableSidePanel(key:edge:title:minWidth:maxWidth:autoCollapse:fitWidth:)` (Hub/HubPanels.swift: grip on hover, release below the minimum collapses to a rail, width saved on release only; during a drag the layout keeps the start width and the panel draws over its neighbour, one reflow on release; the parent passes the room it has as `maxWidth` and `autoCollapse` when there is none, which shows the rail and opens the panel as a drawer; `fitWidth` opens it at its content's width, as the Files list does with `FileListFit`, until the reader drags it in that window) | a fixed `.frame(width:)` sidebar, a width written to `@AppStorage` on every drag step, or moving the neighbouring panes per step (each move of a focusable list makes SwiftUI rebuild the key view loop over every transcript row: 82 ms/step) |
 | A heavy pane (transcript, diff) | `.freezesWidthWhileResizing()`: keeps its size while `HubLiveResize` is active (panel drag, window live resize, pane divider) and reflows once at the end. `heavy: false` for a pane that should follow a pane-divider drag live (everything but the transcript list; frozen, it left a dark gap beside the divider) | letting a `List` re-measure every row per resize step (395 ms/step measured), or ending a divider drag on a local mouse-up monitor (NSSplitView's tracking loop swallows it; `HubLiveResize` polls the button instead) |
-| A pull-down menu in a header or toolbar | `MenuButton(items:label:)` (Hub/HubMenuButton.swift): a drawn label, the NSMenu is built at the click | a SwiftUI `Menu` (an NSPopUpButton) or any other AppKit control inside a `ViewThatFits`: it builds each option's platform views again for every measurement, a dozen pop-up buttons per step of a divider drag in the review header (bench `split` busy p50 46.7 → 23.5 ms, 2026-09-26) |
-| A list row that acts as a button | `.rowButton(cornerRadius:)` → `HubRowButtonStyle`: soft fill in the row's own frame; keep gaps and insets OUTSIDE the button so hover box = selection box | `genHoverRow(accent: .white)` (45 % white outline) or padding inside the button |
+| A pull-down menu in a header or toolbar | `MenuButton(items:label:)` (GenesisKit): a drawn label, the NSMenu is built at the click | a SwiftUI `Menu` (an NSPopUpButton) or any other AppKit control inside a `ViewThatFits`: it builds each option's platform views again for every measurement, a dozen pop-up buttons per step of a divider drag in the review header (bench `split` busy p50 46.7 → 23.5 ms, 2026-09-26) |
+| A list row that acts as a button | `.rowButton(cornerRadius:)` → `RowButtonStyle` (GenesisKit): soft fill in the row's own frame; keep gaps and insets OUTSIDE the button so hover box = selection box | `genHoverRow(accent: .white)` (45 % white outline) or padding inside the button |
 | A background | `.hubSurface(.chrome / .content / .bar)`: opaque normally, translucent in glass mode (`HubGlass`, ⌘⇧G) | `ReviewPalette.sidebar` / `.background` directly |
 | A sidebar group header | `GroupHeader` + `GroupPrefs` (collapse, pin, move up/down, persisted) | an uppercase static label |
 | A status message | `NoticePill` (fades, error stays) | a raw colored `Text` line |
-| A relative time on screen ("5 min. ago", "active 20s ago") | `LiveAgo(date:)` (HubComponents.swift) or `LiveTime(date:style:)` (Hub/Stolen/UI/LiveTime.swift, shared with Genesis): the label keeps its own clock, nothing above it re-renders per tick | `HubFormat.ago` in a body (formats once and goes stale), or a `Timer` / `TimelineView` above the label (re-renders the whole row or list per tick) |
+| A relative time on screen ("5 min. ago", "active 20s ago") | `LiveAgo(date:)` or `LiveTime(date:style:)` (GenesisKit): the label keeps its own clock, nothing above it re-renders per tick | `HubFormat.ago` in a body (formats once and goes stale), or a `Timer` / `TimelineView` above the label (re-renders the whole row or list per tick) |
 | Find inside a panel (⌘F) | Hub/HubPanelFind.swift: `@State` `PanelFindModel`, `PanelFindBar` under the header as its own row above the scroll view, `.panelFind(find, revision:rows:)` on the root, `.findRow(id)` per row, `FindText(text, field:)` for shown text (`MarkdownContentView` + `.findField(key)` for markdown). A pane with its own find registers with `.panelFindNative(scope)`, an overlay that owns the keyboard with `.panelFindModal()` | a bar in `.safeAreaInset(edge: .top)` (selectable text draws through it), a SwiftUI `.keyboardShortcut("f")` button or a local key monitor per view: `PanelFindRouter` is the one ⌘F / ⌘G / ⇧⌘G / Esc owner and sends the key to the panel of the last click |
 | A main view's header (every hub mode, and any new one) | `TitlebarHeader { row } details: { rows }` (Hub/HubComponents.swift): the first row goes into the title bar row, the rest under it, then the hairline; plain title text in the row gets `.titlebarLabel()` so a double-click on it zooms | a header with `.padding(.top, 34)` under the title bar: every hub mode had one, an empty band the `--snapshot` audit now names ("an empty band N pt tall under the title bar") |
 | A window whose content runs under the title bar (`.fullSizeContentView`, transparent title bar) | `.titlebarZone()` on the window's root view, `.titlebarBackground(fill)` for any fill that paints the strip (`.hubSurface` already does), `.titlebarRow()` for a row of controls placed in the strip (Sources/WindowTitlebar.swift) | a view, or a `.background(… .ignoresSafeArea(edges: .top))`, over the title bar without them: the double-click never reaches the window, so it does not zoom |
@@ -29,7 +39,7 @@ install, reap stale faces). Swift UI you have not seen rendered is not done.
 
 **Every button has a hover effect.** Icon buttons: `IconButton` (uses `.genHoverIcon()`); text-like buttons and
 links: `.buttonStyle(.genHoverPlain())`; list rows and menu rows: `.buttonStyle(.genHoverRow())` (all from
-Hub/Stolen/UI/GenHoverButton.swift). Never `.buttonStyle(.borderless)` on something clickable.
+GenesisKit). Never `.buttonStyle(.borderless)` on something clickable.
 
 **Every button that shows only an icon has a tooltip.** Check before you finish: `rg -n 'Image\(systemName' Sources | rg -v 'IconButton|instantTooltip'` and look at each hit.
 
@@ -86,7 +96,9 @@ scrolls at once, as `TranscriptScrollAnchor` does to stay still) stops AppKit re
 screen: their height listener is gone and `noteHeightOfRows` returns the cached height. A row that grows
 later (an opened tool call) keeps its old height and draws over the rows below; with the live tail every
 row of a running session did it (2026-09-28). An insert without that move is fine (measured). Such a list
-needs `TranscriptScrollAnchor.remeasureVisibleRows` after each change of the row count.
+needs `TranscriptScrollAnchor.remeasureVisibleRows` after each such move, and that re-measure is expensive
+(about 230 ms per call, 2026-09-30). So move inside the resize only when the rows on screen would jump
+otherwise (a prepend under a hold); follow appends at the latest turn one turn later (`scheduleFollow`).
 
 ## Look
 
@@ -99,7 +111,9 @@ needs `TranscriptScrollAnchor.remeasureVisibleRows` after each change of the row
 Files copied from GenesisPlayground/Genesis carry a `// Copied from <path> at <time> at commit hash <sha>` header.
 Keep them verbatim so `/steal-code --reconcile` can three-way merge upstream changes. Any local change is a
 marked adaptation (`// GenesisTools adaptation: …`). Missing Genesis types go in `Hub/StolenShims.swift` or
-`Hub/MarkdownShim.swift`, not into the stolen files.
+`Hub/MarkdownShim.swift`, not into the stolen files. The UI pieces both apps use (hover styles, tooltip, LiveTime,
+MenuButton) are no longer copied: they live once in `../GenesisKit`. A reconcile that brings a copy of one back must
+drop it again.
 
 ## Verify without a screen
 

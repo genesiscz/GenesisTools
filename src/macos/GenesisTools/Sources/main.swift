@@ -15,6 +15,15 @@ import Foundation
 let arguments = Array(CommandLine.arguments.dropFirst())
 let wantsWindow = arguments.isEmpty || arguments[0] == "--window" || arguments[0].hasPrefix("-psn_")
 
+// Every face except the launcher: Launch Services starts them with launchd's bare environment, and
+// their `tools` children then miss glab, gh, bun and the login shell's CA bundle. The window faces
+// take the login shell's values; the short-lived ones (--rpc, --mic) only the usual PATH directories.
+// The launcher passes its caller's environment through untouched.
+if wantsWindow || arguments[0].hasPrefix("-") || arguments[0].contains("://") {
+    let windowFace = wantsWindow || arguments[0] == "--hub" || arguments[0] == "--review"
+    ChildEnvironment.install(loginShell: windowFace, refresh: arguments.first == "--hub")
+}
+
 if wantsWindow {
     // Only an explicit --window is certainly a request for the window. A bare launch may instead be
     // macOS relaunching this bundle to deliver a notification click, which looks identical here.

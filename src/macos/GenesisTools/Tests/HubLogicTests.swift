@@ -402,14 +402,21 @@ final class HubLogicTests: XCTestCase {
         XCTAssertEqual(bash.block?.lines.count, 33, "the whole output, not the envelope's clipped one")
         XCTAssertEqual(bash.block?.lines.last?.text, "line 33")
         XCTAssertEqual(bash.input?.lines.map(\.text).joined(separator: "\n"), command, "the whole command, line for line")
+        // Martin, 2026-09-30: the header held the first line after the paren and the next lines under it,
+        // then the numbered input repeated them all. The header keeps the first line and counts the rest.
+        XCTAssertEqual(bash.argument, "cd /tmp/atlas && swift build 2>&1 \\", "only the first line goes in the header")
+        XCTAssertEqual(bash.moreInputLines, 2)
+        XCTAssertTrue(bash.inputRepeatsArgument, "an open call shows the command once, in the numbered input")
 
         let short = try present(line("short1", "Bash", input: "git status --short", result: "M a.swift"))
         XCTAssertNil(short.input, "a one-line command is shown whole in the header, not repeated below it")
+        XCTAssertEqual(short.moreInputLines, 0)
 
         let agent = try present(line("agent1", "Agent", input: "List long signatures", result: "Done."))
         let arguments = try XCTUnwrap(agent.input?.lines.map(\.text).joined(separator: "\n"), "an Agent call opens to all of its input")
         XCTAssertTrue(arguments.contains(prompt), "the prompt the preview left out")
         XCTAssertTrue(arguments.contains("\"subagent_type\" : \"Explore\""), arguments)
+        XCTAssertFalse(agent.inputRepeatsArgument, "an Agent's header names its description, which its JSON input does not repeat")
     }
 
     /// A call the live tail brought in after the session file was scanned still opens to its whole
@@ -533,6 +540,48 @@ final class HubLogicTests: XCTestCase {
             lines(CodeBlockRenderer.attributed(block, limit: 10, highlight: false, drawn: 200).body).count, 10,
             "a limit below the first draw draws every shown line"
         )
+    }
+
+    /// Wrapped code draws one row per line, so the rendered columns split into matching lines, empty
+    /// lines and a line's colours kept.
+    func testWrappedCodeSplitsTheColumnsLineForLine() {
+        let block = CodeBlockBuilder.numbered("kill -TERM -58225\n\nsleep 2", language: .shell)
+        let rendered = CodeBlockRenderer.attributed(block, limit: nil, highlight: true)
+        let bodies = CodeBlockRenderer.lines(of: rendered.body)
+        let gutters = CodeBlockRenderer.lines(of: rendered.gutter)
+
+        XCTAssertEqual(bodies.map { String($0.characters) }, ["kill -TERM -58225", "", "sleep 2"])
+        XCTAssertEqual(gutters.map { String($0.characters) }, ["1", "2", "3"])
+        XCTAssertEqual(bodies[0].runs.count, rendered.body[rendered.body.range(of: "kill -TERM -58225")!].runs.count, "the line keeps its colours")
+    }
+
+    /// Wrap mode splits only the first lines into rows; the rest comes back as one block.
+    func testWrappedCodeSplitsOnlyTheFirstLinesIntoRows() {
+        let text = AttributedString((1...5).map { "line \($0)" }.joined(separator: "\n"))
+        let split = CodeBlockRenderer.lines(of: text, limit: 2)
+        XCTAssertEqual(split.map { String($0.characters) }, ["line 1", "line 2"])
+
+        let short = CodeBlockRenderer.lines(of: AttributedString("a\nb"), limit: 2)
+        XCTAssertEqual(short.map { String($0.characters) }, ["a", "b"])
+    }
+
+    /// The rest past the first rows is built with the block: a diff line keeps its mark, no line numbers.
+    func testTheWrapTailKeepsDiffMarksAndLeavesNumbersOut() {
+        let limit = CodeBlockRenderer.firstDrawLimit
+        let diff = CodeBlock(
+            lines: (1...(limit + 2)).map { CodeLine(number: $0, mark: $0 == limit + 1 ? .added : $0 == limit + 2 ? .removed : .context, text: "l\($0)") },
+            language: .plain
+        )
+        let rendered = CodeBlockRenderer.attributed(diff, limit: nil, highlight: false)
+        XCTAssertEqual(rendered.wrapTail.map { String($0.characters).replacingOccurrences(of: " ", with: "") }, "+l\(limit + 1)\n-l\(limit + 2)")
+
+        let plain = CodeBlockBuilder.numbered((1...(limit + 2)).map { "c\($0)" }.joined(separator: "\n"), language: .plain)
+        let numbered = CodeBlockRenderer.attributed(plain, limit: nil, highlight: false)
+        XCTAssertEqual(numbered.wrapTail.map { String($0.characters) }, "c\(limit + 1)\nc\(limit + 2)", "copying the tail copies only the code")
+        XCTAssertNil(CodeBlockRenderer.attributed(CodeBlockBuilder.numbered("a\nb", language: .plain), limit: nil, highlight: false).wrapTail)
+
+        let firstDraw = CodeBlockRenderer.attributed(plain, limit: nil, highlight: false, drawn: limit)
+        XCTAssertEqual(firstDraw.wrapTail.map { String($0.characters) }, "\n", "the first draw keeps the tail's height, blank")
     }
 
     /// The code block's cache key comes from this fingerprint, hashed once when the block is made.

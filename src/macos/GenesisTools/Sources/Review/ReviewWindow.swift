@@ -19,6 +19,7 @@ func runReview(_ args: [String]) -> Never {
     var options = DiffViewOptions()
     var activate = true
     var demo = ReviewSnapshotDemo()
+    var settings: [String: Any] = [:]
     var index = 0
     while index < args.count {
         let value = index + 1 < args.count ? args[index + 1] : nil
@@ -38,10 +39,23 @@ func runReview(_ args: [String]) -> Never {
         case "--proposal": proposalPath = value; index += 1
         case "--no-activate": activate = false
         case "--style": options.diffStyle = DiffViewOptions.Style(rawValue: value ?? "") ?? .split; index += 1
+        case "--set":
+            // Snapshot runs only, on the scratch settings: `--set panel.review.context.collapsed=false`.
+            let pair = (value ?? "").split(separator: "=", maxSplits: 1).map(String.init)
+            if pair.count == 2 {
+                settings[pair[0]] = ["true", "false", "1", "0"].contains(pair[1]) ? (pair[1] == "true" || pair[1] == "1") : pair[1]
+            }
+            index += 1
         default: break
         }
         index += 1
     }
+
+    if snapshotPath != nil {
+        HubDefaults.isolate()
+        for (key, value) in settings { HubDefaults.store.set(value, forKey: key) }
+    }
+    ReviewContextPanel.registerDefaults()
 
     let app = NSApplication.shared
     // A snapshot run must never become the active app: it would take the keystrokes of whoever is typing.
@@ -81,7 +95,7 @@ func runReview(_ args: [String]) -> Never {
     window.appearance = NSAppearance(named: .darkAqua)
     window.backgroundColor = ReviewPalette.background
     // The title bar strip zooms on a double-click and drags the window (WindowTitlebar.swift).
-    window.contentView = NSHostingView(rootView: ReviewRootView(model: model).titlebarZone())
+    window.contentView = NSHostingView(rootView: ReviewRootView(model: model).defaultAppStorage(HubDefaults.store).titlebarZone())
     window.center()
     window.setFrameAutosaveName("GenesisToolsReview")
     delegate.window = window
@@ -123,6 +137,17 @@ private final class ReviewAppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         true
     }
+
+    /// Every face shares one Dock tile: a click that lands here goes on to the running hub too.
+    @MainActor
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        AppDock.reopenFromOtherFace()
+    }
+
+    @MainActor
+    func applicationDockMenu(_ sender: NSApplication) -> NSMenu? {
+        AppDock.menu()
+    }
 }
 
 enum ReviewPalette {
@@ -149,7 +174,8 @@ enum ReviewPalette {
 
 final class ReviewModel: ObservableObject {
     let repo: URL
-    let renderer: DiffRenderer
+    private let makeRenderer: () -> DiffRenderer
+    private var builtRenderer: DiffRenderer?
     let comments: ReviewCommentStore
     /// The agent session this review is for; "Send to agent" types into its cmux pane.
     let session: String?
@@ -239,17 +265,29 @@ final class ReviewModel: ObservableObject {
     private var renderStart: CFAbsoluteTime?
     private let createdAt = CFAbsoluteTimeGetCurrent()
 
-    init(repo: URL, options: DiffViewOptions, session: String? = nil, renderer: DiffRenderer = PierreWebDiffRenderer()) {
+    init(repo: URL, options: DiffViewOptions, session: String? = nil, renderer: @autoclosure @escaping () -> DiffRenderer = PierreWebDiffRenderer()) {
         self.repo = repo
         self.options = options
         self.session = session
-        self.renderer = renderer
+        makeRenderer = renderer
         comments = ReviewCommentStore(repo: repo)
         roots = [ReviewRoot(folder: repo.path, repo: repo)]
-        renderer.onEvent = { [weak self] event in
+    }
+
+    /// Built on first use, not in `init`: the hub makes a review for every session it selects, even
+    /// with only the transcript open, and the first WKWebView of a process also starts WebKit's
+    /// content process (636 ms on the main thread per select, hang stacks of 2026-09-28).
+    var renderer: DiffRenderer {
+        if let builtRenderer {
+            return builtRenderer
+        }
+        let made = HubPerf.measure("review.renderer.make") { makeRenderer() }
+        made.onEvent = { [weak self] event in
             self?.handle(event)
         }
-        renderer.apply(options)
+        made.apply(options)
+        builtRenderer = made
+        return made
     }
 
     /// What an empty diff says: a turns scope waits for the next turn instead of calling itself clean.
@@ -299,7 +337,8 @@ final class ReviewModel: ObservableObject {
         watchers = roots.filter(\.shown).compactMap { root in
             root.repo.map { repo in
                 RepoWatcher(root: repo) { [weak self] in
-                    self?.reload(folders: [root.folder])
+                    guard let self, self.scope.followsWorkingTree else { return }
+                    self.reload(folders: [root.folder])
                 }
             }
         }
@@ -1388,19 +1427,28 @@ struct ReviewRootView: View {
     /// The file list opens as wide as its widest row (`FileListFit`), measured once per review; a
     /// saved width from an earlier session opened it at 560 pt for rows that needed about 260.
     @State private var listFit: CGFloat?
+    /// The width left of the context panel: the file list's room is a share of it.
+    @State private var innerWidth: CGFloat = 0
+    /// The standalone window's left panel (Review/ReviewContextPanel.swift), folded by default. The
+    /// hub shows its own transcript and PR panes around an embedded review, so it gets none.
+    @AppStorage(ReviewContextPanel.collapsedKey, store: HubDefaults.store) private var contextCollapsed = true
+    private static let contextFraction: CGFloat = 0.4
+    private static let contextMinWidth: CGFloat = 320
+
+    private var showsContext: Bool { !model.embedded }
+    private var contextSqueezed: Bool { width > 0 && width * Self.contextFraction < Self.contextMinWidth }
 
     var body: some View {
-        let room = width * Self.listFraction
-        SideSplit(panelEdge: .trailing, maxFraction: Self.listFraction) {
-            diffColumn
-                .freezesWidthWhileResizing(heavy: false)
-            if showsFileList {
-                ResizableSidePanel(key: "review.files", edge: .trailing, title: "Files", defaultWidth: 320,
-                                   minWidth: Self.listMinWidth, maxWidth: max(Self.listMinWidth, room),
-                                   autoCollapse: width > 0 && room < Self.listMinWidth, fitWidth: listFit) {
-                    FileSidebar(model: model)
+        SideSplit(panelEdge: .leading, maxFraction: Self.contextFraction) {
+            if showsContext {
+                ResizableSidePanel(key: ReviewContextPanel.key, edge: .leading, title: "Context", defaultWidth: 420,
+                                   minWidth: Self.contextMinWidth, maxWidth: max(Self.contextMinWidth, width * Self.contextFraction),
+                                   autoCollapse: contextSqueezed) {
+                    ReviewContextPanelView(model: model)
                 }
             }
+            filesSplit
+                .onGeometryChange(for: CGFloat.self, of: \.size.width) { innerWidth = $0 }
         }
         .hubSurface(.content)
         .preferredColorScheme(.dark)
@@ -1424,9 +1472,31 @@ struct ReviewRootView: View {
         .id(ObjectIdentifier(model))
     }
 
+    private var filesSplit: some View {
+        let room = innerWidth * Self.listFraction
+        return SideSplit(panelEdge: .trailing, maxFraction: Self.listFraction) {
+            diffColumn
+                .freezesWidthWhileResizing(heavy: false)
+            if showsFileList {
+                ResizableSidePanel(key: "review.files", edge: .trailing, title: "Files", defaultWidth: 320,
+                                   minWidth: Self.listMinWidth, maxWidth: max(Self.listMinWidth, room),
+                                   autoCollapse: innerWidth > 0 && room < Self.listMinWidth, fitWidth: listFit) {
+                    FileSidebar(model: model)
+                }
+            }
+        }
+    }
+
+    /// The header's first row sits in the title bar: clear of the traffic lights when the diff starts
+    /// at the window's edge or beside the folded panel's rail, flush beside the open panel.
+    private var headerInset: CGFloat {
+        guard showsContext else { return 78 }
+        return contextCollapsed || contextSqueezed ? 78 - ResizableSidePanel<EmptyView>.railWidth - 1 : 14
+    }
+
     private var diffColumn: some View {
             VStack(spacing: 0) {
-                ReviewHeader(model: model)
+                ReviewHeader(model: model, leadingInset: headerInset)
                 if let proposal = model.proposal {
                     ProposalBanner(model: model, proposal: proposal)
                 }
@@ -1472,6 +1542,8 @@ struct ReviewRootView: View {
 
 private struct ReviewHeader: View {
     @ObservedObject var model: ReviewModel
+    /// Standalone: room for the traffic lights when the header starts at the window's left edge.
+    var leadingInset: CGFloat = 78
     @ObservedObject private var repos = RepoFactsStore.shared
 
     var body: some View {
@@ -1499,7 +1571,7 @@ private struct ReviewHeader: View {
         .clipped()
         .frame(height: 44)
         .buttonStyle(.genHoverPlain())
-        .padding(.leading, model.embedded ? 14 : 78)
+        .padding(.leading, model.embedded ? 14 : leadingInset)
         .padding(.trailing, 14)
         .overlay(Rectangle().fill(ReviewPalette.hairline).frame(height: 1), alignment: .bottom)
         .onGeometryChange(for: Int.self, of: { Int($0.size.height.rounded()) }) { HubBench.note("review.header.height", $0) }
@@ -2373,7 +2445,7 @@ private struct FileRow: View {
         .padding(.leading, 6 + CGFloat(depth) * 14)
         .padding(.trailing, 6)
         .frame(height: 26)
-        // Same shape as the row hover (HubRowButtonStyle, radius 6, same inset): one box, not two.
+        // Same shape as the row hover (RowButtonStyle, radius 6, same inset): one box, not two.
         .background(
             RoundedRectangle(cornerRadius: 6, style: .continuous)
                 .fill(selected ? ReviewPalette.renamed.opacity(0.16) : Color.clear)

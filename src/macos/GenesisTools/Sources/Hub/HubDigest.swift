@@ -194,7 +194,7 @@ final class HubDigestModel: ObservableObject {
                 let written = try await HubDailyCLI.decode(HubDigest.self, ["digest", "--json", "--date", day, "--export"], span: "digest.export")
                 if let path = written.exported {
                     notice = "Exported \(path)"
-                    NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
+                    PathOpener.reveal(path)
                 }
             } catch {
                 notice = "Export failed: \(error)"
@@ -350,7 +350,7 @@ struct HubDigestPanel: View {
                     }
                     ForEach(repo.paths, id: \.self) { path in
                         HStack(spacing: 6) {
-                            Text(verbatim: path.path).font(.system(size: 11, design: .monospaced)).foregroundColor(Color.white.opacity(0.7)).lineLimit(1).truncationMode(.middle)
+                            PathLabel(path: (repo.repo as NSString).appendingPathComponent(path.path), showIcons: false, title: path.path, color: Color.white.opacity(0.7))
                             Spacer(minLength: 8)
                             Text(verbatim: "+\(path.added) −\(path.removed)").font(.system(size: 10.5, design: .monospaced)).foregroundColor(ReviewPalette.dim)
                         }

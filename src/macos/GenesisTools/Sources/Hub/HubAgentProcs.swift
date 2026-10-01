@@ -466,12 +466,7 @@ struct AgentProcsRow: View {
                             .font(.system(size: 12.5, weight: .medium))
                             .lineLimit(1)
                             .truncationMode(.middle)
-                        FindText(group.label, field: "label")
-                            .font(.system(size: 10.5, weight: .medium))
-                            .foregroundColor(ReviewPalette.dim)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 1)
-                            .background(Capsule().fill(Color.white.opacity(0.06)))
+                        Badge(group.label, findField: "label")
                         Text(verbatim: status)
                             .font(.system(size: 10.5, weight: .semibold))
                             .foregroundColor(tone)
@@ -485,7 +480,7 @@ struct AgentProcsRow: View {
                         Text(verbatim: group.parent.pid == 1 ? "parent launchd" : "parent \(group.parent.pid) \(group.parent.label ?? "")")
                         if let cwd = group.cwd {
                             Text(verbatim: "·")
-                            Text(verbatim: PathLabel.display(cwd)).lineLimit(1).truncationMode(.middle)
+                            PathLabel(path: cwd, font: .system(size: 10.5, design: .monospaced), showIcons: false)
                         }
                     }
                     .font(.system(size: 10.5, design: .monospaced))
@@ -608,13 +603,7 @@ struct AgentProcsEntry: View {
                 .font(.system(size: 12.5, weight: selected ? .semibold : .regular))
             Spacer(minLength: 4)
             if orphans > 0 {
-                Text(verbatim: "\(orphans)")
-                    .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
-                    .foregroundColor(ReviewPalette.removed)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 1)
-                    .background(Capsule().fill(Color.white.opacity(0.08)))
-                    .instantTooltip("\(orphans) orphaned process trees (an agent, MCP server or tool shell whose parent is gone)")
+                CountBadge(orphans, tooltip: "\(orphans) orphaned process trees (an agent, MCP server or tool shell whose parent is gone)", color: ReviewPalette.removed)
             }
         }
         .padding(.horizontal, 10)

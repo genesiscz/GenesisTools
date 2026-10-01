@@ -771,22 +771,18 @@ struct InboxListView: View {
         let rows = inbox.sorted(sort, filter: model.filter)
         VStack(spacing: 0) {
             HStack(spacing: 6) {
-                Menu {
-                    ForEach(InboxSort.allCases, id: \.self) { option in
-                        Button {
+                MenuButton(items: {
+                    InboxSort.allCases.map { option in
+                        .action(option.title, checked: option == sort) {
                             HubMainBusy.measure("inbox.sort")
                             sortKey = option.rawValue
-                        } label: {
-                            if option == sort { Label(option.title, systemImage: "checkmark") } else { Text(option.title) }
                         }
                     }
-                } label: {
+                }) {
                     Label(sort.title, systemImage: "arrow.up.arrow.down")
                         .font(.system(size: 11.5))
                         .foregroundColor(ReviewPalette.dim)
                 }
-                .menuStyle(.borderlessButton)
-                .menuIndicator(.hidden)
                 .fixedSize()
                 .instantTooltip("Order the waiting sessions")
                 Spacer()
@@ -851,7 +847,7 @@ private struct InboxSessionRow: View {
                     .background(Capsule().fill(InboxStyle.accent))
                     .instantTooltip(session.waiting == 1 ? "1 answer waiting" : "\(session.waiting) answers waiting")
             } else {
-                InboxTag(text: "queued", color: ReviewPalette.modified)
+                Badge("queued", color: ReviewPalette.modified, look: .filled)
                     .instantTooltip("Answered; the session's next prompt receives it. Nothing waits for you here.")
             }
         }
@@ -1055,7 +1051,7 @@ private struct InboxSessionSection: View {
                     }
                 }
             }
-            if session.provider == "claude" {
+            if let provider = session.provider, ["claude", "codex", "grok"].contains(provider) {
                 IconButton(systemName: "terminal", tooltip: "Show this session's cmux pane") {
                     inbox.focusPane(session) { model.notice = $0 }
                 }
@@ -1284,11 +1280,11 @@ struct InboxDecisionCard: View {
                 .lineLimit(3)
                 .textSelection(.enabled)
             if item.blocking == true && item.isOpen {
-                InboxTag(text: "blocking", color: ReviewPalette.removed)
+                Badge("blocking", color: ReviewPalette.removed, look: .filled)
             }
             if let confidence = item.confidence {
                 // Was a raw "[medium]" beside the title.
-                InboxTag(text: "\(confidence) confidence", color: Self.confidenceColor(confidence))
+                Badge("\(confidence) confidence", color: Self.confidenceColor(confidence), look: .filled)
                     .instantTooltip("How sure the agent is of its recommended option")
             }
             Spacer(minLength: 8)
@@ -1468,7 +1464,7 @@ struct InboxDecisionCard: View {
                             .foregroundColor(Color.white.opacity(item.isOpen || chosen ? 0.92 : 0.55))
                             .frame(maxWidth: .infinity, alignment: .leading)
                         if choice.recommended == true || item.recommended == choice.id {
-                            InboxTag(text: "recommended", color: ReviewPalette.added)
+                            Badge("recommended", color: ReviewPalette.added, look: .filled)
                         }
                     }
                     if let rationale = choice.rationale, !rationale.isEmpty {
@@ -1646,7 +1642,13 @@ private struct SessionInfoPopover: View {
             }
             if let account = session.account { row("account", account) }
             if let model = hubSession?.model { row("model", model) }
-            if let last = hubSession?.lastActivity { row("last activity", HubFormat.ago(last)) }
+            if let last = hubSession?.lastActivity {
+                HStack(alignment: .top, spacing: 8) {
+                    Text("last activity").font(.system(size: 10.5)).foregroundColor(ReviewPalette.dim).frame(width: 84, alignment: .leading)
+                    LiveAgo(date: last).font(.system(size: 11.5)).foregroundColor(Color.white.opacity(0.9))
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
             if let ttl = hubSession?.cacheTtlSec, ttl > 0 { row("cache", "\(ttl / 60) min left") }
         }
     }
@@ -2144,20 +2146,6 @@ private struct InboxFormCard: View {
             list.remove(at: index)
         }
         attachedImages[itemId] = list
-    }
-}
-
-struct InboxTag: View {
-    let text: String
-    let color: Color
-
-    var body: some View {
-        Text(text)
-            .font(.system(size: 10, weight: .semibold))
-            .padding(.horizontal, 6)
-            .padding(.vertical, 1)
-            .background(Capsule().fill(color.opacity(0.18)))
-            .foregroundColor(color)
     }
 }
 

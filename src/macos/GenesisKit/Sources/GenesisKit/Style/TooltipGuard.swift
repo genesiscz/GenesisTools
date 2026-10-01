@@ -1,6 +1,6 @@
 import AppKit
 
-/// Keeps the instant tooltip (Hub/Stolen/UI/InstantTooltip.swift) off an opened menu or popover.
+/// Keeps the instant tooltip (InstantTooltip.swift) off an opened menu or popover.
 ///
 /// The bubble is a `.popUpMenu`-level panel that hid only on mouse exit or when the pointer left
 /// the anchor. A click that opens a popover or menu leaves the pointer on the button, so the
@@ -9,7 +9,7 @@ import AppKit
 /// under the pointer until the pointer leaves them, an open menu mutes every bubble, and no
 /// bubble shows for an anchor that another window (a popover) covers at the pointer.
 @MainActor
-enum TooltipGuard {
+public enum TooltipGuard {
     /// Sensors the pointer is inside now, by token: the candidates a click mutes.
     private static var hovered: [UUID: WeakView] = [:]
     private static var muted = Set<UUID>()
@@ -21,19 +21,24 @@ enum TooltipGuard {
         init(_ view: NSView) { self.view = view }
     }
 
-    static func entered(_ owner: UUID, view: NSView) {
+    public static func entered(_ owner: UUID, view: NSView) {
         install()
         hovered[owner] = WeakView(view)
     }
 
-    static func exited(_ owner: UUID) {
+    public static func exited(_ owner: UUID) {
         hovered[owner] = nil
         muted.remove(owner)
     }
 
+    /// False skips the "another window covers the pointer" check: the presenter tests place their
+    /// anchors away from the real pointer, where some other app's window answers.
+    static var checksPointerCover = true
+
     /// Whether `owner` may show its bubble for an anchor in `window` now.
-    static func allows(_ owner: UUID, in window: NSWindow) -> Bool {
+    public static func allows(_ owner: UUID, in window: NSWindow) -> Bool {
         guard openMenus.isEmpty, !muted.contains(owner) else { return false }
+        guard checksPointerCover else { return true }
         let top = NSWindow.windowNumber(at: NSEvent.mouseLocation, belowWindowWithWindowNumber: 0)
         // 0: no window of ours answers there (a snapshot run, a test). The bubble's own panel may
         // sit under the pointer at a screen edge; it never covers the anchor's content.
@@ -42,7 +47,7 @@ enum TooltipGuard {
 
     /// A mouse-down at `location` (window coordinates) in `window`: hide the bubble, mute every
     /// hovered sensor under the click until the pointer leaves it. Internal for the tests.
-    static func mouseDown(at location: NSPoint, in window: NSWindow?) {
+    public static func mouseDown(at location: NSPoint, in window: NSWindow?) {
         hideBubble()
         for (owner, box) in hovered {
             guard let view = box.view, view.window != nil else {
@@ -55,7 +60,7 @@ enum TooltipGuard {
         }
     }
 
-    static func isMuted(_ owner: UUID) -> Bool { muted.contains(owner) }
+    public static func isMuted(_ owner: UUID) -> Bool { muted.contains(owner) }
 
     private static func hideBubble() {
         if let owner = TooltipPresenter.shared.currentOwner {

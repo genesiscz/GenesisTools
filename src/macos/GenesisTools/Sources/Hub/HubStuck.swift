@@ -111,16 +111,7 @@ struct StuckBadge: View {
     let verdict: StuckVerdict
 
     var body: some View {
-        Text(verbatim: verdict.badge)
-            .font(.system(size: 9.5, weight: .bold))
-            .foregroundColor(verdict.color)
-            .padding(.horizontal, 5)
-            .padding(.vertical, 1)
-            .background(Capsule().fill(verdict.color.opacity(0.16)))
-            .overlay(Capsule().stroke(verdict.color.opacity(0.5), lineWidth: 0.5))
-            .fixedSize()
-            .instantTooltip(verdict.line)
-            .accessibilityLabel(Text(verbatim: verdict.line))
+        Badge(verdict.badge, color: verdict.color, look: .tone, tooltip: verdict.line)
     }
 }
 

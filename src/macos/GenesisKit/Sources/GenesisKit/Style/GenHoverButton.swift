@@ -1,4 +1,3 @@
-// Copied from /Users/Martin/Tresors/Projects/GenesisPlayground.worktrees/genesis-session-redesign/Genesis/apps/Genesis/Sources/Genesis/UI/GenHoverButton.swift at 2026-09-24T08:22:05+02:00 at commit hash 352701bd4e327a97ee223015319f46223ad3a6e5
 import SwiftUI
 
 /// **The** hover/press treatment for buttons in this app.
@@ -15,9 +14,9 @@ import SwiftUI
 /// The lift is a `scaleEffect` — a transform, never an animated shadow, which profiling in this
 /// repo called out as its single biggest idle-CPU sink (see the `PulseGlow` comment in
 /// `Theme.swift`). Reduce Motion drops the scale and keeps the colour change.
-struct GenHoverButtonStyle: ButtonStyle {
-    var accent: Color = .genAccent
-    var cornerRadius: CGFloat = GenRadius.sm
+public struct GenHoverButtonStyle: ButtonStyle {
+    var accent: Color = KitTheme.accent
+    var cornerRadius: CGFloat = KitTheme.radiusSmall
     /// Padding added around the label so small glyphs still get a comfortable hit target.
     var padding: EdgeInsets = EdgeInsets(top: 4, leading: 6, bottom: 4, trailing: 6)
     /// Set false for a control that already draws its own container (a filled pill, a card).
@@ -33,7 +32,7 @@ struct GenHoverButtonStyle: ButtonStyle {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.isEnabled) private var isEnabled
 
-    func makeBody(configuration: Configuration) -> some View {
+    public func makeBody(configuration: Configuration) -> some View {
         let active = isHovering && isEnabled
         let pressed = configuration.isPressed && isEnabled
 
@@ -55,7 +54,7 @@ struct GenHoverButtonStyle: ButtonStyle {
             .contentShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
             .onHover { hovering in
                 guard isEnabled else { return }
-                withAnimation(reduceMotion ? nil : GenAnimation.quick) { isHovering = hovering }
+                withAnimation(reduceMotion ? nil : KitTheme.quick) { isHovering = hovering }
             }
             // A disabled control must not keep a hover it acquired while it was enabled.
             .onChange(of: isEnabled) { _, enabled in
@@ -64,11 +63,11 @@ struct GenHoverButtonStyle: ButtonStyle {
     }
 }
 
-extension ButtonStyle where Self == GenHoverButtonStyle {
+public extension ButtonStyle where Self == GenHoverButtonStyle {
     /// `.buttonStyle(.genHover())` — the default for every button in the app.
     static func genHover(
-        accent: Color = .genAccent,
-        cornerRadius: CGFloat = GenRadius.sm,
+        accent: Color = KitTheme.accent,
+        cornerRadius: CGFloat = KitTheme.radiusSmall,
         padding: EdgeInsets = EdgeInsets(top: 4, leading: 6, bottom: 4, trailing: 6),
         drawsBackground: Bool = true,
         scale: CGFloat = 1.04
@@ -86,20 +85,20 @@ extension ButtonStyle where Self == GenHoverButtonStyle {
     /// Default `scale` is 1: these are applied to rows and full-width cards as well as to
     /// glyphs, and a row that grows on hover clips against its container.
     static func genHoverPlain(scale: CGFloat = 1, brighten: Double = 0.22) -> GenHoverButtonStyle {
-        GenHoverButtonStyle(cornerRadius: GenRadius.sm, padding: EdgeInsets(),
+        GenHoverButtonStyle(cornerRadius: KitTheme.radiusSmall, padding: EdgeInsets(),
                             drawsBackground: false, scale: scale, brighten: brighten)
     }
 
     /// A square icon button: circular feedback, no extra padding, for glyph-only controls.
-    static func genHoverIcon(accent: Color = .genAccent, diameter: CGFloat = 22) -> GenHoverButtonStyle {
+    static func genHoverIcon(accent: Color = KitTheme.accent, diameter: CGFloat = 22) -> GenHoverButtonStyle {
         GenHoverButtonStyle(accent: accent, cornerRadius: diameter / 2,
                             padding: EdgeInsets(top: 3, leading: 3, bottom: 3, trailing: 3),
                             drawsBackground: true, scale: 1.08)
     }
 
     /// A full-width row or card: the fill and border, no scale (a growing row clips).
-    static func genHoverRow(accent: Color = .genAccent,
-                            cornerRadius: CGFloat = GenRadius.md) -> GenHoverButtonStyle {
+    static func genHoverRow(accent: Color = KitTheme.accent,
+                            cornerRadius: CGFloat = KitTheme.radiusMedium) -> GenHoverButtonStyle {
         GenHoverButtonStyle(accent: accent, cornerRadius: cornerRadius, padding: EdgeInsets(),
                             drawsBackground: true, scale: 1, pressedScale: 0.996, brighten: 0.1)
     }
@@ -108,8 +107,8 @@ extension ButtonStyle where Self == GenHoverButtonStyle {
 /// For a control that cannot be a `Button` (a `Menu` label, a tappable row): the same hover
 /// treatment as a modifier.
 struct GenHoverEffect: ViewModifier {
-    var accent: Color = .genAccent
-    var cornerRadius: CGFloat = GenRadius.sm
+    var accent: Color = KitTheme.accent
+    var cornerRadius: CGFloat = KitTheme.radiusSmall
     var scale: CGFloat = 1.04
 
     @State private var isHovering = false
@@ -128,14 +127,14 @@ struct GenHoverEffect: ViewModifier {
             .scaleEffect(reduceMotion ? 1 : (isHovering ? scale : 1))
             .contentShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
             .onHover { hovering in
-                withAnimation(reduceMotion ? nil : GenAnimation.quick) { isHovering = hovering }
+                withAnimation(reduceMotion ? nil : KitTheme.quick) { isHovering = hovering }
             }
     }
 }
 
-extension View {
+public extension View {
     /// `.genHoverEffect()` — hover feedback for something that is not a `Button`.
-    func genHoverEffect(accent: Color = .genAccent, cornerRadius: CGFloat = GenRadius.sm,
+    func genHoverEffect(accent: Color = KitTheme.accent, cornerRadius: CGFloat = KitTheme.radiusSmall,
                         scale: CGFloat = 1.04) -> some View {
         modifier(GenHoverEffect(accent: accent, cornerRadius: cornerRadius, scale: scale))
     }

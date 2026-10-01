@@ -150,12 +150,26 @@ struct HubForecastChip: View {
             HStack(spacing: 3) {
                 Image(systemName: window.beforeReset ? "exclamationmark.triangle.fill" : "gauge.with.dots.needle.33percent")
                     .font(.system(size: 9.5))
-                Text(verbatim: "\(window.label) \(window.summary())")
+                HubForecastSummary(window: window)
                     .font(.system(size: 11, design: .monospaced))
                     .lineLimit(1)
             }
             .foregroundColor(window.beforeReset ? ReviewPalette.modified : ReviewPalette.dim)
             .instantTooltip(entry.current.map { $0.detail() }.joined(separator: "\n") + "\nFrom recorded usage snapshots (tools hub forecast)")
+        }
+    }
+}
+
+/// A window's chip words on screen. A stale window's "5 min. ago" keeps counting (`LiveAgo`);
+/// `summary()` formats it once, for tests and plain text.
+struct HubForecastSummary: View {
+    let window: HubForecastWindow
+
+    var body: some View {
+        if window.stale, let sampled = HubFormat.date(window.lastSampleAt) {
+            LiveAgo(date: sampled) { "\(window.label) \(Int(window.utilization.rounded()))% · \($0)" }
+        } else {
+            Text(verbatim: "\(window.label) \(window.summary())")
         }
     }
 }
@@ -184,7 +198,7 @@ struct HubForecastList: View {
                         .lineLimit(1)
                         .instantTooltip("\(entry.account) · \(entry.provider)")
                     ForEach(entry.current) { window in
-                        Text(verbatim: "\(window.label) \(window.summary())")
+                        HubForecastSummary(window: window)
                             .font(.system(size: 11, design: .monospaced))
                             .foregroundColor(window.beforeReset ? ReviewPalette.modified : (window.stale ? ReviewPalette.dim.opacity(0.7) : ReviewPalette.dim))
                             .instantTooltip(window.detail())

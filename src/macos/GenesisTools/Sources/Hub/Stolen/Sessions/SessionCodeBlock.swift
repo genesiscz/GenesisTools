@@ -287,6 +287,17 @@ enum CodeBlockRenderer {
         var highlighter = SyntaxHighlighter(language: highlight ? block.language : .plain)
         var gutter = AttributedString()
         var out = AttributedString()
+        // GenesisTools adaptation: see `CodeBlockAttributed.wrapTail`. Built here, in the same walk, so the
+        // wrap view never splits or joins the long remainder on the main thread.
+        var wrapTail: AttributedString?
+        func appendToTail(_ text: AttributedString) {
+            if wrapTail == nil {
+                wrapTail = text
+            } else {
+                wrapTail?.append(AttributedString("\n"))
+                wrapTail?.append(text)
+            }
+        }
 
         for (index, line) in lines.enumerated() {
             // GenesisTools adaptation: see `drawn`.
@@ -294,6 +305,10 @@ enum CodeBlockRenderer {
                 let blank = AttributedString(String(repeating: "\n", count: lines.count - index))
                 gutter.append(blank)
                 out.append(blank)
+                let blankTail = lines.count - max(index, firstDrawLimit)
+                if blankTail > 0 {
+                    appendToTail(AttributedString(String(repeating: "\n", count: blankTail - 1)))
+                }
                 break
             }
             if index > 0 {
@@ -308,6 +323,7 @@ enum CodeBlockRenderer {
                 var gap = AttributedString(line.text)
                 gap.foregroundColor = SessionPalette.faint
                 out.append(gap)
+                if index >= firstDrawLimit { appendToTail(gap) }
                 continue
             }
 
@@ -327,10 +343,12 @@ enum CodeBlockRenderer {
             case .focus: background = SessionPalette.blue.opacity(0.16)
             default: background = nil
             }
+            var mark: AttributedString?
             if isDiff {
-                var mark = AttributedString(line.mark == .added ? " +" : line.mark == .removed ? " -" : "  ")
-                mark.foregroundColor = line.mark == .added ? SessionPalette.green : line.mark == .removed ? SessionPalette.red : SessionPalette.faint
-                gutter.append(mark)
+                var sign = AttributedString(line.mark == .added ? " +" : line.mark == .removed ? " -" : "  ")
+                sign.foregroundColor = line.mark == .added ? SessionPalette.green : line.mark == .removed ? SessionPalette.red : SessionPalette.faint
+                gutter.append(sign)
+                mark = sign
             }
 
             var body = AttributedString()
@@ -356,6 +374,15 @@ enum CodeBlockRenderer {
                 body.backgroundColor = background
             }
             out.append(body)
+            if index >= firstDrawLimit {
+                if var mark {
+                    mark.append(AttributedString(" "))
+                    mark.append(body)
+                    appendToTail(mark)
+                } else {
+                    appendToTail(body)
+                }
+            }
         }
         // GenesisTools adaptation: see `CodeBlockAttributed.spoken`. It covers every shown line, also the
         // ones the first draw leaves blank: the text is cheap, only the drawing is bounded.
@@ -364,8 +391,46 @@ enum CodeBlockRenderer {
             gutter: gutter,
             body: out,
             hasGutter: width > 0 || isDiff,
-            spoken: isDiff || cut ? lines.map { spokenLine($0, isDiff: isDiff) }.joined(separator: "\n") : nil
+            spoken: isDiff || cut ? lines.map { spokenLine($0, isDiff: isDiff) }.joined(separator: "\n") : nil,
+            wrapTail: wrapTail
         )
+    }
+
+    // GenesisTools adaptation: a rendered column split at its line breaks, for `CodeBlockText`'s wrap mode.
+    static func lines(of text: AttributedString) -> [AttributedString] {
+        var result: [AttributedString] = []
+        var start = text.startIndex
+        var index = text.startIndex
+        while index < text.endIndex {
+            let next = text.characters.index(after: index)
+            if text.characters[index] == "\n" {
+                result.append(AttributedString(text[start..<index]))
+                start = next
+            }
+            index = next
+        }
+        result.append(AttributedString(text[start..<text.endIndex]))
+        return result
+    }
+
+    // GenesisTools adaptation: wrap mode builds one row per line on the main thread, so it splits only
+    // the first `limit` lines. The walk stops at the limit: a Verbose result of thousands of lines costs
+    // no more rows and no more work; the rest is `CodeBlockAttributed.wrapTail`, built by `attributed`.
+    static func lines(of text: AttributedString, limit: Int) -> [AttributedString] {
+        var result: [AttributedString] = []
+        var start = text.startIndex
+        var index = text.startIndex
+        while index < text.endIndex {
+            let next = text.characters.index(after: index)
+            if text.characters[index] == "\n" {
+                result.append(AttributedString(text[start..<index]))
+                start = next
+                if result.count == limit { return result }
+            }
+            index = next
+        }
+        result.append(AttributedString(text[start..<text.endIndex]))
+        return result
     }
 
     // GenesisTools adaptation: one line as VoiceOver reads it (see `CodeBlockAttributed.spoken`).
@@ -389,6 +454,10 @@ struct CodeBlockAttributed: Equatable, Sendable {
     // only. Also every shown line of any block whose first draw left lines blank (`drawn`), so VoiceOver
     // never reads a cut block while the full pass runs. nil for other blocks: they read their text.
     var spoken: String?
+    // GenesisTools adaptation: wrap mode's lines past `CodeBlockRenderer.firstDrawLimit` as one text (nil
+    // when there are none). A diff line keeps its `+` / `-`, so the colour is never the only sign; line
+    // numbers stay out, so copying ordinary code from the tail copies only the code.
+    var wrapTail: AttributedString? = nil
 }
 
 /// Memoised highlighted bodies, so a recycled row redraws without re-highlighting. Sized for a long
@@ -428,6 +497,9 @@ struct CodeBlockText: View {
     let limit: Int?
     /// Stable identity of the block's content (row id plus variant), for the cache.
     let cacheKey: String
+    // GenesisTools adaptation: long lines wrap under their own number instead of scrolling sideways
+    // (the transcript's wrap menu, Martin 2026-09-30: long commands were clipped).
+    var wrap = false
 
     // GenesisTools adaptation: the key hashes the content and `highlighted` remembers its key. A row
     // keeps its id when the clipped result is replaced by the full one, often with the same line
@@ -452,6 +524,72 @@ struct CodeBlockText: View {
         // GenesisTools adaptation: the plain first draw is bounded (see `CodeBlockRenderer.firstDrawLimit`).
         let rendered = current ?? CodeBlockCache.shared.get(key)
             ?? CodeBlockRenderer.attributed(block, limit: limit, highlight: false, drawn: CodeBlockRenderer.firstDrawLimit)
+        Group {
+            if wrap {
+                wrapped(rendered)
+            } else {
+                sidewaysScrolling(rendered)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+            .task(id: key) {
+                if let cached = CodeBlockCache.shared.get(key) {
+                    // GenesisTools adaptation: `highlighted` remembers its key (see its declaration).
+                    highlighted = (key, cached)
+                    return
+                }
+                let block = block
+                let limit = limit
+                let result = await Task.detached(priority: .utility) {
+                    CodeBlockRenderer.attributed(block, limit: limit, highlight: true)
+                }.value
+                guard !Task.isCancelled else { return }
+                CodeBlockCache.shared.set(key, result)
+                // GenesisTools adaptation: `highlighted` remembers its key (see its declaration).
+                highlighted = (key, result)
+            }
+    }
+
+    // GenesisTools adaptation: one row per line, the number beside the line's first row, so a wrapped
+    // line never pushes the later numbers off their lines. A selection stays inside one line here.
+    // Past `firstDrawLimit` lines the rest is ONE wrapped text, so the row count stays bounded however
+    // long the output is. It still wraps; only its lines carry no numbers of their own.
+    private func wrapped(_ rendered: CodeBlockAttributed) -> some View {
+        let limit = CodeBlockRenderer.firstDrawLimit
+        let bodies = CodeBlockRenderer.lines(of: rendered.body, limit: limit)
+        let gutters = rendered.hasGutter ? CodeBlockRenderer.lines(of: rendered.gutter, limit: limit) : []
+        let tail = rendered.wrapTail
+        return VStack(alignment: .leading, spacing: 1.5) {
+            ForEach(bodies.indices, id: \.self) { index in
+                HStack(alignment: .top, spacing: 0) {
+                    if index < gutters.count {
+                        Text(gutters[index])
+                            .font(CodeBlockRenderer.font)
+                            .fixedSize()
+                            .padding(.trailing, 7)
+                            .accessibilityHidden(true)
+                    }
+                    Text(bodies[index])
+                        .font(CodeBlockRenderer.font)
+                        .lineSpacing(1.5)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+            if let tail {
+                Text(tail)
+                    .font(CodeBlockRenderer.font)
+                    .lineSpacing(1.5)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+        .textSelection(.enabled)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(rendered.spoken.map { Text(verbatim: $0) } ?? Text(rendered.body))
+    }
+
+    private func sidewaysScrolling(_ rendered: CodeBlockAttributed) -> some View {
         HStack(alignment: .top, spacing: 0) {
             if rendered.hasGutter {
                 Text(rendered.gutter)
@@ -475,23 +613,6 @@ struct CodeBlockText: View {
                 .clipped()
                 .overlay(SidewaysWheel(offset: $sideways, contentWidth: codeWidth))
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-            .task(id: key) {
-                if let cached = CodeBlockCache.shared.get(key) {
-                    // GenesisTools adaptation: `highlighted` remembers its key (see its declaration).
-                    highlighted = (key, cached)
-                    return
-                }
-                let block = block
-                let limit = limit
-                let result = await Task.detached(priority: .utility) {
-                    CodeBlockRenderer.attributed(block, limit: limit, highlight: true)
-                }.value
-                guard !Task.isCancelled else { return }
-                CodeBlockCache.shared.set(key, result)
-                // GenesisTools adaptation: `highlighted` remembers its key (see its declaration).
-                highlighted = (key, result)
-            }
     }
 }
 

@@ -32,6 +32,16 @@ enum DiffScope: Hashable {
         }
     }
 
+    /// Whether a change on disk can change this diff. A commit or a range names fixed commits: no file
+    /// event moves it, so the window does not load it again for one (a PR's range was re-read about
+    /// three times a minute all night while agents wrote in its repository, 2026-09-30).
+    var followsWorkingTree: Bool {
+        switch self {
+        case .commit, .range: return false
+        default: return true
+        }
+    }
+
     init?(argument: String) {
         switch argument {
         case "uncommitted": self = .uncommitted

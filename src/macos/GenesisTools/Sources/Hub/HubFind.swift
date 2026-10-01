@@ -203,11 +203,7 @@ struct HubFindPanel: View {
                                 .font(.system(size: 11.5, weight: .semibold, design: .monospaced))
                                 .foregroundColor(.settingsText)
                                 .textSelection(.enabled)
-                                .contextMenu {
-                                    Button("Copy path") { PathOpener.copy(group.path, what: "path") }
-                                    Button("Reveal in Finder") { PathOpener.reveal(group.path) }
-                                    Button("Open in Cursor") { PathOpener.cursor(group.path) }
-                                }
+                                .contextMenu { PathActionsMenu(path: group.path) }
                                 .padding(.horizontal, 12)
                                 .padding(.top, 8)
                                 .padding(.bottom, 2)

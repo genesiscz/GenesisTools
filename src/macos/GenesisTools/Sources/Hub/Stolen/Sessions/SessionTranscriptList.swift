@@ -97,6 +97,9 @@ struct SessionTranscriptList: View {
 
     /// Persisted: the reader picks a level once, not per window.
     @AppStorage("sessionTranscript.verbosity") private var verbosityRaw = TranscriptVerbosity.inputs.rawValue
+    // GenesisTools adaptation: line wrapping in tool calls, per block kind (`TranscriptWrap`).
+    @AppStorage("sessionTranscript.wrapInputs") private var wrapInputs = false
+    @AppStorage("sessionTranscript.wrapOutputs") private var wrapOutputs = false
     @State private var query = ""
     @State private var appliedQuery = ""
     @State private var chips: Set<TranscriptFilter> = []
@@ -223,6 +226,7 @@ struct SessionTranscriptList: View {
                     chipBar
                     verbosityMenu
                     expandButtons
+                    wrapMenu
                     Spacer(minLength: 0)
                 }
             }
@@ -279,6 +283,8 @@ struct SessionTranscriptList: View {
         verbosityMenu
 
         expandButtons
+
+        wrapMenu
 
         Spacer(minLength: 8)
 
@@ -386,6 +392,37 @@ struct SessionTranscriptList: View {
             .accessibilityIdentifier("session-transcript-collapse-all")
         }
         .foregroundStyle(SessionPalette.secondary)
+    }
+
+    private var wrap: TranscriptWrap { TranscriptWrap(inputs: wrapInputs, outputs: wrapOutputs) }
+
+    // GenesisTools adaptation: line wrapping for tool inputs and outputs, each on its own (Martin,
+    // 2026-09-30: long commands were clipped sideways). Lit while either wraps.
+    private var wrapMenu: some View {
+        MenuButton(style: .genHoverIcon(accent: SessionPalette.blue, diameter: 22)) {
+            [
+                .action("Wrap tool inputs", checked: wrapInputs) { setWrap(inputs: !wrapInputs, outputs: wrapOutputs) },
+                .action("Wrap tool outputs", checked: wrapOutputs) { setWrap(inputs: wrapInputs, outputs: !wrapOutputs) },
+                .divider,
+                .action("Wrap both", checked: wrapInputs && wrapOutputs) { setWrap(inputs: true, outputs: true) },
+                .action("Wrap neither", checked: !wrap.any) { setWrap(inputs: false, outputs: false) },
+            ]
+        } label: {
+            Image(systemName: "arrow.turn.down.left")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(wrap.any ? SessionPalette.blue : SessionPalette.secondary)
+                .frame(width: 20, height: 20)
+        }
+        .fixedSize()
+        .instantTooltip("Line wrapping in tool calls: \(wrap.detail)")
+        .accessibilityLabel(Text("Line wrapping"))
+        .accessibilityValue(Text(wrap.detail))
+        .accessibilityIdentifier("session-transcript-wrap")
+    }
+
+    private func setWrap(inputs: Bool, outputs: Bool) {
+        wrapInputs = inputs
+        wrapOutputs = outputs
     }
 
     private var promptNavigator: some View {
@@ -527,6 +564,7 @@ struct SessionTranscriptList: View {
                                     showAll: expansion.showsAll(row.id, byDefault: defaultOpen(row)),
                                     openMembers: openMembers(row),
                                     fullMembers: fullMembers(row),
+                                    wrap: wrap,
                                     services: services,
                                     onToggle: { expansion.toggle($0) }
                                 )
@@ -865,11 +903,13 @@ struct TranscriptRowView: View, Equatable {
     let openMembers: Set<String>
     // GenesisTools adaptation: see `SessionTranscriptList.fullMembers`.
     var fullMembers: Set<String> = []
+    // GenesisTools adaptation: see `TranscriptWrap`.
+    var wrap = TranscriptWrap()
     let services: TranscriptServices
     let onToggle: (String) -> Void
 
     static func == (lhs: Self, rhs: Self) -> Bool {
-        lhs.row == rhs.row && lhs.expanded == rhs.expanded && lhs.showAll == rhs.showAll
+        lhs.row == rhs.row && lhs.expanded == rhs.expanded && lhs.showAll == rhs.showAll && lhs.wrap == rhs.wrap
             && lhs.provider == rhs.provider && lhs.modelName == rhs.modelName && lhs.verbosity == rhs.verbosity
             && lhs.openMembers == rhs.openMembers && lhs.fullMembers == rhs.fullMembers && lhs.services === rhs.services
     }
@@ -895,11 +935,12 @@ struct TranscriptRowView: View, Equatable {
                 verbosity: verbosity,
                 open: expanded,
                 showAll: showAll,
+                wrap: wrap,
                 services: services,
                 onToggle: onToggle
             )
         case .toolGroup(let group):
-            ToolGroupRow(id: row.id, group: group, open: expanded, openMembers: openMembers, fullMembers: fullMembers, services: services, onToggle: onToggle)
+            ToolGroupRow(id: row.id, group: group, open: expanded, openMembers: openMembers, fullMembers: fullMembers, wrap: wrap, services: services, onToggle: onToggle)
         }
     }
 }
@@ -1079,9 +1120,18 @@ struct FilterChip: View {
 
     var body: some View {
         Button(action: action) {
+            // GenesisTools adaptation: the chip is as wide as its semibold label either way. A chip that
+            // widened when turned on made the toolbar's ViewThatFits switch layout under the pointer, so
+            // the next click landed on another control (2026-09-30).
             Text(verbatim: title)
-                .font(.system(size: 11.5, weight: isOn ? .semibold : .medium))
-                .foregroundStyle(isOn ? SessionPalette.text : SessionPalette.dim)
+                .font(.system(size: 11.5, weight: .semibold))
+                .hidden()
+                .overlay {
+                    Text(verbatim: title)
+                        .font(.system(size: 11.5, weight: isOn ? .semibold : .medium))
+                        .foregroundStyle(isOn ? SessionPalette.text : SessionPalette.dim)
+                        .fixedSize()
+                }
                 .padding(.horizontal, 9)
                 .frame(height: 22)
                 .background(Capsule().fill(isOn ? tint.opacity(0.28) : Color.clear))
@@ -1241,6 +1291,8 @@ private struct ToolGroupRow: View {
     let openMembers: Set<String>
     // GenesisTools adaptation: see `SessionTranscriptList.fullMembers`.
     let fullMembers: Set<String>
+    // GenesisTools adaptation: see `TranscriptWrap`.
+    let wrap: TranscriptWrap
     let services: TranscriptServices
     let onToggle: (String) -> Void
 
@@ -1294,6 +1346,7 @@ private struct ToolGroupRow: View {
                             open: openMembers.contains(member.id),
                             // GenesisTools adaptation: see `fullMembers`.
                             showAll: fullMembers.contains(member.id),
+                            wrap: wrap,
                             services: services,
                             onToggle: onToggle
                         )

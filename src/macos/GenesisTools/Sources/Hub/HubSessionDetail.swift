@@ -277,11 +277,18 @@ struct HubSessionDetailHost: View {
             actions.openInFinder = { PathOpener.finder(cwd) }
             actions.openInCursor = { PathOpener.cursor(cwd) }
         }
-        if session.cmux != nil, session.provider == "claude" {
+        if session.cmux != nil, ["claude", "codex", "grok"].contains(session.provider) {
             let id = session.sessionId
             // Off the main thread: it spawns `tools`, and a wait in a button action still spins the run loop.
+            // A failure shows in the banner in words: a closed tab says the pane is gone, never cmux's RPC error.
             actions.focus = {
-                Task.detached(priority: .userInitiated) { _ = TerminalHosts.current.focus(sessionId: id) }
+                Task {
+                    let error = await Task.detached(priority: .userInitiated) { TerminalHosts.current.focus(sessionId: id) }.value
+                    if let error {
+                        HubPerf.log("session.focus \(id.prefix(8)) failed: \(error)")
+                        banner = error
+                    }
+                }
             }
             actions.openTerminal = actions.focus
             // The same lines Genesis types (MonitorSessionActions), through `tools claude cmux send`.

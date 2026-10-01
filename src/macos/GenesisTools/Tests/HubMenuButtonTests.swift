@@ -26,9 +26,27 @@ final class HubMenuButtonTests: XCTestCase {
         XCTAssertEqual(note?.isEnabled, false)
 
         for item in menu.items where item.action != nil {
-            MenuButtonTarget.shared.perform(item)
+            MenuButtonTarget.shared.runItem(item)
         }
         XCTAssertEqual(picked, ["split", "unified", "reload"], "each item runs its own closure")
+    }
+
+    /// A pick goes through AppKit, which sends the item's selector to its target. The selector used to be
+    /// `perform:`, which `#selector(MenuButtonTarget.perform(_:))` resolved to NSObject's
+    /// `performSelector:`: AppKit passed the menu item as the selector, raised "unrecognized selector",
+    /// logged it and went on, so every pick in every `MenuButton` did nothing (Martin, 2026-09-30: "the
+    /// Verbose and all other picker items are literally not doing anything"). A direct Swift call, as in
+    /// the test above, still reached the right method.
+    func testAPickThroughAppKitRunsTheItemsClosure() {
+        _ = NSApplication.shared
+        var picked: [String] = []
+        let menu = MenuButtonPresenter.menu([
+            .action("Minimal") { picked.append("minimal") },
+            .action("Verbose") { picked.append("verbose") },
+        ])
+
+        menu.performActionForItem(at: 1)
+        XCTAssertEqual(picked, ["verbose"], "the picked item must run its closure")
     }
 
     func testScopeItemsCheckTheCurrentScopeAndNeedASessionForTurns() {

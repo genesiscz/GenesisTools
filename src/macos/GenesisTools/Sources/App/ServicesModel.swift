@@ -51,7 +51,7 @@ final class ServicesModel: ObservableObject {
     }
 
     func reveal(_ job: LaunchdJob) {
-        NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: job.plistPath)])
+        PathOpener.reveal(job.plistPath)
     }
 
     private static func isLoaded(_ label: String) -> Bool {

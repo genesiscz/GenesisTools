@@ -100,6 +100,8 @@ interface LiveNote {
     edited: boolean;
     /** The author's profile on the host; the name links there when set. */
     authorUrl?: string;
+    /** The comment on the host; the time links there when set. */
+    url?: string;
 }
 
 interface LiveThread {
@@ -1315,34 +1317,25 @@ function renderNote(threadId: string, note: LiveNote, busy: boolean): HTMLElemen
     const main = element("div", "flex:1;min-width:0");
     const head = element("div", css.head);
     const name = note.author || note.username;
-    const nameNode = note.authorUrl ? link(name, note.authorUrl) : element("span", "", name);
+    const nameNode = note.authorUrl ? quietLink(name, note.authorUrl) : element("span", "", name);
     nameNode.style.fontWeight = "600";
-
-    if (note.authorUrl) {
-        // Like the hub's dense links the name keeps its color; a faint underline marks it as a link,
-        // and hover or keyboard focus makes it full.
-        const faint = "color-mix(in srgb, currentColor 35%, transparent)";
-        const underline = (full: boolean) => () => {
-            nameNode.style.textDecorationColor = full ? "currentColor" : faint;
-        };
-        nameNode.style.color = "inherit";
-        nameNode.style.textDecoration = "underline";
-        nameNode.style.textDecorationColor = faint;
-        nameNode.addEventListener("mouseenter", underline(true));
-        nameNode.addEventListener("mouseleave", underline(false));
-        nameNode.addEventListener("focus", underline(true));
-        nameNode.addEventListener("blur", underline(false));
-    }
-
     head.appendChild(nameNode);
 
     if (note.author && note.author !== note.username) {
         head.appendChild(element("span", css.dim, `@${note.username}`));
     }
 
-    const when = element("span", css.dim, note.when + (note.edited ? " · edited" : ""));
-    when.title = note.at;
-    head.appendChild(when);
+    // The time opens the comment on the host, as the GitHub and GitLab pages do.
+    const when = note.url ? quietLink(note.when, note.url) : element("span", "", note.when);
+    when.title = note.url ? `${note.at}\n${note.url}` : note.at;
+    const whenWrap = element("span", css.dim);
+    whenWrap.appendChild(when);
+
+    if (note.edited) {
+        whenWrap.appendChild(document.createTextNode(" · edited"));
+    }
+
+    head.appendChild(whenWrap);
 
     if (note.isDraft) {
         const badge = element("span", `${css.badge};border-color:#ffa11f;color:#ffa11f`, "Draft");
@@ -1740,6 +1733,26 @@ function link(label: string, url: string): HTMLElement {
             post({ type: "link", url });
         }
     });
+    return node;
+}
+
+/**
+ * A link inside dense text, like the hub's: it keeps the text's color, a faint underline marks it as a
+ * link, and hover or keyboard focus makes the underline full.
+ */
+function quietLink(label: string, url: string): HTMLElement {
+    const node = link(label, url);
+    const faint = "color-mix(in srgb, currentColor 35%, transparent)";
+    const underline = (full: boolean) => () => {
+        node.style.textDecorationColor = full ? "currentColor" : faint;
+    };
+    node.style.color = "inherit";
+    node.style.textDecoration = "underline";
+    node.style.textDecorationColor = faint;
+    node.addEventListener("mouseenter", underline(true));
+    node.addEventListener("mouseleave", underline(false));
+    node.addEventListener("focus", underline(true));
+    node.addEventListener("blur", underline(false));
     return node;
 }
 

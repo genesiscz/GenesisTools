@@ -39,7 +39,38 @@ struct MarkdownContentView: View {
         case rule
     }
 
+    /// Parsed once per text. A transcript row's body runs again every time the list re-measures its
+    /// visible rows (each document resize of a live session), and parsing in the body was in 73 of the
+    /// 179 transcript stall stacks of 2026-09-29/30 (`inline`) and 34 (`blocks`).
+    private final class Parsed<Value>: NSObject {
+        let value: Value
+        init(_ value: Value) { self.value = value }
+    }
+
+    nonisolated(unsafe) private static let blockCache: NSCache<NSString, Parsed<[Block]>> = {
+        let cache = NSCache<NSString, Parsed<[Block]>>()
+        cache.countLimit = 2000
+        return cache
+    }()
+
+    nonisolated(unsafe) private static let inlineCache: NSCache<NSString, Parsed<AttributedString>> = {
+        let cache = NSCache<NSString, Parsed<AttributedString>>()
+        cache.countLimit = 4000
+        return cache
+    }()
+
     nonisolated private static func blocks(_ markdown: String) -> [Block] {
+        let key = markdown as NSString
+        if let hit = blockCache.object(forKey: key) {
+            return hit.value
+        }
+
+        let parsed = parseBlocks(markdown)
+        blockCache.setObject(Parsed(parsed), forKey: key)
+        return parsed
+    }
+
+    nonisolated private static func parseBlocks(_ markdown: String) -> [Block] {
         var blocks: [Block] = []
         var paragraph: [String] = []
         var quote: [String] = []
@@ -260,7 +291,14 @@ struct MarkdownContentView: View {
     }
 
     nonisolated private static func inline(_ text: String) -> AttributedString {
+        let key = text as NSString
+        if let hit = inlineCache.object(forKey: key) {
+            return hit.value
+        }
+
         let options = AttributedString.MarkdownParsingOptions(interpretedSyntax: .inlineOnlyPreservingWhitespace)
-        return (try? AttributedString(markdown: text, options: options)) ?? AttributedString(text)
+        let parsed = (try? AttributedString(markdown: text, options: options)) ?? AttributedString(text)
+        inlineCache.setObject(Parsed(parsed), forKey: key)
+        return parsed
     }
 }

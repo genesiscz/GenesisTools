@@ -974,15 +974,7 @@ struct PRDetailView: View {
     /// Open / Draft / Merged / Closed in the same color as the state icon.
     private var statePill: some View {
         let tone = PRStateTone(pr: pr)
-        return Text(tone.title)
-            .font(.system(size: 10.5, weight: .semibold))
-            .foregroundColor(tone.color)
-            .padding(.horizontal, 7)
-            .padding(.vertical, 1.5)
-            .background(Capsule().fill(tone.color.opacity(0.16)))
-            .overlay(Capsule().stroke(tone.color.opacity(0.35)))
-            .fixedSize()
-            .instantTooltip("\(pr.isGitLab ? "MR" : "PR") state: \(tone.title)")
+        return Badge(tone.title, color: tone.color, look: .tone, tooltip: "\(pr.isGitLab ? "MR" : "PR") state: \(tone.title)")
     }
 
     /// `+33560 −2119`: with a diff (a worktree, or the head fetched) a click shows the whole PR beside

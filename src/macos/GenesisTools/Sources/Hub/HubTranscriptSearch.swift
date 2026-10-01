@@ -318,7 +318,7 @@ private struct HubSearchHitRow: View {
             .padding(.vertical, 6)
             .contentShape(Rectangle())
         }
-        .buttonStyle(HubRowButtonStyle(cornerRadius: 6))
+        .buttonStyle(RowButtonStyle(cornerRadius: 6))
         .padding(.horizontal, 4)
         .instantTooltip("Open this session at the first matching turn")
     }

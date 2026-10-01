@@ -211,6 +211,7 @@ final class PRThreadsTests: XCTestCase {
            "diffHunk":"@@","comments":[
              {"id":"C1","author":{"name":"Alice","username":"alice","avatarUrl":"https://example.com/a.png","role":"MEMBER"},
               "bodyMarkdown":"Why `total`?","createdAt":"2026-09-20T10:00:00Z","isDraft":false,
+              "url":"https://github.com/acme/shop/pull/7#discussion_r11",
               "reactions":[{"emoji":"+1","count":1,"mine":false}]},
              {"id":"C2","author":{"name":"Bob","username":"bob"},"bodyMarkdown":"Renaming it.","createdAt":"2026-09-20T11:00:00Z","isDraft":true}]},
           {"id":"T2","path":"src/cart.ts","side":"deletions","line":4,"outdated":true,"resolved":true,"resolvable":true,
@@ -246,6 +247,8 @@ final class PRThreadsTests: XCTestCase {
         XCTAssertEqual(live.notes.map(\.username), ["alice", "bob"])
         XCTAssertEqual(live.notes.map(\.isDraft), [false, true], "my pending reply gets Edit and Delete")
         XCTAssertEqual(live.notes[0].author, "Alice")
+        XCTAssertEqual(live.notes.map(\.url), ["https://github.com/acme/shop/pull/7#discussion_r11", nil],
+                       "the card's time links to the comment on the host; a draft has no page yet")
         XCTAssertTrue(live.canReply)
         XCTAssertTrue(live.resolvable)
         XCTAssertFalse(live.resolved)

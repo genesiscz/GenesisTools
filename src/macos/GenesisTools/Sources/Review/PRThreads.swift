@@ -175,6 +175,8 @@ struct PRThreadComment: Decodable, Identifiable, Equatable {
     let editedAt: String?
     /// My pending review comment: only I see it until the review is submitted.
     let isDraft: Bool
+    /// The comment on the host's web page (GitHub `#discussion_r…`, GitLab `#note_…`); nil for a draft.
+    let url: String?
 }
 
 struct PRThread: Decodable, Identifiable, Equatable {
@@ -290,7 +292,8 @@ enum PRThreadRendering {
                     body: comment.bodyMarkdown,
                     isDraft: comment.isDraft,
                     edited: comment.editedAt != nil,
-                    authorUrl: forge?.user(comment.author.username)?.absoluteString
+                    authorUrl: forge?.user(comment.author.username)?.absoluteString,
+                    url: comment.url
                 )
             },
             resolved: thread.resolved,

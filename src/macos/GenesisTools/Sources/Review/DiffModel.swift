@@ -89,6 +89,8 @@ struct RenderedLiveThread: Encodable, Equatable {
         var edited: Bool
         /// The author's profile on the host (ForgeWeb), when the host is GitHub or GitLab.
         var authorUrl: String?
+        /// The comment on the host; the time links there when set.
+        var url: String?
     }
 
     var notes: [Note]

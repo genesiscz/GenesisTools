@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
@@ -17,7 +17,16 @@ import { isProcessAlive } from "@genesiscz/utils/process-alive";
 import { withFileLock } from "@genesiscz/utils/storage";
 
 export const APP_SOURCE_DIR = resolve(import.meta.dirname, "../../GenesisTools");
-const SOURCE_ROOTS = ["Package.swift", "Info.plist", "Sources", "scripts/AppIcon.icns", "web"];
+/** The shared SwiftUI package the app links (src/macos/GenesisKit), so an edit there marks the build stale too. */
+const SOURCE_ROOTS = [
+    "Package.swift",
+    "Info.plist",
+    "Sources",
+    "scripts/AppIcon.icns",
+    "web",
+    "../GenesisKit/Package.swift",
+    "../GenesisKit/Sources",
+];
 /** Browser half of the diff renderer (PierreWebDiffRenderer.swift): bundled into Contents/Resources/diff-viewer. */
 const DIFF_VIEWER_SOURCE = "web/diff-viewer";
 const ICON_SOURCE = "scripts/AppIcon.icns";
@@ -93,7 +102,7 @@ export function sourceHash(sourceDir = APP_SOURCE_DIR): string {
         const files = statSync(full).isDirectory() ? sourceFiles(full) : [full];
 
         for (const file of files) {
-            hash.update(file.slice(sourceDir.length));
+            hash.update(relative(sourceDir, file));
             hash.update(readFileSync(file));
         }
     }

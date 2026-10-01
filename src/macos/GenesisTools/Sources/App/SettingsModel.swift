@@ -55,7 +55,7 @@ final class SettingsModel: ObservableObject {
     }
 
     func revealApp() {
-        NSWorkspace.shared.activateFileViewerSelecting([Bundle.main.bundleURL])
+        PathOpener.reveal(Bundle.main.bundlePath)
     }
 
     /// Finder by name (Hub/HubPathActions.swift): opening the folder with its default app can land in

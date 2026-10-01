@@ -40,6 +40,16 @@ enum HubSingleInstance {
         return true
     }
 
+    /// Another process holds the hub lock, so a hub runs there. Asks the kernel, not the pid file,
+    /// which outlives the hub that wrote it.
+    static var isRunningElsewhere: Bool {
+        guard lockDescriptor < 0 else { return false }
+        let descriptor = open(lockFile.path, O_RDONLY | O_CLOEXEC)
+        guard descriptor >= 0 else { return false }
+        defer { close(descriptor) }
+        return flock(descriptor, LOCK_SH | LOCK_NB) != 0
+    }
+
     /// The pid the lock holder wrote, while that process runs.
     private static var holderPid: pid_t? {
         guard let text = try? String(contentsOf: lockFile, encoding: .utf8),

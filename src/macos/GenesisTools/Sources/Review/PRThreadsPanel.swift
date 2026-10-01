@@ -269,7 +269,7 @@ private struct PRBarLinks: View {
 }
 
 /// Every thread of the PR, open ones first; a row's path opens that file in the diff.
-private struct PRThreadsList: View {
+struct PRThreadsList: View {
     @ObservedObject var model: ReviewModel
     @ObservedObject var store: PRThreadsStore
     @AppStorage("review.prThreads.thisFile", store: HubDefaults.store) private var onlyThisFile = false
@@ -419,9 +419,22 @@ private struct PRThreadRow: View {
                 if comment.author.name != comment.author.username {
                     Text(verbatim: "@\(comment.author.username)").foregroundColor(ReviewPalette.dim)
                 }
-                LiveAgo(date: HubFormat.date(comment.createdAt), fallback: comment.createdAt)
-                    .foregroundColor(ReviewPalette.dim)
-                    .instantTooltip(comment.createdAt)
+                if let url = comment.url.flatMap(URL.init(string:)) {
+                    Button {
+                        ExternalOpener.open(url)
+                    } label: {
+                        LiveAgo(date: HubFormat.date(comment.createdAt), fallback: comment.createdAt)
+                            .foregroundColor(ReviewPalette.dim)
+                    }
+                    .hoverCursor(.pointingHand)
+                    .instantTooltip("\(comment.createdAt)\nOpen this comment on the host\n\(url.absoluteString)")
+                    .accessibilityRemoveTraits(.isButton)
+                    .accessibilityAddTraits(.isLink)
+                } else {
+                    LiveAgo(date: HubFormat.date(comment.createdAt), fallback: comment.createdAt)
+                        .foregroundColor(ReviewPalette.dim)
+                        .instantTooltip(comment.createdAt)
+                }
                 if comment.editedAt != nil {
                     Text("edited").foregroundColor(ReviewPalette.dim)
                 }

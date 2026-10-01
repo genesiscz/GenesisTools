@@ -665,13 +665,12 @@ struct WorktreeCleanupView: View {
                         .lineLimit(1)
                         .truncationMode(.middle)
                         .instantTooltip(row.title)
-                    FindText(row.mergedHow, field: "merged")
-                        .font(.system(size: 10.5, weight: .medium))
-                        .foregroundColor(row.removable ? ReviewPalette.added : ReviewPalette.dim)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 1)
-                        .background(Capsule().fill(Color.white.opacity(0.06)))
-                        .instantTooltip("tools git merged: \(row.verdict ?? "no verdict") by \(row.how ?? "-") against \(row.base ?? "no base")")
+                    Badge(
+                        row.mergedHow,
+                        color: row.removable ? ReviewPalette.added : ReviewPalette.dim,
+                        tooltip: "tools git merged: \(row.verdict ?? "no verdict") by \(row.how ?? "-") against \(row.base ?? "no base")",
+                        findField: "merged"
+                    )
                     if row.dirtyCount > 0 {
                         Text(verbatim: "\(row.dirtyCount) dirty")
                             .font(.system(size: 10.5, weight: .medium, design: .monospaced))
@@ -773,12 +772,7 @@ struct WorktreeCleanupEntry: View {
                 .font(.system(size: 12.5, weight: selected ? .semibold : .regular))
             Spacer(minLength: 4)
             if !store.rows.isEmpty {
-                Text(verbatim: "\(store.removable.count)")
-                    .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 1)
-                    .background(Capsule().fill(Color.white.opacity(0.08)))
-                    .instantTooltip("\(store.removable.count) worktrees can go without losing anything")
+                CountBadge(store.removable.count, tooltip: "\(store.removable.count) worktrees can go without losing anything")
             }
         }
         .padding(.horizontal, 10)

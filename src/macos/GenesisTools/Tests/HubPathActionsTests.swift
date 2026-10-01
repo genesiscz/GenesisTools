@@ -17,6 +17,7 @@ final class HubPathActionsTests: XCTestCase {
         func openFolderInFinder(_ url: URL) { calls.append("finder \(url.path)") }
         func revealInFinder(_ url: URL) { calls.append("reveal \(url.path)") }
         func openFile(_ url: URL) { calls.append("open \(url.path)") }
+        func editFile(_ url: URL, line: Int?) { calls.append("edit \(url.path):\(line.map(String.init) ?? "-")") }
         func reportMissing(_ path: String) { calls.append("missing \(path)") }
     }
 
@@ -42,6 +43,20 @@ final class HubPathActionsTests: XCTestCase {
         XCTAssertEqual(PathOpener.perform(.finder, folder, workspace: spy), .folderInFinder(URL(fileURLWithPath: folder)))
         XCTAssertEqual(PathOpener.perform(.open, folder, workspace: spy), .folderInFinder(URL(fileURLWithPath: folder)))
         XCTAssertEqual(spy.calls, ["finder \(folder)", "finder \(folder)"], "a folder never goes to its default app")
+    }
+
+    /// A click on a path label: a folder in Finder (the QuickTime dialog came from a folder given to its
+    /// default app), a file in the editor at its line, a package revealed, never launched.
+    func testAClickOnAPathOpensAFolderInFinderAndAFileInTheEditor() {
+        let folder = root.appendingPathComponent("Acme app/Ďábel/ČŘ").path
+        let file = folder + "/notes #1.md"
+        let package = root.appendingPathComponent("Tool.app").path
+        let spy = SpyWorkspace()
+
+        XCTAssertEqual(PathOpener.perform(.primary, folder, workspace: spy), .folderInFinder(URL(fileURLWithPath: folder)))
+        XCTAssertEqual(PathOpener.perform(.primary, file, line: 12, workspace: spy), .editFile(URL(fileURLWithPath: file), line: 12))
+        XCTAssertEqual(PathOpener.perform(.primary, package, workspace: spy), .revealInFinder(URL(fileURLWithPath: package)))
+        XCTAssertEqual(spy.calls, ["finder \(folder)", "edit \(file):12", "reveal \(package)"])
     }
 
     func testATerminalOpensInAFileItsFolder() {
@@ -119,12 +134,12 @@ final class HubPathActionsTests: XCTestCase {
     // MARK: copy confirmation
 
     func testCopyPreviewIsOneShortLine() {
-        XCTAssertEqual(HubCopyToast.preview("0a1b2c3d-4e5f"), "0a1b2c3d-4e5f")
-        XCTAssertEqual(HubCopyToast.preview("  padded\n"), "padded")
-        XCTAssertEqual(HubCopyToast.preview("one\ntwo\nthree"), "3 lines")
+        XCTAssertEqual(CopyToast.preview("0a1b2c3d-4e5f"), "0a1b2c3d-4e5f")
+        XCTAssertEqual(CopyToast.preview("  padded\n"), "padded")
+        XCTAssertEqual(CopyToast.preview("one\ntwo\nthree"), "3 lines")
 
         let long = "/Users/someone/Projects/Acme/app/src/features/billing/invoices/list/InvoiceListScreen.tsx"
-        let preview = HubCopyToast.preview(long, limit: 40)
+        let preview = CopyToast.preview(long, limit: 40)
         XCTAssertEqual(preview.count, 39)
         XCTAssertTrue(preview.hasPrefix("/Users/someone/Proj"))
         XCTAssertTrue(preview.hasSuffix("oiceListScreen.tsx"), "the file name stays readable: \(preview)")
@@ -135,8 +150,8 @@ final class HubPathActionsTests: XCTestCase {
         let screen = CGRect(x: 0, y: 0, width: 1000, height: 800)
         let size = CGSize(width: 200, height: 30)
 
-        XCTAssertEqual(HubCopyToast.origin(pointer: CGPoint(x: 100, y: 100), size: size, screen: screen), CGPoint(x: 114, y: 110))
-        XCTAssertEqual(HubCopyToast.origin(pointer: CGPoint(x: 990, y: 790), size: size, screen: screen), CGPoint(x: 796, y: 766), "clamped at the corner")
+        XCTAssertEqual(CopyToast.origin(pointer: CGPoint(x: 100, y: 100), size: size, screen: screen), CGPoint(x: 114, y: 110))
+        XCTAssertEqual(CopyToast.origin(pointer: CGPoint(x: 990, y: 790), size: size, screen: screen), CGPoint(x: 796, y: 766), "clamped at the corner")
     }
 
     // MARK: session sidebar

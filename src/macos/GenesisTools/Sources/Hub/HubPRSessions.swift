@@ -99,11 +99,7 @@ struct PRSessionRow: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            Text(verbatim: String(session.provider.prefix(1)).uppercased())
-                .font(.system(size: 10, weight: .bold))
-                .frame(width: 16, height: 16)
-                .background(RoundedRectangle(cornerRadius: 4).fill(Color.white.opacity(0.1)))
-                .instantTooltip(session.provider.capitalized)
+            ProviderBadge(provider: session.provider, size: 16, tooltip: session.provider.capitalized)
             FindText(session.displayTitle, field: "title").font(.system(size: 12)).lineLimit(1).truncationMode(.tail)
             LiveAgo(date: session.lastActivity)
                 .font(.system(size: 11))
@@ -162,13 +158,6 @@ struct PRSessionRow: View {
             default: return (reason, reason)
             }
         }()
-        return Text(verbatim: text)
-            .font(.system(size: 10, weight: .medium))
-            .foregroundColor(ReviewPalette.dim)
-            .padding(.horizontal, 5)
-            .padding(.vertical, 1)
-            .background(Capsule().fill(Color.white.opacity(0.07)))
-            .fixedSize()
-            .instantTooltip(tip)
+        return Badge(text, tooltip: tip)
     }
 }

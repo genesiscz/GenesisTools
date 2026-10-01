@@ -71,6 +71,19 @@ final class GenesisAppDelegate: NSObject, NSApplicationDelegate {
         !browserLinkReceived
     }
 
+    /// The Dock tile: the running hub comes forward beside the settings window (Sources/App/AppDock.swift).
+    /// A face without a window (a notification click) is not in the Dock and ignores it.
+    @MainActor
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        guard window != nil else { return false }
+        return AppDock.reopenFromOtherFace()
+    }
+
+    @MainActor
+    func applicationDockMenu(_ sender: NSApplication) -> NSMenu? {
+        AppDock.menu()
+    }
+
     private func showWindow() {
         quitAfterNotificationClick = false
         NSApp.setActivationPolicy(.regular)

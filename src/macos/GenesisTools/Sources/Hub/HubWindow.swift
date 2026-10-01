@@ -70,6 +70,9 @@ struct HubRequest {
     var settings: [String: Bool] = [:]
     /// `--set <key>=<text>` for any other value (`--set hub.timeline.range=last30`).
     var textSettings: [String: String] = [:]
+    /// `--menu "<Menu>/<Item>"`: runs that menu bar item once the hub has settled, as a click would
+    /// (`--menu "Go/Pull Request…"` opens the palette with "pr " typed). Verifies the menu in a snapshot.
+    var menu: String?
     var activate = true
 
     /// The file `--reveal` names, in the PR `--pr` names.
@@ -132,6 +135,7 @@ struct HubRequest {
                     }
                 }
                 index += 1
+            case "--menu": menu = value; index += 1
             case "--no-activate": activate = false
             default: break
             }
@@ -174,9 +178,11 @@ func runHub(_ args: [String]) -> Never {
     let delegate = HubAppDelegate()
     app.delegate = delegate
     installBrowserURLForwarder()
-    MainActor.assumeIsolated { AppMainMenu.install() }
 
     let model = HubModel(wantedSession: wantedSession, tab: tab)
+    MainActor.assumeIsolated {
+        AppMainMenu.install(hub: model)
+    }
     model.initialMode = mode
     if let panes = request.panes { model.panes = panes }
     if let worktree = request.worktree {
@@ -217,6 +223,7 @@ func runHub(_ args: [String]) -> Never {
     } else {
         window.setFrameAutosaveName("GenesisToolsHub")
     }
+    delegate.window = window
     MainActor.assumeIsolated {
         HubGlass.apply(to: window, enabled: HubDefaults.store.bool(forKey: HubGlass.key))
         HubLiveResize.shared.watch(window)
@@ -278,6 +285,9 @@ func runHub(_ args: [String]) -> Never {
         HubSingleInstance.serve { args in
             let later = HubRequest(args)
             model.apply(later)
+            if let path = later.menu {
+                MainActor.assumeIsolated { AppMainMenu.perform(path) }
+            }
             if window.isMiniaturized {
                 window.deminiaturize(nil)
             }
@@ -295,6 +305,20 @@ func runHub(_ args: [String]) -> Never {
             HubNavInput.install(window: window, model: model)
         }
     }
+    // `--menu` runs once the hub has settled on its mode and selection, as it does for a request
+    // forwarded to a running hub: right after the model was made, File/New Agent Session had no folder
+    // and the diff commands no review. Before the snapshot or bench, which run on the same signal.
+    if let path = request.menu {
+        let settled = model.onSettled
+        var performed = false
+        model.onSettled = {
+            if !performed {
+                performed = true
+                MainActor.assumeIsolated { AppMainMenu.perform(path) }
+            }
+            settled?()
+        }
+    }
     model.loadSessions()
     // The hub is a live monitor: transcripts stream in while it sits behind other windows. App Nap
     // throttled the whole process there (main-queue work ran 0.5–1 s late and even a dedicated
@@ -306,10 +330,23 @@ func runHub(_ args: [String]) -> Never {
 }
 
 private final class HubAppDelegate: NSObject, NSApplicationDelegate {
+    weak var window: NSWindow?
+
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         true
     }
 
+    /// A click on the Dock tile (or the app in the switcher with no window up) brings the hub back
+    /// (Sources/App/AppDock.swift).
+    @MainActor
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        AppDock.reopenHub(window)
+    }
+
+    @MainActor
+    func applicationDockMenu(_ sender: NSApplication) -> NSMenu? {
+        AppDock.menu(hubWindow: window)
+    }
 }
 
 /// What the left column lists: agent sessions, the worktrees (branches) they worked in, PRs, the
@@ -873,14 +910,30 @@ final class HubModel: ObservableObject {
     /// The PR list of every session project, once: the PRs mode and the palette's "pr" both read it.
     @MainActor
     func loadPRsIfNeeded() {
-        guard prs.prs.isEmpty, !prs.loading else { return }
+        if prs.loading { return }
+        guard prs.prs.isEmpty else {
+            answerWithoutLoad()
+            return
+        }
         // One path per project; worktrees and clones of one origin collapse server-side.
         let roots = Array(Set(sessions.map(\.cwd).filter { !$0.isEmpty && FileManager.default.fileExists(atPath: $0) }.map(projectRoot(of:)))).sorted()
         // An empty list for the same projects is an answer (no open PR), not a reason for another
         // `tools hub pr list` on every ⌘K; nothing to ask before the sessions arrive.
-        guard !roots.isEmpty, roots != prRootsRequested else { return }
+        guard !roots.isEmpty, roots != prRootsRequested else {
+            answerWithoutLoad()
+            return
+        }
         prRootsRequested = roots
         prs.load(paths: roots)
+    }
+
+    /// No PR load starts: whoever waits for the list's answer (the window's settle, a deferred `--menu`
+    /// action) hears now, instead of waiting for a load that never comes (no project roots, say).
+    @MainActor
+    private func answerWithoutLoad() {
+        guard let done = prs.onLoaded else { return }
+        prs.onLoaded = nil
+        done()
     }
 
     /// The projects the PR list was last asked for by `loadPRsIfNeeded`.
@@ -1576,20 +1629,16 @@ private struct SessionListView: View {
                 }
                 .frame(width: 16, height: 16)
                 if model.mode == .sessions {
-                    Menu {
-                        ForEach(SessionGrouping.allCases, id: \.self) { option in
-                            Button {
+                    MenuButton(items: {
+                        SessionGrouping.allCases.map { option in
+                            .action(option.title, checked: option == mode) {
                                 HubMainBusy.measure("sessions.grouping")
                                 grouping = option.rawValue
-                            } label: {
-                                if option == mode { Label(option.title, systemImage: "checkmark") } else { Text(option.title) }
                             }
                         }
-                    } label: {
+                    }) {
                         Image(systemName: "rectangle.3.group")
                     }
-                    .menuStyle(.borderlessButton)
-                    .menuIndicator(.hidden)
                     .fixedSize()
                     .instantTooltip("Group sessions: \(mode.title.lowercased())")
                 }
@@ -1667,27 +1716,6 @@ private struct SessionListView: View {
 }
 
 /// The provider's letter on its colour (session rows, the Inbox).
-struct ProviderBadge: View {
-    let provider: String
-
-    var body: some View {
-        let (letter, color): (String, Color) = {
-            switch provider {
-            case "claude": return ("C", Color(red: 0.85, green: 0.47, blue: 0.34))
-            case "codex": return ("X", Color(red: 0.55, green: 0.75, blue: 0.95))
-            case "grok": return ("G", Color(red: 0.75, green: 0.75, blue: 0.78))
-            default: return (String(provider.prefix(1)).uppercased(), ReviewPalette.dim)
-            }
-        }()
-        Text(letter)
-            .font(.system(size: 10, weight: .bold, design: .rounded))
-            .foregroundColor(.black.opacity(0.8))
-            .frame(width: 18, height: 18)
-            .background(RoundedRectangle(cornerRadius: 5).fill(color))
-            .instantTooltip(provider)
-    }
-}
-
 private struct SessionRowView: View {
     let session: HubSession
     let selected: Bool
