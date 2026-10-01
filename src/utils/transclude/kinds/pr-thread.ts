@@ -49,6 +49,40 @@ function login(value: unknown): string {
     return text(user.login) || text(user.username) || "unknown";
 }
 
+const PAGE_SIZE = 100;
+/** Pages read at most per list: 5000 comments or discussions, inside the token's own deadline. */
+const MAX_PAGES = 50;
+
+/**
+ * Every item of a paged forge list, page by page until a short page or until `done` says the rest is
+ * not needed. A list longer than MAX_PAGES is an error, never a partial page passed off as the whole.
+ */
+async function allPages({
+    project,
+    endpoint,
+    ctx,
+    done,
+}: {
+    project: ProjectRef;
+    endpoint: string;
+    ctx: TransclusionContext;
+    done?: (items: Json[]) => boolean;
+}): Promise<Json[]> {
+    const items: Json[] = [];
+
+    for (let page = 1; page <= MAX_PAGES; page++) {
+        const reply = await api({ project, endpoint: `${endpoint}?per_page=${PAGE_SIZE}&page=${page}`, ctx });
+        const batch = Array.isArray(reply) ? reply.map(record) : [];
+        items.push(...batch);
+
+        if (batch.length < PAGE_SIZE || done?.(items)) {
+            return items;
+        }
+    }
+
+    throw new TransclusionError(`${endpoint} has more than ${MAX_PAGES * PAGE_SIZE} items; the thread was not read`);
+}
+
 async function api({
     project,
     endpoint,
@@ -164,10 +198,11 @@ async function githubThread({
 
         if (root) {
             const rootId = text(root.in_reply_to_id) || text(root.id);
-            const all = await api({ project, endpoint: `${repo}/pulls/${number}/comments?per_page=100`, ctx });
-            const full = (Array.isArray(all) ? all.map(record) : [root]).filter(
-                (item) => text(item.id) === rootId || text(item.in_reply_to_id) === rootId
-            );
+            // Every page: the thread's root or its replies may sit past the first hundred comments.
+            const all = await allPages({ project, endpoint: `${repo}/pulls/${number}/comments`, ctx });
+            const inThread = all.filter((item) => text(item.id) === rootId || text(item.in_reply_to_id) === rootId);
+            // The fetched comment always belongs to its own thread, even when the list read missed it.
+            const full = inThread.some((item) => text(item.id) === text(root.id)) ? inThread : [root, ...inThread];
             const thread = full.slice(0, max);
             const first = thread[0] ?? root;
             const hunk = text(first.diff_hunk).split("\n").slice(-8).join("\n");
@@ -244,13 +279,13 @@ async function gitlabThread({
     ctx: TransclusionContext;
 }): Promise<{ markdown: string; meta: Json; shown?: TransclusionResult["shown"] }> {
     const base = `projects/${encodeURIComponent(project.path)}/merge_requests/${number}`;
-    const discussions = await api({ project, endpoint: `${base}/discussions?per_page=100`, ctx });
-    const list = Array.isArray(discussions) ? discussions.map(record) : [];
-    const found = list.find((discussion) =>
+    const holds = (discussion: Json) =>
         (Array.isArray(discussion.notes) ? discussion.notes.map(record) : []).some(
             (note) => text(note.id) === comment.id
-        )
-    );
+        );
+    // Page by page until the discussion holding the note turns up: a later one is never "no note".
+    const list = await allPages({ project, endpoint: `${base}/discussions`, ctx, done: (items) => items.some(holds) });
+    const found = list.find(holds);
 
     if (!found || !Array.isArray(found.notes)) {
         throw new TransclusionError(`no note ${comment.id} on ${project.path}!${number}`);

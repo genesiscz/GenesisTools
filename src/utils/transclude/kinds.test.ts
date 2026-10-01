@@ -245,7 +245,7 @@ describe("network kinds", () => {
                 user: { login: "bob" },
                 body: "Why b?",
             },
-            "repos/acme/widgets/pulls/7/comments?per_page=100": [
+            "repos/acme/widgets/pulls/7/comments?per_page=100&page=1": [
                 {
                     id: 11,
                     path: "src/a.ts",
@@ -277,6 +277,38 @@ describe("network kinds", () => {
         expect(text).not.toContain("Other thread.");
         expect(token.meta).toMatchObject({ kind: "review-comment", comments: 2 });
         expect(calls.every((argv) => argv[0] === "gh" && argv[1] === "api")).toBe(true);
+    });
+
+    test("pr-thread reads every page, so a reply past the first hundred comments is in the thread", async () => {
+        const filler = Array.from({ length: 100 }, (_, i) => ({ id: 1000 + i, user: { login: "zed" }, body: "noise" }));
+        const replies: Record<string, unknown> = {
+            "repos/acme/widgets/pulls/7": { title: "T", state: "open", user: { login: "alice" } },
+            "repos/acme/widgets/pulls/comments/11": {
+                id: 11,
+                path: "src/a.ts",
+                line: 3,
+                user: { login: "bob" },
+                body: "Why b?",
+            },
+            "repos/acme/widgets/pulls/7/comments?per_page=100&page=1": [
+                { id: 11, path: "src/a.ts", line: 3, user: { login: "bob" }, body: "Why b?" },
+                ...filler.slice(1),
+            ],
+            "repos/acme/widgets/pulls/7/comments?per_page=100&page=2": [
+                { id: 12, in_reply_to_id: 11, user: { login: "alice" }, body: "Late reply." },
+            ],
+        };
+        const run: TransclusionRunner = async (argv) => {
+            const reply = replies[argv[argv.length - 1]];
+            return reply
+                ? { code: 0, stdout: SafeJSON.stringify(reply), stderr: "" }
+                : { code: 1, stdout: "", stderr: "HTTP 404" };
+        };
+        const { text } = await one('{{pr-thread url="https://github.com/acme/widgets/pull/7#discussion_r11"}}', {
+            run,
+        });
+
+        expect(text).toContain("> Late reply.");
     });
 
     test("comment references", () => {
