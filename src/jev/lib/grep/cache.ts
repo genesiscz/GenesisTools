@@ -102,11 +102,9 @@ export function createGrepCache(options: GrepCacheOptions) {
             .digest("hex");
     }
 
-    /** The directory's lstat; `create` makes it first when it is missing. */
-    async function checkDirectory(path: string, create: boolean): Promise<Stats> {
-        if (create) {
-            await mkdir(path, { recursive: true, mode: 0o700 });
-        }
+    /** The directory's lstat; `create` makes it first when it is missing, and `created` says this call did. */
+    async function checkDirectory(path: string, create: boolean): Promise<{ info: Stats; created: boolean }> {
+        const created = create ? (await mkdir(path, { recursive: true, mode: 0o700 })) !== undefined : false;
 
         const info = await lstat(path);
         if (!info.isDirectory() || info.isSymbolicLink()) {
@@ -117,7 +115,7 @@ export function createGrepCache(options: GrepCacheOptions) {
             await chmod(path, 0o700);
         }
 
-        return info;
+        return { info, created };
     }
 
     /** Bytes of the entry a write replaces; 0 when there is none. */
@@ -160,7 +158,7 @@ export function createGrepCache(options: GrepCacheOptions) {
             }
         }
 
-        const live = await checkDirectory(entries, true);
+        const { info: live } = await checkDirectory(entries, true);
         let total = 0;
         for await (const entry of await opendir(entries)) {
             if (!ENTRY_NAME.test(entry.name) && !PENDING_NAME.test(entry.name)) {
@@ -308,11 +306,13 @@ export function createGrepCache(options: GrepCacheOptions) {
             // directory must hold the measure on both sides of it.
             let replaced = 0;
             for (let attempt = 0; ; attempt++) {
-                const before = await checkDirectory(entries, true);
+                const { info: before, created } = await checkDirectory(entries, true);
                 replaced = await entryBytes(join(entries, name));
                 const after = await lstat(entries);
                 if (before.ino === after.ino) {
-                    if (after.ino !== generation.ino) {
+                    // Linux hands a directory made right after a clear the old one's inode number, so a
+                    // directory this write had to create is a new generation whatever its inode says.
+                    if (created || after.ino !== generation.ino) {
                         generation = { ino: after.ino, bytes: 0 };
                     }
 
