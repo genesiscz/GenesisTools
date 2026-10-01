@@ -99,10 +99,19 @@ export async function syncServers(providers: MCPProvider[], options: SyncOptions
  * Project `config` for one harness and write it there (diff shown; without --yes in a non-TTY
  * nothing is written, which is the dry run). `config` may be an in-memory edit not saved yet.
  */
-export async function syncConfigToProvider(config: UnifiedMCPConfig, provider: MCPProvider): Promise<WriteResult> {
+export async function syncConfigToProvider(
+    config: UnifiedMCPConfig,
+    provider: MCPProvider,
+    opts: { only?: string[] } = {}
+): Promise<WriteResult> {
     const providerName = provider.getName();
     logger.info(`Syncing to ${providerName}...`);
-    const needsGateway = Object.entries(config.mcpServers).some(
+    // `only` limits the write to those servers. Providers touch exactly the names they are
+    // given, so unrelated drift elsewhere in the harness config stays as it is.
+    const servers = opts.only
+        ? Object.fromEntries(Object.entries(config.mcpServers).filter(([name]) => opts.only?.includes(name)))
+        : config.mcpServers;
+    const needsGateway = Object.entries(servers).some(
         ([name, server]) => isGatewayOauth(server) || isGatewayHosted(name, server)
     );
     // A dry run (a non-TTY without --yes writes nothing) only reads the token: minting one there would
@@ -113,7 +122,7 @@ export async function syncConfigToProvider(config: UnifiedMCPConfig, provider: M
         : dryRun
           ? ((await readSecret(GATEWAY_CLIENT_TOKEN_PATH)) ?? "<minted on the first accepted write>")
           : await ensureGatewayClientToken();
-    const projected = projectAllForHarness(config.mcpServers, {
+    const projected = projectAllForHarness(servers, {
         provider: providerName as MCPProviderName,
         localToken,
         listen: gatewayListen(config),

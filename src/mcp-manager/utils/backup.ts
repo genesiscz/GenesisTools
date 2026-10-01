@@ -6,6 +6,7 @@ import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
 import * as p from "@genesiscz/utils/prompts/p";
 import chalk from "chalk";
+import { redactConfigText } from "../lib/auth/redact.ts";
 import { getGlobalOptions } from "./config.utils.js";
 
 /**
@@ -72,7 +73,9 @@ export class BackupManager {
         logger.info(chalk.bold(`\nChanges to ${configPath}:\n`));
 
         // Use DiffUtil to show diff using system diff command
-        await DiffUtil.showDiff(oldContent, newContent, "old", "new");
+        // Redacted: the diff goes through the logger into the day log, and these configs carry
+        // the gateway token in their headers.
+        await DiffUtil.showDiff(redactConfigText(oldContent), redactConfigText(newContent), "old", "new");
         return true;
     }
 

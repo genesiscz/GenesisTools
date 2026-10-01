@@ -200,6 +200,49 @@ describe("syncFromProviders", () => {
         expect(logger.error).toHaveBeenCalledWith(expect.stringContaining("Failed to read from claude"));
     });
 
+    it("keeps the stored stdio definition of a gateway-hosted server when a harness holds its http projection", async () => {
+        const stdio = {
+            type: "stdio" as const,
+            command: "/repo/tools",
+            args: ["claude", "mcp"],
+            env: { GENESIS_TOOLS_MCP_CAPABILITIES: "question_answer" },
+            _meta: { enabled: { claude: true }, gatewayHosted: true },
+        };
+        const mockConfig = createMockUnifiedConfig();
+        mockConfig.mcpServers["genesis-tools"] = structuredClone(stdio);
+        mockProvider.listServersResult = [
+            {
+                name: "genesis-tools",
+                config: {
+                    type: "http",
+                    url: "http://127.0.0.1:8318/mcp/genesis-tools",
+                    headers: { "X-Genesis-Mcp-Gateway": "local", "X-Genesis-Mcp-Capabilities": "question_answer" },
+                },
+                enabled: true,
+                provider: "claude",
+            },
+        ];
+
+        let capturedConfig: UnifiedMCPConfig | null = null;
+        spyOn(configUtils, "readUnifiedConfig").mockResolvedValue(mockConfig);
+        spyOn(configUtils, "writeUnifiedConfig").mockImplementation(async (config: UnifiedMCPConfig) => {
+            capturedConfig = config;
+            return true;
+        });
+        spyOn(logger, "info");
+        spyOn(logger, "warn");
+
+        await syncFromProviders([mockProvider]);
+
+        const stored = (capturedConfig ?? mockConfig).mcpServers["genesis-tools"];
+        expect(stored).toMatchObject({ type: "stdio", command: "/repo/tools", args: ["claude", "mcp"] });
+        expect(stored.url).toBeUndefined();
+        expect(stored.headers).toBeUndefined();
+        expect(stored._meta?.gatewayHosted).toBe(true);
+        // Recognised as our own projection: no conflict prompt between stdio and http.
+        expect(logger.warn).not.toHaveBeenCalledWith(expect.stringContaining("Conflict detected for 'genesis-tools'"));
+    });
+
     it("should skip providers without config files", async () => {
         mockProvider.configExistsResult = false;
 

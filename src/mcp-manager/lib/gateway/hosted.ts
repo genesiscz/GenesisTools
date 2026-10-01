@@ -41,11 +41,19 @@ const HOSTED: Record<string, HostedServer> = {
             ]);
 
             return (request, peer) => {
-                const caller = peer
-                    ? resolveCallerFromPeer(peer)
-                    : { agent: "unknown" as const, sessionId: null, cwd: null, pid: null, processName: null };
+                // Only a POST carries a JSON-RPC call. A stateless server answers GET and DELETE with
+                // 405, and a client that is closing often drops that socket before it could be read.
+                const caller =
+                    peer && request.method === "POST"
+                        ? resolveCallerFromPeer(peer)
+                        : { agent: "unknown" as const, sessionId: null, cwd: null, pid: null, processName: null };
                 logger.debug(
-                    { server: "genesis-tools", pid: caller.pid, agent: caller.agent, sessionId: caller.sessionId },
+                    {
+                        server: "genesis-tools",
+                        callerPid: caller.pid,
+                        agent: caller.agent,
+                        sessionId: caller.sessionId,
+                    },
                     "gateway hosted call"
                 );
                 return serveGenesisToolsHttp(request, caller);

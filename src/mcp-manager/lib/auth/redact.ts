@@ -2,6 +2,31 @@ import { GATEWAY_HEADER, REDACTED } from "./constants.ts";
 
 const HEADER_KEYS = new Set(["authorization", GATEWAY_HEADER.toLowerCase(), "x-api-key", "proxy-authorization"]);
 
+const SECRET_KEY = `(?:${[...HEADER_KEYS].map((key) => key.replace(/[-]/g, "\\-")).join("|")}|[A-Za-z0-9_-]*(?:token|secret|password|passwd|api[_-]?key|access[_-]?key|private[_-]?key|auth[_-]?config)[A-Za-z0-9_-]*)`;
+
+/**
+ * `"<key>": "<value>"` (JSON) or `<key> = "<value>"` / `<key> = '<value>'` (TOML) where the key is a
+ * credential header or an env name that reads like one (`OPENAI_API_KEY`, `DB_PASSWORD`,
+ * `DOCKER_AUTH_CONFIG`). A double-quoted value runs to its closing quote past escaped quotes
+ * (`\"`), so no tail of the secret survives; a TOML literal string ends at the next `'`.
+ */
+const SECRET_VALUE_IN_TEXT = new RegExp(
+    `(${SECRET_KEY}["']?\\s*[:=]\\s*)(?:"(?:[^"\\\\\\n]|\\\\.)*"|'[^'\\n]*')`,
+    "gi"
+);
+
+/**
+ * Redact credential values inside a serialized harness config (JSON or TOML): auth headers and
+ * secret-looking env entries. For text that is printed or logged, such as a config diff: the
+ * logger writes it to the day log too.
+ */
+export function redactConfigText(text: string): string {
+    return text.replace(SECRET_VALUE_IN_TEXT, (match: string, prefix: string) => {
+        const quote = match.slice(prefix.length, prefix.length + 1);
+        return `${prefix}${quote}${REDACTED}${quote}`;
+    });
+}
+
 export function redactMcpValue<T>(value: T): T {
     return walk(value, undefined) as T;
 }

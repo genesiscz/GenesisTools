@@ -311,7 +311,7 @@ export async function gatewayHost(serverName: string, opts: { off: boolean; prov
         provider.applyHarnessConfig(config);
 
         if (await provider.configExists()) {
-            await syncConfigToProvider(config, provider);
+            await syncConfigToProvider(config, provider, { only: [serverName] });
         }
     }
 
