@@ -76,7 +76,9 @@ export function isAuthError(message: string): boolean {
         message.includes("AADSTS50078") ||
         message.includes("AADSTS70043") ||
         message.includes("multi-factor authentication has expired") ||
-        message.includes("Presented multi-factor")
+        message.includes("Presented multi-factor") ||
+        message.includes("requires user authentication") ||
+        message.includes("Azure DevOps rejected the access token")
     );
 }
 
@@ -141,6 +143,10 @@ export function exitWithSslGuide(error?: unknown): never {
  * Print authentication guide and exit
  */
 export function exitWithAuthGuide(error?: unknown): never {
+    if (error !== undefined) {
+        out.error(`ERROR: ${error instanceof Error ? error.message : String(error)}\n`);
+    }
+
     out.println(authGuide());
 
     if (error instanceof Error && error.stack && env.log.isDebugEnabled()) {
@@ -158,7 +164,7 @@ export function handleCliError(error: unknown): never {
     const message = error instanceof Error ? error.message : String(error);
 
     if (isAuthError(message)) {
-        exitWithAuthGuide();
+        exitWithAuthGuide(error);
     }
 
     out.error(`ERROR: ${message}`);

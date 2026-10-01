@@ -318,10 +318,32 @@ export class Api {
         const elapsed = Date.now() - startTime;
         logger.debug(`[api] ${method} response: ${response.status} ${response.statusText} (${elapsed}ms)`);
 
+        // A token the org no longer accepts gets 401, 203 (sign-in page), or a redirect to /_signout.
+        const signedOut = response.redirected && response.url.includes("/_signout");
+
+        if (response.status === 401 || response.status === 203 || signedOut) {
+            this.cachedToken = null;
+            const how = signedOut ? "redirected to /_signout" : `HTTP ${response.status}`;
+            throw new AzAuthError(
+                `Azure DevOps rejected the access token (${how}) for ${method} ${shortUrl}. The az session is no longer valid; sign in again with az login.`,
+                "",
+                null
+            );
+        }
+
         if (!response.ok) {
             const errorText = await response.text();
             logger.debug(`[api] Error response body: ${errorText.slice(0, 200)}`);
             throw new Error(`API Error ${response.status}: ${errorText}`);
+        }
+
+        const type = response.headers.get("content-type") ?? "";
+
+        if (type.includes("text/html")) {
+            const preview = (await response.text()).replace(/\s+/g, " ").slice(0, 160);
+            throw new Error(
+                `Azure DevOps returned HTML instead of JSON for ${method} ${shortUrl} (HTTP ${response.status}): ${preview}`
+            );
         }
 
         return response;

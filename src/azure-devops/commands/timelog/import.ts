@@ -162,11 +162,22 @@ export function registerImportSubcommand(parent: Command): void {
 
                 // Deduplicate work item IDs to avoid redundant API calls
                 const uniqueWorkItemIds = [...new Set(validEntries.map((e) => e.workItemId))];
+                const precheckErrors = new Map<number, string>();
                 const precheckResults = await concurrentMap({
                     items: uniqueWorkItemIds,
                     fn: (workItemId) => precheckWorkItem(workItemId, config.org, allowedTypeConfig),
                     concurrency: 5,
+                    onError: (workItemId, reason) => {
+                        precheckErrors.set(workItemId, reason instanceof Error ? reason.message : String(reason));
+                    },
                 });
+
+                if (precheckErrors.size > 0) {
+                    const lines = [...precheckErrors].map(([id, message]) => `  #${id}: ${message}`);
+                    throw new Error(
+                        `Pre-check could not read ${precheckErrors.size} of ${uniqueWorkItemIds.length} work item(s); nothing was imported.\n${lines.join("\n")}`
+                    );
+                }
 
                 for (const entry of validEntries) {
                     const result = precheckResults.get(entry.workItemId)!;
