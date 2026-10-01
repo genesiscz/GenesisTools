@@ -678,6 +678,29 @@ describe("three-file pattern", () => {
         expect(await Bun.file(first.outPath).text()).toBe(afterFirst);
     });
 
+    test("a {{lines}} token in the prose becomes an excerpt, and an unchanged rebuild leaves the file as it is", async () => {
+        const dir = await scratch();
+        const modulePath = join(dir, "doc.ts");
+        await Bun.write(join(dir, "doc.json"), SafeJSONStringify({ items: [{ id: 1, name: "one" }] }));
+        await Bun.write(join(dir, "source.ts"), "export const answer = 42;\nexport const other = 1;\n");
+
+        const definition = defineDocument<{ items: Array<{ id: number; name: string }> }>({
+            data: "./doc.json",
+            render: () => [{ raw: '{{lines path="source.ts" range="1-1"}}' }],
+        });
+        const first = await writeDocument(modulePath, definition);
+        const text = await Bun.file(first.outPath).text();
+
+        expect(text).toContain("<!-- md:include sig=");
+        expect(text).toContain("export const answer = 42;");
+        expect(text).not.toContain("export const other = 1;");
+
+        const second = await writeDocument(modulePath, definition);
+
+        expect(second.outcome).toBe("unchanged");
+        expect(await Bun.file(first.outPath).text()).toBe(text);
+    });
+
     test("a data change is stale and rewrites", async () => {
         const dir = await scratch();
         const modulePath = join(dir, "doc.ts");

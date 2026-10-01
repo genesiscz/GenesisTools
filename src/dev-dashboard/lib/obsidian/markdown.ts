@@ -610,7 +610,9 @@ function buildMarked(opts: RenderOptions): Marked {
         // are unaffected.
         {
             renderer: {
-                html: ({ text }) => escapeHtml(text),
+                // A comment-only token (`<!-- md:include … -->` around an excerpt, a json2md stamp, an
+                // `<!-- updated … -->` note) is for the file, not the reader: Obsidian and Genesis hide it too.
+                html: ({ text }) => (text.replace(/<!--[\s\S]*?-->/g, "").trim() === "" ? "" : escapeHtml(text)),
                 link(token: Tokens.Link): string {
                     const local = isLocalHref(token.href);
 

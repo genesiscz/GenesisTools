@@ -101,6 +101,13 @@ export default defineDocument<Data>({
 });
 ```
 
+### Real code in the prose
+
+A `{{lines path="src/a.ts" range="5-20"}}` token (or `symbol`, `json`, `diff`, …) in a `raw` or `p` block
+becomes an excerpt at build time, captured at the build's timestamp, so an unchanged rebuild stays `unchanged`.
+`transclude: false` on the definition keeps tokens literal. The kinds, the include markers and `tools markdown resolve`
+for hand-written notes are in `gt:markdown`.
+
 ## 🛑 Hand-edit detection: what to tell the user
 
 Every generated `.md` ends with a stamp:

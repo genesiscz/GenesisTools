@@ -10,6 +10,8 @@
 
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { resolveIncludes } from "@genesiscz/utils/markdown/includes";
+import { hasTransclusionTokens } from "@genesiscz/utils/transclude";
 import TOML from "@iarna/toml";
 import { Json2mdError } from "./errors";
 import { type DocumentOptions, json2md } from "./index";
@@ -30,6 +32,12 @@ export interface DocumentDefinition<T = unknown> {
     command?: string;
     /** Skip the stamp. Only for a document that a person is expected to keep editing. */
     unstamped?: boolean;
+    /**
+     * `{{kind …}}` tokens in the rendered prose (`{{lines path="src/a.ts" range="5-20"}}`) become excerpts at
+     * build time, the same include blocks `tools markdown resolve` writes. On by default; `false` keeps
+     * the tokens as written. Relative paths resolve from the generator's folder.
+     */
+    transclude?: boolean;
 }
 
 const MARKER = Symbol.for("genesiscz.json2md.document");
@@ -156,6 +164,12 @@ export interface BuildOverrides {
  * @param modulePath absolute path of the `.ts` that declared the document, used to resolve
  *                   the data and output paths and to record the generator in the stamp.
  */
+/** `generated` is a local "YYYY-MM-DD HH:MM"; an unreadable one falls back to now. */
+function capturedAt(generated: string): Date {
+    const parsed = new Date(generated.replace(" ", "T"));
+    return Number.isNaN(parsed.getTime()) ? new Date() : parsed;
+}
+
 export async function buildDocument<T>(
     modulePath: string,
     definition: DocumentDefinition<T>,
@@ -176,7 +190,13 @@ export async function buildDocument<T>(
         : (definition.options ?? {});
 
     // The data comes off disk as `unknown`; the definition declares the shape it expects.
-    const body = json2md(definition.render(data as T), options);
+    const rendered = json2md(definition.render(data as T), options);
+    // Captured at the build's own timestamp, so a rebuild at the pinned time of an unchanged document
+    // produces the same excerpts and footers, and `check` still reads it as clean.
+    const body =
+        definition.transclude === false || !hasTransclusionTokens(rendered)
+            ? rendered
+            : (await resolveIncludes(rendered, { cwd: baseDir, refresh: true, now: () => capturedAt(generated) })).text;
 
     if (definition.unstamped) {
         return { markdown: body, body, outPath, dataPath, sourceHash, data };
