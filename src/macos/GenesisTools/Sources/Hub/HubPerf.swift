@@ -103,6 +103,53 @@ enum HubMainBusy {
             HubPerf.log(String(format: "%@ main busy %.1f ms of %.0f ms", label, meter.busy * 1000, window * 1000) + RenderProbe.summary())
         }
     }
+
+    /// The main thread's busy time from now until it settles, for work whose cost runs past any fixed
+    /// window (a transcript's first page drew for 600 ms and more, and `measure` cut it off there). Settled:
+    /// under `quietMs` of busy time in each of three 100 ms checks in a row; at most `cap` seconds. One line:
+    /// `<label> main busy <ms>, settled after <ms>: <detail()>`, `detail` read at the end.
+    static func measureUntilSettled(_ label: String, cap: TimeInterval = 10, quietMs: Double = 8, detail: @escaping () -> String) {
+        guard PerfLog.enabled, open.insert(label).inserted else { return }
+        _ = RenderProbe.take()
+        let meter = Meter()
+        let start = CFAbsoluteTimeGetCurrent()
+        meter.wokeAt = start
+        let wake = CFRunLoopObserverCreateWithHandler(kCFAllocatorDefault, CFRunLoopActivity.afterWaiting.rawValue, true, Int.min) { _, _ in
+            meter.wokeAt = CFAbsoluteTimeGetCurrent()
+        }
+        let sleep = CFRunLoopObserverCreateWithHandler(kCFAllocatorDefault, CFRunLoopActivity.beforeWaiting.rawValue, true, Int.max) { _, _ in
+            if let woke = meter.wokeAt {
+                meter.busy += CFAbsoluteTimeGetCurrent() - woke
+                meter.wokeAt = nil
+            }
+        }
+        CFRunLoopAddObserver(CFRunLoopGetMain(), wake, .commonModes)
+        CFRunLoopAddObserver(CFRunLoopGetMain(), sleep, .commonModes)
+        var last = 0.0
+        var quiet = 0
+        var lastBusyAt = start
+        func check() {
+            let now = CFAbsoluteTimeGetCurrent()
+            let step = (meter.busy - last) * 1000
+            last = meter.busy
+            if step >= quietMs {
+                quiet = 0
+                lastBusyAt = now
+            } else {
+                quiet += 1
+            }
+            guard quiet >= 3 || now - start >= cap else {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { check() }
+                return
+            }
+            CFRunLoopRemoveObserver(CFRunLoopGetMain(), wake, .commonModes)
+            CFRunLoopRemoveObserver(CFRunLoopGetMain(), sleep, .commonModes)
+            open.remove(label)
+            let capped = quiet < 3 ? " (cap)" : ""
+            HubPerf.log(String(format: "%@ main busy %.1f ms, settled after %.0f ms%@: %@", label, meter.busy * 1000, (lastBusyAt - start) * 1000, capped, detail()) + RenderProbe.summary())
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { check() }
+    }
 }
 
 /// `GENESIS_HUB_STALL_TEST=<ms>`: blocks the main thread once, 3 s after launch, in a frame with a

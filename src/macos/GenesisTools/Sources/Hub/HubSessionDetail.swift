@@ -400,7 +400,14 @@ struct HubSessionDetailHost: View {
             await rebuild()
             // A newer load started while this one rebuilt: it owns the state, the notice and the tail.
             guard id == loadID else { return }
-            HubMainBusy.measure("transcript.page.render")
+            if offset == nil, limit == Self.firstPage {
+                // A session opened: every open is logged with what its rows hold, until the main thread
+                // settles, so the cost of the rows can be read per session from app-perf.log.
+                let shape = Self.shape(document, session: session.sessionId)
+                HubMainBusy.measureUntilSettled("transcript.open") { shape }
+            } else {
+                HubMainBusy.measure("transcript.page.render")
+            }
             loadState = .loaded
             NotificationCenter.default.post(name: Self.firstPageDone, object: session.id)
             // This window's own follow, from its last turn (which may still grow).
@@ -618,6 +625,39 @@ struct HubSessionDetailHost: View {
     /// Off the main thread: a long session is thousands of rows with regex work per prompt. Builds
     /// overlap (a fetch, the native scan, an earlier page, the live tail), and only the latest may
     /// land: an older one would drop turns added after it started.
+    /// What a transcript.open line names: the session and the rows by kind, with the text a row lays out.
+    static func shape(_ document: TranscriptDocument, session: String) -> String {
+        var counts: [String: Int] = [:]
+        var chars = 0
+        var rows = 0
+        for section in document.sections {
+            for row in section.rows {
+                rows += 1
+                switch row.kind {
+                case .prompt(let text, _):
+                    counts["prompt", default: 0] += 1
+                    chars += text.count
+                case .reply(let text, _, _):
+                    counts["reply", default: 0] += 1
+                    chars += text.count
+                case .thinking(let text):
+                    counts["thinking", default: 0] += 1
+                    chars += text.count
+                case .tool(let line):
+                    counts["tool.\(TranscriptToolKind.of(line.name))", default: 0] += 1
+                case .toolGroup:
+                    counts["toolGroup", default: 0] += 1
+                case .notice:
+                    counts["notice", default: 0] += 1
+                case .activity:
+                    counts["activity", default: 0] += 1
+                }
+            }
+        }
+        let kinds = counts.sorted { $0.value > $1.value }.map { "\($0.key)=\($0.value)" }.joined(separator: " ")
+        return "\(session.prefix(8)) \(document.sections.count) turns \(rows) rows \(chars) chars [\(kinds)]"
+    }
+
     private func rebuild() async {
         buildID += 1
         let id = buildID
