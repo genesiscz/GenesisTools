@@ -8,6 +8,12 @@ import { messageCountLabel } from "./thread";
 
 const log = logger.scoped("ms-teams").log;
 
+/**
+ * One invisible line per exported message. A speaker burst shares one `##` heading, so headings
+ * undercount; `tools ms-teams show --out` counts these markers to refuse a shrinking export.
+ */
+export const MESSAGE_MARKER = "<!-- msg -->";
+
 export function renderMarkdown(thread: ThreadExport): string {
     const lines: string[] = [];
     const { conversation, messages } = thread;
@@ -34,6 +40,8 @@ export function renderMarkdown(thread: ThreadExport): string {
             lines.push(`## ${when} · ${who}`);
             lines.push("");
         }
+
+        lines.push(MESSAGE_MARKER);
 
         if (message.replyTo) {
             lines.push(`> reply to ${message.replyTo.from}: ${message.replyTo.excerpt}`);

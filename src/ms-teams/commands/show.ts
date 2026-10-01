@@ -77,7 +77,7 @@ export function registerShowCommand(program: Command): void {
 
                 if (opts.json || format === "json") {
                     if (opts.out) {
-                        await writeOut({ outPath: opts.out, body: rendered, ext: "json", thread, opts });
+                        await writeOut({ outPath: opts.out, body: rendered, ext: "json", opts });
                     } else {
                         out.result(thread);
                     }
@@ -87,7 +87,7 @@ export function registerShowCommand(program: Command): void {
 
                 if (opts.out) {
                     const ext = format === "html" ? "html" : "md";
-                    const dest = await writeOut({ outPath: opts.out, body: rendered, ext, thread, opts });
+                    const dest = await writeOut({ outPath: opts.out, body: rendered, ext, opts });
                     out.println(`Wrote ${dest} (${thread.messages.length} messages).`);
                     return;
                 }
@@ -138,24 +138,19 @@ async function writeOut({
     outPath,
     body,
     ext,
-    thread,
     opts,
 }: {
     outPath: string;
     body: string;
     ext: string;
-    thread: ThreadExport;
     opts: ShowFlags;
 }): Promise<string> {
     const looksDir = outPath.endsWith("/") || extname(outPath) === "";
     const filePath = looksDir ? join(outPath, `thread.${ext}`) : outPath;
-    const existingCount = existsSync(filePath) ? await exportedMessageCount(filePath) : null;
+    const refusal = existsSync(filePath) ? shrinkRefusal(await Bun.file(filePath).text(), body) : null;
 
-    if (existingCount !== null && existingCount > thread.conversation.messageCount && !opts.allowShrink) {
-        throw new Error(
-            `${filePath} holds ${existingCount} messages; this export has ${thread.conversation.messageCount}. ` +
-                `Refusing to shrink it. Write elsewhere, or pass --allow-shrink.`
-        );
+    if (refusal && !opts.allowShrink) {
+        throw new Error(`${filePath}: ${refusal} Write elsewhere, or pass --allow-shrink.`);
     }
 
     await mkdir(dirname(filePath), { recursive: true });
@@ -163,12 +158,37 @@ async function writeOut({
     return filePath;
 }
 
-export async function exportedMessageCount(filePath: string): Promise<number | null> {
-    const text = await Bun.file(filePath).text();
+/** Why overwriting `existing` with `incoming` would lose messages, or null when it is safe. */
+export function shrinkRefusal(existing: string, incoming: string): string | null {
+    if (existing.trim() === "") {
+        return null;
+    }
 
+    const had = countExportedMessages(existing);
+
+    if (had === null) {
+        return "cannot tell how many messages the file holds, so refusing to overwrite it.";
+    }
+
+    const has = countExportedMessages(incoming) ?? 0;
+
+    return had > has ? `holds ${had} messages; this export has ${has}. Refusing to shrink it.` : null;
+}
+
+// Both sides of the comparison are counted from the rendered text, never from the header alone:
+// a hand-merged file can carry any header, and markdown groups a speaker's burst under one heading.
+export function countExportedMessages(text: string): number | null {
     if (text.trimStart().startsWith("{")) {
         try {
-            const parsed = SafeJSON.parse(text, { strict: true }) as { conversation?: { messageCount?: unknown } };
+            const parsed = SafeJSON.parse(text, { strict: true }) as {
+                messages?: unknown;
+                conversation?: { messageCount?: unknown };
+            };
+
+            if (Array.isArray(parsed.messages)) {
+                return parsed.messages.length;
+            }
+
             const count = parsed.conversation?.messageCount;
             return typeof count === "number" ? count : null;
         } catch {
@@ -176,8 +196,31 @@ export async function exportedMessageCount(filePath: string): Promise<number | n
         }
     }
 
+    const articles = text.match(/<article class="msg/g)?.length ?? 0;
+
+    if (articles > 0) {
+        return articles;
+    }
+
+    // One marker per message (current exports); older exports have only the speaker headings.
+    const markers = text.match(/^<!-- msg -->$/gm)?.length ?? 0;
+
+    if (markers > 0) {
+        return markers;
+    }
+
+    const headings = text.match(/^## .+ · .+$/gm)?.length ?? 0;
+
+    if (headings > 0) {
+        return headings;
+    }
+
     const match = /· (\d+) messages\b/.exec(text.slice(0, 4000));
     return match ? Number(match[1]) : null;
+}
+
+export async function exportedMessageCount(filePath: string): Promise<number | null> {
+    return countExportedMessages(await Bun.file(filePath).text());
 }
 
 async function withDownloads(thread: ThreadExport, outPath: string): Promise<ThreadExport> {

@@ -4,7 +4,7 @@ Read Microsoft Teams conversations from the **local New Teams desktop cache** (C
 
 This is the client cache of threads you have opened. It is not a server-complete Graph export.
 
-The Teams cache drops old messages over time; the SQLite store does not. Each `sync` upserts by conversation id + message id, keeps every message it saw before (even with `--force`), replaces an edited message with its newest version, and marks a message deleted in Teams (`_(deleted in Teams)_`) while keeping its last seen text. The export header counts the messages kept from earlier syncs. `show --out` refuses to overwrite a file that holds more messages unless you pass `--allow-shrink`.
+The Teams cache drops old messages over time; the SQLite store does not. Each `sync` upserts by conversation id + message id, keeps every message it saw before (even with `--force`), replaces an edited message with its newest version, and marks a message deleted in Teams (`_(deleted in Teams)_`) while keeping its last seen text. The export header counts the messages kept from earlier syncs. `show --out` refuses to overwrite a file that holds more messages than the new export (counted from the file itself: message headings in markdown, `<article class="msg">` in HTML, the `messages` array in JSON), and refuses a non-empty file it cannot count at all, unless you pass `--allow-shrink`.
 
 ## Quick start
 

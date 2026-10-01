@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { countExportedMessages } from "@app/ms-teams/commands/show";
 import { COMPLETENESS_NOTE, type ExportedMessage, type ThreadExport } from "../types";
 import { sizeMarkdownImages } from "./image-embed";
 import { renderMarkdown } from "./markdown";
@@ -149,6 +150,8 @@ describe("renderMarkdown", () => {
         expect(speakerHeadings(md, "alice@example.com (me)")).toHaveLength(1);
         expect(md).toContain("first ping");
         expect(md).toContain("second ping");
+        // The burst shares one heading, but each message keeps its marker for the shrink guard.
+        expect(countExportedMessages(md)).toBe(2);
     });
 
     test("omits the speaker heading when the same-person gap is 59 minutes", () => {
