@@ -91,13 +91,28 @@ export class TaskSessionStore {
     }
 
     async touchSession(name: string): Promise<void> {
-        const meta = await this.getSessionMeta(name);
-        if (!meta) {
-            return;
-        }
+        await this.mutateMeta(name, (meta) => {
+            meta.lastActivityAt = Date.now();
+        });
+    }
 
-        meta.lastActivityAt = Date.now();
-        await this.writeSessionMeta(meta);
+    /**
+     * Read, change and write one session's meta under a cross-process lock: the run supervisor and a
+     * `tools task stop` both write it, and an unlocked read-modify-write could put back a stale copy
+     * (an exit over a stop, or a touch that drops `stopped`). `change` returns false to write nothing.
+     */
+    private async mutateMeta(name: string, change: (meta: TaskSessionMeta) => boolean | undefined): Promise<void> {
+        await this.storage.withFileLock({
+            file: metaPath(name),
+            fn: async () => {
+                const meta = await this.getSessionMeta(name);
+                if (!meta || change(meta) === false) {
+                    return;
+                }
+
+                await this.writeSessionMeta(meta);
+            },
+        });
     }
 
     sessionFilesExist(name: string): boolean {
@@ -385,22 +400,18 @@ export class TaskSessionStore {
     }
 
     async markExited(input: MarkExitedInput): Promise<void> {
-        const meta = await this.getSessionMeta(input.name);
-        if (!meta) {
-            return;
-        }
+        await this.mutateMeta(input.name, (meta) => {
+            // A deliberate stop wins in either order: the run supervisor can flush its exit after markStopped.
+            if (meta.stopped) {
+                logger.debug({ name: input.name, exitCode: input.exitCode }, "task: exit after a stop, the stop stays");
+                return false;
+            }
 
-        // A deliberate stop wins in either order: the run supervisor can flush its exit after markStopped.
-        if (meta.stopped) {
-            logger.debug({ name: input.name, exitCode: input.exitCode }, "task: exit after a stop, the stop stays");
-            return;
-        }
-
-        meta.exitCode = input.exitCode;
-        meta.durationMs = input.durationMs;
-        meta.exitedAt = new Date().toISOString();
-        meta.lastActivityAt = Date.now();
-        await this.writeSessionMeta(meta);
+            meta.exitCode = input.exitCode;
+            meta.durationMs = input.durationMs;
+            meta.exitedAt = new Date().toISOString();
+            meta.lastActivityAt = Date.now();
+        });
     }
 
     /**
@@ -416,18 +427,14 @@ export class TaskSessionStore {
      * sticks, so it must not leave that stale pair sitting next to `stopped: true`.
      */
     async markStopped(input: MarkStoppedInput): Promise<void> {
-        const meta = await this.getSessionMeta(input.name);
-        if (!meta) {
-            return;
-        }
-
-        meta.stopped = true;
-        meta.stoppedAt = new Date().toISOString();
-        meta.durationMs = input.durationMs;
-        meta.lastActivityAt = Date.now();
-        meta.exitCode = undefined;
-        meta.exitedAt = undefined;
-        await this.writeSessionMeta(meta);
+        await this.mutateMeta(input.name, (meta) => {
+            meta.stopped = true;
+            meta.stoppedAt = new Date().toISOString();
+            meta.durationMs = input.durationMs;
+            meta.lastActivityAt = Date.now();
+            meta.exitCode = undefined;
+            meta.exitedAt = undefined;
+        });
     }
 
     async updatePid(name: string, pid: number): Promise<void> {

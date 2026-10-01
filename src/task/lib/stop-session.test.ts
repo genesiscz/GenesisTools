@@ -177,3 +177,36 @@ describe("stopSession refusals and late writers", () => {
         expect((await store.getActiveSessions()).map((session) => session.name)).not.toContain(name);
     });
 });
+
+describe("stopSession never signals a reused pid's tree", () => {
+    it("a root pid whose start time no longer matches the record signals nothing", async () => {
+        const store = new TaskSessionStore();
+        const name = "stop-reused-root";
+        await store.prepareSession({ name, command: "sleep 5", mode: "pipe", cwd: "/tmp" });
+        const child = Bun.spawn(["sleep", "5"], {
+            stdout: "ignore",
+            stderr: "ignore",
+            stdin: "ignore",
+            env: process.env,
+        });
+
+        try {
+            await store.updatePid(name, child.pid);
+            const meta = await store.getSessionMeta(name);
+
+            if (!meta) {
+                throw new Error("no meta");
+            }
+
+            // The record says the task started an hour earlier: this pid now runs another process.
+            store.writeSessionMeta({ ...meta, pidStartedAt: Date.now() - 3_600_000 });
+            const calls: number[] = [];
+            await stopSession({ name, graceMs: 200, kill: (pid) => calls.push(pid) });
+
+            expect(calls).toEqual([]);
+            expect(isProcessAlive(child.pid)).toBe(true);
+        } finally {
+            child.kill("SIGKILL");
+        }
+    });
+});

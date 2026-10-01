@@ -39,16 +39,33 @@ function identityOf(row: PsRow | undefined): Identity | null {
 }
 
 /**
- * The pids among `pids` that still run the process the snapshot saw: same start time and command line,
- * read in one batched `ps` right before a signal loop. A pid reused by another process is dropped.
+ * Splits `pids` by one batched `ps` read right before a signal loop: `same` still run the process the
+ * snapshot saw (start time and command line), `unverified` are alive but cannot be proven to (a reused
+ * pid, an exec, an unreadable start time). Gone pids are in neither. Only `same` is ever signalled.
  */
-function stillTheSame(pids: number[], snapshot: Map<number, Identity>): number[] {
+function verify(pids: number[], snapshot: Map<number, Identity>): { same: number[]; unverified: number[] } {
     const live = batchPsInfo(pids);
-    return pids.filter((pid) => {
+    const same: number[] = [];
+    const unverified: number[] = [];
+
+    for (const pid of pids) {
+        const row = live.get(pid);
+
+        if (!row) {
+            continue;
+        }
+
         const was = snapshot.get(pid);
-        const now = identityOf(live.get(pid));
-        return was !== undefined && now !== null && was.startTime === now.startTime && was.command === now.command;
-    });
+        const now = identityOf(row);
+
+        if (was !== undefined && now !== null && was.startTime === now.startTime && was.command === now.command) {
+            same.push(pid);
+        } else {
+            unverified.push(pid);
+        }
+    }
+
+    return { same, unverified };
 }
 
 /** Sends `signal` to each pid: the ones signalled, and the ones that refused for a reason other than being gone. */
@@ -131,9 +148,19 @@ export async function stopSession(
 
     const rows = await listPsTable();
     const byPid = new Map(rows.map((row) => [row.pid, row]));
+
+    // The root must still be the recorded task after the await above: the same start-time reader and
+    // tolerance updatePid and reconcileSessionState use, not the ps table's one-second, local-time column.
+    // A reused root pid means the task is gone, and the tree under that pid is another program's: none of
+    // it is ever signalled.
+    const rootStart = processStartMs(meta.pid);
+    const rootMoved =
+        meta.pidStartedAt !== undefined &&
+        (rootStart === null || Math.abs(rootStart - meta.pidStartedAt) > START_MS_TOLERANCE);
+    const tree = rootMoved ? [] : collectProcessTree(meta.pid, rows).filter((pid) => byPid.has(pid));
     const snapshot = new Map<number, Identity>();
 
-    for (const pid of collectProcessTree(meta.pid, rows)) {
+    for (const pid of tree) {
         const identity = identityOf(byPid.get(pid));
 
         if (identity) {
@@ -141,29 +168,27 @@ export async function stopSession(
         }
     }
 
-    // The root must still be the recorded task after the await above: the same start-time reader and
-    // tolerance updatePid and reconcileSessionState use, not the ps table's one-second, local-time column.
-    const rootStart = processStartMs(meta.pid);
-    const rootMoved =
-        meta.pidStartedAt !== undefined &&
-        (rootStart === null || Math.abs(rootStart - meta.pidStartedAt) > START_MS_TOLERANCE);
-
     if (rootMoved) {
-        snapshot.delete(meta.pid);
+        log.info(
+            { name: opts.name, pid: meta.pid },
+            "stop: the recorded pid now runs another process; nothing signalled"
+        );
     }
 
     const graceMs = opts.graceMs ?? DEFAULT_GRACE_MS;
-    const term = signalPids(stillTheSame([...snapshot.keys()], snapshot), "SIGTERM", opts.kill);
+    const atTerm = verify(tree, snapshot);
+    const term = signalPids(atTerm.same, "SIGTERM", opts.kill);
     const termedPids = term.signalled;
     const stillAlive = termedPids.length > 0 ? await waitForPidsToExit(termedPids, Date.now() + graceMs) : [];
 
+    const atKill = verify(stillAlive, snapshot);
     const kill =
-        stillAlive.length > 0
-            ? signalPids(stillTheSame(stillAlive, snapshot), "SIGKILL", opts.kill)
-            : { signalled: [], refused: [] };
+        atKill.same.length > 0 ? signalPids(atKill.same, "SIGKILL", opts.kill) : { signalled: [], refused: [] };
     const killedPids = kill.signalled;
     const survivors = killedPids.length > 0 ? await waitForPidsToExit(killedPids, Date.now() + graceMs) : [];
-    const alivePids = [...new Set([...term.refused, ...kill.refused, ...survivors])];
+    // A live target that could not be verified (an exec, an unreadable start time) is not stopped either.
+    const unverified = [...atTerm.unverified, ...atKill.unverified];
+    const alivePids = [...new Set([...term.refused, ...kill.refused, ...survivors, ...unverified])];
 
     if (alivePids.length > 0) {
         log.warn(
@@ -172,7 +197,12 @@ export async function stopSession(
         );
         return {
             status: "failed",
-            reason: survivors.length > 0 ? "a process outlived SIGKILL" : "a signal was refused (permission?)",
+            reason:
+                survivors.length > 0
+                    ? "a process outlived SIGKILL"
+                    : unverified.length > 0
+                      ? "a live process could not be verified as the task's (exec or unreadable start time)"
+                      : "a signal was refused (permission?)",
             alivePids,
             termedPids,
             killedPids,
