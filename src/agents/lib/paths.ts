@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { env } from "@genesiscz/utils/env";
+import { toolDataDir } from "@genesiscz/utils/storage/root";
 import { FriendlyError } from "./errors";
 import type { SessionPaths } from "./types";
 
@@ -52,7 +52,7 @@ export function assertSafePathSegment(value: string, label: string): string {
 }
 
 export function agentsRoot(): string {
-    return join(env.tools.getHome(), ".genesis-tools", "agents");
+    return toolDataDir("agents");
 }
 
 export function sessionPaths(session: string): SessionPaths {

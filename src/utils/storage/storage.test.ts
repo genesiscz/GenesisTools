@@ -4,7 +4,22 @@ import { mkdirSync, mkdtempSync, readdirSync, rmSync, statSync, writeFileSync } 
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
+import { genesisToolsDir, toolDataDir } from "./root";
 import { atomicWriteFileSync, Storage } from "./storage";
+
+describe("toolDataDir", () => {
+    it("is Storage's base dir, rooted at GENESIS_TOOLS_HOME when set", async () => {
+        const sandbox = mkdtempSync(join(tmpdir(), "gt-root-"));
+
+        await env.testing.withOverrides({ GENESIS_TOOLS_HOME: sandbox }, () => {
+            expect(toolDataDir("agents")).toBe(new Storage("agents").getBaseDir());
+            expect(toolDataDir("claude", "teammate-wrappers")).toBe(
+                join(sandbox, ".genesis-tools", "claude", "teammate-wrappers")
+            );
+            expect(genesisToolsDir("logs")).toBe(join(sandbox, ".genesis-tools", "logs"));
+        });
+    });
+});
 
 describe("Storage.parseTTL", () => {
     const storage = new Storage("test-tool");

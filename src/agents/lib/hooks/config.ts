@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { genesisToolsDir, toolDataDir } from "@genesiscz/utils/storage/root";
 import type { DiffCategory } from "./diff/classify";
 
 export type HookOutcome = "allow" | "context" | "warn" | "block";
@@ -216,14 +216,13 @@ export interface HooksConfig {
 }
 
 /**
- * `~/.genesis-tools/agents`, the same directory `new Storage("agents")` resolves, including
- * the `GENESIS_TOOLS_HOME` override that keeps the suite out of the real home.
+ * `~/.genesis-tools/agents`, the same directory `new Storage("agents")` resolves.
  *
- * 🛑 Deliberately NOT `Storage`: importing it costs 16.2 ms (measured 2026-09-20) because it
- * pulls the pino logger, and three hook entrypoints pay that on every Bash call.
+ * 🛑 Deliberately NOT `Storage`: three hook entrypoints run on every Bash call, and `Storage`
+ * still costs about 10 ms to import (the logger); `toolDataDir` imports only `env`.
  */
 export function agentsDataDir(): string {
-    return join(env.tools.getHome(), ".genesis-tools", "agents");
+    return toolDataDir("agents");
 }
 
 export function hooksConfigPath(): string {
@@ -249,7 +248,7 @@ export function lastConfigProblems(): string[] {
 }
 
 export function defaultLogPath(): string {
-    return join(env.tools.getHome(), ".genesis-tools", "logs", "agents-hooks.jsonl");
+    return genesisToolsDir("logs", "agents-hooks.jsonl");
 }
 
 /**
@@ -649,6 +648,69 @@ function checkedOverride(stored: DiffOverrides, path: string): DiffOverrides {
     return checked;
 }
 
+/** The copy of the shipped defaults a writer stores beside the full settings (see `storedOverrides`). */
+export const SHIPPED_DEFAULTS_KEY = "_shippedDefaults";
+/** The installer's record of what it wired, kept in the same file; not a setting. */
+export const INSTALLED_KEY = "installed";
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+    return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * The parts of `value` that differ from `fallback`, or `undefined` when nothing does.
+ *
+ * 🛑 Only overrides may take effect. `applySetting` works on the fully resolved config, so a file
+ * read verbatim froze every default it listed: observed 2026-09-22, one `diff.maxFiles` change
+ * pinned ten unrelated settings, and a later default would never have reached that machine again.
+ *
+ * An array is compared whole. These are small literal lists, and a per-element merge would
+ * make "the user cleared this list" indistinguishable from "the user did not touch it".
+ */
+export function changedOnly(value: unknown, fallback: unknown): unknown {
+    if (Array.isArray(value) || Array.isArray(fallback)) {
+        return SafeJSON.stringify(value) === SafeJSON.stringify(fallback) ? undefined : value;
+    }
+
+    if (isPlainRecord(value) && isPlainRecord(fallback)) {
+        const out: Record<string, unknown> = {};
+
+        for (const [inner, held] of Object.entries(value)) {
+            const diff = changedOnly(held, fallback[inner]);
+
+            if (diff !== undefined) {
+                out[inner] = diff;
+            }
+        }
+
+        return Object.keys(out).length > 0 ? out : undefined;
+    }
+
+    return value === fallback ? undefined : value;
+}
+
+/**
+ * The user's overrides inside a stored `hooks.json`. Writers store EVERY setting, so the file
+ * shows each knob, plus `_shippedDefaults`, the defaults at write time. A value counts as an
+ * override only when it differs from that copy, so a default that changes later still reaches
+ * every setting the user never touched. A file without the copy (hand-written, or older) is
+ * all overrides, as before.
+ */
+export function storedOverrides(raw: unknown): Record<string, unknown> {
+    if (!isPlainRecord(raw)) {
+        return {};
+    }
+
+    const { [SHIPPED_DEFAULTS_KEY]: shipped, [INSTALLED_KEY]: _installed, ...settings } = raw;
+
+    if (!isPlainRecord(shipped)) {
+        return settings;
+    }
+
+    const overrides = changedOnly(settings, shipped);
+    return isPlainRecord(overrides) ? overrides : {};
+}
+
 /**
  * Synchronous on purpose: three hook entrypoints call this before they read stdin, and
  * the process must not pay for an async config reader. `agentsDataDir()` resolves the same
@@ -661,7 +723,7 @@ export function loadHooksConfig(path = hooksConfigPath()): HooksConfig {
     lastProblems = [];
 
     try {
-        stored = SafeJSON.parse(readFileSync(path, "utf8")) as StoredHooksConfig;
+        stored = storedOverrides(SafeJSON.parse(readFileSync(path, "utf8"))) as StoredHooksConfig;
     } catch (err) {
         // No config file is the normal case, not an error: the defaults below ARE the
         // shipped configuration. `hooks doctor` prints which of the two is in effect.

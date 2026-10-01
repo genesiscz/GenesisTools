@@ -19,6 +19,7 @@ import { logger } from "@genesiscz/utils/logger";
 import { isProcessAlive } from "@genesiscz/utils/process-alive";
 import { processStartMs } from "@genesiscz/utils/process-identity";
 import { shellQuote } from "@genesiscz/utils/shell/quote";
+import { toolDataDir } from "@genesiscz/utils/storage/root";
 
 /**
  * Claude Code's tmux teammate spawn only forwards a hard-coded env allowlist
@@ -60,7 +61,7 @@ export interface InstalledTeammateWrapper {
 }
 
 export function teammateWrappersDir(): string {
-    return join(env.paths.getHome() ?? env.tools.getHome(), ".genesis-tools", "claude", "teammate-wrappers");
+    return toolDataDir("claude", "teammate-wrappers");
 }
 
 /**

@@ -8,13 +8,12 @@ import {
     unlinkSync,
     writeFileSync,
 } from "node:fs";
-import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { withFileLock as acquireFileLock, LockTimeoutError } from "./file-lock";
 import { assertTestSafePath } from "./real-home-guard";
+import { toolDataDir } from "./root";
 
 /**
  * TTL string format: "<number> <unit>" or "<number><unit>"
@@ -104,13 +103,11 @@ export class Storage {
     constructor(toolName: string, options?: StorageOptions) {
         this.toolName = toolName;
         this.configFileMode = options?.configFileMode;
-        // GENESIS_TOOLS_HOME overrides the storage root. Purely additive: unset
-        // in production → identical to `homedir()`. Tests set it to a fresh
+        // GENESIS_TOOLS_HOME overrides the storage root (toolDataDir). Tests set it to a fresh
         // tmp dir so the suite can never write a user's real ~/.genesis-tools
         // (bun's spyOn is process-global with no reliable cross-file restore,
         // so per-test mocks alone are not a safe sandbox).
-        const root = env.tools.getHome() || homedir();
-        this.baseDir = join(root, ".genesis-tools", toolName);
+        this.baseDir = toolDataDir(toolName);
         this.cacheDir = join(this.baseDir, "cache");
         this.configPath = join(this.baseDir, "config.json");
     }

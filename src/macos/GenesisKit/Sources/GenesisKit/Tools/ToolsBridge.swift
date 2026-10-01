@@ -40,10 +40,13 @@ public enum ToolsBridgeError: Error, LocalizedError, Equatable {
 /// `monitor`). Companion file persistence is an optional `outputSink` so this
 /// library never writes under Application Support/Genesis/companion.
 public struct ToolsBridge: Sendable {
+    /// GENESIS_TOOLS_APP_BUNDLE_ID and GENESIS_TOOLS_APP_INODE pass through: they name the responsible
+    /// process this one runs under (set by the GenesisTools launcher, or by a GenesisTools.app face that
+    /// checked it with the kernel), so `tools` skips both launcher stages when that is already GenesisTools.
     public static let envAllowlist: Set<String> = [
         "HOME", "PATH", "SHELL", "LANG", "USER", "LOGNAME", "TERM",
         "SSH_AUTH_SOCK", "GITHUB_TOKEN", "ANTHROPIC_API_KEY", "TZ",
-        "PROFILE",
+        "PROFILE", "GENESIS_TOOLS_APP_BUNDLE_ID", "GENESIS_TOOLS_APP_INODE",
     ]
 
     public typealias OutputSink = @Sendable (

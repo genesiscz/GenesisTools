@@ -48,7 +48,9 @@ func launcherUsage() -> Never {
     exit(64)
 }
 
-func spawnChild(path: String, arguments: [String], environment: [String: String], disclaim: Bool) -> pid_t {
+/// `replace: true` turns this process into the program (POSIX_SPAWN_SETEXEC, same pid) instead of
+/// starting a child; it returns only when that failed.
+func spawnChild(path: String, arguments: [String], environment: [String: String], disclaim: Bool, replace: Bool = false) -> pid_t {
     var attrs: posix_spawnattr_t? = nil
     guard posix_spawnattr_init(&attrs) == 0 else {
         warn("posix_spawnattr_init failed: \(String(cString: strerror(errno)))")
@@ -60,6 +62,14 @@ func spawnChild(path: String, arguments: [String], environment: [String: String]
         let rc = responsibility_spawnattrs_setdisclaim(&attrs, 1)
         if rc != 0 {
             warn("responsibility_spawnattrs_setdisclaim failed (\(rc)); permissions will follow the terminal")
+        }
+    }
+
+    if replace {
+        let rc = posix_spawnattr_setflags(&attrs, Int16(POSIX_SPAWN_SETEXEC))
+        if rc != 0 {
+            warn("posix_spawnattr_setflags(SETEXEC) failed: \(String(cString: strerror(rc)))")
+            exit(70)
         }
     }
 
@@ -143,7 +153,10 @@ func runLauncher(_ arguments: [String]) -> Never {
     if environment[stageMarker] != "responsible" {
         let me = Bundle.main.executablePath ?? CommandLine.arguments[0]
         environment[stageMarker] = "responsible"
-        childPid = spawnChild(path: me, arguments: CommandLine.arguments, environment: environment, disclaim: true)
+        // Stage A becomes stage B in place (same pid), so no process stays behind to proxy for it.
+        _ = spawnChild(path: me, arguments: CommandLine.arguments, environment: environment, disclaim: true, replace: true)
+        warn("cannot re-enter as the responsible process")
+        exit(70)
     } else {
         environment.removeValue(forKey: stageMarker)
         environment[bundleIdVariable] = bundleId

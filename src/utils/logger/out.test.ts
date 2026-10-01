@@ -62,10 +62,20 @@ describe("out facade discipline", () => {
         expect(combined).not.toContain("●");
     });
 
-    it("re-exports the real clack isCancel sentinel", async () => {
+    it("recognises clack's real cancel sentinel, although clack now loads lazily", async () => {
         const { out } = await import("./out");
         const clack = await import("@clack/prompts");
-        expect(out.isCancel).toBe(clack.isCancel);
+        const { PassThrough, Writable } = await import("node:stream");
+        const cancelled = await clack.text({
+            message: "x",
+            signal: AbortSignal.abort(),
+            input: new PassThrough(),
+            output: new Writable({ write: (_chunk, _enc, done) => done() }),
+        });
+
+        expect(clack.isCancel(cancelled)).toBe(true);
+        expect(out.isCancel(cancelled)).toBe(true);
+        expect(out.isCancel("x")).toBe(false);
     });
 
     it("out.info/warn/error shortcuts write to STDERR like out.log.info/warn/error", async () => {

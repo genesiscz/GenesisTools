@@ -1,17 +1,13 @@
-import { homedir } from "node:os";
 import { resolve, sep } from "node:path";
 import { env } from "@genesiscz/utils/env";
-
-function genesisToolsRoot(): string {
-    return env.tools.getHome() || homedir();
-}
+import { toolDataDir } from "@genesiscz/utils/storage/root";
 
 export function getTaskSessionsDir(): string {
-    return resolve(genesisToolsRoot(), ".genesis-tools", "task", "sessions");
+    return resolve(toolDataDir("task", "sessions"));
 }
 
 export function taskConfigPath(): string {
-    return env.task.getConfigPath() ?? resolve(genesisToolsRoot(), ".genesis-tools", "task", "config.json");
+    return env.task.getConfigPath() ?? resolve(toolDataDir("task", "config.json"));
 }
 
 function safeSessionPath(session: string, suffix: string): string {

@@ -140,6 +140,7 @@ When creating a new tool and writing helper functions, check if the utility is *
 - `src/utils/string.ts` - String utilities (glob matching, ANSI stripping)
 - `src/utils/cli/executor.ts` - CLI helpers: `suggestCommand()`, `isInteractive()`, `buildCommand()`, `Executor`, `enhanceHelp()`
 - `src/utils/storage/storage.ts` - Config & cache management
+- `src/utils/storage/root.ts` - `toolDataDir(tool, ...)` / `genesisToolsDir(...)`: every `~/.genesis-tools/...` path (honours `GENESIS_TOOLS_HOME`, no logger import). Never hand-join `homedir()` or `env.paths.getHome()` with `".genesis-tools"`
 - `src/utils/async.ts` - Async helpers (concurrency, retry, etc.)
 - `src/utils/json-schema.ts` - JSON schema inference: `inferSchema()`, `formatSchema(value, "skeleton"|"typescript"|"schema")`
 - `src/utils/ai/local/device.ts` - ONNX Runtime device detection: `detectDevice()`, `resolveDevice()` (CoreML/CUDA/DML/CPU)

@@ -5,9 +5,11 @@ import { existsSync, readdirSync, statSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
 import { namedBunExecPath } from "@genesiscz/utils/cli/bun-link";
 import { takeDetachedMarker } from "@genesiscz/utils/cli/detached";
+import { planToolExec } from "@genesiscz/utils/cli/tool-exec";
 import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
 import { genesisAppLauncher } from "@genesiscz/utils/macos/genesis-app";
+import { diagnose } from "./scripts/test-deps";
 
 // --- Configuration ---
 const SRC_DIR_NAME = "src";
@@ -282,10 +284,34 @@ async function spawnAndCaptureStderr(args: string[], workspaceRoot: string, exec
     // Reminders, Full Disk Access and friends are granted to GenesisTools once instead
     // of to every terminal. Absent bundle, GENESIS_TOOLS_NO_APP=1 or non-macOS: plain spawn.
     const launcher = genesisAppLauncher();
-    const command = launcher ? launcher : execPath;
-    const commandArgs = launcher ? [execPath, ...args] : args;
     // spawnToolDetached (a dashboard a link click starts) is orphaned on purpose; see DETACHED_ENV.
     const detached = takeDetachedMarker(process.env);
+    const childEnv = env.withoutProxy({ INIT_CWD: process.cwd() });
+    // Replace this wrapper with the launcher (or, under an app face, the worker) instead of waiting
+    // as its parent; see src/utils/cli/tool-exec.ts for what moves where and when it still spawns.
+    const plan = planToolExec({
+        launcher,
+        execPath,
+        bunArgs: args,
+        orphanWatchdogPreload: join(workspaceRoot, "src/utils/bun/preload-orphan-watchdog.ts"),
+        detached,
+        orphaned: process.ppid === 1,
+        platform: process.platform,
+        execDisabled: process.env.GENESIS_TOOLS_NO_EXEC === "1",
+        dependencyProblem: diagnose(workspaceRoot),
+    });
+
+    if (plan.mode === "exec") {
+        await flushStdio();
+        const { execve } = await import("@genesiscz/utils/process/execve");
+        const failure = execve(plan.file, plan.argv, childEnv);
+        logger.warn({ file: plan.file, failure }, "[tools] exec failed; running the tool as a child instead");
+    } else {
+        logger.debug({ reason: plan.reason }, "[tools] running the tool as a child");
+    }
+
+    const command = launcher ? launcher : execPath;
+    const commandArgs = launcher ? [execPath, ...args] : args;
 
     return new Promise<number>((resolvePromise, reject) => {
         const child = spawn(command, commandArgs, {
@@ -299,7 +325,7 @@ async function spawnAndCaptureStderr(args: string[], workspaceRoot: string, exec
             // Taskgated (Code Signature Invalid, ~5ms). The hardlink is the
             // same signed binary, and names the process in Activity Monitor.
             cwd: process.cwd(),
-            env: env.withoutProxy({ INIT_CWD: process.cwd() }),
+            env: childEnv,
             shell: process.platform === "win32",
         });
 
@@ -375,6 +401,12 @@ async function spawnAndCaptureStderr(args: string[], workspaceRoot: string, exec
             resolvePromise(code ?? 1);
         });
     });
+}
+
+/** Write out anything still buffered on stdout and stderr: an exec drops what the runtime holds. */
+function flushStdio(): Promise<void> {
+    const flush = (stream: NodeJS.WriteStream) => new Promise<void>((done) => stream.write("", () => done()));
+    return Promise.all([flush(process.stdout), flush(process.stderr)]).then(() => undefined);
 }
 
 function signalToNumber(signal: NodeJS.Signals): number | undefined {

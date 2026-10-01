@@ -16,6 +16,7 @@ import { createInterface } from "node:readline";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { toolDataDir } from "@genesiscz/utils/storage/root";
 
 export interface ParseJsonlTranscriptOptions {
     /**
@@ -113,7 +114,7 @@ interface ResolvedCommandCache {
 const RESOLVED_COMMAND_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 function resolvedCommandCachePath(): string {
-    return join(env.paths.getHome(), ".genesis-tools", "claude", "resolved-command.json");
+    return toolDataDir("claude", "resolved-command.json");
 }
 
 /** The interactive rc file that defines the wrapper functions, for cache invalidation. */

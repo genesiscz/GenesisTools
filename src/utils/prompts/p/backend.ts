@@ -1,4 +1,4 @@
-import { clackBackend } from "./clack-backend"; // STATIC: clack only, no opentui (verified separate file)
+import { createRequire } from "node:module";
 import type {
     ConfirmOpts,
     EditorOpts,
@@ -34,16 +34,19 @@ export interface PromptBackend {
     log: Log;
 }
 
-// Default to clack at module load (advisor: getBackend stays SYNC — 700+
+// Default to clack on the first getBackend() call (advisor: getBackend stays SYNC — 700+
 // sync p.log.*/p.spinner() callers; an async/buffered shim would reorder the
 // first log line of every process). clack-backend.ts does not import @opentui
 // (separate file), so the "no opentui/solid pulled" constraint holds.
-let active: PromptBackend = clackBackend;
+const requireLazy = createRequire(import.meta.url);
+let active: PromptBackend | undefined;
 
 export function setBackend(backend: PromptBackend): void {
     active = backend; // doctor's plain/tui paths override the clack default
 }
 
 export function getBackend(): PromptBackend {
+    // lazy: saves ~9 ms cold import of @clack/prompts for every logger importer (tools ts imports analyze, 2026-10-01); require is synchronous, so the first log line keeps its order
+    active ??= (requireLazy("./clack-backend") as { clackBackend: PromptBackend }).clackBackend;
     return active;
 }

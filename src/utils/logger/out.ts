@@ -1,4 +1,5 @@
-import { isCancel } from "@clack/prompts";
+import { createRequire } from "node:module";
+import type { isCancel as clackIsCancel } from "@clack/prompts";
 import { isQuietOutput } from "@genesiscz/utils/cli/output-mode";
 import { createQuietSpinner } from "@genesiscz/utils/cli/quiet-spinner";
 import { asResult } from "@genesiscz/utils/cli/result";
@@ -7,6 +8,12 @@ import { writeStdout } from "@genesiscz/utils/cli/stdout";
 import { getBackend } from "@genesiscz/utils/prompts/p/backend";
 import type { SelectValue } from "@genesiscz/utils/prompts/p/types";
 import { type Logger, logger } from "../logger";
+
+const requireLazy = createRequire(import.meta.url);
+
+// lazy: saves 8.5 ms cold import of @clack/prompts for every logger importer (tools ts imports analyze, 2026-10-01); a cancel value only exists after a clack prompt already loaded it
+const isCancel: typeof clackIsCancel = (value): value is symbol =>
+    (requireLazy("@clack/prompts") as { isCancel: typeof clackIsCancel }).isCancel(value);
 
 /**
  * Trimmed to only the fields that actually affect behavior. The previous

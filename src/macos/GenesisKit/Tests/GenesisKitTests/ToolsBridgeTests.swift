@@ -139,6 +139,18 @@ final class ToolsBridgeTests: XCTestCase {
         XCTAssertNil(scrubbed["RANDOM_VAR"])
     }
 
+    /// The launcher markers reach `tools`, so a child of a GenesisTools app face skips the launcher.
+    func testEnvAllowlistKeepsTheLauncherMarkers() {
+        let scrubbed = ToolsBridge.scrubbedEnvironment(from: [
+            "GENESIS_TOOLS_APP_BUNDLE_ID": "com.example.tools",
+            "GENESIS_TOOLS_APP_INODE": "4242",
+            "GENESIS_TOOLS_APP_STAGE": "responsible",
+        ])
+        XCTAssertEqual(scrubbed["GENESIS_TOOLS_APP_BUNDLE_ID"], "com.example.tools")
+        XCTAssertEqual(scrubbed["GENESIS_TOOLS_APP_INODE"], "4242")
+        XCTAssertNil(scrubbed["GENESIS_TOOLS_APP_STAGE"])
+    }
+
     func testRunRereadsResolvedBinaryPath() async throws {
         let fm = FileManager.default
         let dir = fm.temporaryDirectory.appendingPathComponent(
