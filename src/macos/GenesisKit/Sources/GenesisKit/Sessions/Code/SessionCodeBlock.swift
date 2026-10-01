@@ -658,7 +658,7 @@ public struct CodeBlockText: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
-        .textSelection(.enabled)
+        .hoverTextSelection()
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(rendered.spoken.map { Text(verbatim: $0) } ?? Text(rendered.body))
     }

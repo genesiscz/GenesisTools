@@ -1196,7 +1196,7 @@ public struct TranscriptMarkdown: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
-        .textSelection(.enabled)
+        .hoverTextSelection()
     }
 }
 
@@ -1504,7 +1504,7 @@ private struct NoticeCard: View {
                         .font(SessionPalette.mono(11))
                         .foregroundStyle(SessionPalette.secondary)
                         .lineLimit(6)
-                        .textSelection(.enabled)
+                        .hoverTextSelection()
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 if !notice.actions.isEmpty, let onAction {
@@ -1672,7 +1672,7 @@ private struct ThinkingLine: View {
                     .font(.system(size: 12))
                     .foregroundStyle(SessionPalette.dim)
                     .lineSpacing(2)
-                    .textSelection(.enabled)
+                    .hoverTextSelection()
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.leading, 12)
                     .overlay(alignment: .leading) {
