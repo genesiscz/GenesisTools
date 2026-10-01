@@ -9,6 +9,7 @@ import { env } from "../../utils/env.client";
 // scan both inline these without tsconfig path mapping (env.client pulls in no
 // bare @app specifiers; json.ts imports only comment-json).
 import { SafeJSON } from "../../utils/json";
+import { getWebService } from "../../utils/ui/dashboards";
 
 const root = resolve(import.meta.dirname);
 const dist = resolve(root, "../../../dist/extension");
@@ -58,12 +59,15 @@ function mirrorDistToMainRepo(): Plugin {
 }
 
 const devReload = env.extension.isDevReload();
+/** The dev-reload WebSocket port, from the port registry (`youtube-extension`). */
+const devReloadPort = getWebService("youtube-extension").port;
 
 const shared: UserConfig = {
     root,
     plugins: [tailwindcss(), viteReact()],
     define: {
         __EXT_DEV_RELOAD__: SafeJSON.stringify(devReload),
+        __EXT_DEV_RELOAD_PORT__: SafeJSON.stringify(devReloadPort),
     },
     resolve: {
         alias: {
@@ -118,6 +122,7 @@ const configs: Record<string, UserConfig> = {
         define: {
             "process.env.NODE_ENV": SafeJSON.stringify("production"),
             __EXT_DEV_RELOAD__: SafeJSON.stringify(devReload),
+            __EXT_DEV_RELOAD_PORT__: SafeJSON.stringify(devReloadPort),
         },
         // Chrome MV3 content-script loader rejects files containing chars it
         // reads as non-UTF-8 (e.g. U+FFFF from regex ranges, dozens of Latin-1

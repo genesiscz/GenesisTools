@@ -2,11 +2,13 @@
 // balloons the MV3 service-worker cold-start to multi-second latency on every
 // idle → wake cycle. Bodies here are our own plain objects, never comments.
 import type { JobEvent } from "@app/youtube/lib/jobs.types";
-import { startDevReload } from "@ext/dev-reload";
 import type { ExtensionEvent, ExtensionRequest, ExtensionResponse } from "@ext/shared/messages";
 import { getExtensionConfig, setExtensionConfig } from "@ext/shared/storage";
+import { startDevReload } from "@genesiscz/utils/browser-extension/runtime/dev-reload";
 
 declare const __EXT_DEV_RELOAD__: boolean;
+/** The registry's `youtube-extension` port, compiled in by vite.config.ts. */
+declare const __EXT_DEV_RELOAD_PORT__: number;
 
 // Job events the server emits on the events socket. Everything else on that
 // socket (hello / pong / subscribed control frames) is protocol chatter the
@@ -631,5 +633,10 @@ function broadcast(event: ExtensionEvent): void {
 reconnectWebsocket();
 
 if (typeof __EXT_DEV_RELOAD__ !== "undefined" && __EXT_DEV_RELOAD__) {
-    startDevReload();
+    startDevReload({
+        url: `ws://127.0.0.1:${__EXT_DEV_RELOAD_PORT__}/reload`,
+        tabs: "https://www.youtube.com/*",
+        files: ["content-script.js"],
+        label: "genesis-yt dev-reload",
+    });
 }

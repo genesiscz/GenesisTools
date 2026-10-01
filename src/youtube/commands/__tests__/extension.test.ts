@@ -22,6 +22,13 @@ describe("youtube extension command", () => {
     });
 
     it("runs the Vite extension build", async () => {
+        // The mocked spawn writes no bundle, so the check that the build wrote every file the manifest names,
+        // and the build stamp, are stubbed here: this test covers the command line only.
+        mock.module("@genesiscz/utils/browser-extension/build-info", () => ({
+            missingManifestFiles: async () => [],
+            newBuildId: () => "test-build",
+            writeBuildInfo: async () => {},
+        }));
         const { buildExtension } = await import("@app/youtube/commands/extension");
 
         const dist = await buildExtension();

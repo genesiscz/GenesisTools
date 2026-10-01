@@ -15,6 +15,8 @@ export const HOST_COMMANDS = [
     "action.run",
     "router.explain",
     "router.route",
+    "extension.status",
+    "extension.build",
 ] as const;
 
 /**
@@ -28,6 +30,8 @@ export const EXTENSION_PAGE_COMMANDS: readonly HostCommand[] = [
     "action.run",
     "router.explain",
     "router.route",
+    "extension.status",
+    "extension.build",
 ];
 
 export type HostCommand = (typeof HOST_COMMANDS)[number];
@@ -61,6 +65,9 @@ export interface PingData {
 }
 
 /** Native messaging's own limit for a host -> browser message. */
+/** `extension.status`: the build in `dist` and whether a build from the current sources would differ. */
+export type { ExtensionStatus as ExtensionStatusData } from "@genesiscz/utils/browser-extension/runtime/freshness";
+
 export const MAX_REPLY_BYTES = 1024 * 1024;
 /** Browser -> host messages may be up to 64 MiB; this host has no use for more than 4 MiB. */
 export const MAX_REQUEST_BYTES = 4 * 1024 * 1024;

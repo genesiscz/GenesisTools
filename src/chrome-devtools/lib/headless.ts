@@ -18,7 +18,7 @@ export interface HeadlessChrome {
  * touches the user's browser, profile or screen, which is what a check or a benchmark needs.
  */
 export async function launchHeadlessChrome(
-    options: { binary?: string; timeoutMs?: number } = {}
+    options: { binary?: string; timeoutMs?: number; extraArgs?: string[] } = {}
 ): Promise<HeadlessChrome> {
     const binary = options.binary ?? DEFAULT_CHROME;
     const profile = mkdtempSync(join(tmpdir(), "gt-headless-chrome-"));
@@ -30,6 +30,7 @@ export async function launchHeadlessChrome(
             `--user-data-dir=${profile}`,
             "--no-first-run",
             "--no-default-browser-check",
+            ...(options.extraArgs ?? []),
             "about:blank",
         ],
         { stdout: "ignore", stderr: "ignore" }

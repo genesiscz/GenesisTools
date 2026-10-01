@@ -1,27 +1,37 @@
 import { copyFile, mkdir } from "node:fs/promises";
 import { relative, resolve } from "node:path";
 import { cdpPortOf } from "@app/chrome-devtools/lib/cdp";
+import { reloadExtension, reloadSummary } from "@app/chrome-devtools/lib/extensions";
 import { captureFrameGrid } from "@app/chrome-devtools/lib/frame-grid";
 import { devtoolsCdpUrl, launchDevtoolsBrowser } from "@app/youtube/lib/devtools/browser";
 import * as p from "@clack/prompts";
+import { missingManifestFiles, newBuildId, writeBuildInfo } from "@genesiscz/utils/browser-extension/build-info";
+import { type DevReloadTarget, startDevReloadServer } from "@genesiscz/utils/browser-extension/dev-reload/server";
+import { extensionByKey } from "@genesiscz/utils/browser-extension/registry";
 import { createWatcher } from "@genesiscz/utils/fs/watcher";
 import { logger } from "@genesiscz/utils/logger";
+import { BROWSER_DEVTOOLS_PORT, EXTENSION_TEST_BROWSER_PORT } from "@genesiscz/utils/net/ports";
 import { toPosixPath } from "@genesiscz/utils/paths";
+import { getWebService } from "@genesiscz/utils/ui/dashboards";
 import type { Command } from "commander";
 import pc from "picocolors";
 
-const DEV_RELOAD_PORT = 9877;
+/** The dev-reload WebSocket, registered as `youtube-extension` in the port registry. */
+const DEV_RELOAD_PORT = getWebService("youtube-extension").port;
 
-/** The port behind this tool's CDP endpoint: explicit flag, then $CDP_URL, then 9333. */
+/** The port behind this tool's CDP endpoint: explicit flag, then $CDP_URL, then EXTENSION_TEST_BROWSER_PORT. */
 function cdpPortFrom(cdpUrl: string | undefined): number {
     const raw = devtoolsCdpUrl(cdpUrl);
 
     try {
         return cdpPortOf(raw);
     } catch (error) {
-        logger.debug({ raw, error }, "extension devtools: unusable CDP url, defaulting to 9333");
+        logger.debug(
+            { raw, error, port: EXTENSION_TEST_BROWSER_PORT },
+            "extension devtools: unusable CDP url, using the default port"
+        );
 
-        return 9333;
+        return EXTENSION_TEST_BROWSER_PORT;
     }
 }
 
@@ -41,15 +51,38 @@ A real chrome-devtools-mcp tool is still one explicit call away: ${cdp(["mcp", "
     process.exitCode = 1;
 }
 
-type DevReloadTarget = "tabs" | "runtime";
-
 export function registerExtensionCommand(program: Command): void {
     const cmd = program.command("extension").description("Build the YouTube Chrome extension");
 
     cmd.command("build")
         .description("Build the extension into dist/extension/")
-        .action(async () => {
+        .option("--no-reload", "Do not reload the extension in the browser")
+        .action(async (opts: { reload: boolean }) => {
             await buildExtension();
+            const entry = extensionByKey("youtube");
+
+            if (opts.reload && entry) {
+                const result = await reloadExtension({ id: entry.id, page: entry.reloadPage });
+                p.log.info(reloadSummary(result, entry));
+            }
+        });
+
+    cmd.command("reload")
+        .description("Reload the extension in the running browser over DevTools (no click)")
+        .option("--port <port>", "DevTools port of the running browser", String(BROWSER_DEVTOOLS_PORT))
+        .action(async (opts: { port: string }) => {
+            const entry = extensionByKey("youtube");
+
+            if (!entry) {
+                return;
+            }
+
+            const result = await reloadExtension({ id: entry.id, page: entry.reloadPage, port: Number(opts.port) });
+            p.log.info(reloadSummary(result, entry));
+
+            if (!result.ok) {
+                process.exitCode = 1;
+            }
         });
 
     cmd.command("dev")
@@ -61,13 +94,13 @@ export function registerExtensionCommand(program: Command): void {
     const devtools = cmd
         .command("devtools")
         .description(
-            "Launch a real, extension-loaded browser with a CDP port; drive it with tools chrome-devtools <verb> --port 9333"
+            `Launch a real, extension-loaded browser with a CDP port; drive it with tools chrome-devtools <verb> --port ${EXTENSION_TEST_BROWSER_PORT}`
         );
 
     devtools
         .command("launch")
         .description("Build the extension and launch Chrome/Brave with it loaded + a CDP port open")
-        .option("-p, --port <port>", "remote debugging port", "9333")
+        .option("-p, --port <port>", "remote debugging port", String(EXTENSION_TEST_BROWSER_PORT))
         .action(async (opts: { port: string }) => {
             const port = Number(opts.port);
 
@@ -90,7 +123,9 @@ export function registerExtensionCommand(program: Command): void {
             .command(verb, { hidden: true })
             .allowUnknownOption(true)
             .allowExcessArguments(true)
-            .description("removed: drive the browser with tools chrome-devtools <verb> --port 9333")
+            .description(
+                `removed: drive the browser with tools chrome-devtools <verb> --port ${EXTENSION_TEST_BROWSER_PORT}`
+            )
             .action(() => {
                 logger.debug({ verb }, "extension devtools: removed MCP verb called");
                 mcpTombstone(verb);
@@ -104,7 +139,10 @@ export function registerExtensionCommand(program: Command): void {
         )
         .option("--region <x,y,w,h>", "crop to this region first (screenshot pixel space)")
         .option("--step <n>", "grid line spacing in pixels", "40")
-        .option("--cdp-url <url>", "CDP endpoint of a running browser (default: $CDP_URL or http://127.0.0.1:9333)")
+        .option(
+            "--cdp-url <url>",
+            `CDP endpoint of a running browser (default: $CDP_URL or http://127.0.0.1:${EXTENSION_TEST_BROWSER_PORT})`
+        )
         .action(async (outPath: string, opts: { region?: string; step: string; cdpUrl?: string }) => {
             logger.info({ outPath, region: opts.region ?? null, step: opts.step }, "extension devtools: frame grid");
             const written = await captureFrameGrid({
@@ -147,6 +185,14 @@ export async function buildExtension(opts: { devReload?: boolean; targets?: stri
         await copyFile(resolve(root, "icons", name), resolve(dist, "icons", name));
     }
 
+    const missing = await missingManifestFiles(dist);
+
+    if (missing.length > 0) {
+        throw new Error(`${dist} is missing ${missing.join(", ")}: the build did not produce a complete extension`);
+    }
+
+    await writeBuildInfo(dist, newBuildId());
+
     p.log.success(`Built to ${dist}. Load it via chrome://extensions → Developer Mode → Load unpacked.`);
     return toPosixPath(dist);
 }
@@ -155,51 +201,10 @@ async function devExtension(): Promise<void> {
     const dist = resolve(import.meta.dirname, "..", "..", "..", "dist", "extension");
     const srcDir = resolve(import.meta.dirname, "..");
 
-    // WebSocket the extension's background service worker subscribes to. Each
-    // message names which reload path to take — content-script rebuilds only
-    // need to refresh open YT tabs (cheap), background rebuilds need a full
-    // `chrome.runtime.reload()`.
-    const clients = new Set<Bun.ServerWebSocket<unknown>>();
-    const server = Bun.serve({
-        port: DEV_RELOAD_PORT,
-        hostname: "127.0.0.1",
-        fetch(req, srv) {
-            if (srv.upgrade(req)) {
-                return undefined;
-            }
-            return new Response("dev-reload up", { status: 200 });
-        },
-        websocket: {
-            open(ws) {
-                clients.add(ws);
-                p.log.info(pc.green(`extension SW connected (${clients.size} client)`));
-            },
-            close(ws) {
-                clients.delete(ws);
-                p.log.info(pc.dim(`extension SW disconnected (${clients.size} client)`));
-            },
-            message(_ws, msg) {
-                // Ignore keepalive pings the SW sends every 20s to keep itself
-                // alive under MV3's idle-shutdown policy.
-                if (typeof msg === "string" && msg === "ping") {
-                    return;
-                }
-            },
-        },
-    });
+    // The worker of a dev build subscribes to this (`runtime/dev-reload.ts`): content-script rebuilds
+    // re-inject into open YouTube tabs (cheap), background rebuilds reload the whole extension.
+    const server = startDevReloadServer({ port: DEV_RELOAD_PORT });
     p.log.info(`dev-reload WS ready on ws://127.0.0.1:${server.port}/reload`);
-
-    function broadcast(target: DevReloadTarget): void {
-        for (const ws of clients) {
-            try {
-                ws.send(target);
-            } catch (error) {
-                // A dead socket stays dead — drop it so the client count stays honest.
-                clients.delete(ws);
-                logger.warn({ error, target }, "extension dev-reload: ws send failed, dropping client");
-            }
-        }
-    }
 
     // Initial build with dev-reload wired in
     await buildExtension({ devReload: true });
@@ -238,9 +243,9 @@ async function devExtension(): Promise<void> {
             const dt = Date.now() - t0;
             const target: DevReloadTarget = targetsBatch.has("runtime") ? "runtime" : "tabs";
             p.log.success(
-                pc.dim(`rebuilt ${buildTargets.join("+")} in ${dt}ms → ${target}-reload (${clients.size} client)`)
+                pc.dim(`rebuilt ${buildTargets.join("+")} in ${dt}ms → ${target}-reload (${server.clients()} client)`)
             );
-            broadcast(target);
+            server.broadcast(target);
         } catch (error) {
             p.log.error(pc.red(`rebuild failed: ${error instanceof Error ? error.message : String(error)}`));
         } finally {
@@ -269,7 +274,6 @@ async function devExtension(): Promise<void> {
     const RUNTIME_PREFIXES = [
         "extension/background",
         "extension/popup",
-        "extension/dev-reload",
         "extension/shared/storage",
         "extension/manifest",
         "extension/vite.config",

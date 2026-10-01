@@ -8,6 +8,7 @@
  * raw CDP instead of an MCP client, so it has no MCP dependency.
  * Requires ImageMagick (`magick`).
  */
+import { BROWSER_DEVTOOLS_PORT } from "@genesiscz/utils/net/ports";
 import { attach } from "./cdp.ts";
 
 export interface FrameGridOpts {
@@ -28,7 +29,7 @@ export async function captureFrameGrid(opts: FrameGridOpts): Promise<string> {
     }
 
     const rawPath = `${opts.outPath}.raw.png`;
-    const page = await attach({ port: opts.port ?? 9222 });
+    const page = await attach({ port: opts.port ?? BROWSER_DEVTOOLS_PORT });
     try {
         await page.screenshot(rawPath, opts.fullPage ?? false);
     } finally {

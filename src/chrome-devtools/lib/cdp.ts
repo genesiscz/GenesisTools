@@ -3,8 +3,10 @@
  * callable from any bun script (no MCP session, no config reload).
  * Ported from ~/.agents/skills/chrome-devtools/scripts/cdp.ts.
  */
+
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { BROWSER_DEVTOOLS_PORT } from "@genesiscz/utils/net/ports";
 
 const log = logger.child({ component: "chrome-devtools:cdp" });
 
@@ -461,7 +463,7 @@ export class Browser {
  */
 export const TARGETS_TIMEOUT_MS = 5000;
 
-export async function targets(port = 9222, opts: { signal?: AbortSignal } = {}): Promise<Target[]> {
+export async function targets(port = BROWSER_DEVTOOLS_PORT, opts: { signal?: AbortSignal } = {}): Promise<Target[]> {
     const signal = opts.signal ?? AbortSignal.timeout(TARGETS_TIMEOUT_MS);
     const r = await fetch(`http://127.0.0.1:${port}/json/list`, { signal });
 
@@ -645,7 +647,7 @@ export function pickPageTarget<T extends { type?: string; title?: string; url: s
 
 /** Attach to a page (url substring must match when given; otherwise first page). */
 export async function attach(opts: { port?: number; url?: string; index?: number } = {}): Promise<Page> {
-    const port = opts.port ?? 9222;
+    const port = opts.port ?? BROWSER_DEVTOOLS_PORT;
     const list = (await targets(port)).filter((t) => t.type === "page");
     const t = pickPageTarget(list, { url: opts.url, index: opts.index, port });
     const page = new Page(new Conn(t.webSocketDebuggerUrl), t);
@@ -677,7 +679,7 @@ export async function newTab(port: number, url: string): Promise<Target> {
 }
 
 /** Browser-level connection (cookies across all domains). */
-export async function browser(port = 9222): Promise<Browser> {
+export async function browser(port = BROWSER_DEVTOOLS_PORT): Promise<Browser> {
     const v = (await (await fetch(`http://127.0.0.1:${port}/json/version`)).json()) as {
         webSocketDebuggerUrl: string;
     };

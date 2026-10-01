@@ -4,18 +4,14 @@
  * `@app/chrome-devtools/lib/launch`. Every browser/CDP mechanic (executable
  * lookup, piped stdio, cold-profile wait, log tail on failure) lives there.
  */
-import { mkdtemp } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { launchCdpBrowser } from "@app/chrome-devtools/lib/launch";
+import { launchHeadedWithExtension } from "@app/chrome-devtools/lib/extensions";
 import { buildExtension } from "@app/youtube/commands/extension";
 import { env } from "@genesiscz/utils/env.client";
+import { EXTENSION_TEST_BROWSER_PORT } from "@genesiscz/utils/net/ports";
 
-const DEFAULT_PORT = 9333;
-
-/** The ONE place this tool's endpoint default lives: an explicit URL, then $CDP_URL, then port 9333. */
+/** The ONE place this tool's endpoint default lives: an explicit URL, then $CDP_URL, then EXTENSION_TEST_BROWSER_PORT. */
 export function devtoolsCdpUrl(cdpUrl?: string): string {
-    return cdpUrl ?? env.extension.getCdpUrl() ?? `http://127.0.0.1:${DEFAULT_PORT}`;
+    return cdpUrl ?? env.extension.getCdpUrl() ?? `http://127.0.0.1:${EXTENSION_TEST_BROWSER_PORT}`;
 }
 
 export interface LaunchDevtoolsBrowserResult {
@@ -27,7 +23,7 @@ export interface LaunchDevtoolsBrowserResult {
 
 /**
  * Launches Chrome/Brave with the built YouTube extension pre-loaded and a
- * remote-debugging port open, so `tools chrome-devtools <verb> --port 9333`
+ * remote-debugging port open, so `tools chrome-devtools <verb> --port <EXTENSION_TEST_BROWSER_PORT>`
  * (snapshot, click, fill, eval, nav, shot, console) can drive a browser that
  * already has the extension installed — no manual chrome://extensions "Load
  * unpacked" step, no fragile pixel-coordinate clicking.
@@ -36,7 +32,7 @@ export interface LaunchDevtoolsBrowserResult {
  * renderer/utility helpers under the same --user-data-dir) when done; this
  * function does not manage the browser's lifetime beyond returning it ready.
  */
-export async function launchDevtoolsBrowser(port = DEFAULT_PORT): Promise<LaunchDevtoolsBrowserResult> {
+export async function launchDevtoolsBrowser(port = EXTENSION_TEST_BROWSER_PORT): Promise<LaunchDevtoolsBrowserResult> {
     // Build in-process (not via a separate `tools` invocation) so this always
     // targets the exact dist/ path buildExtension() itself resolves to — a
     // worktree checkout's own guessed-relative dist path can silently diverge
@@ -46,34 +42,6 @@ export async function launchDevtoolsBrowser(port = DEFAULT_PORT): Promise<Launch
     // hides those, which is right for production but wrong for a test browser
     // you're specifically trying to poke at.
     const dist = await buildExtension({ devReload: true });
-    // A partial build makes Chrome raise a BLOCKING GUI "failed to load
-    // extension" dialog; until someone clicks it the browser never finishes
-    // starting, which looks exactly like a hung CDP port from the outside.
-    // Catch it here, before launch, rather than after a 30s timeout.
-    for (const required of ["manifest.json", "background.js", "content-script.js", "popup/popup.html"]) {
-        if (!(await Bun.file(`${dist}/${required}`).exists())) {
-            throw new Error(`${dist} is missing ${required} — the build did not produce a complete extension.`);
-        }
-    }
-
-    // A fresh dir per launch, not the shared /tmp/cdp-profile-<port>: a zombie
-    // browser from an earlier run still holds its own profile, and two Chromes
-    // on one --user-data-dir is its own failure mode.
-    const userDataDir = await mkdtemp(join(tmpdir(), "genesis-yt-devtools-chrome-"));
-    const logPath = join(userDataDir, "..", `${userDataDir.split("/").pop()}.log`);
-    const launched = await launchCdpBrowser({
-        port,
-        url: "https://www.youtube.com",
-        extension: dist,
-        userDataDir,
-        // The mkdtemp above is this launch's own dir and holds no logins, so it is
-        // the one case that may run with the local-network checks off.
-        disposableProfile: true,
-        // logPath makes the launcher spawn the binary itself and keep its
-        // stdio: an all-ignore stdio stalls Chrome before the CDP port opens,
-        // and the log is the only account of a failed launch.
-        logPath,
-    });
-
-    return { pid: launched.pid, port: launched.port, userDataDir, dist };
+    const launched = await launchHeadedWithExtension({ distDir: dist, port, url: "https://www.youtube.com" });
+    return { pid: launched.pid, port: launched.port, userDataDir: launched.userDataDir, dist };
 }

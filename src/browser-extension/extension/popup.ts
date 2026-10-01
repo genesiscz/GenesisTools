@@ -2,6 +2,7 @@ import type { HostResponse } from "../lib/host/messages";
 import { parseForgeUrl } from "../lib/page-url";
 import { ext } from "./chrome";
 import { callHost, isRecord } from "./shared/bridge";
+import { type Freshness, freshnessFromReply, showFreshness } from "./shared/freshness";
 import { describe, mountPage, required } from "./shared/page";
 import { chip, el } from "./shared/theme";
 
@@ -97,6 +98,7 @@ async function main(): Promise<void> {
     }
 
     hostSlot.replaceChildren(chip(`host ${isRecord(ping.data) ? String(ping.data.version) : "ok"}`, "ok"));
+    void offerUpdate(show);
     const [tab] = await ext.tabs.query({ active: true, currentWindow: true });
     const url = tab?.url ?? "";
     const configReply = await callHost("config.get");
@@ -229,6 +231,45 @@ async function main(): Promise<void> {
         });
         actionButtons.append(button);
     }
+}
+
+const UPDATE_TEXT: Record<"reload" | "rebuild", { text: string; button: string }> = {
+    reload: { text: "A newer build of this extension is ready.", button: "Reload" },
+    rebuild: {
+        text: "The extension's code or the browser router's hosts changed since it was built.",
+        button: "Rebuild and reload",
+    },
+};
+
+/** Asks the host whether this build is current, and offers the one click that fixes it. */
+async function offerUpdate(show: (reply: HostResponse, ok: (data: unknown) => string) => void): Promise<void> {
+    const state: Freshness = freshnessFromReply(await callHost("extension.status"));
+    await showFreshness(state);
+
+    if (state !== "reload" && state !== "rebuild") {
+        return;
+    }
+
+    const copy = UPDATE_TEXT[state];
+    const button = required<HTMLButtonElement>("#update-button");
+    required<HTMLElement>("#update").hidden = false;
+    required<HTMLElement>("#update-text").textContent = copy.text;
+    button.textContent = copy.button;
+    button.addEventListener("click", async () => {
+        button.disabled = true;
+
+        if (state === "rebuild") {
+            const built = await callHost("extension.build");
+
+            if (!built.ok) {
+                show(built, () => "");
+                button.disabled = false;
+                return;
+            }
+        }
+
+        ext.runtime.reload();
+    });
 }
 
 void main();

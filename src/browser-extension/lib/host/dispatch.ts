@@ -1,5 +1,6 @@
 import { logger } from "@genesiscz/utils/logger";
 import { runAction } from "../actions";
+import { buildExtension, extensionFreshness } from "../build";
 import { ConfigError, configPath, saveConfig } from "../config";
 import type { Deps } from "../deps";
 import { FeatureError } from "../errors";
@@ -9,7 +10,14 @@ import { describeCheckouts, openFile, openTerminal } from "../open";
 import { startReview } from "../review";
 import { explainLink, routeLink } from "../router";
 import { isRecord, PageValueError } from "../values";
-import { HOST_COMMANDS, type HostCommand, type HostErrorCode, type HostResponse, type PingData } from "./messages";
+import {
+    type ExtensionStatusData,
+    HOST_COMMANDS,
+    type HostCommand,
+    type HostErrorCode,
+    type HostResponse,
+    type PingData,
+} from "./messages";
 
 export const HOST_VERSION = "0.1.0";
 
@@ -48,6 +56,14 @@ const HANDLERS: Record<HostCommand, Handler> = {
         runAction(deps, { actionId: params.actionId, url: params.url, fields: params.fields }),
     "router.explain": (deps, params) => explainLink(deps, params.url),
     "router.route": (deps, params) => routeLink(deps, params.url),
+    "extension.status": async (): Promise<ExtensionStatusData> => {
+        const freshness = await extensionFreshness();
+        return { distBuildId: freshness.dist?.buildId ?? null, stale: freshness.stale };
+    },
+    "extension.build": async (): Promise<ExtensionStatusData> => {
+        const built = await buildExtension();
+        return { distBuildId: built.info.buildId, stale: false };
+    },
 };
 
 function isHostCommand(value: unknown): value is HostCommand {
