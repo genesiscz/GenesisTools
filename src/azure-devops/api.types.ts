@@ -6,7 +6,7 @@
  * before transformation into domain types.
  */
 
-import type { IdentityRef } from "@app/azure-devops/types";
+import type { CommentFormat, IdentityRef } from "@app/azure-devops/types";
 
 export interface WiqlWorkItemRef {
     id: number;
@@ -51,10 +51,11 @@ export interface CommentsResponse {
         createdBy: { displayName: string };
         createdDate: string;
         text: string;
+        format?: CommentFormat;
     }>;
 }
 
-export type CommentFormat = "markdown" | "html";
+export type { CommentFormat } from "@app/azure-devops/types";
 
 /** One work item comment as the Comments API (7.1-preview.4) returns it */
 export interface WorkItemCommentApi {

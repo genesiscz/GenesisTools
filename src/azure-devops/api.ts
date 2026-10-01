@@ -548,6 +548,7 @@ export class Api {
             author: c.createdBy?.displayName,
             date: c.createdDate,
             text: c.text,
+            format: c.format,
         }));
     }
 
@@ -693,7 +694,8 @@ export class Api {
         const result = await concurrentMap({
             items: ids,
             fn: async (id) => {
-                const url = Api.witUrlPreview(this.config, ["workItems", String(id), "comments"]);
+                // preview.4, unlike preview.3, says whether a comment is markdown or HTML.
+                const url = Api.witUrlPreview(this.config, ["workItems", String(id), "comments"], {}, "7.1-preview.4");
                 const data = await this.get<CommentsResponse>(url, `comments #${id}`);
                 return this.mapComments(data);
             },

@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { extractInlineImageUrls } from "@app/azure-devops/inline-images";
 import { formatWorkItemMarkdown, tableCell } from "@app/azure-devops/lib/work-item-markdown";
 import type { WorkItemFull } from "@app/azure-devops/types";
 
@@ -57,6 +58,26 @@ describe("formatWorkItemMarkdown", () => {
         expect(md).toContain("**repro** confirmed");
         expect(md).not.toContain("<p>");
         expect(md).not.toContain("<b>");
+    });
+
+    test("a markdown comment keeps its lines and its image, pointed at the downloaded file", () => {
+        const url =
+            "https://dev.azure.com/example/proj/_apis/wit/attachments/46e8a5cc-7c33-4aab-92ba-d91fe3446a5a?fileName=image.png";
+        const text = `**Steps**\nopen the card\n![image.png](${url}) \n\n![second](${url} "title")`;
+        const [image] = extractInlineImageUrls(text, 281785);
+        expect(image?.attachmentId).toBe("46e8a5cc-7c33-4aab-92ba-d91fe3446a5a");
+        expect(extractInlineImageUrls(text, 281785)).toHaveLength(1);
+
+        const md = formatWorkItemMarkdown(
+            item({
+                comments: [{ id: 1, author: "Alice Example", date: "2026-09-01T10:00:00Z", text, format: "markdown" }],
+            }),
+            new Map([[url, image?.localFileName ?? ""]])
+        );
+
+        expect(md).toContain("**Steps**\nopen the card\n![image.png](281785-46e8a5cc-image.png)");
+        expect(md).toContain('![second](281785-46e8a5cc-image.png "title")');
+        expect(md).not.toContain("\\*\\*");
     });
 });
 

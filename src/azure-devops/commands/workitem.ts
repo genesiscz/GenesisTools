@@ -11,7 +11,7 @@ import { Api } from "@app/azure-devops/api";
 import { formatJSON, loadWorkItemCache, saveWorkItemCache, WORKITEM_FRESHNESS_MINUTES } from "@app/azure-devops/cache";
 import { downloadAttachments } from "@app/azure-devops/commands/attachments";
 import { downloadInlineImages, extractInlineImageUrls } from "@app/azure-devops/inline-images";
-import { formatWorkItemMarkdown } from "@app/azure-devops/lib/work-item-markdown";
+import { commentMarkdown, formatWorkItemMarkdown } from "@app/azure-devops/lib/work-item-markdown";
 import type {
     AttachmentFilter,
     AttachmentInfo,
@@ -110,7 +110,7 @@ function formatWorkItemAI(
         for (const comment of shownComments) {
             lines.push("");
             lines.push(`**${comment.author}** (${new Date(comment.date).toLocaleDateString()}):`);
-            const mdComment = htmlToMarkdown(comment.text);
+            const mdComment = commentMarkdown(comment);
 
             if (full || mdComment.length <= 300) {
                 lines.push(mdComment);

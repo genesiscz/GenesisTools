@@ -18,9 +18,11 @@ export interface InlineImageRef {
 
 const ATTACHMENT_URL_PATTERN = /\/_apis\/wit\/attachments\/([a-f0-9-]+)/i;
 const IMG_SRC_PATTERN = /<img[^>]+src=["']([^"']+)["'][^>]*>/gi;
+/** `![alt](url)` or `![alt](url "title")`: comments written in ADO's markdown editor carry images this way. */
+const MARKDOWN_IMAGE_PATTERN = /!\[[^\]]*\]\(\s*<?([^)\s>]+)>?(?:\s+"[^"]*")?\s*\)/g;
 
 /**
- * Extract Azure DevOps attachment image URLs from HTML content.
+ * Extract Azure DevOps attachment image URLs from HTML or markdown content.
  * Returns deduplicated list of image references.
  */
 export function extractInlineImageUrls(html: string, workItemId: number): InlineImageRef[] {
@@ -30,10 +32,9 @@ export function extractInlineImageUrls(html: string, workItemId: number): Inline
 
     const seen = new Set<string>();
     const images: InlineImageRef[] = [];
+    const urls = [...html.matchAll(IMG_SRC_PATTERN), ...html.matchAll(MARKDOWN_IMAGE_PATTERN)].map((m) => m[1]);
 
-    for (const match of html.matchAll(IMG_SRC_PATTERN)) {
-        const url = match[1];
-
+    for (const url of urls) {
         if (seen.has(url)) {
             continue;
         }
