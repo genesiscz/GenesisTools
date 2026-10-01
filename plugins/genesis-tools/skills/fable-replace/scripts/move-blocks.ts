@@ -472,7 +472,9 @@ export function expandMoves(moves: MoveSpec[], options: ExpandMovesOptions = {})
     };
     const edits: FileEdit[] = [];
     const planned: PlannedMove[] = [];
-    const created = new Set<string>();
+    // A created target's content before any op: the planner reads it, so a new PHP file is seen
+    // with its `<?php` and namespace lines and its `use` lines go under them.
+    const created = new Map<string, string>();
     for (const [index, move] of moves.entries()) {
         try {
             planned.push(expandOne({ move, index, cwd, readAbs, created, edits }));
@@ -486,7 +488,7 @@ export function expandMoves(moves: MoveSpec[], options: ExpandMovesOptions = {})
     const importEdits = planImportFixes({
         moves: planned,
         cwd,
-        read: readAbs,
+        read: (abs) => created.get(abs) ?? readAbs(abs),
         ...(options.onWarning === undefined ? {} : { onWarning: options.onWarning }),
         ...(options.projectFiles === undefined ? {} : { projectFiles: options.projectFiles }),
         ...(options.isHandled === undefined ? {} : { isHandled: options.isHandled }),
@@ -550,7 +552,7 @@ interface ExpandOneParams {
     cwd: string;
     readAbs: (abs: string) => string | undefined;
     /** Targets an earlier move in this batch creates. */
-    created: Set<string>;
+    created: Map<string, string>;
     edits: FileEdit[];
 }
 
@@ -594,7 +596,7 @@ function expandOne({ move, index, cwd, readAbs, created, edits }: ExpandOneParam
         move.createWith ?? (targetIsNew && toAbs.endsWith(".php") ? phpPreamble(toAbs, source) : undefined);
     const startsFile = targetIsNew && (createWith ?? "") === "";
     if (targetIsNew) {
-        created.add(toAbs);
+        created.set(toAbs, createWith ?? "");
     }
 
     const paste: Op =

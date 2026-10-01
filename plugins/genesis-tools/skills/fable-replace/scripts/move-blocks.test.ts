@@ -711,6 +711,29 @@ describe("imports=fix in Swift", () => {
         expect(read(dir, "App/main.swift")).toStartWith("import Foundation\nimport Kit\n\nlet p");
     });
 
+    test("an init of another type in the moved block does not count as the struct's own (found by a real build)", () => {
+        const dir = project();
+        write(dir, {
+            "App/Helpers.swift": [
+                "import Foundation",
+                "",
+                "struct Point {",
+                "    let x: Int",
+                "}",
+                "",
+                "private final class Reader {",
+                "    init(_ value: Int) {}",
+                "}",
+                "",
+            ].join("\n"),
+        });
+        const { warnings } = parse(
+            dir,
+            "@@ App/Helpers.swift\n<<< move to=Kit/Point.swift lines=3-9 imports=fix visibility=widen\n>>>\n"
+        );
+        expect(warnings.some((w) => w.includes("public init(x: Int) {"))).toBe(true);
+    });
+
     test("across modules without a dependency: the warning carries the Package.swift op, and the op clears it", () => {
         const dir = project("");
         const move =
@@ -851,6 +874,92 @@ describe("imports=fix in PHP", () => {
         const sibling = read(dir, "app/Support/Sibling.php");
         expect(sibling).toContain("namespace App\\Support;\n\nuse App\\Values\\Money;\n");
         expect(sibling).toContain("\\App\\Values\\Money::class");
+    });
+
+    test("a class's trait, attribute and docblock types follow it into a new file (found by a real Laravel replay)", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "fr-php-real-"));
+        write(dir, {
+            "composer.json": '{ "autoload": { "psr-4": { "App\\\\": "app/" } } }\n',
+            "app/Services/Factory.php": [
+                "<?php",
+                "",
+                "declare(strict_types=1);",
+                "",
+                "namespace App\\Services;",
+                "",
+                "use App\\Container\\Lifecycle;",
+                "use App\\Container\\Scoped;",
+                "use App\\Models\\Tenant;",
+                "use App\\Traits\\Backtraces;",
+                "use Brick\\Money\\MoneyBag;",
+                "",
+                "#[Scoped(Lifecycle::Request)]",
+                "class Factory",
+                "{",
+                "    use Backtraces;",
+                "",
+                "    /** @var array<int, Tenant> */",
+                "    private array $cached = [];",
+                "",
+                "    /* $bag = new MoneyBag(); */",
+                "}",
+                "",
+            ].join("\n"),
+        });
+        const { edits } = parse(
+            dir,
+            "@@ app/Services/Factory.php\n<<< move to=app/Support/Factory.php symbol=Factory imports=fix\n>>>\n"
+        );
+        await run({ cwd: dir, verbose: false, edits });
+        expect(read(dir, "app/Support/Factory.php")).toStartWith(
+            [
+                "<?php",
+                "",
+                "declare(strict_types=1);",
+                "",
+                "namespace App\\Support;",
+                "",
+                "use App\\Container\\Lifecycle;",
+                "use App\\Container\\Scoped;",
+                "use App\\Models\\Tenant;",
+                "use App\\Traits\\Backtraces;",
+                "",
+                "#[Scoped(Lifecycle::Request)]",
+                "class Factory",
+            ].join("\n")
+        );
+        // MoneyBag was unused before the move (only in a comment), so it stays where it was.
+        expect(read(dir, "app/Services/Factory.php")).toBe(
+            "<?php\n\ndeclare(strict_types=1);\n\nnamespace App\\Services;\n\nuse Brick\\Money\\MoneyBag;\n"
+        );
+    });
+
+    test("a baseline or config that names the moved class is warned per escape level, and the ops clear it", () => {
+        const dir = project();
+        write(dir, {
+            "phpstan-baseline.neon": [
+                "parameters:",
+                "\tignoreErrors:",
+                "\t\t-",
+                "\t\t\trawMessage: 'Call to App\\Support\\Money::x()'",
+                "\t\t\tmessage: '#^Call to App\\\\Support\\\\Money\\:\\:x\\(\\)$#'",
+                "",
+            ].join("\n"),
+        });
+        const move = "@@ app/Support/Legacy.php\n<<< move to=app/Values/Money.php symbol=Money imports=fix\n>>>\n";
+        const baseline = parse(dir, move).warnings.filter((w) => w.includes("phpstan-baseline.neon"));
+        expect(baseline).toHaveLength(2);
+        const ops = baseline
+            .map((w) =>
+                w
+                    .split("\n")
+                    .slice(2)
+                    .map((line) => line.slice(4))
+                    .join("\n")
+            )
+            .join("\n");
+        expect(ops).toContain("App\\\\Values\\\\Money");
+        expect(parse(dir, `${move}${ops}\n`).warnings.filter((w) => w.includes("phpstan-baseline.neon"))).toEqual([]);
     });
 
     test("the string warning's op clears it", () => {

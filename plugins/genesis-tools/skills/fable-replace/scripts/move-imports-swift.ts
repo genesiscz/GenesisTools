@@ -327,9 +327,36 @@ const importOps = (plan: SwiftFilePlan, label: string): Op[] => {
 };
 
 const TYPE_KINDS = new Set(["struct", "class", "enum", "actor"]);
+const EXTENSION_LINE = new RegExp(`^(?:@[\\w.]+(?:\\([^)\\n]*\\))?\\s+)*(?:${MODIFIER})*extension\\s+[\\w.]+`);
 const MEMBER = new RegExp(
     `^((?:@[\\w.]+(?:\\([^)\\n]*\\))?\\s+)*)((?:${MODIFIER})*)(func|var|let|init|subscript|typealias|struct|class|enum|actor)\\b`
 );
+
+/** The type's direct member lines (its first indentation level), indentation removed. */
+const ownMembers = (lines: string[], declIndex: number): string[] => {
+    const indent = lines
+        .slice(declIndex + 1)
+        .find((line) => line.trim() !== "")
+        ?.match(/^\s+/)?.[0];
+    const out: string[] = [];
+    if (indent === undefined) {
+        return out;
+    }
+
+    for (let k = declIndex + 1; k < lines.length; k++) {
+        const line = lines[k];
+        if (line.trim() !== "" && !line.startsWith(indent)) {
+            break;
+        }
+
+        const body = line.slice(indent.length);
+        if (body.trim() !== "" && !/^\s/.test(body)) {
+            out.push(body);
+        }
+    }
+
+    return out;
+};
 
 /** The type's direct members, written without an access word, each with `public` added. */
 const publicMembers = (lines: string[], declIndex: number): Array<[number, string]> => {
@@ -441,6 +468,14 @@ export const planSwiftImportFixes = (params: PlanImportFixesParams): FileEdit[] 
             const widen = toTarget.some((move) => move.widen);
             const blocksRaw = toTarget.map((move) => move.blockText).join("\n");
             const blocks = maskSwift(blocksRaw);
+            // Members, locals and parameters the moved code declares shadow outer names of the same spelling.
+            const blockDeclares = new Set(
+                [
+                    ...blocks.matchAll(
+                        /\b(?:func|var|let|case|class|struct|enum|actor|protocol|typealias)\s+([A-Za-z_]\w*)/g
+                    ),
+                ].map((match) => match[1])
+            );
             const movedDecls = new Map<string, { decl: SwiftDeclaration; move: PlannedMove }>();
             for (const move of toTarget) {
                 for (const [name, decl] of swiftDeclarations(maskSwift(move.blockText), move.blockText)) {
@@ -460,7 +495,7 @@ export const planSwiftImportFixes = (params: PlanImportFixesParams): FileEdit[] 
             if (!crossing) {
                 // One module: only file-scoped access can break.
                 for (const [name, decl] of remainingDecls) {
-                    if (isPrivate(decl.access) && usesName(blocks, name)) {
+                    if (isPrivate(decl.access) && !blockDeclares.has(name) && usesName(blocks, name)) {
                         if (!widen) {
                             throw new MoveError(
                                 withFix(
@@ -534,28 +569,47 @@ export const planSwiftImportFixes = (params: PlanImportFixesParams): FileEdit[] 
                 }
             }
 
-            const reached = [...stays].filter(([name]) => !movedDecls.has(name) && usesName(blocks, name));
+            // A name can also be a member reached through implicit `self` (`arguments` inside an
+            // `extension Process`), which only the compiler can tell apart, so this is a warning.
+            const reached = [...stays].filter(
+                ([name]) => !movedDecls.has(name) && !blockDeclares.has(name) && usesName(blocks, name)
+            );
             if (reached.length > 0) {
-                throw new MoveError(
-                    withFix(
-                        `move: the moved code uses ${reached.map(([n]) => n).join(", ")}, which stay${reached.length === 1 ? "s" : ""} in module ${sourceModule.name}; ${targetModule.name} cannot see it`,
-                        {
-                            why: `move ${reached.length === 1 ? "it" : "them"} into ${targetModule.name} too:`,
-                            spec: reached
-                                .map(([n, info]) =>
-                                    info.file === sourceAbs
-                                        ? `<<< move to=${first.to} symbol=${n} imports=fix visibility=widen`
-                                        : `@@ ${display(info.file)}\n<<< move to=${first.to} symbol=${n} imports=fix visibility=widen\n>>>`
-                                )
-                                .join("\n"),
-                        }
-                    ),
-                    first.index
-                );
+                const names = reached.map(([n]) => n).join(", ");
+                warnWithFix(params, {
+                    abs: targetAbs,
+                    needles: [],
+                    message: `imports=fix: the moved code names ${names}, declared in module ${sourceModule.name}, which ${targetModule.name} cannot see; if ${reached.length === 1 ? "it is" : "they are"} not a member reached through self, the build fails`,
+                    fix: {
+                        why: `if the build names ${reached.length === 1 ? "it" : "them"}, move ${reached.length === 1 ? "it" : "them"} into ${targetModule.name} too:`,
+                        spec: `${reached
+                            .map(
+                                ([n, info]) =>
+                                    `@@ ${display(info.file)}\n<<< move to=${first.to} symbol=${n} imports=fix visibility=widen\n>>>`
+                            )
+                            .join(
+                                "\n"
+                            )}\n# verify: --verify "swift build --package-path ${display(path.dirname(sourceModule.packageFile))}"`,
+                    },
+                });
             }
 
             // Every user of a moved declaration imports the target module, and the moved API is public.
+            // A moved extension's members are moved API too: `process.runCapturing()` names no
+            // moved type, yet its file needs the import and the member needs `public`.
             const movedNames = [...movedDecls.keys()];
+            const extensionMembers = toTarget.flatMap((move) => {
+                const lines = move.blockText.split("\n");
+                return lines.flatMap((line, index) =>
+                    EXTENSION_LINE.test(maskSwift(line))
+                        ? publicMembers(lines, index).flatMap(([memberIndex, widened]) => {
+                              const name = lines[memberIndex].match(/\b(?:func|var|let)\s+(\w+)/)?.[1];
+                              return name === undefined ? [] : [{ move, memberIndex, widened, name }];
+                          })
+                        : []
+                );
+            });
+            const callsMember = (masked: string, name: string): boolean => new RegExp(`\\.${name}\\b`).test(masked);
             const users = swiftFiles.filter((file) => {
                 if (file === targetAbs || file.startsWith(`${targetModule.dir}${path.sep}`)) {
                     return false;
@@ -565,8 +619,32 @@ export const planSwiftImportFixes = (params: PlanImportFixesParams): FileEdit[] 
                 const masked = maskSwift(text);
                 const inSourceModule = file.startsWith(`${sourceModule.dir}${path.sep}`);
                 const importsSource = parseSwiftImports(text, masked).some((i) => i.module === sourceModule.name);
-                return (inSourceModule || importsSource) && movedNames.some((name) => usesName(masked, name));
+                return (
+                    (inSourceModule || importsSource) &&
+                    (movedNames.some((name) => usesName(masked, name)) ||
+                        extensionMembers.some((member) => callsMember(masked, member.name)))
+                );
             });
+            const calledMembers = extensionMembers.filter((member) =>
+                users.some((file) =>
+                    callsMember(maskSwift(file === sourceAbs ? remaining : (read(file) ?? "")), member.name)
+                )
+            );
+            for (const member of calledMembers) {
+                if (!member.move.widen) {
+                    throw new MoveError(
+                        withFix(
+                            `move: ${member.name} moves into module ${targetModule.name} as an internal extension member, and ${sourceModule.name} still calls it`,
+                            { why: "let the move make it public:", spec: markerWith(member.move, "visibility=widen") }
+                        ),
+                        member.move.index
+                    );
+                }
+
+                const edited = blockEdits.get(member.move) ?? new Map<number, string>();
+                blockEdits.set(member.move, edited);
+                edited.set(member.memberIndex, member.widened);
+            }
             const usedOutside = new Set(
                 movedNames.filter((name) =>
                     users.some((file) => usesName(maskSwift(file === sourceAbs ? remaining : (read(file) ?? "")), name))
@@ -614,7 +692,9 @@ export const planSwiftImportFixes = (params: PlanImportFixesParams): FileEdit[] 
                 if (
                     entry.decl.kind === "struct" &&
                     builtOutside &&
-                    !/^\s+(?:public\s+)?init\s*[(<]/m.test(entry.move.blockText)
+                    !ownMembers(lines, declIndex).some((line) =>
+                        /^(?:@\S+\s+)*(?:(?:public|internal|package|convenience|required)\s+)*init\s*[(<?]/.test(line)
+                    )
                 ) {
                     const init = memberwiseInit(lines, declIndex);
                     warnWithFix(params, {

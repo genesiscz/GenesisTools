@@ -98,6 +98,8 @@ export interface UseStatement {
     entries: UseEntry[];
 }
 
+const TEXT_FILE = /\.(?:neon|ya?ml|json|xml|md|txt|ini|env|dist|stub|twig|blade)$|\.neon\.dist$|\.xml\.dist$/;
+
 const lastSegment = (fqn: string): string => fqn.slice(fqn.lastIndexOf("\\") + 1);
 const namespaceOf = (fqn: string): string => (fqn.includes("\\") ? fqn.slice(0, fqn.lastIndexOf("\\")) : "");
 const same = (a: string, b: string): boolean =>
@@ -180,25 +182,42 @@ const KEYWORDS = new Set([
     "never",
 ]);
 
-/** Names the code refers to as classes: `new X`, `X::`, type hints, `extends`, `instanceof`, attributes. */
-export const classReferences = (masked: string): Set<string> => {
+/**
+ * Names the code refers to as classes: `new X`, `X::`, type hints, `extends`, `instanceof`, a trait
+ * `use X;` inside a class, attributes `#[X(...)]`, and, when `raw` is given, the types in docblock
+ * tags (`@var array<int, X>`), which static analysis resolves through the same `use` lines.
+ */
+export const classReferences = (masked: string, raw?: string): Set<string> => {
     const out = new Set<string>();
     for (const match of masked.matchAll(/(?<![\w$\\>:])(\\?[A-Za-z_]\w*(?:\\[A-Za-z_]\w*)*)/g)) {
         const name = match[1];
-        const at = (match.index ?? 0) + name.length;
-        const before = masked.slice(Math.max(0, (match.index ?? 0) - 10), match.index ?? 0);
+        const index = match.index ?? 0;
+        const at = index + name.length;
+        const before = masked.slice(Math.max(0, index - 10), index);
         const first = name.replace(/^\\/, "").split("\\")[0];
-        if (KEYWORDS.has(first.toLowerCase()) || /\b(?:function|const|namespace|use|fn)\s+$/.test(before)) {
+        if (KEYWORDS.has(first.toLowerCase()) || /\b(?:function|const|namespace|fn)\s+$/.test(before)) {
             continue;
         }
 
-        // A bare call is a function: PHP falls back to the global one, so it needs no `use`.
-        const callsIt = /^\s*\(/.test(masked.slice(at, at + 4)) && !/\bnew\s+$/.test(before);
+        // A bare call is a function: PHP falls back to the global one, so it needs no `use`. An
+        // attribute `#[X(...)]` looks like a call and is a class.
+        const inAttribute = masked.lastIndexOf("#[", index) > masked.lastIndexOf("]", index);
+        const callsIt = /^\s*\(/.test(masked.slice(at, at + 4)) && !/\bnew\s+$/.test(before) && !inAttribute;
         if (callsIt || !/^[A-Z]/.test(first) || (/^[A-Z0-9_]+$/.test(first) && !name.includes("\\"))) {
             continue;
         }
 
         out.add(name);
+    }
+
+    for (const doc of (raw ?? "").matchAll(/\/\*\*[\s\S]*?\*\//g)) {
+        for (const tag of doc[0].matchAll(/@[\w-]+[ \t]+([^\n]*)/g)) {
+            for (const name of tag[1].matchAll(/\\?[A-Za-z_]\w*(?:\\[A-Za-z_]\w*)*/g)) {
+                if (/^\\?[A-Z]/.test(name[0]) && !/^[A-Z0-9_]+$/.test(name[0])) {
+                    out.add(name[0]);
+                }
+            }
+        }
     }
 
     return out;
@@ -388,7 +407,10 @@ export const planPhpImportFixes = (params: PlanImportFixesParams): FileEdit[] =>
 
         return plan;
     };
-    const phpFiles = (params.projectFiles ?? listProjectFiles(cwd)).filter((file) => file.endsWith(".php"));
+    const allFiles = params.projectFiles ?? listProjectFiles(cwd);
+    const phpFiles = allFiles.filter((file) => file.endsWith(".php"));
+    // Non-PHP text that can name a class: analyser baselines, YAML/JSON/XML config, docs.
+    const textFiles = allFiles.filter((file) => TEXT_FILE.test(file));
 
     for (const sourceAbs of [...new Set(fixing.map((move) => move.fromAbs))]) {
         const source = planFor(sourceAbs);
@@ -409,9 +431,10 @@ export const planPhpImportFixes = (params: PlanImportFixesParams): FileEdit[] =>
             }
             return out.replace(/^namespace\s+[\w\\]+\s*;/m, (line) => " ".repeat(line.length));
         };
-        const originalRefs = classReferences(usesBlanked(source.masked, source.uses, source.text));
+        const originalRefs = classReferences(usesBlanked(source.masked, source.uses, source.text), source.text);
         const remainingRefs = classReferences(
-            usesBlanked(remainingMasked, parseUses(remaining, remainingMasked), remaining)
+            usesBlanked(remainingMasked, parseUses(remaining, remainingMasked), remaining),
+            remaining
         );
         const remainingDecls = new Set(phpDeclarations(remainingMasked).map((d) => d.name.toLowerCase()));
         const aliasUsed = (refs: Set<string>, alias: string): boolean =>
@@ -438,7 +461,7 @@ export const planPhpImportFixes = (params: PlanImportFixesParams): FileEdit[] =>
             const target = planFor(targetAbs);
             const targetNs = target.text === "" ? (psr4Namespace(targetAbs) ?? sourceNs) : (target.namespace ?? "");
             const blocksMasked = maskPhp(toTarget.map((move) => move.blockText).join("\n"));
-            const blockRefs = classReferences(blocksMasked);
+            const blockRefs = classReferences(blocksMasked, toTarget.map((move) => move.blockText).join("\n"));
             const moved: Array<PhpDeclaration & { move: PlannedMove }> = toTarget.flatMap((move) =>
                 phpDeclarations(maskPhp(move.blockText)).map((d) => ({ ...d, move }))
             );
@@ -519,6 +542,51 @@ export const planPhpImportFixes = (params: PlanImportFixesParams): FileEdit[] =>
             for (const declaration of moved) {
                 const oldFqn = sourceNs === "" ? declaration.name : `${sourceNs}\\${declaration.name}`;
                 const newFqn = targetNs === "" ? declaration.name : `${targetNs}\\${declaration.name}`;
+                if (oldFqn.includes("\\")) {
+                    for (const file of textFiles) {
+                        let text: string;
+                        try {
+                            if (fs.statSync(file).size > 4_000_000) {
+                                continue;
+                            }
+
+                            text = fs.readFileSync(file, "utf8");
+                        } catch {
+                            continue;
+                        }
+
+                        // One spelling per escaping level: `A\B`, `A\\B` (JSON, PHP strings), `A\\\\B` (regex in a string).
+                        for (const level of [1, 2, 4]) {
+                            const spelled = oldFqn.split("\\").join("\\".repeat(level));
+                            // The name ends unless a word character or a deeper namespace (the same
+                            // escape level of backslashes plus a letter) follows; `\:` in a regex is an escape.
+                            const pattern = new RegExp(
+                                `${spelled.replace(/\\/g, "\\\\")}(?!\\w|${"\\\\".repeat(level)}[A-Za-z_])`,
+                                "g"
+                            );
+                            const count = [...text.matchAll(pattern)].length;
+                            if (count === 0) {
+                                continue;
+                            }
+
+                            warnWithFix(params, {
+                                abs: file,
+                                needles: [spelled],
+                                message: `imports=fix: ${display(file)} names ${oldFqn} ${count} time(s), and the class moves to ${newFqn}`,
+                                fix: {
+                                    why: "rename it there too (an analyser baseline keyed on the old name stops matching otherwise):",
+                                    spec: literalOpSpec(
+                                        display(file),
+                                        spelled,
+                                        newFqn.split("\\").join("\\".repeat(level)),
+                                        `count=${count}`
+                                    ),
+                                },
+                            });
+                        }
+                    }
+                }
+
                 const entry: UseEntry = {
                     kind: declaration.kind === "function" ? "function" : "class",
                     fqn: newFqn,
@@ -580,7 +648,7 @@ export const planPhpImportFixes = (params: PlanImportFixesParams): FileEdit[] =>
                             s.entries.some((e) => e.alias.toLowerCase() === declaration.name.toLowerCase())
                         ) &&
                         (entry.kind === "class"
-                            ? aliasUsed(classReferences(plan.masked), declaration.name)
+                            ? aliasUsed(classReferences(plan.masked, plan.text), declaration.name)
                             : callsIn(plan.masked, declaration.name));
                     if (bareUser) {
                         plan.added.push(entry);
