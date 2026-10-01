@@ -324,16 +324,18 @@ const program = new Command()
                     opts,
                     stream,
                     apiKey,
+                    accountId: speakingAccount && apiKey ? speakingAccount.entry.id : undefined,
+                    onSynthesized:
+                        speakingAccount && apiKey
+                            ? () =>
+                                  recordSayAccountUsage({
+                                      account: speakingAccount,
+                                      model: effectiveForRun.model ?? null,
+                                      characters: text.length,
+                                  })
+                            : undefined,
                 });
                 setOutcome({ status: doneStatus, provider, voice: effectiveForRun.voice, cacheHit, fallbackFrom });
-
-                if (speakingAccount && apiKey && !cacheHit) {
-                    await recordSayAccountUsage({
-                        account: speakingAccount,
-                        model: effectiveForRun.model ?? null,
-                        characters: text.length,
-                    });
-                }
             } catch (err) {
                 const message = err instanceof Error ? err.message : String(err);
 
@@ -537,6 +539,10 @@ interface SpeakCachedArgs {
     stream?: boolean;
     /** The chosen account's key; absent means each engine walks its provider's accounts. */
     apiKey?: string;
+    /** The chosen account's id, so its audio is cached apart from every other account's. */
+    accountId?: string;
+    /** Called once a paid synthesis returned, before writing or playing it; never for a cache hit. */
+    onSynthesized?: () => Promise<void>;
 }
 
 /**
@@ -553,7 +559,7 @@ interface SpeakCachedArgs {
  * Reports whether the audio came from the cache, for the call log.
  */
 async function speakCached(args: SpeakCachedArgs): Promise<{ cacheHit: boolean }> {
-    const { mgr, text, provider, effective, opts, stream, apiKey } = args;
+    const { mgr, text, provider, effective, opts, stream, apiKey, accountId, onSynthesized } = args;
     const outputPath = opts.output ? resolve(opts.output) : undefined;
 
     // Bypass the cache when:
@@ -563,18 +569,28 @@ async function speakCached(args: SpeakCachedArgs): Promise<{ cacheHit: boolean }
     //     providers. Honor the flag instead.
     // `--output` needs a full buffer, so it never takes the stream-only path.
     if ((provider === "macos" || stream === true) && !outputPath) {
-        await ai.speak(text, {
-            provider,
-            voice: effective.voice ?? undefined,
-            language: effective.language ?? undefined,
-            format: effective.format ?? undefined,
-            rate: effective.rate ?? undefined,
-            volume: effective.volume ?? undefined,
-            stream,
-            wait: opts.wait,
-            model: effective.model ?? undefined,
-            apiKey,
-        });
+        // A cloud stream is billed as it is consumed, so a stream that fails part-way still counts.
+        const billed = provider !== "macos";
+
+        try {
+            await ai.speak(text, {
+                provider,
+                voice: effective.voice ?? undefined,
+                language: effective.language ?? undefined,
+                format: effective.format ?? undefined,
+                rate: effective.rate ?? undefined,
+                volume: effective.volume ?? undefined,
+                stream,
+                wait: opts.wait,
+                model: effective.model ?? undefined,
+                apiKey,
+            });
+        } finally {
+            if (billed) {
+                await onSynthesized?.();
+            }
+        }
+
         return { cacheHit: false };
     }
 
@@ -609,6 +625,7 @@ async function speakCached(args: SpeakCachedArgs): Promise<{ cacheHit: boolean }
         rate: effective.rate,
         language: effective.language,
         format: effective.format,
+        account: accountId ?? null,
     };
 
     // Cache I/O is best-effort — if reading the index fails (e.g. corrupted
@@ -650,6 +667,8 @@ async function speakCached(args: SpeakCachedArgs): Promise<{ cacheHit: boolean }
         model: effective.model ?? undefined,
         apiKey,
     });
+    // Paid as soon as it returned: a write or playback failure below does not undo the charge.
+    await onSynthesized?.();
 
     // recordMiss writes to disk synchronously — wrap so a cache-write failure
     // (ENOSPC, permission, etc.) doesn't drop the audio the user just paid

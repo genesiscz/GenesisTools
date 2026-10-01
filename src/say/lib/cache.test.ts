@@ -28,6 +28,14 @@ describe("SayAudioCache", () => {
         expect(c.get(baseParams)).toBeNull();
     });
 
+    it("keeps each account apart: audio one account paid for is never served to another", () => {
+        const c = new SayAudioCache({ dir, threshold: 1 });
+        c.recordMiss({ ...baseParams, account: "acc-a" }, Buffer.from([1]), "audio/mpeg");
+        expect(c.get({ ...baseParams, account: "acc-a" })).not.toBeNull();
+        expect(c.get({ ...baseParams, account: "acc-b" })).toBeNull();
+        expect(c.get(baseParams)).toBeNull();
+    });
+
     it("does not persist audio until threshold is crossed", () => {
         const c = new SayAudioCache({ dir, threshold: 3 });
         c.recordMiss(baseParams, Buffer.from([1, 2]), "audio/mpeg");

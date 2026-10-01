@@ -12,6 +12,8 @@ export interface SayCacheParams {
     rate?: number | null;
     language?: string | null;
     format?: string | null;
+    /** The AI account that synthesized it (its immutable id, never a secret): accounts never share audio. */
+    account?: string | null;
 }
 
 export interface SayCacheHit {
@@ -118,6 +120,8 @@ export class SayAudioCache {
             r: p.rate ?? 1,
             l: p.language ?? "",
             f: p.format ?? "",
+            // Only when set, so every entry cached before accounts keeps its key.
+            ...(p.account ? { a: p.account } : {}),
         });
         return createHash("sha256").update(canon).digest("hex").slice(0, 32);
     }
