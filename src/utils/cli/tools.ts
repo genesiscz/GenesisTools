@@ -169,17 +169,20 @@ export async function collectOutput(
         proc.kill(signal);
     };
     let truncated = false;
+    let capReached: () => void = () => undefined;
+    const capped = new Promise<"cap">((resolve) => {
+        capReached = () => resolve("cap");
+    });
     const onCap = () => {
         if (!truncated) {
             truncated = true;
             terminate("SIGTERM");
+            capReached();
         }
     };
-    const collected = Promise.all([
-        readCapped(proc.stdout, maxBytes, onCap),
-        readCapped(proc.stderr, maxBytes, onCap),
-        proc.exited,
-    ]);
+    const stdoutRead = readCapped(proc.stdout, maxBytes, onCap);
+    const stderrRead = readCapped(proc.stderr, maxBytes, onCap);
+    const collected = Promise.all([stdoutRead, stderrRead, proc.exited]);
     const finished = ([stdout, stderr, exitCode]: [string, string, number]): CollectedOutput => ({
         stdout,
         stderr,
@@ -188,11 +191,40 @@ export async function collectOutput(
         ...(truncated ? { truncated: true } : {}),
     });
 
-    if (!deadlineMs && !signal) {
+    if (!deadlineMs && !signal && maxBytes === undefined) {
         return finished(await collected);
     }
 
-    const first = await within(collected, deadlineMs || undefined, signal);
+    const first = await Promise.race([within(collected, deadlineMs || undefined, signal), capped]);
+
+    if (first === "cap") {
+        // Past the cap the child got SIGTERM: it has its own grace, then SIGKILL, then the call returns
+        // with what was read, whether or not a member still holds the pipes.
+        const afterTerm = await within(collected, graceMs);
+
+        if (afterTerm !== "deadline") {
+            return finished(afterTerm);
+        }
+
+        terminate("SIGKILL");
+        const afterKill = await within(collected, graceMs);
+
+        if (afterKill !== "deadline") {
+            return finished(afterKill);
+        }
+
+        const settled = async (read: Promise<string>) => {
+            const value = await within(read, 0);
+            return value === "deadline" ? "" : value;
+        };
+        return {
+            stdout: await settled(stdoutRead),
+            stderr: await settled(stderrRead),
+            exitCode: 137,
+            timedOut: false,
+            truncated: true,
+        };
+    }
 
     if (first !== "deadline") {
         return finished(first);
@@ -217,7 +249,9 @@ export async function collectOutput(
 export async function execTool(args: string[], options?: RunToolOptions): Promise<ExecResult> {
     // Only a bounded run gets its own process group, so its deadline (or abort) can end everything
     // it started. An unbounded run stays in the caller's group and still gets the caller's Ctrl-C.
-    const bounded = options?.timeout !== undefined || options?.signal !== undefined;
+    // An output cap counts: past it the child is stopped, and so must everything it started.
+    const bounded =
+        options?.timeout !== undefined || options?.signal !== undefined || options?.maxOutputBytes !== undefined;
     const proc = Bun.spawn([namedBunExecPath("tools"), "run", getToolsPath(), ...args], {
         cwd: options?.cwd ?? process.cwd(),
         stdin: options?.stdin === undefined ? "ignore" : new TextEncoder().encode(options.stdin),

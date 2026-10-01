@@ -74,6 +74,24 @@ describe.skipIf(process.platform === "win32")("collectOutput bounds", () => {
         expect(result.stdout.length).toBe(1000);
     });
 
+    test("a cap with no deadline still ends a child that ignores SIGTERM, within its kill grace", async () => {
+        // SIG_IGN survives the exec, so the writer itself ignores SIGTERM.
+        const proc = Bun.spawn(["/bin/sh", "-c", "trap '' TERM; exec yes 0123456789"], {
+            env: process.env,
+            stdin: "ignore",
+            stdout: "pipe",
+            stderr: "pipe",
+        });
+        const started = Date.now();
+
+        const result = await collectOutput(proc, undefined, { maxBytes: 1000, graceMs: 200 });
+
+        expect(result.truncated).toBe(true);
+        expect(result.stdout.length).toBe(1000);
+        expect(Date.now() - started).toBeLessThan(5000);
+        await proc.exited;
+    });
+
     test("an aborted signal ends the child like the deadline", async () => {
         const proc = Bun.spawn(["/bin/sh", "-c", "exec sleep 30"], {
             stdin: "ignore",
