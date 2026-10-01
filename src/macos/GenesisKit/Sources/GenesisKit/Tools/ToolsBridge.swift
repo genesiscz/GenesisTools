@@ -241,6 +241,9 @@ public struct ToolsBridge: Sendable {
             return result
         }
 
+        // A task cancelled while the server had the call never starts the process fallback.
+        try Task.checkCancellation()
+
         guard Self.isExecutableFile(resolvedBinaryPath) else {
             throw ToolsBridgeError.binaryNotFound(resolvedBinaryPath)
         }

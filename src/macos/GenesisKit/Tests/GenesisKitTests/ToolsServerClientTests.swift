@@ -171,6 +171,20 @@ final class ToolsServerClientTests: XCTestCase {
         XCTAssertEqual(answer?.exitCode, 0)
     }
 
+    /// A cancelled task gets nil at once, not after the call's deadline, from a server that never answers.
+    func testACancelledCallReturnsAtOnce() async throws {
+        let server = try FakeServer { _ in [] }
+        defer { server.stop() }
+        let client = ToolsServerClient(socketPath: server.path)
+        let started = Date()
+        let task = Task { await client.call(argv: ["slow"], timeoutSeconds: 20) }
+        try await Task.sleep(nanoseconds: 200_000_000)
+        task.cancel()
+        let result = await task.value
+        XCTAssertNil(result)
+        XCTAssertLessThan(Date().timeIntervalSince(started), 5)
+    }
+
     @MainActor
     func testSubscriptionDeliversLinesThenEnd() async throws {
         let server = try FakeServer { request in

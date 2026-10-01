@@ -453,6 +453,8 @@ public struct ToolCallRowView: View, Equatable {
         let cached = open && finished ? services.loaded(toolId: toolId) : nil
         let current = loadedFrom == ObjectIdentifier(services) ? (loaded ?? cached) : (cached ?? loaded)
         let presentation = ToolPresentation.make(line: line, loaded: current, context: context, cwd: services.cwd)
+        // Edit and Write caps apply only at a trimming verbosity: Verbose shows every line of everything.
+        let cap = verbosity.bodyLimit == nil ? nil : (presentation.bodyCap ?? verbosity.bodyLimit)
         VStack(alignment: .leading, spacing: 2) {
             Button { onToggle(rowId) } label: { header(presentation) }
                 .buttonStyle(.genHoverRow(accent: .white, cornerRadius: 7))
@@ -463,8 +465,8 @@ public struct ToolCallRowView: View, Equatable {
                 ToolResultBody(
                     rowId: rowId,
                     presentation: presentation,
-                    limit: showAll ? nil : (presentation.bodyCap ?? verbosity.bodyLimit),
-                    expandedByReader: showAll && (presentation.bodyCap != nil || verbosity.bodyLimit != nil),
+                    limit: showAll ? nil : cap,
+                    expandedByReader: showAll && cap != nil,
                     wrap: wrap,
                     canAddContext: current?.fileLines != nil && (current?.detail.edits.count ?? 0) == 1,
                     onShowAll: { onToggle(rowId + "#all") },

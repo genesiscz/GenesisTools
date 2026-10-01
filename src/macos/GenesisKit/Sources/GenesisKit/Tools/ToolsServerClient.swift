@@ -81,25 +81,49 @@ public final class ToolsServerClient: @unchecked Sendable {
 
     // MARK: - Public
 
-    /// The server's answer to `tools <argv…>`, or nil: run the process.
+    /// The server's answer to `tools <argv…>`, or nil: run the process. A cancelled task gets nil at once, and
+    /// the server is told to stop the call; the caller checks `Task.isCancelled` before running a process.
     public func call(argv: [String], timeoutSeconds: Int, traceId: String? = nil) async -> ToolsRunResult? {
-        await withCheckedContinuation { (continuation: CheckedContinuation<ToolsRunResult?, Never>) in
-            let once = Once()
-            guard let id = send(op: "call", argv: argv, timeoutMs: timeoutSeconds * 1000, traceId: traceId, onCall: { result in
-                if once.take() { continuation.resume(returning: result) }
-            }) else {
-                if once.take() { continuation.resume(returning: nil) }
-                return
-            }
+        let once = Once()
+        let pending = PendingCall()
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { (continuation: CheckedContinuation<ToolsRunResult?, Never>) in
+                pending.resume = { result in
+                    if once.take() { continuation.resume(returning: result) }
+                }
+                guard let id = send(op: "call", argv: argv, timeoutMs: timeoutSeconds * 1000, traceId: traceId, onCall: { result in
+                    pending.resume?(result)
+                }) else {
+                    pending.resume?(nil)
+                    return
+                }
 
-            // The deadline: an answer that does not come in time is a nil, and the caller's process runs instead.
-            queue.asyncAfter(deadline: .now() + .seconds(timeoutSeconds + 1)) { [weak self] in
-                guard once.take() else { return }
-                self?.lock.withLock { _ = self?.calls.removeValue(forKey: id) }
-                serverLog.info("call timed out: \(argv.prefix(3).joined(separator: " "), privacy: .public)")
-                continuation.resume(returning: nil)
+                pending.id = id
+                // Cancelled while the request was being sent: the handler below ran before the id existed.
+                if Task.isCancelled {
+                    self.cancelCall(id)
+                    pending.resume?(nil)
+                    return
+                }
+
+                // The deadline: an answer that does not come in time is a nil, and the caller's process runs instead.
+                queue.asyncAfter(deadline: .now() + .seconds(timeoutSeconds + 1)) { [weak self] in
+                    guard once.take() else { return }
+                    self?.lock.withLock { _ = self?.calls.removeValue(forKey: id) }
+                    serverLog.info("call timed out: \(argv.prefix(3).joined(separator: " "), privacy: .public)")
+                    continuation.resume(returning: nil)
+                }
             }
+        } onCancel: { [weak self] in
+            if let id = pending.id { self?.cancelCall(id) }
+            pending.resume?(nil)
         }
+    }
+
+    /// Forgets call `id` and asks the server to stop it.
+    private func cancelCall(_ id: Int) {
+        let known = lock.withLock { calls.removeValue(forKey: id) != nil }
+        if known { write(["id": id, "op": "cancel"]) }
     }
 
     /// The same, blocking the calling thread (never the main thread) for at most `timeout` seconds.
@@ -395,6 +419,23 @@ private final class LineSplitter: @unchecked Sendable {
         }
         buffer = Data(buffer)
         return lines
+    }
+}
+
+/// One async call's id and its single resume, shared with its cancellation handler.
+private final class PendingCall: @unchecked Sendable {
+    private let lock = NSLock()
+    private var _id: Int?
+    private var _resume: ((ToolsRunResult?) -> Void)?
+
+    var id: Int? {
+        get { lock.withLock { _id } }
+        set { lock.withLock { _id = newValue } }
+    }
+
+    var resume: ((ToolsRunResult?) -> Void)? {
+        get { lock.withLock { _resume } }
+        set { lock.withLock { _resume = newValue } }
     }
 }
 

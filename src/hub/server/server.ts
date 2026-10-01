@@ -41,6 +41,8 @@ export interface HubServerHandle {
 interface Connection {
     socket: Socket;
     subscriptions: Map<number, AbortController>;
+    /** In-flight calls, so a client's cancel stops the door's work too. */
+    calls: Map<number, AbortController>;
 }
 
 const DRAIN_DEADLINE_MS = 10_000;
@@ -196,6 +198,7 @@ async function startHubServerOwned(options: HubServerOptions): Promise<HubServer
             const cpu = process.cpuUsage();
             const deadline = timeoutMs ?? options.callTimeoutMs;
             const controller = new AbortController();
+            connection.calls.set(id, controller);
             let timer: ReturnType<typeof setTimeout> | undefined;
             const timeout = new Promise<CallResult>((resolve) => {
                 timer = setTimeout(() => {
@@ -212,6 +215,7 @@ async function startHubServerOwned(options: HubServerOptions): Promise<HubServer
                 result = { stdout: "", stderr: `${error instanceof Error ? error.message : String(error)}\n`, exit: 1 };
             } finally {
                 clearTimeout(timer);
+                connection.calls.delete(id);
             }
 
             const used = process.cpuUsage(cpu);
@@ -315,6 +319,7 @@ async function startHubServerOwned(options: HubServerOptions): Promise<HubServer
 
         if (request.op === "cancel") {
             connection.subscriptions.get(request.id)?.abort();
+            connection.calls.get(request.id)?.abort();
             return;
         }
 
@@ -336,7 +341,7 @@ async function startHubServerOwned(options: HubServerOptions): Promise<HubServer
     };
 
     const server: Server = createServer((socket) => {
-        const connection: Connection = { socket, subscriptions: new Map() };
+        const connection: Connection = { socket, subscriptions: new Map(), calls: new Map() };
         connections.add(connection);
         armIdle();
         const lines = new LineBuffer();
