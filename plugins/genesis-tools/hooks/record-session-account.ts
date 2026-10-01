@@ -1,9 +1,9 @@
 #!/usr/bin/env bun
 import { spawnSync } from "node:child_process";
-import { appendFileSync, existsSync, mkdirSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
-import { accountEnvVarFor, type Harness, harnessOf } from "./harness";
+import { join, resolve, sep } from "node:path";
+import { accountEnvVarFor, type Harness, harnessFor } from "./harness";
 
 const SafeJSON = JSON;
 
@@ -22,14 +22,23 @@ const SafeJSON = JSON;
  * 9 times in this journal before `harnessOf` was applied here.
  *
  * Silent and never fatal: it runs on every session start, resume, clear and compact.
- * Anything printed on stdout here would be injected into the session as context.
+ * Claude and Codex inject SessionStart stdout into the session. Grok 1.0.44 ignores it
+ * (that sentence is in the 1.0.44 binary). Printing would still land in the other two.
  */
 
 interface HookInput {
     session_id?: string;
+    /** Grok's name for the same id. */
+    sessionId?: string;
     cwd?: string;
     source?: string;
     transcript_path?: string;
+    /** Grok's name for the same path. */
+    transcriptPath?: string;
+    /** Codex 0.155 requires this on SessionStart. Absent on the Grok 1.0.44 common fields. */
+    model?: string;
+    /** Grok sends the event name; with no transcript path it is what marks the payload as Grok. */
+    hookEventName?: string;
 }
 
 interface SessionPin {
@@ -166,12 +175,214 @@ function resolveAuth(env: NodeJS.ProcessEnv): Pick<SessionPin, "auth" | "authSou
 /**
  * The account this session bills, read ONLY from its own harness's variable.
  *
- * Never fall back to another harness's: that is precisely how a Codex session started inside a
- * Claude pane came to carry a Claude account. An absent variable is a real answer — the agent
- * was launched outside `tools <agent> run` — not a reason to guess.
+ * Never fall back to another harness's variable: that is precisely how a Codex session started
+ * inside a Claude pane came to carry a Claude account. When the variable is absent the home in
+ * the transcript still names an account, via {@link accountBoundToHome}. That is the config
+ * binding, not a guess from a sibling's env.
  */
 export function accountFor(harness: Harness, env: NodeJS.ProcessEnv): string | null {
     return env[accountEnvVarFor(harness)] || null;
+}
+
+interface ConfigAccount {
+    name?: unknown;
+    provider?: unknown;
+    accountUuid?: unknown;
+    credentials?: { authFile?: unknown; dataDir?: unknown };
+}
+
+/** `~/.codex`, `~/.codex-shop`, `~/.grok`, `~/.grok-side` — the directory the transcript lives under. */
+function agentHome(transcript: string): string | null {
+    const match = /^(.*\/\.(?:codex|grok)[^/]*)\//.exec(transcript);
+
+    return match?.[1] ?? null;
+}
+
+function expandHome(path: string): string {
+    if (path === "~") {
+        return homedir();
+    }
+
+    if (path.startsWith("~/")) {
+        return join(homedir(), path.slice(2));
+    }
+
+    return path;
+}
+
+function configAccounts(): ConfigAccount[] {
+    const path = join(HOME, ".genesis-tools", "ai", "config.json");
+
+    if (!existsSync(path)) {
+        return [];
+    }
+
+    try {
+        const doc = SafeJSON.parse(readFileSync(path, "utf8")) as { accounts?: unknown };
+
+        return Array.isArray(doc.accounts) ? (doc.accounts as ConfigAccount[]) : [];
+    } catch (err) {
+        console.warn("[record-session-account] ai config was not readable", err);
+
+        return [];
+    }
+}
+
+/**
+ * The account whose saved auth file or data dir is this home.
+ *
+ * One match is a name. Zero or several is null: two accounts pointing at one home is not
+ * something this hook should pick between. Grok is matched on `auth.json` exactly, the same
+ * way home discovery does. Codex also accepts an auth file inside the home or a `dataDir`.
+ */
+function accountBoundToHome(home: string, provider: string): string | null {
+    const resolvedHome = resolve(home);
+    const prefix = `${resolvedHome}${sep}`;
+    const authJson = resolve(home, "auth.json");
+    const names: string[] = [];
+
+    for (const account of configAccounts()) {
+        if (account.provider !== provider || typeof account.name !== "string" || account.name.length === 0) {
+            continue;
+        }
+
+        const rawAuth = account.credentials?.authFile;
+        const rawDir = account.credentials?.dataDir;
+        const authFile = typeof rawAuth === "string" && rawAuth.length > 0 ? resolve(expandHome(rawAuth)) : undefined;
+        const dataDir = typeof rawDir === "string" && rawDir.length > 0 ? resolve(expandHome(rawDir)) : undefined;
+        const matches =
+            provider === "grok-sub"
+                ? authFile === authJson
+                : authFile === authJson || authFile?.startsWith(prefix) || dataDir === resolvedHome;
+
+        if (matches) {
+            names.push(account.name);
+        }
+    }
+
+    if (names.length > 1) {
+        return null;
+    }
+
+    if (names.length === 1) {
+        return names[0];
+    }
+
+    return accountByAuthIdentity(home, provider);
+}
+
+function readAuthJson(path: string): unknown {
+    if (!existsSync(path)) {
+        return null;
+    }
+
+    try {
+        return SafeJSON.parse(readFileSync(path, "utf8"));
+    } catch (err) {
+        console.warn("[record-session-account] auth file was not readable", err);
+
+        return null;
+    }
+}
+
+/** Official Codex CLI stores `tokens.account_id`; some writers use a top-level `accountId`. */
+function codexAccountId(raw: unknown): string | null {
+    if (typeof raw !== "object" || raw === null) {
+        return null;
+    }
+
+    const doc = raw as { tokens?: { account_id?: unknown }; accountId?: unknown };
+
+    if (typeof doc.tokens?.account_id === "string" && doc.tokens.account_id.length > 0) {
+        return doc.tokens.account_id;
+    }
+
+    if (typeof doc.accountId === "string" && doc.accountId.length > 0) {
+        return doc.accountId;
+    }
+
+    return null;
+}
+
+function jwtSub(token: string): string | null {
+    const part = token.split(".")[1];
+
+    if (!part) {
+        return null;
+    }
+
+    try {
+        const payload = SafeJSON.parse(Buffer.from(part, "base64url").toString("utf8")) as { sub?: unknown };
+
+        return typeof payload.sub === "string" && payload.sub.length > 0 ? payload.sub : null;
+    } catch (err) {
+        console.warn("[record-session-account] auth jwt subject was not readable", err);
+
+        return null;
+    }
+}
+
+/** Grok's auth file is a map of entries. Discovery stores the JWT `sub` as `accountUuid`. */
+function grokAccountIds(raw: unknown): string[] {
+    if (typeof raw !== "object" || raw === null) {
+        return [];
+    }
+
+    const ids: string[] = [];
+
+    for (const value of Object.values(raw)) {
+        if (typeof value !== "object" || value === null) {
+            continue;
+        }
+
+        const entry = value as { key?: unknown; user_id?: unknown };
+
+        if (typeof entry.user_id === "string" && entry.user_id.length > 0) {
+            ids.push(entry.user_id);
+        }
+
+        if (typeof entry.key === "string") {
+            const sub = jwtSub(entry.key);
+
+            if (sub) {
+                ids.push(sub);
+            }
+        }
+    }
+
+    return ids;
+}
+
+/**
+ * When the config has no path for this home, the id inside auth.json still matches
+ * `accountUuid`. Several matches stay null. The token itself is never recorded.
+ */
+function accountByAuthIdentity(home: string, provider: string): string | null {
+    const raw = readAuthJson(join(home, "auth.json"));
+    const ids = new Set(provider === "grok-sub" ? grokAccountIds(raw) : [codexAccountId(raw)].filter((id) => id));
+    const names = configAccounts()
+        .filter(
+            (account) =>
+                account.provider === provider &&
+                typeof account.accountUuid === "string" &&
+                ids.has(account.accountUuid) &&
+                typeof account.name === "string"
+        )
+        .map((account) => account.name as string);
+
+    return names.length === 1 ? names[0] : null;
+}
+
+function providerId(harness: Harness): string | null {
+    if (harness === "codex") {
+        return "openai-sub";
+    }
+
+    if (harness === "grok") {
+        return "grok-sub";
+    }
+
+    return null;
 }
 
 function main(raw: string): void {
@@ -183,25 +394,36 @@ function main(raw: string): void {
 
     try {
         input = SafeJSON.parse(raw) as HookInput;
-    } catch {
+    } catch (err) {
+        console.warn("[record-session-account] payload was not json", err);
+
         return;
     }
 
-    if (!input.session_id) {
+    const sessionId = (input.session_id ?? input.sessionId)?.trim();
+    const transcript = input.transcript_path ?? input.transcriptPath ?? "";
+
+    if (!sessionId) {
         return;
     }
 
-    const harness = harnessOf(input);
+    const harness = harnessFor(input);
+    const fromEnv = accountFor(harness, process.env);
+    const home = agentHome(transcript);
+    const provider = providerId(harness);
+    const fromPayload = typeof input.model === "string" ? input.model.trim() : "";
     const pin: SessionPin = {
-        sessionId: input.session_id,
+        sessionId,
         ...(harness === "claude" ? {} : { provider: harness }),
-        // Absent means the agent was launched outside `tools <agent> run`, which for Claude is
-        // a plain keychain login. That is a real answer, not a missing one.
-        account: accountFor(harness, process.env),
+        // Env wins: `tools <agent> run` said which account this process is. The home binding
+        // covers a terminal the user opened themselves. Claude has no home binding.
+        account: fromEnv || (home && provider ? accountBoundToHome(home, provider) : null),
         // Claude-only, and deliberately not faked for the others: the ancestor walk looks for a
         // `claude` process and the auth modes are Claude's.
         ...(harness === "claude" ? resolveAuth(process.env) : {}),
-        model: harness === "claude" ? modelFromAncestors() : null,
+        // The payload wins when the harness sends it (Codex 0.155 SessionStart requires `model`).
+        // Claude often omits it; the launch flag on the claude ancestor is the fallback.
+        model: fromPayload || (harness === "claude" ? modelFromAncestors() : null),
         cwd: input.cwd || process.cwd(),
         workspaceId: process.env.CMUX_WORKSPACE_ID || null,
         source: "hook",

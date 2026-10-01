@@ -1,9 +1,13 @@
 #!/usr/bin/env bun
 
-// Both Claude Code and Codex run this plugin's SessionStart hooks (Codex installs Claude plugins
-// verbatim), so the same file speaks to two harnesses that need opposite advice. The harness is
-// decided from the payload, never from the environment: a Codex worker spawned from a Claude
-// session inherits every CLAUDE_CODE_* variable, so env would call it Claude.
+// Claude Code, Codex and Grok run this plugin's SessionStart hooks. The harness is decided from
+// the payload, never from the environment: a Codex worker spawned from a Claude session inherits
+// every CLAUDE_CODE_* variable, so env would call it Claude.
+//
+// Grok 1.0.44's installed guide says SessionStart stdout is ignored. Rechecked 2026-09-29: the
+// sentence is in that binary, and a 1.0.44 system prompt did not contain this reminder. Codex
+// 0.155 still accepts additionalContext on SessionStart, and Claude does too, so the hook still
+// prints it.
 
 import { harnessOf, type SessionStartPayload } from "./harness";
 

@@ -3,7 +3,7 @@ import { spawnSync } from "node:child_process";
 import { appendFileSync, existsSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { type Harness, harnessOf } from "./harness";
+import { type Harness, harnessFor } from "./harness";
 
 const SafeJSON = JSON;
 
@@ -12,24 +12,37 @@ const SafeJSON = JSON;
  * lives in, so `tools claude cmux focus/send <session-id>` can resolve a fresh,
  * untitled session instantly instead of guessing from tab titles and pane text.
  *
- * 🛑 Codex and Grok run this same plugin hook, and a codex session started inside a claude
- * pane inherits that pane's CMUX_SURFACE_ID. An untagged record would then put a codex
- * thread id on a claude pane's tty: `assignSessionIds` sees two hints for one tty and drops
- * BOTH, so `tools claude who` goes blank for exactly the pane you were looking at. Every
- * record therefore carries its harness, and the claude reader keeps only claude's.
+ * 🛑 Codex and Grok run this same plugin hook, and a session started inside a claude pane
+ * inherits that pane's CMUX_SURFACE_ID. An untagged record would then put the other agent's
+ * id on a claude pane's tty: `assignSessionIds` sees two hints for one tty and drops BOTH,
+ * so `tools claude who` goes blank for exactly the pane you were looking at. Every record
+ * therefore carries its harness, and the claude reader keeps only claude's.
+ *
+ * Grok's stdin uses `sessionId`, not Claude's `session_id`. Reading only `session_id`
+ * made the hook succeed and write nothing.
  *
  * The launch env carries the stable surface/workspace UUIDs; `cmux identify`
  * adds the pane/window refs a focus needs. Re-recorded on every prompt so a
  * session that moves panes (or a cmux restart) heals on the next message.
  *
- * Silent and never fatal, like the other hooks here: stdout would be injected
- * into the session as context.
+ * Silent and never fatal. Claude and Codex inject SessionStart stdout into the session.
+ * Grok 1.0.44 ignores it, and also discards an allowing UserPromptSubmit's stdout.
+ * Rechecked 2026-09-29 against the installed Grok guide and the Codex 0.155 hook schema.
  */
 
 interface HookInput {
+    /** Claude and Codex. */
     session_id?: string;
+    /**
+     * Grok's documented id. 1.0.44 also sends `session_id`: the account hook wrote pins
+     * while it read only that alias. Either field is enough.
+     */
+    sessionId?: string;
     cwd?: string;
     transcript_path?: string;
+    transcriptPath?: string;
+    /** Grok's own event name. Absent on the Claude and Codex payloads. */
+    hookEventName?: string;
 }
 
 // Standalone hook script: no access to @genesiscz/utils/env, so process.env directly.
@@ -109,7 +122,9 @@ function main(raw: string): void {
         return;
     }
 
-    if (!input.session_id) {
+    const sessionId = (input.session_id ?? input.sessionId)?.trim();
+
+    if (!sessionId) {
         return;
     }
 
@@ -128,10 +143,10 @@ function main(raw: string): void {
         return;
     }
 
-    const harness: Harness = harnessOf(input);
+    const harness: Harness = harnessFor(input);
     const caller = surfaceId ? identifyRefs() : {};
     const entry = {
-        sessionId: input.session_id,
+        sessionId,
         // Absent means claude, so every record written before this field keeps its meaning.
         ...(harness === "claude" ? {} : { provider: harness }),
         workspaceId,

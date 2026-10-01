@@ -72,6 +72,14 @@ describe("the hook as Claude Code and Codex run it", () => {
     });
 });
 
+// Regression test: Grok's hook stdin names the transcript transcriptPath. Reading only transcript_path classified it as Claude.
+test("a transcriptPath under a grok home selects the grok reminder", () => {
+    const payload = { transcriptPath: "/Users/u/.grok/sessions/chat.jsonl" };
+
+    expect(harnessOf(payload)).toBe("grok");
+    expect(reminderFor(payload)).toBe(GROK_REMINDER);
+});
+
 test("grok is told not to invoke the skill either, with the advice grok can act on", () => {
     // Grok has no Monitor tool, so the Claude text — "invoke the agents-talk skill" — was
     // wrong there in exactly the way it was wrong on Codex. Its replacement names grok's own

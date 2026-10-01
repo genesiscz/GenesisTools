@@ -88,6 +88,7 @@ describe("record-session-cmux tty gate", () => {
         expect(entries).toHaveLength(1);
         expect(entries[0].sessionId).toBe("11111111-aaaa-bbbb-cccc-000000000001");
         expect(entries[0].surfaceId).toBe("TEST-SURFACE");
+        expect(entries[0].provider).toBeUndefined();
     });
 
     test("a dead CLAUDE_PID fails open and records", async () => {
@@ -102,5 +103,35 @@ describe("record-session-cmux tty gate", () => {
         await runHook(PAYLOAD, { CMUX_SURFACE_ID: "", CMUX_WORKSPACE_ID: "" });
 
         expect(await readJournal()).toEqual([]);
+    });
+
+    test("a grok payload is tagged grok instead of an untagged claude line", async () => {
+        // Grok's hook stdin uses sessionId and hookEventName, and often no transcript.
+        // An untagged line would claim the pane for `tools claude who`.
+        await runHook(
+            SafeJSON.stringify({
+                sessionId: "01a0aaaa-bbbb-7ccc-8ddd-eeeeeeeeeeee",
+                hookEventName: "user_prompt_submit",
+                cwd: "/tmp/grok-session",
+            })
+        );
+        const entries = await readJournal();
+
+        expect(entries).toHaveLength(1);
+        expect(entries[0].provider).toBe("grok");
+        expect(entries[0].sessionId).toBe("01a0aaaa-bbbb-7ccc-8ddd-eeeeeeeeeeee");
+        expect(entries[0].surfaceId).toBe("TEST-SURFACE");
+    });
+
+    test("a transcript under a .grok home is grok even when the id field is session_id", async () => {
+        await runHook(
+            SafeJSON.stringify({
+                session_id: "01a0bbbb-cccc-7ddd-8eee-ffffffffffff",
+                transcript_path: "/tmp/fake/.grok/sessions/chat.jsonl",
+                cwd: "/tmp/grok-session",
+            })
+        );
+
+        expect((await readJournal())[0]?.provider).toBe("grok");
     });
 });

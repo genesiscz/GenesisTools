@@ -6,5 +6,6 @@
         "name": "GenesisTools"
     },
     "commands": "./commands/",
-    "skills": "./skills/"
+    "skills": "./skills/",
+    "hooks": "./hooks/hooks.json"
 }

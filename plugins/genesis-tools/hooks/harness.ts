@@ -15,6 +15,8 @@ export type Harness = "claude" | "codex" | "grok";
 
 export interface SessionStartPayload {
     transcript_path?: string;
+    /** Grok's camelCase name for the same path. */
+    transcriptPath?: string;
 }
 
 /**
@@ -26,13 +28,40 @@ export interface SessionStartPayload {
  * unrecognised payload keeps today's meaning rather than inventing a new one.
  */
 export function harnessOf(payload: SessionStartPayload): Harness {
-    const transcript = payload.transcript_path ?? "";
+    const transcript = payload.transcript_path ?? payload.transcriptPath ?? "";
 
     if (/\/rollout-[^/]*\.jsonl$/.test(transcript) || /\/\.codex[^/]*\//.test(transcript)) {
         return "codex";
     }
 
     if (/\/\.grok[^/]*\//.test(transcript)) {
+        return "grok";
+    }
+
+    return "claude";
+}
+
+/** The hook payload fields that tell the harness apart when there is no transcript path. */
+export interface HookHarnessPayload extends SessionStartPayload {
+    session_id?: string;
+    /** Grok's camelCase session id. */
+    sessionId?: string;
+    /** Grok sends the event name; Claude and Codex do not. */
+    hookEventName?: string;
+}
+
+/**
+ * `harnessOf` plus the payload shape: Grok's hook JSON uses `sessionId` and `hookEventName` and
+ * often has no transcript path, which `harnessOf` alone would call Claude.
+ */
+export function harnessFor(input: HookHarnessPayload): Harness {
+    const transcript = input.transcript_path ?? input.transcriptPath;
+
+    if (transcript) {
+        return harnessOf({ transcript_path: transcript });
+    }
+
+    if (input.hookEventName || (input.sessionId && !input.session_id)) {
         return "grok";
     }
 

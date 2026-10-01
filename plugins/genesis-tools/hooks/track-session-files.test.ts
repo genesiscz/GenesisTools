@@ -5,9 +5,9 @@ import { join, resolve } from "node:path";
 
 /**
  * All three harnesses run this hook, and they name their edit tools differently. The matcher
- * in `hooks.json` only narrows Claude's calls; Codex and Grok deliver every tool call, so an
- * unrecognised name must be tallied rather than silently dropped — that tally is how the
- * candidate names in `EDIT_TOOLS` get confirmed instead of guessed at forever.
+ * narrows each of them (Claude's own names, Codex 0.155 `apply_patch` via Edit|Write, Grok
+ * 1.0.44 `search_replace` and `write`). A name that still gets through and is not in
+ * `EDIT_TOOLS` is tallied, which is how a new edit name becomes visible instead of vanishing.
  */
 
 const HOOK = join(import.meta.dir, "track-session-files.ts");
@@ -168,6 +168,55 @@ test("a tally file holding valid JSON of the wrong shape recovers instead of dyi
     ).toBe(0);
 
     expect(await readJson<Record<string, number>>("hook-tool-names.json")).toEqual({ "codex:mystery_tool": 1 });
+});
+
+// Regression test: Grok 1.0.44 tool tally on 2026-09-29 — search_replace was counted and the file was not tracked.
+test("a grok search_replace records the file it names", async () => {
+    expect(
+        await runHook({
+            session_id: "s-grok",
+            hook_event_name: "PostToolUse",
+            tool_name: "search_replace",
+            tool_input: { file_path: "/repo/g.ts" },
+            transcript_path: "/Users/u/.grok/sessions/chat.jsonl",
+        })
+    ).toBe(0);
+
+    expect((await readJson<{ files: string[] }>("sessions", "s-grok.json").catch(() => ({ files: [] }))).files).toEqual(
+        ["/repo/g.ts"]
+    );
+});
+
+// Regression test: Grok's stdin is camelCase (sessionId, toolName, toolInput) and 1.0.44 names the create tool `write`.
+test("a grok write in the camelCase envelope records the file", async () => {
+    expect(
+        await runHook({
+            sessionId: "s-grok-write",
+            hookEventName: "post_tool_use",
+            toolName: "write",
+            toolInput: { file_path: "/repo/h.ts" },
+            transcriptPath: "/Users/u/.grok/sessions/chat.jsonl",
+        })
+    ).toBe(0);
+
+    expect(
+        (await readJson<{ files: string[] }>("sessions", "s-grok-write.json").catch(() => ({ files: [] }))).files
+    ).toEqual(["/repo/h.ts"]);
+});
+
+test("a grok write that reports failure through toolResult is not tracked", async () => {
+    expect(
+        await runHook({
+            sessionId: "s-grok-fail",
+            hookEventName: "post_tool_use",
+            toolName: "write",
+            toolInput: { file_path: "/repo/nope.ts" },
+            toolResult: { success: false },
+            transcriptPath: "/Users/u/.grok/sessions/chat.jsonl",
+        })
+    ).toBe(0);
+
+    await expect(readJson("sessions", "s-grok-fail.json")).rejects.toThrow();
 });
 
 test("a failed write is not tracked, on any harness", async () => {

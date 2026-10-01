@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { SessionPin } from "@genesiscz/utils/agent-sessions/pins";
@@ -155,7 +155,8 @@ describe("record-session-account hook", () => {
         expect(readPins()).rejects.toThrow();
     });
 
-    test("prints nothing — SessionStart stdout is injected into the session as context", async () => {
+    // Claude and Codex inject SessionStart stdout. Grok 1.0.44 ignores it. Stay silent either way.
+    test("prints nothing on stdout", async () => {
         const proc = Bun.spawn(["bun", HOOK], {
             stdin: new TextEncoder().encode('{"session_id":"abc","cwd":"/tmp"}'),
             stdout: "pipe",
@@ -208,6 +209,222 @@ describe("the harness decides which account variable is read", () => {
         expect(pin).toMatchObject({ provider: "codex", account: null });
     });
 
+    // Regression test: a Codex or Grok session launched outside `tools <agent> run` has no
+    // TOOLS_*_ACCOUNT, but the ai config already names the account that owns that home.
+    test("a codex session with no launch env takes the account bound to its home", async () => {
+        await mkdir(join(home, ".genesis-tools", "ai"), { recursive: true });
+        await writeFile(
+            join(home, ".genesis-tools", "ai", "config.json"),
+            SafeJSON.stringify({
+                accounts: [
+                    {
+                        id: "acc_shop",
+                        name: "shop",
+                        provider: "openai-sub",
+                        credentials: { authFile: "/Users/u/.codex/auth.json" },
+                    },
+                ],
+            })
+        );
+
+        await runHook(
+            SafeJSON.stringify({
+                session_id: "01a0cccc-dddd-7eee-8fff-000000000001",
+                transcript_path: CODEX_TRANSCRIPT,
+            })
+        );
+
+        expect((await readPins())[0]).toMatchObject({ provider: "codex", account: "shop" });
+    });
+
+    // Regression test: the saved Codex authFile is often empty, so the home's auth.json account id
+    // is the only link to the config account.
+    test("a codex home with no authFile path is named by the account id in its auth.json", async () => {
+        const codexHome = join(home, "Users", "u", ".codex-work");
+        await mkdir(join(home, ".genesis-tools", "ai"), { recursive: true });
+        await mkdir(codexHome, { recursive: true });
+        await writeFile(join(codexHome, "auth.json"), SafeJSON.stringify({ tokens: { account_id: "acct_fixture" } }));
+        await writeFile(
+            join(home, ".genesis-tools", "ai", "config.json"),
+            SafeJSON.stringify({
+                accounts: [
+                    {
+                        id: "acc_work",
+                        name: "work",
+                        provider: "openai-sub",
+                        accountUuid: "acct_fixture",
+                        credentials: { authFile: "" },
+                    },
+                ],
+            })
+        );
+
+        await runHook(
+            SafeJSON.stringify({
+                session_id: "01a0dddd-eeee-7fff-8000-000000000002",
+                transcript_path: `${codexHome}/sessions/2026/09/11/rollout-2026-09-11T10-00-00-id.jsonl`,
+            })
+        );
+
+        expect((await readPins())[0]).toMatchObject({ provider: "codex", account: "work" });
+    });
+
+    // Regression test: grok home discovery stores the JWT `sub` as accountUuid, and the authFile path is often empty.
+    test("a grok home is named by the subject in its auth.json", async () => {
+        const grokHome = join(home, "Users", "u", ".grok-side");
+        const payload = Buffer.from(SafeJSON.stringify({ sub: "user_fixture" })).toString("base64url");
+        await mkdir(join(home, ".genesis-tools", "ai"), { recursive: true });
+        await mkdir(grokHome, { recursive: true });
+        await writeFile(
+            join(grokHome, "auth.json"),
+            SafeJSON.stringify({ default: { key: `e30.${payload}.sig`, user_id: "not-the-config-id" } })
+        );
+        await writeFile(
+            join(home, ".genesis-tools", "ai", "config.json"),
+            SafeJSON.stringify({
+                accounts: [
+                    {
+                        id: "acc_side",
+                        name: "side",
+                        provider: "grok-sub",
+                        accountUuid: "user_fixture",
+                        credentials: { authFile: "" },
+                    },
+                ],
+            })
+        );
+
+        await runHook(
+            SafeJSON.stringify({
+                session_id: "01a0eeee-ffff-7000-8000-000000000003",
+                transcript_path: `${grokHome}/sessions/chat.jsonl`,
+            })
+        );
+
+        expect((await readPins())[0]).toMatchObject({ provider: "grok", account: "side" });
+    });
+
+    // Regression test: Grok's SessionStart payload uses sessionId and transcriptPath, not the snake names.
+    test("a grok payload that only has sessionId and transcriptPath is pinned as grok", async () => {
+        const pins = await runHook(
+            SafeJSON.stringify({
+                sessionId: "01a0aaaa-bbbb-7ccc-8ddd-eeeeeeeeeeee",
+                hookEventName: "session_start",
+                transcriptPath: "/Users/u/.grok/sessions/chat.jsonl",
+            })
+        ).then(() => readPins().catch(() => []));
+
+        expect(pins[0]).toMatchObject({
+            sessionId: "01a0aaaa-bbbb-7ccc-8ddd-eeeeeeeeeeee",
+            provider: "grok",
+        });
+    });
+
+    test("a grok payload with no transcript path is pinned as grok, never with the claude account", async () => {
+        await runHook(
+            SafeJSON.stringify({
+                sessionId: "01a0aaaa-bbbb-7ccc-8ddd-ffffffffffff",
+                hookEventName: "session_start",
+            }),
+            { TOOLS_CLAUDE_ACCOUNT: "personal" }
+        );
+
+        const pin = (await readPins())[0];
+        expect(pin).toMatchObject({ sessionId: "01a0aaaa-bbbb-7ccc-8ddd-ffffffffffff", provider: "grok" });
+        expect(pin?.account).not.toBe("personal");
+    });
+
+    test("the launch env wins over the home binding", async () => {
+        await mkdir(join(home, ".genesis-tools", "ai"), { recursive: true });
+        await writeFile(
+            join(home, ".genesis-tools", "ai", "config.json"),
+            SafeJSON.stringify({
+                accounts: [
+                    {
+                        id: "acc_shop",
+                        name: "shop",
+                        provider: "openai-sub",
+                        credentials: { authFile: "/Users/u/.codex/auth.json" },
+                    },
+                ],
+            })
+        );
+
+        await runHook(
+            SafeJSON.stringify({
+                session_id: "01a0cccc-dddd-7eee-8fff-000000000009",
+                transcript_path: CODEX_TRANSCRIPT,
+            }),
+            { TOOLS_CODEX_ACCOUNT: "work" }
+        );
+
+        expect((await readPins())[0]).toMatchObject({ provider: "codex", account: "work" });
+    });
+
+    test("two accounts on one home leave the pin unnamed", async () => {
+        const codexHome = join(home, "Users", "u", ".codex");
+        await mkdir(join(home, ".genesis-tools", "ai"), { recursive: true });
+        await mkdir(codexHome, { recursive: true });
+        await writeFile(join(codexHome, "auth.json"), SafeJSON.stringify({ tokens: { account_id: "acct_shared" } }));
+        await writeFile(
+            join(home, ".genesis-tools", "ai", "config.json"),
+            SafeJSON.stringify({
+                accounts: [
+                    {
+                        id: "acc_shop",
+                        name: "shop",
+                        provider: "openai-sub",
+                        accountUuid: "acct_shared",
+                        credentials: {},
+                    },
+                    {
+                        id: "acc_side",
+                        name: "side",
+                        provider: "openai-sub",
+                        accountUuid: "acct_shared",
+                        credentials: {},
+                    },
+                ],
+            })
+        );
+
+        await runHook(
+            SafeJSON.stringify({
+                session_id: "01a0cccc-dddd-7eee-8fff-00000000000a",
+                transcript_path: `${codexHome}/sessions/2026/09/11/rollout-2026-09-11T10-00-00-id.jsonl`,
+            })
+        );
+
+        expect((await readPins())[0]).toMatchObject({ provider: "codex", account: null });
+    });
+
+    test("a claude account in the env is not the account of a codex home", async () => {
+        await mkdir(join(home, ".genesis-tools", "ai"), { recursive: true });
+        await writeFile(
+            join(home, ".genesis-tools", "ai", "config.json"),
+            SafeJSON.stringify({
+                accounts: [
+                    {
+                        id: "acc_shop",
+                        name: "shop",
+                        provider: "openai-sub",
+                        credentials: { authFile: "/Users/u/.codex/auth.json" },
+                    },
+                ],
+            })
+        );
+
+        await runHook(
+            SafeJSON.stringify({
+                session_id: "01a0cccc-dddd-7eee-8fff-00000000000b",
+                transcript_path: CODEX_TRANSCRIPT,
+            }),
+            { TOOLS_CLAUDE_ACCOUNT: "personal", TOOLS_CLAUDE_AUTH: "token" }
+        );
+
+        expect((await readPins())[0]).toMatchObject({ provider: "codex", account: "shop" });
+    });
+
     test("a claude session is still untagged, so every existing record keeps its meaning", async () => {
         await runHook(
             SafeJSON.stringify({ session_id: "abc", transcript_path: "/Users/u/.claude/projects/p/abc.jsonl" }),
@@ -219,5 +436,19 @@ describe("the harness decides which account variable is read", () => {
         const [pin] = await readPins();
         expect(pin.provider).toBeUndefined();
         expect(pin.account).toBe("personal");
+    });
+
+    // Codex 0.155's SessionStart schema requires `model`. The pin was hardcoded null
+    // outside Claude, so a Codex session never recorded the model it was started with.
+    test("a codex session records the model named in its payload", async () => {
+        await runHook(
+            SafeJSON.stringify({
+                session_id: "01a0ffff-1111-7222-8333-444444444444",
+                transcript_path: CODEX_TRANSCRIPT,
+                model: "fixture-model",
+            })
+        );
+
+        expect((await readPins())[0]).toMatchObject({ provider: "codex", model: "fixture-model" });
     });
 });

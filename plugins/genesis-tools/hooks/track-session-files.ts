@@ -19,25 +19,34 @@ const SafeJSON = JSON;
  * PostToolUse + SessionStart hook: the list of files this session edited.
  *
  * ⚠️ All three harnesses run this, and they name their edit tools differently. Claude sends
- * `Edit` / `Write` / `MultiEdit` with `tool_input.file_path`; Codex sends `apply_patch` and
- * `shell`; Grok sends `edit_file` / `create_file`. `EDIT_TOOLS` and `filePathsOf` below are
- * the whole of that difference — everything else is shared.
+ * `Edit` / `Write` / `MultiEdit` with `tool_input.file_path`; Codex sends `apply_patch`.
+ * Grok 1.0.44 sends `search_replace` and `write` (tool-name tally, 2026-09-29). Its envelope
+ * is camelCase (`sessionId`, `toolName`, `toolInput`) and also carries Claude's snake aliases.
+ * `normalize` folds those into the snake fields the rest of this file already reads.
  */
 
+interface ToolBody {
+    file_path?: string;
+    /** Codex `apply_patch`, and some edit tools, name the file here instead of `file_path`. */
+    path?: string;
+    filePath?: string;
+    command?: string;
+}
+
 interface HookInput {
-    session_id: string;
-    hook_event_name: string;
+    session_id?: string;
+    sessionId?: string;
+    hook_event_name?: string;
+    /** Grok's own event name, snake_case (`post_tool_use`). `hook_event_name` is PascalCase. */
+    hookEventName?: string;
     tool_name?: string;
+    toolName?: string;
     transcript_path?: string;
+    transcriptPath?: string;
     /** Where the tool ran; an apply_patch path is relative to it. */
     cwd?: string;
-    tool_input?: {
-        file_path?: string;
-        /** Codex `apply_patch`, Grok `edit_file` / `create_file`. */
-        path?: string;
-        filePath?: string;
-        command?: string;
-    };
+    tool_input?: ToolBody;
+    toolInput?: ToolBody;
     tool_response?:
         | string
         | {
@@ -45,6 +54,29 @@ interface HookInput {
               filePath?: string;
               path?: string;
           };
+    /** Grok's name for `tool_response`. The snake alias is a copy; either one is enough. */
+    toolResult?: HookInput["tool_response"];
+}
+
+const GROK_EVENT_NAMES: Record<string, string> = {
+    session_start: "SessionStart",
+    post_tool_use: "PostToolUse",
+};
+
+function normalize(input: HookInput): HookInput {
+    const grokEvent = input.hookEventName ? GROK_EVENT_NAMES[input.hookEventName] : undefined;
+    // The payload is untrusted JSON: a non-string id must become "" (skipped), never a fake id.
+    const rawSessionId: unknown = input.session_id ?? input.sessionId;
+
+    return {
+        ...input,
+        session_id: typeof rawSessionId === "string" ? rawSessionId.trim() : "",
+        hook_event_name: input.hook_event_name || grokEvent || "",
+        tool_name: input.tool_name ?? input.toolName,
+        transcript_path: input.transcript_path ?? input.transcriptPath,
+        tool_input: input.tool_input ?? input.toolInput,
+        tool_response: input.tool_response ?? input.toolResult,
+    };
 }
 
 /**
@@ -52,8 +84,10 @@ interface HookInput {
  * tracked; the hook never guesses from arguments, because a shell call that happens to carry
  * a path is usually reading it.
  *
- * Codex 0.154 keeps `apply_patch` as the payload name but exposes `Write` and `Edit` as matcher
- * aliases, so the Claude-shaped matcher selects this hook without running it for every tool.
+ * Codex 0.155 keeps `apply_patch` as the payload name and matches it as `apply_patch`, `Edit`,
+ * or `Write`, so the Claude-shaped matcher selects this hook without running it for every tool.
+ * Rechecked 2026-09-29: current Codex hook docs still say that, and two sessions that day left
+ * tracked files. The installed binary's schema names `tool_name` as a string, not the alias.
  * Codex carries every affected path inside `tool_input.command`; `filePathsOf` parses that patch.
  * Unknown names are still tallied so later harness vocabulary changes remain observable.
  */
@@ -66,7 +100,10 @@ const EDIT_TOOLS = new Set([
     // Codex — candidates.
     "apply_patch",
     "edit_file",
-    // Grok — candidates.
+    // Grok 1.0.44 sends `search_replace` and `write` (tool-name tally, 2026-09-29).
+    // The others stay so an older build that still uses them keeps tracking.
+    "search_replace",
+    "write",
     "create_file",
     "write_file",
     "str_replace",
@@ -139,6 +176,10 @@ function recordUnknownTool(harness: string, toolName: string): void {
  * `apply_patch` calls are tracked, but shell commands can also modify files without hitting this
  * edit-only matcher. Codex and Grok transcripts remain the complete record consumed by
  * `tools codex history` / `tools grok history`. So say the session id and stop.
+ *
+ * Grok 1.0.44's installed guide says SessionStart stdout is ignored. Rechecked 2026-09-29: the
+ * sentence is in that binary, and a 1.0.44 system prompt did not contain this line. Codex 0.155
+ * still takes `additionalContext` as developer context. Claude does too.
  */
 function sessionStartOutput(input: HookInput): { hookEventName: string; additionalContext: string } {
     const tracked =
@@ -293,8 +334,12 @@ function trackFile(sessionId: string, filePath: string) {
 }
 
 async function main() {
-    const input: HookInput = SafeJSON.parse(await Bun.stdin.text()) as HookInput;
+    const input = normalize(SafeJSON.parse(await Bun.stdin.text()) as HookInput);
     const { session_id, hook_event_name, tool_response } = input;
+
+    if (!session_id) {
+        process.exit(0);
+    }
 
     // On SessionStart, output session ID and clean up old sessions.
     if (hook_event_name === "SessionStart") {
@@ -303,8 +348,11 @@ async function main() {
         process.exit(0);
     }
 
-    // For PostToolUse, track the file. The matcher in hooks.json narrows this for Claude;
-    // Codex and Grok deliver every tool call, so the name is checked here too.
+    // The matcher narrows all three harnesses. The payload still uses the harness's own
+    // tool name, so the set above decides what is recorded. Codex 0.155 reports `apply_patch`
+    // for a call the matcher accepted as Edit|Write. Grok 1.0.44 maps Edit|Write|MultiEdit
+    // onto `search_replace` and also delivered `write`; the tool-name tally that day held
+    // only those two Grok names, so the other tools were filtered out.
     if (hook_event_name === "PostToolUse") {
         const toolName = input.tool_name;
 

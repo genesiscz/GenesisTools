@@ -32,14 +32,16 @@ the observed call count where it is interesting.
   `get_command_or_subagent_output` are POLLS: you ask, you get what has accumulated. A protocol
   that needs to be woken (see `skills/agents-talk`) genuinely cannot be built on them; a
   protocol that just needs to observe a stream can.
-- ⚠️ **Codex has no file-edit tool.** Its edits arrive as a `FileChange` item produced by
-  `exec`; there is no `apply_patch` **tool name** in a hook payload. That is why a PostToolUse
-  matcher naming Claude's edit tools never fires there
-  (`hooks/track-session-files.ts` explains the consequence).
+- ⚠️ **Codex edits are `exec` in the transcript and `apply_patch` on the hook.** A session on
+  2026-09-29 still records the call as `name: exec` whose input is an apply_patch. Codex 0.155
+  reports `tool_name: apply_patch` to the hook, and `Edit` or `Write` match that call. The
+  Claude-shaped matcher in `hooks/track-session-files.ts` does fire: two Codex sessions pinned
+  that day left tracked files. The older note that the matcher never fires is not true of 0.155.
 - ⚠️ **A Claude model id is not portable.** `haiku`, `sonnet`, `opus`, `fable` mean nothing to
   the other two; say "a cheap model" and let the harness pick.
-- ⚠️ **`${CLAUDE_PLUGIN_ROOT}` substitution outside Claude is UNVERIFIED.** A hook that runs
-  proves the command resolved, which happens both when the harness templates the placeholder
-  and when it merely exports the variable for a shell to expand. Under the second, a markdown
-  body keeps the literal text and a **Read** of that path fails. So every "read this path"
-  instruction in this plugin also names a repo-relative fallback.
+- ⚠️ **`${CLAUDE_PLUGIN_ROOT}` in a skill body is not a shell variable.** Claude substitutes it
+  when the skill loads. If the document still shows the placeholder, build the path from the
+  skill's base directory, and keep the repo-relative fallback. Hook commands are a separate
+  case: unquoted `bun ${CLAUDE_PLUGIN_ROOT}/hooks/<script>.ts` ran on Grok 1.0.44 (2026-09-29),
+  and Codex sessions that day wrote pins. A quoted path is a different failure: Grok joins the
+  hooks directory in front of the quote.
