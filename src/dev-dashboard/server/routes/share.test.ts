@@ -163,6 +163,11 @@ describe("GET /share/:slug assets", () => {
         expect(html).not.toContain(sha(OUTSIDE));
         expect(html).not.toContain(sha(SECRET));
         expect(html).toContain('class="dd-md-embed-stub" data-target="escape.png"');
+        // A file the page does not serve is its label, never a dead href="#" link.
+        expect(html).toContain('<span class="dd-md-inert-link">outside md</span>');
+        expect(html).toContain('<span class="dd-md-inert-link">escape</span>');
+        expect(html).not.toContain('href="#">outside md');
+        expect(html).not.toContain('href="#">escape');
     });
 
     test("a referenced image is served with its type, nosniff and an immutable cache", async () => {

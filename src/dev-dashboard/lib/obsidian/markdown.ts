@@ -624,6 +624,12 @@ function buildMarked(opts: RenderOptions): Marked {
                         return renderAsset(asset, this.parser.parseInline(token.tokens), false);
                     }
 
+                    // On a shared page a local file the page does not serve (a code file outside the vault)
+                    // has no address a visitor could open, so it shows as its label instead of a dead link.
+                    if (local && opts.resolveAsset) {
+                        return `<span class="dd-md-inert-link">${this.parser.parseInline(token.tokens)}</span>`;
+                    }
+
                     const href = escapeHtml(sanitizeUrl(token.href, SAFE_LINK_SCHEME_RE));
                     const title = token.title ? ` title="${escapeHtml(token.title)}"` : "";
                     const inner = this.parser.parseInline(token.tokens);
