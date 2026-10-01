@@ -453,12 +453,23 @@ final class ReviewModel: ObservableObject {
     /// The diff belongs to this PR/MR: its live threads load now (or on `start`) and sit on their lines.
     func attachPR(_ target: PRTarget) {
         guard pr?.target != target else { return }
-        let store = PRThreadsStore(target: target)
+        attachPR(PRThreadsStore(target: target))
+    }
+
+    /// The same with a store whose load already runs: the hub starts a PR's threads with its detail,
+    /// before the diff (and this model) exists, so the threads do not wait for the head fetch.
+    func attachPR(_ store: PRThreadsStore) {
+        guard pr !== store else { return }
         store.onChange = { [weak self] in
             self?.pushComments()
         }
         pr = store
-        if started {
+        // Only into a renderer that exists: building one here would start WebKit on the PR-selection
+        // path; the diff's own render pushes the current comments when it creates the renderer.
+        if store.payload != nil, builtRenderer != nil {
+            pushComments()
+        }
+        if started, store.payload == nil, !store.loading {
             store.load()
         }
     }
@@ -2105,18 +2116,13 @@ private final class TreeNode {
     let path: String
     var children: [String: TreeNode] = [:]
     var files: [DiffFile] = []
+    /// Every file under this folder, nested ones included: summed once while the tree is built.
+    var additions = 0
+    var deletions = 0
 
     init(name: String, path: String) {
         self.name = name
         self.path = path
-    }
-
-    var totals: (Int, Int) {
-        let own = files.reduce((0, 0)) { ($0.0 + $1.additions, $0.1 + $1.deletions) }
-        return children.values.reduce(own) { sum, child in
-            let t = child.totals
-            return (sum.0 + t.0, sum.1 + t.1)
-        }
     }
 }
 
@@ -2145,9 +2151,11 @@ private func sidebarRows(_ files: [DiffFile], tree: Bool, collapsed: Set<String>
         return grouped.keys.sorted().flatMap { directory -> [SidebarRow] in
             let group = grouped[directory] ?? []
             let name = directory.hasPrefix(strip) ? String(directory.dropFirst(strip.count)) : ""
+            let additions = group.reduce(0) { $0 + $1.additions }
+            let deletions = group.reduce(0) { $0 + $1.deletions }
             let header = name.isEmpty
                 ? []
-                : [SidebarRow(id: "dir:\(directory)", depth: depth, kind: .directory(name: name, additions: 0, deletions: 0))]
+                : [SidebarRow(id: "dir:\(directory)", depth: depth, kind: .directory(name: name, additions: additions, deletions: deletions))]
             return header + group.map { SidebarRow(id: $0.id, depth: depth, kind: .file($0)) }
         }
     }
@@ -2161,6 +2169,8 @@ private func sidebarRows(_ files: [DiffFile], tree: Bool, collapsed: Set<String>
                 node.children[part] = TreeNode(name: part, path: path)
             }
             node = node.children[part]!
+            node.additions += file.additions
+            node.deletions += file.deletions
         }
         node.files.append(file)
     }
@@ -2174,9 +2184,8 @@ private func sidebarRows(_ files: [DiffFile], tree: Bool, collapsed: Set<String>
                 folder = only
                 label += "/\(only.name)"
             }
-            let totals = folder.totals
             let id = "dir:\(folder.path)"
-            rows.append(SidebarRow(id: id, depth: depth, kind: .directory(name: label, additions: totals.0, deletions: totals.1)))
+            rows.append(SidebarRow(id: id, depth: depth, kind: .directory(name: label, additions: folder.additions, deletions: folder.deletions)))
             if !collapsed.contains(id) {
                 walk(folder, depth: depth + 1)
             }
@@ -2350,7 +2359,7 @@ enum FileListFit {
             let skipped: CGFloat = file.skipped == nil ? 0 : 8 + 16
             return indent + 6 + 8 + text(file.name, fileName) + 8 + 4 + skipped + totals(file.additions, file.deletions, spacing: 8) + 6
         case .directory(let name, let additions, let deletions):
-            // Counts show only on a folded folder of the tree.
+            // Every folder row shows the sum of the files under it.
             let chevron: CGFloat = tree ? 10 + 6 : 0
             return indent + chevron + text(name, folderName) + 6 + 4 + totals(additions, deletions, spacing: 6) + 6
         case .root(let index, let additions, let deletions):
@@ -2495,13 +2504,12 @@ private struct DirectoryRow: View {
                 .truncationMode(.head)
                 .instantTooltip(name)
             Spacer(minLength: 4)
-            if tree && collapsed {
-                if additions > 0 {
-                    Text(verbatim: "+\(additions)").foregroundColor(ReviewPalette.added.opacity(0.7))
-                }
-                if deletions > 0 {
-                    Text(verbatim: "−\(deletions)").foregroundColor(ReviewPalette.removed.opacity(0.7))
-                }
+            // The sum of every file under it, open or folded, in the file rows' colours.
+            if additions > 0 {
+                Text(verbatim: "+\(additions)").foregroundColor(ReviewPalette.added)
+            }
+            if deletions > 0 {
+                Text(verbatim: "−\(deletions)").foregroundColor(ReviewPalette.removed)
             }
         }
         .font(.system(size: 11, design: .monospaced))

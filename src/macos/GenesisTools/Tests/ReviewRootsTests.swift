@@ -95,6 +95,55 @@ final class ReviewRootsTests: XCTestCase {
                                         "dir:notes", "notes/README.md", "dir:notes/daily", "notes/daily/2026-01-02.md"])
     }
 
+    func testEveryFolderRowSumsTheFilesUnderItOpenOrFolded() {
+        let files = [file("lib/desktop/patches/a.diff", add: 264), file("lib/desktop/patches/b.diff", add: 23, del: 3),
+                     file("lib/desktop/c.ts", add: 1, del: 1), file("codex/commands/d.ts", add: 5)]
+        func sums(_ rows: [SidebarRow]) -> [String: [Int]] {
+            rows.reduce(into: [:]) { sums, row in
+                if case .directory(_, let additions, let deletions) = row.kind { sums[row.id] = [additions, deletions] }
+            }
+        }
+
+        let open = sums(sidebarRows(files, tree: true, collapsed: []))
+        XCTAssertEqual(open["dir:lib/desktop"], [288, 4], "a folder counts its nested folders")
+        XCTAssertEqual(open["dir:lib/desktop/patches"], [287, 3])
+        XCTAssertEqual(open["dir:codex/commands"], [5, 0], "a single-child chain reads as one row with the sum")
+
+        let folded = sums(sidebarRows(files, tree: true, collapsed: ["dir:lib/desktop"]))
+        XCTAssertEqual(folded["dir:lib/desktop"], [288, 4])
+
+        let flat = sums(sidebarRows(files, tree: false, collapsed: []))
+        XCTAssertEqual(flat["dir:lib/desktop/patches"], [287, 3], "the flat list's folder headers sum their files too")
+    }
+
+    func testNoFolderRowGoesWithoutItsSumAtAnyDepth() {
+        // The shape of a real PR: a top-level folder with siblings, compacted chains under it, expanded.
+        let files = [file("src/ai/a.ts", add: 59, del: 3), file("src/azure-devops/commands/query.ts", add: 98, del: 2),
+                     file("src/browser-extension/lib/hub.ts", add: 7), file("src/browser-extension/extension/c.ts", add: 102, del: 9),
+                     file("README.md", add: 1)]
+        let rows = sidebarRows(files, tree: true, collapsed: [])
+        var sums: [String: [Int]] = [:]
+        for row in rows {
+            if case .directory(_, let additions, let deletions) = row.kind { sums[row.id] = [additions, deletions] }
+        }
+        XCTAssertEqual(sums["dir:src"], [266, 14], "the top-level folder sums everything under it")
+        XCTAssertEqual(sums["dir:src/azure-devops/commands"], [98, 2], "a compacted chain")
+        XCTAssertEqual(sums["dir:src/browser-extension"], [109, 9])
+        XCTAssertEqual(sums["dir:src/browser-extension/lib"], [7, 0])
+        XCTAssertEqual(sums.count, 6, "src, ai, azure-devops/commands, browser-extension, extension, lib")
+
+        // With several roots, each root row carries its own total too.
+        let roots = sidebarRows(ReviewRoots.merge(twoRoots), tree: true, collapsed: [], roots: twoRoots)
+        for row in roots {
+            switch row.kind {
+            case .directory(_, let additions, let deletions), .root(_, let additions, let deletions):
+                XCTAssertGreaterThan(additions + deletions, 0, row.id)
+            case .file:
+                break
+            }
+        }
+    }
+
     func testOneRootStillBuildsTheOldTree() {
         let rows = sidebarRows([file("src/lib/a.ts"), file("b.ts")], tree: true, collapsed: [])
         XCTAssertEqual(rows.map(\.id), ["dir:src/lib", "src/lib/a.ts", "b.ts"])
