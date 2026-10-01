@@ -204,7 +204,10 @@ final class SessionInsightsModel: ObservableObject {
            id == sessionId, payload == nil, loading {
             HubSWR.painted("insights.load", "\(cached.turns.count) prompts")
             showingCache = true
-            withAnimation(SWR.animation) { payload = cached }
+            // No animation: the sidebar is one stack, and a spring here laid it all out again on every
+            // frame while the transcript's first page was drawing. Without it, opening four sessions took
+            // 3110-3238 ms of main thread instead of 3728-4055 ms (hub bench, 3 rounds, 2026-10-01 23:39).
+            payload = cached
         }
         let result = await fetch.value
         guard id == sessionId else {
@@ -218,7 +221,7 @@ final class SessionInsightsModel: ObservableObject {
         case .success(let fresh):
             span.end("\(fresh.turns.count) prompts, \(fresh.tools.count) tools")
             if payload != fresh {
-                withAnimation(SWR.animation) { payload = fresh }
+                payload = fresh
             }
             error = nil
             HubStuckStore.shared.apply(fresh.stuck, sessionId: id)
