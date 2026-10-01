@@ -10,8 +10,10 @@ export const forecastDoor: CallDoor<true> = {
         const parsed = parseArgv(argv, { command: ["hub", "forecast"], positionals: 0, flags: { "--json": "bool" } });
         return parsed?.flags.get("--json") === true ? true : null;
     },
-    async run() {
+    async run(_parsed, { signal }) {
         try {
+            // A cancel that arrived before the work started stops it here.
+            signal.throwIfAborted();
             const { buildForecast } = await import("../../lib/forecast");
             return ok(asResult(await buildForecast({})));
         } catch (error) {
@@ -31,8 +33,10 @@ export const procsDoor: CallDoor<true> = {
         const parsed = parseArgv(argv, { command: ["hub", "procs"], positionals: 0, flags: { "--json": "bool" } });
         return parsed?.flags.get("--json") === true ? true : null;
     },
-    async run() {
+    async run(_parsed, { signal }) {
         try {
+            // A cancel that arrived before the work started stops it here.
+            signal.throwIfAborted();
             const { readProcsReport } = await import("../../lib/procs/sources");
             return ok(asResult(await readProcsReport({ energy: false })));
         } catch (error) {
@@ -55,8 +59,10 @@ export const stuckDoor: CallDoor<string[]> = {
         const ids = argv.slice(head.length);
         return ids.every((id) => !id.startsWith("-")) ? ids : null;
     },
-    async run(sessionIds) {
+    async run(sessionIds, { signal }) {
         try {
+            // A cancel that arrived before the work started stops it here.
+            signal.throwIfAborted();
             const { readStuckThresholds } = await import("../../lib/insights/stuck");
             const { stuckSessions } = await import("../../lib/insights/index");
             const thresholds = readStuckThresholds();
@@ -92,8 +98,10 @@ export const inboxDoor: CallDoor<InboxArgs> = {
         const hours = parsed.flags.has("--hours") ? wholeNumber(parsed.flags.get("--hours")) : 72;
         return hours === null || hours < 1 ? null : { hours };
     },
-    async run(args) {
+    async run(args, { signal }) {
         try {
+            // A cancel that arrived before the work started stops it here.
+            signal.throwIfAborted();
             const inbox = await import("@app/question/lib/inbox/load");
             if ("session" in args) {
                 const decisions = await inbox.loadSessionDecisions(args.session);

@@ -206,9 +206,17 @@ async function startHubServerOwned(options: HubServerOptions): Promise<HubServer
                     resolve({ stdout: "", stderr: `hub server: ${door.name} exceeded ${deadline} ms\n`, exit: 124 });
                 }, deadline);
             });
+            // A client cancel answers at once: the door stops at its next stage check, and nobody waits for it.
+            const cancelled = new Promise<CallResult>((resolve) => {
+                controller.signal.addEventListener(
+                    "abort",
+                    () => resolve({ stdout: "", stderr: `hub server: ${door.name} cancelled\n`, exit: 130 }),
+                    { once: true }
+                );
+            });
             let result: CallResult;
             try {
-                result = await Promise.race([door.run(parsed, { signal: controller.signal }), timeout]);
+                result = await Promise.race([door.run(parsed, { signal: controller.signal }), timeout, cancelled]);
             } catch (error) {
                 errors++;
                 log.warn({ error, door: door.name }, "hub server door threw");

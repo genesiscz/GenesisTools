@@ -51,8 +51,10 @@ export const agentsTreeDoor: CallDoor<TreeArgs> = {
 
         return { hours, limit, session: stringFlag(parsed, "--session"), agent: stringFlag(parsed, "--agent") };
     },
-    async run(args) {
+    async run(args, { signal }) {
         try {
+            // A cancel that arrived before the work started stops it here.
+            signal.throwIfAborted();
             const agents = await import("../../lib/agents/index");
             if (args.agent) {
                 const detail = await agents.hubAgent({ ...args, agent: args.agent });
@@ -97,8 +99,10 @@ export const agentsCountsDoor: CallDoor<CountsArgs> = {
 
         return { session, ids };
     },
-    async run(args) {
+    async run(args, { signal }) {
         try {
+            // A cancel that arrived before the work started stops it here.
+            signal.throwIfAborted();
             const { agentCounts } = await import("../../lib/agents/counts");
             return ok(asResult(await agentCounts(args)));
         } catch (error) {
@@ -130,8 +134,10 @@ export const agentsMailDoor: CallDoor<MailArgs> = {
 
         return { session, agent };
     },
-    async run(args) {
+    async run(args, { signal }) {
         try {
+            // A cancel that arrived before the work started stops it here.
+            signal.throwIfAborted();
             const { agentMail } = await import("../../lib/agents/mail");
             return ok(asResult(await agentMail(args)));
         } catch (error) {
@@ -152,8 +158,10 @@ export const subagentsDoor: CallDoor<string> = {
         });
         return parsed?.flags.get("--json") === true ? parsed.positionals[0] : null;
     },
-    async run(sessionId) {
+    async run(sessionId, { signal }) {
         try {
+            // A cancel that arrived before the work started stops it here.
+            signal.throwIfAborted();
             const { resolveTranscript } = await import("@genesiscz/utils/ai/transcripts/resolve");
             const { listSubagents } = await import("@genesiscz/utils/ai/transcripts/subagents");
             return ok(asResult(listSubagents(await resolveTranscript(sessionId, {}))));

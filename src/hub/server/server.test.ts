@@ -214,6 +214,30 @@ describe("hub server", () => {
     });
 });
 
+describe("hub server cancellation", () => {
+    it("a production call door stops before its work when the call was cancelled", async () => {
+        const parsed = transcriptFetchDoor.match([
+            "ai",
+            "sessions",
+            "tail",
+            "no-such-session",
+            "--json",
+            "--limit",
+            "5",
+        ]);
+        expect(parsed).not.toBeNull();
+        const controller = new AbortController();
+        controller.abort();
+
+        const result = await transcriptFetchDoor.run(parsed as NonNullable<typeof parsed>, {
+            signal: controller.signal,
+        });
+
+        expect(result.exit).toBe(1);
+        expect(result.stderr.toLowerCase()).toContain("abort");
+    });
+});
+
 describe("hub server argv", () => {
     it("parses only the plain shape: an unknown flag, a repeated flag or a missing value is null", () => {
         const shape = { command: ["a", "b"], positionals: 1, flags: { "--json": "bool", "--limit": "value" } } as const;
