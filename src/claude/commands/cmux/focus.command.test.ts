@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import type { CmuxLivePane, CmuxLiveSnapshot, CmuxLiveSurface } from "@genesiscz/utils/cmux/lib/live-snapshot";
-import { CmuxTransportError } from "@genesiscz/utils/cmux/lib/socket";
+import { CmuxRpcError, CmuxTransportError } from "@genesiscz/utils/cmux/lib/socket";
 import type { SessionCmuxRefs } from "@genesiscz/utils/cmux/session-refs";
 import { out } from "@genesiscz/utils/logger";
 
@@ -8,6 +8,7 @@ const SESSION_A = "8b6e69bf-0efc-4990-ba3e-b77262498421";
 const CALLER_PANE = "pane:2";
 const DEAD_SURFACE = "dead-surf";
 const TIMEOUT_SURFACE = "timeout-surf";
+const REFUSED_SURFACE = "refused-surf";
 
 let snapshot: CmuxLiveSnapshot;
 
@@ -53,7 +54,12 @@ mock.module("@genesiscz/utils/cmux/lib/controls", () => ({
 
         // A recorded surface that cmux no longer knows: the stale-ref case.
         if (surfaceId === DEAD_SURFACE) {
-            throw new Error("no such surface");
+            throw new CmuxRpcError("surface.focus", "not_found", "no such surface");
+        }
+
+        // cmux refused for another reason: the pane may well be alive.
+        if (surfaceId === REFUSED_SURFACE) {
+            throw new CmuxRpcError("surface.focus", "invalid_params", "bad surface ref");
         }
 
         // cmux did not answer: says nothing about whether the surface exists.
@@ -362,6 +368,24 @@ describe("focusCommand", () => {
         );
 
         await expect(run).rejects.toBeInstanceOf(CmuxTransportError);
+        expect(await capturedResult()).not.toContain(`"gone"`);
+    });
+
+    test("a refusal other than not_found on a recorded ref is an error, never a gone pane", async () => {
+        setSnapshot([pane({ id: "pane:9", cwd: "/elsewhere", surfaces: [surface({ id: "surface:3" })] })]);
+
+        const { focusCommand } = await import("@app/claude/commands/cmux/focus");
+        const run = focusCommand(
+            SESSION_A,
+            { activate: false, json: true },
+            {
+                fetchSnapshot: async () => snapshot,
+                lookupSession: async () => ({ aliases: [], sessionId: SESSION_A, cwd: "/repo" }),
+                lookupRefs: () => ({ ...staleRefs(), surfaceId: REFUSED_SURFACE }),
+            }
+        );
+
+        await expect(run).rejects.toBeInstanceOf(CmuxRpcError);
         expect(await capturedResult()).not.toContain(`"gone"`);
     });
 

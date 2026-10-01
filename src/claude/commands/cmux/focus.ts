@@ -4,7 +4,7 @@ import * as p from "@clack/prompts";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
 import { runCmuxJSON, runCmuxOk } from "@genesiscz/utils/cmux/lib/cli";
 import { focusCmuxPane, focusCmuxSurface } from "@genesiscz/utils/cmux/lib/controls";
-import { isCmuxTransportError } from "@genesiscz/utils/cmux/lib/socket";
+import { isCmuxNotFound } from "@genesiscz/utils/cmux/lib/socket";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
 import { createBoxTable, renderCliHeader, truncateDisplay } from "@genesiscz/utils/table";
@@ -270,8 +270,9 @@ export async function focusCommand(query: string, opts: FocusOptions, deps: Focu
     try {
         windowRef = await focusTarget(target);
     } catch (err) {
-        // A timeout or a broken socket says nothing about the pane, so it never reads as "gone".
-        if (result.source !== "recorded" || isCmuxTransportError(err)) {
+        // Only cmux saying not_found proves the recorded pane closed. A timeout, a broken socket, another
+        // refusal or a malformed reply says nothing about the pane, so it is reported as the error it is.
+        if (result.source !== "recorded" || !isCmuxNotFound(err)) {
             throw err;
         }
         // Recorded refs outlived their pane (cmux restart). Fall back to the matcher.
