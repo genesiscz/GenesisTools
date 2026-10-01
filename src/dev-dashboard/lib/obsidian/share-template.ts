@@ -7,6 +7,8 @@ interface ShareTemplateOptions {
     rendered: RenderResult;
     source: string;
     sourcePath?: string;
+    /** A JSON asset URL whose side panel opens on load (a deep link to `?asset=<hash>`). */
+    openAssetUrl?: string;
 }
 
 const HLJS_CSS_URL = "https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.10.0/build/styles/atom-one-dark.min.css";
@@ -286,6 +288,130 @@ img { max-width: 100%; height: auto; border-radius: 6px; }
 .dd-md-embed-icon { color: var(--dd-accent); }
 .dd-md-embed-label { font-family: var(--dd-mono); }
 
+.dd-md-asset-img {
+    display: block;
+    margin: 0.4em 0;
+    border: 1px solid var(--dd-border);
+    background: var(--dd-bg-panel);
+}
+
+.dd-md-asset-link { color: var(--dd-link); }
+
+.dd-md-asset-chip {
+    display: inline-flex;
+    gap: 8px;
+    align-items: center;
+    max-width: 100%;
+    background: var(--dd-bg-panel);
+    border: 1px solid var(--dd-border-strong);
+    border-radius: 6px;
+    padding: 2px 10px;
+    color: var(--dd-text);
+    font-family: var(--dd-mono);
+    font-size: 0.84em;
+    text-decoration: none;
+    overflow-wrap: anywhere;
+    transition: border-color 0.15s, background 0.15s;
+}
+
+.dd-md-asset-chip:hover {
+    border-color: var(--dd-accent);
+    background: var(--dd-accent-soft);
+}
+
+.dd-md-asset-chip-icon { color: var(--dd-accent); font-weight: 600; }
+
+.dd-md-inert-link { color: var(--dd-text-dim); border-bottom: 1px dotted var(--dd-text-faint); }
+
+.dd-line-hit { background: rgba(52, 211, 153, 0.14); box-shadow: inset 3px 0 0 var(--dd-accent); }
+.dd-src-block { border-radius: 6px; padding: 0 8px; margin: 0 -8px; }
+.dd-src-block > :first-child { margin-top: 0.6em; }
+
+.dd-code-window { margin: 0 0 8px; font-size: 12px; color: var(--dd-text-faint); font-family: var(--dd-mono); }
+pre.dd-code-lines code { padding: 10px 0; }
+.dd-code-line { display: block; padding: 0 14px 0 0; }
+.dd-code-ln {
+    display: inline-block;
+    width: 3.2em;
+    padding-right: 1em;
+    margin-right: 0.6em;
+    text-align: right;
+    color: var(--dd-text-faint);
+    border-right: 1px solid var(--dd-border);
+    user-select: none;
+}
+
+.dd-share-panel-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.45);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.18s;
+    z-index: 110;
+}
+
+.dd-share-panel {
+    position: fixed;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: min(640px, 94vw);
+    display: flex;
+    flex-direction: column;
+    background: var(--dd-bg-panel);
+    border-left: 1px solid var(--dd-border-strong);
+    box-shadow: -24px 0 48px rgba(0, 0, 0, 0.45);
+    transform: translateX(100%);
+    transition: transform 0.2s ease;
+    z-index: 111;
+}
+
+body.dd-share-panel-open .dd-share-panel-backdrop { opacity: 1; pointer-events: auto; }
+body.dd-share-panel-open .dd-share-panel { transform: none; }
+
+.dd-share-panel-head {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--dd-border);
+}
+
+.dd-share-panel-title {
+    flex: 1;
+    min-width: 0;
+    font-family: var(--dd-mono);
+    font-size: 13px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.dd-share-panel-head a, .dd-share-panel-head button {
+    color: var(--dd-text-dim);
+    background: none;
+    border: 1px solid var(--dd-border-strong);
+    border-radius: 6px;
+    padding: 2px 10px;
+    font: inherit;
+    font-size: 12px;
+    cursor: pointer;
+    text-decoration: none;
+}
+
+.dd-share-panel-head a:hover, .dd-share-panel-head button:hover { color: var(--dd-accent); border-color: var(--dd-accent); }
+
+.dd-share-panel-body {
+    flex: 1;
+    overflow: auto;
+    padding: 12px 16px 24px;
+}
+
+.dd-share-panel-body pre { margin: 0; }
+.dd-share-panel-body pre code { white-space: pre-wrap; overflow-wrap: anywhere; }
+.dd-share-panel-body .dd-code-line { padding-left: 4.4em; text-indent: -4.4em; }
+
 .markdown-alert {
     --cal: var(--dd-border-strong);
     margin: 1.2em 0;
@@ -522,8 +648,188 @@ function buildViewToggleScript(downloadName: string): string {
 </script>`;
 }
 
+function buildAssetPanelScript(): string {
+    return `<script>
+(function () {
+    var panel = document.getElementById("dd-share-panel");
+    var backdrop = document.getElementById("dd-share-panel-backdrop");
+    var content = document.getElementById("dd-share-panel-body");
+    var title = document.getElementById("dd-share-panel-title");
+    var rawLink = document.getElementById("dd-share-panel-raw");
+    var closeBtn = document.getElementById("dd-share-panel-close");
+    if (!panel || !backdrop || !content || !title || !rawLink || !closeBtn) {
+        return;
+    }
+
+    var basePath = location.pathname;
+    var lastFocus = null;
+    var isOpen = false;
+    // Each open asks for one fragment; an answer for an earlier open (or after a close) is dropped.
+    var panelRequest = 0;
+    // While the panel is open the page behind it is inert, so Tab stays inside the dialog.
+    var behind = [document.querySelector(".dd-share-toolbar"), document.querySelector("main")];
+
+    function setBehindInert(on) {
+        for (var b = 0; b < behind.length; b++) {
+            if (!behind[b]) {
+                continue;
+            }
+            if (on) {
+                behind[b].setAttribute("inert", "");
+            } else {
+                behind[b].removeAttribute("inert");
+            }
+        }
+    }
+
+    function nameFor(base) {
+        var chips = document.querySelectorAll("a[data-asset-panel]");
+        for (var i = 0; i < chips.length; i++) {
+            if (chips[i].getAttribute("data-asset-panel") === base) {
+                return chips[i].getAttribute("data-asset-name") || "file";
+            }
+        }
+        return "file";
+    }
+
+    function parseLines(hash) {
+        var match = /^#L(\\d+)(?:-L?(\\d+))?$/.exec(hash || "");
+        if (!match) {
+            return null;
+        }
+        var start = Number(match[1]);
+        return { start: start, end: Math.max(start, Number(match[2] || start)) };
+    }
+
+    function markLines(lines) {
+        if (!lines) {
+            return;
+        }
+
+        var hits = [];
+        var codeLines = content.querySelectorAll(".dd-code-line[data-line]");
+        for (var i = 0; i < codeLines.length; i++) {
+            var n = Number(codeLines[i].getAttribute("data-line"));
+            if (n >= lines.start && n <= lines.end) {
+                hits.push(codeLines[i]);
+            }
+        }
+
+        var blocks = content.querySelectorAll(".dd-src-block[data-line-start]");
+        for (var j = 0; j < blocks.length; j++) {
+            var from = Number(blocks[j].getAttribute("data-line-start"));
+            var to = Number(blocks[j].getAttribute("data-line-end"));
+            if (from <= lines.end && to >= lines.start) {
+                blocks[j].classList.add("dd-line-hit");
+                hits.push(blocks[j]);
+            }
+        }
+
+        if (hits.length > 0) {
+            hits[0].scrollIntoView({ block: "center" });
+        }
+    }
+
+    function openPanel(url, push) {
+        var hashAt = url.indexOf("#");
+        var base = hashAt === -1 ? url : url.slice(0, hashAt);
+        var hash = hashAt === -1 ? "" : url.slice(hashAt);
+        var lines = parseLines(hash);
+        var name = nameFor(base);
+        lastFocus = document.activeElement;
+        title.textContent = lines ? name + ":" + lines.start + (lines.end > lines.start ? "-" + lines.end : "") : name;
+        rawLink.href = base + "&view=raw";
+        content.textContent = "Loading " + name + "\u2026";
+        document.body.classList.add("dd-share-panel-open");
+        panel.setAttribute("aria-hidden", "false");
+        panel.removeAttribute("inert");
+        setBehindInert(true);
+        isOpen = true;
+        var request = ++panelRequest;
+        if (push) {
+            history.pushState({ ddAsset: url }, "", url);
+        }
+
+        var fragmentUrl = base + "&view=fragment" + (lines ? "&lines=" + lines.start + "-" + lines.end : "");
+        fetch(fragmentUrl, { headers: { Accept: "text/html" } })
+            .then(function (res) {
+                if (!res.ok) {
+                    throw new Error("HTTP " + res.status);
+                }
+                return res.text();
+            })
+            .then(function (html) {
+                if (request !== panelRequest) {
+                    return;
+                }
+                content.innerHTML = html;
+                content.scrollTop = 0;
+                markLines(lines);
+            })
+            .catch(function (err) {
+                if (request !== panelRequest) {
+                    return;
+                }
+                content.textContent = "Could not load " + name + ": " + err.message;
+            });
+        closeBtn.focus();
+    }
+
+    function closePanel(push) {
+        if (!isOpen) {
+            return;
+        }
+
+        isOpen = false;
+        panelRequest++;
+        document.body.classList.remove("dd-share-panel-open");
+        panel.setAttribute("aria-hidden", "true");
+        panel.setAttribute("inert", "");
+        setBehindInert(false);
+        if (push) {
+            history.pushState(null, "", basePath);
+        }
+        if (lastFocus && lastFocus.focus) {
+            lastFocus.focus();
+        }
+    }
+
+    document.addEventListener("click", function (event) {
+        var chip = event.target && event.target.closest ? event.target.closest("a[data-asset-panel]") : null;
+        if (!chip || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) {
+            return;
+        }
+
+        event.preventDefault();
+        openPanel(chip.getAttribute("href"), true);
+    });
+    closeBtn.addEventListener("click", function () { closePanel(true); });
+    backdrop.addEventListener("click", function () { closePanel(true); });
+    document.addEventListener("keydown", function (event) {
+        if (event.key === "Escape") {
+            closePanel(true);
+        }
+    });
+    window.addEventListener("popstate", function (event) {
+        if (event.state && event.state.ddAsset) {
+            openPanel(event.state.ddAsset, false);
+        } else {
+            closePanel(false);
+        }
+    });
+
+    var initial = document.body.getAttribute("data-open-asset");
+    if (initial) {
+        var deepLink = initial + location.hash;
+        history.replaceState({ ddAsset: deepLink }, "", deepLink);
+        openPanel(deepLink, false);
+    }
+})();
+</script>`;
+}
+
 export function renderSharePage(options: ShareTemplateOptions): string {
-    const { title, rendered, source, sourcePath } = options;
+    const { title, rendered, source, sourcePath, openAssetUrl } = options;
     const headExtras: string[] = [
         `<link rel="preconnect" href="https://fonts.googleapis.com">`,
         `<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>`,
@@ -553,6 +859,7 @@ export function renderSharePage(options: ShareTemplateOptions): string {
     const downloadName = `${baseName.replace(/[\\/:*?"<>|]/g, "_")}.md`;
 
     bodyExtras.push(buildViewToggleScript(downloadName));
+    bodyExtras.push(buildAssetPanelScript());
 
     const sourceLine = sourcePath ? `<span class="dd-share-source">${escapeHtml(sourcePath)}</span>` : "";
 
@@ -566,7 +873,7 @@ export function renderSharePage(options: ShareTemplateOptions): string {
 ${headExtras.join("\n")}
 <style>${buildCss()}</style>
 </head>
-<body>
+<body${openAssetUrl ? ` data-open-asset="${escapeHtml(openAssetUrl)}"` : ""}>
 <div class="dd-share-toolbar">
 <button type="button" class="dd-share-view-btn" id="dd-share-view-btn" aria-label="Show raw markdown source" title="Show raw markdown source">${FILE_CODE_ICON}</button>
 <button type="button" class="dd-share-view-btn" id="dd-share-download-btn" aria-label="Download raw markdown" title="Download raw markdown">${DOWNLOAD_ICON}</button>
@@ -576,6 +883,15 @@ ${headExtras.join("\n")}
 <pre class="dd-share-source-panel" id="dd-share-source-panel"></pre>
 <footer class="dd-share-footer">shared via dev-dashboard${sourceLine}</footer>
 </main>
+<div class="dd-share-panel-backdrop" id="dd-share-panel-backdrop"></div>
+<aside class="dd-share-panel" id="dd-share-panel" role="dialog" aria-modal="true" aria-labelledby="dd-share-panel-title" aria-hidden="true" inert>
+<div class="dd-share-panel-head">
+<span class="dd-share-panel-title" id="dd-share-panel-title"></span>
+<a id="dd-share-panel-raw" href="#" target="_blank" rel="noopener">Raw</a>
+<button type="button" id="dd-share-panel-close" aria-label="Close panel">Close</button>
+</div>
+<div class="dd-share-panel-body" id="dd-share-panel-body"></div>
+</aside>
 <script type="application/json" id="dd-share-source-data">${embedSourceJson(source)}</script>
 ${bodyExtras.join("\n")}
 </body>

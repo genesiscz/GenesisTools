@@ -37,9 +37,25 @@ import { Marked } from "marked";
 import { markedHighlight } from "marked-highlight";
 import markedKatex from "marked-katex-extension";
 
+/**
+ * A vault file the note references, already resolved and served under a content hash. `page` is a
+ * note that has its own share page, so it stays an ordinary link.
+ */
+export interface ResolvedAsset {
+    url: string;
+    kind: "image" | "json" | "markdown" | "code" | "page";
+    name: string;
+}
+
 interface RenderOptions {
     resolveWikilink: (name: string) => string | null;
     resolveVaultNotePath?: (name: string) => string | null;
+    /** Called with the raw target of `![[x]]`, `[[x]]`, `![](x)` and `[t](x)` (relative and file: hrefs only). */
+    resolveAsset?: (target: string) => ResolvedAsset | null;
+    /** Relative and file: links and images render as plain text, so a rendered attachment cannot reach further files. */
+    inertLocalLinks?: boolean;
+    /** Wrap each top-level block in `data-line-start`/`data-line-end` (1-based source lines, frontmatter counted). */
+    lineAnchors?: boolean;
 }
 
 export interface RenderResult {
@@ -89,6 +105,42 @@ function sanitizeUrl(href: string, allow: RegExp): string {
         .join("");
 
     return allow.test(cleaned) ? cleaned : "#";
+}
+
+function isLocalHref(href: string): boolean {
+    const trimmed = href.trim();
+
+    if (/^file:/i.test(trimmed)) {
+        return true;
+    }
+
+    return trimmed !== "" && !/^[a-z][a-z0-9+.-]*:/i.test(trimmed) && !/^[/#?]/.test(trimmed);
+}
+
+const PANEL_ICONS: Record<string, string> = { json: "{ }", markdown: "¶", code: "</>" };
+
+/** `labelHtml` is already escaped: link text comes out of marked as HTML, embed labels are escaped by the caller. */
+function renderAsset(asset: ResolvedAsset, labelHtml: string, inline: boolean): string {
+    const url = escapeHtml(asset.url);
+
+    if (asset.kind === "image") {
+        if (inline) {
+            return `<img src="${url}" alt="${labelHtml}" class="dd-md-asset-img" loading="lazy" />`;
+        }
+
+        return `<a href="${url}" class="dd-md-asset-link">${labelHtml}</a>`;
+    }
+
+    if (asset.kind === "page") {
+        return `<a href="${url}" class="dd-wikilink">${labelHtml}</a>`;
+    }
+
+    const panelUrl = escapeHtml(asset.url.split("#")[0]);
+
+    return (
+        `<a href="${url}" class="dd-md-asset-chip dd-md-asset-${asset.kind}" data-asset-panel="${panelUrl}" data-asset-name="${escapeHtml(asset.name)}">` +
+        `<span class="dd-md-asset-chip-icon" aria-hidden="true">${escapeHtml(PANEL_ICONS[asset.kind] ?? "")}</span><span>${labelHtml}</span></a>`
+    );
 }
 
 function parseTagList(value: string): string[] {
@@ -191,6 +243,12 @@ function wikilinkExtension(opts: RenderOptions): MarkedExtension {
                 },
                 renderer(token: Tokens.Generic): string {
                     const t = token as unknown as WikilinkToken;
+                    const asset = opts.resolveAsset?.(t.target) ?? null;
+
+                    if (asset) {
+                        return renderAsset(asset, escapeHtml(t.display), false);
+                    }
+
                     const vaultPath = opts.resolveVaultNotePath?.(t.target) ?? null;
 
                     if (vaultPath) {
@@ -212,7 +270,7 @@ function wikilinkExtension(opts: RenderOptions): MarkedExtension {
     };
 }
 
-function embedExtension(): MarkedExtension {
+function embedExtension(opts: RenderOptions): MarkedExtension {
     return {
         extensions: [
             {
@@ -237,6 +295,15 @@ function embedExtension(): MarkedExtension {
                 },
                 renderer(token: Tokens.Generic): string {
                     const t = token as unknown as EmbedToken;
+                    const asset = opts.resolveAsset?.(t.target) ?? null;
+
+                    if (asset) {
+                        // `![[x.webp|300]]` carries a size, not a caption, so images keep the file name as alt.
+                        const label = asset.kind === "image" || t.display === t.target ? asset.name : t.display;
+
+                        return renderAsset(asset, escapeHtml(label), true);
+                    }
+
                     const target = escapeHtml(t.target);
                     const display = escapeHtml(t.display);
 
@@ -545,6 +612,18 @@ function buildMarked(opts: RenderOptions): Marked {
             renderer: {
                 html: ({ text }) => escapeHtml(text),
                 link(token: Tokens.Link): string {
+                    const local = isLocalHref(token.href);
+
+                    if (local && opts.inertLocalLinks) {
+                        return `<span class="dd-md-inert-link">${this.parser.parseInline(token.tokens)}</span>`;
+                    }
+
+                    const asset = local ? (opts.resolveAsset?.(token.href) ?? null) : null;
+
+                    if (asset) {
+                        return renderAsset(asset, this.parser.parseInline(token.tokens), false);
+                    }
+
                     const href = escapeHtml(sanitizeUrl(token.href, SAFE_LINK_SCHEME_RE));
                     const title = token.title ? ` title="${escapeHtml(token.title)}"` : "";
                     const inner = this.parser.parseInline(token.tokens);
@@ -552,6 +631,18 @@ function buildMarked(opts: RenderOptions): Marked {
                     return `<a href="${href}"${title}>${inner}</a>`;
                 },
                 image(token: Tokens.Image): string {
+                    const local = isLocalHref(token.href);
+
+                    if (local && opts.inertLocalLinks) {
+                        return `<span class="dd-md-inert-link">${escapeHtml(token.text || token.href)}</span>`;
+                    }
+
+                    const asset = local ? (opts.resolveAsset?.(token.href) ?? null) : null;
+
+                    if (asset) {
+                        return renderAsset(asset, escapeHtml(token.text || asset.name), true);
+                    }
+
                     const src = escapeHtml(sanitizeUrl(token.href, SAFE_IMG_SRC_RE));
                     const title = token.title ? ` title="${escapeHtml(token.title)}"` : "";
 
@@ -565,16 +656,107 @@ function buildMarked(opts: RenderOptions): Marked {
         }),
         obsidianCalloutExtension(),
         markedKatex({ throwOnError: false, output: "html", strict: false }),
-        embedExtension(),
+        embedExtension(opts),
         wikilinkExtension(opts),
         inlineTagExtension()
     );
 }
 
+function lineCount(text: string): number {
+    return text.split("\n").length - 1;
+}
+
+/**
+ * The same output as `md.parse`, one top-level block at a time, so each block can carry the source
+ * lines it came from. Inline references were already resolved by the lexer, and highlighting runs in
+ * walkTokens, so both behave exactly as in a whole-document parse.
+ */
+function renderWithLineAnchors(md: Marked, markdown: string, lineOffset: number): string {
+    const tokens = md.lexer(markdown);
+    const walk = md.defaults.walkTokens;
+
+    if (walk) {
+        md.walkTokens(tokens, walk);
+    }
+
+    let line = lineOffset;
+    const parts: string[] = [];
+
+    for (const token of tokens) {
+        const start = line + 1;
+        const newlines = lineCount(token.raw);
+        line += newlines;
+
+        if (token.type === "space") {
+            continue;
+        }
+
+        const end = Math.max(start, start + newlines - (token.raw.endsWith("\n") ? 1 : 0));
+        const html = md.parser([token]);
+
+        parts.push(`<div class="dd-src-block" data-line-start="${start}" data-line-end="${end}">${html}</div>`);
+    }
+
+    return parts.join("\n");
+}
+
+/** Split highlight.js output into lines, closing and reopening spans so every line is balanced HTML. */
+function splitHighlightedLines(html: string): string[] {
+    const lines: string[] = [];
+    const open: string[] = [];
+    let current = "";
+
+    for (const part of html.split(/(<span[^>]*>|<\/span>|\n)/)) {
+        if (part === "\n") {
+            lines.push(current + "</span>".repeat(open.length));
+            current = open.join("");
+        } else if (part.startsWith("<span")) {
+            open.push(part);
+            current += part;
+        } else if (part === "</span>") {
+            open.pop();
+            current += part;
+        } else {
+            current += part;
+        }
+    }
+
+    lines.push(current + "</span>".repeat(open.length));
+
+    return lines;
+}
+
+/** A highlighted code block with a number and a `data-line` on every line; the `hit` range is marked. */
+export function renderCodeLines(options: {
+    code: string;
+    language: string;
+    firstLine: number;
+    hit?: { start: number; end: number };
+}): string {
+    const { code, language, firstLine, hit } = options;
+    const lines = splitHighlightedLines(highlightCode(code.replace(/\n$/, ""), language));
+    const body = lines
+        .map((lineHtml, index) => {
+            const number = firstLine + index;
+            const isHit = hit !== undefined && number >= hit.start && number <= hit.end;
+
+            return `<span class="dd-code-line${isHit ? " dd-line-hit" : ""}" data-line="${number}"><span class="dd-code-ln">${number}</span>${lineHtml || " "}</span>`;
+        })
+        .join("");
+
+    return `<pre class="dd-code-lines"><code class="hljs language-${escapeHtml(language)}">${body}</code></pre>`;
+}
+
 export function renderMarkdown(source: string, opts: RenderOptions): RenderResult {
     const metadata = extractMetadata(source);
     const md = buildMarked(opts);
-    const body = md.parse(metadata.markdown, { async: false }) as string;
+    const body = opts.lineAnchors
+        ? renderWithLineAnchors(
+              md,
+              metadata.markdown,
+              lineCount(source.slice(0, source.length - metadata.markdown.length))
+          )
+        : (md.parse(metadata.markdown, { async: false }) as string);
     const tagsHeader = renderTagsHeader(metadata.tags);
     const hasMath = /class="katex(?:[ "])/.test(body);
     const hasMermaid = body.includes('<div class="mermaid">');
