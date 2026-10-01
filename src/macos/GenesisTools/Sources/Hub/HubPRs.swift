@@ -49,7 +49,7 @@ struct HubPR: Decodable, Identifiable, Equatable {
     /// The head branch lives in a fork; `headRepo` is its `owner/repo` when the host named it.
     let crossRepository: Bool?
     let headRepo: String?
-    let localWorktree: String?
+    fileprivate(set) var localWorktree: String?
     let isMine: Bool?
     let proposal: Proposal?
 
@@ -184,6 +184,21 @@ private struct HubPRList: Decodable {
 
     let prs: [HubPR]
     let repos: [Repo]
+
+    private enum CodingKeys: String, CodingKey { case prs, repos }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        repos = try container.decode([Repo].self, forKey: .repos)
+        // A cached list can name a worktree deleted since (a review's scratch checkout): its diff failed
+        // with "commit … is not in <path>" instead of fetching the head into the main checkout.
+        prs = try container.decode([HubPR].self, forKey: .prs).map { pr in
+            guard let path = pr.localWorktree, !FileManager.default.fileExists(atPath: path) else { return pr }
+            var live = pr
+            live.localWorktree = nil
+            return live
+        }
+    }
 }
 
 @MainActor
