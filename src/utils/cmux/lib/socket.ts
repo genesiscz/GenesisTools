@@ -36,6 +36,43 @@ export function resetSocketPathCache(): void {
 
 let requestCounter = 0;
 
+/** cmux refused a call: `code` is its own (`not_found` for a surface or workspace that is gone). */
+export class CmuxRpcError extends Error {
+    constructor(
+        readonly method: string,
+        readonly code: string,
+        readonly detail: string
+    ) {
+        super(`cmux RPC ${method} failed: ${code} ${detail}`.trim());
+        this.name = "CmuxRpcError";
+    }
+}
+
+/**
+ * The socket itself failed (cmux did not answer in time, or the connection broke). Unlike a
+ * `CmuxRpcError`, it says nothing about whether the target exists, so a caller must not read it
+ * as "the pane is gone".
+ */
+export class CmuxTransportError extends Error {
+    constructor(
+        readonly method: string,
+        message: string,
+        options?: { cause?: unknown }
+    ) {
+        super(message, options);
+        this.name = "CmuxTransportError";
+    }
+}
+
+export function isCmuxTransportError(err: unknown): err is CmuxTransportError {
+    return err instanceof CmuxTransportError;
+}
+
+/** The target (a surface, pane or workspace) no longer exists in cmux. */
+export function isCmuxNotFound(err: unknown): boolean {
+    return err instanceof CmuxRpcError && err.code === "not_found";
+}
+
 export async function rpc<TResult = unknown>(
     method: string,
     params: Record<string, unknown> = {},
@@ -65,12 +102,18 @@ export async function rpc<TResult = unknown>(
         };
 
         const timer = setTimeout(() => {
-            settle(() => reject(new Error(`cmux RPC ${method} timed out after ${timeoutMs}ms`)));
+            settle(() => reject(new CmuxTransportError(method, `cmux RPC ${method} timed out after ${timeoutMs}ms`)));
         }, timeoutMs);
 
         sock.on("error", (error) => {
             clearTimeout(timer);
-            settle(() => reject(error));
+            settle(() =>
+                reject(
+                    new CmuxTransportError(method, `cmux RPC ${method} socket error: ${error.message}`, {
+                        cause: error,
+                    })
+                )
+            );
         });
 
         sock.on("connect", () => {
@@ -88,13 +131,11 @@ export async function rpc<TResult = unknown>(
             try {
                 const parsed = SafeJSON.parse(line) as JsonRpcResponse<TResult>;
                 if (!parsed.ok) {
-                    logger.error({ method, params, error: parsed.error }, "[socket] RPC error");
+                    // Debug, not error: the caller decides what a refusal means. A stale surface
+                    // answers not_found, and the console line reached the hub as a raw error banner.
+                    logger.debug({ method, params, error: parsed.error }, "[socket] RPC error");
                     settle(() =>
-                        reject(
-                            new Error(
-                                `cmux RPC ${method} failed: ${parsed.error?.code ?? "unknown"} ${parsed.error?.message ?? ""}`.trim()
-                            )
-                        )
+                        reject(new CmuxRpcError(method, parsed.error?.code ?? "unknown", parsed.error?.message ?? ""))
                     );
                     return;
                 }

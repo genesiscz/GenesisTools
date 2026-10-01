@@ -1,11 +1,13 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import type { CmuxLivePane, CmuxLiveSnapshot, CmuxLiveSurface } from "@genesiscz/utils/cmux/lib/live-snapshot";
+import { CmuxTransportError } from "@genesiscz/utils/cmux/lib/socket";
 import type { SessionCmuxRefs } from "@genesiscz/utils/cmux/session-refs";
 import { out } from "@genesiscz/utils/logger";
 
 const SESSION_A = "8b6e69bf-0efc-4990-ba3e-b77262498421";
 const CALLER_PANE = "pane:2";
 const DEAD_SURFACE = "dead-surf";
+const TIMEOUT_SURFACE = "timeout-surf";
 
 let snapshot: CmuxLiveSnapshot;
 
@@ -52,6 +54,11 @@ mock.module("@genesiscz/utils/cmux/lib/controls", () => ({
         // A recorded surface that cmux no longer knows: the stale-ref case.
         if (surfaceId === DEAD_SURFACE) {
             throw new Error("no such surface");
+        }
+
+        // cmux did not answer: says nothing about whether the surface exists.
+        if (surfaceId === TIMEOUT_SURFACE) {
+            throw new CmuxTransportError("surface.focus", "cmux RPC surface.focus timed out after 5000ms");
         }
     },
 }));
@@ -310,8 +317,69 @@ describe("focusCommand", () => {
         expect(process.exitCode).toBe(1);
         expect(result).toContain(`"ambiguous": true`);
         expect(result).toContain(`"focused": null`);
-        // The dead recorded surface is attempted once; no live pane is focused after it.
-        expect(events.filter((event) => event.startsWith("focus-pane"))).toEqual([
+        // The dead recorded tab is tried first, so its old pane is never raised, and no live
+        // pane is focused after it.
+        expect(events.filter((event) => event.startsWith("focus-surface"))).toEqual([`focus-surface ${DEAD_SURFACE}`]);
+        expect(events.filter((event) => event.startsWith("focus-pane"))).toEqual([]);
+    });
+
+    test("a stale recorded ref with no other pane says the pane is gone and moves nothing", async () => {
+        // The hub showed "ERROR: [socket] RPC error" here, after raising the dead tab's window
+        // and pane. The answer is a plain `gone` result, and nothing on screen changes.
+        setSnapshot([pane({ id: "pane:9", cwd: "/elsewhere", surfaces: [surface({ id: "surface:3" })] })]);
+
+        const { focusCommand } = await import("@app/claude/commands/cmux/focus");
+        await focusCommand(
+            SESSION_A,
+            { activate: false, json: true },
+            {
+                fetchSnapshot: async () => snapshot,
+                lookupSession: async () => ({ aliases: [], sessionId: SESSION_A, cwd: "/repo" }),
+                lookupRefs: () => staleRefs(),
+            }
+        );
+
+        const result = await capturedResult();
+
+        expect(process.exitCode).toBe(1);
+        expect(result).toContain(`"gone": true`);
+        expect(result).toContain(`"focused": null`);
+        expect(events.filter((event) => event !== "identify")).toEqual([`focus-surface ${DEAD_SURFACE}`]);
+    });
+
+    test("a cmux timeout on a recorded ref is an error, never a gone pane", async () => {
+        setSnapshot([pane({ id: "pane:9", cwd: "/elsewhere", surfaces: [surface({ id: "surface:3" })] })]);
+
+        const { focusCommand } = await import("@app/claude/commands/cmux/focus");
+        const run = focusCommand(
+            SESSION_A,
+            { activate: false, json: true },
+            {
+                fetchSnapshot: async () => snapshot,
+                lookupSession: async () => ({ aliases: [], sessionId: SESSION_A, cwd: "/repo" }),
+                lookupRefs: () => ({ ...staleRefs(), surfaceId: TIMEOUT_SURFACE }),
+            }
+        );
+
+        await expect(run).rejects.toBeInstanceOf(CmuxTransportError);
+        expect(await capturedResult()).not.toContain(`"gone"`);
+    });
+
+    test("a live recorded ref raises its tab, then its window and pane", async () => {
+        const { focusCommand } = await import("@app/claude/commands/cmux/focus");
+        await focusCommand(
+            SESSION_A,
+            { activate: false, json: true },
+            {
+                fetchSnapshot: async () => snapshot,
+                lookupRefs: () => ({ ...staleRefs(), surfaceId: "live-surf" }),
+            }
+        );
+
+        expect(process.exitCode ?? 0).toBe(0);
+        expect(events.filter((event) => !event.startsWith("identify"))).toEqual([
+            "focus-surface live-surf",
+            "focus-window --window window:1",
             `focus-pane ws-uuid ${RECORDED_PANE}`,
         ]);
     });

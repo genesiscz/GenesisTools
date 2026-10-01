@@ -4,6 +4,7 @@ import * as p from "@clack/prompts";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
 import { runCmuxJSON, runCmuxOk } from "@genesiscz/utils/cmux/lib/cli";
 import { focusCmuxPane, focusCmuxSurface } from "@genesiscz/utils/cmux/lib/controls";
+import { isCmuxTransportError } from "@genesiscz/utils/cmux/lib/socket";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
 import { createBoxTable, renderCliHeader, truncateDisplay } from "@genesiscz/utils/table";
@@ -78,11 +79,19 @@ async function activateApp(identity?: IdentifyResponse): Promise<boolean> {
 /**
  * Raise window, pane, and tab for one target. Returns the window ref used.
  *
- * A recorded target's surface IS the match, so its focus failure throws and
- * lets the caller fall back to the matcher; a matcher target keeps the lenient
- * pane-focused-but-tab-hidden behavior.
+ * A recorded target's surface IS the match, and the journal can outlive it (the tab was
+ * closed, cmux restarted). So its tab is raised FIRST: a gone surface throws before any
+ * window or pane moves, and the caller falls back to the matcher. Raising the window and
+ * pane of a dead tab first left the user looking at an unrelated pane (2026-09-30).
+ * A matcher target keeps the lenient pane-focused-but-tab-hidden behavior.
  */
 async function focusTarget(target: FocusTarget): Promise<string | undefined> {
+    const recorded = target.matchedOn === "recorded" && Boolean(target.surfaceId);
+
+    if (recorded && target.surfaceId) {
+        await focusCmuxSurface({ surfaceId: target.surfaceId });
+    }
+
     const windowRef = target.windowRef ?? (await windowRefFor(target.workspaceId));
 
     if (windowRef) {
@@ -93,13 +102,13 @@ async function focusTarget(target: FocusTarget): Promise<string | undefined> {
         await focusCmuxPane({ workspaceId: target.workspaceId, paneId: target.paneId });
     }
 
-    if (target.surfaceId) {
+    if (target.surfaceId && !recorded) {
         // The match came from a background tab. Without this the pane is focused and the
         // command claims success while the user still looks at a different surface.
         try {
             await focusCmuxSurface({ surfaceId: target.surfaceId });
         } catch (err) {
-            if (!target.paneId || target.matchedOn === "recorded") {
+            if (!target.paneId) {
                 throw err;
             }
             log.warn({ err, surfaceId: target.surfaceId }, "could not focus the matched surface");
@@ -261,7 +270,8 @@ export async function focusCommand(query: string, opts: FocusOptions, deps: Focu
     try {
         windowRef = await focusTarget(target);
     } catch (err) {
-        if (result.source !== "recorded") {
+        // A timeout or a broken socket says nothing about the pane, so it never reads as "gone".
+        if (result.source !== "recorded" || isCmuxTransportError(err)) {
             throw err;
         }
         // Recorded refs outlived their pane (cmux restart). Fall back to the matcher.
@@ -278,11 +288,20 @@ export async function focusCommand(query: string, opts: FocusOptions, deps: Focu
             process.exitCode = 1;
 
             if (opts.json) {
-                out.result(SafeJSON.stringify({ query, focused: null, matches: [] }, null, 2));
+                // `gone`: the session had a pane and it closed. Callers say so and offer a new
+                // pane instead of showing cmux's not_found.
+                out.result(SafeJSON.stringify({ query, focused: null, gone: true, matches: [] }, null, 2));
                 return;
             }
 
-            out.error(pc.red(`The recorded pane for "${query}" is gone and no other pane matches.`));
+            out.error(
+                pc.red(`That cmux pane is gone: the tab session ${query.slice(0, 8)} last ran in no longer exists.`)
+            );
+            out.printlnErr(
+                pc.dim(
+                    `  Resume it in a new pane: ${suggestCommand("tools claude", { replaceCommand: ["cmux", "open-session", query] })}`
+                )
+            );
             return;
         }
 
