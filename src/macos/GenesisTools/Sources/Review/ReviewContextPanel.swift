@@ -175,8 +175,8 @@ private struct ReviewSessionTranscript: View {
                     .padding(16)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                ProgressView().controlSize(.small)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                TranscriptSkeleton(turns: 2)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             }
         }
         .task(id: sessionId) {

@@ -363,12 +363,14 @@ struct SessionInsightsSection: View {
                     .foregroundStyle(SessionPalette.red)
                     .textSelection(.enabled)
             } else {
-                HStack(spacing: 6) {
-                    ProgressView().controlSize(.mini)
-                    Text("Reading cost and tool analytics…")
+                // Shaped like the cost chart and the tool table that replace it.
+                VStack(alignment: .leading, spacing: 10) {
+                    SkeletonBar(height: 56, radius: 5)
+                    SkeletonRows(count: 4, subtitle: false, rowHeight: 20)
                 }
-                .font(.system(size: 11.5))
-                .foregroundStyle(SessionPalette.faint)
+                .skeletonShimmer()
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("Reading cost and tool analytics")
             }
             HandoffSidebarRow(
                 thresholds: model.payload?.thresholds,

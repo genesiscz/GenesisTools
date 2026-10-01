@@ -545,10 +545,8 @@ public struct SessionTranscriptList: View {
     private var content: some View {
         switch loadState {
         case .loading where document.sections.isEmpty:
-            placeholder {
-                ProgressView().controlSize(.small)
-                Text("Loading transcript…")
-            }
+            TranscriptSkeleton()
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         case .failed(let message) where document.sections.isEmpty:
             placeholder {
                 Image(systemName: "exclamationmark.triangle")

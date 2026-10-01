@@ -54,7 +54,22 @@ struct DecisionsView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
                     toolbar
-                    if shown.isEmpty {
+                    if shown.isEmpty, model.decisions.isEmpty, model.loadingDecisions {
+                        // Decision cards: a title line and a short paragraph each.
+                        VStack(alignment: .leading, spacing: 18) {
+                            ForEach(0..<3, id: \.self) { index in
+                                VStack(alignment: .leading, spacing: 8) {
+                                    SkeletonBar(width: 200, height: 11)
+                                    SkeletonLines(count: 2, seed: index)
+                                }
+                                .padding(12)
+                                .background(RoundedRectangle(cornerRadius: 8).fill(Color.white.opacity(0.03)))
+                            }
+                        }
+                        .skeletonShimmer()
+                        .accessibilityElement(children: .ignore)
+                        .accessibilityLabel("Reading the decisions")
+                    } else if shown.isEmpty {
                         Text(model.decisions.isEmpty ? "No decisions recorded for this session." : filter == "open" ? "No open decisions." : "Nothing here.")
                             .font(.system(size: 12.5))
                             .foregroundColor(ReviewPalette.dim)

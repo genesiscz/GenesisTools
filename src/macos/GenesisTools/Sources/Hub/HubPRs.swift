@@ -974,6 +974,12 @@ struct PRListView: View {
             }
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 2, pinnedViews: [.sectionHeaders]) {
+                    if prs.prs.isEmpty, prs.loading {
+                        SkeletonRows(count: 10, leading: .dot)
+                            .skeletonShimmer()
+                            .accessibilityElement(children: .ignore)
+                            .accessibilityLabel("Loading PRs and MRs")
+                    }
                     ForEach(groups, id: \.project) { group in
                         Section {
                             if !prefs.collapsed.contains(group.project) {
@@ -1239,9 +1245,13 @@ struct PRsMain: View {
             PRDetailView(model: model, prs: prs, pr: pr)
                 .id(pr.id)
         } else {
-            Text(prs.loading ? "Loading PRs and MRs…" : "Pick a PR or MR")
-                .foregroundColor(ReviewPalette.dim)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            if prs.loading {
+                PaneSkeleton("Loading PRs and MRs")
+            } else {
+                Text("Pick a PR or MR")
+                    .foregroundColor(ReviewPalette.dim)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
         }
     }
 }
@@ -1294,6 +1304,18 @@ struct PRDetailView: View {
                     }
                     ReviewRootView(model: review)
                         .freezesWidthWhileResizing()
+                        .hubSurface(.content)
+                }
+                .onGeometryChange(for: CGFloat.self, of: \.size.width) { width = $0 }
+            } else if showDiff, prs.fetchState(pr) == .fetching {
+                // The head is on its way into the main checkout: the diff's place shows its shape.
+                HStack(spacing: 0) {
+                    overview
+                        .frame(width: max(Self.overviewMinWidth, width * 0.4))
+                        .hubSurface(.content)
+                    Rectangle().fill(ReviewPalette.hairline).frame(width: 1)
+                    DiffSkeleton()
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
                         .hubSurface(.content)
                 }
                 .onGeometryChange(for: CGFloat.self, of: \.size.width) { width = $0 }
@@ -1555,7 +1577,10 @@ struct PRDetailView: View {
                     }
                     .id(Self.descriptionSectionID)
                 } else if detail == nil {
-                    ProgressView().controlSize(.small)
+                    SkeletonLines(count: 6)
+                        .skeletonShimmer()
+                        .accessibilityElement(children: .ignore)
+                        .accessibilityLabel("Loading the description")
                 }
                 if let commits = detail?.commits, !commits.isEmpty {
                     if let review = prs.review {

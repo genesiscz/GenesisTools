@@ -1568,8 +1568,10 @@ struct HubRootView: View {
                 } else if model.selectedWorktree == WorktreeCleanup.selectionID, !model.loadingWorktrees {
                     WorktreeCleanupView(model: model)
                         .freezesWidthWhileDragging(panel: "hub.sidebar")
+                } else if model.loadingWorktrees {
+                    PaneSkeleton("Finding worktrees")
                 } else {
-                    Text(model.loadingWorktrees ? "Finding worktrees…" : "Pick a worktree")
+                    Text("Pick a worktree")
                         .foregroundColor(ReviewPalette.dim)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
@@ -1577,17 +1579,13 @@ struct HubRootView: View {
                 AgentProcsView(model: model)
             } else if let session = model.selected {
                 SessionDetailView(model: model, session: session)
+            } else if model.loadingSessions {
+                TranscriptSkeleton()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             } else {
-                VStack(spacing: 8) {
-                    if model.loadingSessions {
-                        ProgressView()
-                        Text("Loading sessions…").foregroundColor(ReviewPalette.dim)
-                    } else {
-                        Text(model.error ?? "No sessions in the last \(HubModel.recentHours) hours")
-                            .foregroundColor(ReviewPalette.dim)
-                    }
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                Text(model.error ?? "No sessions in the last \(HubModel.recentHours) hours")
+                    .foregroundColor(ReviewPalette.dim)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
         .hubSurface(.content)
@@ -1884,6 +1882,12 @@ private struct SessionListView: View {
                     LazyVStack(alignment: .leading, spacing: 2, pinnedViews: [.sectionHeaders]) {
                         // Hub/HubAgentProcs.swift: every agent session's process tree, orphans first.
                         AgentProcsEntry(model: model)
+                        if model.sessions.isEmpty, model.loadingSessions {
+                            SkeletonRows(count: 10, leading: .avatar)
+                                .skeletonShimmer()
+                                .accessibilityElement(children: .ignore)
+                                .accessibilityLabel("Loading sessions")
+                        }
                         ForEach(sections, id: \.title) { section in
                             Section {
                                 if !(section.managed && prefs.collapsed.contains(section.title)) {

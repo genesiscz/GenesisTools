@@ -252,8 +252,11 @@ struct WorktreeListView: View {
         let groups = groups
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 2, pinnedViews: [.sectionHeaders]) {
-                if model.loadingWorktrees {
-                    ProgressView().frame(maxWidth: .infinity).padding()
+                if model.loadingWorktrees, model.worktrees.isEmpty {
+                    SkeletonRows(count: 8, leading: .dot)
+                        .skeletonShimmer()
+                        .accessibilityElement(children: .ignore)
+                        .accessibilityLabel("Finding worktrees")
                 } else if !model.worktrees.isEmpty {
                     WorktreeCleanupEntry(model: model)
                 }

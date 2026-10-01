@@ -1083,8 +1083,14 @@ struct TimelineMain: View {
             PanelFindBar(find: find)
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 0, pinnedViews: [.sectionHeaders]) {
-                    if events.isEmpty {
-                        Text(timeline.loading ? "Reading the activity…" : timeline.error ?? (timeline.events.isEmpty ? "Nothing happened in this range." : "Nothing matches these filters."))
+                    if events.isEmpty, timeline.loading {
+                        SkeletonRows(count: 12, leading: .dot)
+                            .skeletonShimmer()
+                            .accessibilityElement(children: .ignore)
+                            .accessibilityLabel("Reading the activity")
+                            .padding(.top, 8)
+                    } else if events.isEmpty {
+                        Text(timeline.error ?? (timeline.events.isEmpty ? "Nothing happened in this range." : "Nothing matches these filters."))
                             .font(.system(size: 13))
                             .foregroundColor(ReviewPalette.dim)
                             .frame(maxWidth: .infinity)

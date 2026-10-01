@@ -1066,12 +1066,11 @@ struct AgentsListView: View {
         let sections = sections
         Group {
             if !agents.loaded && agents.parents.isEmpty {
-                VStack(spacing: 8) {
-                    ProgressView().controlSize(.small)
-                    Text("Loading agents…").foregroundColor(ReviewPalette.dim)
-                }
-                .font(.system(size: 12))
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                SkeletonRows(count: 10, leading: .dot)
+                    .skeletonShimmer()
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel("Loading agents")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             } else {
                 ScrollViewReader { proxy in
                     ScrollView {
@@ -1437,16 +1436,14 @@ struct AgentsMain: View {
         } else if let parent = agents.selectedMain {
             AgentLeadScreen(model: model, agents: agents, parent: parent, node: nil)
         } else {
-            VStack(spacing: 8) {
-                if !agents.loaded {
-                    ProgressView()
-                    Text("Loading agents…").foregroundColor(ReviewPalette.dim)
-                } else {
-                    Text("Pick an agent to read its whole transcript")
-                        .foregroundColor(ReviewPalette.dim)
-                }
+            if !agents.loaded {
+                TranscriptSkeleton()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            } else {
+                Text("Pick an agent to read its whole transcript")
+                    .foregroundColor(ReviewPalette.dim)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
     }
 }
@@ -1482,8 +1479,8 @@ private struct AgentLeadScreen: View {
             if let lead = model.selected, lead.sessionId == parent.sessionId {
                 SessionDetailView(model: model, session: lead, agent: AgentPaneContext(agents: agents, parent: parent, node: node))
             } else {
-                ProgressView()
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                TranscriptSkeleton()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             }
         }
         // The panes read the model's selected session (its review, decisions, added folders).

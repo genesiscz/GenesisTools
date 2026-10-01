@@ -816,8 +816,13 @@ struct InboxListView: View {
             .padding(.bottom, 6)
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 2) {
-                    if rows.isEmpty {
-                        Text(inbox.loading ? "Looking for waiting sessions…" : inbox.error ?? "Nothing is waiting for you.")
+                    if rows.isEmpty, inbox.loading {
+                        SkeletonRows(count: 6, leading: .avatar)
+                            .skeletonShimmer()
+                            .accessibilityElement(children: .ignore)
+                            .accessibilityLabel("Looking for waiting sessions")
+                    } else if rows.isEmpty {
+                        Text(inbox.error ?? "Nothing is waiting for you.")
                             .font(.system(size: 12))
                             .foregroundColor(ReviewPalette.dim)
                             .padding(14)
@@ -900,8 +905,10 @@ struct InboxMain: View {
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 22) {
-                        if rows.isEmpty {
-                            Text(inbox.loading ? "Looking for waiting sessions…" : "No session is waiting for an answer.")
+                        if rows.isEmpty, inbox.loading {
+                            PaneSkeleton("Looking for waiting sessions")
+                        } else if rows.isEmpty {
+                            Text("No session is waiting for an answer.")
                                 .font(.system(size: 13))
                                 .foregroundColor(ReviewPalette.dim)
                                 .frame(maxWidth: .infinity)

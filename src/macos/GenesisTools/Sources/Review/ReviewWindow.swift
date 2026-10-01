@@ -1648,6 +1648,14 @@ struct ReviewRootView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
                     RendererHost(renderer: model.renderer)
+                        .overlay {
+                            // The first load of this review: the page has nothing to draw yet.
+                            if model.files.isEmpty && model.loading {
+                                DiffSkeleton()
+                                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                                    .hubSurface(.content)
+                            }
+                        }
                 }
             }
             .frame(minWidth: 0, maxWidth: .infinity)
