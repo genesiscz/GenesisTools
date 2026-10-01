@@ -195,6 +195,23 @@ describe("hub server", () => {
         });
         expect(second).toBeNull();
     });
+
+    it("two starts at once leave exactly one server on the socket", async () => {
+        const socketPath = join(mkdtempSync(join(tmpdir(), "hubsrv-")), "s", "hub.sock");
+        const options = {
+            socketPath,
+            doors: [echoDoor],
+            maxFootprintBytes: Number.MAX_SAFE_INTEGER,
+            idleMs: 0,
+            checkEveryMs: 60_000,
+            callTimeoutMs: 5000,
+        };
+        const started = await Promise.all([startHubServer(options), startHubServer(options)]);
+        const handles = started.filter((handle): handle is HubServerHandle => handle !== null);
+        servers.push(...handles);
+
+        expect(handles).toHaveLength(1);
+    });
 });
 
 describe("hub server argv", () => {

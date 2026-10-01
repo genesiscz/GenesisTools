@@ -4,11 +4,16 @@ import { dirname } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { physFootprintBytes } from "@genesiscz/utils/process/footprint";
+import { withFileLock } from "@genesiscz/utils/storage/file-lock";
 import { withTraceId } from "@genesiscz/utils/trace";
 import type { Door } from "./doors/types";
 import { type CallResult, type EndReason, type HubServerHealth, LineBuffer, parseRequest } from "./protocol";
 
 const log = logger.child({ component: "hub-server" });
+/** Unsent bytes one connection may queue before it is closed as too slow. */
+const MAX_PENDING_WRITE_BYTES = 16 * 1024 * 1024;
+/** How long a start waits for another start to finish binding the socket. */
+const START_LOCK_MS = 10_000;
 
 export interface HubServerOptions {
     socketPath: string;
@@ -96,16 +101,23 @@ export function newestLoadedModuleMtime(root: string): number {
 /**
  * The resident hub server: line-delimited JSON over a unix socket (src/hub/server/protocol.ts).
  * Returns null when another server already answers on the socket.
+ *
+ * Probe, stale-socket removal and listen run under one lock file beside the socket: two starts at
+ * once would otherwise both see no server, and the second would unlink the first one's live socket.
  */
 export async function startHubServer(options: HubServerOptions): Promise<HubServerHandle | null> {
+    const dir = dirname(options.socketPath);
+    mkdirSync(dir, { recursive: true, mode: 0o700 });
+    chmodSync(dir, 0o700);
+    return withFileLock(`${options.socketPath}.lock`, () => startHubServerOwned(options), START_LOCK_MS);
+}
+
+async function startHubServerOwned(options: HubServerOptions): Promise<HubServerHandle | null> {
     if (await socketAnswers(options.socketPath)) {
         log.info({ socket: options.socketPath }, "hub server already running; not starting a second one");
         return null;
     }
 
-    const dir = dirname(options.socketPath);
-    mkdirSync(dir, { recursive: true, mode: 0o700 });
-    chmodSync(dir, 0o700);
     if (existsSync(options.socketPath)) {
         // Nothing answered: a socket file left by a server that died.
         unlinkSync(options.socketPath);
@@ -129,6 +141,15 @@ export async function startHubServer(options: HubServerOptions): Promise<HubServ
         }
 
         connection.socket.write(`${SafeJSON.stringify(message, { strict: true })}\n`);
+
+        // A client that stopped reading must not grow this process: past the bound only its connection ends.
+        if (connection.socket.writableLength > MAX_PENDING_WRITE_BYTES) {
+            log.warn(
+                { pending: connection.socket.writableLength, subscriptions: connection.subscriptions.size },
+                "hub server: a slow client fell too far behind; closing its connection"
+            );
+            connection.socket.destroy();
+        }
     };
 
     const health = (): HubServerHealth => ({
