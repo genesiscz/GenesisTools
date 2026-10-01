@@ -61,7 +61,17 @@ describe("static catalog", () => {
         expect(byId("claude-opus-5")?.displayName).toBe("Claude Opus 5");
         expect(byId("claude-opus-5-5")?.displayName).toBe("Claude Opus 5.5");
         expect(byId("opus")?.id).toBe("claude-opus-5-5");
-        expect(byId("sonnet")?.id).toBe("claude-sonnet-5");
+        expect(byId("sonnet")?.id).toBe("claude-sonnet-5-5");
+        expect(byId("claude-sonnet-5")?.displayName).toBe("Claude Sonnet 5");
+        expect(byId("claude-sonnet-5-5")?.pricing).toMatchObject({ inputPer1M: 2, outputPer1M: 10 });
+        // 6.1 Sol keeps 6 Sol's list price and halves cached input.
+        expect(byId("gpt-6.1-sol", "openai")?.pricing).toMatchObject({
+            inputPer1M: 2,
+            outputPer1M: 10,
+            cachedReadPer1M: 0.1,
+        });
+        expect(byId("gpt-6-sol", "openai")?.pricing).toMatchObject({ cachedReadPer1M: 0.2 });
+        expect(byId("gpt-6.1-sol", "openai-sub")?.id).toBe("gpt-6.1-sol");
         expect(byId("not-a-model")).toBeUndefined();
     });
 
@@ -147,6 +157,7 @@ describe("static catalog", () => {
         for (const id of [
             "claude-opus-5-5",
             "claude-opus-5",
+            "claude-sonnet-5-5",
             "claude-sonnet-5",
             "claude-fable-5",
             "claude-fable-5-1",

@@ -58,6 +58,9 @@ Luna is half on input and cache but not on output ($0.50, not $0.60). Sol is
 $2/$0.20/$2.50/$10 and Luna is $0.10/$0.01/$0.125/$0.50, with the same 272K band
 and Fast doubling.
 
+`gpt-6.1-sol` (released 2026-09-29, verified 2026-09-30) keeps GPT-6 Sol's shape and
+list price but halves cached input: $2/$0.10/$2.50/$10, $4/$0.20/$5/$15 above 272K.
+
 Tier changes are read from `thread_settings_applied.thread_settings` and explicit
 `turn_context` fields, and survive incremental parser resumes.
 Recorded `service_tier: priority` and `fast` select Fast rates. Missing tiers use

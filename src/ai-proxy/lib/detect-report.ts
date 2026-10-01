@@ -79,7 +79,7 @@ export function suggestedModelFor(account: AiProxyAccountConfig): string | undef
         case "anthropic-subscription":
             return `${account.name}/${account.providerSlug}/sonnet`;
         case "openai-subscription":
-            return `${account.name}/${account.providerSlug}/gpt-6-sol`;
+            return `${account.name}/${account.providerSlug}/gpt-6.1-sol`;
         default:
             return undefined;
     }

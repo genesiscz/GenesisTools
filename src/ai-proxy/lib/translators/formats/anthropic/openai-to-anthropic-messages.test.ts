@@ -205,14 +205,16 @@ describe("openAiChatToAnthropicMessages", () => {
             expect(body.output_config).toEqual({ effort: "low" });
         });
 
-        it("turns a forced tool choice into auto", () => {
-            for (const tool_choice of ["required", { type: "function", function: { name: "search" } }]) {
-                const body = openAiChatToAnthropicMessages(
-                    { messages: [{ role: "user", content: "go" }], tools: searchTool, tool_choice },
-                    { model: OPUS_55 }
-                );
+        it("turns a forced tool choice into auto, on Opus 5.5 and Sonnet 5.5", () => {
+            for (const model of [OPUS_55, "claude-sonnet-5-5"]) {
+                for (const tool_choice of ["required", { type: "function", function: { name: "search" } }]) {
+                    const body = openAiChatToAnthropicMessages(
+                        { messages: [{ role: "user", content: "go" }], tools: searchTool, tool_choice },
+                        { model }
+                    );
 
-                expect(body.tool_choice).toEqual({ type: "auto" });
+                    expect(body.tool_choice).toEqual({ type: "auto" });
+                }
             }
         });
 

@@ -20,6 +20,7 @@ export interface WhamModelRecord {
  */
 export const OPENAI_SUB_STATIC_CATALOG: WhamModelRecord[] = [
     { slug: "gpt-6-astra", displayName: "GPT-6-Astra", contextWindow: 272_000, visibility: "list" },
+    { slug: "gpt-6.1-sol", displayName: "GPT-6.1-Sol", contextWindow: 272_000, visibility: "list" },
     { slug: "gpt-6-sol", displayName: "GPT-6-Sol", contextWindow: 272_000, visibility: "list" },
     { slug: "gpt-6-luna", displayName: "GPT-6-Luna", contextWindow: 272_000, visibility: "list" },
     { slug: "gpt-5.6-sol", displayName: "GPT-5.6-Sol", contextWindow: 372_000, visibility: "list" },
@@ -42,7 +43,7 @@ const OPENAI_SUB_BUILTIN_ALIASES: Record<string, (catalog: WhamModelRecord[]) =>
     astra: () => "gpt-6-astra",
     terra: () => "gpt-5.6-terra",
     luna: () => "gpt-6-luna",
-    sol: () => "gpt-6-sol",
+    sol: () => "gpt-6.1-sol",
     latest: (catalog) => catalog.find((record) => record.visibility === "list")?.slug,
     codex: (catalog) =>
         catalog.find((record) => record.visibility === "list" && record.slug.includes("codex"))?.slug ??

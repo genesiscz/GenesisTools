@@ -5,10 +5,11 @@ Read this after `gt:handoff-to` has picked Codex and the readiness gate has pass
 ## Explicit model selection
 
 Use the task routing in the parent skill. Pass `--model gpt-6-astra --effort high`
-for an Astra escalation, `--model gpt-6-sol --effort medium` for normal implementation,
+for an Astra escalation, `--model gpt-6.1-sol --effort medium` for normal implementation,
 `--model gpt-6-luna --effort medium` for bounded exploration, or
-`--model gpt-6-luna --effort low` for mechanical work. `gpt-5.6-terra` still works but
-costs more than `gpt-6-sol`, so do not pick it.
+`--model gpt-6-luna --effort low` for mechanical work. `gpt-6-sol` and `gpt-5.6-terra` still
+work, but `gpt-6.1-sol` is stronger for the same or a lower price, so do not pick them.
+`gpt-6.1-sol` takes `low` to `max` effort only: `none` and `minimal` return an error.
 
 The `tools codex spawn` command accepts an explicit model string. Availability still
 depends on the selected account and backend. Verify the recorded model after dispatch;
@@ -36,7 +37,7 @@ Only a Claude Code orchestrator that relies on bus delivery should start the lea
 ```bash
 tools codex spawn \
   --name <task> \
-  --model gpt-6-sol \
+  --model gpt-6.1-sol \
   --effort medium \
   --write ask \
   --cwd <abs path> \
@@ -229,7 +230,7 @@ Resume: `command codex exec resume <thread_id> --json --ignore-user-config --ski
 
 ## Human-driven native sessions and history
 
-`tools codex run <account>` is for a human driving the native terminal, not a replacement for the worker/driver contract. Run-model aliases are `astra` (`gpt-6-astra`), `sol` (`gpt-6-sol`), `luna` (`gpt-6-luna`) and `terra` (`gpt-5.6-terra`); full native IDs remain supported. Resume recipes preserve the account wrapper rather than an expired temporary socket.
+`tools codex run <account>` is for a human driving the native terminal, not a replacement for the worker/driver contract. Run-model aliases are `astra` (`gpt-6-astra`), `sol` (`gpt-6.1-sol`), `luna` (`gpt-6-luna`) and `terra` (`gpt-5.6-terra`); full native IDs remain supported. Resume recipes preserve the account wrapper rather than an expired temporary socket.
 
 ```bash
 tools codex run work --model sol --resume

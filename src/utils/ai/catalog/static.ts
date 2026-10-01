@@ -147,6 +147,23 @@ const ANTHROPIC_ENTRIES: CatalogEntry[] = [
         flags: { native1m: true, cli: { label: "Opus 5 (1M native)" } },
     }),
     anthropic({
+        id: "claude-sonnet-5-5",
+        family: "sonnet",
+        displayName: "Claude Sonnet 5.5",
+        contextWindow: 1_000_000,
+        thinking: "reasoning",
+        // Sonnet 5's $2/$10 carried over (platform.claude.com/docs/en/models/sonnet-5-5, 2026-09-28).
+        pricing: {
+            inputPer1M: 2,
+            outputPer1M: 10,
+            cachedCreatePer1M: 2.5,
+            cachedReadPer1M: 0.2,
+        },
+        aliases: ["sonnet"],
+        releasedAt: "2026-09-28",
+        flags: { native1m: true, cli: { label: "Sonnet 5.5 (1M native)" } },
+    }),
+    anthropic({
         id: "claude-sonnet-5",
         family: "sonnet",
         displayName: "Claude Sonnet 5",
@@ -161,7 +178,6 @@ const ANTHROPIC_ENTRIES: CatalogEntry[] = [
             cachedCreatePer1M: 2.5,
             cachedReadPer1M: 0.2,
         },
-        aliases: ["sonnet"],
         // 1M is the base window, so there is no 200K mode to suffix back up.
         flags: { native1m: true, cli: { label: "Sonnet 5 (1M native)" } },
     }),
@@ -405,7 +421,7 @@ const OPENAI_ENTRIES: CatalogEntry[] = apiEntries(
             displayName: "GPT-6 Astra",
             contextWindow: 1_050_000,
             thinking: "reasoning",
-            // Verified 2026-09-07: https://developers.openai.com/api/docs/models/gpt-6-astra
+            // Verified 2026-09-30: https://developers.openai.com/api/docs/models/gpt-6-astra
             // The full request is re-rated above 272K INPUT tokens, including cache.
             pricing: {
                 inputPer1M: 10,
@@ -440,11 +456,50 @@ const OPENAI_ENTRIES: CatalogEntry[] = apiEntries(
             vision: true,
         },
         {
+            id: "gpt-6.1-sol",
+            displayName: "GPT-6.1 Sol",
+            contextWindow: 1_050_000,
+            thinking: "reasoning",
+            // Verified 2026-09-30: https://developers.openai.com/api/docs/models/gpt-6.1-sol
+            // GPT-6 Sol's rates, except cached input at 5% of input instead of 10%.
+            pricing: {
+                inputPer1M: 2,
+                outputPer1M: 10,
+                cachedReadPer1M: 0.1,
+                cachedCreatePer1M: 2.5,
+                rules: [
+                    {
+                        ctxFrom: 272_001,
+                        inputPer1M: 4,
+                        outputPer1M: 15,
+                        cachedReadPer1M: 0.2,
+                        cachedCreatePer1M: 5,
+                    },
+                    {
+                        serviceTier: "priority",
+                        inputPer1M: 4,
+                        outputPer1M: 20,
+                        cachedReadPer1M: 0.2,
+                        cachedCreatePer1M: 5,
+                    },
+                    {
+                        serviceTier: "priority",
+                        ctxFrom: 272_001,
+                        inputPer1M: 8,
+                        outputPer1M: 30,
+                        cachedReadPer1M: 0.4,
+                        cachedCreatePer1M: 10,
+                    },
+                ],
+            },
+            vision: true,
+        },
+        {
             id: "gpt-6-sol",
             displayName: "GPT-6 Sol",
             contextWindow: 1_050_000,
             thinking: "reasoning",
-            // Verified 2026-09-23: https://developers.openai.com/api/docs/models/gpt-6-sol
+            // Verified 2026-09-30: https://developers.openai.com/api/docs/models/gpt-6-sol (superseded by 6.1 Sol)
             // Whole-request rates above 272K input; priority (fast) is 2x the applicable rate.
             pricing: {
                 inputPer1M: 2,
@@ -483,7 +538,7 @@ const OPENAI_ENTRIES: CatalogEntry[] = apiEntries(
             displayName: "GPT-6 Luna",
             contextWindow: 1_050_000,
             thinking: "reasoning",
-            // Verified 2026-09-23: https://developers.openai.com/api/docs/models/gpt-6-luna
+            // Verified 2026-09-30: https://developers.openai.com/api/docs/models/gpt-6-luna
             // Whole-request rates above 272K input; priority (fast) is 2x the applicable rate.
             pricing: {
                 inputPer1M: 0.1,
@@ -522,7 +577,7 @@ const OPENAI_ENTRIES: CatalogEntry[] = apiEntries(
             displayName: "GPT-5.6 Sol",
             contextWindow: 1_050_000,
             thinking: "reasoning",
-            // Published Sol promotion, verified 2026-09-07; available at least through 2026-11-21.
+            // Published Sol promotion, verified 2026-09-30; available at least through 2026-11-21.
             // https://developers.openai.com/api/docs/pricing
             pricing: {
                 inputPer1M: 4,

@@ -16,10 +16,10 @@ describe("estimateCostUsd", () => {
     it("bills GPT-6 at its own rates, doubling input above 272K", () => {
         const million = { prompt_tokens: 1_000_000, completion_tokens: 1_000_000 };
 
-        expect(estimateCostUsd("gpt-6-sol", { prompt_tokens: 100_000, completion_tokens: 100_000 })).toBeCloseTo(
-            1.2,
-            10
-        );
+        for (const model of ["gpt-6.1-sol", "gpt-6-sol"]) {
+            expect(estimateCostUsd(model, { prompt_tokens: 100_000, completion_tokens: 100_000 })).toBeCloseTo(1.2, 10);
+            expect(estimateCostUsd(model, million)).toBeCloseTo(4 + 15, 10);
+        }
         expect(estimateCostUsd("gpt-6-luna", { prompt_tokens: 100_000, completion_tokens: 100_000 })).toBeCloseTo(
             0.06,
             10
@@ -74,11 +74,13 @@ describe("estimateCostUsd", () => {
         expect(estimateCostUsd("grok-4-fast", {})).toBe(0);
     });
 
-    it("applies the intro rate before its end date, standard after", () => {
+    it("bills Sonnet 5 and 5.5 at the permanent $2/$10, before and after the cancelled 2026-09-01 rise", () => {
         const usage = { prompt_tokens: 1_000_000, completion_tokens: 1_000_000 };
-        // sonnet-5 intro $2/$10 until 2026-09-01, then $3/$15
-        expect(estimateCostUsd("claude-sonnet-5", usage, new Date("2026-08-15"))).toBeCloseTo(12, 10);
-        expect(estimateCostUsd("claude-sonnet-5", usage, new Date("2026-09-01"))).toBeCloseTo(18, 10);
+
+        for (const model of ["claude-sonnet-5", "claude-sonnet-5-5"]) {
+            expect(estimateCostUsd(model, usage, new Date("2026-08-15"))).toBeCloseTo(12, 10);
+            expect(estimateCostUsd(model, usage, new Date("2026-09-30"))).toBeCloseTo(12, 10);
+        }
     });
 
     it("bills the whole request at long-context rates above the prompt threshold", () => {

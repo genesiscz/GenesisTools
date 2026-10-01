@@ -6,7 +6,7 @@
  * rate. Unknown model → undefined (ledger records tokens, adds $0, CLI marks
  * the estimate incomplete) — better unpriced than wrongly priced.
  *
- * Rates: public list prices as of 2026-07. Update deliberately; this table is
+ * Rates: public list prices, re-verified 2026-09-30. Update deliberately; this table is
  * the invoicing source of truth. Cost is booked at WRITE time (see
  * client-ledger), so date-bounded rules resolve against the booking date and a
  * later table edit never rewrites past invoices.
@@ -73,15 +73,9 @@ const RATE_GROUPS: Array<{ ids: string[]; rate: ModelRate }> = [
         rate: OPUS_45_PLUS,
     },
     { ids: ["claude-opus-4-1", "claude-opus-4-20250514"], rate: OPUS_PRE_45 },
-    {
-        ids: ["claude-sonnet-5"],
-        rate: {
-            inputUsdPerMTok: 3,
-            outputUsdPerMTok: 15,
-            // Introductory launch pricing.
-            rules: [{ to: "2026-09-01", inputUsdPerMTok: 2, outputUsdPerMTok: 10 }],
-        },
-    },
+    // Sonnet 5's launch $2/$10 became permanent on 2026-08-10 and Sonnet 5.5 kept it. Until 2026-09-30 this
+    // row billed Sonnet 5 at $3/$15 from 2026-09-01, a rise Anthropic had already cancelled.
+    { ids: ["claude-sonnet-5-5", "claude-sonnet-5"], rate: { inputUsdPerMTok: 2, outputUsdPerMTok: 10 } },
     { ids: ["claude-sonnet-4-6"], rate: SONNET_4_FLAT },
     { ids: ["claude-sonnet-4-5"], rate: SONNET_4_LONG_CTX },
     { ids: ["claude-haiku-4-5"], rate: HAIKU_4_5 },
@@ -95,7 +89,8 @@ const RATE_GROUPS: Array<{ ids: string[]; rate: ModelRate }> = [
         },
     },
     {
-        ids: ["gpt-6-sol"],
+        // 6.1 Sol only halves cached input, which this table does not price separately.
+        ids: ["gpt-6.1-sol", "gpt-6-sol"],
         rate: {
             inputUsdPerMTok: 2,
             outputUsdPerMTok: 10,

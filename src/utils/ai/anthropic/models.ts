@@ -68,7 +68,7 @@ export interface AnthropicRequestRules {
     thinking: "adaptive" | "budget";
     /** `temperature` / `top_p` are accepted (removed from Opus 4.7 on). */
     sampling: boolean;
-    /** `tool_choice` `any` / `tool` are accepted (removed on Opus 5.5 and Fable 5.1). */
+    /** `tool_choice` `any` / `tool` are accepted (removed on 5.5+ (Opus, Sonnet) and Fable 5.1). */
     forcedToolChoice: boolean;
     /** A trailing assistant turn (prefill) is accepted (removed from Opus 4.6 / Sonnet 4.6 on). */
     prefill: boolean;
@@ -100,7 +100,7 @@ export function anthropicRequestRules(id: string): AnthropicRequestRules {
     return {
         thinking: fableTier || version >= 4.6 ? "adaptive" : "budget",
         sampling: !fableTier && version < 4.7,
-        forcedToolChoice: fableTier ? version < 5.1 : !(family === "opus" && version >= 5.5),
+        forcedToolChoice: fableTier ? version < 5.1 : version < 5.5,
         prefill: !fableTier && version < 4.6,
         effortCeiling: fableTier || version >= 4.7 ? "xhigh" : "high",
     };
