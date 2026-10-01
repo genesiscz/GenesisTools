@@ -103,6 +103,23 @@ export function firstOpenTurn(start: number, turns: readonly TranscriptTurn[]): 
     return start + Math.max(open, 0);
 }
 
+/**
+ * The drain high-water mark after one more page: the oldest turn that can still change. A turn with a
+ * tool still waiting holds the mark, the page's last turn included, so no later page moves it past;
+ * without one only the last turn read can still change. `open` carries a held turn across pages.
+ */
+export function drainMark(
+    open: number | null,
+    start: number,
+    turns: readonly TranscriptTurn[]
+): { open: number | null; mark: number } {
+    const pageOpen = firstOpenTurn(start, turns);
+    const lastTurn = start + turns.length - 1;
+    const lastPending = turns[turns.length - 1]?.tools.some((tool) => tool.result === null) ?? false;
+    const held = open ?? (pageOpen < lastTurn || lastPending ? pageOpen : null);
+    return { open: held, mark: held ?? lastTurn };
+}
+
 export async function followTranscriptLive(resolved: ResolvedTranscript, options: LiveFollowOptions): Promise<void> {
     const stream = new LiveTurnStream(options.offset, options.write);
     // followTranscript reads this object on every change, so moving `offset` narrows the next read.
@@ -127,11 +144,7 @@ export async function followTranscriptLive(resolved: ResolvedTranscript, options
             const start = page.nextOffset - page.turns.length;
 
             if (page.turns.length > 0) {
-                const pageOpen = firstOpenTurn(start, page.turns);
-                const lastTurn = page.nextOffset - 1;
-                // An open tool before the page's last turn keeps its page re-readable; else only the last turn.
-                open = open ?? (pageOpen < lastTurn ? pageOpen : null);
-                drainedTo = open ?? lastTurn;
+                ({ open, mark: drainedTo } = drainMark(open, start, page.turns));
             }
 
             if (page.turns.length === 0 || page.nextOffset >= (page.turnCount ?? page.nextOffset)) {

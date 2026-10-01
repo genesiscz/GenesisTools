@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { firstOpenTurn, LiveTurnStream } from "./live";
+import { drainMark, firstOpenTurn, LiveTurnStream } from "./live";
 import type { TranscriptEnvelope, TranscriptTurn } from "./types";
 
 function turn(id: string, text: string, pending = false): TranscriptTurn {
@@ -90,5 +90,20 @@ describe("firstOpenTurn", () => {
     it("is the first turn with a tool still waiting, else the last turn", () => {
         expect(firstOpenTurn(10, [turn("a", "x"), turn("b", "y", true), turn("c", "z")])).toBe(11);
         expect(firstOpenTurn(10, [turn("a", "x"), turn("b", "y")])).toBe(11);
+    });
+});
+
+describe("drainMark", () => {
+    it("a pending tool in a page's last turn holds the mark when the next page is drained", () => {
+        const first = drainMark(null, 0, [turn("a", "x"), turn("b", "y", true)]);
+        expect(first).toEqual({ open: 1, mark: 1 });
+
+        const second = drainMark(first.open, 2, [turn("c", "z"), turn("d", "w")]);
+        expect(second.mark).toBe(1);
+    });
+
+    it("settled pages move the mark to the last turn read", () => {
+        const first = drainMark(null, 0, [turn("a", "x"), turn("b", "y")]);
+        expect(drainMark(first.open, 2, [turn("c", "z")])).toEqual({ open: null, mark: 2 });
     });
 });
