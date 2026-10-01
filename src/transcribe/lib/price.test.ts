@@ -7,6 +7,7 @@ import { quotesFor, quoteTranscription } from "@genesiscz/utils/ai/catalog/speec
 
 import { readMediaCache, writeMediaCache } from "./media-cache.ts";
 import { formatUsd, orderQuotes, runLabel } from "./price.ts";
+import { effectiveProvider, unsupportedYoutubeFlags } from "./quote";
 
 describe("quote table", () => {
     it("lists a ready provider before a cheaper one that is not configured", () => {
@@ -63,5 +64,23 @@ describe("media cache", () => {
         } finally {
             await rm(dir, { recursive: true, force: true });
         }
+    });
+});
+
+describe("transcribe quote policy", () => {
+    it("--local wins over --provider, as a real run resolves it", () => {
+        expect(effectiveProvider({ provider: "openai", local: true })).toBe("local-hf");
+        expect(effectiveProvider({ provider: "openai" })).toBe("openai");
+        expect(effectiveProvider({})).toBeUndefined();
+    });
+
+    it("a YouTube source refuses only the flags its pipeline would drop", () => {
+        expect(unsupportedYoutubeFlags({ model: "x", raw: true, diarize: true, speakers: 2 })).toEqual([
+            "--model",
+            "--raw/--no-clean",
+            "--diarize",
+            "--speakers",
+        ]);
+        expect(unsupportedYoutubeFlags({})).toEqual([]);
     });
 });

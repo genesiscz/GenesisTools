@@ -306,6 +306,30 @@ describe("acquireRemoteAudio", () => {
         expect(acquired.audioPath.endsWith("audio.mp3")).toBe(true);
         await acquired.cleanup();
     });
+
+    it("an extensionless playlist, known by its Content-Type, goes to ffmpeg by its own URL", async () => {
+        const dir = await tempDir();
+        let ffmpegInput = "";
+        const acquired = await acquireRemoteAudio(
+            { driver: "direct", url: "https://cdn.example.com/stream" },
+            {
+                dir,
+                fetch: async () =>
+                    new Response("#EXTM3U\nseg1.ts\n", {
+                        headers: { "content-type": "application/vnd.apple.mpegurl" },
+                    }),
+                convert: async (input, output) => {
+                    ffmpegInput = input;
+                    await Bun.write(output, "audio");
+
+                    return output;
+                },
+            }
+        );
+
+        expect(ffmpegInput).toBe("https://cdn.example.com/stream");
+        await acquired.cleanup();
+    });
 });
 
 async function tempDir(): Promise<string> {

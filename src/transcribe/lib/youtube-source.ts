@@ -18,8 +18,22 @@ export interface YoutubeTranscribeOpts {
  * reads yt-dlp's metadata directly instead of `ensureMetadata`, which would store the channel and
  * the video in the YouTube database.
  */
-export async function youtubeDurationSec(videoId: string): Promise<number> {
-    const video = await dumpVideoMetadata(videoId);
+export async function youtubeDurationSec(videoId: string, opts: { timeoutMs?: number } = {}): Promise<number> {
+    // yt-dlp can stall on the network: past the deadline it is killed and the quote says so.
+    const signal = opts.timeoutMs ? AbortSignal.timeout(opts.timeoutMs) : undefined;
+    let video: Awaited<ReturnType<typeof dumpVideoMetadata>>;
+
+    try {
+        video = await dumpVideoMetadata(videoId, { signal });
+    } catch (error) {
+        if (signal?.aborted) {
+            throw new Error(
+                `YouTube metadata for ${videoId} did not arrive within ${opts.timeoutMs} ms; no duration to price.`
+            );
+        }
+
+        throw error;
+    }
 
     if (!video.durationSec || video.durationSec <= 0) {
         throw new Error(`YouTube video ${videoId} has no duration in its metadata.`);

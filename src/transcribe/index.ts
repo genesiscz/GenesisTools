@@ -2,14 +2,12 @@
 
 import { existsSync } from "node:fs";
 import { basename, extname, resolve } from "node:path";
-import { type AcquiredAudio, acquireRemoteAudio, fetchXDurationSec } from "@app/transcribe/lib/acquire";
+import { type AcquiredAudio, acquireRemoteAudio } from "@app/transcribe/lib/acquire";
 import { type ClassifiedSource, classifySource, type RemoteSource } from "@app/transcribe/lib/drivers";
-import { formatUsd, orderQuotes, runLabel } from "@app/transcribe/lib/price";
-import { transcribeYoutubeSource, youtubeDurationSec } from "@app/transcribe/lib/youtube-source";
+import { formatUsd } from "@app/transcribe/lib/price";
+import { type PriceQuote, priceQuote, unsupportedYoutubeFlags } from "@app/transcribe/lib/quote";
+import { transcribeYoutubeSource } from "@app/transcribe/lib/youtube-source";
 import * as p from "@clack/prompts";
-import { quotesFor } from "@genesiscz/utils/ai/catalog/speech";
-import { AiConfigStore } from "@genesiscz/utils/ai/config/AiConfigStore";
-import { AICloudProvider } from "@genesiscz/utils/ai/providers/AICloudProvider";
 import { getAllProviders } from "@genesiscz/utils/ai/providers/index.ts";
 import { Transcriber } from "@genesiscz/utils/ai/tasks/Transcriber";
 import {
@@ -21,7 +19,6 @@ import {
 } from "@genesiscz/utils/ai/transcription-format.ts";
 import type { AIProviderType } from "@genesiscz/utils/ai/types.ts";
 import { audioProcessor } from "@genesiscz/utils/ask/audio/AudioProcessor.ts";
-import { getAudioInfo } from "@genesiscz/utils/audio/probe";
 import { runTool } from "@genesiscz/utils/cli";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli/executor.ts";
 import { isQuietOutput } from "@genesiscz/utils/cli/output-mode.ts";
@@ -393,142 +390,58 @@ const program = new Command()
     });
 
 /** Providers that run on this Mac and need no account: their own availability check reads no AI config. */
-const LOCAL_TRANSCRIBE_PROVIDERS = new Set(["local-hf", "darwinkit", "coreml"]);
-/** A remote media URL that does not answer is a quote with no duration, never a hang. */
-const REMOTE_PROBE_TIMEOUT_MS = 20_000;
-
 async function printPrice(file: string, classified: ClassifiedSource, opts: TranscribeFlags): Promise<void> {
-    let timed: { seconds: number; via: string };
+    let quote: PriceQuote;
 
     try {
-        timed = await durationForQuote(file, classified);
+        quote = await priceQuote({ file, classified, provider: opts.provider, local: opts.local, model: opts.model });
     } catch (error) {
         out.error(pc.red(error instanceof Error ? error.message : String(error)));
         process.exit(1);
     }
 
-    const providers = getAllProviders().filter((provider) => provider.supports("transcribe"));
-    const ready = new Set<string>();
-    // A quote only reads: the AI config comes from a read-only snapshot (no migration, no vault
-    // write), and only on-device providers are asked for their own availability.
-    const configured = new Set(
-        (await AiConfigStore.readOnly())
-            .accounts()
-            .filter((account) => account.enabled)
-            .map((account) => account.provider)
-    );
-
-    for (const provider of providers) {
-        // An enabled account with a stored credential counts from the snapshot, whichever provider it is.
-        if (configured.has(provider.type)) {
-            ready.add(provider.type);
-            continue;
-        }
-
-        // On-device providers and the env-key cloud providers check without touching the AI config;
-        // any other (xAI's client loads the config store) counts from its env key.
-        const readOnlyCheck = LOCAL_TRANSCRIBE_PROVIDERS.has(provider.type) || provider instanceof AICloudProvider;
-
-        if (!readOnlyCheck) {
-            if (provider.type === "xai" && env.getXAIApiKey()) {
-                ready.add(provider.type);
-            }
-
-            continue;
-        }
-
-        try {
-            if (await provider.isAvailable()) {
-                ready.add(provider.type);
-            }
-        } catch (error) {
-            out.error(pc.dim(`${provider.type}: ${error instanceof Error ? error.message : String(error)}`));
-        }
+    for (const problem of quote.problems) {
+        out.error(pc.dim(problem));
     }
 
-    const choice = { provider: opts.provider, model: opts.model };
-    const quotes = orderQuotes(quotesFor(timed.seconds, choice), ready);
-
     if (opts.format === "json") {
-        out.result({
-            durationSec: timed.seconds,
-            via: timed.via,
-            quotes: quotes.map((quote) => ({
-                ...quote,
-                available: ready.has(quote.provider),
-                run: runLabel(quote, choice),
-            })),
-        });
+        out.result({ durationSec: quote.durationSec, via: quote.via, quotes: quote.quotes });
 
         return;
     }
 
     out.error(
         pc.dim(
-            `${formatDuration(timed.seconds, "s", "hms")} from ${timed.via}. No media downloaded. A real transcribe keeps the converted audio for 1 hour.`
+            `${formatDuration(quote.durationSec, "s", "hms")} from ${quote.via}. No media downloaded. A real transcribe keeps the converted audio for 1 hour.`
         )
     );
     const table = createBoxTable(["PROVIDER", "MODEL", "MODE", "$/HOUR", "THIS AUDIO", "HERE", "RUN"]);
 
-    for (const quote of quotes) {
-        const here = ready.has(quote.provider);
-
+    for (const row of quote.quotes) {
         table.push([
-            quote.provider,
-            quote.model,
-            quote.mode,
-            formatUsd(quote.usdPerHour),
-            formatUsd(quote.usd),
-            formatDotStatus(here ? "ok" : "dim", here ? "yes" : "no"),
-            runLabel(quote, choice),
+            row.provider,
+            row.model,
+            row.mode,
+            formatUsd(row.usdPerHour),
+            formatUsd(row.usd),
+            formatDotStatus(row.available ? "ok" : "dim", row.available ? "yes" : "no"),
+            row.run,
         ]);
     }
 
     out.println(table.toString());
 
-    for (const quote of quotes) {
-        if (!quote.note) {
+    for (const row of quote.quotes) {
+        if (!row.note) {
             continue;
         }
 
-        out.error(pc.dim(`${quote.provider} ${quote.model} ${quote.mode}: ${quote.note}`));
+        out.error(pc.dim(`${row.provider} ${row.model} ${row.mode}: ${row.note}`));
     }
 
     if (classified.driver === "youtube") {
         out.error(pc.dim("YouTube captions, when the video has them, cost nothing. This table is the audio price."));
     }
-}
-
-async function durationForQuote(file: string, classified: ClassifiedSource): Promise<{ seconds: number; via: string }> {
-    if (classified.driver === "local") {
-        const info = await getAudioInfo(resolve(file));
-
-        if (!info.duration) {
-            throw new Error(`Could not read a duration from ${file}.`);
-        }
-
-        return { seconds: info.duration, via: "the local file" };
-    }
-
-    if (classified.driver === "x") {
-        return { seconds: await fetchXDurationSec(classified.statusId), via: "X post metadata" };
-    }
-
-    if (classified.driver === "youtube") {
-        return { seconds: await youtubeDurationSec(classified.videoId), via: "YouTube metadata" };
-    }
-
-    if (classified.driver === "direct") {
-        const info = await getAudioInfo(classified.url, { timeoutMs: REMOTE_PROBE_TIMEOUT_MS });
-
-        if (!info.duration) {
-            throw new Error("Could not read a duration from the file header. --price-only does not download the file.");
-        }
-
-        return { seconds: info.duration, via: "the file header" };
-    }
-
-    throw new Error(classified.reason);
 }
 
 async function transcribeInput(file: string, opts: TranscribeFlags): Promise<void> {
@@ -562,29 +475,6 @@ async function transcribeInput(file: string, opts: TranscribeFlags): Promise<voi
     }
 
     await runTranscription(file, flags);
-}
-
-/** Flags the YouTube pipeline cannot honour; it would drop them silently, so they are refused. */
-function unsupportedYoutubeFlags(opts: TranscribeFlags): string[] {
-    const unsupported: string[] = [];
-
-    if (opts.model) {
-        unsupported.push("--model");
-    }
-
-    if (opts.raw || opts.clean === false) {
-        unsupported.push("--raw/--no-clean");
-    }
-
-    if (opts.diarize) {
-        unsupported.push("--diarize");
-    }
-
-    if (opts.speakers !== undefined) {
-        unsupported.push("--speakers");
-    }
-
-    return unsupported;
 }
 
 async function runYoutube(videoId: string, opts: TranscribeFlags): Promise<void> {

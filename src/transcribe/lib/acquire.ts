@@ -7,6 +7,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 
 import {
+    contentTypeIsHls,
     contentTypeIsMedia,
     extensionOf,
     isAudioExtension,
@@ -196,21 +197,20 @@ async function materializeAudio(
     const output = join(dir, "audio.mp3");
 
     if (isHls(mediaUrl)) {
-        try {
-            return await convert(mediaUrl, output, { timeoutMs: HLS_CONVERT_TIMEOUT_MS });
-        } catch (error) {
-            log.warn({ error, mediaHost: safeHost(mediaUrl) }, "hls transcode failed");
-            throw new Error(
-                `The HLS stream from ${safeHost(mediaUrl)} did not convert within ${HLS_CONVERT_TIMEOUT_MS / 60_000} minutes or failed. Live streams are not supported.`,
-                { cause: error }
-            );
-        }
+        return convertHls(mediaUrl, output, convert);
     }
 
     const ext = extensionOf(mediaUrl);
     const knownMedia = isMediaExtension(ext);
     const saved = join(dir, `source${knownMedia ? ext : ""}`);
-    await downloadMedia(mediaUrl, saved, fetchImpl, knownMedia);
+    const playlist = await downloadMedia(mediaUrl, saved, fetchImpl, knownMedia);
+
+    // An extensionless playlist: ffmpeg reads it from its own (post-redirect) URL, so relative segment
+    // and key URLs resolve against the server, never against the temp folder.
+    if (playlist) {
+        return convertHls(playlist, output, convert);
+    }
+
     const savedExt = extname(saved).toLowerCase();
 
     if (isAudioExtension(savedExt)) {
@@ -220,7 +220,25 @@ async function materializeAudio(
     return convert(saved, output);
 }
 
-async function downloadMedia(url: string, dest: string, fetchImpl: MediaFetch, knownMedia: boolean): Promise<void> {
+async function convertHls(playlistUrl: string, output: string, convert: MediaConvert): Promise<string> {
+    try {
+        return await convert(playlistUrl, output, { timeoutMs: HLS_CONVERT_TIMEOUT_MS });
+    } catch (error) {
+        log.warn({ error, mediaHost: safeHost(playlistUrl) }, "hls transcode failed");
+        throw new Error(
+            `The HLS stream from ${safeHost(playlistUrl)} did not convert within ${HLS_CONVERT_TIMEOUT_MS / 60_000} minutes or failed. Live streams are not supported.`,
+            { cause: error }
+        );
+    }
+}
+
+/** Saves the media to `dest`; for an HLS playlist (by Content-Type) saves nothing and returns its final URL. */
+async function downloadMedia(
+    url: string,
+    dest: string,
+    fetchImpl: MediaFetch,
+    knownMedia: boolean
+): Promise<string | null> {
     const response = await fetchImpl(url, {
         headers: { accept: "*/*", "user-agent": USER_AGENT },
         redirect: "follow",
@@ -232,6 +250,13 @@ async function downloadMedia(url: string, dest: string, fetchImpl: MediaFetch, k
     }
 
     const type = response.headers.get("content-type");
+
+    if (contentTypeIsHls(type)) {
+        await response.body?.cancel().catch((error: unknown) => {
+            log.debug({ error }, "cancel of playlist response failed");
+        });
+        return response.url || url;
+    }
 
     if (!knownMedia && !contentTypeIsMedia(type)) {
         await response.body?.cancel().catch((error: unknown) => {
@@ -291,6 +316,8 @@ async function downloadMedia(url: string, dest: string, fetchImpl: MediaFetch, k
     } finally {
         await writer.end();
     }
+
+    return null;
 }
 
 function safeHost(url: string): string {

@@ -240,6 +240,12 @@ export function isHls(url: string): boolean {
     return extensionOf(url) === ".m3u8";
 }
 
+/** True when a response is an HLS playlist by its Content-Type, whatever its URL looks like. */
+export function contentTypeIsHls(contentType: string | null): boolean {
+    const type = (contentType ?? "").split(";")[0]?.trim().toLowerCase() ?? "";
+    return type === "application/vnd.apple.mpegurl" || type === "application/x-mpegurl";
+}
+
 /** True when a response body is worth saving as media. Extensionless URLs must say so in Content-Type. */
 export function contentTypeIsMedia(contentType: string | null): boolean {
     const type = (contentType ?? "").split(";")[0]?.trim().toLowerCase() ?? "";
