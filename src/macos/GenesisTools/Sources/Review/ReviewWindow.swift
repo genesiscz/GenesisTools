@@ -91,6 +91,9 @@ func runReview(_ args: [String]) -> Never {
         defer: false
     )
     window.title = "Review · \(model.repo.lastPathComponent)"
+    // The Context panel's tabs sit in the title bar row: AppKit's title drew over "Commits" (Martin,
+    // 2026-10-02). The title still names the window in the Window menu and Mission Control.
+    window.titleVisibility = .hidden
     window.titlebarAppearsTransparent = true
     window.appearance = NSAppearance(named: .darkAqua)
     window.backgroundColor = ReviewPalette.background
