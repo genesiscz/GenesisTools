@@ -176,6 +176,7 @@ enum HubBench {
             // Opt-in only (not in the default run): it scrolls the transcript, which loads rows.
             if only.contains("scroll"), model.panes.contains(.transcript) { addTranscriptScroll() }
             if only.contains("open"), model.mode == .sessions, model.panes.contains(.transcript) { addTranscriptOpen() }
+            if only.contains("panes"), model.mode == .sessions, model.panes.contains(.transcript) { addPaneToggle() }
             PerfLog.mark("hub.bench start: \(steps.count) steps, panes \(model.panes.map(\.rawValue).joined(separator: ","))")
             guard ProcessInfo.processInfo.environment["GENESIS_HUB_BENCH_AX"] == "1" else {
                 tick()
@@ -364,6 +365,64 @@ enum HubBench {
             }
         }
 
+
+        /// `panes` (opt-in, sessions mode): the Files pane opened and closed beside the transcript, which
+        /// makes the list narrower and its rows wrap again. First with the reader in the middle of the
+        /// transcript: every 50 ms `transcript.paneShift.<phase>` records where the row that was at the
+        /// viewport's top before the click sits now, in points from the top (0 all through: nothing moved).
+        /// Then at the latest turn: `transcript.paneEnd.<phase>` is the viewport end's distance from the
+        /// content's end. `GENESIS_HUB_BENCH_PANE` names the pane (default files).
+        private func addPaneToggle() {
+            order.append("panes")
+            let pane = ProcessInfo.processInfo.environment["GENESIS_HUB_BENCH_PANE"].flatMap(HubTab.init(rawValue:)) ?? .files
+            var reference: Int?
+            let table = { [weak self] () -> (NSTableView, NSClipView)? in
+                guard let self, let table = HubBench.largestTable(in: self.window.contentView), table.numberOfRows > 0,
+                      let clip = table.enclosingScrollView?.contentView else { return nil }
+                return (table, clip)
+            }
+            let toggle = Step(scenario: "panes", action: { [weak self] in self?.model.togglePane(pane) }, delay: 0.05)
+            if model.panes.contains(pane) {
+                steps.append(Step(scenario: "panes", action: { [weak self] in self?.model.togglePane(pane) }, delay: 1.0))
+            }
+            // The earlier turns fill in behind the first page for a few seconds: a row index taken
+            // meanwhile names another row after the next insert.
+            steps.append(Step(scenario: "panes", action: {}, delay: 8.0))
+            steps.append(Step(scenario: "panes", action: {
+                guard let (list, clip) = table(), let scroll = list.enclosingScrollView else { return }
+                // 40% down the content, by height: a row index lands near the end when the rows are long.
+                clip.scroll(to: NSPoint(x: 0, y: max(0, (list.frame.height - clip.bounds.height) * 0.4)))
+                scroll.reflectScrolledClipView(clip)
+            }, delay: 1.0))
+            steps.append(Step(scenario: "panes", action: {
+                guard let (list, clip) = table() else { return }
+                let range = list.rows(in: clip.bounds)
+                reference = (range.location..<range.location + range.length).first { list.rect(ofRow: $0).height > 2 }
+                PerfLog.mark(String(format: "hub.bench panes: reference row %@ of %d, viewport %.0f-%.0f of %.0f", reference.map(String.init) ?? "-", list.numberOfRows, clip.bounds.minY, clip.bounds.maxY, list.frame.height))
+            }, delay: 0.05))
+            for phase in ["open", "close"] {
+                steps.append(toggle)
+                for _ in 0..<30 {
+                    steps.append(Step(scenario: "panes", action: {
+                        guard let (list, clip) = table(), let row = reference, row < list.numberOfRows else { return }
+                        HubBench.note("transcript.paneShift.\(phase)", Int((list.rect(ofRow: row).minY - clip.bounds.minY).rounded()))
+                    }, delay: 0.05))
+                }
+            }
+            steps.append(Step(scenario: "panes", action: {
+                guard let (list, _) = table() else { return }
+                list.scrollRowToVisible(list.numberOfRows - 1)
+            }, delay: 1.0))
+            for phase in ["open", "close"] {
+                steps.append(toggle)
+                for _ in 0..<30 {
+                    steps.append(Step(scenario: "panes", action: {
+                        guard let (list, clip) = table() else { return }
+                        HubBench.note("transcript.paneEnd.\(phase)", Int((list.frame.height - clip.bounds.maxY).rounded()))
+                    }, delay: 0.05))
+                }
+            }
+        }
 
         private static func splitView(in view: NSView?) -> NSSplitView? {
             guard let view else { return nil }

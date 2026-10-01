@@ -59,6 +59,11 @@ public final class TranscriptScrollAnchor: ObservableObject {
     private var animatingToEnd = false
     /// The follow glides instead of jumping; off under Reduce Motion.
     private static let followDuration: TimeInterval = 0.2
+    /// The content's width at the last resize. A change (a pane opened beside the list) wraps the rows
+    /// again; at the latest turn the follow then jumps to the end instead of gliding there, since nothing
+    /// new arrived (`--bench` `panes`, 2026-10-02: 644 pt in one step, not four frames of glide).
+    private var documentWidth: CGFloat = 0
+    private var widthChangedAt: CFAbsoluteTime = 0
 
     /// Call before rows are inserted above the viewport. Until `seconds` pass, or the reader scrolls
     /// or clicks in the list, the viewport keeps its distance from the content's end.
@@ -119,6 +124,7 @@ public final class TranscriptScrollAnchor: ObservableObject {
         scrollView = scroll
         guard let document = scroll.documentView else { return }
         documentHeight = document.frame.height
+        documentWidth = document.frame.width
         document.postsFrameChangedNotifications = true
         scroll.contentView.postsBoundsChangedNotifications = true
         let center = NotificationCenter.default
@@ -160,6 +166,10 @@ public final class TranscriptScrollAnchor: ObservableObject {
         // The viewport has not moved yet: this is where its end sat before the resize.
         let before = documentHeight - scroll.contentView.bounds.maxY
         documentHeight = height
+        if abs(document.frame.width - documentWidth) > 0.5 {
+            documentWidth = document.frame.width
+            widthChangedAt = CFAbsoluteTimeGetCurrent()
+        }
         if let held {
             keep(held)
             // Only this move inside the resize costs the rows on screen their height listener.
@@ -222,7 +232,9 @@ public final class TranscriptScrollAnchor: ObservableObject {
                 self.follow = nil
                 // To the end itself (a glide, 2026-10-01): the few points the reader sat above it are
                 // the list's spacer, and a glide to a fixed distance fell behind rows measured mid-way.
-                self.keep(0, animated: true)
+                // Rows that wrap again after a width change are not new content: no glide (0.6 s covers
+                // the passes in which they measure).
+                self.keep(0, animated: CFAbsoluteTimeGetCurrent() - self.widthChangedAt > 0.6)
             }
         }
     }

@@ -2028,22 +2028,22 @@ struct SessionDetailView: View {
         VStack(spacing: 0) {
             header
             HStack(spacing: 0) {
-                if shown.count == 1, let only = shown.first {
-                    pane(only).freezesWidthWhileResizing()
-                } else {
-                    HSplitView {
-                        ForEach(shown, id: \.self) { tab in
-                            pane(tab)
-                                .freezesWidthWhileResizing(heavy: tab == .transcript)
-                                .frame(minWidth: tab.minPaneWidth, idealWidth: tab.idealPaneWidth, maxWidth: .infinity, maxHeight: .infinity)
-                        }
+                // One split view whatever the count: a pane that stays keeps its identity when another
+                // opens or closes. A single pane used to be a different branch, so opening Files beside
+                // the transcript made a new transcript, which loaded its page again and scrolled to the
+                // latest turn (Martin, 2026-10-02: "when i open Files, the transcript always jumps").
+                HSplitView {
+                    ForEach(shown, id: \.self) { tab in
+                        pane(tab)
+                            .freezesWidthWhileResizing(heavy: tab == .transcript)
+                            .frame(minWidth: tab.minPaneWidth, idealWidth: tab.idealPaneWidth, maxWidth: .infinity, maxHeight: .infinity)
                     }
-                    // The side panels' grip, target and cursor on the split's bare 1 pt dividers too.
-                    .overlay(PaneDividerGrips())
-                    // The split view too: its frame changing per window-resize step made the root
-                    // hosting view rebuild the key view loop each step (72 ms with two panes).
-                    .freezesWidthWhileResizing()
                 }
+                // The side panels' grip, target and cursor on the split's bare 1 pt dividers too.
+                .overlay(PaneDividerGrips())
+                // The split view too: its frame changing per window-resize step made the root
+                // hosting view rebuild the key view loop each step (72 ms with two panes).
+                .freezesWidthWhileResizing()
                 // Panes with no room left fold to rails at the edge instead of being pushed out of
                 // the window (at 900 pt the Files pane lay past the right edge, audit 2026-09-24).
                 ForEach(railed, id: \.self) { tab in
@@ -2088,7 +2088,7 @@ struct SessionDetailView: View {
                     HubSessionDetailHost(session: row, onShowChange: { path, line in
                         model.showChange(path: path, line: line)
                     }, showsSidebar: model.panes.count == 1, agentChild: true)
-                        .id("\(agent.key)|\(model.panes.count == 1)")
+                        .id(agent.key)
                 } else {
                     Text("This agent has no transcript file")
                         .foregroundColor(ReviewPalette.dim)
@@ -2100,7 +2100,7 @@ struct SessionDetailView: View {
                 }, onOpenSubagent: { agent in
                     model.openSubagent(sessionId: session.sessionId, agentId: agent.id)
                 }, showsSidebar: model.panes.count == 1, transcriptQuery: model.transcriptQuery)
-                    .id("\(session.id)|\(model.panes.count == 1)")
+                    .id(session.id)
             }
         case .changes:
             HubChangesPane(model: model)

@@ -216,6 +216,9 @@ public struct SessionDetailScreen<SidebarExtra: View>: View {
     public var sidebarExtraFirst = false
 
     @State private var showSidebar = true
+    /// What the host asks for now; a change (the hub opening a second pane) folds or opens the sidebar
+    /// without a new screen, which would load the transcript again and lose the reader's place.
+    private let showsSidebarRequest: Bool
     // The sidebar covers the transcript in a narrow pane (`SessionSidebarSplit`).
     @State private var sidebarCovers = false
 
@@ -241,6 +244,7 @@ public struct SessionDetailScreen<SidebarExtra: View>: View {
         self.sidebarExtraFirst = sidebarExtraFirst
         // A host that places the screen in a narrow pane starts it with the sidebar folded.
         _showSidebar = State(initialValue: showsSidebar)
+        showsSidebarRequest = showsSidebar
         self.info = info
         self.digest = digest
         self.document = document
@@ -296,6 +300,7 @@ public struct SessionDetailScreen<SidebarExtra: View>: View {
         // No clicks on the fill: in the title bar row they belong to the window's `.titlebarZone()`
         // (Window/WindowTitlebar.swift), which zooms on a double-click and drags.
         .background { SessionPalette.background.allowsHitTesting(false) }
+        .onChange(of: showsSidebarRequest) { _, wanted in showSidebar = wanted }
         // The header's first row IS the titlebar row: it draws under the traffic lights.
         .ignoresSafeArea(.container, edges: .top)
         .environment(\.colorScheme, .dark)
