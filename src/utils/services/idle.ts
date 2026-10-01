@@ -13,7 +13,8 @@ export interface IdleDecision {
     stop: boolean;
 }
 
-function stateKey(row: ServiceRow): string {
+/** The idle-state key of one running instance: a restarted server starts a fresh idle window. */
+export function stateKey(row: ServiceRow): string {
     return `${row.id}@${row.startedAt ?? row.pid}`;
 }
 

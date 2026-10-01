@@ -313,7 +313,15 @@ async function offerServiceRestarts(): Promise<void> {
     }
 
     out.println(pc.dim(`\n  ${stale} service(s) run code from before this update.`));
-    // Only the stale ones, as the non-interactive hint says: the update never restarts a current server.
+    // A restart interrupts whoever uses the server, so it is asked for, default no. `restart --stale`
+    // itself picks the stale rows without a prompt, so this confirm is the only one.
+    const restart = await p.confirm({ message: `Restart the ${stale} stale service(s) now?`, initialValue: false });
+
+    if (p.isCancel(restart) || !restart) {
+        out.println(pc.dim(`  Later: ${command}`));
+        return;
+    }
+
     await execToolInteractive(["services", "restart", "--stale"]);
 }
 

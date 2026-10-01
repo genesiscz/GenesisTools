@@ -3,7 +3,7 @@ import type { PsRow } from "@genesiscz/utils/process/ps";
 import { isProcessAlive } from "@genesiscz/utils/process-alive";
 import { classifyPid } from "@genesiscz/utils/process-identity";
 import { getDashboard } from "@genesiscz/utils/ui/dashboards";
-import { clientPortsFrom, connectedPorts, idleDecisions } from "./idle";
+import { clientPortsFrom, connectedPorts, idleDecisions, stateKey } from "./idle";
 import {
     type LaunchdJob,
     listServices,
@@ -193,6 +193,13 @@ describe("idleDecisions", () => {
         relaunch: null,
     });
     const HOUR = 3_600_000;
+
+    test("the reaper resets idle time under the same key idleDecisions reads (stateKey)", () => {
+        const r = row("idle", "detached");
+        const { next } = idleDecisions({ rows: [r], active: () => true, state: {}, now: 5000, idleMs: 1000 });
+
+        expect(Object.keys(next)).toEqual([stateKey(r)]);
+    });
 
     test("only a detached service with a port, idle for the whole window, is stopped", () => {
         const rows = [

@@ -6,7 +6,13 @@ import { formatDuration, formatList } from "@genesiscz/utils/format";
 import { logger, out } from "@genesiscz/utils/logger";
 import { sendNotification } from "@genesiscz/utils/macos/notifications";
 import * as p from "@genesiscz/utils/prompts/p";
-import { idleDecisions, readClientPorts, readIdleState, writeIdleState } from "@genesiscz/utils/services/idle";
+import {
+    idleDecisions,
+    readClientPorts,
+    readIdleState,
+    stateKey,
+    writeIdleState,
+} from "@genesiscz/utils/services/idle";
 import { listServices, type ServiceRow } from "@genesiscz/utils/services/inventory";
 import { restartService, stopService } from "@genesiscz/utils/services/lifecycle";
 import { type StaleRow, withStaleness } from "@genesiscz/utils/services/stale";
@@ -221,7 +227,7 @@ program
             if (!now || (decision.row.port !== null && now.has(decision.row.port))) {
                 if (now) {
                     // Used again just now: the idle window starts over instead of keeping the stale time.
-                    next[decision.row.id] = Date.now();
+                    next[stateKey(decision.row)] = Date.now();
                 }
 
                 out.println(`${decision.row.id}: ${now ? "a client connected, kept" : "connections unreadable, kept"}`);
