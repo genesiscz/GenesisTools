@@ -13,6 +13,7 @@ import { loadPins } from "@genesiscz/utils/agent-sessions/pins";
 import type { AccountProviderAlias } from "@genesiscz/utils/ai/providers/aliases";
 import { PROVIDER_ALIASES } from "@genesiscz/utils/ai/providers/aliases";
 import { grokAccountNameLookup } from "@genesiscz/utils/ai/providers/plugins/grok-sub/discover";
+import { loadAllSessionCmuxRefs, resolveRefsProvider, type SessionCmuxRefs } from "@genesiscz/utils/cmux/session-refs";
 import { logger } from "@genesiscz/utils/logger";
 import { collapsePath } from "@genesiscz/utils/paths";
 
@@ -164,6 +165,40 @@ function accountOf(
 }
 
 /**
+ * The journal location for this row, or null when the newest line is another agent's or names
+ * no cmux surface. An untagged line goes through `resolveRefsProvider`: a Claude-shaped id is
+ * Claude's. An id it cannot place is a historical Codex line (Codex wrote untagged lines before
+ * the tag existed; Grok lines were always tagged), so only a Codex row takes it.
+ */
+export function cmuxLocationForRow(
+    sessionId: string,
+    provider: AccountProviderAlias,
+    refs: Map<string, SessionCmuxRefs>
+): SessionCmuxLocation | null {
+    const entry = refs.get(sessionId.toLowerCase());
+
+    if (!entry || (!entry.surfaceId && !entry.surfaceRef)) {
+        return null;
+    }
+
+    const owner = resolveRefsProvider(entry, undefined) ?? "codex";
+
+    if (owner !== provider) {
+        return null;
+    }
+
+    return {
+        workspaceId: entry.workspaceId ?? null,
+        workspaceRef: entry.workspaceRef ?? null,
+        paneRef: entry.paneRef ?? null,
+        surfaceId: entry.surfaceId ?? null,
+        surfaceRef: entry.surfaceRef ?? null,
+        windowRef: entry.windowRef ?? null,
+        at: entry.at ?? 0,
+    };
+}
+
+/**
  * Codex and Grok rows, straight off the shared history index.
  *
  * `PR #370` made `openHistoryService` provider-generic; only `getSessionListing` in the Claude
@@ -191,6 +226,7 @@ async function nativeRows(
     });
     // One config read for the whole listing, not one per grok row.
     const grokLookup = alias === "grok" ? await grokAccountNameLookup() : () => undefined;
+    const refs = loadAllSessionCmuxRefs();
     const rows: AgentSessionRow[] = [];
 
     for (const record of metadata) {
@@ -229,6 +265,7 @@ async function nativeRows(
             filePath: record.filePath,
             ...(record.sourceHome ? { sourceHome: record.sourceHome } : {}),
             archived: record.archived,
+            cmux: cmuxLocationForRow(record.sessionId, alias, refs),
             ...cache,
         });
     }

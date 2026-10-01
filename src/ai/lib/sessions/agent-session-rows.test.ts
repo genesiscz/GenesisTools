@@ -3,8 +3,9 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CODEX_CACHE_TTL_MS, computeCacheStatus, GROK_CACHE_TTL_MS } from "@app/claude/lib/usage/session-rows";
+import type { SessionCmuxRefs } from "@genesiscz/utils/cmux/session-refs";
 import { env } from "@genesiscz/utils/env";
-import { type AgentSessionRow, listAgentSessionRows } from "./agent-session-rows";
+import { type AgentSessionRow, cmuxLocationForRow, listAgentSessionRows } from "./agent-session-rows";
 
 /**
  * The contract this file pins is the ROW SHAPE, because a reader outside this repo (the
@@ -105,6 +106,55 @@ test("a claude row is the same shape with the extra fields filled", () => {
     expect(claudeRow.cacheStatus).toBe("HOT");
     expect(claudeRow.cacheLifetimeSec).toBe(3600);
     expect(claudeRow.contextTokens).toBe(505_000);
+});
+
+test("a grok row takes a grok journal line and ignores an untagged or claude one", () => {
+    const grokId = "01a0aaaa-bbbb-7ccc-8ddd-eeeeeeeeeeee";
+    const location = {
+        workspaceId: "ws",
+        surfaceId: "surface-1",
+        workspaceRef: null,
+        paneRef: null,
+        surfaceRef: "surface:1",
+        windowRef: null,
+        tmuxPane: null,
+        cwd: "/tmp/grok-session",
+        at: 10,
+    };
+    const refs = new Map<string, SessionCmuxRefs>([
+        [grokId, { ...location, sessionId: grokId, provider: "grok" }],
+        ["untagged", { ...location, sessionId: "untagged", surfaceId: "surface-2" }],
+        ["claude-id", { ...location, sessionId: "claude-id", provider: "claude", surfaceId: "surface-3" }],
+    ]);
+
+    expect(cmuxLocationForRow(grokId, "grok", refs)?.surfaceId).toBe("surface-1");
+    expect(cmuxLocationForRow("untagged", "grok", refs)).toBeNull();
+    expect(cmuxLocationForRow("claude-id", "grok", refs)).toBeNull();
+    expect(cmuxLocationForRow(grokId, "claude", refs)).toBeNull();
+});
+
+test("a codex row takes an untagged journal line with a codex id", () => {
+    const codexId = "019a0aaa-bbbb-7ccc-8ddd-eeeeeeeeeeee";
+    const refs = new Map<string, SessionCmuxRefs>([
+        [
+            codexId,
+            {
+                sessionId: codexId,
+                workspaceId: "ws",
+                surfaceId: "surface-9",
+                workspaceRef: null,
+                paneRef: null,
+                surfaceRef: "surface:9",
+                windowRef: null,
+                tmuxPane: null,
+                cwd: "/tmp/codex-session",
+                at: 10,
+            },
+        ],
+    ]);
+
+    expect(cmuxLocationForRow(codexId, "codex", refs)?.surfaceId).toBe("surface-9");
+    expect(cmuxLocationForRow(codexId, "grok", refs)).toBeNull();
 });
 
 test("a provider that cannot be listed adds no rows, or with failClosed fails the listing", async () => {

@@ -21,8 +21,8 @@ const { log } = logger.scoped("agent-cmux");
  * fallback that searches session TITLES, which read Claude's history index; `ResolveDeps`
  * already declares that as an injection point, so this supplies the right index per agent.
  *
- * ⚠️ Grok writes nothing to that journal yet, so a `tools grok cmux focus` falls back to the
- * title and pane-text matchers rather than the recorded shortcut.
+ * Grok's hook stdin names the session `sessionId`. The recorder accepts that and tags
+ * the line `provider: "grok"`.
  */
 
 /** This agent's sessions in the shape the pane matcher wants. */
