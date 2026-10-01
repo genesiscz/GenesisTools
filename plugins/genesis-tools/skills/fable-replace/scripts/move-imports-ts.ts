@@ -1425,18 +1425,26 @@ export const planTsImportFixes = (params: PlanImportFixesParams): FileEdit[] => 
 
         // A cheap pre-filter before resolving every statement: an importer's specifier spells the
         // file's name or its folder's, unless an exact `paths` alias (`"@helpers"`) names it.
+        // The alias comes from the importer's own tsconfig, which in a monorepo is not the source's.
         const stem = path.basename(withoutExt(sourceAbs));
-        const hints = [
-            stem === "index" ? path.basename(path.dirname(sourceAbs)) : stem,
-            ...resolver.exactAliases(path.dirname(sourceAbs), sourceAbs),
-        ];
+        const nameHint = stem === "index" ? path.basename(path.dirname(sourceAbs)) : stem;
+        const aliasHints = new Map<string, string[]>();
+        const hintsFor = (dir: string): string[] => {
+            let aliases = aliasHints.get(dir);
+            if (aliases === undefined) {
+                aliases = resolver.exactAliases(dir, sourceAbs);
+                aliasHints.set(dir, aliases);
+            }
+
+            return [nameHint, ...aliases];
+        };
         for (const file of files) {
             if (file === sourceAbs) {
                 continue;
             }
 
             const text = plans.get(file)?.text ?? read(file);
-            if (text === undefined || !hints.some((hint) => text.includes(hint))) {
+            if (text === undefined || !hintsFor(path.dirname(file)).some((hint) => text.includes(hint))) {
                 continue;
             }
 

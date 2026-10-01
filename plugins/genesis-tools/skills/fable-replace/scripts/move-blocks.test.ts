@@ -1268,3 +1268,117 @@ describe("PR #444 review round 1", () => {
         expect(read(dir, "b.ts")).toStartWith('import { helper } from "./dep";\n');
     });
 });
+describe("PR #444 review round 2", () => {
+    const write = (dir: string, files: Record<string, string>): void => {
+        for (const [file, content] of Object.entries(files)) {
+            mkdirSync(dirname(join(dir, file)), { recursive: true });
+            writeFileSync(join(dir, file), content);
+        }
+    };
+    const read = (dir: string, file: string): string => readFileSync(join(dir, file), "utf8");
+    const lineOf = (text: string, needle: string): number => text.split("\n").findIndex((l) => l.includes(needle)) + 1;
+
+    test("t7: a qualified name inside a block moved to ANOTHER target of the same batch follows the class", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "fr-r2-two-targets-"));
+        write(dir, {
+            "composer.json": '{ "autoload": { "psr-4": { "App\\\\": "app/" } } }\n',
+            "app/Support/Legacy.php": [
+                "<?php",
+                "",
+                "namespace App\\Support;",
+                "",
+                "final class Money",
+                "{",
+                "}",
+                "",
+                "class Legacy",
+                "{",
+                "    public function price(): \\App\\Support\\Money",
+                "    {",
+                "        return new \\App\\Support\\Money();",
+                "    }",
+                "}",
+                "",
+                "class Keep",
+                "{",
+                "}",
+                "",
+            ].join("\n"),
+        });
+        const edits = parseSpec({
+            text: [
+                "@@ app/Support/Legacy.php",
+                "<<< move to=app/Values/Money.php symbol=Money imports=fix",
+                ">>>",
+                "<<< move to=app/Services/Legacy.php symbol=Legacy imports=fix",
+                ">>>",
+                "",
+            ].join("\n"),
+            cwd: dir,
+        });
+        await run({ cwd: dir, verbose: false, edits });
+        const legacy = read(dir, "app/Services/Legacy.php");
+        expect(legacy).toContain("public function price(): \\App\\Values\\Money");
+        expect(legacy).toContain("return new \\App\\Values\\Money();");
+        expect(legacy).not.toContain("App\\Support\\Money");
+    });
+
+    test("t7: a user that moves its qualified reference away is counted after its own cut", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "fr-r2-user-cut-"));
+        const controller = [
+            "<?php",
+            "",
+            "namespace App\\Http;",
+            "",
+            "class Controller",
+            "{",
+            "    public function total(): int",
+            "    {",
+            "        return \\App\\Support\\Money::cents();",
+            "    }",
+            "}",
+            "",
+        ].join("\n");
+        write(dir, {
+            "composer.json": '{ "autoload": { "psr-4": { "App\\\\": "app/" } } }\n',
+            "app/Support/Money.php":
+                "<?php\n\nnamespace App\\Support;\n\nfinal class Money\n{\n}\n\nclass Keep\n{\n}\n",
+            "app/Http/Controller.php": controller,
+            "app/Services/Store.php": "<?php\n\nnamespace App\\Services;\n\nclass Store\n{\n    // methods\n}\n",
+        });
+        const first = lineOf(controller, "public function total");
+        const edits = parseSpec({
+            text: [
+                "@@ app/Support/Money.php",
+                "<<< move to=app/Values/Money.php symbol=Money imports=fix",
+                ">>>",
+                "@@ app/Http/Controller.php",
+                `<<< move to=app/Services/Store.php lines=${first}-${first + 3} at=after imports=fix`,
+                "    // methods",
+                ">>>",
+                "",
+            ].join("\n"),
+            cwd: dir,
+        });
+        await run({ cwd: dir, verbose: false, edits });
+        expect(read(dir, "app/Services/Store.php")).toContain("return \\App\\Values\\Money::cents();");
+        expect(read(dir, "app/Http/Controller.php")).not.toContain("Money");
+    });
+
+    test("t8: an importer whose OWN tsconfig names the source through an exact alias is re-pointed", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "fr-r2-consumer-alias-"));
+        write(dir, {
+            "packages/shared/tsconfig.json": '{ "compilerOptions": { "strict": true } }\n',
+            "packages/shared/utils.ts": "export const keep = 1;\n\nexport const moved = 2;\n",
+            "packages/app/tsconfig.json":
+                '{ "compilerOptions": { "baseUrl": ".", "paths": { "@helpers": ["../shared/utils.ts"] } } }\n',
+            "packages/app/a.ts": 'import { moved } from "@helpers";\n\nexport const a = moved;\n',
+        });
+        const edits = parseSpec({
+            text: "@@ packages/shared/utils.ts\n<<< move to=packages/shared/moved.ts symbol=moved imports=fix\n>>>\n",
+            cwd: dir,
+        });
+        await run({ cwd: dir, verbose: false, edits });
+        expect(read(dir, "packages/app/a.ts")).toStartWith('import { moved } from "../shared/moved";\n');
+    });
+});

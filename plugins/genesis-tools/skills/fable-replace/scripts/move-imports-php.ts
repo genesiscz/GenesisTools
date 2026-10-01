@@ -413,6 +413,28 @@ export const planPhpImportFixes = (params: PlanImportFixesParams): FileEdit[] =>
     const phpFiles = allFiles.filter((file) => file.endsWith(".php"));
     // Non-PHP text that can name a class: analyser baselines, YAML/JSON/XML config, docs.
     const textFiles = allFiles.filter((file) => TEXT_FILE.test(file));
+    // A file's text once the whole batch is applied: its own text without the blocks cut from it,
+    // plus every block pasted into it, whichever source and target the move names.
+    const finalTexts = new Map<string, string>();
+    const finalText = (abs: string): string => {
+        let text = finalTexts.get(abs);
+        if (text === undefined) {
+            text = moves.reduce(
+                (current, move) => (move.fromAbs === abs ? current.replace(move.cutText, "") : current),
+                read(abs) ?? ""
+            );
+            text += moves
+                .filter((move) => move.toAbs === abs)
+                .map((move) => `\n${move.blockText}`)
+                .join("");
+            finalTexts.set(abs, text);
+        }
+
+        return text;
+    };
+    const touchedPhp = [...new Set([...phpFiles, ...moves.flatMap((move) => [move.fromAbs, move.toAbs])])].filter(
+        (file) => file.endsWith(".php")
+    );
 
     for (const sourceAbs of [...new Set(fixing.map((move) => move.fromAbs))]) {
         const source = planFor(sourceAbs);
@@ -602,17 +624,13 @@ export const planPhpImportFixes = (params: PlanImportFixesParams): FileEdit[] =>
                     expect: count,
                     label: `imports=fix: \\${oldFqn} → \\${newFqn}`,
                 });
-                // The moved code and the code that stays can write the class out in full too.
-                const inRemaining = [...remaining.matchAll(qualified)].length;
-                if (inRemaining > 0) {
-                    source.ops.push(qualifiedOp(inRemaining));
-                }
-
-                const inTarget =
-                    [...target.text.matchAll(qualified)].length +
-                    toTarget.reduce((sum, move) => sum + [...move.blockText.matchAll(qualified)].length, 0);
-                if (inTarget > 0) {
-                    target.ops.push(qualifiedOp(inTarget));
+                // `\Old\Ns\Class` written out (in code, or in a double-quoted string of one backslash),
+                // counted on each file's final text: the code that stays, every moved block, every user.
+                for (const file of touchedPhp) {
+                    const written = [...finalText(file).matchAll(qualified)].length;
+                    if (written > 0) {
+                        planFor(file).ops.push(qualifiedOp(written));
+                    }
                 }
 
                 const stillUsed =
@@ -675,19 +693,6 @@ export const planPhpImportFixes = (params: PlanImportFixesParams): FileEdit[] =>
                             : callsIn(plan.masked, declaration.name));
                     if (bareUser) {
                         plan.added.push(entry);
-                    }
-
-                    // `\Old\Ns\Class` written out: in code, or in a double-quoted string of one backslash.
-                    // The target's are counted below, together with the moved code pasted into it.
-                    const written = file === targetAbs ? 0 : [...plan.text.matchAll(qualified)].length;
-                    if (written > 0) {
-                        plan.ops.push({
-                            kind: "regex",
-                            find: qualified,
-                            replace: () => `\\${newFqn}`,
-                            expect: written,
-                            label: `imports=fix: \\${oldFqn} → \\${newFqn}`,
-                        });
                     }
 
                     // The name inside a string: configs, container bindings. A warning, with the op.
