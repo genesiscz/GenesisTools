@@ -1,4 +1,4 @@
-import { chmodSync, cpSync, existsSync, mkdirSync, renameSync, rmSync, statSync } from "node:fs";
+import { chmodSync, cpSync, existsSync, mkdirSync, readdirSync, renameSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { logger } from "@genesiscz/utils/logger";
 import { liveBlobDir, liveIdbDir, snapshotDir } from "./paths";
@@ -57,12 +57,22 @@ export function snapshotTeamsIdb(): SnapshotPaths {
     return { leveldbDir, blobDir, dumpDir };
 }
 
-export function liveIdbMtimeMs(): number {
-    const current = join(liveIdbDir(), "CURRENT");
-
-    if (existsSync(current)) {
-        return statSync(current).mtimeMs;
+// LevelDB appends new records to its .log file and rewrites CURRENT only when it rolls the manifest,
+// so the newest mtime of any file in the directory is the only reliable "something changed" signal.
+export function liveIdbMtimeMs(dir: string = liveIdbDir()): number {
+    if (!existsSync(dir)) {
+        return 0;
     }
 
-    return existsSync(liveIdbDir()) ? statSync(liveIdbDir()).mtimeMs : 0;
+    let newest = statSync(dir).mtimeMs;
+
+    for (const name of readdirSync(dir)) {
+        try {
+            newest = Math.max(newest, statSync(join(dir, name)).mtimeMs);
+        } catch {
+            // LevelDB deletes compacted files while we list them.
+        }
+    }
+
+    return newest;
 }
