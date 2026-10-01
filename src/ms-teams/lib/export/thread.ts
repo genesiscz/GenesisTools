@@ -21,6 +21,8 @@ export function exportThread(cache: TeamsCache, conversationId: string, opts: Li
     }
 
     const messages = cache.listMessages(conversationId, opts);
+    const lastSyncAt = Number(cache.getMeta("last_seen_at") ?? 0);
+    const retainedCount = messages.filter((m) => m.lastSeenAt !== null && m.lastSeenAt < lastSyncAt).length;
     const byId = new Map(messages.map((m) => [m.id, m]));
     const exported = messages.map((row) => toExported(row, byId));
     const first = messages[0];
@@ -46,6 +48,7 @@ export function exportThread(cache: TeamsCache, conversationId: string, opts: Li
             cachedFrom,
             cachedTo,
             messageCount: exported.length,
+            retainedCount,
             completenessNote: COMPLETENESS_NOTE,
         },
         messages: exported,
@@ -83,7 +86,18 @@ function toExported(row: MessageRow, byId: Map<string, MessageRow>): ExportedMes
         attachments: parseJsonArray<Attachment>(row.attachmentsJson),
         call: row.messageType === "Event/Call" ? { state: row.text || "call" } : null,
         system,
+        deletedAt: row.deletedAt ? new Date(row.deletedAt).toISOString() : null,
     };
+}
+
+export function messageCountLabel(conversation: ThreadExport["conversation"]): string {
+    const base = `${conversation.messageCount} messages`;
+
+    if (conversation.retainedCount > 0) {
+        return `${base} (${conversation.retainedCount} kept from earlier syncs)`;
+    }
+
+    return base;
 }
 
 function parseJsonArray<T>(raw: string): T[] {

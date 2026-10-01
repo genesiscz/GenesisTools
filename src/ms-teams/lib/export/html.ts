@@ -3,6 +3,7 @@ import { parseAmsObjectId } from "../disk-cache";
 import { isImageAttachment, toFileUrl } from "../media";
 import type { Attachment, ThreadExport } from "../types";
 import { EXPORT_IMAGE_STYLE } from "./image-embed";
+import { messageCountLabel } from "./thread";
 
 export function renderHtml(thread: ThreadExport): string {
     const { conversation, messages } = thread;
@@ -68,7 +69,7 @@ export function renderHtml(thread: ThreadExport): string {
 </head>
 <body>
 <h1>${escapeHtml(conversation.title)}</h1>
-<p class="meta">${escapeHtml(conversation.type)} · ${conversation.messageCount} messages · ${escapeHtml(conversation.cachedFrom ?? "—")} → ${escapeHtml(conversation.cachedTo ?? "—")}</p>
+<p class="meta">${escapeHtml(conversation.type)} · ${escapeHtml(messageCountLabel(conversation))} · ${escapeHtml(conversation.cachedFrom ?? "—")} → ${escapeHtml(conversation.cachedTo ?? "—")}</p>
 <p class="meta">${escapeHtml(conversation.completenessNote)}</p>
 ${items}
 </body>

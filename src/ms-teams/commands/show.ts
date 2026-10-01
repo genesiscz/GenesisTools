@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import { dirname, extname, join } from "node:path";
 import { downloadAttachments } from "@app/ms-teams/lib/attachments";
@@ -12,6 +13,7 @@ import { mergeShowQuery, parseQueryDate, parseShowQuery } from "@app/ms-teams/li
 import { resolveConversation } from "@app/ms-teams/lib/resolve-chat";
 import type { ThreadExport } from "@app/ms-teams/lib/types";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
 
@@ -29,6 +31,7 @@ export function registerShowCommand(program: Command): void {
         .option("--out <path>", "Write to a file or directory")
         .option("--attachments", "Try to download files next to --out")
         .option("--include-system", "Keep member-join and similar system events in md/html")
+        .option("--allow-shrink", "Overwrite an --out file that holds more messages than this export")
         .action(async (queryParts: string[], opts: ShowFlags) => {
             const cache = openCache();
 
@@ -74,7 +77,7 @@ export function registerShowCommand(program: Command): void {
 
                 if (opts.json || format === "json") {
                     if (opts.out) {
-                        await writeOut(opts.out, rendered, "json");
+                        await writeOut({ outPath: opts.out, body: rendered, ext: "json", thread, opts });
                     } else {
                         out.result(thread);
                     }
@@ -83,7 +86,8 @@ export function registerShowCommand(program: Command): void {
                 }
 
                 if (opts.out) {
-                    const dest = await writeOut(opts.out, rendered, format === "html" ? "html" : "md");
+                    const ext = format === "html" ? "html" : "md";
+                    const dest = await writeOut({ outPath: opts.out, body: rendered, ext, thread, opts });
                     out.println(`Wrote ${dest} (${thread.messages.length} messages).`);
                     return;
                 }
@@ -111,6 +115,7 @@ interface ShowFlags {
     out?: string;
     attachments?: boolean;
     includeSystem?: boolean;
+    allowShrink?: boolean;
 }
 
 function renderThread(thread: ThreadExport, format: string): string {
@@ -129,12 +134,50 @@ function renderThread(thread: ThreadExport, format: string): string {
     throw new Error(`Unsupported format: ${format}. Use md, json, or html.`);
 }
 
-async function writeOut(outPath: string, body: string, ext: string): Promise<string> {
+async function writeOut({
+    outPath,
+    body,
+    ext,
+    thread,
+    opts,
+}: {
+    outPath: string;
+    body: string;
+    ext: string;
+    thread: ThreadExport;
+    opts: ShowFlags;
+}): Promise<string> {
     const looksDir = outPath.endsWith("/") || extname(outPath) === "";
     const filePath = looksDir ? join(outPath, `thread.${ext}`) : outPath;
+    const existingCount = existsSync(filePath) ? await exportedMessageCount(filePath) : null;
+
+    if (existingCount !== null && existingCount > thread.conversation.messageCount && !opts.allowShrink) {
+        throw new Error(
+            `${filePath} holds ${existingCount} messages; this export has ${thread.conversation.messageCount}. ` +
+                `Refusing to shrink it. Write elsewhere, or pass --allow-shrink.`
+        );
+    }
+
     await mkdir(dirname(filePath), { recursive: true });
     await Bun.write(filePath, body);
     return filePath;
+}
+
+export async function exportedMessageCount(filePath: string): Promise<number | null> {
+    const text = await Bun.file(filePath).text();
+
+    if (text.trimStart().startsWith("{")) {
+        try {
+            const parsed = SafeJSON.parse(text, { strict: true }) as { conversation?: { messageCount?: unknown } };
+            const count = parsed.conversation?.messageCount;
+            return typeof count === "number" ? count : null;
+        } catch {
+            return null;
+        }
+    }
+
+    const match = /· (\d+) messages\b/.exec(text.slice(0, 4000));
+    return match ? Number(match[1]) : null;
 }
 
 async function withDownloads(thread: ThreadExport, outPath: string): Promise<ThreadExport> {

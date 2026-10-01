@@ -31,6 +31,7 @@ export interface ParsedMessage {
     mentions: { id: string; name: string }[];
     links: string[];
     attachments: ReturnType<typeof parseAttachments>;
+    deletedAt: number | null;
     raw: unknown;
 }
 
@@ -222,6 +223,7 @@ export function parseMessage(raw: unknown, conversationId: string, meMri: string
         mentions: parseMentions(rec.properties),
         links: parseLinks(rec.properties),
         attachments: parseAttachments(rec.properties, html),
+        deletedAt: numberish(asRecord(rec.properties)?.deletetime),
         raw,
     };
 }

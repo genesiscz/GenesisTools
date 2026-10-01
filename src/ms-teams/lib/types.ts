@@ -41,6 +41,7 @@ export interface ExportedMessage {
     attachments: Attachment[];
     call: { state: string; durationSec?: number } | null;
     system: string | null;
+    deletedAt: string | null;
 }
 
 export interface ThreadExport {
@@ -53,6 +54,8 @@ export interface ThreadExport {
         cachedFrom: string | null;
         cachedTo: string | null;
         messageCount: number;
+        /** Messages the Teams client cache no longer holds, kept from earlier syncs. */
+        retainedCount: number;
         completenessNote: string;
     };
     messages: ExportedMessage[];
@@ -86,6 +89,8 @@ export interface MessageRow {
     mentionsJson: string;
     linksJson: string;
     attachmentsJson: string;
+    deletedAt: number | null;
+    lastSeenAt: number | null;
 }
 
 export interface PeopleRow {

@@ -39,6 +39,7 @@ function threadWithImage(): ThreadExport {
         ],
         call: null,
         system: null,
+        deletedAt: null,
     };
 
     return {
@@ -51,6 +52,7 @@ function threadWithImage(): ThreadExport {
             cachedFrom: message.time,
             cachedTo: message.time,
             messageCount: 1,
+            retainedCount: 0,
             completenessNote: COMPLETENESS_NOTE,
         },
         messages: [message],

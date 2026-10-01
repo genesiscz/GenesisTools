@@ -17,6 +17,8 @@ export interface IngestResult {
     conversations: number;
     messages: number;
     people: number;
+    /** Messages in the store after this sync, including ones the Teams cache has dropped. */
+    storedMessages: number;
     dumpCounts: Record<string, number>;
 }
 
@@ -39,7 +41,7 @@ async function ingestIndexedDbLocked(opts: { force?: boolean }): Promise<IngestR
             if (stored > 0 && live > 0 && live <= stored) {
                 const counts = existing.counts();
                 log.debug({ stored, live }, "[ms-teams] cache is current; skip snapshot");
-                return { ...counts, dumpCounts: {} };
+                return { ...counts, storedMessages: counts.messages, dumpCounts: {} };
             }
         } finally {
             existing.close();
@@ -63,7 +65,7 @@ async function ingestIndexedDbLocked(opts: { force?: boolean }): Promise<IngestR
             log.debug({ mtimeBefore, mtimeAfter }, "[ms-teams] IDB changed during snapshot; next sync will re-ingest");
         }
 
-        return { ...counts, dumpCounts };
+        return { ...counts, storedMessages: cache.counts().messages, dumpCounts };
     } finally {
         cache.close();
     }

@@ -47,6 +47,7 @@ describe("renderHtml", () => {
                 cachedFrom: null,
                 cachedTo: null,
                 messageCount: 1,
+                retainedCount: 0,
                 completenessNote: COMPLETENESS_NOTE,
             },
             messages: [
@@ -75,6 +76,7 @@ describe("renderHtml", () => {
                     ],
                     call: null,
                     system: null,
+                    deletedAt: null,
                 },
             ],
         };

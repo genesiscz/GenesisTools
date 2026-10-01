@@ -4,6 +4,7 @@ import { teamsHtmlToMarkdown } from "../html-to-markdown";
 import { isImageAttachment } from "../media";
 import type { Attachment, ExportedMessage, ThreadExport } from "../types";
 import { sizeMarkdownImages } from "./image-embed";
+import { messageCountLabel } from "./thread";
 
 const log = logger.scoped("ms-teams").log;
 
@@ -13,7 +14,7 @@ export function renderMarkdown(thread: ThreadExport): string {
     lines.push(`# ${conversation.title}`);
     lines.push("");
     lines.push(
-        `${conversation.type} · ${conversation.messageCount} messages · cached ${conversation.cachedFrom ?? "—"} → ${conversation.cachedTo ?? "—"}`
+        `${conversation.type} · ${messageCountLabel(conversation)} · cached ${conversation.cachedFrom ?? "—"} → ${conversation.cachedTo ?? "—"}`
     );
     lines.push("");
     lines.push(`_${conversation.completenessNote}_`);
@@ -45,8 +46,16 @@ export function renderMarkdown(thread: ThreadExport): string {
             lines.push(`*${message.system}*`);
         } else if (body) {
             lines.push(body);
-        } else if (message.attachments.length === 0) {
+        } else if (message.attachments.length === 0 && !message.deletedAt) {
             lines.push("_(no text)_");
+        }
+
+        if (message.deletedAt) {
+            if (body) {
+                lines.push("");
+            }
+
+            lines.push("_(deleted in Teams)_");
         }
 
         if (message.reactions.length > 0) {

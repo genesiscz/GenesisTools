@@ -65,44 +65,12 @@ export class TeamsCache {
             last_preview TEXT,
             member_count INTEGER NOT NULL DEFAULT 0
         )`);
-        this.db.run(`CREATE TABLE IF NOT EXISTS messages (
-            id TEXT PRIMARY KEY,
-            conversation_id TEXT NOT NULL,
-            sequence_id INTEGER,
-            version INTEGER,
-            original_arrival_time INTEGER NOT NULL,
-            from_mri TEXT,
-            from_name TEXT,
-            is_from_me INTEGER NOT NULL DEFAULT 0,
-            message_type TEXT NOT NULL,
-            text TEXT,
-            html TEXT,
-            reply_to_id TEXT,
-            reactions_json TEXT NOT NULL DEFAULT '[]',
-            mentions_json TEXT NOT NULL DEFAULT '[]',
-            links_json TEXT NOT NULL DEFAULT '[]',
-            attachments_json TEXT NOT NULL DEFAULT '[]'
-        )`);
-        this.db.run(
-            `CREATE INDEX IF NOT EXISTS idx_messages_conv_time ON messages(conversation_id, original_arrival_time)`
-        );
+        this.db.run(messagesTableSql("messages"));
         this.db.run(`CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
             text, content=messages, content_rowid=rowid, tokenize='unicode61'
         )`);
-        try {
-            this.db.run(`CREATE TRIGGER messages_ai AFTER INSERT ON messages BEGIN
-                INSERT INTO messages_fts(rowid, text) VALUES (new.rowid, new.text);
-            END`);
-            this.db.run(`CREATE TRIGGER messages_ad AFTER DELETE ON messages BEGIN
-                INSERT INTO messages_fts(messages_fts, rowid, text) VALUES('delete', old.rowid, old.text);
-            END`);
-            this.db.run(`CREATE TRIGGER messages_au AFTER UPDATE ON messages BEGIN
-                INSERT INTO messages_fts(messages_fts, rowid, text) VALUES('delete', old.rowid, old.text);
-                INSERT INTO messages_fts(rowid, text) VALUES (new.rowid, new.text);
-            END`);
-        } catch (err) {
-            log.debug({ err }, "[ms-teams] fts triggers already exist");
-        }
+        this.migrateMessagesToRetainedSchema();
+        this.createMessageIndexAndTriggers();
         this.db.run(`CREATE TABLE IF NOT EXISTS people (
             mri TEXT PRIMARY KEY,
             display_name TEXT NOT NULL,
@@ -133,12 +101,62 @@ export class TeamsCache {
         )`);
     }
 
+    /**
+     * Stores from before message retention keyed messages by id alone and had no
+     * deleted_at / last_seen_at. Copy them into the new table keeping each rowid,
+     * so the external-content FTS index stays valid.
+     */
+    private migrateMessagesToRetainedSchema(): void {
+        const columns = this.db.query(`PRAGMA table_info(messages)`).all() as Array<{ name: string }>;
+
+        if (columns.some((c) => c.name === "last_seen_at")) {
+            return;
+        }
+
+        const seenAt = Date.parse(this.getMeta("ingested_at") ?? "") || 0;
+        const copied = MESSAGE_CONTENT_COLUMNS.join(", ");
+        const tx = this.db.transaction(() => {
+            this.db.run(messagesTableSql("messages_retained"));
+            this.db.run(
+                `INSERT OR IGNORE INTO messages_retained (rowid, id, conversation_id, ${copied}, deleted_at, last_seen_at)
+                 SELECT rowid, id, conversation_id, ${copied}, NULL, ? FROM messages`,
+                [seenAt]
+            );
+            this.db.run(`DROP TABLE messages`);
+            this.db.run(`ALTER TABLE messages_retained RENAME TO messages`);
+            this.createMessageIndexAndTriggers();
+            this.db.run(`INSERT INTO messages_fts(messages_fts) VALUES('rebuild')`);
+        });
+        tx();
+        log.debug("[ms-teams] migrated messages to the retained-history schema");
+    }
+
+    private createMessageIndexAndTriggers(): void {
+        this.db.run(
+            `CREATE INDEX IF NOT EXISTS idx_messages_conv_time ON messages(conversation_id, original_arrival_time)`
+        );
+        this.db.run(`CREATE TRIGGER IF NOT EXISTS messages_ai AFTER INSERT ON messages BEGIN
+            INSERT INTO messages_fts(rowid, text) VALUES (new.rowid, new.text);
+        END`);
+        this.db.run(`CREATE TRIGGER IF NOT EXISTS messages_ad AFTER DELETE ON messages BEGIN
+            INSERT INTO messages_fts(messages_fts, rowid, text) VALUES('delete', old.rowid, old.text);
+        END`);
+        this.db.run(`CREATE TRIGGER IF NOT EXISTS messages_au AFTER UPDATE ON messages BEGIN
+            INSERT INTO messages_fts(messages_fts, rowid, text) VALUES('delete', old.rowid, old.text);
+            INSERT INTO messages_fts(rowid, text) VALUES (new.rowid, new.text);
+        END`);
+    }
+
+    /**
+     * Upserts the snapshot. The Teams client cache drops old messages over time, so a
+     * message missing from this snapshot is kept; a newer version replaces an older one.
+     */
     ingestDump(
         dump: TeamsDump,
         opts?: { force?: boolean }
     ): { conversations: number; messages: number; people: number } {
         if (!opts?.force && dump.conversations.length === 0 && dump.replychains.length === 0) {
-            throw new Error("Teams dump is empty; refusing to wipe the cache. Pass --force to override.");
+            throw new Error("Teams dump is empty; the snapshot probably failed. Pass --force to accept it.");
         }
 
         const people = new Map<string, Person>();
@@ -172,10 +190,11 @@ export class TeamsCache {
 
         for (const raw of dump.replychains) {
             for (const parsed of parseReplychain(raw, meMri)) {
-                const prev = messages.get(parsed.id);
+                const key = `${parsed.conversationId}\u0000${parsed.id}`;
+                const prev = messages.get(key);
 
                 if (!prev || parsed.version >= prev.version) {
-                    messages.set(parsed.id, parsed);
+                    messages.set(key, parsed);
                 }
 
                 if (parsed.isFromMe && parsed.fromMri) {
@@ -200,21 +219,21 @@ export class TeamsCache {
             }
         }
 
+        const seenAt = Math.max(Date.now(), Number(this.getMeta("last_seen_at") ?? 0) + 1);
         const tx = this.db.transaction(() => {
-            this.db.run("DELETE FROM conversations");
-            this.db.run("DELETE FROM messages");
-            this.db.run("DELETE FROM people");
-            this.db.run("DELETE FROM calls");
-            this.db.run("DELETE FROM activity");
-
             const insertConv = this.db.prepare(
                 `INSERT INTO conversations (id, type, title, topic, members_json, last_message_time, last_preview, member_count)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                 ON CONFLICT(id) DO UPDATE SET
+                    type = excluded.type,
+                    title = excluded.title,
+                    topic = excluded.topic,
+                    members_json = excluded.members_json,
+                    last_message_time = MAX(COALESCE(excluded.last_message_time, 0), COALESCE(conversations.last_message_time, 0)),
+                    last_preview = COALESCE(excluded.last_preview, conversations.last_preview),
+                    member_count = excluded.member_count`
             );
-            const insertMsg = this.db.prepare(
-                `INSERT INTO messages (id, conversation_id, sequence_id, version, original_arrival_time, from_mri, from_name, is_from_me, message_type, text, html, reply_to_id, reactions_json, mentions_json, links_json, attachments_json)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-            );
+            const insertMsg = this.db.prepare(upsertMessageSql());
             const insertPerson = this.db.prepare(
                 `INSERT OR REPLACE INTO people (mri, display_name, email, upn) VALUES (?, ?, ?, ?)`
             );
@@ -249,7 +268,9 @@ export class TeamsCache {
                     SafeJSON.stringify(msg.reactions),
                     SafeJSON.stringify(msg.mentions),
                     SafeJSON.stringify(msg.links),
-                    SafeJSON.stringify(msg.attachments)
+                    SafeJSON.stringify(msg.attachments),
+                    msg.deletedAt,
+                    seenAt
                 );
             }
 
@@ -267,7 +288,8 @@ export class TeamsCache {
             this.setMeta("me_mri", meMri);
         }
 
-        this.setMeta("ingested_at", new Date().toISOString());
+        this.setMeta("ingested_at", new Date(seenAt).toISOString());
+        this.setMeta("last_seen_at", String(seenAt));
         log.debug(
             { conversations: conversations.size, messages: messages.size, people: people.size },
             "[ms-teams] ingest complete"
@@ -603,6 +625,69 @@ export class TeamsCache {
     }
 }
 
+const MESSAGE_CONTENT_COLUMNS = [
+    "sequence_id",
+    "version",
+    "original_arrival_time",
+    "from_mri",
+    "from_name",
+    "is_from_me",
+    "message_type",
+    "text",
+    "html",
+    "reply_to_id",
+    "reactions_json",
+    "mentions_json",
+    "links_json",
+    "attachments_json",
+] as const;
+
+function messagesTableSql(table: string): string {
+    return `CREATE TABLE IF NOT EXISTS ${table} (
+        id TEXT NOT NULL,
+        conversation_id TEXT NOT NULL,
+        sequence_id INTEGER,
+        version INTEGER,
+        original_arrival_time INTEGER NOT NULL,
+        from_mri TEXT,
+        from_name TEXT,
+        is_from_me INTEGER NOT NULL DEFAULT 0,
+        message_type TEXT NOT NULL,
+        text TEXT,
+        html TEXT,
+        reply_to_id TEXT,
+        reactions_json TEXT NOT NULL DEFAULT '[]',
+        mentions_json TEXT NOT NULL DEFAULT '[]',
+        links_json TEXT NOT NULL DEFAULT '[]',
+        attachments_json TEXT NOT NULL DEFAULT '[]',
+        deleted_at INTEGER,
+        last_seen_at INTEGER,
+        PRIMARY KEY (conversation_id, id)
+    )`;
+}
+
+/**
+ * A newer version replaces the stored one, except that a deletion keeps the last
+ * content we saw and only records deleted_at. last_seen_at always moves forward.
+ */
+function upsertMessageSql(): string {
+    const newer = "excluded.version >= COALESCE(messages.version, 0)";
+    const contentUpdates = MESSAGE_CONTENT_COLUMNS.filter((c) => c !== "version" && c !== "is_from_me").map(
+        (c) => `${c} = CASE WHEN ${newer} AND excluded.deleted_at IS NULL THEN excluded.${c} ELSE messages.${c} END`
+    );
+
+    return `INSERT INTO messages (id, conversation_id, ${MESSAGE_CONTENT_COLUMNS.join(", ")}, deleted_at, last_seen_at)
+        VALUES (${Array(MESSAGE_CONTENT_COLUMNS.length + 4)
+            .fill("?")
+            .join(", ")})
+        ON CONFLICT(conversation_id, id) DO UPDATE SET
+            ${contentUpdates.join(",\n            ")},
+            is_from_me = MAX(excluded.is_from_me, messages.is_from_me),
+            deleted_at = CASE WHEN ${newer} THEN excluded.deleted_at ELSE messages.deleted_at END,
+            version = MAX(excluded.version, COALESCE(messages.version, 0)),
+            last_seen_at = excluded.last_seen_at`;
+}
+
 function mapConversationRow(row: {
     id: string;
     type: ConversationType;
@@ -643,6 +728,8 @@ function mapMessageRow(row: Record<string, unknown>): MessageRow {
         mentionsJson: String(row.mentions_json ?? "[]"),
         linksJson: String(row.links_json ?? "[]"),
         attachmentsJson: String(row.attachments_json ?? "[]"),
+        deletedAt: typeof row.deleted_at === "number" ? row.deleted_at : null,
+        lastSeenAt: typeof row.last_seen_at === "number" ? row.last_seen_at : null,
     };
 }
 

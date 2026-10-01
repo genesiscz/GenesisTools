@@ -31,6 +31,7 @@ function threadWithMessages(
         attachments: [],
         call: null,
         system: null,
+        deletedAt: null,
         ...message,
     }));
     const first = full[0];
@@ -46,6 +47,7 @@ function threadWithMessages(
             cachedFrom: first?.time ?? null,
             cachedTo: last?.time ?? null,
             messageCount: full.length,
+            retainedCount: 0,
             completenessNote: COMPLETENESS_NOTE,
         },
         messages: full,
