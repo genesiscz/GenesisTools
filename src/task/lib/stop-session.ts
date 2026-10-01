@@ -1,6 +1,7 @@
 import { TaskSessionStore } from "@app/task/lib/session-store";
 import { logger } from "@genesiscz/utils/logger";
 import { batchPsInfo, collectProcessTree, listPsTable, type PsRow } from "@genesiscz/utils/process/ps";
+import { isProcessAlive } from "@genesiscz/utils/process-alive";
 import { processStartMs, START_MS_TOLERANCE } from "@genesiscz/utils/process-identity";
 
 const log = logger.child({ component: "task:stop-session" });
@@ -52,6 +53,11 @@ function verify(pids: number[], snapshot: Map<number, Identity>): { same: number
         const row = live.get(pid);
 
         if (!row) {
+            // ps gives no row for a dead pid and for a failed read alike: only a live check tells them apart.
+            if (isProcessAlive(pid)) {
+                unverified.push(pid);
+            }
+
             continue;
         }
 
@@ -157,6 +163,22 @@ export async function stopSession(
     const rootMoved =
         meta.pidStartedAt !== undefined &&
         (rootStart === null || Math.abs(rootStart - meta.pidStartedAt) > START_MS_TOLERANCE);
+    // The root alive by its recorded start time but absent from the table means the table was not read
+    // (ps failed or printed nothing parseable): that proves nothing about the tree, so nothing is stopped.
+    if (!rootMoved && rootStart !== null && !byPid.has(meta.pid)) {
+        log.warn(
+            { name: opts.name, pid: meta.pid, rows: rows.length },
+            "stop: the process table did not list the live root"
+        );
+        return {
+            status: "failed",
+            reason: "the process table could not be read",
+            alivePids: [meta.pid],
+            termedPids: [],
+            killedPids: [],
+        };
+    }
+
     const tree = rootMoved ? [] : collectProcessTree(meta.pid, rows).filter((pid) => byPid.has(pid));
     const snapshot = new Map<number, Identity>();
 
