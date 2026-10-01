@@ -149,9 +149,16 @@ export const MONO_MP3_BITRATE_KBPS = 128;
  * far smaller than WAV, and matches the split-segment encoding so a
  * re-encode of an already-split chunk is a harmless round-trip.
  *
+ * `timeoutMs` bounds the transcode: on expiry ffmpeg is killed, the partial output removed, and
+ * the call throws. A network input (an HLS playlist) needs it, since a live stream never ends.
+ *
  * @returns the output path on success.
  */
-export async function convertFileToMonoMp3(inputPath: string, outputPath: string): Promise<string> {
+export async function convertFileToMonoMp3(
+    inputPath: string,
+    outputPath: string,
+    options: { timeoutMs?: number } = {}
+): Promise<string> {
     const proc = Bun.spawn(
         [
             "ffmpeg",
@@ -174,8 +181,23 @@ export async function convertFileToMonoMp3(inputPath: string, outputPath: string
         { stdout: "pipe", stderr: "pipe" }
     );
 
+    let timedOut = false;
+    const timer =
+        options.timeoutMs === undefined
+            ? undefined
+            : setTimeout(() => {
+                  timedOut = true;
+                  proc.kill("SIGKILL");
+              }, options.timeoutMs);
+
     const [, stderr] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text()]);
     await proc.exited;
+    clearTimeout(timer);
+
+    if (timedOut) {
+        cleanup(outputPath);
+        throw new Error(`ffmpeg mp3 transcode did not finish within ${options.timeoutMs} ms`);
+    }
 
     if (proc.exitCode !== 0 || !existsSync(outputPath)) {
         cleanup(outputPath);

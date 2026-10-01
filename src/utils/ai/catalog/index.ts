@@ -18,6 +18,16 @@ export {
 } from "./openrouter";
 export { effectivePricing, type PricingContext } from "./pricing";
 export {
+    type QuoteChoice,
+    quotesFor,
+    quoteTranscription,
+    SPEECH_OFFERS,
+    type SpeechMode,
+    type SpeechOffer,
+    speechModelMatches,
+    type TranscriptionQuote,
+} from "./speech";
+export {
     aliasMapFor,
     byCapability,
     byId,

@@ -21,7 +21,9 @@ export interface AudioValidation {
 
 /** Probe an audio file with ffprobe. Returns safe defaults if ffprobe fails
  *  (never throws) so callers can degrade gracefully. */
-export async function getAudioInfo(filePath: string): Promise<AudioInfo> {
+export async function getAudioInfo(filePath: string, options: { timeoutMs?: number } = {}): Promise<AudioInfo> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+
     try {
         const proc = spawn(
             ["ffprobe", "-v", "quiet", "-print_format", "json", "-show_format", "-show_streams", filePath],
@@ -29,6 +31,12 @@ export async function getAudioInfo(filePath: string): Promise<AudioInfo> {
                 stdio: ["ignore", "pipe", "pipe"],
             }
         );
+
+        // A remote input (a URL, a live stream) may never answer: past the deadline ffprobe is killed
+        // and the probe reports no duration, like any other failed probe.
+        if (options.timeoutMs !== undefined) {
+            timer = setTimeout(() => proc.kill("SIGKILL"), options.timeoutMs);
+        }
 
         const stdout = await new Response(proc.stdout).text();
         const stderr = await new Response(proc.stderr).text();
@@ -72,6 +80,8 @@ export async function getAudioInfo(filePath: string): Promise<AudioInfo> {
             format: "unknown",
             duration: 0,
         };
+    } finally {
+        clearTimeout(timer);
     }
 }
 

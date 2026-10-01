@@ -102,6 +102,18 @@ export function calculateCallCostUsd(
     return inputCost + outputCost + cachedReadCost + cachedCreateCost;
 }
 
+/**
+ * USD for a duration-billed speech call. Null when the model has no per-second
+ * list price. The rate itself comes from the catalog (`speech.ts`), not from here.
+ */
+export function speechDurationCostUsd(usdPerSecond: number | null, durationSec: number): number | null {
+    if (usdPerSecond === null || !Number.isFinite(usdPerSecond) || !Number.isFinite(durationSec) || durationSec < 0) {
+        return null;
+    }
+
+    return usdPerSecond * durationSec;
+}
+
 /** ~150 spoken words/min ≈ 200 tokens/min — token estimate for speech of a given length. */
 const SPEECH_TOKENS_PER_SEC = 3.3;
 
