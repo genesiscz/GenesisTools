@@ -500,7 +500,17 @@ function withInstallMarker(swap: () => void): void {
 }
 
 /**
- * Moves the replaced bundle to `<appDir>/retired/<ms>/` instead of deleting it.
+ * Where replaced bundles go. `.noindex` keeps Spotlight out: Spotlight registers every app bundle it
+ * indexes with Launch Services, which undid the `lsregister -u` below, and `open -b` then handed
+ * links to a retired copy whose router predated the current config (2026-09-30: a
+ * `https://dashboard/` link looped through the browser extension, one new tab every half second).
+ */
+export function retiredRootFor(appDir: string): string {
+    return join(appDir, "retired.noindex");
+}
+
+/**
+ * Moves the replaced bundle to `<appDir>/retired.noindex/<ms>/` instead of deleting it.
  *
  * Every `tools` process, and every Claude session started through `gt-cc`, runs inside this
  * app's binary and keeps the one it started with. macOS judges Full Disk Access by that
@@ -514,61 +524,122 @@ function retirePreviousBundle(previous: string, appDir: string): void {
         return;
     }
 
-    const retiredRoot = join(appDir, "retired");
+    const retiredRoot = retiredRootFor(appDir);
     const retiredAt = Date.now();
     const target = join(retiredRoot, String(retiredAt), `${GENESIS_APP_NAME}.app`);
     mkdirSync(dirname(target), { recursive: true });
     renameSync(previous, target);
-    // Launch Services must not offer the retired copy in the Full Disk Access picker.
-    run([LSREGISTER, "-u", target]);
+    adoptLegacyRetired(appDir, retiredRoot);
     pruneRetiredBundles(retiredRoot);
+    // Launch Services must never offer a retired copy: not in the Full Disk Access picker, and not
+    // to `open -b`. Every build unregisters all of them, since a copy may have been registered again.
+    for (const entry of readdirSync(retiredRoot, { withFileTypes: true })) {
+        const bundle = join(retiredRoot, entry.name, `${GENESIS_APP_NAME}.app`);
+
+        if (entry.isDirectory() && existsSync(bundle)) {
+            run([LSREGISTER, "-u", bundle]);
+        }
+    }
+}
+
+/** Copies retired before `retired.noindex` existed move in; a move keeps the path tccd resolves live. */
+function adoptLegacyRetired(appDir: string, retiredRoot: string): void {
+    const legacy = join(appDir, "retired");
+
+    if (!existsSync(legacy)) {
+        return;
+    }
+
+    for (const entry of readdirSync(legacy, { withFileTypes: true })) {
+        if (entry.isDirectory()) {
+            renameSync(join(legacy, entry.name), join(retiredRoot, entry.name));
+        }
+    }
+
+    logger.debug({ legacy, retiredRoot }, "moved retired bundles out of Spotlight's reach");
 }
 
 /**
- * The retirement time below which a retired bundle may be deleted, from `ps -axo lstart=,command=`:
- * a bundle retired before every running GenesisTools process started is the binary of none of them.
- * `null` keeps every bundle. A failed listing or a start time that does not parse would otherwise
- * read as "no process runs", and the bundle retired a moment ago would go with the rest.
+ * The inode of every running executable, from `lsof -d txt -Fi -n`. An inode survives the move to
+ * `retired.noindex`, while lsof may still print a moved binary under its old path (it named
+ * `GenesisTools.app.previous` for processes whose bundle had long moved on). `null` keeps every
+ * bundle: a listing that failed would otherwise read as "nothing runs", and a failed run's partial
+ * output can miss the one process that still executes a retired binary.
  */
-export function retiredBundleCutoff(listing: { code: number; stdout: string }): number | null {
+export function runningExecutableInodes(listing: { code: number; stdout: string }): Set<number> | null {
     if (listing.code !== 0) {
         return null;
     }
 
-    const starts = listing.stdout
-        .split("\n")
-        .filter((line) => line.includes(`${GENESIS_APP_NAME}.app/Contents/MacOS/${GENESIS_APP_NAME}`))
-        .map((line) => Date.parse(line.trim().slice(0, 24)));
+    const inodes = new Set<number>();
 
-    if (starts.some((ms) => !Number.isFinite(ms))) {
-        return null;
+    for (const line of listing.stdout.split("\n")) {
+        const inode = line.startsWith("i") ? Number(line.slice(1)) : Number.NaN;
+
+        if (Number.isInteger(inode)) {
+            inodes.add(inode);
+        }
     }
 
-    // lstart has one-second resolution; a process started in the same second may still use it.
-    return starts.length > 0 ? Math.min(...starts) - 1000 : Number.POSITIVE_INFINITY;
+    return inodes.size === 0 ? null : inodes;
 }
 
-/** Deletes a retired bundle once no running GenesisTools process can have started from it. */
-function pruneRetiredBundles(retiredRoot: string): void {
-    // lstart is strftime's %c, so a localized LC_TIME spells it in words Date.parse cannot read.
-    const listing = run(["env", "LC_ALL=C", "ps", "-axo", "lstart=,command="]);
-    const cutoff = retiredBundleCutoff(listing);
+/**
+ * Which retired bundles stay: the newest one (one version back), and every one whose binary a
+ * running process still executes, since tccd resolves that process by the binary's path.
+ */
+export function retiredBundlesToKeep({
+    entries,
+    inodeOf,
+    running,
+}: {
+    /** Directory names under the retired root, each a retirement time in ms. */
+    entries: string[];
+    inodeOf: (entry: string) => number | null;
+    running: Set<number>;
+}): Set<string> {
+    const newest = entries.reduce<string | null>(
+        (best, entry) => (best === null || Number(entry) > Number(best) ? entry : best),
+        null
+    );
+    return new Set(
+        entries.filter((entry) => {
+            const inode = inodeOf(entry);
+            return entry === newest || inode === null || running.has(inode);
+        })
+    );
+}
 
-    if (cutoff === null) {
+/** Deletes every retired bundle except the newest and the ones a running process executes. */
+function pruneRetiredBundles(retiredRoot: string): void {
+    const listing = run(["lsof", "-d", "txt", "-Fi", "-n"]);
+    const running = runningExecutableInodes(listing);
+
+    if (running === null) {
         logger.debug(
             { code: listing.code, stderr: listing.stderr },
-            "cannot read the process start times; keeping retired bundles"
+            "cannot list running executables; keeping retired bundles"
         );
         return;
     }
 
-    for (const entry of readdirSync(retiredRoot, { withFileTypes: true })) {
-        const retiredAt = Number(entry.name);
+    const entries = readdirSync(retiredRoot, { withFileTypes: true })
+        .filter((entry) => entry.isDirectory() && Number.isFinite(Number(entry.name)))
+        .map((entry) => entry.name);
+    const binary = (entry: string) =>
+        join(retiredRoot, entry, `${GENESIS_APP_NAME}.app`, "Contents", "MacOS", GENESIS_APP_NAME);
+    const keep = retiredBundlesToKeep({
+        entries,
+        running,
+        inodeOf: (entry) => (existsSync(binary(entry)) ? statSync(binary(entry)).ino : null),
+    });
+    const removed = entries.filter((entry) => !keep.has(entry));
 
-        if (entry.isDirectory() && Number.isFinite(retiredAt) && retiredAt < cutoff) {
-            rmSync(join(retiredRoot, entry.name), { recursive: true, force: true });
-        }
+    for (const entry of removed) {
+        rmSync(join(retiredRoot, entry), { recursive: true, force: true });
     }
+
+    logger.info({ kept: keep.size, removed: removed.length }, "pruned retired app bundles");
 }
 
 const STALE_FACE_TERM_GRACE_MS = 500;

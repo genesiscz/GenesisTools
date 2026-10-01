@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { generateAttachmentName } from "@app/macos/lib/mail/format";
+import { mailMessageUrl, messageIdFromRaw, normalizeMessageId } from "@app/macos/lib/mail/open";
 import type { MailMessage } from "@genesiscz/utils/macos/mail/types";
 
 function msg(subject: string): MailMessage {
@@ -28,5 +29,16 @@ describe("generateAttachmentName", () => {
 
     it("sanitizes path-unsafe characters in the original name", () => {
         expect(generateAttachmentName(msg("Order #3"), "weird/na me.pdf")).toBe("2026-05-12-order-3-weird_na_me.pdf");
+    });
+});
+
+describe("mail open helpers", () => {
+    it("reads the Message-ID header, folded or bracketed, and builds Mail's link", () => {
+        const raw =
+            "From: a@example.com\r\nMessage-ID:\r\n <abc.123@mail.example.com>\r\nSubject: x\r\n\r\nMessage-ID: <body@x>";
+        expect(messageIdFromRaw(raw)).toBe("abc.123@mail.example.com");
+        expect(messageIdFromRaw("Subject: none\n\nMessage-ID: <body@x>")).toBeNull();
+        expect(normalizeMessageId(" <id@host> ")).toBe("id@host");
+        expect(mailMessageUrl("a+b@host")).toBe("message://%3Ca%2Bb@host%3E");
     });
 });
