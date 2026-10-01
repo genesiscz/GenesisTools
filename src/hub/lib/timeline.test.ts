@@ -260,7 +260,7 @@ describe("timeline", () => {
             now: NOW,
             deps: deps(),
             storage: await scratchStorage(),
-            fresh: true,
+            maxCacheAgeSeconds: 0,
         });
 
         expect(result.events.map((event) => [event.kind, event.detail])).toEqual([
@@ -294,7 +294,7 @@ describe("timeline", () => {
             now: NOW,
             deps: deps(),
             storage: await scratchStorage(),
-            fresh: true,
+            maxCacheAgeSeconds: 0,
         });
         const byId = new Map(events.map((event) => [event.id, event]));
 
@@ -326,7 +326,7 @@ describe("timeline", () => {
         });
     });
 
-    test("the feed is served from its cache until fresh, and without PRs the network is not called", async () => {
+    test("the feed is served from its cache unless asked fresh, and without PRs the network is not called", async () => {
         const storage = await scratchStorage();
         let listed = 0;
         const counting = deps({
@@ -338,7 +338,7 @@ describe("timeline", () => {
 
         await buildTimeline({ since: SINCE, now: NOW, deps: counting, storage });
         const again = await buildTimeline({ since: SINCE, now: NOW, deps: counting, storage });
-        await buildTimeline({ since: SINCE, now: NOW, deps: counting, storage, prs: false, fresh: true });
+        await buildTimeline({ since: SINCE, now: NOW, deps: counting, storage, prs: false, maxCacheAgeSeconds: 0 });
 
         expect(again.cached).toBe(true);
         expect(listed).toBe(1);
@@ -365,7 +365,7 @@ describe("timeline", () => {
             since: SINCE,
             now: NOW,
             storage: await scratchStorage(),
-            fresh: true,
+            maxCacheAgeSeconds: 0,
             deps: deps({
                 commits: async () => {
                     throw new Error("git log exited 128");
@@ -434,7 +434,7 @@ describe("timeline paging", () => {
 
     test("buildTimeline pages with before and every event of the range is reached once", async () => {
         const storage = await scratchStorage();
-        const all = await buildTimeline({ since: SINCE, now: NOW, deps: deps(), storage, fresh: true });
+        const all = await buildTimeline({ since: SINCE, now: NOW, deps: deps(), storage, maxCacheAgeSeconds: 0 });
         const seen: string[] = [];
         let before: Date | null = null;
 
@@ -444,7 +444,7 @@ describe("timeline paging", () => {
                 now: NOW,
                 deps: deps(),
                 storage,
-                fresh: true,
+                maxCacheAgeSeconds: 0,
                 limit: 3,
                 before,
             });
@@ -473,7 +473,7 @@ describe("timeline paging", () => {
             now: NOW,
             deps: deps(),
             storage: await scratchStorage(),
-            fresh: true,
+            maxCacheAgeSeconds: 0,
             before: new Date(at("10:30:00")),
         });
         expect(page.events.map((event) => event.id)).toEqual([
@@ -493,7 +493,7 @@ describe("timeline filters", () => {
             since: SINCE,
             now: NOW,
             storage: await scratchStorage(),
-            fresh: true,
+            maxCacheAgeSeconds: 0,
             filters: { author: "me" },
             deps: deps({
                 commits: async (_repo, _window, _limit, author) => {
@@ -513,7 +513,7 @@ describe("timeline filters", () => {
             since: SINCE,
             now: NOW,
             storage: await scratchStorage(),
-            fresh: true,
+            maxCacheAgeSeconds: 0,
             filters: { author: "others" },
             deps: deps(),
         });
@@ -525,7 +525,7 @@ describe("timeline filters", () => {
             since: SINCE,
             now: NOW,
             storage: await scratchStorage(),
-            fresh: true,
+            maxCacheAgeSeconds: 0,
             filters: { needsMe: true },
             deps: deps(),
         });
@@ -633,7 +633,7 @@ describe("timeline PR range", () => {
                 },
             }),
             storage: await scratchStorage(),
-            fresh: true,
+            maxCacheAgeSeconds: 0,
         });
 
         expect(asked).toEqual([MONTH_AGO]);
@@ -653,7 +653,7 @@ describe("timeline PR range", () => {
             now: NOW,
             deps: deps({ prs: async () => full }),
             storage: await scratchStorage(),
-            fresh: true,
+            maxCacheAgeSeconds: 0,
         });
 
         expect(warnings).toContain(
@@ -683,7 +683,7 @@ describe("timeline PR range", () => {
                 },
             }),
             storage: await scratchStorage(),
-            fresh: true,
+            maxCacheAgeSeconds: 0,
         });
         expect(asked).toEqual([TIMELINE_LIMITS.prsPerProject]);
     });
@@ -699,7 +699,7 @@ describe("timeline session branch", () => {
                 lastBranch: () => "feat/now",
             }),
             storage: await scratchStorage(),
-            fresh: true,
+            maxCacheAgeSeconds: 0,
         });
 
         expect(events.find((event) => event.kind === "session.turn")?.branch).toBe("feat/now");
@@ -712,7 +712,7 @@ describe("timeline session branch", () => {
             now: NOW,
             deps: deps({ sessions: async () => [session({ gitBranch: "feat/first" })], lastBranch: () => null }),
             storage: await scratchStorage(),
-            fresh: true,
+            maxCacheAgeSeconds: 0,
         });
 
         expect(events.find((event) => event.kind === "session.turn")?.branch).toBe("feat/first");

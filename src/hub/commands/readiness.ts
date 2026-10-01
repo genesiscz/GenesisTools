@@ -1,4 +1,5 @@
 import { out } from "@genesiscz/utils/logger";
+import { maxCacheAgeOption, resolveMaxCacheAge } from "@genesiscz/utils/storage/cache-flag";
 import { type DotStatusKind, formatDotStatus } from "@genesiscz/utils/table";
 import type { Command } from "commander";
 import pc from "picocolors";
@@ -37,10 +38,15 @@ export function registerReadinessCommand(pr: Command): void {
             "<refs...>",
             "PR/MR URLs, <repoPath>#<n>, or <n> for this folder's repo; append @<headSha> when the head is known, so a cached answer for it is used"
         )
-        .option("--fresh", "ask the forge even when a cached answer for this head exists")
+        .addOption(
+            maxCacheAgeOption(
+                "answer, never older than 10 min for a ref@head of that head or 60 s (and not 'ready') for a bare ref,"
+            )
+        )
+        .option("--fresh", "the default; kept for old callers (same as --max-cache-age 0)")
         .option("--json", "machine-readable output: one {input, readiness, error} per ref")
-        .action(async (refs: string[], opts: { fresh?: boolean; json?: boolean }) => {
-            const outcomes = await prReadinessMany({ inputs: refs, fresh: Boolean(opts.fresh) });
+        .action(async (refs: string[], opts: { fresh?: boolean; maxCacheAge?: number; json?: boolean }) => {
+            const outcomes = await prReadinessMany({ inputs: refs, maxCacheAgeSeconds: resolveMaxCacheAge(opts) });
 
             if (outcomes.some((outcome) => outcome.error)) {
                 process.exitCode = 1;

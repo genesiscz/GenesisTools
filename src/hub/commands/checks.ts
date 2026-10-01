@@ -1,5 +1,6 @@
 import { resolve } from "node:path";
 import { out } from "@genesiscz/utils/logger";
+import { maxCacheAgeOption, resolveMaxCacheAge } from "@genesiscz/utils/storage/cache-flag";
 import type { Command } from "commander";
 import { checkLog, DEFAULT_LOG_LINES } from "../lib/checks";
 import { fixCheck } from "../lib/checks-fix";
@@ -9,13 +10,14 @@ import { HubPrError } from "../lib/pr";
 export function registerCheckLogCommand(pr: Command): void {
     pr.command("check-log")
         .description(
-            "The failing part of a CI check's log (GitHub Actions job or run, GitLab job or pipeline); read-only, finished logs cached 7 days"
+            "The failing part of a CI check's log (GitHub Actions job or run, GitLab job or pipeline); read-only"
         )
         .argument("<url>", "the check's URL from `pr show` (checks[].url)")
         .option("--lines <n>", "lines per failed section", String(DEFAULT_LOG_LINES))
-        .option("--no-cache", "fetch again even when a cached log exists")
+        .addOption(maxCacheAgeOption("finished log (only finished logs are stored)"))
+        .option("--no-cache", "the default; kept for old callers (same as --max-cache-age 0)")
         .option("--json", "machine-readable output")
-        .action(async (url: string, opts: { lines: string; cache: boolean; json?: boolean }) => {
+        .action(async (url: string, opts: { lines: string; cache: boolean; maxCacheAge?: number; json?: boolean }) => {
             const maxLines = Number(opts.lines);
 
             if (!Number.isInteger(maxLines) || maxLines < 1) {
@@ -24,7 +26,11 @@ export function registerCheckLogCommand(pr: Command): void {
                 return;
             }
 
-            const result = await checkLog({ url, maxLines, fresh: !opts.cache });
+            const result = await checkLog({
+                url,
+                maxLines,
+                maxCacheAgeSeconds: resolveMaxCacheAge({ ...opts, fresh: !opts.cache }),
+            });
 
             if (opts.json) {
                 out.result(result);

@@ -16,6 +16,7 @@ import { type RepoFacts, repoFacts } from "@genesiscz/utils/git/repo-facts";
 import { logger } from "@genesiscz/utils/logger";
 import { type ComputedSessionChanges, loadSessionChanges, mergeTurnFiles } from "@genesiscz/utils/session-changes";
 import type { Storage } from "@genesiscz/utils/storage";
+import { cached, capMaxCacheAge } from "@genesiscz/utils/storage/cache-flag";
 import { backendFor, type PrThread, prThreads, resolvePr, type ThreadsResult } from "./pr";
 import { type HubPr, type HubPrDetail, hubPr } from "./prs";
 import { cachedPrs, cachedThreads, commentTitle, git, hubStorage } from "./timeline";
@@ -49,7 +50,8 @@ export interface TimelineDetailRequest {
     until?: Date;
     /** A commit's one file whose diff is wanted. */
     file?: string;
-    fresh?: boolean;
+    /** Serve a stored detail at most this old, never past the kind's own limit; unset keeps that limit, 0 builds it fresh. */
+    maxCacheAgeSeconds?: number;
 }
 
 export interface TimelinePrSummary {
@@ -179,11 +181,12 @@ export interface TimelineDetailDeps {
     changes: (sessionId: string) => ComputedSessionChanges | null;
     subagents: (resolved: ResolvedTranscript) => SessionSubagent[];
     /** The cached PR list of these projects. */
-    prs: (roots: string[]) => Promise<HubPr[]>;
+    /** `maxCacheAgeSeconds` bounds the list's cache (unset: its own 5 min), as a detail request asks. */
+    prs: (roots: string[], maxCacheAgeSeconds?: number) => Promise<HubPr[]>;
     /** Every cached thread list (no network). */
     threads: () => ThreadsResult[];
-    /** The threads of one PR from the host (its own 30 s cache). */
-    fetchThreads: (pr: string, repo: string | null) => Promise<ThreadsResult>;
+    /** The threads of one PR from the host; `maxCacheAgeSeconds` bounds its cache (unset: its own 30 s). */
+    fetchThreads: (pr: string, repo: string | null, maxCacheAgeSeconds?: number) => Promise<ThreadsResult>;
     prDetail: (ref: string) => Promise<HubPrDetail>;
     decisions: () => DecisionRecord[];
     facts: (path: string) => Promise<RepoFacts>;
@@ -320,15 +323,21 @@ async function sessionDetail(
     };
 }
 
-async function containingPrs(
-    repo: string,
-    branches: readonly string[],
-    deps: TimelineDetailDeps
-): Promise<TimelinePrSummary[]> {
+async function containingPrs({
+    repo,
+    branches,
+    maxCacheAgeSeconds,
+    deps,
+}: {
+    repo: string;
+    branches: readonly string[];
+    maxCacheAgeSeconds?: number;
+    deps: TimelineDetailDeps;
+}): Promise<TimelinePrSummary[]> {
     const names = new Set(branches.map((name) => name.replace(/^(remotes\/)?[^/]+\//, "")).concat(branches));
 
     try {
-        return (await deps.prs([repo])).filter((pr) => names.has(pr.headBranch)).map(prSummary);
+        return (await deps.prs([repo], maxCacheAgeSeconds)).filter((pr) => names.has(pr.headBranch)).map(prSummary);
     } catch (error) {
         log.debug({ error, repo }, "timeline detail: PR list unavailable");
         return [];
@@ -392,7 +401,12 @@ async function commitDetail(request: TimelineDetailRequest, deps: TimelineDetail
         files,
         branches,
         branchesTruncated: allBranches.length > branches.length,
-        prs: await containingPrs(repo, allBranches, deps),
+        prs: await containingPrs({
+            repo,
+            branches: allBranches,
+            maxCacheAgeSeconds: request.maxCacheAgeSeconds,
+            deps,
+        }),
         diff,
     };
 }
@@ -432,7 +446,7 @@ async function pushDetail(request: TimelineDetailRequest, deps: TimelineDetailDe
     let pr: TimelinePrSummary | null = null;
 
     try {
-        const match = (await deps.prs([repo])).find((row) => row.headBranch === branch);
+        const match = (await deps.prs([repo], request.maxCacheAgeSeconds)).find((row) => row.headBranch === branch);
         pr = match ? prSummary(match) : null;
     } catch (error) {
         log.debug({ error, repo }, "timeline detail: PR list unavailable");
@@ -533,14 +547,19 @@ async function threadDetail(request: TimelineDetailRequest, deps: TimelineDetail
         result?.threads.find(
             (thread) => thread.id === commentId || thread.comments.some((comment) => comment.id === commentId)
         );
-    const cached = request.fresh ? undefined : deps.threads().find((result) => samePr(result, url));
+    const maxAge = request.maxCacheAgeSeconds;
+    // A stored thread list counts only while it is within the requested age, judged from when it was fetched.
+    const cached =
+        maxAge === 0
+            ? undefined
+            : deps.threads().find((result) => samePr(result, url) && withinAge(result.fetchedAt, maxAge));
     const hit = find(cached);
 
     if (cached && hit) {
         return { kind: "thread", pr: threadPrSummary(cached), viewer: cached.viewer, thread: hit, fetched: "cache" };
     }
 
-    const fetched = await deps.fetchThreads(url, request.repo ?? null);
+    const fetched = await deps.fetchThreads(url, request.repo ?? null, maxAge);
     const thread = find(fetched);
 
     if (!thread) {
@@ -548,6 +567,16 @@ async function threadDetail(request: TimelineDetailRequest, deps: TimelineDetail
     }
 
     return { kind: "thread", pr: threadPrSummary(fetched), viewer: fetched.viewer, thread, fetched: "host" };
+}
+
+function withinAge(fetchedAt: string | undefined, maxAgeSeconds: number | undefined): boolean {
+    if (maxAgeSeconds === undefined) {
+        return true;
+    }
+
+    const at = fetchedAt ? Date.parse(fetchedAt) : Number.NaN;
+
+    return Number.isFinite(at) && Date.now() - at <= maxAgeSeconds * 1000;
 }
 
 function decisionDetail(request: TimelineDetailRequest, deps: TimelineDetailDeps): DecisionDetail {
@@ -563,14 +592,15 @@ function decisionDetail(request: TimelineDetailRequest, deps: TimelineDetailDeps
 
 // MARK: - Entry
 
-const DETAIL_TTL: Record<TimelineDetailKind, string | null> = {
-    session: "1 minute",
-    commit: "1 day",
-    push: "1 day",
-    pr: "1 minute",
-    ci: "1 minute",
-    thread: "30 seconds",
-    decision: null,
+/** How old a stored detail may be per kind; 0 is never stored. */
+const DETAIL_MAX_AGE_SECONDS: Record<TimelineDetailKind, number> = {
+    session: 60,
+    commit: 24 * 60 * 60,
+    push: 24 * 60 * 60,
+    pr: 60,
+    ci: 60,
+    thread: 30,
+    decision: 0,
 };
 
 export const realTimelineDetailDeps: TimelineDetailDeps = {
@@ -584,18 +614,18 @@ export const realTimelineDetailDeps: TimelineDetailDeps = {
         return loaded.transcriptPath ? loaded : null;
     },
     subagents: (resolved) => listSubagents(resolved).subagents,
-    prs: cachedPrs,
+    prs: (roots, maxCacheAgeSeconds) => cachedPrs(roots, undefined, undefined, maxCacheAgeSeconds),
     threads: cachedThreads,
-    fetchThreads: async (pr, repo) => {
+    fetchThreads: async (pr, repo, maxCacheAgeSeconds) => {
         const found = await resolvePr({ repo: repo ?? process.cwd(), pr });
-        return prThreads({ pr: found, backend: await backendFor(found) });
+        return prThreads({ pr: found, backend: await backendFor(found), maxCacheAgeSeconds });
     },
     prDetail: (ref) => hubPr({ ref }),
     decisions: () => readDecisions(decisionFiles().file),
     facts: (path) => repoFacts({ path }),
 };
 
-/** One row's detail, from its cache unless `fresh` (a commit's for a day, a session's for a minute). */
+/** One row's detail, from its cache at most `maxCacheAgeSeconds` old (a commit's for a day, a session's for a minute). */
 export async function timelineDetail({
     request,
     deps = realTimelineDetailDeps,
@@ -608,7 +638,7 @@ export async function timelineDetail({
     now?: Date;
 }): Promise<TimelineDetail & { cached: boolean; elapsedMs: number }> {
     const started = performance.now();
-    const ttl = DETAIL_TTL[request.kind];
+    const ownMaxAge = DETAIL_MAX_AGE_SECONDS[request.kind];
     const fingerprint = createHash("sha1")
         .update(
             [
@@ -627,14 +657,27 @@ export async function timelineDetail({
         .slice(0, 16);
     const key = `timeline/detail-${request.kind}-${fingerprint}.json`;
 
-    if (ttl && !request.fresh) {
-        const hit = await storage.getCacheFile<TimelineDetail>(key, ttl);
-
-        if (hit) {
-            return { ...hit, cached: true, elapsedMs: Math.round(performance.now() - started) };
-        }
+    if (ownMaxAge === 0) {
+        const detail = await buildDetail(request, deps, now);
+        return { ...detail, cached: false, elapsedMs: Math.round(performance.now() - started) };
     }
 
+    const { value, hit } = await cached({
+        storage,
+        key,
+        maxAgeSeconds: capMaxCacheAge(request.maxCacheAgeSeconds, ownMaxAge),
+        fetch: () => buildDetail(request, deps, now),
+    });
+    const elapsedMs = Math.round(performance.now() - started);
+    log.debug({ kind: request.kind, id: request.id, hit, elapsedMs }, "timeline detail");
+    return { ...value, cached: hit, elapsedMs };
+}
+
+async function buildDetail(
+    request: TimelineDetailRequest,
+    deps: TimelineDetailDeps,
+    now: Date
+): Promise<TimelineDetail> {
     let detail: TimelineDetail;
 
     switch (request.kind) {
@@ -659,11 +702,5 @@ export async function timelineDetail({
             break;
     }
 
-    if (ttl) {
-        await storage.putCacheFile(key, detail, ttl);
-    }
-
-    const elapsedMs = Math.round(performance.now() - started);
-    log.debug({ kind: request.kind, id: request.id, elapsedMs }, "timeline detail built");
-    return { ...detail, cached: false, elapsedMs };
+    return detail;
 }

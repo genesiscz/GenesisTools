@@ -15,6 +15,7 @@ import {
     parseGhUpdatedPrs,
     parseGlabMrRows,
     parseGlabMrView,
+    parsePrQuery,
     parsePrRef,
     parsePrUrl,
     projectRefFromRemote,
@@ -439,6 +440,45 @@ describe("gh PR list and view", () => {
         });
     });
 
+    it("reads the search box: author, numbers and free text", () => {
+        expect(parsePrQuery("author:qkleblmat")).toEqual({ author: "qkleblmat", numbers: [], text: "" });
+        expect(parsePrQuery("!7412")).toEqual({ author: null, numbers: [7412], text: "" });
+        expect(parsePrQuery("@me fix")).toEqual({ author: "@me", numbers: [], text: "fix" });
+        expect(parsePrQuery("author:@Me")).toEqual({ author: "@me", numbers: [], text: "" });
+        expect(parsePrQuery("#12 fix login")).toEqual({ author: null, numbers: [12], text: "fix login" });
+        expect(parsePrQuery("@alice  text 12 #12")).toEqual({ author: "alice", numbers: [12], text: "text 12" });
+        expect(parsePrQuery("Expo 57")).toEqual({ author: null, numbers: [57], text: "Expo 57" });
+        expect(parsePrQuery("7412 #9")).toEqual({ author: null, numbers: [7412, 9], text: "" });
+        expect(parsePrQuery("  ")).toEqual({ author: null, numbers: [], text: "" });
+    });
+
+    it("finds a number with gh pr view in any state and searches text and author with gh pr list", async () => {
+        const calls: string[][] = [];
+        const row = SafeJSON.parse(GH_ROWS, { strict: true })[0];
+        const runner: CommandRunner = async (cmd) => {
+            calls.push(cmd);
+            const body = cmd[2] === "view" ? SafeJSON.stringify({ ...row, number: 7 }) : GH_ROWS;
+            return { code: 0, stdout: body, stderr: "" };
+        };
+        const project = projectRefFromRemote("git@github.com:o/r.git");
+
+        if (!project) {
+            throw new Error("fixture remote did not parse");
+        }
+
+        const byNumber = await listPrs({ project, query: "!7", runner });
+        expect(byNumber.prs.map((pr) => pr.number)).toEqual([7]);
+        expect(calls).toHaveLength(1);
+        expect(calls[0].slice(0, 6)).toEqual(["gh", "pr", "view", "7", "--repo", "github.com/o/r"]);
+
+        calls.length = 0;
+        const mixed = await listPrs({ project, state: "merged", query: "#7 @bob fix login", runner });
+        expect(mixed.prs.map((pr) => pr.number)).toEqual([7, 15]);
+        const list = calls.find((cmd) => cmd[2] === "list") ?? [];
+        expect(list.join(" ")).toContain("--state merged");
+        expect(list.join(" ")).toContain("--author bob --search fix login");
+    });
+
     const node = (number: number, updatedAt: string, login = "alice") => ({
         number,
         title: `PR ${number}`,
@@ -703,6 +743,51 @@ describe("GitLab MR list and view", () => {
         await listPrs({ project, state: "all", limit: 100, updatedSince: new Date("2026-03-01T10:00:00Z"), runner });
         const ranged = calls.find((cmd) => cmd[4].includes("/merge_requests"));
         expect(new URLSearchParams(ranged?.[4].split("?")[1]).get("updated_after")).toBe("2026-03-01T10:00:00.000Z");
+    });
+
+    it("searches by author, text and iids, and pages past GitLab's 100 rows", async () => {
+        if (!project) {
+            throw new Error("fixture remote did not parse");
+        }
+
+        const row = SafeJSON.parse(GL_MRS, { strict: true })[0];
+        const calls: URLSearchParams[] = [];
+        const runner: CommandRunner = async (cmd) => {
+            if (cmd[4].includes("/pipelines")) {
+                return { code: 0, stdout: "[]", stderr: "" };
+            }
+
+            const params = new URLSearchParams(cmd[4].split("?")[1]);
+            calls.push(params);
+            const page = Number(params.get("page"));
+            const perPage = Number(params.get("per_page"));
+            const iids = params.getAll("iids[]").map(Number);
+            const numbers =
+                iids.length > 0
+                    ? iids
+                    : Array.from({ length: page < 3 ? perPage : 5 }, (_, i) => 1000 - (page - 1) * perPage - i);
+            return { code: 0, stdout: SafeJSON.stringify(numbers.map((iid) => ({ ...row, iid }))), stderr: "" };
+        };
+
+        const paged = await listPrs({ project, state: "all", limit: 250, query: "@alice fix login", runner });
+        expect(paged.prs).toHaveLength(205);
+        expect(calls.map((params) => params.get("page"))).toEqual(["1", "2", "3"]);
+        expect(calls[0].get("per_page")).toBe("100");
+        expect(calls[0].get("author_username")).toBe("alice");
+        expect(calls[0].get("search")).toBe("fix login");
+        expect(calls[0].get("state")).toBe("all");
+
+        calls.length = 0;
+        const capped = await listPrs({ project, state: "all", limit: 120, runner });
+        expect(capped.prs).toHaveLength(120);
+        expect(calls).toHaveLength(2);
+
+        calls.length = 0;
+        const numbered = await listPrs({ project, state: "open", query: "!7412 #9", runner });
+        expect(numbered.prs.map((pr) => pr.number)).toEqual([7412, 9]);
+        expect(calls).toHaveLength(1);
+        expect(calls[0].getAll("iids[]")).toEqual(["7412", "9"]);
+        expect(calls[0].get("state")).toBeNull();
     });
 
     it("views an MR, a failed secondary call leaves its fields empty", async () => {

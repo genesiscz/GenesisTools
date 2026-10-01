@@ -8,6 +8,7 @@ import { createGit, listWorktrees, type WorktreeInfo } from "@genesiscz/utils/gi
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { Storage } from "@genesiscz/utils/storage";
+import { cached } from "@genesiscz/utils/storage/cache-flag";
 
 const log = logger.child({ component: "hub/pr-sessions" });
 
@@ -86,7 +87,8 @@ const MAX_TRANSCRIPTS = 300;
 const MAX_RESULTS = 100;
 const MAX_LISTED = 20;
 const SHORT_SHA = 7;
-const CACHE_TTL = "60 seconds";
+/** How old an answer a library caller gets when it does not say. */
+const CACHE_MAX_AGE_SECONDS = 60;
 
 function under(path: string, root: string): boolean {
     return path === root || path.startsWith(`${root}/`);
@@ -433,28 +435,22 @@ export const realPrSessionsDeps: PrSessionsDeps = {
     commitOutput: commitOutputShas,
 };
 
-/** `matchPrSessions` behind a 60 s cache keyed by the whole input; `fresh` skips the read. */
+/** `matchPrSessions` behind a cache keyed by the whole input, at most `maxCacheAgeSeconds` old (60 s when unset). */
 export async function prSessions({
     input,
-    fresh = false,
+    maxCacheAgeSeconds = CACHE_MAX_AGE_SECONDS,
     deps = realPrSessionsDeps,
 }: {
     input: PrSessionsInput;
-    fresh?: boolean;
+    maxCacheAgeSeconds?: number;
     deps?: PrSessionsDeps;
 }): Promise<PrSessionsResult> {
-    const storage = new Storage("hub");
     const key = `pr-sessions/${createHash("sha256").update(SafeJSON.stringify(input)).digest("hex").slice(0, 24)}.json`;
-
-    if (!fresh) {
-        const hit = await storage.getCacheFile<PrSessionsResult>(key, CACHE_TTL);
-
-        if (hit) {
-            return { ...hit, cached: true };
-        }
-    }
-
-    const result = await matchPrSessions(input, deps);
-    await storage.putCacheFile(key, result, CACHE_TTL);
-    return result;
+    const { value, hit } = await cached({
+        storage: new Storage("hub"),
+        key,
+        maxAgeSeconds: maxCacheAgeSeconds,
+        fetch: () => matchPrSessions(input, deps),
+    });
+    return hit ? { ...value, cached: true } : value;
 }

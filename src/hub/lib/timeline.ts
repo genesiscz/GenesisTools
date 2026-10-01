@@ -16,6 +16,7 @@ import { LOG_FORMAT, parseLogZ } from "@genesiscz/utils/git/porcelain";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { Storage } from "@genesiscz/utils/storage";
+import { cached, capMaxCacheAge } from "@genesiscz/utils/storage/cache-flag";
 import type { NotifyItem } from "./notify";
 import { readNotifyState } from "./notify-poll";
 import type { ThreadsResult } from "./pr";
@@ -161,9 +162,9 @@ export interface TimelineDeps {
     /**
      * The PRs of these projects updated since `since`, asked of the host in update order with that
      * bound (not the newest 30 of all time, which left out older PRs of a 30-day range), at most
-     * `limit` per project.
+     * `limit` per project, from a cache at most `maxCacheAgeSeconds` old (its own five minutes when unset).
      */
-    prs: (roots: string[], since: Date, limit: number) => Promise<HubPr[]>;
+    prs: (roots: string[], since: Date, limit: number, maxCacheAgeSeconds?: number) => Promise<HubPr[]>;
     /** Every cached thread list the hub has fetched (no network). */
     threads: () => ThreadsResult[];
     /** The decision store's rows (`tools question`). */
@@ -668,6 +669,7 @@ export async function collectTimeline({
     filters = {},
     now = new Date(),
     prs = true,
+    prsMaxCacheAgeSeconds,
     deps,
 }: {
     since: Date;
@@ -677,6 +679,7 @@ export async function collectTimeline({
     filters?: TimelineFilters;
     now?: Date;
     prs?: boolean;
+    prsMaxCacheAgeSeconds?: number;
     deps: TimelineDeps;
 }): Promise<Omit<TimelineResult, "elapsedMs" | "cached">> {
     const end = until ?? now;
@@ -744,7 +747,7 @@ export async function collectTimeline({
     if (prs && roots.length > 0) {
         try {
             const perProject = prRangeLimit(since, now);
-            prList = await deps.prs(roots, since, perProject);
+            prList = await deps.prs(roots, since, perProject, prsMaxCacheAgeSeconds);
             sources.push(bounded("PR events", prEvents(prList, window), limit, filters));
 
             for (const repo of fullPrLists(prList, perProject)) {
@@ -893,26 +896,45 @@ export function prRangeLimit(since: Date, now = new Date()): number {
         : TIMELINE_LIMITS.prsInRange;
 }
 
+/** How old a PR list the feed uses at most: it is the feed's one network call. */
+const PRS_MAX_AGE_SECONDS = 5 * 60;
+
 /**
- * The PR list of these projects, from a five-minute cache (the one network call of the feed). With
- * `since`, the host is asked for the PRs updated since that hour, at most `limit` per project;
- * without it, the newest `prsPerProject` (a branch's PR lookup in a row's detail).
+ * The PR list of these projects, from a cache at most `maxCacheAgeSeconds` old and never past five
+ * minutes (the one network call of the feed). With `since`, the host is asked for the PRs updated
+ * since that hour, at most `limit` per project; without it, the newest `prsPerProject` (a branch's
+ * PR lookup in a row's detail).
  */
 export async function cachedPrs(
     roots: string[],
     since?: Date,
-    limit: number = TIMELINE_LIMITS.prsPerProject
+    limit: number = TIMELINE_LIMITS.prsPerProject,
+    maxCacheAgeSeconds?: number
 ): Promise<HubPr[]> {
-    const storage = hubStorage();
     const updatedSince = since ? prListSince(since) : undefined;
     const rootsKey = createHash("sha1").update(roots.join("\n")).digest("hex").slice(0, 12);
-    const key = `timeline/prs-${rootsKey}${updatedSince ? `-since-${updatedSince.getTime()}-${limit}` : ""}.json`;
-    const hit = await storage.getCacheFile<HubPr[]>(key, "5 minutes");
+    // `prs2`: the entry is `{ prs, complete }` now; an older `prs-` file holds a bare array.
+    const key = `timeline/prs2-${rootsKey}${updatedSince ? `-since-${updatedSince.getTime()}-${limit}` : ""}.json`;
+    const { value } = await cached({
+        storage: hubStorage(),
+        key,
+        maxAgeSeconds: capMaxCacheAge(maxCacheAgeSeconds, PRS_MAX_AGE_SECONDS),
+        fetch: () => fetchPrs({ roots, updatedSince, limit }),
+        // A project whose lookup failed has unknown PRs, not none: a later read asks the forge again.
+        shouldStore: (result) => result.complete,
+    });
+    return value.prs;
+}
 
-    if (hit) {
-        return hit;
-    }
-
+async function fetchPrs({
+    roots,
+    updatedSince,
+    limit,
+}: {
+    roots: string[];
+    updatedSince?: Date;
+    limit: number;
+}): Promise<{ prs: HubPr[]; complete: boolean }> {
     const { prs, repos } = await hubPrs({
         paths: roots,
         state: "all",
@@ -925,8 +947,7 @@ export async function cachedPrs(
     }
 
     log.debug({ projects: repos.length, prs: prs.length, updatedSince }, "timeline: PR list fetched");
-    await storage.putCacheFile(key, prs, "5 minutes");
-    return prs;
+    return { prs, complete: repos.every((entry) => !entry.error) };
 }
 
 export const realTimelineDeps: TimelineDeps = {
@@ -1018,9 +1039,10 @@ export const realTimelineDeps: TimelineDeps = {
 };
 
 /**
- * `tools hub timeline`: one page of the feed, served from a cache unless `fresh`: one minute for
- * the live page (no cursor, the range ends now), ten minutes for an older page, whose events do
- * not move. The PR list inside it has its own five-minute cache, since it is the network call.
+ * `tools hub timeline`: one page of the feed, served from a cache at most `maxCacheAgeSeconds` old, and
+ * never past one minute for the live page (no cursor, the range ends now) or ten minutes for an older
+ * page, whose events do not move. Unset keeps those limits; 0 builds it fresh. The PR list inside it
+ * follows the same age, capped at its own five minutes, since it is the network call.
  */
 export async function buildTimeline({
     since = startOfDay(),
@@ -1029,7 +1051,7 @@ export async function buildTimeline({
     limit = TIMELINE_LIMITS.pageDefault,
     filters = {},
     prs = true,
-    fresh = false,
+    maxCacheAgeSeconds,
     deps = realTimelineDeps,
     storage = hubStorage(),
     now = new Date(),
@@ -1040,7 +1062,7 @@ export async function buildTimeline({
     limit?: number;
     filters?: TimelineFilters;
     prs?: boolean;
-    fresh?: boolean;
+    maxCacheAgeSeconds?: number;
     deps?: TimelineDeps;
     storage?: Storage;
     now?: Date;
@@ -1059,19 +1081,32 @@ export async function buildTimeline({
     // range (`24h`, `hour`) moves its start on every call too, so the start is keyed by the minute.
     const sinceKey = Math.floor(since.getTime() / 60_000);
     const key = `timeline/feed-${sinceKey}-${live ? "live" : upper.getTime()}-${size}-${prs ? "prs" : "local"}-${createHash("sha1").update(shape).digest("hex").slice(0, 8)}.json`;
-    const ttl = live ? "1 minute" : "10 minutes";
+    const { value, hit } = await cached<TimelineResult>({
+        storage,
+        key,
+        maxAgeSeconds: capMaxCacheAge(maxCacheAgeSeconds, live ? 60 : 600),
+        fetch: async () => ({
+            ...(await collectTimeline({
+                since,
+                until: end,
+                before,
+                limit: size,
+                filters,
+                now,
+                prs,
+                prsMaxCacheAgeSeconds: maxCacheAgeSeconds,
+                deps,
+            })),
+            elapsedMs: Math.round(performance.now() - started),
+            cached: false,
+        }),
+    });
 
-    if (!fresh) {
-        const hit = await storage.getCacheFile<TimelineResult>(key, ttl);
-
-        if (hit) {
-            return { ...hit, cached: true, elapsedMs: Math.round(performance.now() - started) };
-        }
+    if (hit) {
+        return { ...value, cached: true, elapsedMs: Math.round(performance.now() - started) };
     }
 
-    const collected = await collectTimeline({ since, until: end, before, limit: size, filters, now, prs, deps });
-    const result: TimelineResult = { ...collected, elapsedMs: Math.round(performance.now() - started), cached: false };
-    await storage.putCacheFile(key, result, ttl);
+    const result = value;
     log.debug(
         {
             since: result.since,

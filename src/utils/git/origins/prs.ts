@@ -228,6 +228,61 @@ export function parsePrRef(ref: string): { url: string } | { path: string; numbe
     return { path: match[1], number: Number(match[2]) };
 }
 
+/** A PR list search, as `parsePrQuery` reads it from the hub's search box. */
+export interface PrQuery {
+    /** Author username, or `@me` for the logged-in user; null for any author. */
+    author: string | null;
+    /** PR/MR numbers asked for by id; each is found whatever its state. */
+    numbers: number[];
+    /** Free text, matched against title and description by the host. */
+    text: string;
+}
+
+/**
+ * The hub's PR search box: `author:<name>` or `@<name>` filters by author (the last one wins), `#123` or
+ * `!123` asks for that PR/MR, and the remaining words are free text. A bare number is both: titles carry
+ * numbers ("Expo 57"), so it stays in the text too, unless the text would be numbers alone.
+ */
+export function parsePrQuery(query: string): PrQuery {
+    let author: string | null = null;
+    const numbers: number[] = [];
+    const words: string[] = [];
+    let hasWord = false;
+
+    for (const token of query.trim().split(/\s+/)) {
+        const person = /^(?:author:@?|@)(\S+)$/i.exec(token);
+
+        if (person) {
+            // `@me` is the logged-in user, as on GitHub's own search, never a user named "me".
+            author = person[1].toLowerCase() === "me" ? "@me" : person[1];
+            continue;
+        }
+
+        const id = /^([#!]?)(\d+)$/.exec(token);
+
+        if (id) {
+            const number = Number(id[2]);
+
+            if (!numbers.includes(number)) {
+                numbers.push(number);
+            }
+
+            if (!id[1]) {
+                words.push(token);
+            }
+
+            continue;
+        }
+
+        if (token) {
+            words.push(token);
+            hasWord = true;
+        }
+    }
+
+    return { author, numbers, text: hasWord ? words.join(" ") : "" };
+}
+
 function webUrls(kind: OriginKind, url: string): PrDetail["webUrls"] {
     return kind === "github"
         ? { pr: url, files: `${url}/files`, commits: `${url}/commits`, checks: `${url}/checks` }
@@ -873,7 +928,8 @@ export async function viewerLogin({
 /**
  * Open (default), merged or all PRs/MRs of a project. Read-only. `updatedSince` asks the host for
  * only the PRs updated at or after that time, most recently updated first, so a date range is not
- * limited to the newest `limit` PRs of all time.
+ * limited to the newest `limit` PRs of all time. `query` searches the host (`parsePrQuery` grammar):
+ * numbers come first and ignore `state`, and a query of only numbers runs no list at all.
  */
 export async function listPrs({
     project,
@@ -881,6 +937,7 @@ export async function listPrs({
     mine = false,
     limit = 30,
     updatedSince,
+    query,
     cwd = process.cwd(),
     runner = spawnRunner,
 }: {
@@ -889,12 +946,19 @@ export async function listPrs({
     mine?: boolean;
     limit?: number;
     updatedSince?: Date;
+    query?: PrQuery | string;
     cwd?: string;
     runner?: CommandRunner;
 }): Promise<PrListResult> {
     const warnings: string[] = [];
+    const parsed = typeof query === "string" ? parsePrQuery(query) : query;
+    const search = parsed && (parsed.author || parsed.numbers.length > 0 || parsed.text) ? parsed : null;
 
     try {
+        if (project.kind === "github" && search) {
+            return await listGhSearch({ project, state, mine, limit, updatedSince, search, cwd, runner });
+        }
+
         if (project.kind === "github" && updatedSince) {
             return await listGhUpdatedSince({ project, state, mine, limit, updatedSince, cwd, runner });
         }
@@ -918,53 +982,235 @@ export async function listPrs({
             return { prs, error: null, warnings };
         }
 
-        const query = new URLSearchParams({
-            state: state === "open" ? "opened" : state,
-            order_by: "updated_at",
-            sort: "desc",
-            per_page: String(Math.min(Math.max(limit, 1), GLAB_MAX_PER_PAGE)),
-        });
-
-        if (mine) {
-            query.set("scope", "created_by_me");
-        }
-
-        if (updatedSince) {
-            query.set("updated_after", updatedSince.toISOString());
-        }
-
-        const [mrs, pipelines] = await Promise.all([
-            run({ cmd: glabApi(project, `${glabProject(project)}/merge_requests?${query}`), cwd, runner }),
-            run({
-                cmd: glabApi(project, `${glabProject(project)}/pipelines?per_page=100&order_by=id&sort=desc`),
-                cwd,
-                runner,
-            }),
-        ]);
-
-        if (mrs.error) {
-            return { prs: [], error: mrs.error, warnings };
-        }
-
-        let ciBySha = new Map<string, CheckStatus | null>();
-
-        if (pipelines.error) {
-            warnings.push(`pipelines: ${pipelines.error}`);
-        } else {
-            try {
-                ciBySha = glabPipelinesBySha(pipelines.stdout);
-            } catch (err) {
-                warnings.push(`pipelines: ${errorText(err)}`);
-            }
-        }
-
-        const prs = parseGlabMrRows(mrs.stdout, ciBySha).slice(0, limit);
-        log.debug({ project: project.path, state, mine, updatedSince, count: prs.length, warnings }, "glab mr list");
-        return { prs, error: null, warnings };
+        return await listGlab({ project, state, mine, limit, updatedSince, search, cwd, runner });
     } catch (err) {
         log.debug({ err, project: project.path }, "pr list failed");
         return { prs: [], error: errorText(err), warnings };
     }
+}
+
+/**
+ * `listPrs` with a query on GitHub. `gh pr list` cannot select by number, so each number is one
+ * `gh pr view` with the list fields; text and author go through `gh pr list --search/--author`.
+ */
+async function listGhSearch({
+    project,
+    state,
+    mine,
+    limit,
+    updatedSince,
+    search,
+    cwd,
+    runner,
+}: {
+    project: ProjectRef;
+    state: PrListState;
+    mine: boolean;
+    limit: number;
+    updatedSince?: Date;
+    search: PrQuery;
+    cwd: string;
+    runner: CommandRunner;
+}): Promise<PrListResult> {
+    const warnings: string[] = [];
+    const repo = ghRepoArg(project);
+    const byNumber = await Promise.all(
+        search.numbers.map(async (number) => ({
+            number,
+            res: await run({
+                cmd: ["gh", "pr", "view", String(number), "--repo", repo, "--json", GH_LIST_FIELDS.join(",")],
+                cwd,
+                runner,
+            }),
+        }))
+    );
+    const prs: PrSummary[] = [];
+
+    for (const { number, res } of byNumber) {
+        if (res.error) {
+            warnings.push(`#${number}: ${res.error}`);
+            continue;
+        }
+
+        prs.push(...parseGhPrRows(`[${res.stdout}]`));
+    }
+
+    let error: string | null = null;
+
+    if (search.text || search.author) {
+        const cmd = ["gh", "pr", "list", "--repo", repo, "--state", state, "--limit", String(limit)];
+        const author = search.author ?? (mine ? "@me" : null);
+
+        if (author) {
+            cmd.push("--author", author);
+        }
+
+        if (search.text) {
+            cmd.push("--search", search.text);
+        }
+
+        cmd.push("--json", GH_LIST_FIELDS.join(","));
+        const res = await run({ cmd, cwd, runner });
+
+        if (res.error) {
+            error = res.error;
+        } else {
+            const since = updatedSince?.toISOString();
+            const listed = parseGhPrRows(res.stdout).filter(
+                (pr) => !prs.some((found) => found.number === pr.number) && (!since || pr.updatedAt >= since)
+            );
+            prs.push(...listed);
+        }
+    }
+
+    log.debug({ project: project.path, state, mine, search, count: prs.length, error, warnings }, "gh pr search");
+    return { prs: prs.slice(0, limit), error, warnings };
+}
+
+/**
+ * `GET projects/:id/merge_requests` walked `page=1,2,…` until `limit` rows or a short page, since GitLab
+ * answers at most `GLAB_MAX_PER_PAGE` rows per page.
+ */
+async function glabMrPages({
+    project,
+    params,
+    limit,
+    cwd,
+    runner,
+}: {
+    project: ProjectRef;
+    params: URLSearchParams;
+    limit: number;
+    cwd: string;
+    runner: CommandRunner;
+}): Promise<{ rows: Record<string, unknown>[]; error: string | null }> {
+    const perPage = Math.min(Math.max(limit, 1), GLAB_MAX_PER_PAGE);
+    const rows: Record<string, unknown>[] = [];
+
+    for (let page = 1; rows.length < limit; page++) {
+        const query = new URLSearchParams(params);
+        query.set("per_page", String(perPage));
+        query.set("page", String(page));
+        const res = await run({
+            cmd: glabApi(project, `${glabProject(project)}/merge_requests?${query}`),
+            cwd,
+            runner,
+        });
+
+        if (res.error) {
+            return { rows, error: res.error };
+        }
+
+        const answer = parseJson(res.stdout, "glab");
+
+        if (!Array.isArray(answer)) {
+            throw new PrParseError("glab output is not a list");
+        }
+
+        rows.push(...records(answer));
+
+        if (answer.length < perPage) {
+            break;
+        }
+    }
+
+    return { rows: rows.slice(0, limit), error: null };
+}
+
+/** `listPrs` on GitLab: MRs by number (any state) first, then the listed or searched MRs, CI joined by sha. */
+async function listGlab({
+    project,
+    state,
+    mine,
+    limit,
+    updatedSince,
+    search,
+    cwd,
+    runner,
+}: {
+    project: ProjectRef;
+    state: PrListState;
+    mine: boolean;
+    limit: number;
+    updatedSince?: Date;
+    search: PrQuery | null;
+    cwd: string;
+    runner: CommandRunner;
+}): Promise<PrListResult> {
+    const warnings: string[] = [];
+    const order = { order_by: "updated_at", sort: "desc" };
+    const numbers = search?.numbers ?? [];
+    const listed = !search || search.text || search.author;
+    const params = new URLSearchParams({ state: state === "open" ? "opened" : state, ...order });
+
+    if (mine) {
+        params.set("scope", "created_by_me");
+    }
+
+    if (updatedSince) {
+        params.set("updated_after", updatedSince.toISOString());
+    }
+
+    if (search?.text) {
+        params.set("search", search.text);
+    }
+
+    if (search?.author === "@me") {
+        params.set("scope", "created_by_me");
+    } else if (search?.author) {
+        params.set("author_username", search.author);
+    }
+
+    const byIid = new URLSearchParams(order);
+
+    for (const number of numbers) {
+        byIid.append("iids[]", String(number));
+    }
+
+    const [numbered, mrs, pipelines] = await Promise.all([
+        numbers.length > 0
+            ? glabMrPages({ project, params: byIid, limit: numbers.length, cwd, runner })
+            : { rows: [], error: null },
+        listed ? glabMrPages({ project, params, limit, cwd, runner }) : { rows: [], error: null },
+        run({
+            cmd: glabApi(project, `${glabProject(project)}/pipelines?per_page=100&order_by=id&sort=desc`),
+            cwd,
+            runner,
+        }),
+    ]);
+    const error = numbered.error ?? mrs.error;
+
+    if (error && numbered.rows.length === 0 && mrs.rows.length === 0) {
+        return { prs: [], error, warnings };
+    }
+
+    let ciBySha = new Map<string, CheckStatus | null>();
+
+    if (pipelines.error) {
+        warnings.push(`pipelines: ${pipelines.error}`);
+    } else {
+        try {
+            ciBySha = glabPipelinesBySha(pipelines.stdout);
+        } catch (err) {
+            warnings.push(`pipelines: ${errorText(err)}`);
+        }
+    }
+
+    const prs: PrSummary[] = [];
+
+    for (const row of [...numbered.rows, ...mrs.rows]) {
+        const pr = glabSummary(row, ciBySha);
+
+        if (pr && !prs.some((found) => found.number === pr.number)) {
+            prs.push(pr);
+        }
+    }
+
+    log.debug(
+        { project: project.path, state, mine, updatedSince, search, count: prs.length, warnings },
+        "glab mr list"
+    );
+    return { prs: prs.slice(0, limit), error, warnings };
 }
 
 /** One PR/MR with body, commits, checks and merge state. Read-only. */

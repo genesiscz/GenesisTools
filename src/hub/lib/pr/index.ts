@@ -3,6 +3,7 @@ import { resolveProjectApi } from "@app/gitlab/lib/client";
 import type { CommandRunner } from "@genesiscz/utils/git/origins";
 import { logger } from "@genesiscz/utils/logger";
 import { Storage } from "@genesiscz/utils/storage";
+import { cached } from "@genesiscz/utils/storage/cache-flag";
 import { type FactsReader, findBranchPr, findPrByRef } from "./find";
 import { githubBackend } from "./github";
 import { gitlabBackend } from "./gitlab";
@@ -12,7 +13,8 @@ export { findBranchPr, findPrByRef } from "./find";
 export * from "./types";
 
 const log = logger.child({ component: "hub/pr" });
-const THREADS_TTL = "30 seconds";
+/** How old a thread list a library caller gets when it does not say (the window polls while open). */
+const THREADS_MAX_AGE_SECONDS = 30;
 
 /**
  * The PR/MR a verb works on: the one named by `pr` (URL or `<repoPath>#<n>`) when given, else the one
@@ -67,34 +69,37 @@ function cacheKey(pr: FoundPr): string {
     return `pr-threads/${slug}.json`;
 }
 
-/** Threads for the window, from a 30 s cache per PR unless `noCache` (the window may poll while open). */
+/**
+ * Threads of one PR, from a per-PR cache at most `maxCacheAgeSeconds` old (30 s when unset; 0 asks the
+ * host). A cached list for another head is never served.
+ */
 export async function prThreads({
     pr,
     backend,
-    noCache = false,
+    maxCacheAgeSeconds = THREADS_MAX_AGE_SECONDS,
     storage = cacheStorage(),
 }: {
     pr: FoundPr;
     backend: PrBackend;
-    noCache?: boolean;
+    maxCacheAgeSeconds?: number;
     storage?: Storage;
 }): Promise<ThreadsResult> {
     const key = cacheKey(pr);
+    const { value, hit } = await cached<ThreadsResult>({
+        storage,
+        key,
+        maxAgeSeconds: maxCacheAgeSeconds,
+        isValid: (stored) => stored.pr.headSha === pr.headSha,
+        fetch: async () => ({ pr, ...(await backend.threads()), cached: false, fetchedAt: new Date().toISOString() }),
+    });
 
-    if (!noCache) {
-        const hit = await storage.getCacheFile<ThreadsResult>(key, THREADS_TTL);
-
-        if (hit && hit.pr.headSha === pr.headSha) {
-            log.debug({ key }, "hub pr threads: cache hit");
-            return { ...hit, pr, cached: true };
-        }
+    if (hit) {
+        log.debug({ key }, "hub pr threads: cache hit");
+        return { ...value, pr, cached: true };
     }
 
-    const fresh = await backend.threads();
-    const result: ThreadsResult = { pr, ...fresh, cached: false, fetchedAt: new Date().toISOString() };
-    await storage.putCacheFile(key, result, THREADS_TTL);
-    log.debug({ key, threads: result.threads.length, drafts: result.draftCount }, "hub pr threads: fetched");
-    return result;
+    log.debug({ key, threads: value.threads.length, drafts: value.draftCount }, "hub pr threads: fetched");
+    return value;
 }
 
 /** A write changed what `threads` returns; the next read must not serve the old answer. */

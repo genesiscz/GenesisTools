@@ -3,7 +3,10 @@ import { join } from "node:path";
 import type { CommandRunner } from "@genesiscz/utils/git/origins";
 import { TestRepo } from "@genesiscz/utils/git/test-repo";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { setupStorageSandbox } from "@genesiscz/utils/storage/test-sandbox";
 import { hubPr, hubPrs, PrRefError } from "./prs";
+
+setupStorageSandbox();
 
 const repos: TestRepo[] = [];
 
@@ -95,6 +98,46 @@ describe("hubPrs / hubPr", () => {
 
         const detail = await hubPr({ ref: `${worktree}#7`, runner: fakeGh(calls) });
         expect(detail).toMatchObject({ number: 7, body: "why", repoRoot: repo.dir, localWorktree: worktree });
+    });
+
+    it("passes the search query to the host", async () => {
+        const repo = await TestRepo.create({ prefix: "gt-review-prs-" });
+        repos.push(repo);
+        await repo.git(["remote", "add", "origin", "git@github.com:o/r.git"]);
+        const calls: string[][] = [];
+
+        const result = await hubPrs({ paths: [repo.dir], query: "!7", runner: fakeGh(calls) });
+
+        expect(result.prs.map((pr) => pr.number)).toEqual([7]);
+        expect(calls.some((cmd) => cmd[2] === "view" && cmd[3] === "7")).toBe(true);
+        expect(calls.some((cmd) => cmd[2] === "list")).toBe(false);
+    });
+
+    it("answers fresh by default and serves a stored answer only within --max-cache-age", async () => {
+        const repo = await TestRepo.create({ prefix: "gt-review-prs-" });
+        repos.push(repo);
+        await repo.git(["remote", "add", "origin", "git@github.com:o/r.git"]);
+        const calls: string[][] = [];
+        const lists = () => calls.filter((cmd) => cmd[2] === "list").length;
+        const views = () => calls.filter((cmd) => cmd[2] === "view").length;
+
+        await hubPrs({ paths: [repo.dir], runner: fakeGh(calls) });
+        await hubPrs({ paths: [repo.dir], runner: fakeGh(calls) });
+        expect(lists()).toBe(2);
+        expect((await hubPrs({ paths: [repo.dir], maxCacheAgeSeconds: 300, runner: fakeGh(calls) })).prs).toHaveLength(
+            1
+        );
+        expect(lists()).toBe(2);
+        await hubPrs({ paths: [repo.dir], state: "all", maxCacheAgeSeconds: 300, runner: fakeGh(calls) });
+        expect(lists()).toBe(3);
+
+        const ref = "https://github.com/o/r/pull/7";
+        await hubPr({ ref, runner: fakeGh(calls) });
+        expect((await hubPr({ ref, maxCacheAgeSeconds: 300, runner: fakeGh(calls) })).number).toBe(7);
+        expect(views()).toBe(1);
+        // GH_ROW carries no head sha, so a caller that knows one is never served the stored answer.
+        await hubPr({ ref, maxCacheAgeSeconds: 300, headSha: "abc123", runner: fakeGh(calls) });
+        expect(views()).toBe(2);
     });
 
     it("reports a failed lookup per project instead of dropping it", async () => {

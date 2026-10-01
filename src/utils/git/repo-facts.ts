@@ -36,12 +36,15 @@ const log = logger.child({ component: "review/repo" });
 export async function repoFacts({
     path,
     withPr = false,
-    fresh = false,
+    maxCacheAgeSeconds,
 }: {
     path: string;
     withPr?: boolean;
-    /** Bypass the PR lookup cache (src/utils/git/origins/lookup-cache.ts); still refreshes it on success. */
-    fresh?: boolean;
+    /**
+     * How old a PR lookup cache entry may be (src/utils/git/origins/lookup-cache.ts), never past its
+     * configured TTL; unset uses that TTL, 0 asks the host and still refreshes the cache on success.
+     */
+    maxCacheAgeSeconds?: number;
 }): Promise<RepoFacts> {
     const empty: RepoFacts = {
         path,
@@ -116,7 +119,13 @@ export async function repoFacts({
             facts.pr = lookup.pr;
             facts.prError = lookup.error;
         } else {
-            const lookup = await cachedPrForHead({ driver, originUrl: origin.url, branch, head, fresh });
+            const lookup = await cachedPrForHead({
+                driver,
+                originUrl: origin.url,
+                branch,
+                head,
+                maxAgeSeconds: maxCacheAgeSeconds,
+            });
             facts.pr = lookup.pr;
             facts.prError = lookup.error;
         }
@@ -130,16 +139,16 @@ export async function repoFacts({
 export async function repoFactsMany({
     paths,
     withPr = false,
-    fresh = false,
+    maxCacheAgeSeconds,
 }: {
     paths: string[];
     withPr?: boolean;
-    fresh?: boolean;
+    maxCacheAgeSeconds?: number;
 }): Promise<RepoFacts[]> {
     const unique = [...new Set(paths)];
     const results = await concurrentMap({
         items: unique,
-        fn: (path) => repoFacts({ path, withPr, fresh }),
+        fn: (path) => repoFacts({ path, withPr, maxCacheAgeSeconds }),
         concurrency: 4,
     });
 

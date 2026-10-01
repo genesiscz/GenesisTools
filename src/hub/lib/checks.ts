@@ -14,6 +14,7 @@ import {
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { Storage } from "@genesiscz/utils/storage";
+import { cached } from "@genesiscz/utils/storage/cache-flag";
 
 // The failing part of a CI check's log, for the PR detail's Checks section: a GitHub Actions job
 // (`gh run view --job --log` sliced to the failed steps) or a GitLab job trace. Fetched on demand
@@ -22,7 +23,8 @@ import { Storage } from "@genesiscz/utils/storage";
 const log = logger.child({ component: "hub/checks" });
 
 const LOG_TIMEOUT_MS = 90_000;
-const CACHE_TTL = "7 days";
+/** How old a finished log a library caller gets when it does not say: a finished job never changes. */
+const CACHE_MAX_AGE_SECONDS = 7 * 24 * 60 * 60;
 /** A run or pipeline URL can name dozens of jobs; only the first failed ones are fetched. */
 const MAX_JOBS = 3;
 export const DEFAULT_LOG_LINES = 150;
@@ -224,35 +226,52 @@ function cacheKey(url: string, maxLines: number): string {
 }
 
 /**
- * The failing log of the check at `url`. A finished log is cached for a week under
- * `~/.genesis-tools/hub/cache/check-logs/`; `fresh` skips the read. Never throws: a check with no
- * CI log behind it, or a host error, comes back with `error` set.
+ * The failing log of the check at `url`. Only a finished log is stored, under
+ * `~/.genesis-tools/hub/cache/check-logs/`, and served while at most `maxCacheAgeSeconds` old (a week
+ * when unset; 0 always fetches). Never throws: a check with no CI log behind it, or a host error,
+ * comes back with `error` set.
  */
 export async function checkLog({
     url,
     maxLines = DEFAULT_LOG_LINES,
-    fresh = false,
+    maxCacheAgeSeconds = CACHE_MAX_AGE_SECONDS,
     runner = spawnRunner,
     storage = new Storage("hub"),
 }: {
     url: string;
     maxLines?: number;
-    fresh?: boolean;
+    maxCacheAgeSeconds?: number;
     runner?: CommandRunner;
     storage?: Storage;
 }): Promise<CheckLogResult> {
     const started = performance.now();
-    const key = cacheKey(url, maxLines);
+    const { value, hit } = await cached({
+        storage,
+        key: cacheKey(url, maxLines),
+        maxAgeSeconds: maxCacheAgeSeconds,
+        fetch: () => fetchCheckLog({ url, maxLines, runner, started }),
+        shouldStore: (result) => result.final && result.error === null,
+    });
 
-    if (!fresh) {
-        const hit = await storage.getCacheFile<CheckLogResult>(key, CACHE_TTL);
-
-        if (hit) {
-            log.debug({ url }, "check log cache hit");
-            return { ...hit, cached: true, elapsedMs: Math.round(performance.now() - started) };
-        }
+    if (hit) {
+        log.debug({ url }, "check log cache hit");
+        return { ...value, cached: true, elapsedMs: Math.round(performance.now() - started) };
     }
 
+    return value;
+}
+
+async function fetchCheckLog({
+    url,
+    maxLines,
+    runner,
+    started,
+}: {
+    url: string;
+    maxLines: number;
+    runner: CommandRunner;
+    started: number;
+}): Promise<CheckLogResult> {
     const target = parseCheckUrl(url);
     const base: CheckLogResult = {
         url,
@@ -291,10 +310,6 @@ export async function checkLog({
             },
             "check log fetched"
         );
-
-        if (result.final && result.error === null) {
-            await storage.putCacheFile(key, result, CACHE_TTL);
-        }
 
         return result;
     } catch (err) {

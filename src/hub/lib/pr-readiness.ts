@@ -2,6 +2,7 @@ import { defaultReviewCommentClient } from "@app/github/lib/review-comments";
 import type { CiStatus } from "@genesiscz/utils/git/origins";
 import { logger } from "@genesiscz/utils/logger";
 import { Storage } from "@genesiscz/utils/storage";
+import { cached, capMaxCacheAge } from "@genesiscz/utils/storage/cache-flag";
 import { backendFor, findPrByRef, prThreads } from "./pr";
 import { hubPr } from "./prs";
 
@@ -18,7 +19,6 @@ const log = logger.child({ component: "hub/pr-readiness" });
 export const READINESS_HEAD_TTL_MS = 10 * 60_000;
 /** Without a known head (a bare CLI call), a cached answer is served this long. */
 export const READINESS_BARE_TTL_MS = 60_000;
-const CACHE_TTL = "1 day";
 const THREAD_PAGE = 100;
 const MAX_THREAD_PAGES = 10;
 
@@ -389,17 +389,20 @@ export interface ReadinessDeps {
     graphql<T>(query: string, variables: Record<string, unknown>): Promise<T>;
     /** The PR/MR URL of a `<repoPath>#<n>` or `<n>` ref, through the hub's own finder. */
     locate(ref: string): Promise<string>;
-    /** A PR/MR that is not on github.com: judged through the hub's own readers. */
-    other(url: string): Promise<ReadinessFacts>;
+    /**
+     * A PR/MR that is not on github.com: judged through the hub's own readers. `maxCacheAgeSeconds`
+     * reaches the thread read, so a fresh readiness request is not answered from a cached thread list.
+     */
+    other(url: string, maxCacheAgeSeconds?: number): Promise<ReadinessFacts>;
     storage: Pick<Storage, "getCacheFile" | "putCacheFile">;
     now(): Date;
 }
 
-async function otherFacts(url: string): Promise<ReadinessFacts> {
+async function otherFacts(url: string, maxCacheAgeSeconds?: number): Promise<ReadinessFacts> {
     const found = await findPrByRef({ ref: url });
     const [detail, threads] = await Promise.all([
         hubPr({ ref: found.url }),
-        backendFor(found).then((backend) => prThreads({ pr: found, backend })),
+        backendFor(found).then((backend) => prThreads({ pr: found, backend, maxCacheAgeSeconds })),
     ]);
 
     return {
@@ -444,11 +447,11 @@ function cacheKey(ref: string): string {
     return `pr-readiness/${ref.replace(/^https?:\/\//, "").replace(/[^A-Za-z0-9._-]+/g, "_")}.json`;
 }
 
-async function fetchFacts(ref: string, deps: ReadinessDeps): Promise<ReadinessFacts> {
+async function fetchFacts(ref: string, deps: ReadinessDeps, maxCacheAgeSeconds?: number): Promise<ReadinessFacts> {
     const parsed = parseGithubPrUrl(ref);
 
     if (!parsed || !/^https?:\/\/github\.com\//.test(ref)) {
-        return deps.other(ref);
+        return deps.other(ref, maxCacheAgeSeconds);
     }
 
     const vars = { owner: parsed.owner, repo: parsed.repo, number: parsed.number };
@@ -489,15 +492,16 @@ async function fetchFacts(ref: string, deps: ReadinessDeps): Promise<ReadinessFa
 
 /**
  * Readiness of one PR. `ref` is a PR/MR URL or `<repoPath>#<n>`, optionally `@<headSha>`: with a head,
- * a cached answer for that head under 10 minutes old is served without a forge call.
+ * a cached answer for that head under 10 minutes old is served without a forge call. `maxCacheAgeSeconds`
+ * lowers those limits (0 always asks the forge); unset keeps them.
  */
 export async function prReadiness({
     input,
-    fresh = false,
+    maxCacheAgeSeconds,
     deps = realReadinessDeps,
 }: {
     input: string;
-    fresh?: boolean;
+    maxCacheAgeSeconds?: number;
     deps?: ReadinessDeps;
 }): Promise<PrReadiness> {
     const known = splitKnownHead(input.trim());
@@ -508,25 +512,33 @@ export async function prReadiness({
     const key = cacheKey(ref);
     const now = deps.now();
 
-    if (!fresh) {
-        const hit = await deps.storage.getCacheFile<PrReadiness>(key, CACHE_TTL);
-        const age = hit ? now.getTime() - Date.parse(hit.fetchedAt) : Number.POSITIVE_INFINITY;
-        const valid =
-            hit &&
-            (head
-                ? hit.headSha?.toLowerCase().startsWith(head) && age < READINESS_HEAD_TTL_MS
+    const maxAgeMs =
+        capMaxCacheAge(maxCacheAgeSeconds, (head ? READINESS_HEAD_TTL_MS : READINESS_BARE_TTL_MS) / 1000) * 1000;
+    const { value, hit } = await cached<PrReadiness>({
+        storage: deps.storage,
+        key,
+        // The age is judged from `fetchedAt` below, so a test clock decides it; the file read only needs a bound.
+        maxAgeSeconds: maxAgeMs > 0 ? READINESS_HEAD_TTL_MS / 1000 : 0,
+        isValid: (stored) => {
+            const age = now.getTime() - Date.parse(stored.fetchedAt);
+            return head
+                ? Boolean(stored.headSha?.toLowerCase().startsWith(head)) && age < maxAgeMs
                 : // Without a head nothing proves the PR did not move since: a cached "ready" is asked again.
-                  age < READINESS_BARE_TTL_MS && hit.verdict !== "ready");
+                  age < maxAgeMs && stored.verdict !== "ready";
+        },
+        fetch: async () => ({
+            ...judgeReadiness(await fetchFacts(ref, deps, maxCacheAgeSeconds), now),
+            fetchedAt: now.toISOString(),
+            cached: false,
+        }),
+    });
 
-        if (hit && valid) {
-            log.debug({ ref, head, ageMs: age }, "pr readiness: cache hit");
-            return { ...hit, cached: true };
-        }
+    if (hit) {
+        log.debug({ ref, head, ageMs: now.getTime() - Date.parse(value.fetchedAt) }, "pr readiness: cache hit");
+        return { ...value, cached: true };
     }
 
-    const facts = await fetchFacts(ref, deps);
-    const result: PrReadiness = { ...judgeReadiness(facts, now), fetchedAt: now.toISOString(), cached: false };
-    await deps.storage.putCacheFile(key, result, CACHE_TTL);
+    const result = value;
     // debug: the verdict is the command's own output; at info it printed a second time on the console.
     log.debug(
         {
@@ -550,12 +562,12 @@ export interface ReadinessOutcome {
 /** Several PRs, a few at a time; one failure is that PR's error, never the whole list's. */
 export async function prReadinessMany({
     inputs,
-    fresh = false,
+    maxCacheAgeSeconds,
     concurrency = 4,
     deps = realReadinessDeps,
 }: {
     inputs: string[];
-    fresh?: boolean;
+    maxCacheAgeSeconds?: number;
     concurrency?: number;
     deps?: ReadinessDeps;
 }): Promise<ReadinessOutcome[]> {
@@ -568,7 +580,11 @@ export async function prReadinessMany({
             const input = inputs[index];
 
             try {
-                outcomes[index] = { input, readiness: await prReadiness({ input, fresh, deps }), error: null };
+                outcomes[index] = {
+                    input,
+                    readiness: await prReadiness({ input, maxCacheAgeSeconds, deps }),
+                    error: null,
+                };
             } catch (err) {
                 log.warn({ err, input }, "pr readiness failed");
                 outcomes[index] = { input, readiness: null, error: err instanceof Error ? err.message : String(err) };

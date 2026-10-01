@@ -417,7 +417,7 @@ describe("prReadiness bare calls and thread pages", () => {
 });
 
 describe("prReadiness cache", () => {
-    test("the same head within 10 minutes is served from the cache; a new head or --fresh asks again", async () => {
+    test("the same head within 10 minutes is served from the cache; a new head or a max age of 0 asks again", async () => {
         const deps = fakeDeps();
         const first = await prReadiness({ input: `${URL}@${HEAD.slice(0, 9)}`, deps });
         const second = await prReadiness({ input: `${URL}@${HEAD.slice(0, 9)}`, deps });
@@ -429,7 +429,7 @@ describe("prReadiness cache", () => {
         await prReadiness({ input: `${URL}@${OLD.slice(0, 9)}`, deps });
         expect(deps.calls).toBe(2);
 
-        await prReadiness({ input: `${URL}@${HEAD.slice(0, 9)}`, deps, fresh: true });
+        await prReadiness({ input: `${URL}@${HEAD.slice(0, 9)}`, deps, maxCacheAgeSeconds: 0 });
         expect(deps.calls).toBe(3);
 
         deps.clock.now = new Date(NOW.getTime() + 11 * 60_000);

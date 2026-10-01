@@ -25,6 +25,7 @@ import { buildToolStats, buildTurnCosts, type CallPricer } from "@genesiscz/util
 import { concurrentMap } from "@genesiscz/utils/async";
 import { logger } from "@genesiscz/utils/logger";
 import { Storage } from "@genesiscz/utils/storage";
+import { cached } from "@genesiscz/utils/storage/cache-flag";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/storage";
 import { readProcsReport } from "../procs/sources";
 import { composeHandoff, type HandoffDraft, type HandoffMeta, type HandoffRange } from "./handoff";
@@ -49,7 +50,8 @@ const STUCK_SCAN_CONCURRENCY = 4;
 
 /** Bump when the cached JSON's shape or the cache key changes. */
 const CACHE_VERSION = 2;
-const CACHE_TTL = "7 days";
+/** How old a heavy part a library caller gets when it does not say; the key already names the file state. */
+const CACHE_MAX_AGE_SECONDS = 7 * 24 * 60 * 60;
 /** The stuck detector reads this much of the file's end for full tool inputs. */
 const TAIL_BYTES = 2 * 1024 * 1024;
 /** Turns the stuck detector reads: enough for a long loop inside one prompt. */
@@ -184,8 +186,8 @@ async function stuckOf(resolved: ResolvedTranscript, thresholds: StuckThresholds
 
 export interface InsightsOptions {
     sessionId: string;
-    /** Skip the cache (a changed pricing table, a debugging run). */
-    fresh?: boolean;
+    /** Serve the heavy part from its cache at most this old (a week when unset); 0 recomputes it. */
+    maxCacheAgeSeconds?: number;
     now?: number;
     storage?: Storage;
 }
@@ -201,26 +203,39 @@ export async function sessionInsights(options: InsightsOptions): Promise<Session
     const resolved = await resolveTranscript(options.sessionId);
     const thresholds = readStuckThresholds();
     const key = insightsCacheKey(resolved);
+    const { value, hit } = await cached<SessionInsights>({
+        storage,
+        key,
+        maxAgeSeconds: options.maxCacheAgeSeconds ?? CACHE_MAX_AGE_SECONDS,
+        isValid: (stored) => {
+            if (cachedInsightsFit(stored, resolved)) {
+                return true;
+            }
 
-    if (!options.fresh) {
-        const hit = await storage.getCacheFile<SessionInsights>(key, CACHE_TTL);
-
-        if (hit && !cachedInsightsFit(hit, resolved)) {
             log.warn(
-                { key, cached: { provider: hit.provider, filePath: hit.filePath }, filePath: resolved.filePath },
+                { key, cached: { provider: stored.provider, filePath: stored.filePath }, filePath: resolved.filePath },
                 "insights cache entry belongs to another transcript; recomputing"
             );
-        } else if (hit) {
-            log.debug({ key }, "insights cache hit");
-            return {
-                ...hit,
-                stuck: await stuckOf(resolved, thresholds, now),
-                thresholds,
-                generatedAt: new Date(now).toISOString(),
-            };
-        }
-    }
+            return false;
+        },
+        fetch: () => computeInsights({ resolved, thresholds, now }),
+    });
+    // The same tail read as `tools hub stuck`, so both print one verdict; it depends on the clock, so never cached.
+    const stuck = await stuckOf(resolved, thresholds, now);
+    log.debug({ key, hit, stuck: stuck?.kind ?? null }, "insights");
+    return { ...value, stuck, thresholds, generatedAt: new Date(now).toISOString() };
+}
 
+/** The cacheable part of `sessionInsights`: everything but the stuck verdict. */
+async function computeInsights({
+    resolved,
+    thresholds,
+    now,
+}: {
+    resolved: ResolvedTranscript;
+    thresholds: StuckThresholds;
+    now: number;
+}): Promise<SessionInsights> {
     const loaded = await loadTranscript(resolved);
     const costs = buildTurnCosts({
         turns: loaded.turns,
@@ -229,8 +244,6 @@ export async function sessionInsights(options: InsightsOptions): Promise<Session
         price: catalogPricer(),
     });
     const tools = buildToolStats({ turns: loaded.turns, native: loaded.native });
-    // The same tail read as a cache hit and `tools hub stuck`, so all three print one verdict.
-    const stuck = await stuckOf(resolved, thresholds, now);
     const firstPrompt = loaded.turns.find((turn) => turn.role === "user");
     const result: SessionInsights = {
         sessionId: resolved.sessionId,
@@ -245,11 +258,10 @@ export async function sessionInsights(options: InsightsOptions): Promise<Session
         totals: costs.totals,
         turns: costs.turns,
         tools,
-        stuck,
+        stuck: null,
         thresholds,
         generatedAt: new Date(now).toISOString(),
     };
-    await storage.putCacheFile(key, { ...result, stuck: null }, CACHE_TTL);
     log.debug(
         {
             sessionId: resolved.sessionId,
@@ -257,7 +269,6 @@ export async function sessionInsights(options: InsightsOptions): Promise<Session
             sections: result.turns.length,
             tools: result.tools.length,
             priced: result.priced,
-            stuck: result.stuck?.kind ?? null,
         },
         "insights computed"
     );

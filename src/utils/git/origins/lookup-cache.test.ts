@@ -185,14 +185,21 @@ describe("cachedPrForHead", () => {
         expect(calls).toEqual(["b", "b"]);
     });
 
-    test("--fresh skips the read but still refreshes the cache for the next call", async () => {
+    test("a max age of 0 skips the read but still refreshes the cache for the next call", async () => {
         const storage = scratchStorage();
         const { driver, calls } = fakeDriver([
             { pr: pr(1), error: null },
             { pr: pr(2), error: null },
         ]);
         await cachedPrForHead({ driver, originUrl: "o", branch: "b", head: "h", storage });
-        const fresh = await cachedPrForHead({ driver, originUrl: "o", branch: "b", head: "h", storage, fresh: true });
+        const fresh = await cachedPrForHead({
+            driver,
+            originUrl: "o",
+            branch: "b",
+            head: "h",
+            storage,
+            maxAgeSeconds: 0,
+        });
         expect(fresh.pr?.number).toBe(2);
 
         const afterFresh = await cachedPrForHead({

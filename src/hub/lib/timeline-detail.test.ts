@@ -401,7 +401,12 @@ describe("timeline detail: commit", () => {
 
         await timelineDetail({ request, deps: counting, storage, now: NOW });
         const again = await timelineDetail({ request, deps: counting, storage, now: NOW });
-        const fresh = await timelineDetail({ request: { ...request, fresh: true }, deps: counting, storage, now: NOW });
+        const fresh = await timelineDetail({
+            request: { ...request, maxCacheAgeSeconds: 0 },
+            deps: counting,
+            storage,
+            now: NOW,
+        });
 
         expect(again.cached).toBe(true);
         expect(fresh.cached).toBe(false);

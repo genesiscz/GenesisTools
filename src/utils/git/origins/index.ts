@@ -12,6 +12,7 @@ export type {
     PrListResult,
     PrListState,
     ProjectRef,
+    PrQuery,
     PrSummary,
     PrViewResult,
 } from "./prs";
@@ -25,6 +26,7 @@ export {
     parseGhPrView,
     parseGlabMrRows,
     parseGlabMrView,
+    parsePrQuery,
     parsePrRef,
     parsePrUrl,
     projectRefFromRemote,

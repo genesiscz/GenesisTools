@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { basename } from "node:path";
 import { concurrentMap } from "@genesiscz/utils/async";
 import {
@@ -8,6 +9,7 @@ import {
     type PrDetail,
     type PrListState,
     type ProjectRef,
+    type PrQuery,
     type PrSummary,
     parsePrRef,
     parsePrUrl,
@@ -20,7 +22,10 @@ import {
 } from "@genesiscz/utils/git";
 import { branchMentions, localBranchNames } from "@genesiscz/utils/git/branch-names";
 import { type RepoFacts, repoFacts, repoFactsMany } from "@genesiscz/utils/git/repo-facts";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { cached } from "@genesiscz/utils/storage/cache-flag";
+import { Storage } from "@genesiscz/utils/storage/storage";
 import { type ProposalSummary, proposalFor } from "./proposal";
 
 /** The hub's PR row: the host's PR plus where it lives on this machine. */
@@ -96,7 +101,7 @@ function toHubPr({
         ...pr,
         // A detached review worktree has no branch to match; the proposal names the checkout it read.
         localWorktree: worktrees.get(pr.headBranch) ?? proposal?.repoPath ?? null,
-        isMine: mine ? true : viewer && pr.author ? viewer === pr.author : null,
+        isMine: viewer && pr.author ? viewer === pr.author : mine ? true : null,
         proposal,
     };
 }
@@ -164,9 +169,18 @@ function viewerCache(runner: CommandRunner): (project: ProjectRef, cwd: string) 
     };
 }
 
+function hubCache(): Storage {
+    return new Storage("hub");
+}
+
+function cacheHash(value: unknown): string {
+    return createHash("sha256").update(SafeJSON.stringify(value)).digest("hex").slice(0, 24);
+}
+
 /**
  * PRs/MRs of every project among `paths`, one host query per project, four projects at a time.
- * Read-only. `updatedSince` keeps only PRs updated since then (`listPrs`).
+ * Read-only. `updatedSince` keeps only PRs updated since then, `query` searches the host (`listPrs`).
+ * Fresh by default; `maxCacheAgeSeconds` serves a stored answer for the same projects and filters.
  */
 export async function hubPrs({
     paths,
@@ -174,20 +188,74 @@ export async function hubPrs({
     mine = false,
     limit = 30,
     updatedSince,
+    query,
+    maxCacheAgeSeconds,
     runner = spawnRunner,
+    storage = hubCache(),
 }: {
     paths: string[];
     state?: PrListState;
     mine?: boolean;
     limit?: number;
     updatedSince?: Date;
+    query?: PrQuery | string;
+    maxCacheAgeSeconds?: number;
     runner?: CommandRunner;
+    storage?: Pick<Storage, "getCacheFile" | "putCacheFile">;
 }): Promise<HubPrsResult> {
     const facts = await repoFactsMany({ paths });
     const { groups, skipped } = groupByOrigin(facts);
+    const key = `pr-list/${cacheHash({
+        groups: groups.map((group) => [group.key, group.paths]),
+        skipped,
+        state,
+        mine,
+        limit,
+        updatedSince: updatedSince?.toISOString() ?? null,
+        query: query ?? null,
+    })}.json`;
+    const { value, hit } = await cached({
+        storage,
+        key,
+        maxAgeSeconds: maxCacheAgeSeconds,
+        fetch: () => collectHubPrs({ groups, skipped, state, mine, limit, updatedSince, query, runner }),
+        // A project whose lookup failed has unknown PRs, not none: the next call asks the host again.
+        shouldStore: (result) => result.repos.every((repo) => repo.error === null),
+    });
+    log.debug({ key, hit, prs: value.prs.length }, "hub prs");
+    return value;
+}
+
+async function collectHubPrs({
+    groups,
+    skipped,
+    state,
+    mine,
+    limit,
+    updatedSince,
+    query,
+    runner,
+}: {
+    groups: ProjectGroup[];
+    skipped: HubPrsResult["skipped"];
+    state: PrListState;
+    mine: boolean;
+    limit: number;
+    updatedSince?: Date;
+    query?: PrQuery | string;
+    runner: CommandRunner;
+}): Promise<HubPrsResult> {
     const viewerFor = viewerCache(runner);
     log.debug(
-        { paths: paths.length, projects: groups.length, skipped: skipped.length, state, mine, limit, updatedSince },
+        {
+            projects: groups.length,
+            skipped: skipped.length,
+            state,
+            mine,
+            limit,
+            updatedSince,
+            query,
+        },
         "hub prs"
     );
 
@@ -223,7 +291,7 @@ export async function hubPrs({
 
             const cwd = repoRoot ?? first.path;
             const [listed, viewer] = await Promise.all([
-                listPrs({ project, state, mine, limit, updatedSince, cwd, runner }),
+                listPrs({ project, state, mine, limit, updatedSince, query, cwd, runner }),
                 viewerFor(project, cwd),
             ]);
             const byBranch = worktreeByBranch(worktrees.all);
@@ -271,10 +339,18 @@ export class PrRefError extends Error {}
 /** One PR/MR by URL or `<repoPath>#<number>`, with body, commits and checks. Read-only; throws PrRefError. */
 export async function hubPr({
     ref,
+    maxCacheAgeSeconds,
+    headSha,
     runner = spawnRunner,
+    storage = hubCache(),
 }: {
     ref: string;
+    /** Serve a stored answer at most this old; fresh by default. */
+    maxCacheAgeSeconds?: number;
+    /** The head the caller knows: a stored answer for another head is not served. */
+    headSha?: string;
     runner?: CommandRunner;
+    storage?: Pick<Storage, "getCacheFile" | "putCacheFile">;
 }): Promise<HubPrDetail> {
     const parsedRef = parsePrRef(ref);
 
@@ -321,6 +397,34 @@ export async function hubPr({
         worktrees = worktreeByBranch(local.all);
     }
 
+    const key = `pr-show/${cacheHash([project.kind, project.host, project.path, number, repoRoot])}.json`;
+    const head = headSha?.trim().toLowerCase();
+    const { value, hit } = await cached({
+        storage,
+        key,
+        maxAgeSeconds: maxCacheAgeSeconds,
+        isValid: (stored) => !head || Boolean(stored.headSha?.toLowerCase().startsWith(head)),
+        fetch: () => fetchHubPr({ project, number, repo, repoRoot, worktrees, runner }),
+    });
+    log.debug({ key, hit, head }, "hub pr");
+    return value;
+}
+
+async function fetchHubPr({
+    project,
+    number,
+    repo,
+    repoRoot,
+    worktrees,
+    runner,
+}: {
+    project: ProjectRef;
+    number: number;
+    repo: string;
+    repoRoot: string | null;
+    worktrees: Map<string, string>;
+    runner: CommandRunner;
+}): Promise<HubPrDetail> {
     const cwd = repoRoot ?? process.cwd();
     const [viewed, viewer, branches] = await Promise.all([
         viewPr({ project, number, cwd, runner }),

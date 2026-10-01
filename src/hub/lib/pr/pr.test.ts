@@ -932,7 +932,7 @@ describe("only publish publishes", () => {
 // ─── cache ────────────────────────────────────────────────────────────────────
 
 describe("prThreads cache", () => {
-    test("30 s cache per PR, bypassed by noCache, dropped by forgetThreads and by a new head", async () => {
+    test("30 s cache per PR, bypassed by a max age of 0, dropped by forgetThreads and by a new head", async () => {
         let reads = 0;
         const unused = async (): Promise<never> => {
             throw new Error("only threads is read here");
@@ -957,7 +957,7 @@ describe("prThreads cache", () => {
         expect((await prThreads({ pr: ghPr, backend: full, storage })).cached).toBe(true);
         expect(reads).toBe(1);
 
-        expect((await prThreads({ pr: ghPr, backend: full, storage, noCache: true })).cached).toBe(false);
+        expect((await prThreads({ pr: ghPr, backend: full, storage, maxCacheAgeSeconds: 0 })).cached).toBe(false);
         expect((await prThreads({ pr: { ...ghPr, headSha: "newer" }, backend: full, storage })).cached).toBe(false);
         await forgetThreads({ pr: ghPr, storage });
         expect((await prThreads({ pr: ghPr, backend: full, storage })).cached).toBe(false);

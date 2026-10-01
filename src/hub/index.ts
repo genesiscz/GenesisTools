@@ -11,6 +11,7 @@ import { repoFactsMany } from "@genesiscz/utils/git/repo-facts";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import { genesisAppBundlePath } from "@genesiscz/utils/macos/genesis-app";
+import { maxCacheAgeOption, resolveMaxCacheAge } from "@genesiscz/utils/storage/cache-flag";
 import { Command } from "commander";
 import { registerCheckLogCommand } from "./commands/checks";
 import { registerConfigCommands } from "./commands/config";
@@ -309,9 +310,12 @@ program
     .description("Checkout, branch, origin web pages and (with --pr) the PR/MR of each folder, as JSON")
     .argument("<paths...>", "folders inside git checkouts")
     .option("--pr", "also look up the PR/MR whose head is the branch (gh / glab; slower)")
-    .option("--fresh", "ignore the PR lookup cache (tools hub config)")
-    .action(async (paths: string[], opts: { pr?: boolean; fresh?: boolean }) => {
-        out.result(await repoFactsMany({ paths, withPr: Boolean(opts.pr), fresh: Boolean(opts.fresh) }));
+    .addOption(maxCacheAgeOption("PR lookup, never older than its TTL (tools hub config),"))
+    .option("--fresh", "the default; kept for old callers (same as --max-cache-age 0)")
+    .action(async (paths: string[], opts: { pr?: boolean; fresh?: boolean; maxCacheAge?: number }) => {
+        out.result(
+            await repoFactsMany({ paths, withPr: Boolean(opts.pr), maxCacheAgeSeconds: resolveMaxCacheAge(opts) })
+        );
     });
 
 const timeline = program
@@ -331,7 +335,8 @@ const timeline = program
     .option("--needs-me", "only what waits for me: open decisions, failed CI on my PRs, unanswered threads on my PRs")
     .option("--kinds <list>", `only these kinds, comma-separated: ${TIMELINE_KINDS.join(",")}`)
     .option("--no-prs", "skip the PR list (the one network call)")
-    .option("--fresh", "ignore the page cache")
+    .addOption(maxCacheAgeOption("page, never older than 1 min live or 10 min for an older page,"))
+    .option("--fresh", "the default; kept for old callers (same as --max-cache-age 0)")
     .option("--json", "machine-readable output")
     .action(
         async (opts: {
@@ -345,6 +350,7 @@ const timeline = program
             kinds?: string;
             prs?: boolean;
             fresh?: boolean;
+            maxCacheAge?: number;
             json?: boolean;
         }) => {
             const preset = await enumFlag("--range", TIMELINE_RANGE_PRESETS, opts.range);
@@ -408,7 +414,7 @@ const timeline = program
                     kinds: kinds?.filter(isTimelineKind),
                 },
                 prs: opts.prs !== false,
-                fresh: Boolean(opts.fresh),
+                maxCacheAgeSeconds: resolveMaxCacheAge(opts),
             });
 
             if (opts.json) {
@@ -445,7 +451,8 @@ timeline
     .option("--since <time>", "the period a session or PR row stands for (default: midnight)")
     .option("--until <time>", "the period's end (default: now)")
     .option("--file <path>", "a commit's one file whose diff is wanted")
-    .option("--fresh", "ignore the detail cache")
+    .addOption(maxCacheAgeOption("detail, never older than its kind allows,"))
+    .option("--fresh", "the default; kept for old callers (same as --max-cache-age 0)")
     .option("--json", "machine-readable output")
     .action(
         async (opts: {
@@ -459,6 +466,7 @@ timeline
             until?: string;
             file?: string;
             fresh?: boolean;
+            maxCacheAge?: number;
             json?: boolean;
         }) => {
             if (!isTimelineDetailKind(opts.kind)) {
@@ -472,12 +480,21 @@ timeline
                 return;
             }
 
-            // `timeline` declares --since, --until, --fresh and --json too, and commander hands a
-            // flag both commands know to the PARENT, so the subcommand reads both stores.
-            const parent = timeline.opts<{ since?: string; until?: string; fresh?: boolean; json?: boolean }>();
+            // `timeline` declares --since, --until, --fresh, --max-cache-age and --json too, and commander
+            // hands a flag both commands know to the PARENT, so the subcommand reads both stores.
+            const parent = timeline.opts<{
+                since?: string;
+                until?: string;
+                fresh?: boolean;
+                maxCacheAge?: number;
+                json?: boolean;
+            }>();
             const sinceText = opts.since ?? parent.since;
             const untilText = opts.until ?? parent.until;
-            const fresh = Boolean(opts.fresh ?? parent.fresh);
+            const maxCacheAgeSeconds = resolveMaxCacheAge({
+                fresh: opts.fresh ?? parent.fresh,
+                maxCacheAge: opts.maxCacheAge ?? parent.maxCacheAge,
+            });
             const json = Boolean(opts.json ?? parent.json);
             const since = sinceText === undefined ? undefined : parseSince(sinceText);
             const until = untilText === undefined ? undefined : parseUntil(untilText);
@@ -500,7 +517,7 @@ timeline
                         since,
                         until,
                         file: opts.file,
-                        fresh,
+                        maxCacheAgeSeconds,
                     },
                 });
 
@@ -535,52 +552,73 @@ pr.command("list")
     .argument("<paths...>", "folders inside git checkouts; worktrees and clones of one origin count once")
     .option("--state [state]", `${PR_LIST_STATES.join("|")} (default open)`)
     .option("--mine", "only PRs/MRs authored by the logged-in gh/glab user")
-    .option("--limit <n>", "at most this many per project", "30")
-    .action(async (paths: string[], opts: { state?: string | true; mine?: boolean; limit: string }) => {
-        let state = opts.state === undefined ? "open" : opts.state;
+    .option("--limit <n>", "at most this many per project; GitLab pages past 100", "30")
+    .option(
+        "--query <q>",
+        "search on the host: author:<name> or @<name>, #123 / !123 for that PR/MR in any state, other words match title and description; a bare 123 is both"
+    )
+    .addOption(maxCacheAgeOption("list for the same projects and filters"))
+    .action(
+        async (
+            paths: string[],
+            opts: { state?: string | true; mine?: boolean; limit: string; query?: string; maxCacheAge?: number }
+        ) => {
+            let state = opts.state === undefined ? "open" : opts.state;
 
-        if (!isPrListState(state) && isInteractive()) {
-            const picked = await p.select({
-                message: "Which PRs/MRs",
-                options: PR_LIST_STATES.map((value) => ({ value, label: value })),
-            });
+            if (!isPrListState(state) && isInteractive()) {
+                const picked = await p.select({
+                    message: "Which PRs/MRs",
+                    options: PR_LIST_STATES.map((value) => ({ value, label: value })),
+                });
 
-            if (p.isCancel(picked)) {
+                if (p.isCancel(picked)) {
+                    process.exitCode = 1;
+                    return;
+                }
+
+                state = picked;
+            }
+
+            if (!isPrListState(state)) {
+                out.log.error(
+                    suggestEnumFlag("tools hub", "--state", PR_LIST_STATES, {
+                        subcommand: ["pr", "list"],
+                        given: typeof state === "string" ? state : undefined,
+                    })
+                );
                 process.exitCode = 1;
                 return;
             }
 
-            state = picked;
-        }
+            const limit = Number(opts.limit);
 
-        if (!isPrListState(state)) {
-            out.log.error(
-                suggestEnumFlag("tools hub", "--state", PR_LIST_STATES, {
-                    subcommand: ["pr", "list"],
-                    given: typeof state === "string" ? state : undefined,
+            if (!Number.isInteger(limit) || limit < 1) {
+                out.log.error(`--limit must be a positive integer, got "${opts.limit}"`);
+                process.exitCode = 1;
+                return;
+            }
+
+            out.result(
+                await hubPrs({
+                    paths,
+                    state,
+                    mine: Boolean(opts.mine),
+                    limit,
+                    query: opts.query,
+                    maxCacheAgeSeconds: resolveMaxCacheAge(opts),
                 })
             );
-            process.exitCode = 1;
-            return;
         }
-
-        const limit = Number(opts.limit);
-
-        if (!Number.isInteger(limit) || limit < 1) {
-            out.log.error(`--limit must be a positive integer, got "${opts.limit}"`);
-            process.exitCode = 1;
-            return;
-        }
-
-        out.result(await hubPrs({ paths, state, mine: Boolean(opts.mine), limit }));
-    });
+    );
 
 pr.command("show")
     .description("One PR/MR with body, commits, checks and merge state, as JSON; read-only")
     .argument("<ref>", "PR/MR URL, or <repoPath>#<number> (the path form also finds the local worktree)")
-    .action(async (ref: string) => {
+    .addOption(maxCacheAgeOption("PR"))
+    .option("--head <sha>", "the head the caller knows: a cached answer for another head is not served")
+    .action(async (ref: string, opts: { maxCacheAge?: number; head?: string }) => {
         try {
-            out.result(await hubPr({ ref }));
+            out.result(await hubPr({ ref, maxCacheAgeSeconds: resolveMaxCacheAge(opts), headSha: opts.head }));
         } catch (error) {
             if (!(error instanceof PrRefError)) {
                 throw error;
@@ -661,7 +699,8 @@ pr.command("sessions")
     .option("--head <sha>", "the PR's head commit")
     .option("--commits <shas>", "comma-separated PR commits (default: git log base..head)")
     .option("--since <iso>", "the PR's first activity; scans start a day before it (default: 90 days ago)")
-    .option("--no-cache", "recompute instead of reading the 60 s cache")
+    .addOption(maxCacheAgeOption("match"))
+    .option("--no-cache", "the default; kept for old callers (same as --max-cache-age 0)")
     .option("--json", "machine-readable output")
     .action(
         async (opts: {
@@ -672,6 +711,7 @@ pr.command("sessions")
             commits?: string;
             since?: string;
             cache: boolean;
+            maxCacheAge?: number;
             json?: boolean;
         }) => {
             const since = opts.since ? new Date(opts.since) : null;
@@ -694,7 +734,7 @@ pr.command("sessions")
                             commits: opts.commits?.split(",").filter(Boolean),
                             since,
                         },
-                        fresh: !opts.cache,
+                        maxCacheAgeSeconds: resolveMaxCacheAge({ ...opts, fresh: !opts.cache }),
                     }),
                 human: (result) =>
                     [
@@ -801,17 +841,22 @@ pr.command("find")
     });
 
 pr.command("threads")
-    .description("Review threads with side/line positions, authors, reactions and my drafts; read-only, cached 30 s")
+    .description("Review threads with side/line positions, authors, reactions and my drafts; read-only")
     .option("--repo <path>", REPO_HELP, ".")
     .option("--pr <ref>", PR_HELP)
-    .option("--no-cache", "ask the host even when a 30 s old answer is cached")
+    .addOption(maxCacheAgeOption("thread list for the same head"))
+    .option("--no-cache", "the default; kept for old callers (same as --max-cache-age 0)")
     .option("--json", "machine-readable output")
-    .action(async (opts: { repo: string; pr?: string; cache: boolean; json?: boolean }) => {
+    .action(async (opts: { repo: string; pr?: string; cache: boolean; maxCacheAge?: number; json?: boolean }) => {
         await prVerb({
             json: opts.json,
             run: async () => {
                 const found = await resolvePr({ repo: opts.repo, pr: opts.pr });
-                return prThreads({ pr: found, backend: await backendFor(found), noCache: !opts.cache });
+                return prThreads({
+                    pr: found,
+                    backend: await backendFor(found),
+                    maxCacheAgeSeconds: resolveMaxCacheAge({ ...opts, fresh: !opts.cache }),
+                });
             },
             human: (result) =>
                 [

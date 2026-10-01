@@ -129,8 +129,8 @@ export async function writePrLookupCacheSeconds(
 
 /**
  * `driver.prForHead`, through a persistent cache keyed by origin URL + branch + head commit (each
- * hub click is a new process, so the cache lives in a file, not memory). `fresh` skips the read
- * but still writes on success, so the next click benefits. TTL 0 (`ttlSeconds`, else the config
+ * hub click is a new process, so the cache lives in a file, not memory). `maxAgeSeconds` lowers how old
+ * a served entry may be (0 skips the read but still writes on success, so the next click benefits). TTL 0 (`ttlSeconds`, else the config
  * value) turns caching off entirely: never read, never written, `driver.prForHead` called every
  * time. A failed lookup is returned as-is and never cached.
  */
@@ -139,7 +139,7 @@ export async function cachedPrForHead({
     originUrl,
     branch,
     head,
-    fresh = false,
+    maxAgeSeconds,
     ttlSeconds,
     storage = new Storage(PR_LOOKUP_STORAGE),
     now = () => Date.now(),
@@ -148,7 +148,7 @@ export async function cachedPrForHead({
     originUrl: string;
     branch: string;
     head: string;
-    fresh?: boolean;
+    maxAgeSeconds?: number;
     ttlSeconds?: number;
     storage?: Storage;
     now?: () => number;
@@ -163,11 +163,13 @@ export async function cachedPrForHead({
     const path = cachePath(storage);
     const key = prLookupCacheKey(originUrl, branch, head);
 
-    if (!fresh) {
+    const readMs = Math.min(ttlMs, (maxAgeSeconds ?? ttl) * 1000);
+
+    if (readMs > 0) {
         const { entries } = readCacheFile(path);
         const hit = entries[key];
         // "No PR" goes stale when someone opens one for this very head, which changes no part of the key.
-        const hitTtlMs = hit?.pr ? ttlMs : Math.min(ttlMs, NO_PR_TTL_MS);
+        const hitTtlMs = hit?.pr ? readMs : Math.min(readMs, NO_PR_TTL_MS);
 
         if (hit && now() - hit.cachedAt <= hitTtlMs) {
             log.debug({ branch, head: head.slice(0, 8) }, "pr lookup cache hit");

@@ -1,5 +1,6 @@
 import { formatDuration, formatTokens } from "@genesiscz/utils/format";
 import { out } from "@genesiscz/utils/logger";
+import { maxCacheAgeOption, resolveMaxCacheAge } from "@genesiscz/utils/storage/cache-flag";
 import {
     createBoxTable,
     formatDotStatus,
@@ -234,11 +235,15 @@ export function registerInsightsCommands(program: Command): void {
             "One session's per-prompt tokens and list-price cost, tool analytics and stuck verdict (the Session Details sidebar)"
         )
         .argument("<session>", "session id or a unique prefix (Claude, Codex or Grok)")
-        .option("--fresh", "recompute instead of reading the per-file cache")
+        .addOption(maxCacheAgeOption("analysis of the unchanged transcript (the stuck verdict is always fresh)"))
+        .option("--fresh", "the default; kept for old callers (same as --max-cache-age 0)")
         .option("--json", "machine-readable output")
-        .action(async (session: string, opts: { fresh?: boolean; json?: boolean }) => {
+        .action(async (session: string, opts: { fresh?: boolean; maxCacheAge?: number; json?: boolean }) => {
             try {
-                const insights = await sessionInsights({ sessionId: session, fresh: opts.fresh });
+                const insights = await sessionInsights({
+                    sessionId: session,
+                    maxCacheAgeSeconds: resolveMaxCacheAge(opts),
+                });
 
                 if (opts.json) {
                     out.result(insights);
