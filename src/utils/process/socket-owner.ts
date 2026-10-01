@@ -169,6 +169,56 @@ function holdsSocket(lib: LibProc, pid: number, localPort: number, foreignPort: 
     return false;
 }
 
+const PROX_FDTYPE_VNODE = 1;
+const PROC_PIDFDVNODEPATHINFO = 2;
+/** `vnode_fdinfowithpath`: proc_fileinfo (24) + vnode_info (152) + vip_path[MAXPATHLEN]. */
+const VNODE_FDINFOWITHPATH_SIZE = 24 + 152 + 1024;
+const VNODE_PATH_OFFSET = 24 + 152;
+
+/** Paths of the regular files `pid` holds open right now (same uid only). Empty when unreadable. */
+export function readOpenFilePaths(pid: number): string[] {
+    const lib = loadLibproc();
+    if (!lib) {
+        return [];
+    }
+
+    let written = lib.proc_pidinfo(pid, PROC_PIDLISTFDS, 0n, ptr(fdBuffer.bytes), fdBuffer.bytes.byteLength);
+    while (written === fdBuffer.bytes.byteLength) {
+        fdBuffer.bytes = new Uint8Array(fdBuffer.bytes.byteLength * 2);
+        written = lib.proc_pidinfo(pid, PROC_PIDLISTFDS, 0n, ptr(fdBuffer.bytes), fdBuffer.bytes.byteLength);
+    }
+
+    if (written <= 0) {
+        return [];
+    }
+
+    const fds = new DataView(fdBuffer.bytes.buffer.slice(0, written));
+    const pathBuffer = new Uint8Array(VNODE_FDINFOWITHPATH_SIZE);
+    const decoder = new TextDecoder();
+    const paths: string[] = [];
+
+    for (let offset = 0; offset + PROC_FDINFO_SIZE <= written; offset += PROC_FDINFO_SIZE) {
+        if (fds.getUint32(offset + 4, true) !== PROX_FDTYPE_VNODE) {
+            continue;
+        }
+
+        const fd = fds.getInt32(offset, true);
+        const got = lib.proc_pidfdinfo(pid, fd, PROC_PIDFDVNODEPATHINFO, ptr(pathBuffer), VNODE_FDINFOWITHPATH_SIZE);
+        if (got !== VNODE_FDINFOWITHPATH_SIZE) {
+            continue;
+        }
+
+        const raw = pathBuffer.subarray(VNODE_PATH_OFFSET);
+        const end = raw.indexOf(0);
+        const path = decoder.decode(end === -1 ? raw : raw.subarray(0, end));
+        if (path.length > 0) {
+            paths.push(path);
+        }
+    }
+
+    return paths;
+}
+
 /** The last answer per client port, re-checked against that one pid before it is trusted again. */
 const lastOwner = new Map<string, number>();
 

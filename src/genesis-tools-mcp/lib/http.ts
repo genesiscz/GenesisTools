@@ -33,10 +33,10 @@ let handler: McpHttpHandler | undefined;
 function mcpHandler(): McpHttpHandler {
     if (!handler) {
         handler = createMcpHandler(
-            (ctx) => {
+            async (ctx) => {
                 const caller = currentCaller() ?? UNKNOWN_CALLER;
                 const capabilities = parseCapabilities(ctx.requestInfo?.headers.get(CAPABILITIES_HEADER));
-                const { server } = createGenesisToolsServer({
+                const { server } = await createGenesisToolsServer({
                     capabilities,
                     runCall: (fn) => runAsCaller(caller, fn),
                 });

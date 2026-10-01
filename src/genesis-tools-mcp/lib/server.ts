@@ -1,4 +1,3 @@
-import { jevToolEntries } from "@app/jev/mcp/genesis-tools";
 import { loadConfig as loadQuestionConfig } from "@app/question/lib/config";
 import { env } from "@genesiscz/utils/env/envVariables";
 import { logger } from "@genesiscz/utils/logger";
@@ -243,7 +242,6 @@ export interface ToolEntry {
 
 function buildToolRegistry(askViaQuestionTool: boolean): Record<string, ToolEntry> {
     return {
-        ...jevToolEntries(),
         question_answer: {
             description: QUESTION_ANSWER_DESCRIPTION,
             inputSchema: QUESTION_ANSWER_INPUT_SCHEMA as unknown as Record<string, unknown>,
@@ -601,14 +599,32 @@ export function filterRegistryByCapabilities(
     return Object.fromEntries(Object.entries(registry).filter(([name]) => enabled.some((matches) => matches(name))));
 }
 
-const registries = new Map<boolean, Record<string, ToolEntry>>();
+const registries = new Map<string, Record<string, ToolEntry>>();
+let jevEntries: Promise<Record<string, ToolEntry>> | undefined;
+
+/**
+ * The Jev tools import the evaluation stack (about 80 MB resident, measured 2026-10-01), so they load
+ * only for a capability list that can expose them: unset (everything) or one naming `jev`.
+ */
+function loadJevEntries(): Promise<Record<string, ToolEntry>> {
+    jevEntries ??= import("@app/jev/mcp/genesis-tools").then((module) => module.jevToolEntries());
+    return jevEntries;
+}
 
 /** One registry per instructions variant; a resident server builds it once, not per request. */
-function toolRegistry(askViaQuestionTool: boolean): Record<string, ToolEntry> {
-    let registry = registries.get(askViaQuestionTool);
+async function toolRegistry(
+    askViaQuestionTool: boolean,
+    capabilities: string[] | undefined
+): Promise<Record<string, ToolEntry>> {
+    const withJev = capabilities === undefined || capabilities.includes("jev");
+    const key = `${askViaQuestionTool}:${withJev}`;
+    let registry = registries.get(key);
     if (!registry) {
-        registry = buildToolRegistry(askViaQuestionTool);
-        registries.set(askViaQuestionTool, registry);
+        registry = {
+            ...(withJev ? await loadJevEntries() : {}),
+            ...buildToolRegistry(askViaQuestionTool),
+        };
+        registries.set(key, registry);
     }
 
     return registry;
@@ -618,12 +634,15 @@ function toolRegistry(askViaQuestionTool: boolean): Record<string, ToolEntry> {
  * The genesis-tools MCP server for one stdio connection or one HTTP request. `runCall` wraps every
  * tool handler; the resident HTTP server uses it to run the handler as the calling session.
  */
-export function createGenesisToolsServer(opts: {
+export async function createGenesisToolsServer(opts: {
     capabilities: string[] | undefined;
     runCall?: <T>(fn: () => Promise<T>) => Promise<T>;
-}): { server: Server; tools: string[]; askViaQuestionTool: boolean } {
+}): Promise<{ server: Server; tools: string[]; askViaQuestionTool: boolean }> {
     const askViaQuestionTool = loadQuestionConfig().askViaQuestionTool === true;
-    const registry = filterRegistryByCapabilities(toolRegistry(askViaQuestionTool), opts.capabilities);
+    const registry = filterRegistryByCapabilities(
+        await toolRegistry(askViaQuestionTool, opts.capabilities),
+        opts.capabilities
+    );
     const runCall = opts.runCall ?? ((fn) => fn());
     const server = new Server(
         { name: "genesis-tools", version: "1.0.0" },
@@ -669,7 +688,7 @@ export function createGenesisToolsServer(opts: {
 
 export async function startMcpServer(): Promise<void> {
     const capabilities = env.tools.getMcpCapabilities();
-    const { server, tools, askViaQuestionTool } = createGenesisToolsServer({ capabilities });
+    const { server, tools, askViaQuestionTool } = await createGenesisToolsServer({ capabilities });
     log.info(
         { capabilities: capabilities ?? "all", tools, askViaQuestionTool },
         "genesis-tools MCP tool registry resolved"

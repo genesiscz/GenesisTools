@@ -5,7 +5,12 @@ import type { AgentCaller } from "@genesiscz/utils/agent/runtime";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { readProcessCwd } from "@genesiscz/utils/process/cwd";
-import { findLoopbackClientPids, type ProcessInfo, readProcessInfo } from "@genesiscz/utils/process/socket-owner";
+import {
+    findLoopbackClientPids,
+    type ProcessInfo,
+    readOpenFilePaths,
+    readProcessInfo,
+} from "@genesiscz/utils/process/socket-owner";
 
 const log = logger.child({ component: "genesis-tools-mcp:http-caller" });
 
@@ -58,6 +63,39 @@ function claudeSessionId(info: ProcessInfo, sessionsDir: string): string | null 
     return parsed.sessionId;
 }
 
+const ROLLOUT_FILE =
+    /\/sessions\/\d{4}\/\d{2}\/\d{2}\/rollout-[^/]*-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/i;
+
+/**
+ * Codex writes each thread to `<CODEX_HOME>/sessions/YYYY/MM/DD/rollout-<time>-<thread id>.jsonl` and
+ * keeps that file open while the thread runs (observed on codex-cli 0.159.2). One open rollout names
+ * the thread; several (an app-server running many threads) name none, because the socket alone
+ * cannot say which thread made the call.
+ */
+export function codexThreadIdFromOpenFiles(paths: string[]): string | null {
+    const ids = new Set<string>();
+    for (const path of paths) {
+        const match = path.match(ROLLOUT_FILE);
+        if (match?.[1]) {
+            ids.add(match[1].toLowerCase());
+        }
+    }
+
+    return ids.size === 1 ? [...ids][0] : null;
+}
+
+function sessionIdFor(agent: AgentCaller["agent"], info: ProcessInfo, claudeSessionsDir: string): string | null {
+    if (agent === "claude-code") {
+        return claudeSessionId(info, claudeSessionsDir);
+    }
+
+    if (agent === "codex") {
+        return codexThreadIdFromOpenFiles(readOpenFilePaths(info.pid));
+    }
+
+    return null;
+}
+
 const UNKNOWN: ResolvedCaller = { agent: "unknown", sessionId: null, cwd: null, pid: null, processName: null };
 
 /** The harness process that holds the client end of this connection, and what it is running. */
@@ -77,10 +115,7 @@ export function resolveCallerFromPeer(opts: {
     }
 
     const agent = HARNESS_BY_NAME[chosen.name] ?? "unknown";
-    const sessionId =
-        agent === "claude-code"
-            ? claudeSessionId(chosen, opts.claudeSessionsDir ?? join(homedir(), ".claude", "sessions"))
-            : null;
+    const sessionId = sessionIdFor(agent, chosen, opts.claudeSessionsDir ?? join(homedir(), ".claude", "sessions"));
 
     return {
         agent,

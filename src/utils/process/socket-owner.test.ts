@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { createServer, type Socket } from "node:net";
-import { findLoopbackClientPids, readProcessInfo } from "./socket-owner";
+import { findLoopbackClientPids, readOpenFilePaths, readProcessInfo } from "./socket-owner";
 
 describe.skipIf(process.platform !== "darwin")("socket-owner", () => {
     it("finds this process as the owner of its own client socket, and nobody for another server port", async () => {
@@ -37,6 +37,20 @@ describe.skipIf(process.platform !== "darwin")("socket-owner", () => {
 
             server.close();
         }
+    });
+
+    it("lists a file this process holds open, and stops listing it after close", () => {
+        const { closeSync, mkdtempSync, openSync, realpathSync } = require("node:fs") as typeof import("node:fs");
+        const { tmpdir } = require("node:os") as typeof import("node:os");
+        const path = `${realpathSync(mkdtempSync(`${tmpdir()}/open-files-`))}/rollout-invented.jsonl`;
+        const fd = openSync(path, "a");
+        try {
+            expect(readOpenFilePaths(process.pid)).toContain(path);
+        } finally {
+            closeSync(fd);
+        }
+
+        expect(readOpenFilePaths(process.pid)).not.toContain(path);
     });
 
     it("reads its own name, uid and start time", () => {
