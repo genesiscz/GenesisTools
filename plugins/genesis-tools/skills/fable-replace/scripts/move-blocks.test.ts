@@ -1129,3 +1129,142 @@ describe("imports=fix reads TypeScript with the compiler when GenesisTools is fo
         }
     });
 });
+describe("PR #444 review round 1", () => {
+    const write = (dir: string, files: Record<string, string>): void => {
+        for (const [file, content] of Object.entries(files)) {
+            mkdirSync(dirname(join(dir, file)), { recursive: true });
+            writeFileSync(join(dir, file), content);
+        }
+    };
+    const read = (dir: string, file: string): string => readFileSync(join(dir, file), "utf8");
+    const lineOf = (text: string, needle: string): number => text.split("\n").findIndex((l) => l.includes(needle)) + 1;
+
+    test("t1: a Swift attribute on its own line stays put while the declaration below it turns public", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "fr-r1-swift-"));
+        write(dir, {
+            "Package.swift":
+                '// swift-tools-version: 5.9\nimport PackageDescription\n\nlet package = Package(\n    name: "Demo",\n    targets: [\n        .target(name: "Kit", path: "Kit"),\n        .executableTarget(name: "App", dependencies: ["Kit"], path: "App"),\n    ]\n)\n',
+            "Kit/Kit.swift": "public let kitVersion = 1\n",
+            "App/Helpers.swift": "import Foundation\n\n@MainActor\nstruct Point {\n    let x: Int\n}\n",
+            "App/main.swift": "import Foundation\n\nlet p = Point(x: 1)\n",
+        });
+        const edits = parseSpec({
+            text: "@@ App/Helpers.swift\n<<< move to=Kit/Point.swift symbol=Point imports=fix visibility=widen\n>>>\n",
+            cwd: dir,
+            onWarning: () => {},
+        });
+        await run({ cwd: dir, verbose: false, edits });
+        expect(read(dir, "Kit/Point.swift")).toContain("@MainActor\npublic struct Point {\n    public let x: Int\n}");
+    });
+
+    test("t2: an importer through an exact paths alias that never spells the file name is re-pointed", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "fr-r1-alias-"));
+        write(dir, {
+            "tsconfig.json":
+                '{ "compilerOptions": { "baseUrl": ".", "paths": { "@helpers": ["src/lib/utils.ts"] } } }\n',
+            "src/lib/utils.ts": "export const keep = 1;\n\nexport const moved = 2;\n",
+            "src/a.ts": 'import { moved } from "@helpers";\n\nexport const a = moved;\n',
+        });
+        const edits = parseSpec({
+            text: "@@ src/lib/utils.ts\n<<< move to=src/lib/moved.ts symbol=moved imports=fix\n>>>\n",
+            cwd: dir,
+        });
+        await run({ cwd: dir, verbose: false, edits });
+        expect(read(dir, "src/a.ts")).toStartWith('import { moved } from "./lib/moved";\n');
+    });
+
+    test("t3: an all-uppercase PHP class (PDO) carries its use line with a moved method", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "fr-r1-pdo-"));
+        const controller = [
+            "<?php",
+            "",
+            "namespace App\\Http;",
+            "",
+            "use PDO;",
+            "",
+            "class Db",
+            "{",
+            "    public function connect(): PDO",
+            "    {",
+            '        return new PDO("sqlite::memory:");',
+            "    }",
+            "}",
+            "",
+        ].join("\n");
+        write(dir, {
+            "composer.json": '{ "autoload": { "psr-4": { "App\\\\": "app/" } } }\n',
+            "app/Http/Db.php": controller,
+            "app/Services/Store.php": "<?php\n\nnamespace App\\Services;\n\nclass Store\n{\n    // methods\n}\n",
+        });
+        const first = lineOf(controller, "public function connect");
+        const edits = parseSpec({
+            text: `@@ app/Http/Db.php\n<<< move to=app/Services/Store.php lines=${first}-${first + 3} at=after imports=fix\n    // methods\n>>>\n`,
+            cwd: dir,
+        });
+        await run({ cwd: dir, verbose: false, edits });
+        expect(read(dir, "app/Services/Store.php")).toContain("namespace App\\Services;\n\nuse PDO;\n");
+        expect(read(dir, "app/Http/Db.php")).not.toContain("use PDO;");
+    });
+
+    test("t4: a fully qualified self-reference is rewritten in the moved class and in the code that stays", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "fr-r1-fqn-"));
+        write(dir, {
+            "composer.json": '{ "autoload": { "psr-4": { "App\\\\": "app/" } } }\n',
+            "app/Support/Legacy.php": [
+                "<?php",
+                "",
+                "namespace App\\Support;",
+                "",
+                "final class Money",
+                "{",
+                "    public static function make(): \\App\\Support\\Money",
+                "    {",
+                "        return new \\App\\Support\\Money();",
+                "    }",
+                "}",
+                "",
+                "class Legacy",
+                "{",
+                "    public function price(): \\App\\Support\\Money",
+                "    {",
+                "        return Money::make();",
+                "    }",
+                "}",
+                "",
+            ].join("\n"),
+        });
+        const edits = parseSpec({
+            text: "@@ app/Support/Legacy.php\n<<< move to=app/Values/Money.php symbol=Money imports=fix\n>>>\n",
+            cwd: dir,
+        });
+        await run({ cwd: dir, verbose: false, edits });
+        const moved = read(dir, "app/Values/Money.php");
+        expect(moved).toContain("public static function make(): \\App\\Values\\Money");
+        expect(moved).toContain("return new \\App\\Values\\Money();");
+        expect(moved).not.toContain("App\\Support\\Money");
+        const legacy = read(dir, "app/Support/Legacy.php");
+        expect(legacy).toContain("use App\\Values\\Money;");
+        expect(legacy).toContain("public function price(): \\App\\Values\\Money");
+    });
+
+    test("t5: a parameter default reads the imported name even when the body declares its own", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "fr-r1-param-"));
+        write(dir, {
+            "dep.ts": "export const helper = (): number => 2;\n",
+            "a.ts": [
+                'import { helper } from "./dep";',
+                "",
+                "export function f(x = helper()): number {",
+                "    const helper = (): number => 1;",
+                "    return x + helper();",
+                "}",
+                "",
+                "export const keep = 1;",
+                "",
+            ].join("\n"),
+        });
+        const edits = parseSpec({ text: "@@ a.ts\n<<< move to=b.ts symbol=f imports=fix\n>>>\n", cwd: dir });
+        await run({ cwd: dir, verbose: false, edits });
+        expect(read(dir, "b.ts")).toStartWith('import { helper } from "./dep";\n');
+    });
+});

@@ -404,9 +404,10 @@ moved type and its members `public`.
 module imports and nothing else changes. Across modules (read from `Package.swift`, custom `path:`
 included) every user of a moved declaration gains `import <Module>`, the moved API needs `public`,
 a struct built from outside gets a proposed `public init`, and a missing target dependency is a
-warning with the `Package.swift` op. Moved code that reaches back into a module the target cannot
-see is refused, with the moves that would fix it. Source imports stay: Swift does not fail on an
-unused import.
+warning with the `Package.swift` op. Moved code that names a declaration of a module the target
+cannot see is a WARNING, not a refusal, with the moves that would fix it: an implicit `self`
+member reads the same as a top-level name, so only the compiler can tell. Run the build in
+`--verify`. Source imports stay: Swift does not fail on an unused import.
 
 **PHP.** A method moved between classes carries the `use` lines it needs and the source drops the
 ones it no longer needs. A class that changes namespace (PSR-4 from `composer.json`) is followed

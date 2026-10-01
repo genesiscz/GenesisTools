@@ -75,17 +75,10 @@ const typeParameterNames = (node: { typeParameters?: TS.NodeArray<TS.TypeParamet
 /** The names `node` declares for its descendants, or undefined when it opens no scope. */
 const scopeOf = (ts: typeof TS, node: TS.Node): string[] | undefined => {
     if (ts.isFunctionLike(node)) {
+        // Body declarations belong to the body Block's own scope: a parameter default such as
+        // `x = helper()` reads the OUTER `helper` even when the body declares one of its own.
         const own = (ts.isFunctionExpression(node) || ts.isClassExpression(node)) && node.name ? [node.name.text] : [];
-        const body =
-            "body" in node && node.body !== undefined && ts.isBlock(node.body)
-                ? declaredBy(ts, node.body.statements)
-                : [];
-        return [
-            ...own,
-            ...node.parameters.flatMap((p) => bindingNames(ts, p.name)),
-            ...typeParameterNames(node),
-            ...body,
-        ];
+        return [...own, ...node.parameters.flatMap((p) => bindingNames(ts, p.name)), ...typeParameterNames(node)];
     }
 
     if (ts.isBlock(node) || ts.isModuleBlock(node)) {

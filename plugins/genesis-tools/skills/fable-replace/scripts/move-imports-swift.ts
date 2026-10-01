@@ -160,13 +160,17 @@ export const swiftDeclarations = (masked: string, raw: string): Map<string, Swif
         }
 
         const start = match.index ?? 0;
-        const end = raw.indexOf("\n", start);
-        const line = raw.slice(start, end === -1 ? undefined : end);
+        // Attributes can sit on lines of their own (`@MainActor` above `struct X`). The declaration
+        // line is the one the keyword is on, and only the attributes on THAT line come before it.
+        const declarationStart = raw.lastIndexOf("\n", start + attributes.length - 1) + 1;
+        const end = raw.indexOf("\n", declarationStart);
+        const line = raw.slice(declarationStart, end === -1 ? undefined : end);
+        const sameLineAttributes = attributes.slice(declarationStart - start);
         const written = modifiers.match(ACCESS_WORD)?.[1] as Access | undefined;
         const withAccess = (access: Access | ""): string => {
             const rest = modifiers.replace(ACCESS_WORD, "");
             const word = access === "" ? "" : `${access} `;
-            return `${line.slice(0, attributes.length)}${word}${rest}${line.slice(attributes.length + modifiers.length)}`;
+            return `${line.slice(0, sameLineAttributes.length)}${word}${rest}${line.slice(sameLineAttributes.length + modifiers.length)}`;
         };
         out.set(rawName.replace(/`/g, ""), {
             access: written ?? "internal",

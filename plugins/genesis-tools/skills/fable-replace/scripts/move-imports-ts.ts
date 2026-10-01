@@ -308,6 +308,8 @@ export interface Resolver {
     resolve: (fromFile: string, specifier: string) => Resolved | null;
     /** A specifier from `fromFile` to `targetAbs` in the style `via` names, falling back to relative. */
     specifierFor: (fromFile: string, targetAbs: string, via: Via) => string;
+    /** `paths` keys without `*` that resolve to `targetAbs` (`"@helpers"`): specifiers that never spell its name. */
+    exactAliases: (fromDir: string, targetAbs: string) => string[];
 }
 
 /** Resolves like TypeScript does for the cases a split meets: relative paths, `paths` and `baseUrl`. */
@@ -540,7 +542,18 @@ export const createResolver = (extraFiles: Set<string> = new Set()): Resolver =>
         return checked ?? relativeSpecifier(fromFile, targetAbs, via.ext);
     };
 
-    return { resolve, specifierFor };
+    const exactAliases = (fromDir: string, targetAbs: string): string[] => {
+        const config = configFor(fromDir);
+        return (config?.paths ?? [])
+            .filter(
+                ({ pattern, targets }) =>
+                    !pattern.includes("*") &&
+                    targets.some((target) => probe(path.resolve(config?.pathsBase ?? "", target)) === targetAbs)
+            )
+            .map(({ pattern }) => pattern);
+    };
+
+    return { resolve, specifierFor, exactAliases };
 };
 
 // ── planning ──────────────────────────────────────────────────────────────
@@ -1410,15 +1423,20 @@ export const planTsImportFixes = (params: PlanImportFixesParams): FileEdit[] => 
             continue;
         }
 
+        // A cheap pre-filter before resolving every statement: an importer's specifier spells the
+        // file's name or its folder's, unless an exact `paths` alias (`"@helpers"`) names it.
         const stem = path.basename(withoutExt(sourceAbs));
-        const hint = stem === "index" ? path.basename(path.dirname(sourceAbs)) : stem;
+        const hints = [
+            stem === "index" ? path.basename(path.dirname(sourceAbs)) : stem,
+            ...resolver.exactAliases(path.dirname(sourceAbs), sourceAbs),
+        ];
         for (const file of files) {
             if (file === sourceAbs) {
                 continue;
             }
 
             const text = plans.get(file)?.text ?? read(file);
-            if (text === undefined || !text.includes(hint)) {
+            if (text === undefined || !hints.some((hint) => text.includes(hint))) {
                 continue;
             }
 

@@ -203,7 +203,9 @@ export const classReferences = (masked: string, raw?: string): Set<string> => {
         // attribute `#[X(...)]` looks like a call and is a class.
         const inAttribute = masked.lastIndexOf("#[", index) > masked.lastIndexOf("]", index);
         const callsIt = /^\s*\(/.test(masked.slice(at, at + 4)) && !/\bnew\s+$/.test(before) && !inAttribute;
-        if (callsIt || !/^[A-Z]/.test(first) || (/^[A-Z0-9_]+$/.test(first) && !name.includes("\\"))) {
+        // An all-uppercase name stays: `PDO` and `URL` are classes. A constant (`PHP_EOL`) only
+        // matters if a `use` alias spells it, which is the case where it should count.
+        if (callsIt || !/^[A-Z]/.test(first)) {
             continue;
         }
 
@@ -213,7 +215,7 @@ export const classReferences = (masked: string, raw?: string): Set<string> => {
     for (const doc of (raw ?? "").matchAll(/\/\*\*[\s\S]*?\*\//g)) {
         for (const tag of doc[0].matchAll(/@[\w-]+[ \t]+([^\n]*)/g)) {
             for (const name of tag[1].matchAll(/\\?[A-Za-z_]\w*(?:\\[A-Za-z_]\w*)*/g)) {
-                if (/^\\?[A-Z]/.test(name[0]) && !/^[A-Z0-9_]+$/.test(name[0])) {
+                if (/^\\?[A-Z]/.test(name[0])) {
                     out.add(name[0]);
                 }
             }
@@ -592,6 +594,27 @@ export const planPhpImportFixes = (params: PlanImportFixesParams): FileEdit[] =>
                     fqn: newFqn,
                     alias: declaration.name,
                 };
+                const qualified = new RegExp(`(?<![\\w\\\\])\\\\${oldFqn.replace(/\\/g, "\\\\")}(?![\\w\\\\])`, "g");
+                const qualifiedOp = (count: number): Op => ({
+                    kind: "regex",
+                    find: qualified,
+                    replace: () => `\\${newFqn}`,
+                    expect: count,
+                    label: `imports=fix: \\${oldFqn} → \\${newFqn}`,
+                });
+                // The moved code and the code that stays can write the class out in full too.
+                const inRemaining = [...remaining.matchAll(qualified)].length;
+                if (inRemaining > 0) {
+                    source.ops.push(qualifiedOp(inRemaining));
+                }
+
+                const inTarget =
+                    [...target.text.matchAll(qualified)].length +
+                    toTarget.reduce((sum, move) => sum + [...move.blockText.matchAll(qualified)].length, 0);
+                if (inTarget > 0) {
+                    target.ops.push(qualifiedOp(inTarget));
+                }
+
                 const stillUsed =
                     entry.kind === "class"
                         ? aliasUsed(remainingRefs, declaration.name)
@@ -655,11 +678,8 @@ export const planPhpImportFixes = (params: PlanImportFixesParams): FileEdit[] =>
                     }
 
                     // `\Old\Ns\Class` written out: in code, or in a double-quoted string of one backslash.
-                    const qualified = new RegExp(
-                        `(?<![\\w\\\\])\\\\${oldFqn.replace(/\\/g, "\\\\")}(?![\\w\\\\])`,
-                        "g"
-                    );
-                    const written = [...plan.text.matchAll(qualified)].length;
+                    // The target's are counted below, together with the moved code pasted into it.
+                    const written = file === targetAbs ? 0 : [...plan.text.matchAll(qualified)].length;
                     if (written > 0) {
                         plan.ops.push({
                             kind: "regex",
