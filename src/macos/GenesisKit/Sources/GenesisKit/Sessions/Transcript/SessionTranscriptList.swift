@@ -877,7 +877,13 @@ public struct SessionTranscriptList: View {
             guard didInitialScroll, let previousFirst, sections.first?.rows.first?.id != previousFirst,
                   sections.contains(where: { $0.rows.contains { $0.id == previousFirst } })
             else { return }
-            if followsLatest {
+            if followsLatest, atLatest {
+                // At the end: the document-change scroll keeps the reader there; a scroll to the old first
+                // row would undo it.
+                return
+            } else if followsLatest, tracksLatestByGeometry {
+                // Earlier turns arrive only from the "Load earlier turns" row at the very top, so the reader
+                // is at the old first row: it stays where it was. (No anchor probe here: geometry tracking.)
                 request(previousFirst, anchor: .top)
             } else {
                 // The scroll back to the previous first row came a pass after the insert and put that
