@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { appendFileSync, existsSync, mkdirSync, renameSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
@@ -10,7 +11,7 @@ import { logger } from "@genesiscz/utils/logger";
  * log gets the same record, so an hour later the log alone says which file changed, how, and how to put
  * it back. /tmp clears on a reboot: the patch is the record that is small enough to keep elsewhere.
  */
-export const BACKUP_ROOT = "/tmp/GenesisTools/transclude";
+export const BACKUP_ROOT = join(process.platform === "win32" ? tmpdir() : "/tmp", "GenesisTools", "transclude");
 
 export interface BackupRecord {
     file: string;
