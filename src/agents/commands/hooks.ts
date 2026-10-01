@@ -18,6 +18,7 @@ import {
     loadHooksConfig,
 } from "../lib/hooks/config";
 import { collectStaleCaptures, parseHorizon } from "../lib/hooks/gc";
+import { hooksFileListsOldDefaults, recordInstallState } from "../lib/hooks/hooks-file";
 import { type ImportResult, importGuardConfig } from "../lib/hooks/import-config";
 import { hooksDistPath, installAndPoint, repoRoot, uninstallHooks, wiringStatus } from "../lib/hooks/install";
 import { resolveOutcome } from "../lib/hooks/outcome";
@@ -205,6 +206,14 @@ export function registerHooksCommands(program: Command): void {
             }
 
             ui.raw(isDefault ? pc.dim("using built-in defaults, no config file") : pc.dim("config file in effect"));
+
+            if (hooksFileListsOldDefaults(hooksConfigPath())) {
+                // The newer defaults already apply to every setting the user did not change; only
+                // the values the file SHOWS are older. Read-only here: the fix is a write.
+                ui.warn(
+                    `the file lists older defaults (the newer ones already apply). Refresh it: ${suggestCommand("tools agents", { replaceCommand: ["hooks", "install", "--write"] })}`
+                );
+            }
         });
 
     hooks
@@ -237,6 +246,12 @@ export function registerHooksCommands(program: Command): void {
                 ui.raw(`${pc.bold("backup")}     ${result.backup}`);
             }
 
+            if (options.write) {
+                // Also when nothing changed: the file then gains every setting and the record.
+                recordInstallState({ dist, target: managed ? target : null });
+                ui.raw(`${pc.bold("config")}     ${hooksConfigPath()} (every setting, plus what was installed)`);
+            }
+
             if (!result.changed) {
                 ui.raw("");
                 ui.raw(pc.dim("already wired exactly like this; the settings file was not touched"));
@@ -262,6 +277,9 @@ export function registerHooksCommands(program: Command): void {
                 ui.raw(pc.yellow("dry run: nothing was written. Pass --write to apply."));
                 return;
             }
+
+            recordInstallState({ dist: hooksDistPath(), target: null });
+            ui.raw(`${pc.bold("recorded")}  ${hooksConfigPath()}`);
 
             ui.raw(
                 pc.dim("⚠️ Hook config is snapshotted at session start; a running session keeps calling the old path.")

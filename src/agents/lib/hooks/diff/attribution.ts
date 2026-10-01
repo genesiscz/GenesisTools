@@ -385,7 +385,7 @@ export function attribute(file: string, root: string, context: AttributionContex
         return "named";
     }
 
-    if (covers(context.mentions(), file, root, "shallow")) {
+    if (covers(context.mentions(), file, root, "file")) {
         return "mentioned";
     }
 

@@ -21,6 +21,7 @@ import { postDecisions, readDecisions, updateDecision } from "@app/question/lib/
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import {
+    changedOnly,
     DEFAULT_HOOKS_CONFIG,
     type DecisionsHookConfig,
     decisionHooksWanted,
@@ -29,6 +30,8 @@ import {
     lastConfigLoadError,
     lastConfigProblems,
     loadHooksConfig,
+    SHIPPED_DEFAULTS_KEY,
+    storedOverrides,
 } from "./config";
 import { finalReply, type PromptHookOutput, runDecisionInject, runDecisionStop } from "./decisions";
 import { collectStaleCaptures, parseHorizon } from "./gc";
@@ -50,7 +53,7 @@ import { callDir, hookDataRoot, safeSegment, sessionDir } from "./paths";
 import type { HookPayload } from "./payload";
 import { parseHookPayload } from "./payload";
 import { withPrivateTempDir } from "./private-temp";
-import { applySetting, changedOnly, setHooksConfig } from "./set-config";
+import { applySetting, setHooksConfig } from "./set-config";
 import { unpushedReminders, unpushedState } from "./unpushed";
 import { writeJsonFile } from "./write-json";
 
@@ -1367,7 +1370,52 @@ describe("the stored config holds overrides only", () => {
 
         const stored = SafeJSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;
 
-        expect(stored).toEqual({ diff: { maxFiles: 7 } });
+        expect(storedOverrides(stored)).toEqual({ diff: { maxFiles: 7 } });
+    });
+
+    it("lists every setting in the file, with the shipped defaults beside them", () => {
+        const path = join(mkdtempSync(join(tmpdir(), "gt-setcfg-")), "hooks.json");
+
+        setHooksConfig("unpushed.maxCommits", "5", { write: true, path });
+
+        const stored = SafeJSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;
+
+        expect(stored.unpushed).toEqual({ ...DEFAULT_HOOKS_CONFIG.unpushed, maxCommits: 5 });
+        expect(stored.guard).toBeDefined();
+        expect(stored[SHIPPED_DEFAULTS_KEY]).toEqual(SafeJSON.parse(SafeJSON.stringify(DEFAULT_HOOKS_CONFIG)));
+    });
+
+    it("lets a later default reach a listed setting the user never changed", () => {
+        // The file was written when the default was 45 and lists 45; this build ships another value.
+        const shippedThen = {
+            ...DEFAULT_HOOKS_CONFIG,
+            unpushed: { ...DEFAULT_HOOKS_CONFIG.unpushed, maxAgeMinutes: 45 },
+        };
+        const file = {
+            ...shippedThen,
+            unpushed: { ...shippedThen.unpushed, maxCommits: 9 },
+            installed: { at: "2026-10-01T00:00:00.000Z" },
+            [SHIPPED_DEFAULTS_KEY]: shippedThen,
+        };
+
+        expect(storedOverrides(file)).toEqual({ unpushed: { maxCommits: 9 } });
+    });
+
+    it("reads a file without the shipped copy as overrides, as before", () => {
+        expect(storedOverrides({ shadow: false })).toEqual({ shadow: false });
+    });
+
+    it("keeps the install record when a setting is written", () => {
+        const path = join(mkdtempSync(join(tmpdir(), "gt-setcfg-")), "hooks.json");
+        const installed = { at: "2026-10-01T00:00:00.000Z", claude: { state: "installed" } };
+
+        writeJsonFile(path, { shadow: false, installed });
+        setHooksConfig("diff.maxFiles", "7", { write: true, path });
+
+        const stored = SafeJSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;
+
+        expect(stored.installed).toEqual(installed);
+        expect(storedOverrides(stored)).toEqual({ shadow: false, diff: { maxFiles: 7 } });
     });
 });
 
@@ -1411,12 +1459,12 @@ describe("the diff is resolved per harness", () => {
         rmSync(home, { recursive: true, force: true });
     });
 
-    it("can be turned back on from the CLI, and writes only that key", () => {
+    it("can be turned back on from the CLI, and overrides only that key", () => {
         const path = join(mkdtempSync(join(tmpdir(), "gt-setcfg-grok-")), "hooks.json");
 
         setHooksConfig("diff.harnesses.grok.enabled", "true", { write: true, path });
 
-        expect(SafeJSON.parse(readFileSync(path, "utf8"))).toEqual({
+        expect(storedOverrides(SafeJSON.parse(readFileSync(path, "utf8")))).toEqual({
             diff: { harnesses: { grok: { enabled: true } } },
         });
     });

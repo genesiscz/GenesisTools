@@ -208,7 +208,10 @@ A plain background agent (`Agent` without `name`) needs none of this: its `SendM
 
 On **Grok**:
 
-- Wrap `tools agents login` with the harness `monitor` tool (`persistent: true`). Do not tee to a file. Verified 2026-10-01 00:09 on grok 1.0.44 in a headless `tools grok spawn` worker: the bus mail reached it mid-turn about 28 s after the send, and its ACK came back on the bus. Stop the monitor with `kill_command_or_subagent` before the turn ends.
+- Start the `monitor` tool with `persistent: true` on exactly this command, and keep working after its `ready` line: `tools agents login --agent-name <name> --format json --kinds message --session <id>`. Each mail line has `body` and `message_id`. Do not tee to a file. This is the one monitor that must NOT be reduced to DONE/FAILED lines, whatever the `monitor` tool's own advice says: every line is mail you must act on, and `--kinds message` already keeps the volume low.
+- Reply with `tools agents message --from <name> --reply <message_id> --body '...' --session <id>`.
+- A `tools grok spawn` or `tools grok steer` run is ONE turn from start to final report; each tool call inside it is not a turn. Mail that arrives between two tool calls of that run is mid-turn delivery, not a wake. Stop the monitor with `kill_command_or_subagent` just before the final report.
+- Verified 2026-10-01 00:09 and again at 00:45 (a worker given only this section): bus mail reached a headless grok 1.0.44 worker mid-turn 28 to 56 s after the send, and its ACK came back on the bus.
 - The **parent** receives: (1) its own main login stream (every swarm hop), and (2) each child's monitor lines (Grok bubbles child monitor events into the parent turn).
 - An idle Grok **child is not re-invoked** when its inbox line arrives. Verified 2026-08-22: the child ended after `monitor`, hop 0 landed on the parent as `[alpha inbox]`, and alpha stayed idle until `resume_from`. For a `tools grok spawn` worker the parent's resume is `tools grok steer`.
 - Budget one bus send per grok turn (`references/grok.md` in `gt:handoff-to`): a second send in the same turn was once cancelled by grok's permission layer and reported as sent.

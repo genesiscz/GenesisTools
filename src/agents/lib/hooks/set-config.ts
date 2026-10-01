@@ -1,7 +1,6 @@
 import { SafeJSON } from "@genesiscz/utils/json";
 import { ruleById } from "@genesiscz/utils/shell/rules";
 import {
-    DEFAULT_HOOKS_CONFIG,
     type HarnessName,
     type HookOutcome,
     type HooksConfig,
@@ -11,7 +10,7 @@ import {
     loadHooksConfigForWrite,
     OTHERS_SUMMARIES,
 } from "./config";
-import { writeJsonFile } from "./write-json";
+import { writeHooksFile } from "./hooks-file";
 
 const OUTCOMES: readonly HookOutcome[] = ["allow", "context", "warn", "block"];
 const HARNESSES: readonly HarnessName[] = ["claude", "codex", "grok"];
@@ -328,43 +327,6 @@ export interface SetResult {
     written: boolean;
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-    return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-/**
- * The parts of `value` that differ from `fallback`, or `undefined` when nothing does.
- *
- * 🛑 The stored file must hold OVERRIDES only. `applySetting` works on the fully resolved
- * config, so writing that verbatim froze every current default into the file: observed
- * 2026-09-22, one `diff.maxFiles` change pinned ten unrelated settings, and a later default
- * would never have reached that machine again.
- *
- * An array is compared whole. These are small literal lists, and a per-element merge would
- * make "the user cleared this list" indistinguishable from "the user did not touch it".
- */
-export function changedOnly(value: unknown, fallback: unknown): unknown {
-    if (Array.isArray(value) || Array.isArray(fallback)) {
-        return SafeJSON.stringify(value) === SafeJSON.stringify(fallback) ? undefined : value;
-    }
-
-    if (isRecord(value) && isRecord(fallback)) {
-        const out: Record<string, unknown> = {};
-
-        for (const [inner, held] of Object.entries(value)) {
-            const diff = changedOnly(held, fallback[inner]);
-
-            if (diff !== undefined) {
-                out[inner] = diff;
-            }
-        }
-
-        return Object.keys(out).length > 0 ? out : undefined;
-    }
-
-    return value === fallback ? undefined : value;
-}
-
 export function setHooksConfig(key: string, value: string, options: { write: boolean; path?: string }): SetResult {
     const path = options.path ?? hooksConfigPath();
     // Read from the file this writes: loading the default path while writing `options.path`
@@ -372,9 +334,7 @@ export function setHooksConfig(key: string, value: string, options: { write: boo
     const config = applySetting(loadHooksConfigForWrite(path), key, value);
 
     if (options.write) {
-        // Atomic, and OVERRIDES only: the resolved config written whole froze every current
-        // default into the file (see `changedOnly`).
-        writeJsonFile(path, changedOnly(config, DEFAULT_HOOKS_CONFIG) ?? {});
+        writeHooksFile({ path, config });
     }
 
     return { path, config, written: options.write };

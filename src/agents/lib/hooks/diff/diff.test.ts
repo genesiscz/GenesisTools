@@ -2314,6 +2314,21 @@ describe("mention extraction", () => {
         expect(covers(mentions, `${root}/docs/y.md`, root, "shallow")).toBe(true);
     });
 
+    it("attribution from an EARLIER mention needs the file itself, not its directory", () => {
+        const root = "/work/app";
+        // Observed 2026-10-01: a session that once named `Sources/Hub` was shown another
+        // session's edit of `Sources/Hub/HubMainMenu.swift`.
+        const mentions = mentionsFrom([
+            `${root}/Sources/Hub`,
+            `${root}/Sources/Hub/HubWindow.swift`,
+            `glob:${root}/docs/*.md`,
+        ]);
+
+        expect(covers(mentions, `${root}/Sources/Hub/HubWindow.swift`, root, "file")).toBe(true);
+        expect(covers(mentions, `${root}/Sources/Hub/HubMainMenu.swift`, root, "file")).toBe(false);
+        expect(covers(mentions, `${root}/docs/y.md`, root, "file")).toBe(false);
+    });
+
     it("classifies read-only commands, and anything that writes or runs a program as a runner", () => {
         expect(readOnlyCommand("git -C /work status --short | head -5")).toBe(true);
         expect(readOnlyCommand('rg -n "rm -rf" src && cat a.ts | wc -l')).toBe(true);

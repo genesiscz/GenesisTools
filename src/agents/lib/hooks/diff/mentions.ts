@@ -585,8 +585,13 @@ const compiled = new Map<string, InstanceType<typeof Bun.Glob>>();
  * Measured 2026-09-30 on the 128 MB transcript of the session that was shown another session's
  * `src/utils/services/lifecycle.ts`: it never named that file, but it had run `ls <repo>/src/`
  * and `rg … <repo>/src/`, and a deep reading of those claimed every file in `src` for it.
+ *
+ * `file` is for ATTRIBUTION from earlier inputs: the file itself and nothing else. Observed
+ * 2026-10-01: `shallow` still showed session b1a2c5fc a `HubMainMenu.swift` edit another
+ * session made, because b1a2c5fc had once named the `Sources/Hub` directory. A directory
+ * mention says the session looked there, not that it wrote there.
  */
-export type Reach = "deep" | "shallow";
+export type Reach = "deep" | "shallow" | "file";
 
 /**
  * Whether the index covers `file` inside repository `root`.
@@ -598,6 +603,10 @@ export type Reach = "deep" | "shallow";
 export function covers(mentions: Mentions, file: string, root: string, reach: Reach = "deep"): boolean {
     if (mentions.paths.has(file)) {
         return true;
+    }
+
+    if (reach === "file") {
+        return false;
     }
 
     const floor = root.endsWith(sep) ? root : `${root}${sep}`;

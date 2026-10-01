@@ -10,7 +10,7 @@ import {
     loadHooksConfigForWrite,
     mergeStoredConfig,
 } from "./config";
-import { writeJsonFile } from "./write-json";
+import { writeHooksFile } from "./hooks-file";
 
 /** Where the guard this port replaces keeps its tuned overrides. */
 export function legacyGuardConfigPath(): string {
@@ -103,7 +103,7 @@ export function importGuardConfig(options: { from?: string; to?: string; write: 
     if (options.write) {
         // The default `to` is `~/.genesis-tools/agents/hooks.json`, and that directory may not
         // exist yet; the atomic writer creates it.
-        writeJsonFile(to, config);
+        writeHooksFile({ path: to, config });
     }
 
     return { from, to, config, written: options.write };
