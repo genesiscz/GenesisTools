@@ -4,6 +4,7 @@ import path from "node:path";
 import { Writable } from "node:stream";
 import { formatLocalDate } from "@genesiscz/utils/date";
 import { env } from "@genesiscz/utils/env";
+import { currentTraceId } from "@genesiscz/utils/trace";
 import pc from "picocolors";
 import type pino from "pino";
 import type PinoPretty from "pino-pretty";
@@ -295,6 +296,11 @@ export const createLogger = (options: LoggerOptions = {}): pino.Logger => {
         // both key spellings get pino's error serializer; non-Errors pass through.
         serializers: { err: pinoFn.stdSerializers.err, error: pinoFn.stdSerializers.err },
         ...(showPid && { base: { pid: process.pid } }),
+        // GenesisTools.app's per-call id (utils/trace.ts): a day-log record names the app call it served.
+        mixin: () => {
+            const traceId = currentTraceId();
+            return traceId ? { traceId } : {};
+        },
     };
 
     const logger = pinoFn(baseConfig, pinoFn.multistream(streams));

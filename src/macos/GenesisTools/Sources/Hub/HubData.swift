@@ -25,7 +25,14 @@ extension MonitorSessionRow {
 }
 
 enum HubSource {
-    static let bridge = ToolsBridge(binaryPath: ToolsBridge.defaultBinaryPath())
+    /// The resident hub server (`tools hub serve`, src/hub/server): the hub asks it first and runs a `tools`
+    /// process only when it cannot answer. Started on demand; `GENESIS_HUB_SERVER=0` turns it off.
+    static let server: ToolsServerClient? = {
+        guard ProcessInfo.processInfo.environment["GENESIS_HUB_SERVER"] != "0" else { return nil }
+        return ToolsServerClient(startServer: { HubServerStarter.start() })
+    }()
+
+    static let bridge = ToolsBridge(binaryPath: ToolsBridge.defaultBinaryPath(), server: server)
 
     static func sessions(hours: Int) async throws -> [HubSession] {
         let span = HubPerf.begin("sessions.list", "hours=\(hours)", awaits: true)
@@ -159,5 +166,36 @@ enum HubSpend {
         cache[session.sessionId] = estimate
         lock.unlock()
         return estimate
+    }
+}
+
+/// Starts `tools hub serve` once, detached from any call: it outlives the call that found no server, exits by
+/// itself after 10 minutes with no connection, and restarts when its code changes (src/hub/server/server.ts).
+/// It runs through the same `tools` launcher chain as every per-call child, so its macOS privacy identity is
+/// GenesisTools.app, as before.
+enum HubServerStarter {
+    static func start() {
+        let binary = HubSource.bridge.binaryPath
+        guard ToolsBridge.isExecutableFile(binary) else { return }
+
+        let plan = ToolsBridge.launchPlan(binaryPath: binary, argv: ["hub", "serve"])
+        let process = Process()
+        process.executableURL = plan.executable
+        process.arguments = plan.arguments
+        process.currentDirectoryURL = plan.workingDirectory
+        process.environment = ToolsBridge.scrubbedEnvironment()
+        process.qualityOfService = .utility
+        process.standardInput = FileHandle.nullDevice
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        process.terminationHandler = { finished in
+            HubPerf.log("hub server pid=\(finished.processIdentifier) exited \(finished.terminationStatus)")
+        }
+        do {
+            try process.run()
+            HubPerf.log("hub server started pid=\(process.processIdentifier)")
+        } catch {
+            HubPerf.log("hub server cannot start: \(error.localizedDescription)")
+        }
     }
 }

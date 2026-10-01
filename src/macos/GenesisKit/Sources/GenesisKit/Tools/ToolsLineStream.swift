@@ -32,6 +32,11 @@ public final class ToolsLineStream: @unchecked Sendable {
     private var exited = false
     private let onLines: @MainActor ([String]) -> Void
     private let onExit: @MainActor (Exit) -> Void
+    /// One app-perf.log line when the follow ends (ToolsCallTrace); the CLI gets the id in its environment.
+    public let traceId = ToolsCallTrace.newId()
+    private let argv: [String]
+    private let started = Date()
+    private var outBytes = 0
 
     public var processIdentifier: Int32 { process.processIdentifier }
 
@@ -47,6 +52,7 @@ public final class ToolsLineStream: @unchecked Sendable {
     ) throws {
         self.onLines = onLines
         self.onExit = onExit
+        self.argv = [subcommand] + args
         let binary = bridge.binaryPath
         guard ToolsBridge.isExecutableFile(binary) else {
             throw ToolsBridgeError.binaryNotFound(binary)
@@ -60,6 +66,7 @@ public final class ToolsLineStream: @unchecked Sendable {
         for (key, value) in extraEnv where ToolsBridge.envAllowlist.contains(key) {
             environment[key] = value
         }
+        environment[ToolsCallTrace.environmentKey] = traceId
         process.environment = environment
         process.qualityOfService = .utility
         process.standardInput = input
@@ -124,6 +131,7 @@ public final class ToolsLineStream: @unchecked Sendable {
         }
 
         lock.lock()
+        outBytes += data.count
         partial.append(data)
         var lines: [String] = []
         while let newline = partial.firstIndex(of: 0x0A) {
@@ -155,8 +163,13 @@ public final class ToolsLineStream: @unchecked Sendable {
             stopped: stopRequested,
             stderr: String(decoding: stderrTail, as: UTF8.self)
         )
+        let bytes = outBytes
         lock.unlock()
         guard done else { return }
+        ToolsCallTrace.record(
+            traceId: traceId, via: "process-follow", argv: argv, started: started,
+            exit: report.status, outBytes: bytes, stderr: report.stderr
+        )
         let onExit = onExit
         DispatchQueue.main.async {
             MainActor.assumeIsolated { onExit(report) }

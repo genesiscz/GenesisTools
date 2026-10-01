@@ -186,6 +186,22 @@ enum ToolsCLIRunner {
     /// The exit status and both streams, for verbs that print a JSON error on stdout when they
     /// fail (`tools hub pr … --json` prints `{error, code}` and exits 1).
     static func capture(_ args: [String], timeout: TimeInterval = 60) throws -> ProcessCapture {
+        // The resident hub server first (src/hub/server): no process when it has a door for this argv.
+        // Its span is `srv.…`, so app-perf.log shows which path answered.
+        let traceId = ToolsCallTrace.newId()
+        let started = Date()
+        if let server = HubSource.server {
+            let start = CFAbsoluteTimeGetCurrent()
+            if let result = server.callSync(argv: args, timeout: timeout, traceId: traceId) {
+                PerfLog.since("hub.srv.\(args.prefix(3).joined(separator: "."))", start)
+                ToolsCallTrace.record(
+                    traceId: traceId, via: "server", argv: args, started: started,
+                    exit: result.exitCode, outBytes: result.stdout.utf8.count, stderr: result.stderr
+                )
+                return ProcessCapture(status: result.exitCode, stdout: Data(result.stdout.utf8), stderr: Data(result.stderr.utf8))
+            }
+        }
+
         let span = HubPerf.begin("tools.\(args.prefix(3).joined(separator: "."))")
         defer { span.end() }
         let process = Process()
@@ -194,9 +210,26 @@ enum ToolsCLIRunner {
         process.currentDirectoryURL = plan.workingDirectory
         process.arguments = plan.arguments
         process.standardInput = FileHandle.nullDevice
+        var environment = ProcessInfo.processInfo.environment
+        environment[ToolsCallTrace.environmentKey] = traceId
+        if args.prefix(2) == ["hub", "pr"] {
+            // Every `tools hub pr` phase, child process, forge request and cache lookup goes to
+            // <date>-profiling.log with this call's trace id (scopes: src/utils/profile/scopes.ts).
+            environment["PROFILE"] = "hub-pr,spawn,forge-http,cache"
+            environment["PROFILE_TO_STDERR"] = "0"
+        }
+        process.environment = environment
         do {
-            return try process.runCapturing(timeout: timeout)
+            let capture = try process.runCapturing(timeout: timeout)
+            ToolsCallTrace.record(
+                traceId: traceId, via: "process", argv: args, started: started,
+                exit: capture.status, outBytes: capture.stdout.count, stderr: String(decoding: capture.stderr.suffix(400), as: UTF8.self)
+            )
+            return capture
         } catch let timeout as ProcessTimeout {
+            ToolsCallTrace.record(
+                traceId: traceId, via: "process-timeout", argv: args, started: started, exit: -1, outBytes: 0, stderr: ""
+            )
             throw ReviewError.git("tools \(args.prefix(3).joined(separator: " ")) did not exit within \(Int(timeout.seconds)) s and was killed")
         }
     }

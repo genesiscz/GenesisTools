@@ -47,6 +47,7 @@ public struct ToolsBridge: Sendable {
         "HOME", "PATH", "SHELL", "LANG", "USER", "LOGNAME", "TERM",
         "SSH_AUTH_SOCK", "GITHUB_TOKEN", "ANTHROPIC_API_KEY", "TZ",
         "PROFILE", "GENESIS_TOOLS_APP_BUNDLE_ID", "GENESIS_TOOLS_APP_INODE",
+        ToolsCallTrace.environmentKey,
     ]
 
     public typealias OutputSink = @Sendable (
@@ -60,21 +61,26 @@ public struct ToolsBridge: Sendable {
     /// without restarting Genesis.app.
     private let resolveBinaryPath: @Sendable () -> String
     public let outputSink: OutputSink?
+    /// A resident `tools` server to ask first (`tools hub serve`). Nil, or a nil answer, runs the process.
+    public let server: ToolsServerClient?
 
     public var binaryPath: String { resolveBinaryPath() }
 
-    public init(binaryPath: String, outputSink: OutputSink? = nil) {
+    public init(binaryPath: String, outputSink: OutputSink? = nil, server: ToolsServerClient? = nil) {
         let captured = binaryPath
         self.resolveBinaryPath = { captured }
         self.outputSink = outputSink
+        self.server = server
     }
 
     public init(
         resolveBinaryPath: @escaping @Sendable () -> String,
-        outputSink: OutputSink? = nil
+        outputSink: OutputSink? = nil,
+        server: ToolsServerClient? = nil
     ) {
         self.resolveBinaryPath = resolveBinaryPath
         self.outputSink = outputSink
+        self.server = server
     }
 
     public var binaryExists: Bool {
@@ -221,12 +227,24 @@ public struct ToolsBridge: Sendable {
                 "`tools --readme` is too expensive from a turn — use `tools \(subcommand) --help` instead"
             )
         }
+        let argv = [subcommand] + args
+        let traceId = ToolsCallTrace.newId()
+        let started = Date()
+        if let server, let result = await server.call(argv: argv, timeoutSeconds: timeoutSeconds, traceId: traceId) {
+            // Same span name as the process path with `.srv`, so app-perf.log shows which path answered.
+            MonitorPerf.record(Self.spanLabel(subcommand: subcommand, args: args) + ".srv", ms: Double(result.wallMs))
+            ToolsCallTrace.record(
+                traceId: traceId, via: "server", argv: argv, started: started,
+                exit: result.exitCode, outBytes: result.stdout.utf8.count, stderr: result.stderr
+            )
+            outputSink?(result, turnId, callId, argv)
+            return result
+        }
+
         guard Self.isExecutableFile(resolvedBinaryPath) else {
             throw ToolsBridgeError.binaryNotFound(resolvedBinaryPath)
         }
 
-        let started = Date()
-        let argv = [subcommand] + args
         let plan = Self.launchPlan(binaryPath: resolvedBinaryPath, argv: argv)
 
         let process = Process()
@@ -236,6 +254,7 @@ public struct ToolsBridge: Sendable {
         for (key, value) in extraEnv where Self.envAllowlist.contains(key) {
             environment[key] = value
         }
+        environment[ToolsCallTrace.environmentKey] = traceId
         process.environment = environment
         process.currentDirectoryURL = plan.workingDirectory
         process.qualityOfService = .userInitiated
@@ -258,7 +277,7 @@ public struct ToolsBridge: Sendable {
             try await finish(
                 process: process, outPipe: outPipe, errPipe: errPipe, started: started,
                 subcommand: subcommand, args: args, argv: argv, timeoutSeconds: timeoutSeconds,
-                turnId: turnId, callId: callId
+                turnId: turnId, callId: callId, traceId: traceId
             )
         } onCancel: {
             if process.isRunning { process.terminate() }
@@ -275,7 +294,8 @@ public struct ToolsBridge: Sendable {
         argv: [String],
         timeoutSeconds: Int,
         turnId: String,
-        callId: String
+        callId: String,
+        traceId: String
     ) async throws -> ToolsRunResult {
         let timedOutFlag = TimeoutFlag()
         let watchdog = Task.detached {
@@ -310,8 +330,7 @@ public struct ToolsBridge: Sendable {
         // perf.log sees every child: `tools.claude.usage 1234.0ms`. The
         // `[profile:` lines a PROFILE= child prints ride along as marks, so
         // "the CLI took 20 s" and "where inside the CLI" sit on adjacent lines.
-        let verb = args.prefix(while: { !$0.hasPrefix("-") }).prefix(2).joined(separator: ".")
-        let spanLabel = "tools.\(subcommand)" + (verb.isEmpty ? "" : ".\(verb)")
+        let spanLabel = Self.spanLabel(subcommand: subcommand, args: args)
         MonitorPerf.record(spanLabel, ms: Double(wallMs))
         if timedOutFlag.fired {
             MonitorPerf.mark("\(spanLabel) TIMEOUT after \(timeoutSeconds)s (killed)")
@@ -322,12 +341,23 @@ public struct ToolsBridge: Sendable {
             monitorLog.info("\(String(line), privacy: .public)")
             MonitorPerf.mark("\(spanLabel) \(String(line.prefix(200)))")
         }
+        ToolsCallTrace.record(
+            traceId: traceId, via: timedOut ? "process-timeout" : "process", argv: argv, started: started,
+            exit: exitCode, outBytes: stdout.utf8.count, stderr: stderr
+        )
         outputSink?(result, turnId, callId, argv)
 
         if timedOut {
             throw ToolsBridgeError.timeout(seconds: timeoutSeconds)
         }
         return result
+    }
+}
+
+extension ToolsBridge {
+    static func spanLabel(subcommand: String, args: [String]) -> String {
+        let verb = args.prefix(while: { !$0.hasPrefix("-") }).prefix(2).joined(separator: ".")
+        return "tools.\(subcommand)" + (verb.isEmpty ? "" : ".\(verb)")
     }
 }
 

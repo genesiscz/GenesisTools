@@ -23,6 +23,7 @@ import { formatLocalDate } from "@genesiscz/utils/date";
 import { env } from "@genesiscz/utils/env";
 import { getProfilingConfig, type ProfilingDetail } from "@genesiscz/utils/GenesisTools";
 import { assertTestSafePath } from "@genesiscz/utils/storage/real-home-guard";
+import { currentTraceId } from "@genesiscz/utils/trace";
 
 export interface ProfilerGate {
     on: boolean;
@@ -306,7 +307,9 @@ function write(line: string, durMs?: number): void {
     }
 
     if (g.file) {
-        appendFile(text);
+        // The app call this line belongs to (utils/trace.ts), so the file joins with app-perf.log.
+        const traceId = currentTraceId();
+        appendFile(traceId ? `${line} trace=${traceId}\n` : text);
     }
 }
 
@@ -320,8 +323,12 @@ interface Stat {
 export interface ProfilerScope {
     /** True when this scope is active (PROFILE / config gate matched). */
     readonly enabled: boolean;
-    /** Start a timer; call the returned fn to stop it (records + logs the duration). */
-    start(label: string): () => number;
+    /**
+     * Start a timer; call the returned fn to stop it (records + logs the duration). `outcome` (an exit
+     * code, an HTTP status) is known only at the end: it goes on the logged line, never into the stats
+     * label, so the summary still groups every call of `label`.
+     */
+    start(label: string): (outcome?: string) => number;
     /** Time a synchronous fn, record under `label`, return its value. */
     measure<T>(label: string, fn: () => T): T;
     /** Time an async fn, record under `label`, return its value. */
@@ -378,12 +385,12 @@ function makeScope(name: string): ProfilerScope {
         };
     }
 
-    const start = (label: string): (() => number) => {
+    const start = (label: string): ((outcome?: string) => number) => {
         const s = performance.now();
-        return () => {
+        return (outcome) => {
             const dur = performance.now() - s;
             record(label, dur);
-            write(`[profile:${name}] ${label} ${fmtMs(dur)}`, dur);
+            write(`[profile:${name}] ${label}${outcome ? ` ${outcome}` : ""} ${fmtMs(dur)}`, dur);
             return dur;
         };
     };

@@ -217,6 +217,10 @@ export const env = {
         getRoot: () => getTrimmed("GENESIS_TOOLS_ROOT"),
         getCommands: () => getTrimmed("COMMANDS"),
         getMailEnvelopePath: () => getTrimmed("MAIL_ENVELOPE_PATH"),
+        /** Set by GenesisTools.app per `tools` call: the id its app-perf.log line, the day log and profiling lines share. */
+        getTraceId: () => getTrimmed("GENESIS_TOOLS_TRACE_ID"),
+        /** The resident hub server (`tools hub serve`) drains and exits above this physical footprint, in MB. */
+        getHubServerMaxMb: () => parseIntEnv("GENESIS_HUB_SERVER_MAX_MB", 512),
         getQdrantPort: () => parseIntEnv("GENESIS_QDRANT_PORT", 16_335),
         getQdrantGrpcPort: () => parseIntEnv("GENESIS_QDRANT_GRPC_PORT", 16_336),
         /** Comma-delimited capability filter for `tools claude mcp` (e.g. "question_answer,boards"). */

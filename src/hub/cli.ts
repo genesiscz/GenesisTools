@@ -11,6 +11,7 @@ import { repoFactsMany } from "@genesiscz/utils/git/repo-facts";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import { genesisAppBundlePath } from "@genesiscz/utils/macos/genesis-app";
+import { profiler } from "@genesiscz/utils/profile";
 import { maxCacheAgeOption, resolveMaxCacheAge } from "@genesiscz/utils/storage/cache-flag";
 import { Command } from "commander";
 import { registerAgentsCommand } from "./commands/agents";
@@ -65,6 +66,7 @@ import {
 } from "./lib/timeline";
 import { TIMELINE_DETAIL_KINDS, type TimelineDetailKind, timelineDetail } from "./lib/timeline-detail";
 import { registerWorktreesCommand } from "./lib/worktrees-command";
+import { registerServeCommand } from "./server/command";
 
 function isPrListState(value: unknown): value is PrListState {
     return typeof value === "string" && (PR_LIST_STATES as readonly string[]).includes(value);
@@ -560,6 +562,17 @@ timeline
 // `tools hub pr …`: read-only views of many projects (list, show), and the review verbs on the PR/MR of
 // one checkout's branch (find, threads, reply, draft, resolve, publish) that the review window calls.
 const pr = program.command("pr").description("GitHub PRs and GitLab MRs of the projects the hub shows");
+const prProf = profiler.scope("hub-pr");
+const verbTimers = new WeakMap<Command, (outcome?: string) => number>();
+// Each verb's whole run in the hub-pr scope (`verb show exit=0 1.2s`); its phases, spawns, HTTP requests
+// and cache lookups land between, in the hub-pr, spawn, forge-http and cache scopes.
+pr.hook("preAction", (_pr, verb) => {
+    verbTimers.set(verb, prProf.start(`verb ${verb.name()}`));
+});
+pr.hook("postAction", (_pr, verb) => {
+    verbTimers.get(verb)?.(`exit=${process.exitCode ?? 0}`);
+    verbTimers.delete(verb);
+});
 
 pr.command("list")
     .description("Open (or merged/all) PRs/MRs of every project among the folders, as JSON; read-only")
@@ -1157,5 +1170,6 @@ registerInsightsCommands(program);
 registerProcsCommand(program);
 registerPromptsCommand(program);
 registerAgentsCommand(program);
+registerServeCommand(program);
 
 await runTool(program, { tool: "hub" });
