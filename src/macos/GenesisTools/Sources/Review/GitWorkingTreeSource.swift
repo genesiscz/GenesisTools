@@ -32,14 +32,22 @@ enum DiffScope: Hashable {
         }
     }
 
-    /// Whether a change on disk can change this diff. A commit or a range names fixed commits: no file
-    /// event moves it, so the window does not load it again for one (a PR's range was re-read about
-    /// three times a minute all night while agents wrote in its repository, 2026-09-30).
+    /// Whether a change on disk can change this diff. A commit, or a range whose ends are commit ids, is
+    /// fixed: no file event moves it, so the window does not load it again for one (a PR's range was
+    /// re-read about three times a minute all night while agents wrote in its repository, 2026-09-30).
+    /// A range on a name (`HEAD`, `origin/main`, a fallback base) moves with a commit or a fetch.
     var followsWorkingTree: Bool {
         switch self {
-        case .commit, .range: return false
+        case .commit: return false
+        case .range(let base, let head, _, let fallbackBase):
+            return !(Self.isObjectID(base) && Self.isObjectID(head) && (fallbackBase.map(Self.isObjectID) ?? true))
         default: return true
         }
+    }
+
+    /// A full or abbreviated commit id (7 to 64 hex digits), never a ref name.
+    static func isObjectID(_ revision: String) -> Bool {
+        (7...64).contains(revision.count) && revision.allSatisfy(\.isHexDigit)
     }
 
     init?(argument: String) {

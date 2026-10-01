@@ -90,4 +90,16 @@ final class ReviewCacheTests: XCTestCase {
         XCTAssertEqual(shown.live?.resolvable, false)
         XCTAssertEqual(shown.body, card.body)
     }
+
+    /// A range on commit ids is fixed; one on a name (HEAD, origin/main, a fallback base) follows file events.
+    func testOnlyARangeOfCommitIDsIgnoresFileEvents() {
+        let a = "1234567890abcdef1234567890abcdef12345678"
+        let b = "abcdef1234567890abcdef1234567890abcdef12"
+        XCTAssertFalse(DiffScope.range(base: a, head: b, label: "PR").followsWorkingTree)
+        XCTAssertTrue(DiffScope.range(base: "origin/main", head: b, label: "PR").followsWorkingTree)
+        XCTAssertTrue(DiffScope.range(base: a, head: "HEAD", label: "PR").followsWorkingTree)
+        XCTAssertTrue(DiffScope.range(base: a, head: b, label: "PR", fallbackBase: "origin/main").followsWorkingTree)
+        XCTAssertFalse(DiffScope.commit(sha: a, title: "x").followsWorkingTree)
+    }
+
 }

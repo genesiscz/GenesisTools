@@ -72,6 +72,8 @@ struct ReviewContextPanelView: View {
                     }
                     .buttonStyle(.genHoverPlain())
                     .instantTooltip(item.tooltip)
+                    // The active tab is shown by weight and fill only; VoiceOver hears it as selected.
+                    .accessibilityAddTraits(item == tab ? .isSelected : [])
                 }
                 Spacer(minLength: 0)
             }
