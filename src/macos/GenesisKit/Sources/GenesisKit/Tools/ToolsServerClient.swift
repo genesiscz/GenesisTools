@@ -55,6 +55,9 @@ public final class ToolsServerClient: @unchecked Sendable {
     private let lock = NSLock()
     private let writeLock = NSLock()
     private var fd: Int32 = -1
+    /// Counts connections. A descriptor number can come back for a newer connection; a generation never does,
+    /// so a late failure of an old connection can only ever end that one.
+    private var generation = 0
     private var source: DispatchSourceRead?
     private var nextId = 1
     private var calls: [Int: (ToolsRunResult?) -> Void] = [:]
@@ -173,7 +176,7 @@ public final class ToolsServerClient: @unchecked Sendable {
                 streams.removeValue(forKey: id)
             }
             // Only the connection the write used: a reconnect in between keeps its newer one.
-            if attempt.socketFd >= 0 { disconnect(expectedFd: attempt.socketFd) }
+            if let connection = attempt.connection { disconnect(connection: connection) }
             return nil
         }
 
@@ -218,12 +221,14 @@ public final class ToolsServerClient: @unchecked Sendable {
         }
 
         fd = socketFd
+        generation += 1
+        let connection = generation
         connectedAt = Date()
         // The partial line belongs to this connection alone and lives on its read source's queue, so a
         // reconnect on another thread never resets bytes a read handler is still splitting.
         let lines = LineSplitter()
         let readSource = DispatchSource.makeReadSource(fileDescriptor: socketFd, queue: queue)
-        readSource.setEventHandler { [weak self] in self?.readAvailable(socketFd, lines: lines) }
+        readSource.setEventHandler { [weak self] in self?.readAvailable(socketFd, connection: connection, lines: lines) }
         // Closed under the writers' lock: a write that holds it keeps the descriptor (and its number) its own.
         readSource.setCancelHandler { [writeLock] in writeLock.withLock { _ = close(socketFd) } }
         source = readSource
@@ -246,21 +251,22 @@ public final class ToolsServerClient: @unchecked Sendable {
     private func write(_ message: [String: Any]) -> Bool {
         let attempt = writeOnce(message)
         // Only this connection: a failed write must not end a newer one a reconnect already made.
-        if !attempt.written, attempt.socketFd >= 0 { disconnect(expectedFd: attempt.socketFd) }
+        if !attempt.written, let connection = attempt.connection { disconnect(connection: connection) }
         return attempt.written
     }
 
-    /// One message on the current connection, and the descriptor it used (-1 when there was none).
-    private func writeOnce(_ message: [String: Any]) -> (written: Bool, socketFd: Int32) {
-        guard var data = try? JSONSerialization.data(withJSONObject: message) else { return (false, -1) }
+    /// One message on the current connection, and that connection's generation (nil when there was none).
+    private func writeOnce(_ message: [String: Any]) -> (written: Bool, connection: Int?) {
+        guard var data = try? JSONSerialization.data(withJSONObject: message) else { return (false, nil) }
 
         data.append(0x0A)
         var socketFd: Int32 = -1
+        var connection: Int?
 
         // One writer at a time, so two requests never interleave on the socket. The descriptor is read
         // inside the writers' lock, which its close also takes: it cannot be closed or reused mid-write.
         let written: Bool = writeLock.withLock {
-            socketFd = lock.withLock { fd }
+            (socketFd, connection) = lock.withLock { (fd, fd >= 0 ? generation : nil) }
             guard socketFd >= 0 else { return false }
 
             return data.withUnsafeBytes { raw -> Bool in
@@ -277,16 +283,16 @@ public final class ToolsServerClient: @unchecked Sendable {
                 return true
             }
         }
-        return (written, socketFd)
+        return (written, connection)
     }
 
-    private func readAvailable(_ socketFd: Int32, lines: LineSplitter) {
+    private func readAvailable(_ socketFd: Int32, connection: Int, lines: LineSplitter) {
         var chunk = [UInt8](repeating: 0, count: 65536)
         let count = read(socketFd, &chunk, chunk.count)
         if count <= 0 {
             if count < 0, errno == EAGAIN || errno == EINTR { return }
             // Only this connection: a late callback of an old socket must not end its successor.
-            disconnect(expectedFd: socketFd)
+            disconnect(connection: connection)
             return
         }
 
@@ -347,9 +353,9 @@ public final class ToolsServerClient: @unchecked Sendable {
         }
     }
 
-    private func disconnect(expectedFd: Int32? = nil) {
+    private func disconnect(connection expected: Int? = nil) {
         let (pending, open, readSource): ([(ToolsRunResult?) -> Void], [StreamHandlers], DispatchSourceRead?) = lock.withLock {
-            if let expectedFd, fd != expectedFd {
+            if let expected, generation != expected || fd < 0 {
                 return ([], [], nil)
             }
             let pending = Array(calls.values)
