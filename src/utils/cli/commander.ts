@@ -5,6 +5,7 @@ import { consoleFloorFor } from "@genesiscz/utils/logging/tool-policy";
 import type { Command } from "commander";
 import { setCurrentCommand } from "./current-command";
 import { enhanceHelp, markRequiredOptionsDeep, setSuggestCommandProgram, showHelpAfterErrorDeep } from "./executor";
+import { observeInterrupts } from "./interrupt";
 // `logger` itself is intentionally NOT imported here — runTool only drives the
 // console gate / base binding via the setters above (importing the logger
 // value into commander.ts would risk a commander↔logger value cycle).
@@ -209,6 +210,12 @@ export async function runTool(
         throw new Error(
             `runTool() ran while ${Bun.main} is the process entry, so this CLI was imported by a test rather than executed. Wrap the call in \`if (import.meta.main) { … }\`, or move the imported helper into src/<tool>/lib/.`
         );
+    }
+
+    // A Ctrl-C the tool handles itself still exits 130 (see observeInterrupts). Only for a real CLI
+    // run: a test passes its own argv and must not get a SIGINT listener or an exit hook.
+    if (argv === process.argv) {
+        observeInterrupts();
     }
 
     // Conflicting color envs (agent harnesses set FORCE_COLOR while user shells set

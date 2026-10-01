@@ -66,3 +66,49 @@ export async function withInterrupt<T>(
         }
     }
 }
+
+/** What a shell reports for a process ended by Ctrl-C: 128 + SIGINT. */
+export const INTERRUPTED_EXIT_CODE = 130;
+
+/**
+ * Make a Ctrl-C that a tool handles itself still end the process with 130, as an unhandled one does.
+ *
+ * Scripts and `a && b` chains read 130 as "interrupted". A tool that catches SIGINT to stop cleanly
+ * (a follow closing its watcher, `withInterrupt` printing what it found) used to exit 130 only by
+ * accident: `tools` and both launcher stages each forwarded the signal, and a later copy killed it.
+ * With the wrapper exec'd and one launcher stage, the tool sees one copy and exited 0.
+ *
+ * The observer never changes what Ctrl-C does. With no other SIGINT listener it removes itself and
+ * re-raises, so the default action ends the process exactly as before; with one, it only records the
+ * interrupt, and a run that then ends with 0 exits 130. Any other exit code is kept.
+ */
+const observed = new WeakSet<object>();
+
+export function observeInterrupts(target: NodeJS.Process = process): void {
+    // Once per process: a second observer would count the first as the tool's own handler, and with
+    // no real handler neither would re-raise, so Ctrl-C would be ignored.
+    if (observed.has(target)) {
+        return;
+    }
+
+    observed.add(target);
+    let interrupted = false;
+    const observer = () => {
+        if (target.listenerCount("SIGINT") > 1) {
+            interrupted = true;
+            return;
+        }
+
+        target.off("SIGINT", observer);
+        // pid-verified: target.pid is this process; re-raising lets the default SIGINT action end it.
+        target.kill(target.pid, "SIGINT");
+    };
+
+    // First in line, so it records the interrupt even when the tool's own handler ends the process.
+    target.prependListener("SIGINT", observer);
+    target.on("exit", (code) => {
+        if (interrupted && (code ?? 0) === 0) {
+            target.exitCode = INTERRUPTED_EXIT_CODE;
+        }
+    });
+}
