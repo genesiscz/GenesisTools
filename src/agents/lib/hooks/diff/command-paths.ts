@@ -89,7 +89,8 @@ function assignments(command: string, scanned: ShellScan): Map<string, string> {
                         break;
                     }
 
-                    const value = plainArgument(raw.slice(head[0].length));
+                    // `V=/x; cat "$V/a"`: the statement's `;` comes with the token and is not part of the value.
+                    const value = plainArgument(raw.slice(head[0].length).replace(/;+$/, ""));
 
                     if (value) {
                         known.set(name, value);
@@ -229,8 +230,34 @@ function pathShaped(value: string): boolean {
     return value.includes("/") && !value.includes("://") && !value.includes("\n");
 }
 
-function add(into: string[], raw: string | null, bases: string[]): void {
-    const plain = plainArgument(raw);
+/** `$NAME/rest` or `${NAME}/rest`: a variable reference, then a plain remainder. */
+const VARIABLE_PREFIX = /^\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?(\/[^"'\\$`]*)?$/;
+
+/**
+ * A path that starts with a variable the command set to a plain value earlier (`V=/vault; cat "$V/a.md"`).
+ * The same rule as `variableValue`: only the command's own assignments, never the environment, and only
+ * a plain remainder, so the result is what the shell saw. Long vault paths are written this way, and
+ * refusing them left a sweep's files with no diff (2026-10-01).
+ */
+function expandVariable(raw: string | null, known: Map<string, string>): string | null {
+    if (!raw || known.size === 0) {
+        return null;
+    }
+
+    const quoted = /^(['"])(.*)\1$/.exec(raw);
+
+    if (quoted?.[1] === "'") {
+        return null;
+    }
+
+    const match = VARIABLE_PREFIX.exec(quoted?.[2] ?? raw);
+    const base = match?.[1] ? known.get(match[1]) : undefined;
+
+    return base ? base + (match?.[2] ?? "") : null;
+}
+
+function add(into: string[], raw: string | null, bases: string[], known: Map<string, string> = new Map()): void {
+    const plain = plainArgument(raw) ?? expandVariable(raw, known);
 
     if (plain === null) {
         return;
@@ -287,12 +314,14 @@ export function namedArguments(command: string, bases: string[]): string[] {
         return found;
     }
 
+    const known = assignments(command, scanned);
+
     for (const unit of scanned.units) {
         for (const statement of unit) {
             for (const element of splitPipeline(statement)) {
                 for (const token of tokenize(element)) {
-                    add(found, rawToken(command, token), bases);
-                    add(found, nextRawArgument(command, token.start + token.text.length), bases);
+                    add(found, rawToken(command, token), bases, known);
+                    add(found, nextRawArgument(command, token.start + token.text.length), bases, known);
                 }
             }
         }
