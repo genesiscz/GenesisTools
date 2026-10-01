@@ -551,6 +551,25 @@ private struct GroupDropDelegate: DropDelegate {
     }
 }
 
+/// Header of a fixed sidebar group ("Live", "Today", "Earlier"): title and count, pinned while its rows scroll.
+struct PlainGroupHeader: View {
+    let title: String
+    let count: Int
+
+    var body: some View {
+        HStack {
+            Text(title)
+            Spacer()
+            Text(verbatim: "\(count)").font(.system(size: 10.5, design: .monospaced))
+        }
+        .font(.system(size: 11.5, weight: .semibold))
+        .foregroundColor(ReviewPalette.dim)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 6)
+        .hubSurface(.bar)
+    }
+}
+
 /// Header of a collapsible, pinnable, movable group in a sidebar list.
 struct GroupHeader: View {
     let title: String

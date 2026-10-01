@@ -22,8 +22,8 @@ export function teamsRoot(): string {
     return join(CLAUDE_DIR || join(homedir(), ".claude"), "teams");
 }
 
-export function readTeamConfig(teamName: string): TeamConfigFile | null {
-    const path = join(teamsRoot(), teamName, "config.json");
+export function readTeamConfig(teamName: string, root: string = teamsRoot()): TeamConfigFile | null {
+    const path = join(root, teamName, "config.json");
     if (!existsSync(path)) {
         return null;
     }

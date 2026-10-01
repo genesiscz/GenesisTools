@@ -12,6 +12,7 @@ export const PROFILER_SCOPE_NAMES = [
     "du.cli",
     "clones",
     "teams",
+    "hub-agents",
     "claude-cmux-tree",
     "claude-cmux-open",
     "claude-sessions",

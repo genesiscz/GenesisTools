@@ -13,15 +13,21 @@
 import Foundation
 
 let arguments = Array(CommandLine.arguments.dropFirst())
-let wantsWindow = arguments.isEmpty || arguments[0] == "--window" || arguments[0].hasPrefix("-psn_")
+// "" when there is none, so no check below can trap on an argument-less launch.
+let firstArgument = arguments.first ?? ""
+let wantsWindow = arguments.isEmpty || firstArgument == "--window" || firstArgument.hasPrefix("-psn_")
 
 // Every face except the launcher: Launch Services starts them with launchd's bare environment, and
 // their `tools` children then miss glab, gh, bun and the login shell's CA bundle. The window faces
 // take the login shell's values; the short-lived ones (--rpc, --mic) only the usual PATH directories.
 // The launcher passes its caller's environment through untouched.
-if wantsWindow || arguments[0].hasPrefix("-") || arguments[0].contains("://") {
-    let windowFace = wantsWindow || arguments[0] == "--hub" || arguments[0] == "--review"
-    ChildEnvironment.install(loginShell: windowFace, refresh: arguments.first == "--hub")
+if wantsWindow || firstArgument.hasPrefix("-") || firstArgument.contains("://") {
+    let hubLink = firstArgument.hasPrefix("genesis-tools://hub")
+    let windowFace = wantsWindow || firstArgument == "--hub" || firstArgument == "--review" || hubLink
+    ChildEnvironment.install(loginShell: windowFace, refresh: arguments.first == "--hub" || hubLink)
+    // A face that is (or runs under) this bundle's responsible process tells its `tools` children to
+    // skip the launcher; one started from a plain terminal clears the markers (App/FaceMarker.swift).
+    FaceMarker.install()
 }
 
 if wantsWindow {
@@ -32,15 +38,19 @@ if wantsWindow {
 
 // Only the first argument: the link forwarder passes the URL alone, and a URL later in the argv is
 // a value of the program the launcher runs (`GenesisTools <program> https://...`) or of `--rpc`.
-if arguments[0].contains("://"), !arguments[0].hasPrefix("-") {
-    runBrowserLink(arguments[0])
+if firstArgument.contains("://"), !firstArgument.hasPrefix("-") {
+    // `genesis-tools://hub?…` opens a place in the hub (the running one takes it); every other link is routed.
+    if let hubArgs = HubRequest.arguments(fromLink: firstArgument) {
+        runHub(hubArgs)
+    }
+    runBrowserLink(firstArgument)
 }
 
-if arguments[0] == "--help" || arguments[0] == "-h" {
+if firstArgument == "--help" || firstArgument == "-h" {
     launcherUsage()
 }
 
-if arguments[0] == "--version" {
+if firstArgument == "--version" {
     print(bundleVersion())
     exit(0)
 }
@@ -48,7 +58,7 @@ if arguments[0] == "--version" {
 // GenesisTools --default-browser set|restore|status: make this bundle the http(s) handler (macOS asks
 // the user to confirm), give http(s) back to the browser recorded before, or print the handler.
 // It replaced the separate "Genesis Router.app" (see BrowserURL.swift).
-if arguments[0] == "--default-browser" {
+if firstArgument == "--default-browser" {
     runDefaultBrowser(Array(arguments.dropFirst()))
 }
 
@@ -56,31 +66,31 @@ if arguments[0] == "--default-browser" {
 // exit. The reply is one JSON line on stdout. This is the door a unix socket would replace without
 // changing the envelope, so it stays the single entry point for anything the CLI wants done under
 // this bundle's identity (see Notify.swift).
-if arguments[0] == "--rpc" {
+if firstArgument == "--rpc" {
     runRpc(Array(arguments.dropFirst()))
 }
 
 // GenesisTools --mic [--rate 16000]: stream microphone PCM on stdout as this bundle, so the
 // microphone grant attaches to GenesisTools (see Mic.swift).
-if arguments[0] == "--mic" {
+if firstArgument == "--mic" {
     runMic(Array(arguments.dropFirst()))
 }
 
 // GenesisTools --capsule [--theme dark|light] [--screen main|<index>] [--position bottom|top]: draw
 // the floating voice capsule, fed one JSON event per line on stdin (see Capsule.swift).
-if arguments[0] == "--capsule" {
+if firstArgument == "--capsule" {
     runCapsule(Array(arguments.dropFirst()))
 }
 
 // GenesisTools --hub [--session <id>] [--tab transcript|changes|files|decisions] [--snapshot <png>]:
 // every agent session with its transcript, changes, files and decisions (see Hub/HubWindow.swift).
-if arguments[0] == "--hub" {
+if firstArgument == "--hub" {
     runHub(Array(arguments.dropFirst()))
 }
 
 // GenesisTools --review [--repo <path>] [--style split|unified] [--snapshot <png>]: the diff review
 // window (see Review/ReviewWindow.swift).
-if arguments[0] == "--review" {
+if firstArgument == "--review" {
     runReview(Array(arguments.dropFirst()))
 }
 

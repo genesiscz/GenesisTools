@@ -10,6 +10,7 @@ import { closeSync, existsSync, fstatSync, openSync, readdirSync, readFileSync, 
 import { basename, dirname, join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { scanClaudeToolCalls } from "./file-scan";
 import type { ResolvedTranscript } from "./resolve";
 
 /**
@@ -28,8 +29,25 @@ export interface SessionSubagent {
     description: string | null;
     agentType: string | null;
     model: string | null;
+    /** The model its last reply names (`meta.model` is often `inherit`). */
+    transcriptModel: string | null;
     /** The Agent tool call that started it, when the meta file records one. */
     toolUseId: string | null;
+    /** 0 for a teammate, 1 for an agent the session started, 2+ for one an agent started. Null when unrecorded. */
+    spawnDepth: number | null;
+    /** `background` | `foreground`, as the meta records it. */
+    requestShape: string | null;
+    isFork: boolean;
+    /** A teammate's team (`session-<first 8 of the lead's id>`). */
+    teamName: string | null;
+    /** `in_process_teammate` for an in-process teammate. */
+    taskKind: string | null;
+    /** The first prompt it received, at most `SPAWN_PROMPT_CHARS`, with a teammate envelope removed. */
+    spawnPrompt: string | null;
+    /** With `scan: true`: tool calls in its whole transcript (a byte count, see `file-scan.ts`). */
+    toolCalls?: number;
+    /** With `scan: true`: the `tool_use` ids of the Agent calls it made, for nesting its own agents. */
+    agentCalls?: string[];
     /** The first record's timestamp. */
     startedAt: string | null;
     /** When its transcript was last written. */
@@ -48,9 +66,18 @@ export interface ListSubagentsOptions {
     now?: number;
     /** A working agent silent for longer than this is `stopped`. Default 15 minutes. */
     staleAfterMs?: number;
+    /** Also count tool calls and Agent calls over each whole transcript (`scanClaudeToolCalls`). */
+    scan?: boolean;
+    /** How much of each spawn prompt to keep. Default `SPAWN_PROMPT_CHARS`; a one-agent view passes `Infinity`. */
+    promptChars?: number;
+    /** Read only these agent ids (`agent-<id>.jsonl`); the other transcripts are not opened. */
+    ids?: string[];
 }
 
+export const SPAWN_PROMPT_CHARS = 4000;
 const HEAD_BYTES = 16 * 1024;
+/** How far the first record is followed when it is longer than the head (a long spawn prompt). */
+const FIRST_RECORD_MAX_BYTES = 512 * 1024;
 const TAIL_BYTES = 64 * 1024;
 const DEFAULT_STALE_MS = 15 * 60 * 1000;
 
@@ -116,11 +143,81 @@ function midWork(last: JsonRecord | null): boolean {
 
     const message = isRecord(last.message) ? last.message : null;
     const content = Array.isArray(message?.content) ? message.content : [];
+    if (content.some(approvesShutdown)) {
+        return false;
+    }
+
     if (content.some((part) => isRecord(part) && part.type === "tool_use")) {
         return true;
     }
 
     return message?.stop_reason === null;
+}
+
+/** A teammate's last act before its process exits: `SendMessage` with an approving `shutdown_response`. */
+function approvesShutdown(part: unknown): boolean {
+    if (!isRecord(part) || part.type !== "tool_use" || part.name !== "SendMessage" || !isRecord(part.input)) {
+        return false;
+    }
+
+    const reply = part.input.message;
+    return isRecord(reply) && reply.type === "shutdown_response" && reply.approve === true;
+}
+
+/** The head, grown until it holds the whole first record (a spawn prompt can outgrow `HEAD_BYTES`). */
+function readHead(fd: number, size: number): string {
+    let length = Math.min(HEAD_BYTES, size);
+    let head = readSlice(fd, 0, length);
+
+    while (!head.includes("\n") && length < size && length < FIRST_RECORD_MAX_BYTES) {
+        length = Math.min(length * 4, size, FIRST_RECORD_MAX_BYTES);
+        head = readSlice(fd, 0, length);
+    }
+
+    return head;
+}
+
+const TEAMMATE_ENVELOPE = /^\s*<teammate-message\b[^>]*>\n?([\s\S]*?)\n?<\/teammate-message>\s*$/;
+
+/** The text of a prompt record: a string content, or its text parts joined. */
+function promptText(record: JsonRecord | null, maxChars: number): string | null {
+    if (record?.type !== "user") {
+        return null;
+    }
+
+    const message = isRecord(record.message) ? record.message : null;
+    const content = message?.content;
+    const raw =
+        typeof content === "string"
+            ? content
+            : Array.isArray(content)
+              ? content
+                    .filter((part): part is JsonRecord => isRecord(part) && part.type === "text")
+                    .map((part) => (typeof part.text === "string" ? part.text : ""))
+                    .join("\n")
+              : "";
+    const unwrapped = TEAMMATE_ENVELOPE.exec(raw)?.[1] ?? raw;
+    return text(unwrapped.slice(0, maxChars));
+}
+
+/** The model the last reply in the tail names. */
+function lastModel(tail: string): string | null {
+    const lines = tail.split("\n");
+    for (let index = lines.length - 1; index >= 0; index--) {
+        const line = lines[index];
+        if (!line.includes('"type":"assistant"') || !line.includes('"model"')) {
+            continue;
+        }
+
+        const record = parseLine(line.trim());
+        const message = record && isRecord(record.message) ? record.message : null;
+        const model = text(message?.model);
+        if (model && model !== "<synthetic>") {
+            return model;
+        }
+    }
+
+    return null;
 }
 
 function readMeta(path: string): JsonRecord {
@@ -137,32 +234,45 @@ function readMeta(path: string): JsonRecord {
     }
 }
 
-function readAgent(dir: string, entry: string, now: number, staleAfterMs: number): SessionSubagent | null {
+function readAgent(
+    dir: string,
+    entry: string,
+    { now, staleAfterMs, scan, promptChars }: { now: number; staleAfterMs: number; scan: boolean; promptChars: number }
+): SessionSubagent | null {
     const filePath = join(dir, entry);
     const id = entry.slice("agent-".length, -".jsonl".length);
     let fd: number | null = null;
     try {
         fd = openSync(filePath, "r");
         const stat = fstatSync(fd);
-        const head = readSlice(fd, 0, Math.min(HEAD_BYTES, stat.size));
+        const head = readHead(fd, stat.size);
         const tailStart = Math.max(0, stat.size - TAIL_BYTES);
         const tail = readSlice(fd, tailStart, stat.size - tailStart);
         const { first, last } = firstAndLast(head, tail);
         const meta = readMeta(join(dir, `agent-${id}.meta.json`));
         const working = midWork(last);
         const state: SubagentState = !working ? "done" : now - stat.mtimeMs > staleAfterMs ? "stopped" : "running";
+        const scanned = scan ? scanClaudeToolCalls(filePath) : null;
         return {
             id,
             name: text(meta.name),
             description: text(meta.description),
             agentType: text(meta.agentType),
             model: text(meta.model),
+            transcriptModel: lastModel(tail),
             toolUseId: text(meta.toolUseId),
+            spawnDepth: typeof meta.spawnDepth === "number" ? meta.spawnDepth : null,
+            requestShape: text(meta.requestShape),
+            isFork: meta.isFork === true,
+            teamName: text(meta.teamName),
+            taskKind: text(meta.taskKind),
+            spawnPrompt: promptText(first, promptChars),
             startedAt: text(first?.timestamp),
             lastAt: new Date(stat.mtimeMs).toISOString(),
             state,
             bytes: stat.size,
             filePath,
+            ...(scanned ? { toolCalls: scanned.toolCalls, agentCalls: scanned.agentCalls } : {}),
         };
     } catch (error) {
         logger.debug({ error, filePath }, "[transcripts] unreadable sub-agent transcript");
@@ -191,9 +301,17 @@ export function listSubagents(resolved: ResolvedTranscript, options: ListSubagen
         return { sessionId: resolved.sessionId, subagents: [] };
     }
 
+    const wanted = options.ids ? new Set(options.ids.map((id) => `agent-${id}.jsonl`)) : null;
     const subagents = entries
-        .filter((entry) => entry.startsWith("agent-") && entry.endsWith(".jsonl"))
-        .map((entry) => readAgent(dir, entry, now, staleAfterMs))
+        .filter((entry) => (wanted ? wanted.has(entry) : entry.startsWith("agent-") && entry.endsWith(".jsonl")))
+        .map((entry) =>
+            readAgent(dir, entry, {
+                now,
+                staleAfterMs,
+                scan: options.scan === true,
+                promptChars: options.promptChars ?? SPAWN_PROMPT_CHARS,
+            })
+        )
         .filter((agent): agent is SessionSubagent => agent !== null)
         .sort((a, b) => (a.startedAt ?? a.lastAt).localeCompare(b.startedAt ?? b.lastAt));
     logger.debug({ dir, count: subagents.length }, "[transcripts] listed sub-agents");

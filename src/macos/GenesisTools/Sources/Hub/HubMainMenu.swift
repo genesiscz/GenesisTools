@@ -274,6 +274,7 @@ enum HubMenuCommands {
         case .prs: hub.prs.reload()
         case .inbox: hub.inbox.load()
         case .timeline: hub.timeline.load(fresh: true)
+        case .agents: hub.agents.reload()
         case .worktrees: break
         }
     }

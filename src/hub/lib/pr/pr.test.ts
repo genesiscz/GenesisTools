@@ -921,7 +921,7 @@ describe("only publish publishes", () => {
     });
 
     test("the CLI calls backend.publish from the publish command only", () => {
-        const source = readFileSync(join(import.meta.dir, "..", "..", "index.ts"), "utf8");
+        const source = readFileSync(join(import.meta.dir, "..", "..", "cli.ts"), "utf8");
         const calls = [...source.matchAll(/\.publish\(/g)].map((match) => match.index ?? 0);
         const publishCommand = source.indexOf('pr.command("publish")');
         expect(calls).toHaveLength(1);

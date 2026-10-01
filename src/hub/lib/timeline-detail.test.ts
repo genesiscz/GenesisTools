@@ -262,8 +262,19 @@ const CHANGES: ComputedSessionChanges = {
     blobs: new Map(),
 };
 
+const SUBAGENT_META = {
+    transcriptModel: null,
+    spawnDepth: 1,
+    requestShape: null,
+    isFork: false,
+    teamName: null,
+    taskKind: null,
+    spawnPrompt: null,
+} satisfies Partial<SessionSubagent>;
+
 const SUBAGENTS: SessionSubagent[] = [
     {
+        ...SUBAGENT_META,
         id: "agent-1",
         name: "fixer",
         description: "fix the cache",
@@ -277,6 +288,7 @@ const SUBAGENTS: SessionSubagent[] = [
         filePath: "/tmp/agent-1.jsonl",
     },
     {
+        ...SUBAGENT_META,
         id: "agent-old",
         name: null,
         description: "yesterday",

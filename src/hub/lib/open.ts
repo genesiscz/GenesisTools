@@ -4,7 +4,7 @@ import { logger } from "@genesiscz/utils/logger";
 import { genesisAppBundlePath } from "@genesiscz/utils/macos/genesis-app";
 import { hubStatus } from "./proposal";
 
-export const HUB_MODES = ["sessions", "worktrees", "prs", "inbox", "timeline"] as const;
+export const HUB_MODES = ["sessions", "worktrees", "prs", "inbox", "timeline", "agents"] as const;
 export type HubMode = (typeof HUB_MODES)[number];
 export const HUB_TABS = ["transcript", "changes", "decisions"] as const;
 export type HubTab = (typeof HUB_TABS)[number];
@@ -12,6 +12,12 @@ export type HubTab = (typeof HUB_TABS)[number];
 export interface OpenHubOptions {
     mode?: HubMode;
     session?: string;
+    /**
+     * Open this agent in the Agents mode: a Claude agent id (`aE-sharedkit-4743…`) or a codex/grok
+     * worker name. With `session` it is looked up under that parent; alone, the hub searches every
+     * parent. The hub switches to the Agents mode itself.
+     */
+    agent?: string;
     /** `42`, `#42`, or with its project: `group/app#42`, `app!12` (numbers repeat across projects), or a PR page URL. */
     pr?: string;
     /** With `pr`: this repo-relative file opens in that PR's review. */
@@ -62,6 +68,10 @@ export function hubArgs(options: OpenHubOptions): string[] {
         args.push("--session", options.session);
     }
 
+    if (options.agent) {
+        args.push("--agent", options.agent);
+    }
+
     if (options.pr !== undefined) {
         args.push("--pr", options.pr);
 
@@ -110,6 +120,24 @@ export function hubArgs(options: OpenHubOptions): string[] {
     }
 
     return args;
+}
+
+/**
+ * The same target as a link: `genesis-tools://hub?session=<parent>&agent=<child>`, with `mode`,
+ * `pr`, `tab` and `filter` as further query items (the set the app's URL handler reads).
+ */
+export function hubUrl(options: Pick<OpenHubOptions, "mode" | "session" | "agent" | "pr" | "tab" | "filter">): string {
+    // encodeURIComponent, not URLSearchParams: that writes a space as `+`, which Foundation's
+    // URLComponents reads back as a literal plus.
+    const query: string[] = [];
+    for (const key of ["mode", "session", "agent", "pr", "tab", "filter"] as const) {
+        const value = options[key];
+        if (value !== undefined && value !== "") {
+            query.push(`${key}=${encodeURIComponent(value)}`);
+        }
+    }
+
+    return query.length > 0 ? `genesis-tools://hub?${query.join("&")}` : "genesis-tools://hub";
 }
 
 /** Why the installed app cannot serve the hub as it is, or undefined when it can. */

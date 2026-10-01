@@ -24,6 +24,8 @@ struct HubRequest {
     var snapshotPath: String?
     var benchPath: String?
     var session: String?
+    /// With `--session`: this sub-agent, teammate or worker of it opens in the Agents mode (`--agent <id|name>`).
+    var agent: String?
     var pr: HubPRRef?
     /// With `--pr`: this repo-relative file opens in that PR's review (`--reveal <path>`, the browser
     /// extension's "Open in GenesisTools" on a diff file).
@@ -96,6 +98,7 @@ struct HubRequest {
             case "--snapshot": snapshotPath = value; index += 1
             case "--bench": benchPath = value; index += 1
             case "--session": session = value; index += 1
+            case "--agent": agent = value; index += 1
             case "--pr": pr = value.flatMap(HubPRRef.init); index += 1
             case "--reveal": reveal = value; index += 1
             case "--tab": tab = value.flatMap(HubTab.init(rawValue:)); index += 1
@@ -154,6 +157,22 @@ struct HubRequest {
         guard let value, !value.hasPrefix("--") else { return nil }
         return value
     }
+
+    /// The flags a link may carry. Never `--snapshot`, `--bench`, `--set` or `--menu`: a link is a place to
+    /// show, not a file to write or a command to run.
+    static let linkKeys: Set<String> = ["mode", "session", "agent", "pr", "reveal", "tab", "filter", "worktree", "decision", "question"]
+
+    /// `genesis-tools://hub?session=<parent>&agent=<child>` (any of `linkKeys`) as `--hub` arguments, the
+    /// same ones `tools hub open` passes; nil for any other URL.
+    static func arguments(fromLink raw: String) -> [String]? {
+        guard let components = URLComponents(string: raw), components.scheme == "genesis-tools", components.host == "hub" else { return nil }
+        var args: [String] = []
+        for item in components.queryItems ?? [] where linkKeys.contains(item.name) {
+            guard let value = item.value, !value.isEmpty else { continue }
+            args += ["--\(item.name)", value]
+        }
+        return args
+    }
 }
 
 func runHub(_ args: [String]) -> Never {
@@ -164,7 +183,7 @@ func runHub(_ args: [String]) -> Never {
     let wantedPR = request.pr
     let tab = request.tab ?? .transcript
     // `--pr` alone means the PRs mode, as it does for a request handed to a running hub (`apply`).
-    let mode = request.mode ?? (request.pr != nil ? .prs : request.inboxItem != nil ? .inbox : .sessions)
+    let mode = request.mode ?? (request.agent != nil ? .agents : request.pr != nil ? .prs : request.inboxItem != nil ? .inbox : .sessions)
     let activate = request.activate
     if !request.isScripted, !HubSingleInstance.claim() {
         exit(HubSingleInstance.forwardToRunningHub(args) ? 0 : 1)
@@ -195,6 +214,12 @@ func runHub(_ args: [String]) -> Never {
     }
     model.applyOverlays(request)
     MainActor.assumeIsolated {
+        if let agent = request.agent {
+            model.agents.request(parent: request.session, child: agent)
+        } else if mode == .agents, let session = request.session {
+            // `--mode agents --session <p>` opens that session's Main row.
+            model.agents.request(parent: session, child: AgentTree.mainChild)
+        }
         if let wantedPR {
             model.prs.request(wantedPR, reveal: request.prReveal)
         }
@@ -357,7 +382,7 @@ private final class HubAppDelegate: NSObject, NSApplicationDelegate {
 /// What the left column lists: agent sessions, the worktrees (branches) they worked in, PRs, the
 /// sessions waiting for an answer (Hub/HubInbox.swift), or today's activity (Hub/HubTimeline.swift).
 enum HubMode: String, CaseIterable {
-    case sessions, worktrees, prs, inbox, timeline
+    case sessions, worktrees, prs, inbox, timeline, agents
 
     var title: String {
         switch self {
@@ -366,6 +391,7 @@ enum HubMode: String, CaseIterable {
         case .prs: return "PRs"
         case .inbox: return "Inbox"
         case .timeline: return "Activity"
+        case .agents: return "Agents"
         }
     }
 
@@ -377,6 +403,7 @@ enum HubMode: String, CaseIterable {
         case .prs: return "PRs and MRs of those projects, with their diffs, threads and checks"
         case .inbox: return waiting > 0 ? "Inbox: sessions waiting for your answer (\(waiting))" : "Inbox: sessions waiting for your answer (none right now)"
         case .timeline: return "Activity: sessions, commits, pushes, PR events, review comments, decisions and CI results across your projects, by day"
+        case .agents: return "Agents: every session's sub-agents, teammates and codex or grok workers, live, each with its whole transcript"
         }
     }
 }
@@ -578,11 +605,14 @@ final class HubModel: ObservableObject {
     let inbox: HubInboxModel
     /// Today mode state (`tools hub timeline`), Hub/HubTimeline.swift.
     let timeline: HubTimelineModel
+    /// Agents mode state (`tools hub agents`), Hub/HubAgents.swift.
+    let agents: HubAgentsModel
 
     init(wantedSession: String?, tab: HubTab) {
         prs = MainActor.assumeIsolated { PRsModel() }
         inbox = MainActor.assumeIsolated { HubInboxModel() }
         timeline = MainActor.assumeIsolated { HubTimelineModel() }
+        agents = MainActor.assumeIsolated { HubAgentsModel() }
         self.wantedSession = wantedSession
         self.tab = tab
         if !panes.contains(tab) {
@@ -608,6 +638,7 @@ final class HubModel: ObservableObject {
             $selectedWorktree.map { _ in () }.eraseToAnyPublisher(),
             prs.$selectedID.map { _ in () }.eraseToAnyPublisher(),
             inbox.$selectedID.map { _ in () }.eraseToAnyPublisher(),
+            agents.$selectedID.map { _ in () }.eraseToAnyPublisher(),
         ]
         navRecorder = Publishers.MergeMany(changes).sink { [weak self] in self?.scheduleNavRecord() }
     }
@@ -634,6 +665,7 @@ final class HubModel: ObservableObject {
         // Both lists are the content itself, so the mode alone is a place worth going back to.
         case .inbox: return HubNavEntry(mode: .inbox, selection: inbox.selectedID ?? Self.wholeList)
         case .timeline: return HubNavEntry(mode: .timeline, selection: Self.wholeList)
+        case .agents: return HubNavEntry(mode: .agents, selection: agents.selectedID ?? Self.wholeList)
         }
     }
 
@@ -684,6 +716,10 @@ final class HubModel: ObservableObject {
                 inbox.selectedID = id == Self.wholeList ? nil : id
             case .timeline:
                 break
+            case .agents:
+                if id != Self.wholeList, let key = AgentTree.split(id) {
+                    agents.select(parent: key.parent, child: key.child)
+                }
             }
         }
         // The recorder's turn for these changes is already queued, so it runs first and skips them.
@@ -708,6 +744,8 @@ final class HubModel: ObservableObject {
             name = id == Self.wholeList ? "Inbox" : "Inbox: " + (inbox.sessions.first { $0.id == id }?.displayTitle ?? "a session")
         case .timeline:
             name = "Activity"
+        case .agents:
+            name = id == Self.wholeList ? "Agents" : agents.selectedMain.map { "main of " + $0.displayTitle } ?? ("agent " + (agents.selected?.node.title ?? String((AgentTree.split(id)?.child ?? id).prefix(12))))
         }
         return name.count > 70 ? String(name.prefix(69)) + "…" : name
     }
@@ -729,6 +767,13 @@ final class HubModel: ObservableObject {
         // A switch costs the renders after it: the old mode's views go and the new mode's arrive.
         MainActor.assumeIsolated { HubMainBusy.measure("mode.\(next.rawValue)") }
         mode = next
+        MainActor.assumeIsolated {
+            if next == .agents {
+                agents.activate()
+            } else {
+                agents.deactivate()
+            }
+        }
         if next == .inbox {
             MainActor.assumeIsolated { inbox.loadIfStale() }
         }
@@ -954,6 +999,18 @@ final class HubModel: ObservableObject {
                 }
             }
             setMode(.prs)
+        } else if initialMode == .agents {
+            MainActor.assumeIsolated {
+                // A wanted child settles on its transcript's first page; the list alone settles here.
+                if agents.selectedID == nil {
+                    agents.onLoaded = { [weak self] in
+                        guard let self, self.agents.selectedID == nil else { return }
+                        self.onSettled?()
+                        self.onSettled = nil
+                    }
+                }
+            }
+            setMode(.agents)
         } else if initialMode == .inbox || initialMode == .timeline {
             let settle: () -> Void = { [weak self] in
                 self?.onSettled?()
@@ -1173,7 +1230,13 @@ final class HubModel: ObservableObject {
         if let tab = request.tab {
             self.tab = tab
         }
-        if request.session == AgentProcs.selectionID {
+        if let agent = request.agent {
+            setMode(.agents)
+            MainActor.assumeIsolated { agents.request(parent: request.session, child: agent) }
+        } else if request.mode == .agents, let session = request.session {
+            setMode(.agents)
+            MainActor.assumeIsolated { agents.request(parent: session, child: AgentTree.mainChild) }
+        } else if request.session == AgentProcs.selectionID {
             setMode(.sessions)
             select(AgentProcs.selectionID)
         } else if let wanted = request.session, let match = sessions.first(where: { $0.id == wanted || $0.sessionId.hasPrefix(wanted) }) {
@@ -1399,6 +1462,8 @@ struct HubRootView: View {
         // PRs with the diff open: the overview (360) and the diff (420) side by side. At 520 the diff
         // pushed its own header and file rail past the window edge (snapshot 2026-09-24 15:25).
         if model.mode == .prs, prsShowDiff { return 360 + 1 + 420 }
+        // An agent's transcript is the full session screen, as a session's transcript alone is.
+        if model.mode == .agents { return model.agents.selected != nil || model.agents.selectedMain != nil ? 761 : 520 }
         guard model.mode == .sessions, model.selected != nil else { return 520 }
         let visible = model.tabOrder.filter { model.panes.contains($0) }
         guard visible.count > 1 else {
@@ -1420,7 +1485,7 @@ struct HubRootView: View {
                                autoCollapse: width > 0 && sidebarRoom < Self.sidebarMinWidth,
                                // Sessions mode holds the layout for the transcript; every other
                                // mode's main view moves with the edge and reflows on release.
-                               holdsLayout: model.mode == .sessions) {
+                               holdsLayout: model.mode == .sessions || model.mode == .agents) {
                 SessionListView(model: model)
             }
             if model.mode == .prs {
@@ -1436,6 +1501,9 @@ struct HubRootView: View {
             } else if model.mode == .timeline {
                 TimelineMain(model: model, timeline: model.timeline)
                     .freezesWidthWhileDragging(panel: "hub.sidebar")
+            } else if model.mode == .agents {
+                // Held like Sessions: the transcript keeps its layout while the sidebar drags.
+                AgentsMain(model: model, agents: model.agents)
             } else if model.mode == .worktrees {
                 if let path = model.selectedWorktree, let worktree = model.worktrees.first(where: { $0.path == path }) {
                     WorktreeDetailView(model: model, worktree: worktree)
@@ -1543,6 +1611,7 @@ extension HubModel {
         switch mode {
         case .prs: return prs.selected != nil
         case .inbox, .timeline: return true
+        case .agents: return agents.selected != nil || agents.selectedMain != nil
         case .worktrees:
             return worktrees.contains { $0.path == selectedWorktree }
                 || (selectedWorktree == WorktreeCleanup.selectionID && !loadingWorktrees)
@@ -1589,14 +1658,14 @@ private struct HubModePicker: View {
 
     private static let symbols: [HubMode: String] = [
         .sessions: "text.bubble", .worktrees: "arrow.triangle.branch", .prs: "arrow.triangle.pull",
-        .inbox: "tray", .timeline: "clock",
+        .inbox: "tray", .timeline: "clock", .agents: "person.2",
     ]
 
-    /// The row's width; five titles need about 290 pt at the small control size.
-    @State private var width: CGFloat = 320
+    /// The row's width; six titles need about 340 pt at the small control size.
+    @State private var width: CGFloat = 360
 
     var body: some View {
-        let icons = width < 290
+        let icons = width < 340
         HStack(spacing: 1) {
             ForEach(HubMode.allCases, id: \.self) { mode in
                 segment(mode, icons: icons)
@@ -1657,6 +1726,7 @@ private struct SessionListView: View {
         case .sessions: return "Filter sessions, projects, accounts…"
         case .inbox: return "Filter waiting sessions and questions…"
         case .timeline: return "Filter the activity: title, project, branch, author, sha…"
+        case .agents: return "Filter agents, sessions, models, accounts…"
         case .worktrees, .prs: return "Filter repos, branches…"
         }
     }
@@ -1744,6 +1814,8 @@ private struct SessionListView: View {
                 InboxListView(model: model, inbox: model.inbox)
             } else if model.mode == .timeline {
                 TimelineListView(model: model, timeline: model.timeline)
+            } else if model.mode == .agents {
+                AgentsListView(model: model, agents: model.agents)
             } else {
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 2, pinnedViews: [.sectionHeaders]) {
@@ -1769,16 +1841,7 @@ private struct SessionListView: View {
                                         path: mode == .harness ? nil : section.rows.first.map { projectRoot(of: $0.cwd) }.flatMap { $0.isEmpty ? nil : $0 }
                                     )
                                 } else {
-                                    HStack {
-                                        Text(section.title)
-                                        Spacer()
-                                        Text(verbatim: "\(section.rows.count)").font(.system(size: 10.5, design: .monospaced))
-                                    }
-                                    .font(.system(size: 11.5, weight: .semibold))
-                                    .foregroundColor(ReviewPalette.dim)
-                                    .padding(.horizontal, 14)
-                                    .padding(.vertical, 6)
-                                    .hubSurface(.bar)
+                                    PlainGroupHeader(title: section.title, count: section.rows.count)
                                 }
                             }
                         }

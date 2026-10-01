@@ -157,9 +157,9 @@ public struct SessionTranscriptList: View {
     @State private var scrollTarget: ScrollRequest?
     @State private var didInitialScroll = false
     /// Whether the reader is at the latest row; a live transcript follows new rows only then, never
-    /// pulling a reader who scrolled up. Session Details reads it from the last section's end marker
-    /// (GenesisTools hub); the chat (`followsLatest`) from scroll geometry, because a reply that grows
-    /// pushes that marker off screen while the reader is still at the end.
+    /// pulling a reader who scrolled up. Only a following chat (`followsLatest`) reads it, from scroll
+    /// geometry, because a reply that grows pushes the end marker off screen while the reader is still at
+    /// the end; before macOS 15 from the last section's end marker. Session Details uses `anchor.atEnd`.
     @State private var atLatest = true
     /// The chat's scroll-geometry tracking (`LatestTracker`) needs macOS 15. Before that a following
     /// chat keeps the end-marker tracking and the scroll anchor, so a reader who scrolls up is still seen.
@@ -168,6 +168,8 @@ public struct SessionTranscriptList: View {
         if #available(macOS 15, *) { return true }
         return false
     }
+    // The end marker of the newest section (see `atLatest`).
+    private var latestEndMarker: String? { visible.last.map { Self.endMarker($0.id) } }
     /// Holds the rows on screen still while earlier turns are prepended, and keeps a reader at the
     /// latest turn there as rows grow (`TranscriptScrollAnchor`). Not in a following chat
     /// (`followsLatest`), which follows by its own scroll geometry.
@@ -182,6 +184,11 @@ public struct SessionTranscriptList: View {
     /// handlers those clears trigger must not schedule a competing `.firstHit` scroll to the bottom in
     /// between (`Self.scroll`'s 120 ms / 350 ms retries could land after the reveal's).
     @State private var revealing = false
+    /// Rows a live session appended in the last change: they fade in (`RowArrival`). Set in the same
+    /// pass as `visible`, so no extra list render.
+    @State private var arriving: Set<String> = []
+    /// Rows appended while the reader was scrolled up: the "N new" pill (`NewItemsPill`).
+    @State private var unseen = 0
 
     private var toolFilter: String? { filters.tool(for: services.sessionId) }
     @FocusState private var searchFocused: Bool
@@ -219,7 +226,7 @@ public struct SessionTranscriptList: View {
             recompute(.preserve)
         }
         .onChange(of: document) {
-            recompute(.preserve)
+            recompute(.preserve, documentChanged: true)
             // A reveal that waited for this document.
             if let pending = pendingReveal, TranscriptBus.contains(pending, in: document.sections) {
                 pendingReveal = nil
@@ -626,13 +633,15 @@ public struct SessionTranscriptList: View {
                                     onToggle: { expansion.toggle($0) }
                                 )
                                 .equatable()
+                                .modifier(RowArrival(active: arriving.contains(row.id)))
                                 .listRowInsets(EdgeInsets())
                                 .listRowSeparator(.hidden)
                                 .listRowBackground(Color.clear)
                             case .end(let id):
                                 marker(id)
-                                    .onAppear { if !tracksLatestByGeometry, id == latestEndMarker { atLatest = true } }
-                                    .onDisappear { if !tracksLatestByGeometry, id == latestEndMarker { atLatest = false } }
+                                    // A following chat before macOS 15 has no scroll geometry (`tracksLatestByGeometry`).
+                                    .onAppear { if followsLatest, !tracksLatestByGeometry, id == latestEndMarker { atLatest = true } }
+                                    .onDisappear { if followsLatest, !tracksLatestByGeometry, id == latestEndMarker { atLatest = false } }
                             }
                         }
                     } header: {
@@ -658,6 +667,17 @@ public struct SessionTranscriptList: View {
             .overlay(alignment: .bottomTrailing) {
                 if followsLatest, !atLatest {
                     latestButton(proxy)
+                } else if !followsLatest, !anchor.atEnd, unseen > 0 {
+                    NewItemsPill(count: unseen, noun: "new") {
+                        unseen = 0
+                        anchor.scrollToEnd()
+                    }
+                    .padding(14)
+                }
+            }
+            .onChange(of: anchor.atEnd) { _, atEnd in
+                if atEnd {
+                    unseen = 0
                 }
             }
             .onChange(of: scrollTarget) { _, request in
@@ -674,13 +694,12 @@ public struct SessionTranscriptList: View {
                     proxy.scrollTo(Self.endMarker(last.id), anchor: .bottom)
                 }
             }
-            // A live session appended rows while the reader was at the latest one (GenesisTools hub).
-            .onChange(of: visible.last?.rows.last?.id) { _, newLast in
-                guard !followsLatest, didInitialScroll, atLatest, appliedQuery.isEmpty, chips.isEmpty, toolFilter == nil, let newLast else { return }
-                Self.scroll(proxy, to: newLast, anchor: .bottom)
-            }
+            // A live session's appended rows (GenesisTools hub) are followed by `anchor` alone, and only
+            // while the reader is at the end: one ease-out glide per change. The three-pass `scroll` to
+            // the new last row that used to run here too moved the viewport twice more after it, which
+            // read as a jump on every append (Martin, 2026-10-01).
             .onAppear {
-                guard !didInitialScroll, let last = visible.last?.rows.last?.id else { return }
+                guard !didInitialScroll, visible.last?.rows.last != nil else { return }
                 didInitialScroll = true
                 if let target = preset.scrollTo {
                     Self.scroll(proxy, to: target, anchor: .top)
@@ -692,8 +711,15 @@ public struct SessionTranscriptList: View {
                     Self.scroll(proxy, to: target, anchor: .top)
                     return
                 }
-                // A conversation opens at its latest turn.
-                Self.scroll(proxy, to: last, anchor: .bottom)
+                // A conversation opens at its latest turn. Each pass reads the latest end marker again:
+                // a live session appends during the 350 ms of passes, and a pass to the row that was last
+                // at the first one landed above the end, so the list took the reader for scrolled up.
+                for delay in [0, 0.12, 0.35] {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+                        guard let section = visible.last else { return }
+                        proxy.scrollTo(Self.endMarker(section.id), anchor: .bottom)
+                    }
+                }
             }
         }
     }
@@ -757,8 +783,6 @@ public struct SessionTranscriptList: View {
 
     private static func endMarker(_ sectionId: String) -> String { "end-\(sectionId)" }
 
-    // The end marker of the newest section (see `atLatest`).
-    private var latestEndMarker: String? { visible.last.map { Self.endMarker($0.id) } }
 
     private var loadEarlierRow: some View {
         HStack {
@@ -825,12 +849,16 @@ public struct SessionTranscriptList: View {
         return Set(group.members.map(\.id).filter { expansion.isOpen($0) && expansion.showsAll($0, byDefault: false) })
     }
 
-    private func recompute(_ intent: ScrollIntent) {
+    /// `documentChanged`: only a new document can hold rows that arrived; a filter, a level or a
+    /// reveal recomputes the same rows and must not count them as new.
+    private func recompute(_ intent: ScrollIntent, documentChanged: Bool = false) {
         let previousFirst = visible.first?.rows.first?.id
+        let previousLast = visible.last?.rows.last?.id
         // The host's tool filter narrows the chips' result (`filters`).
         let filtered = TranscriptBus.onlyTool(toolFilter, in: document.filtered(chips, query: appliedQuery))
         let sections = verbosity == .minimal ? TranscriptDocument.folded(filtered) : filtered
         visible = sections
+        noteArrivals(after: previousLast, intent: intent, documentChanged: documentChanged)
         let ids = sections.flatMap { $0.rows.filter(\.isPrompt).map(\.id) }
         promptIds = ids
         if let cursor = promptCursor, cursor >= ids.count {
@@ -859,6 +887,39 @@ public struct SessionTranscriptList: View {
                 anchor.holdForPrepend()
             }
         }
+    }
+
+    /// Rows a live session appended after `previousLast` fade in, and count toward the "N new" pill
+    /// while the reader is scrolled up. A prepend, a filter or the first load appends nothing.
+    private func noteArrivals(after previousLast: String?, intent: ScrollIntent, documentChanged: Bool) {
+        // The previous last row is gone (the window moved, a filter dropped it): the old count means nothing.
+        if let previousLast, Self.rows(after: previousLast, in: visible) == nil, unseen > 0 {
+            unseen = 0
+        }
+        guard !followsLatest, documentChanged, case .preserve = intent, didInitialScroll, let previousLast,
+              let fresh = Self.rows(after: previousLast, in: visible), !fresh.isEmpty
+        else {
+            if !arriving.isEmpty { arriving = [] }
+            return
+        }
+        arriving = Set(fresh)
+        if !anchor.atEnd {
+            unseen += fresh.count
+        }
+    }
+
+    /// The ids after `id`, scanning from the end; nil when `id` is gone.
+    static func rows(after id: String, in sections: [TranscriptSection]) -> [String]? {
+        var after: [String] = []
+        for section in sections.reversed() {
+            for row in section.rows.reversed() {
+                if row.id == id {
+                    return after.reversed()
+                }
+                after.append(row.id)
+            }
+        }
+        return nil
     }
 
     /// Scrolls so the target prompt sits just below its pinned section header. Scrolling to the
@@ -1536,6 +1597,13 @@ public struct FilterChip: View {
     public let isOn: Bool
     public var tint: Color = SessionPalette.blue
     public let action: () -> Void
+
+    public init(title: String, isOn: Bool, tint: Color = SessionPalette.blue, action: @escaping () -> Void) {
+        self.title = title
+        self.isOn = isOn
+        self.tint = tint
+        self.action = action
+    }
 
     public var body: some View {
         Button(action: action) {
