@@ -1,0 +1,11 @@
+# eve PR review (docs: eve-ai-layer docs/eve-review-config.md). Read at the PR head.
+# Show every finding the verifier is at least 75% sure of, whatever its severity,
+# and give big stacked PRs the full tool budget instead of a degraded pass.
+severityFloor: info
+confidenceFloor: 75
+maxComments: 100
+verdictPosture: gating
+summaryVerbosity: standard
+depth:
+  mode: always
+  maxToolSteps: 24

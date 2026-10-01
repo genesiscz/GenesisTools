@@ -1,0 +1,9 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+# Merge with the settings in the CodeRabbit UI: this file only adds what differs.
+inheritance: true
+reviews:
+  auto_review:
+    enabled: true
+    # Stacked PRs target another PR's branch, not master. Review every base branch.
+    base_branches:
+      - ".*"
