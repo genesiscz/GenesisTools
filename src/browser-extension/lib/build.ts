@@ -1,8 +1,10 @@
 import { copyFile, mkdir, readdir } from "node:fs/promises";
 import { join, resolve } from "node:path";
+import { serviceShortcutHosts } from "@genesiscz/utils/browser-router/services";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { EXTENSION_SOURCE_DIR } from "./host/install";
+import { isRecord } from "./values";
 
 export const DIST_DIR = resolve(import.meta.dirname, "..", "..", "..", "dist", "browser-extension");
 
@@ -58,6 +60,24 @@ export async function checkBuild(outDir: string): Promise<string[]> {
     return [...new Set(referenced)].filter((file) => !present.has(file));
 }
 
+/**
+ * The router's short service hosts (`https://dashboard`) come from the dashboard registry, so the
+ * build grants them: a redirect rule only fires on a host the extension may access. The background
+ * worker reads its rule's host list back from these permissions.
+ */
+async function grantShortcutHosts(manifestPath: string): Promise<void> {
+    const manifest: unknown = SafeJSON.parse(await Bun.file(manifestPath).text(), { strict: true });
+
+    if (!isRecord(manifest) || !Array.isArray(manifest.host_permissions)) {
+        throw new Error("manifest.json has no host_permissions array");
+    }
+
+    const granted = serviceShortcutHosts().flatMap((host) => [`http://${host}/*`, `https://${host}/*`]);
+    manifest.host_permissions = [...new Set([...manifest.host_permissions, ...granted])];
+    await Bun.write(manifestPath, `${SafeJSON.stringify(manifest, null, 4)}\n`);
+    log.info({ hosts: granted.length / 2 }, "extension: granted short service hosts");
+}
+
 export async function buildExtension({ outDir = DIST_DIR }: { outDir?: string } = {}): Promise<{
     outDir: string;
     files: string[];
@@ -69,6 +89,8 @@ export async function buildExtension({ outDir = DIST_DIR }: { outDir?: string } 
         await copyFile(join(EXTENSION_SOURCE_DIR, name), join(outDir, name));
         files.push(join(outDir, name));
     }
+
+    await grantShortcutHosts(join(outDir, "manifest.json"));
 
     for (const name of ICONS) {
         await copyFile(join(EXTENSION_SOURCE_DIR, "icons", name), join(outDir, "icons", name));

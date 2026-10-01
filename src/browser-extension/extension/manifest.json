@@ -6,7 +6,15 @@
     "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAwEca1EM86J9fPCpLb/BGVr9/z7itD4VS6ghXUxET3byphmYVgdccWk/qnv+aWv+cnKwII4V7i+BbB5d8Kg8hVoxUPaOzM3D0xwvDpeTStX/pXaePG9IpGj9pfdCnYFDlUUQCV5GYeMTRiXHofV1wihC3WB4vicH/h7prvI048s2OJppOL6EjQ9JoSc9CZjOtprxODyWjUbxrurwT/RcxELao0uxQEGrWmJoepvmxoNAWuVXg2cuHkyJLRMqk+Lwj9ziD/56mjfMJRYiUdfOJ/f3qKHB40UskHEhbRqRjIRpf2MMzKu2s+sas9km+32BH57UIx8ljoDFpfaVCPfEsfwIDAQAB",
     "minimum_chrome_version": "120",
     "permissions": ["nativeMessaging", "storage", "contextMenus", "activeTab", "scripting", "declarativeNetRequest"],
-    "host_permissions": ["https://github.com/*", "https://genesis.tools/*"],
+    "host_permissions": [
+        "https://github.com/*",
+        "https://genesis.tools/*",
+        "https://www.google.com/*",
+        "https://www.google.cz/*",
+        "https://search.brave.com/*",
+        "https://duckduckgo.com/*",
+        "https://www.bing.com/*"
+    ],
     "optional_host_permissions": ["https://*/*"],
     "background": { "service_worker": "background.js", "type": "module" },
     "action": {

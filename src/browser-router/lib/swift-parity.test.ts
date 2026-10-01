@@ -4,7 +4,13 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { presetById } from "@genesiscz/utils/browser-router/presets";
-import { defaultRouterConfig, parseConfig, type RouteDecision, route } from "@genesiscz/utils/browser-router/route";
+import {
+    defaultAliases,
+    defaultRouterConfig,
+    parseConfig,
+    type RouteDecision,
+    route,
+} from "@genesiscz/utils/browser-router/route";
 import { CLEAN_CASES } from "@genesiscz/utils/browser-router/testing/clean-cases";
 import { SafeJSON } from "@genesiscz/utils/json";
 
@@ -19,7 +25,11 @@ describe.skipIf(!canCompile)("swift router parity", () => {
         const home = mkdtempSync(join(tmpdir(), "browser-router-swift-"));
         const configPath = join(home, "config.json");
         const binary = join(home, "router-cli");
-        const parityConfig = { ...defaultRouterConfig(), services: [{ port: 3999, name: "Example" }] };
+        const parityConfig = {
+            ...defaultRouterConfig(),
+            aliases: [...defaultAliases(), { host: "lib", base: "http://localhost:3999" }],
+            services: [{ port: 3999, name: "Example", host: "example" }],
+        };
         writeFileSync(configPath, `${SafeJSON.stringify(parityConfig, null, 2)}\n`);
         const compiled = spawnSync(
             "swiftc",
@@ -47,6 +57,12 @@ describe.skipIf(!canCompile)("swift router parity", () => {
             // An unregistered local port keeps today's routing; only a registered one is started.
             "http://127.0.0.1:4555/x",
             "http://localhost:3999/",
+            // A service's short host opens its loopback port, path and query kept.
+            "https://example",
+            "http://example/tasks?x=1#top",
+            "https://examplexyz/",
+            // An alias onto a registered port starts it too.
+            "https://lib/a/x?y=1",
             // One sample per link-cleaner rule.
             ...CLEAN_CASES.map((row) => row.input),
         ];
@@ -64,6 +80,7 @@ describe.skipIf(!canCompile)("swift router parity", () => {
             );
             if (expected.kind === "run" && actual.kind === "run") {
                 expect(actual.argv).toEqual(expected.argv);
+                expect(actual.open ?? null).toBe(expected.open);
             }
         }
 

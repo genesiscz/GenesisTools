@@ -67,28 +67,40 @@ private func routeParsed(_ raw: String, config: ParsedConfig, allowUnwrap: Bool)
     if let direct = try matchRoutes(raw, href: original.absoluteString, config: config, allowUnwrap: allowUnwrap) {
         return direct
     }
-    if let aliased = try aliasURL(original, aliases: config.aliases), aliased.absoluteString != original.absoluteString,
-       let second = try matchRoutes(raw, href: aliased.absoluteString, config: config, allowUnwrap: allowUnwrap) {
+    let aliased = try aliasURL(original, aliases: config.aliases).flatMap { $0.absoluteString == original.absoluteString ? nil : $0 }
+    if let aliased, let second = try matchRoutes(raw, href: aliased.absoluteString, config: config, allowUnwrap: allowUnwrap) {
         return second
     }
-    if let service = serviceMatch(original, services: config.services) {
-        let opened = try forward(config.defaultBrowser, url: original.absoluteString, original: raw, via: "route", routeIndex: nil)
+    // An alias onto a registered port starts that server, and wins over the host's own short name.
+    let viaAlias = aliased.flatMap { serviceMatch($0, services: config.services) }
+    if let (service, target) = viaAlias ?? serviceMatch(original, services: config.services) {
+        let opened = try forward(config.defaultBrowser, url: target, original: raw, via: "route", routeIndex: nil)
         return RouteDecision(
-            kind: "run", original: raw, url: original.absoluteString, browser: opened.browser,
+            kind: "run", original: raw, url: target, browser: opened.browser,
             openArguments: [], via: "route", routeIndex: nil, tool: nil, args: nil, approval: "allow",
             needsApproval: false, argv: ["tools", "browser-router", "ensure", String(service.port)],
-            open: original.absoluteString, notify: "Starting \(service.name)", browserArguments: opened.openArguments,
+            open: target, notify: "Starting \(service.name)", browserArguments: opened.openArguments,
             touchId: false
         )
     }
     return try forward(config.defaultBrowser, url: original.absoluteString, original: raw, via: "default", routeIndex: nil)
 }
 
-private func serviceMatch(_ url: URL, services: [ServiceRef]) -> ServiceRef? {
+/// A loopback URL on a registered port, or a service's short host (`registeredService` in route.ts).
+private func serviceMatch(_ url: URL, services: [ServiceRef]) -> (ServiceRef, String)? {
     guard url.scheme == "http" || url.scheme == "https" else { return nil }
-    guard url.host == "localhost" || url.host == "127.0.0.1" else { return nil }
+    let host = url.host?.lowercased() ?? ""
+    if url.port == nil, let named = services.first(where: { $0.host == host && $0.port != 6666 }),
+       let components = URLComponents(url: url, resolvingAgainstBaseURL: false) {
+        let path = components.percentEncodedPath.isEmpty ? "/" : components.percentEncodedPath
+        let query = components.percentEncodedQuery.map { "?\($0)" } ?? ""
+        let fragment = components.percentEncodedFragment.map { "#\($0)" } ?? ""
+        return (named, "http://localhost:\(named.port)\(path)\(query)\(fragment)")
+    }
+    guard host == "localhost" || host == "127.0.0.1" else { return nil }
     guard let port = url.port, port != 6666 else { return nil }
-    return services.first { $0.port == port }
+    guard let service = services.first(where: { $0.port == port }) else { return nil }
+    return (service, url.absoluteString)
 }
 
 private func matchRoutes(_ raw: String, href: String, config: ParsedConfig, allowUnwrap: Bool) throws -> RouteDecision? {
@@ -160,6 +172,7 @@ func decisionJSON(_ decision: RouteDecision) throws -> String {
 private struct ServiceRef {
     var port: Int
     var name: String
+    var host: String?
 }
 
 private struct AliasRef {
@@ -238,7 +251,7 @@ private func parseServices(_ value: Any?) -> [ServiceRef] {
         guard let object = row as? [String: Any], let port = object["port"] as? Int, let name = object["name"] as? String else {
             return nil
         }
-        return ServiceRef(port: port, name: name)
+        return ServiceRef(port: port, name: name, host: (object["host"] as? String)?.lowercased())
     }
 }
 

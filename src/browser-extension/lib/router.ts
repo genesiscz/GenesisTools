@@ -1,3 +1,4 @@
+import { serviceShortcutHosts } from "@genesiscz/utils/browser-router/services";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { GENESIS_APP_BUNDLE_ID } from "@genesiscz/utils/macos/genesis-app";
@@ -31,16 +32,19 @@ export function checkRouterLink(value: unknown): string {
     }
 
     const url = new URL(value);
+    const routerLink = url.protocol === "https:" && url.hostname === ROUTER_LINK_HOST;
+    const web = url.protocol === "https:" || url.protocol === "http:";
+    const shortcut = web && url.port === "" && serviceShortcutHosts().includes(url.hostname);
 
-    if (url.protocol !== "https:" || url.hostname !== ROUTER_LINK_HOST) {
-        throw new FeatureError("invalid", `only https://${ROUTER_LINK_HOST}/ links are routed`);
+    if (!routerLink && !shortcut) {
+        throw new FeatureError("invalid", `only https://${ROUTER_LINK_HOST}/ links and short service hosts are routed`);
     }
 
     return url.href;
 }
 
 /** The router's decision, as `tools browser-router explain --json` prints it. */
-export function readDecision(stdout: string): { kind: string; via: string; summary: string } {
+export function readDecision(stdout: string): { kind: string; via: string; summary: string; service: boolean } {
     const parsed: unknown = SafeJSON.parse(stdout, { strict: true });
 
     if (!isRecord(parsed) || typeof parsed.kind !== "string") {
@@ -51,7 +55,14 @@ export function readDecision(stdout: string): { kind: string; via: string; summa
     const argv = Array.isArray(parsed.argv) ? parsed.argv.join(" ") : null;
     const tool = typeof parsed.tool === "string" ? `tools ${parsed.tool}` : null;
     const target = typeof parsed.url === "string" ? parsed.url : "";
-    return { kind: parsed.kind, via, summary: argv ?? tool ?? target };
+    // A registered server's start and open: the router's own built-in decision, never a saved route.
+    const service = isRecord(parsed.service) && typeof parsed.service.name === "string" ? parsed.service.name : null;
+
+    if (service) {
+        return { kind: parsed.kind, via, summary: `start and open ${service} (${target})`, service: true };
+    }
+
+    return { kind: parsed.kind, via, summary: argv ?? tool ?? target, service: false };
 }
 
 /**
@@ -71,10 +82,11 @@ export async function explainLink(deps: Deps, rawUrl: unknown): Promise<RouteOut
         );
     }
 
-    const decision = readDecision(explained.stdout);
+    const { service, ...decision } = readDecision(explained.stdout);
     const handled = decision.via !== "default" && decision.via !== "loop-guard";
-    const runs = decision.kind === "run" || decision.kind === "tool";
-    log.info({ url, kind: decision.kind, via: decision.via, handled, runs }, "router decision");
+    // Starting a registered server and opening it is safe without a click; any other run is not.
+    const runs = (decision.kind === "run" || decision.kind === "tool") && !service;
+    log.info({ url, kind: decision.kind, via: decision.via, handled, runs, service }, "router decision");
     return { handled, runs, routed: false, ...decision };
 }
 

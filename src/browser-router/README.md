@@ -80,6 +80,39 @@ and the page only opens on success. Run it by hand the same way: `tools browser-
 3042`. An unregistered port, and port 6666 itself (the router's own symbolic host), are never
 auto-started; they route as a normal URL.
 
+## Short hosts: `https://dashboard`
+
+Every browser dashboard in the registry also gets its registry key as a short host. A click on
+`https://dashboard` (or `http://dashboard/tasks?x=1`) runs `tools browser-router ensure 3000` and
+opens `http://localhost:3000/tasks?x=1`, the same start-then-open as a click on the port itself.
+The port comes from `src/utils/ui/dashboards.ts` through `routerServices()`
+(`src/utils/browser-router/services.ts`), which `ensureBuiltinRoutes` writes into the config's
+`services` list as `{ port, name, host }`. So nothing hardcodes 3000, a moved port follows the
+registry, and `https://jev`, `https://dev-dashboard`, `https://youtube` and the rest work the same
+way. Web services (APIs such as `ai-proxy`) keep their port route but get no short host.
+
+Only the exact host without a port matches: `https://dashboardxyz` and `http://dashboard:8080` route
+as normal URLs. Saved routes and aliases are tried first, so a route of your own for one of these
+hosts still wins. To point a short host at another registered server, add an alias in
+`config.json`: `{ "host": "dashboard", "base": "http://localhost:3096" }` makes `https://dashboard`
+start and open the Artifact Library instead, with the same no-click start as any short host. The trade-off: a real intranet machine named like a registry key (`monitor`,
+`shops`) would be sent to the local dashboard instead.
+
+**Typed into a browser**, a short host needs two things:
+
+1. `dashboard/` and `https://dashboard` are addresses. A bare `dashboard` is a search, so the
+   extension also redirects a Google, Brave Search, DuckDuckGo or Bing search whose whole query is
+   one short host (`dashboard`, `Dashboard`; not `dashboard ideas`) to the same route page. Another
+   default search engine needs its host added to `SEARCH_ENGINES` in
+   `src/browser-extension/extension/background.ts` and to the manifest's `host_permissions`.
+2. The GenesisTools browser extension must be built from this checkout. `tools browser-extension
+   build` adds `http://<host>/*` and `https://<host>/*` for every short host to the manifest's
+   `host_permissions` (a redirect rule only fires on a host the extension may access), and the
+   background worker reads that list back to build its redirect rule. The route page then starts
+   the dashboard without asking for a click, because starting a registered server and opening it
+   is the router's own built-in decision. A saved route that runs something still waits for the
+   click. Reload the unpacked extension after a registry change.
+
 ## Presets vs. an ad-hoc `route`
 
 A **preset** is a built-in route for one companion tool: `genesis-md` (the Genesis Markdown

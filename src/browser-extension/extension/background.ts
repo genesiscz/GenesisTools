@@ -5,10 +5,18 @@ import {
     hostReplyDeadlineMs,
     NATIVE_HOST_NAME,
 } from "../lib/host/messages";
-import { type ContextMenuInfo, ext, type MessageSender, type Tab } from "./chrome";
+import { type ContextMenuInfo, type DnrRule, ext, type MessageSender, type Tab } from "./chrome";
 import { type BackgroundMessage, isBackgroundMessage, isHostResponse, isRecord, type MenuItem } from "./shared/bridge";
 
 const ROUTER_RULE_ID = 1;
+const SHORTCUT_RULE_ID = 2;
+/** Search rules take ids from here up, one per short host, below the bypass range. */
+const SEARCH_RULE_BASE = 100;
+/**
+ * The engines a bare word typed in the address bar goes to. The manifest grants each one: a
+ * redirect only fires on a host the extension may access.
+ */
+const SEARCH_ENGINES = ["google.com", "google.cz", "search.brave.com", "duckduckgo.com", "bing.com"];
 /** Bypass rules take ids from here up, one per route page tab. */
 const BYPASS_RULE_BASE = 1000;
 const BYPASS_EXPIRY_MS = 30_000;
@@ -66,7 +74,23 @@ function escapeRegex(text: string): string {
     return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-/** genesis.tools links open route.html before any request leaves the browser. */
+/** Each letter as `[xX]`; safe on `escapeRegex` output, which escapes punctuation only. */
+function caseInsensitive(pattern: string): string {
+    return pattern.replace(/[a-z]/gi, (letter) => `[${letter.toLowerCase()}${letter.toUpperCase()}]`);
+}
+
+/** Short service hosts (`dashboard`): the build grants each one, so the manifest is the list. */
+function shortcutHosts(): string[] {
+    const granted = ext.runtime.getManifest().host_permissions ?? [];
+    const hosts = granted.flatMap((pattern) => /^https?:\/\/([a-z0-9-]+)\/\*$/.exec(pattern)?.[1] ?? []);
+    return [...new Set(hosts)];
+}
+
+function routeRedirect(): DnrRule["action"] {
+    return { type: "redirect", redirect: { regexSubstitution: `${ext.runtime.getURL("route.html")}#\\0` } };
+}
+
+/** genesis.tools links and short service hosts open route.html before any request leaves the browser. */
 async function installRouterRule(): Promise<void> {
     await ext.declarativeNetRequest.updateDynamicRules({
         removeRuleIds: [ROUTER_RULE_ID],
@@ -74,13 +98,76 @@ async function installRouterRule(): Promise<void> {
             {
                 id: ROUTER_RULE_ID,
                 priority: 1,
-                action: {
-                    type: "redirect",
-                    redirect: { regexSubstitution: `${ext.runtime.getURL("route.html")}#\\0` },
-                },
+                action: routeRedirect(),
                 condition: { regexFilter: "^https://genesis\\.tools/.*$", resourceTypes: ["main_frame"] },
             },
         ],
+    });
+    await installShortcutRule().catch((error: unknown) => {
+        console.warn("[genesis-tools] short service host rule failed", error);
+    });
+    await installSearchRules().catch((error: unknown) => {
+        console.warn("[genesis-tools] short host search rules failed", error);
+    });
+}
+
+/**
+ * A bare `dashboard` typed in the address bar is a search, not a URL, so it never reaches the host
+ * rule. A search whose whole query is one short host goes to the route page as that host instead.
+ *
+ * The engines go in `requestDomains` and the regex holds only the query: with the engine paths in
+ * it too, `artifact-library` and `dev-dashboard-cloud` passed Chrome's regex memory limit. Each
+ * rule has its own call, since one refused rule fails every other rule in the same call.
+ */
+async function installSearchRules(): Promise<void> {
+    const stale = (await ext.declarativeNetRequest.getDynamicRules())
+        .map((rule) => rule.id)
+        .filter((id) => id >= SEARCH_RULE_BASE && id < BYPASS_RULE_BASE);
+    await ext.declarativeNetRequest.updateDynamicRules({ removeRuleIds: stale });
+
+    for (const [index, host] of shortcutHosts().entries()) {
+        const rule: DnrRule = {
+            id: SEARCH_RULE_BASE + index,
+            priority: 1,
+            action: { type: "redirect", redirect: { extensionPath: `/route.html#http://${host}/` } },
+            condition: {
+                // regexFilter ignores isUrlFilterCaseSensitive, so `q=Dashboard` needs a class per letter.
+                regexFilter: `[?&]q=${caseInsensitive(escapeRegex(host))}(?:&|#|$)`,
+                requestDomains: SEARCH_ENGINES,
+                resourceTypes: ["main_frame"],
+            },
+        };
+        await ext.declarativeNetRequest.updateDynamicRules({ addRules: [rule] }).catch((error: unknown) => {
+            console.warn(`[genesis-tools] search rule for ${host} failed`, error);
+        });
+    }
+}
+
+/**
+ * Its own rule, so a failure here never costs the genesis.tools one. The host list goes in
+ * `requestDomains`, not the regex: an alternation of every host passes Chrome's 2 KB compiled
+ * regex limit (seen at 14 hosts), while this regex stays the same size for any number of them.
+ * `requestDomains` also matches subdomains, which the one-label regex then excludes.
+ */
+async function installShortcutRule(): Promise<void> {
+    const hosts = shortcutHosts();
+    await ext.declarativeNetRequest.updateDynamicRules({
+        removeRuleIds: [SHORTCUT_RULE_ID],
+        addRules:
+            hosts.length === 0
+                ? []
+                : [
+                      {
+                          id: SHORTCUT_RULE_ID,
+                          priority: 1,
+                          action: routeRedirect(),
+                          condition: {
+                              regexFilter: "^https?://[a-z0-9-]+/.*$",
+                              requestDomains: hosts,
+                              resourceTypes: ["main_frame"],
+                          },
+                      },
+                  ],
     });
 }
 

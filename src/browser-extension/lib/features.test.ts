@@ -606,4 +606,26 @@ describe("router", () => {
         expect(unrouted.calls.run).toEqual([]);
         await expect(routeLink(unrouted.deps, "https://evil.example/x")).rejects.toThrow("only https://genesis.tools");
     });
+
+    it("takes a short service host and starts the server without asking for a click", async () => {
+        const started = fakeDeps({
+            tools: () => ({
+                code: 0,
+                stdout: '{"kind":"run","via":"route","argv":["tools","browser-router","ensure","3000"],"url":"http://localhost:3000/","service":{"port":3000,"name":"Personal Dashboard"}}',
+                stderr: "",
+            }),
+        });
+        expect(await explainLink(started.deps, "http://dashboard/")).toMatchObject({
+            handled: true,
+            runs: false,
+            summary: "start and open Personal Dashboard (http://localhost:3000/)",
+        });
+        // A saved route that runs something still waits for the click.
+        const saved = fakeDeps({
+            tools: () => ({ code: 0, stdout: '{"kind":"run","via":"route","argv":["tools","x"]}', stderr: "" }),
+        });
+        expect(await explainLink(saved.deps, "https://dashboard/")).toMatchObject({ runs: true });
+        await expect(explainLink(saved.deps, "https://dashboardxyz/")).rejects.toThrow("only https://genesis.tools");
+        await expect(explainLink(saved.deps, "http://dashboard:8080/")).rejects.toThrow("only https://genesis.tools");
+    });
 });

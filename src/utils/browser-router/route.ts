@@ -64,6 +64,16 @@ export function builtinRoutes(): RouteRule[] {
 export const ROUTER_ALIAS_HOST = "genesis.tools";
 export const ROUTER_ALIAS_BASE = "https://127.0.0.1:6666";
 
+/**
+ * A registered local server. `host` is a short name (the registry key, such as `dashboard`):
+ * `https://dashboard/tasks` then opens `http://localhost:<port>/tasks` after the same start.
+ */
+export interface RouterService {
+    port: number;
+    name: string;
+    host?: string;
+}
+
 export interface RouterAlias {
     host: string;
     base: string;
@@ -90,7 +100,7 @@ export interface RouterConfig {
     /** Center-screen card shown when a click opens or runs something. */
     toast?: ToastSettings;
     /** Registered local servers. A click on one starts it before the page opens. */
-    services?: { port: number; name: string }[];
+    services?: RouterService[];
     /** Unwrap safelinks and strip tracking parameters. Default on. */
     clean?: boolean;
     routes: RouteRule[];
@@ -152,6 +162,8 @@ interface RunDecision {
     via: "route";
     routeIndex: number | null;
     launch?: LaunchFields;
+    /** Set when the click starts a registered local server and opens it, nothing else. */
+    service?: { port: number; name: string };
 }
 
 export type RouteDecision = OpenDecision | ToolDecision | RunDecision;
@@ -248,35 +260,53 @@ export function route(
         }
     }
 
-    const service = registeredService(original, config);
+    // An alias onto a registered port (`dashboard` -> `http://localhost:3096`) starts that server,
+    // and wins over the host's own short name.
+    const viaAlias = aliased.href === original.href ? null : registeredService(aliased, config);
+    const registered = viaAlias ?? registeredService(original, config);
 
-    if (service) {
-        const opened = forward(config.defaultBrowser, original.href, raw, "route", null);
+    if (registered) {
+        const { service, target } = registered;
+        const opened = forward(config.defaultBrowser, target, raw, "route", null);
         return {
             kind: "run",
             original: raw,
-            url: original.href,
+            url: target,
             argv: ["tools", "browser-router", "ensure", String(service.port)],
             approval: "allow",
             needsApproval: false,
             touchId: false,
-            open: original.href,
+            open: target,
             notify: `Starting ${service.name}`,
             browserArguments: opened.openArguments,
             via: "route",
             routeIndex: null,
+            service: { port: service.port, name: service.name },
         };
     }
 
     return forward(config.defaultBrowser, original.href, raw, "default", null);
 }
 
-function registeredService(url: URL, config: RouterConfig): { port: number; name: string } | null {
+/** A loopback URL on a registered port, or a service's short host (`https://dashboard/x`). */
+function registeredService(url: URL, config: RouterConfig): { service: RouterService; target: string } | null {
     if (url.protocol !== "http:" && url.protocol !== "https:") {
         return null;
     }
 
-    if (url.hostname !== "localhost" && url.hostname !== "127.0.0.1") {
+    const services = config.services ?? [];
+    const host = url.hostname.toLowerCase();
+
+    if (url.port === "") {
+        const named = services.find((service) => service.host === host && service.port !== 6666);
+
+        if (named) {
+            const target = `http://localhost:${named.port}${url.pathname}${url.search}${url.hash}`;
+            return { service: named, target };
+        }
+    }
+
+    if (host !== "localhost" && host !== "127.0.0.1") {
         return null;
     }
 
@@ -286,7 +316,8 @@ function registeredService(url: URL, config: RouterConfig): { port: number; name
         return null;
     }
 
-    return (config.services ?? []).find((service) => service.port === port) ?? null;
+    const service = services.find((item) => item.port === port);
+    return service ? { service, target: url.href } : null;
 }
 
 function firstMatch(
@@ -887,7 +918,7 @@ function parseAction(value: Record<string, unknown>, index: number): RouteAction
     throw new RouteError(`routes[${index}].action.type must be open, forward, unwrap, token, run, or tool`);
 }
 
-function parseServices(value: unknown): { port: number; name: string }[] {
+function parseServices(value: unknown): RouterService[] {
     if (!Array.isArray(value)) {
         throw new RouteError("config.services must be an array");
     }
@@ -897,7 +928,8 @@ function parseServices(value: unknown): { port: number; name: string }[] {
             throw new RouteError(`services[${index}] needs a port and a name`);
         }
 
-        return { port: item.port, name: item.name };
+        const host = typeof item.host === "string" ? item.host.toLowerCase() : undefined;
+        return { port: item.port, name: item.name, ...(host === undefined ? {} : { host }) };
     });
 }
 

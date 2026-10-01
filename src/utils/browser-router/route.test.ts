@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { getDashboard, getWebService } from "@genesiscz/utils/ui/dashboards";
 import {
     compileRoutePattern,
     compileUrlTemplate,
@@ -9,6 +10,7 @@ import {
     route,
     substitute,
 } from "./route";
+import { routerServices, serviceShortcutHosts } from "./services";
 
 const config = defaultRouterConfig();
 
@@ -57,6 +59,52 @@ describe("route", () => {
             needsApproval: false,
         });
         expect(route("http://localhost:3999/", custom).kind).toBe("run");
+    });
+
+    test("the Personal Dashboard's short host and port come from the registry", () => {
+        const dashboard = getDashboard("dashboard");
+        expect(routerServices()).toContainEqual({ port: dashboard.port, name: dashboard.name, host: "dashboard" });
+        // An API service keeps its port route but gets no short host.
+        expect(
+            routerServices().find((service) => service.name === getWebService("ai-proxy").name)?.host
+        ).toBeUndefined();
+        expect(serviceShortcutHosts()).toContain("dev-dashboard");
+    });
+
+    test("a service's short host starts it and opens its loopback port, path and query kept", () => {
+        const custom = { ...config, services: [{ port: 3999, name: "Example", host: "example" }] };
+
+        expect(route("https://example/tasks?x=1#top", custom)).toMatchObject({
+            kind: "run",
+            argv: ["tools", "browser-router", "ensure", "3999"],
+            url: "http://localhost:3999/tasks?x=1#top",
+            open: "http://localhost:3999/tasks?x=1#top",
+            needsApproval: false,
+            service: { port: 3999, name: "Example" },
+        });
+        expect(route("http://EXAMPLE/", custom)).toMatchObject({ kind: "run", open: "http://localhost:3999/" });
+        // Only the exact host, without a port of its own.
+        expect(route("https://examplexyz/", custom)).toMatchObject({ kind: "forward", via: "default" });
+        expect(route("https://example.com/", custom)).toMatchObject({ kind: "forward", via: "default" });
+        expect(route("http://example:8080/", custom)).toMatchObject({ kind: "forward", via: "default" });
+    });
+
+    test("an alias onto a registered port starts that server and wins over the short host", () => {
+        const custom = {
+            ...config,
+            aliases: [{ host: "example", base: "http://localhost:3096" }],
+            services: [
+                { port: 3999, name: "Example", host: "example" },
+                { port: 3096, name: "Library" },
+            ],
+        };
+
+        expect(route("https://example/a/x?y=1", custom)).toMatchObject({
+            kind: "run",
+            argv: ["tools", "browser-router", "ensure", "3096"],
+            open: "http://localhost:3096/a/x?y=1",
+            service: { port: 3096, name: "Library" },
+        });
     });
 
     test("an unregistered port and the router's own 6666 keep today's routing", () => {

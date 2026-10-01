@@ -32,9 +32,11 @@ export interface ContextMenuInfo {
 export interface DnrRule {
     id: number;
     priority: number;
-    action: { type: "redirect"; redirect: { regexSubstitution: string } } | { type: "allow" };
+    action:
+        | { type: "redirect"; redirect: { regexSubstitution: string } | { extensionPath: string } }
+        | { type: "allow" };
     /** `tabIds` is honoured on session rules only. */
-    condition: { regexFilter: string; resourceTypes: "main_frame"[]; tabIds?: number[] };
+    condition: { regexFilter: string; resourceTypes: "main_frame"[]; tabIds?: number[]; requestDomains?: string[] };
 }
 
 export interface RegisteredContentScript {
@@ -50,6 +52,7 @@ export interface ChromeApi {
         id: string;
         lastError?: { message?: string };
         getURL(path: string): string;
+        getManifest(): { host_permissions?: string[] };
         sendMessage(message: unknown): Promise<unknown>;
         connectNative(name: string): NativePort;
         openOptionsPage(): Promise<void>;
@@ -104,6 +107,7 @@ export interface ChromeApi {
     };
     declarativeNetRequest: {
         updateDynamicRules(options: { removeRuleIds?: number[]; addRules?: DnrRule[] }): Promise<void>;
+        getDynamicRules(): Promise<DnrRule[]>;
         updateSessionRules(options: { removeRuleIds?: number[]; addRules?: DnrRule[] }): Promise<void>;
         getSessionRules(): Promise<DnrRule[]>;
     };

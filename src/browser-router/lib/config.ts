@@ -16,10 +16,10 @@ import {
     type RouterConfig,
     type ToastSettings,
 } from "@genesiscz/utils/browser-router/route";
+import { routerServices } from "@genesiscz/utils/browser-router/services";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { withFileLock } from "@genesiscz/utils/storage";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/storage";
-import { listPortRegistry } from "@genesiscz/utils/ui/dashboards";
 
 export function stateFile(name: string): string {
     return `${browserRouterStorage().getBaseDir()}/${name}`;
@@ -73,9 +73,7 @@ async function ensureBuiltinRoutesLocked(): Promise<RouterConfig> {
         allowAliases: config.allowAliases !== false,
         aliases: config.aliases ?? defaultAliases(),
         toast: config.toast === undefined ? { enabled: true, seconds: 5 } : config.toast,
-        services: listPortRegistry()
-            .filter((entry) => entry.launch && entry.port !== 6666)
-            .map((entry) => ({ port: entry.port, name: entry.name })),
+        services: routerServices(),
         routes,
     };
 
