@@ -495,3 +495,18 @@ describe("an old session's pin far from the journal's tail", () => {
         await rm(dir, { recursive: true, force: true });
     });
 });
+
+describe("pin lines split across chunks", () => {
+    test("a non-ASCII account split at any byte boundary reads back intact", async () => {
+        const dir = await mkdtemp(join(tmpdir(), "pins-utf8-"));
+        const path = join(dir, "session-pins.jsonl");
+        const pin = (sessionId: string, account: string) =>
+            SafeJSON.stringify({ sessionId, provider: "codex", account, source: "hook", at: 1 });
+        await writeFile(path, `${pin("s1", "wörk-ünïcödé")}\n${pin("s2", "side")}\n`);
+
+        for (const chunk of [3, 5, 7, 11, 64]) {
+            expect(priorAccount(path, "s1", "codex", chunk)).toBe("wörk-ünïcödé");
+        }
+        await rm(dir, { recursive: true, force: true });
+    });
+});

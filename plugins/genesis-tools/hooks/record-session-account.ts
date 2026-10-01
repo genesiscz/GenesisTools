@@ -410,7 +410,12 @@ function pinAccount(line: string, sessionId: string, harness: string): string | 
  * journal backwards chunk by chunk and stops at the first (newest) match, so an old session pinned far
  * from the tail is still found, with memory bounded by one chunk plus one line.
  */
-export function priorAccount(path: string, sessionId: string, harness: string): string | null {
+export function priorAccount(
+    path: string,
+    sessionId: string,
+    harness: string,
+    chunkBytes: number = PIN_CHUNK_BYTES
+): string | null {
     let fd: number;
     let size: number;
 
@@ -428,13 +433,16 @@ export function priorAccount(path: string, sessionId: string, harness: string): 
         let carry = Buffer.alloc(0);
 
         while (end > 0) {
-            const from = Math.max(0, end - PIN_CHUNK_BYTES);
+            const from = Math.max(0, end - chunkBytes);
             const chunk = Buffer.alloc(end - from);
             readSync(fd, chunk, 0, chunk.length, from);
-            const text = Buffer.concat([chunk, carry]).toString("utf8");
-            const lines = text.split("\n");
-            // Unless this chunk starts the file, its first line may begin in the earlier chunk.
-            carry = from > 0 ? Buffer.from(lines.shift() ?? "", "utf8") : Buffer.alloc(0);
+            const bytes = Buffer.concat([chunk, carry]);
+            // Unless this chunk starts the file, its first line may begin in the earlier chunk: those bytes
+            // are carried raw, so a UTF-8 character split at the chunk boundary is never decoded in halves.
+            const newline = from > 0 ? bytes.indexOf(0x0a) : -1;
+            carry = from > 0 ? bytes.subarray(0, newline < 0 ? bytes.length : newline) : Buffer.alloc(0);
+            const complete = from > 0 ? (newline < 0 ? Buffer.alloc(0) : bytes.subarray(newline + 1)) : bytes;
+            const lines = complete.toString("utf8").split("\n");
 
             for (let i = lines.length - 1; i >= 0; i--) {
                 const account = pinAccount(lines[i] ?? "", sessionId, harness);
