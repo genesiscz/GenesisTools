@@ -81,10 +81,7 @@ export class LiveTurnStream {
             return;
         }
 
-        const open = turns.findIndex(
-            (turn, position) => position === turns.length - 1 || turn.tools.some((tool) => tool.result === null)
-        );
-        const next = start + open;
+        const next = firstOpenTurn(start, turns);
         if (next <= this.offset) {
             return;
         }
@@ -98,21 +95,44 @@ export class LiveTurnStream {
     }
 }
 
+/** The oldest turn of a page that can still change: one with a tool still waiting for its result, else the last. */
+export function firstOpenTurn(start: number, turns: readonly TranscriptTurn[]): number {
+    const open = turns.findIndex(
+        (turn, position) => position === turns.length - 1 || turn.tools.some((tool) => tool.result === null)
+    );
+    return start + Math.max(open, 0);
+}
+
 export async function followTranscriptLive(resolved: ResolvedTranscript, options: LiveFollowOptions): Promise<void> {
     const stream = new LiveTurnStream(options.offset, options.write);
     // followTranscript reads this object on every change, so moving `offset` narrows the next read.
     const slice = { offset: options.offset, limit: LIVE_WINDOW };
-    let draining: Promise<void> = Promise.resolve();
+    let draining: Promise<void> | null = null;
+    let wanted: number | null = null;
+    // Drained pages before this turn are settled: a later drain starts here, not at the window's end,
+    // so a long run behind an open tool is not re-read on every write. It is the oldest drained turn
+    // that can still change (an open tool's turn, else the last turn read).
+    let drainedTo = 0;
 
     // A read is capped at LIVE_WINDOW turns. When more turns sit past it (the app was away while a
     // worker wrote thousands), the rest is read page by page now, not on the next file write. The pages
     // never move the re-read window: an open tool in the first page must stay re-read until it ends.
     const drain = async (from: number): Promise<void> => {
-        let at = from;
+        let at = Math.max(from, drainedTo);
+        let open: number | null = null;
 
         while (!options.signal?.aborted) {
             const page = await transcriptEnvelope(resolved, { offset: at, limit: LIVE_WINDOW });
             stream.envelope(page, { advance: false });
+            const start = page.nextOffset - page.turns.length;
+
+            if (page.turns.length > 0) {
+                const pageOpen = firstOpenTurn(start, page.turns);
+                const lastTurn = page.nextOffset - 1;
+                // An open tool before the page's last turn keeps its page re-readable; else only the last turn.
+                open = open ?? (pageOpen < lastTurn ? pageOpen : null);
+                drainedTo = open ?? lastTurn;
+            }
 
             if (page.turns.length === 0 || page.nextOffset >= (page.turnCount ?? page.nextOffset)) {
                 return;
@@ -120,6 +140,33 @@ export async function followTranscriptLive(resolved: ResolvedTranscript, options
 
             at = page.nextOffset;
         }
+    };
+
+    // One drain at a time, and growth during a drain asks for ONE more, never a queue of catch-up scans.
+    const requestDrain = (from: number): void => {
+        wanted = wanted === null ? from : Math.min(wanted, from);
+
+        if (draining) {
+            return;
+        }
+
+        draining = (async () => {
+            while (wanted !== null && !options.signal?.aborted) {
+                const next = wanted;
+                wanted = null;
+
+                try {
+                    await drain(next);
+                } catch (error) {
+                    logger.warn(
+                        { error, file: resolved.filePath, from: next },
+                        "live follow: draining capped pages failed"
+                    );
+                }
+            }
+
+            draining = null;
+        })();
     };
 
     await followTranscript(resolved, {
@@ -130,15 +177,7 @@ export async function followTranscriptLive(resolved: ResolvedTranscript, options
             slice.offset = stream.offset;
 
             if (envelope.turns.length > 0 && envelope.nextOffset < (envelope.turnCount ?? envelope.nextOffset)) {
-                const from = envelope.nextOffset;
-                draining = draining
-                    .then(() => drain(from))
-                    .catch((error: unknown) => {
-                        logger.warn(
-                            { error, file: resolved.filePath, from },
-                            "live follow: draining capped pages failed"
-                        );
-                    });
+                requestDrain(envelope.nextOffset);
             }
         },
     });
