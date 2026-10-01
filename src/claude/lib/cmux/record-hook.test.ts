@@ -5,6 +5,7 @@ import { join } from "node:path";
 import type { SessionPin } from "@genesiscz/utils/agent-sessions/pins";
 import { findProjectRoot } from "@genesiscz/utils/fs/project-root";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { priorAccount } from "../../../../plugins/genesis-tools/hooks/record-session-account";
 
 /**
  * The pin journal is written by a standalone hook script in the plugin (it cannot import
@@ -450,5 +451,30 @@ describe("the harness decides which account variable is read", () => {
         );
 
         expect((await readPins())[0]).toMatchObject({ provider: "codex", model: "fixture-model" });
+    });
+});
+
+describe("an existing session keeps its pinned account", () => {
+    test("the newest pin of the same session and provider wins; other sessions and providers do not count", async () => {
+        const dir = await mkdtemp(join(tmpdir(), "pins-prior-"));
+        const path = join(dir, "session-pins.jsonl");
+        const pin = (sessionId: string, provider: string, account: string) =>
+            SafeJSON.stringify({ sessionId, provider, account, source: "hook", at: 1 });
+        await writeFile(
+            path,
+            [
+                pin("s1", "codex", "work"),
+                pin("s2", "codex", "side"),
+                pin("s1", "grok", "personal"),
+                pin("s1", "codex", "shop"),
+            ]
+                .join("\n")
+                .concat("\n")
+        );
+
+        expect(priorAccount(path, "s1", "codex")).toBe("shop");
+        expect(priorAccount(path, "s3", "codex")).toBeNull();
+        expect(priorAccount(join(dir, "missing.jsonl"), "s1", "codex")).toBeNull();
+        await rm(dir, { recursive: true, force: true });
     });
 });

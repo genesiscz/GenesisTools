@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 import { spawnSync } from "node:child_process";
-import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
+import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve, sep } from "node:path";
 import { accountEnvVarFor, type Harness, harnessFor } from "./harness";
@@ -385,6 +385,56 @@ function providerId(harness: Harness): string | null {
     return null;
 }
 
+/** Past this the pin file is read from its tail only; a session's earlier pin is near its other lines. */
+const PIN_TAIL_BYTES = 4 * 1024 * 1024;
+
+/** The account an earlier pin of this session (same provider) recorded, the newest one winning. */
+export function priorAccount(path: string, sessionId: string, harness: string): string | null {
+    let text: string;
+
+    try {
+        const size = statSync(path).size;
+        const fd = openSync(path, "r");
+
+        try {
+            const length = Math.min(size, PIN_TAIL_BYTES);
+            const buffer = Buffer.alloc(length);
+            readSync(fd, buffer, 0, length, size - length);
+            text = buffer.toString("utf8");
+        } finally {
+            closeSync(fd);
+        }
+    } catch {
+        // No pin file yet is the normal case for a first session.
+        return null;
+    }
+
+    let account: string | null = null;
+
+    for (const line of text.split("\n")) {
+        if (!line.includes(sessionId)) {
+            continue;
+        }
+
+        try {
+            const pin = SafeJSON.parse(line) as Partial<SessionPin>;
+
+            if (
+                pin.sessionId === sessionId &&
+                pin.provider === harness &&
+                typeof pin.account === "string" &&
+                pin.account
+            ) {
+                account = pin.account;
+            }
+        } catch {
+            // A torn first line from the tail read, or a corrupt line: skipped.
+        }
+    }
+
+    return account;
+}
+
 function main(raw: string): void {
     if (!raw.trim()) {
         return;
@@ -417,7 +467,12 @@ function main(raw: string): void {
         ...(harness === "claude" ? {} : { provider: harness }),
         // Env wins: `tools <agent> run` said which account this process is. The home binding
         // covers a terminal the user opened themselves. Claude has no home binding.
-        account: fromEnv || (home && provider ? accountBoundToHome(home, provider) : null),
+        // A session that already has a pin (resume, clear, compact) keeps it: today's home binding says
+        // who is logged in now, not who owned the session. Only a new session is pinned from the home.
+        account:
+            fromEnv ||
+            (harness === "claude" ? null : priorAccount(PINS_PATH, sessionId, harness)) ||
+            (home && provider ? accountBoundToHome(home, provider) : null),
         // Claude-only, and deliberately not faked for the others: the ancestor walk looks for a
         // `claude` process and the auth modes are Claude's.
         ...(harness === "claude" ? resolveAuth(process.env) : {}),
