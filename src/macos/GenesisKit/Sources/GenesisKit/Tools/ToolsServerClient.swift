@@ -222,7 +222,8 @@ public final class ToolsServerClient: @unchecked Sendable {
         let lines = LineSplitter()
         let readSource = DispatchSource.makeReadSource(fileDescriptor: socketFd, queue: queue)
         readSource.setEventHandler { [weak self] in self?.readAvailable(socketFd, lines: lines) }
-        readSource.setCancelHandler { close(socketFd) }
+        // Closed under the writers' lock: a write that holds it keeps the descriptor (and its number) its own.
+        readSource.setCancelHandler { [writeLock] in writeLock.withLock { _ = close(socketFd) } }
         source = readSource
         readSource.resume()
         serverLog.info("connected to \(self.socketPath, privacy: .public)")
@@ -244,12 +245,15 @@ public final class ToolsServerClient: @unchecked Sendable {
         guard var data = try? JSONSerialization.data(withJSONObject: message) else { return false }
 
         data.append(0x0A)
-        let socketFd = lock.withLock { fd }
-        guard socketFd >= 0 else { return false }
+        var socketFd: Int32 = -1
 
-        // One writer at a time, so two requests never interleave on the socket.
+        // One writer at a time, so two requests never interleave on the socket. The descriptor is read
+        // inside the writers' lock, which its close also takes: it cannot be closed or reused mid-write.
         let written: Bool = writeLock.withLock {
-            data.withUnsafeBytes { raw -> Bool in
+            socketFd = lock.withLock { fd }
+            guard socketFd >= 0 else { return false }
+
+            return data.withUnsafeBytes { raw -> Bool in
                 var offset = 0
                 while offset < raw.count {
                     let count = Darwin.write(socketFd, raw.baseAddress! + offset, raw.count - offset)
@@ -263,7 +267,8 @@ public final class ToolsServerClient: @unchecked Sendable {
                 return true
             }
         }
-        if !written, disconnectOnFailure { disconnect() }
+        // Only this connection: a failed write must not end a newer one a reconnect already made.
+        if !written, disconnectOnFailure, socketFd >= 0 { disconnect(expectedFd: socketFd) }
         return written
     }
 
