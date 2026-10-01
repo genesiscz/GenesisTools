@@ -890,7 +890,7 @@ final class HubAgentsModel: ObservableObject {
         let hit = index.first { key, value in
             let parentMatches = wanted.parent.map { want in value.parent.map { $0.sessionId.hasPrefix(want) } ?? false } ?? true
             let node = value.node
-            return parentMatches && (node.id == wanted.child || node.id.hasPrefix(wanted.child) || node.name == wanted.child || key.hasSuffix("|" + wanted.child))
+            return parentMatches && (node.id == wanted.child || node.toolUseId == wanted.child || node.id.hasPrefix(wanted.child) || node.name == wanted.child || key.hasSuffix("|" + wanted.child))
         }
         if let hit {
             pendingRequest = nil
@@ -1429,10 +1429,13 @@ struct AgentsMain: View {
     @ObservedObject var agents: HubAgentsModel
 
     var body: some View {
-        if let selected = agents.selected {
-            AgentDetailView(model: model, agents: agents, parent: selected.parent, node: selected.node)
+        if let selected = agents.selected, let parent = selected.parent {
+            AgentLeadScreen(model: model, agents: agents, parent: parent, node: selected.node)
+        } else if let selected = agents.selected {
+            // A codex or grok worker without a lead session: its transcript alone.
+            AgentDetailView(model: model, agents: agents, node: selected.node)
         } else if let parent = agents.selectedMain {
-            AgentMainDetailView(model: model, agents: agents, parent: parent)
+            AgentLeadScreen(model: model, agents: agents, parent: parent, node: nil)
         } else {
             VStack(spacing: 8) {
                 if !agents.loaded {
@@ -1448,20 +1451,73 @@ struct AgentsMain: View {
     }
 }
 
+/// What the Agents mode adds to the shared session screen: the open agent (nil for the lead's Main row).
+struct AgentPaneContext {
+    let agents: HubAgentsModel
+    let parent: AgentParent
+    let node: AgentNode?
+
+    /// The transcript pane's row and identity: the agent's own file, or the lead session's.
+    @MainActor
+    var transcriptRow: HubSession? {
+        node.flatMap { HubAgentsModel.transcriptRow(parent: parent, node: $0) }
+    }
+
+    var key: String {
+        node.map { AgentTree.key(parent: parent.sessionId, child: $0.id) } ?? AgentTree.mainKey(parent.sessionId)
+    }
+}
+
+/// The Agents mode's detail is Sessions mode's screen (Hub/HubWindow.swift `SessionDetailView`) on the lead
+/// session: the same Transcript, Changes, Files and Decisions panes, the same "Open diff". Only the transcript
+/// pane differs, when an agent is open: it shows that agent's own file, and the header carries its facts.
+private struct AgentLeadScreen: View {
+    @ObservedObject var model: HubModel
+    @ObservedObject var agents: HubAgentsModel
+    let parent: AgentParent
+    let node: AgentNode?
+
+    var body: some View {
+        Group {
+            if let lead = model.selected, lead.sessionId == parent.sessionId {
+                SessionDetailView(model: model, session: lead, agent: AgentPaneContext(agents: agents, parent: parent, node: node))
+            } else {
+                ProgressView()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+        }
+        // The panes read the model's selected session (its review, decisions, added folders).
+        .task(id: parent.sessionId) {
+            let span = HubPerf.begin("agents.lead", String(parent.sessionId.prefix(8)))
+            model.selectLead(HubAgentsModel.leadRow(parent, in: model.sessions))
+            span.end()
+            HubMainBusy.measure("agents.lead.render")
+        }
+    }
+}
+
+/// A worker that belongs to no lead session: its header and transcript only.
 private struct AgentDetailView: View {
     @ObservedObject var model: HubModel
     @ObservedObject var agents: HubAgentsModel
-    let parent: AgentParent?
     let node: AgentNode
-    /// Remembered, and settable in a snapshot (`--set hub.agents.promptOpen=true`).
-    @AppStorage("hub.agents.promptOpen") private var promptOpen = false
-    @State private var mailOpen = true
 
     var body: some View {
         VStack(spacing: 0) {
-            header
-            if let row = HubAgentsModel.transcriptRow(parent: parent, node: node) {
-                let key = AgentTree.key(parent: parent?.sessionId, child: node.id)
+            TitlebarHeader {
+                HStack(spacing: 8) {
+                    AgentChildTitle(agents: agents, parent: nil, node: node)
+                    Spacer()
+                    if let notice = model.notice {
+                        NoticePill(text: notice, isError: notice.contains("not in")) { model.notice = nil }
+                    }
+                    AgentCopyIdButton(model: model, node: node)
+                }
+            } details: {
+                AgentChildDetails(agents: agents, parent: nil, node: node)
+            }
+            if let row = HubAgentsModel.transcriptRow(parent: nil, node: node) {
+                let key = AgentTree.key(parent: nil, child: node.id)
                 AgentTranscriptPane(row: row, key: key) { path, line in
                     model.showChange(path: path, line: line)
                 }
@@ -1475,57 +1531,76 @@ private struct AgentDetailView: View {
             }
         }
     }
+}
 
-    private var header: some View {
-        TitlebarHeader {
-            HStack(spacing: 8) {
-                if let parent {
-                    Button {
-                        agents.openMain(parent)
-                    } label: {
-                        HStack(spacing: 4) {
-                            Image(systemName: "chevron.left").font(.system(size: 10, weight: .semibold))
-                            Text(parent.displayTitle).lineLimit(1)
-                        }
-                        .font(.system(size: 12.5))
-                        .foregroundColor(Color.white.opacity(0.75))
-                    }
-                    .buttonStyle(.genHoverPlain())
-                    .instantTooltip("Back to the lead session \(parent.sessionId.prefix(8))")
-                    .layoutPriority(-1)
-                    Text("›").foregroundColor(ReviewPalette.dim).titlebarLabel()
+/// The header's title for an open agent: the lead session as a way back, then the agent and its state.
+struct AgentChildTitle: View {
+    @ObservedObject var agents: HubAgentsModel
+    let parent: AgentParent?
+    let node: AgentNode
+
+    var body: some View {
+        if let parent {
+            Button {
+                agents.openMain(parent)
+            } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: "chevron.left").font(.system(size: 10, weight: .semibold))
+                    Text(parent.displayTitle).lineLimit(1)
                 }
-                Group {
-                    ProviderBadge(provider: node.harness)
-                    Text(node.title)
-                        .font(.system(size: 15, weight: .semibold))
-                        .lineLimit(1)
-                    Circle()
-                        .fill(AgentStatusStyle.color(node.status))
-                        .frame(width: 7, height: 7)
-                    Text(node.status)
-                        .font(.system(size: 11.5))
-                        .foregroundColor(ReviewPalette.dim)
-                }
-                .titlebarLabel()
-                Spacer()
-                if let notice = model.notice {
-                    NoticePill(text: notice, isError: notice.contains("not in")) { model.notice = nil }
-                }
-                IconButton(systemName: "number", tooltip: "Copy the agent id \(node.id)") {
-                    PathOpener.copy(node.id)
-                    model.notice = "Agent id copied"
-                }
+                .font(.system(size: 12.5))
+                .foregroundColor(Color.white.opacity(0.75))
             }
-        } details: {
-            VStack(alignment: .leading, spacing: 8) {
-                facts
-                if let prompt = shownPrompt, !prompt.isEmpty {
-                    spawnPrompt(prompt)
-                }
-                if node.isTeammate {
-                    mailStrip
-                }
+            .buttonStyle(.genHoverPlain())
+            .instantTooltip("Back to the lead session \(parent.sessionId.prefix(8))")
+            .layoutPriority(-1)
+            Text("›").foregroundColor(ReviewPalette.dim).titlebarLabel()
+        }
+        Group {
+            ProviderBadge(provider: node.harness)
+            Text(node.title)
+                .font(.system(size: 15, weight: .semibold))
+                .lineLimit(1)
+            Circle()
+                .fill(AgentStatusStyle.color(node.status))
+                .frame(width: 7, height: 7)
+            Text(node.status)
+                .font(.system(size: 11.5))
+                .foregroundColor(ReviewPalette.dim)
+        }
+        .titlebarLabel()
+    }
+}
+
+struct AgentCopyIdButton: View {
+    @ObservedObject var model: HubModel
+    let node: AgentNode
+
+    var body: some View {
+        IconButton(systemName: "number", tooltip: "Copy the agent id \(node.id)") {
+            PathOpener.copy(node.id)
+            model.notice = "Agent id copied"
+        }
+    }
+}
+
+/// Under the header row for an open agent: its facts, spawn prompt and (a teammate's) team mail.
+struct AgentChildDetails: View {
+    @ObservedObject var agents: HubAgentsModel
+    let parent: AgentParent?
+    let node: AgentNode
+    /// Remembered, and settable in a snapshot (`--set hub.agents.promptOpen=true`).
+    @AppStorage("hub.agents.promptOpen") private var promptOpen = false
+    @State private var mailOpen = true
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            facts
+            if let prompt = shownPrompt, !prompt.isEmpty {
+                spawnPrompt(prompt)
+            }
+            if node.isTeammate {
+                mailStrip
             }
         }
     }
@@ -1674,16 +1749,11 @@ private struct AgentTranscriptPane: View, Equatable {
     }
 }
 
-/// A parent's Main: the lead session's own screen, as in Sessions mode (spend, terminal, insights, resume,
-/// the same live follow), under a header with the session's facts and a way into Sessions mode.
-private struct AgentMainDetailView: View {
-    @ObservedObject var model: HubModel
-    @ObservedObject var agents: HubAgentsModel
-    let parent: AgentParent
-
-    /// The Sessions list's row when it holds this session (cmux pane, cache clock), else one from the list.
-    private var row: HubSession {
-        if let listed = model.sessions.first(where: { $0.sessionId == parent.sessionId }) {
+extension HubAgentsModel {
+    /// The lead session's row: the Sessions list's when it holds it (cmux pane, cache clock), else one
+    /// built from the agents list (a session older than the list's window).
+    static func leadRow(_ parent: AgentParent, in sessions: [HubSession]) -> HubSession {
+        if let listed = sessions.first(where: { $0.sessionId == parent.sessionId }) {
             return listed
         }
         return HubSession(
@@ -1700,42 +1770,6 @@ private struct AgentMainDetailView: View {
             account: parent.account,
             filePath: parent.filePath ?? ""
         )
-    }
-
-    var body: some View {
-        let key = AgentTree.mainKey(parent.sessionId)
-        VStack(spacing: 0) {
-            TitlebarHeader {
-                HStack(spacing: 8) {
-                    Group {
-                        ProviderBadge(provider: parent.provider)
-                        Text(parent.displayTitle)
-                            .font(.system(size: 15, weight: .semibold))
-                            .lineLimit(1)
-                        Circle()
-                            .fill(agents.isLive(parent) ? ReviewPalette.added : Color.white.opacity(0.3))
-                            .frame(width: 7, height: 7)
-                        Text(verbatim: "Main · \(parent.totalCount) agents" + (parent.runningCount > 0 ? " · \(parent.runningCount) running" : ""))
-                            .font(.system(size: 11.5))
-                            .foregroundColor(ReviewPalette.dim)
-                    }
-                    .titlebarLabel()
-                    Spacer()
-                    if let notice = model.notice {
-                        NoticePill(text: notice, isError: notice.contains("not in")) { model.notice = nil }
-                    }
-                    IconButton(systemName: "text.bubble", tooltip: "Open this session in Sessions mode (changes, files, decisions)") {
-                        model.openAgentParent(parent.sessionId)
-                    }
-                }
-            }
-            AgentTranscriptPane(row: row, key: key, child: false) { path, line in
-                model.showChange(path: path, line: line)
-            }
-                .equatable()
-                .id(key)
-                .freezesWidthWhileResizing()
-        }
     }
 }
 
@@ -1813,6 +1847,14 @@ private struct AgentMailRow: View {
 }
 
 extension HubModel {
+    /// A session sidebar's sub-agent row: the Agents mode at that agent (matched by its Agent call's id).
+    @MainActor
+    func openSubagent(sessionId: String, agentId: String) {
+        HubPerf.log("agents.openSubagent \(sessionId.prefix(8)) \(agentId.prefix(16))")
+        setMode(.agents)
+        agents.request(parent: sessionId, child: agentId)
+    }
+
     /// The breadcrumb: the parent session in Sessions mode, when the session list holds it.
     @MainActor
     func openAgentParent(_ sessionId: String) {

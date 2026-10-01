@@ -9,6 +9,8 @@ struct HubSessionDetailHost: View {
     let session: HubSession
     /// A tool row's "Open diff": absolute path and line of the change.
     var onShowChange: ((String, Int?) -> Void)?
+    /// A sidebar sub-agent row: the hub opens it in the Agents mode.
+    var onOpenSubagent: ((SessionSubagent) -> Void)?
     /// False in a multi-pane layout: the screen's own sidebar starts folded to leave room.
     var showsSidebar = true
     /// Opens with this transcript search applied (`--transcript-query`, snapshots and links).
@@ -170,7 +172,7 @@ struct HubSessionDetailHost: View {
         // A failed Agent call in the loaded turns is the one thing the directory cannot tell.
         let failed = Set(digest.subagents.filter { $0.state == .failed }.map(\.id))
         merged.subagents = subagents.map { agent in
-            failed.contains(agent.id) ? SessionSubagent(id: agent.id, kind: agent.kind, summary: agent.summary, state: .failed) : agent
+            failed.contains(agent.id) ? SessionSubagent(id: agent.id, kind: agent.kind, summary: agent.summary, state: .failed, startedAt: agent.startedAt) : agent
         }
         return merged
     }
@@ -300,6 +302,7 @@ struct HubSessionDetailHost: View {
             Task { await load(offset: turns.isEmpty ? nil : windowStart, limit: max(Self.pageSize, turns.count + Self.pageSize), throughEnd: true) }
         }
         actions.copy = { text in PathOpener.copy(text) }
+        actions.openSubagent = agentChild ? nil : onOpenSubagent
         // The header's "Copy the resume command" copied an empty string (it cleared the clipboard):
         // nothing set the command. It runs in the session's folder, where the agent finds the session.
         if !agentChild, let command = AgentLauncher.resumeCommand(for: session) {
@@ -641,6 +644,7 @@ enum HubSubagents {
             let description: String?
             let agentType: String?
             let toolUseId: String?
+            let startedAt: String?
             let lastAt: String
             let state: String
         }
@@ -668,14 +672,20 @@ enum HubSubagents {
 
     private static func row(_ agent: Envelope.Agent) -> SessionSubagent {
         let title = agent.description ?? agent.agentType ?? agent.id
-        var summary = agent.name.map { "\($0): \(title)" } ?? title
-        // The stolen row has no "stopped" state: the text says it, the row keeps the "done" state.
-        if agent.state == "stopped" {
-            summary += " (stopped, last write \(agent.lastAt.prefix(16).replacingOccurrences(of: "T", with: " ")) UTC)"
+        let summary = agent.name.map { "\($0): \(title)" } ?? title
+        // "stopped": its transcript stopped growing before it reported back.
+        let state: SessionSubagent.State = switch agent.state {
+        case "running": .running
+        case "stopped": .idle
+        default: .done
         }
-
-        let state: SessionSubagent.State = agent.state == "running" ? .running : .done
-        return SessionSubagent(id: agent.toolUseId ?? agent.id, kind: agent.agentType ?? "Agent", summary: summary, state: state)
+        return SessionSubagent(
+            id: agent.toolUseId ?? agent.id,
+            kind: agent.agentType ?? "Agent",
+            summary: summary,
+            state: state,
+            startedAt: HubFormat.date(agent.startedAt ?? agent.lastAt)
+        )
     }
 }
 

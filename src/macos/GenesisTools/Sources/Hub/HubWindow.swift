@@ -330,6 +330,7 @@ func runHub(_ args: [String]) -> Never {
 
     MainActor.assumeIsolated {
         HangWatch.start()
+        FrameWatch.start()
         HubStallTest.scheduleIfRequested()
         if !request.isScripted {
             HubNavInput.install(window: window, model: model)
@@ -751,7 +752,19 @@ final class HubModel: ObservableObject {
     }
 
     var selected: HubSession? {
-        sessions.first { $0.id == selectedID }
+        sessions.first { $0.id == selectedID } ?? leadOutsideList.flatMap { $0.id == selectedID ? $0 : nil }
+    }
+
+    /// The Agents mode's lead session when the Sessions list does not hold it (older than the list's window).
+    private var leadOutsideList: HubSession?
+
+    /// The Agents mode's detail: its lead session becomes the selected one, so the Changes, Files and
+    /// Decisions panes (and "Open diff") work on it exactly as in Sessions mode.
+    func selectLead(_ session: HubSession) {
+        if !sessions.contains(where: { $0.id == session.id }) {
+            leadOutsideList = session
+        }
+        select(session.id)
     }
 
     var filtered: [HubSession] {
@@ -1460,6 +1473,29 @@ private struct HubPaletteHost: View {
 
 struct HubRootView: View {
     @ObservedObject var model: HubModel
+
+    /// The open screen in words: mode, what is selected, and the session panes.
+    private var perfArea: String {
+        var parts = [model.mode.rawValue]
+        switch model.mode {
+        case .agents:
+            if let node = model.agents.selected?.node {
+                parts.append("agent " + String(node.title.prefix(40)))
+            } else if let parent = model.agents.selectedMain {
+                parts.append("main " + String(parent.displayTitle.prefix(40)))
+            }
+        case .sessions:
+            if let session = model.selected {
+                parts.append(String(session.displayTitle.prefix(40)))
+            }
+        default:
+            break
+        }
+        if model.mode == .agents || model.mode == .sessions {
+            parts.append(model.tabOrder.filter { model.panes.contains($0) }.map(\.rawValue).joined(separator: ","))
+        }
+        return parts.joined(separator: " › ")
+    }
     @AppStorage(HubGlass.key) private var glass = false
     @AppStorage("hub.prs.showDiff") private var prsShowDiff = true
     @State private var width: CGFloat = 0
@@ -1547,6 +1583,8 @@ struct HubRootView: View {
         .hubSurface(.content)
         .environment(\.hubGlass, glass)
         .preferredColorScheme(.dark)
+        // Every stall and dropped-frame line in app-perf.log names this (GenesisKit Perf/PerfContext.swift).
+        .task(id: perfArea) { PerfContext.area = perfArea }
         .onGeometryChange(for: CGFloat.self, of: \.size.width) { width = $0 }
         .onGeometryChange(for: Int.self, of: { $0.frame(in: .global).minX < -0.5 ? 1 : 0 }) { HubBench.note("hub.root.clipped", $0) }
         .background(HubWindowReader { window in
@@ -1939,11 +1977,15 @@ private struct SessionRowView: View {
     }
 }
 
-private struct SessionDetailView: View {
+/// The one session screen of Sessions and Agents mode: the transcript, Changes, Files and Decisions panes
+/// on the selected session. The Agents mode passes `agent`: the transcript pane then shows that agent's
+/// own file and the header its facts, while the other panes stay the lead session's.
+struct SessionDetailView: View {
     @ObservedObject var model: HubModel
     @ObservedObject private var repos = RepoFactsStore.shared
     @ObservedObject private var stuck = HubStuckStore.shared
     let session: HubSession
+    var agent: AgentPaneContext?
     /// How many of the open panes fit side by side; nil until measured (then all are shown).
     @State private var fitting: Int?
     /// A pane that did not fit, shown as a drawer over the others from its rail.
@@ -2027,10 +2069,25 @@ private struct SessionDetailView: View {
     private func pane(_ tab: HubTab) -> some View {
         switch tab {
         case .transcript:
-            HubSessionDetailHost(session: session, onShowChange: { path, line in
-                model.showChange(path: path, line: line)
-            }, showsSidebar: model.panes.count == 1, transcriptQuery: model.transcriptQuery)
-                .id("\(session.id)|\(model.panes.count == 1)")
+            if let agent, agent.node != nil {
+                if let row = agent.transcriptRow {
+                    HubSessionDetailHost(session: row, onShowChange: { path, line in
+                        model.showChange(path: path, line: line)
+                    }, showsSidebar: model.panes.count == 1, agentChild: true)
+                        .id("\(agent.key)|\(model.panes.count == 1)")
+                } else {
+                    Text("This agent has no transcript file")
+                        .foregroundColor(ReviewPalette.dim)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
+            } else {
+                HubSessionDetailHost(session: session, onShowChange: { path, line in
+                    model.showChange(path: path, line: line)
+                }, onOpenSubagent: { agent in
+                    model.openSubagent(sessionId: session.sessionId, agentId: agent.id)
+                }, showsSidebar: model.panes.count == 1, transcriptQuery: model.transcriptQuery)
+                    .id("\(session.id)|\(model.panes.count == 1)")
+            }
         case .changes:
             HubChangesPane(model: model)
         case .files:
@@ -2070,7 +2127,33 @@ private struct SessionDetailView: View {
     /// The first row sits in the window's title bar, right of the traffic lights and the title, so the
     /// panes start right under the title bar (Martin, 2026-09-28). Its empty part zooms and drags the
     /// window (`TitlebarHeader`, `.titlebarZone()` on the root, WindowTitlebar.swift).
+    @ViewBuilder
     private var header: some View {
+        if let agent, let node = agent.node {
+            agentHeader(agent, node: node)
+        } else {
+            sessionHeader
+        }
+    }
+
+    /// An open agent: the way back to the lead, the agent's state, then the same pane buttons.
+    private func agentHeader(_ agent: AgentPaneContext, node: AgentNode) -> some View {
+        TitlebarHeader {
+            HStack(spacing: 8) {
+                AgentChildTitle(agents: agent.agents, parent: agent.parent, node: node)
+                Spacer()
+                if let notice = model.notice {
+                    NoticePill(text: notice, isError: notice.hasPrefix("cmux:") || notice.contains("failed") || notice.contains("not in")) { model.notice = nil }
+                }
+                paneToggles
+                AgentCopyIdButton(model: model, node: node)
+            }
+        } details: {
+            AgentChildDetails(agents: agent.agents, parent: agent.parent, node: node)
+        }
+    }
+
+    private var sessionHeader: some View {
         TitlebarHeader(details: model.panes.contains(.transcript) ? nil : accountRow) {
             HStack(spacing: 10) {
                 if !model.panes.contains(.transcript) {

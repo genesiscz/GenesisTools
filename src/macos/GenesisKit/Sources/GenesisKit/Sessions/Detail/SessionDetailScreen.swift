@@ -136,6 +136,8 @@ public struct SessionDetailActions {
     public var alertAction: (() -> Void)?
     /// Opens this session in the GenesisTools hub (Genesis). nil hides the row.
     public var openInHub: (() -> Void)?
+    /// A click on a sidebar sub-agent row (the hub opens it in its Agents mode). nil: the rows are not buttons.
+    public var openSubagent: ((SessionSubagent) -> Void)?
 
     public init(
         refreshing: Bool = false,
@@ -948,33 +950,26 @@ public struct SessionDetailSidebar<Extra: View>: View {
         .accessibilityIdentifier("session-details-commits")
     }
 
-    // A long run's sub-agents (89 in one session) pushed the hub's insight
-    // sections out of reach, so the list shows the live and failed ones first and caps the rest.
+    // A long run's sub-agents (161 in one session) pushed the hub's insight sections out of reach, so the
+    // list shows the working, idle and failed ones first (newest started first) and caps the rest.
     private var subagents: some View {
         let all = digest.subagents
-        let open = all.filter { $0.state != .done }
-        let ordered = open + all.filter { $0.state == .done }
-        let limit = max(Self.subagentLimit, open.count)
+        let ordered = SessionSubagent.ordered(all)
+        let open = ordered.filter { $0.state != .done }.count
+        let limit = max(Self.subagentLimit, open)
         let shown = showAllSubagents ? ordered : Array(ordered.prefix(limit))
         return VStack(alignment: .leading, spacing: 1) {
             SessionSectionTitle(title: "Sub-agents", count: all.count)
                 .padding(.bottom, 5)
             ForEach(shown) { agent in
-                HStack(spacing: 8) {
-                    SessionStatusDot(color: color(agent.state))
-                        .frame(width: 14)
-                    Text(verbatim: agent.summary)
-                        .font(.system(size: 12))
-                        .foregroundStyle(SessionPalette.secondary)
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                    Spacer(minLength: 4)
-                    Text(verbatim: stateLabel(agent.state))
-                        .font(SessionPalette.mono(10.5))
-                        .foregroundStyle(SessionPalette.faint)
+                if let open = actions.openSubagent {
+                    subagentRow(agent)
+                        .rowButton(cornerRadius: 5) { open(agent) }
+                        .instantTooltip("\(agent.summary)\nClick: open it in the Agents mode")
+                } else {
+                    subagentRow(agent)
+                        .instantTooltip(agent.summary)
                 }
-                .frame(height: 26)
-                .instantTooltip(agent.summary)
             }
             if ordered.count > limit {
                 moreButton(showAllSubagents ? "Show fewer" : "Show \(ordered.count - limit) more") { showAllSubagents.toggle() }
@@ -983,10 +978,29 @@ public struct SessionDetailSidebar<Extra: View>: View {
         .accessibilityIdentifier("session-details-subagents")
     }
 
+    private func subagentRow(_ agent: SessionSubagent) -> some View {
+        HStack(spacing: 8) {
+            SessionStatusDot(color: color(agent.state))
+                .frame(width: 14)
+            Text(verbatim: agent.summary)
+                .font(.system(size: 12))
+                .foregroundStyle(SessionPalette.secondary)
+                .lineLimit(1)
+                .truncationMode(.tail)
+            Spacer(minLength: 4)
+            Text(verbatim: stateLabel(agent.state))
+                .font(SessionPalette.mono(10.5))
+                .foregroundStyle(SessionPalette.faint)
+        }
+        .frame(height: 26)
+        .contentShape(Rectangle())
+    }
+
     private func color(_ state: SessionSubagent.State) -> Color {
         switch state {
         case .done: return SessionPalette.green
         case .running, .background: return SessionPalette.orange
+        case .idle: return SessionPalette.faint
         case .failed: return SessionPalette.red
         }
     }
@@ -996,6 +1010,7 @@ public struct SessionDetailSidebar<Extra: View>: View {
         case .done: return "done"
         case .running: return "running"
         case .background: return "background"
+        case .idle: return "idle"
         case .failed: return "failed"
         }
     }

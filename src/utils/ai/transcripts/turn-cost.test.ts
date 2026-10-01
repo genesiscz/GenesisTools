@@ -181,6 +181,8 @@ describe("buildTurnCosts", () => {
             [4, "u2", 1],
         ]);
         expect(result.turns[1]?.cacheWriteTokens).toBe(2_000);
+        // The prompt size of each prompt's last call: it falls when the second prompt runs on a cache.
+        expect(result.turns.map((turn) => turn.contextTokens)).toEqual([100_000, 52_010]);
         expect(result.turns[0]?.costUsd).toBeCloseTo(0.11);
         expect(result.turns[0]?.rank).toBe(1);
         expect(result.turns[1]?.rank).toBe(2);
