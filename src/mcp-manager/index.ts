@@ -7,7 +7,7 @@ import { handleReadmeFlag } from "@genesiscz/utils/readme";
 // Use inquirer backend for this tool
 p.setBackend(inquirerBackend);
 
-import { Command } from "commander";
+import { Command, Option } from "commander";
 import { showHelp } from "./utils/command.utils.js";
 import { defaultProviders } from "./utils/providers/index.js";
 import type { MCPProvider } from "./utils/providers/types.js";
@@ -25,6 +25,7 @@ import {
     configJson,
     disableServer,
     enableServer,
+    gatewayHost,
     gatewayInstall,
     gatewayRotateClient,
     gatewayStart,
@@ -314,8 +315,9 @@ const gateway = program.command("gateway").description("Local MCP auth gateway")
 gateway
     .command("start")
     .option("--port <value>", "Listen port")
+    .addOption(new Option("--supervised", "Set by the launchd agent that runs this command").hideHelp())
     .action(async (cmdOptions) => {
-        await gatewayStart({ port: cmdOptions.port });
+        await gatewayStart({ port: cmdOptions.port, supervised: cmdOptions.supervised === true });
     });
 
 gateway.command("stop").action(async () => {
@@ -350,6 +352,18 @@ gateway
 gateway.command("rotate-client").action(async () => {
     await gatewayRotateClient();
 });
+
+gateway
+    .command("host <server>")
+    .description(
+        "Serve a server from the gateway process for claude and codex (http), instead of one stdio child per " +
+            "session. --off restores the stdio definition. Shows diffs; writes only with -y."
+    )
+    .option("--off", "Give the harnesses the stored stdio definition back")
+    .action(async (server, cmdOptions) => {
+        const providers = parseProviderArg(program.opts().provider, getProviders());
+        await gatewayHost(server, { off: cmdOptions.off === true, providers });
+    });
 
 gateway
     .command("stdio")

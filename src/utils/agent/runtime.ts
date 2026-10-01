@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { realpathSync } from "node:fs";
 import { basename, resolve } from "node:path";
 import type { AgentRuntimeContext } from "@genesiscz/utils/agent/context";
@@ -9,6 +10,37 @@ import { logger } from "@genesiscz/utils/logger";
 import { resolveAncestorCwd } from "@genesiscz/utils/process/cwd";
 
 export type { AgentRuntimeContext } from "@genesiscz/utils/agent/context";
+
+/**
+ * The harness session a request came from, when this process serves many sessions.
+ *
+ * A stdio MCP server is spawned by one session and reads that session from its own env
+ * and cwd. A resident server (the mcp-manager gateway) is spawned by launchd, so its env
+ * and cwd describe nobody: it learns the caller per request and runs the handler inside
+ * this scope. Inside the scope the caller wins over the process env and cwd; outside it
+ * nothing changes.
+ */
+export interface AgentCaller {
+    agent: AgentRuntimeContext["agent"];
+    sessionId: string | null;
+    /** The caller's live cwd. Null leaves the process's own answer in place. */
+    cwd: string | null;
+}
+
+const callerScope = new AsyncLocalStorage<AgentCaller>();
+
+export function runAsCaller<T>(caller: AgentCaller, fn: () => T): T {
+    return callerScope.run(caller, fn);
+}
+
+export function currentCaller(): AgentCaller | undefined {
+    return callerScope.getStore();
+}
+
+/** Where relative paths resolve for the current request: the caller's cwd, else this process's. */
+export function callerCwd(): string {
+    return callerScope.getStore()?.cwd ?? process.cwd();
+}
 
 function gitSync(args: string[], cwd: string): string | null {
     const r = Bun.spawnSync(["git", ...args], { cwd, stdout: "pipe", stderr: "ignore" });
@@ -83,9 +115,12 @@ export function getAgentRuntimeContext(
     overrides: Partial<AgentRuntimeContext> = {},
     processEnv: NodeJS.ProcessEnv = appEnv.getProcessEnv()
 ): AgentRuntimeContext {
-    const cwd = overrides.cwd ?? resolveSessionCwd();
+    const caller = callerScope.getStore();
+    const cwd = overrides.cwd ?? caller?.cwd ?? resolveSessionCwd();
 
-    const agentPartial = resolveAgentHost(processEnv);
+    const agentPartial: Partial<AgentRuntimeContext> = caller
+        ? { agent: caller.agent, sessionId: caller.sessionId, isInAgent: caller.agent !== "unknown", aiAgent: null }
+        : resolveAgentHost(processEnv);
 
     // Canonical worktree test: in the main repo `--git-dir` and
     // `--git-common-dir` resolve to the same path; in a linked worktree the

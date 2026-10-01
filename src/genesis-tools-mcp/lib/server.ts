@@ -581,11 +581,15 @@ const CAPABILITY_MATCHERS: Record<string, (name: string) => boolean> = {
 };
 
 /**
- * Filters the tool registry by GENESIS_TOOLS_MCP_CAPABILITIES (comma-delimited, e.g.
- * "question_answer,boards"). Unset or empty -> every capability enabled (unchanged default).
+ * Filters the tool registry by a capability list (comma-delimited in GENESIS_TOOLS_MCP_CAPABILITIES for
+ * stdio, or the capabilities header over HTTP, e.g. "question_answer,boards"). Undefined -> every
+ * capability enabled (unchanged default). No default from the env: an HTTP request without the header
+ * passes `undefined`, and the gateway's own environment must not narrow it.
  */
-export function filterRegistryByCapabilities(registry: Record<string, ToolEntry>): Record<string, ToolEntry> {
-    const capabilities = env.tools.getMcpCapabilities();
+export function filterRegistryByCapabilities(
+    registry: Record<string, ToolEntry>,
+    capabilities: string[] | undefined
+): Record<string, ToolEntry> {
     if (capabilities === undefined) {
         return registry;
     }
@@ -597,13 +601,30 @@ export function filterRegistryByCapabilities(registry: Record<string, ToolEntry>
     return Object.fromEntries(Object.entries(registry).filter(([name]) => enabled.some((matches) => matches(name))));
 }
 
-export async function startMcpServer(): Promise<void> {
+const registries = new Map<boolean, Record<string, ToolEntry>>();
+
+/** One registry per instructions variant; a resident server builds it once, not per request. */
+function toolRegistry(askViaQuestionTool: boolean): Record<string, ToolEntry> {
+    let registry = registries.get(askViaQuestionTool);
+    if (!registry) {
+        registry = buildToolRegistry(askViaQuestionTool);
+        registries.set(askViaQuestionTool, registry);
+    }
+
+    return registry;
+}
+
+/**
+ * The genesis-tools MCP server for one stdio connection or one HTTP request. `runCall` wraps every
+ * tool handler; the resident HTTP server uses it to run the handler as the calling session.
+ */
+export function createGenesisToolsServer(opts: {
+    capabilities: string[] | undefined;
+    runCall?: <T>(fn: () => Promise<T>) => Promise<T>;
+}): { server: Server; tools: string[]; askViaQuestionTool: boolean } {
     const askViaQuestionTool = loadQuestionConfig().askViaQuestionTool === true;
-    const registry = filterRegistryByCapabilities(buildToolRegistry(askViaQuestionTool));
-    log.info(
-        { capabilities: env.tools.getMcpCapabilities() ?? "all", tools: Object.keys(registry), askViaQuestionTool },
-        "genesis-tools MCP tool registry resolved"
-    );
+    const registry = filterRegistryByCapabilities(toolRegistry(askViaQuestionTool), opts.capabilities);
+    const runCall = opts.runCall ?? ((fn) => fn());
     const server = new Server(
         { name: "genesis-tools", version: "1.0.0" },
         { capabilities: { tools: {} }, instructions: serverInstructions(askViaQuestionTool) }
@@ -627,9 +648,11 @@ export async function startMcpServer(): Promise<void> {
         }
 
         try {
-            const text = await entry.handler((request.params.arguments ?? {}) as Record<string, unknown>, {
-                signal: context.mcpReq.signal,
-            });
+            const text = await runCall(() =>
+                entry.handler((request.params.arguments ?? {}) as Record<string, unknown>, {
+                    signal: context.mcpReq.signal,
+                })
+            );
             return { content: [{ type: "text" as const, text }] };
         } catch (err) {
             const message = err instanceof Error ? err.message : String(err);
@@ -640,6 +663,17 @@ export async function startMcpServer(): Promise<void> {
             };
         }
     });
+
+    return { server, tools: Object.keys(registry), askViaQuestionTool };
+}
+
+export async function startMcpServer(): Promise<void> {
+    const capabilities = env.tools.getMcpCapabilities();
+    const { server, tools, askViaQuestionTool } = createGenesisToolsServer({ capabilities });
+    log.info(
+        { capabilities: capabilities ?? "all", tools, askViaQuestionTool },
+        "genesis-tools MCP tool registry resolved"
+    );
 
     const transport = new StdioServerTransport();
     await server.connect(transport);

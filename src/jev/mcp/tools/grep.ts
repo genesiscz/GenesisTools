@@ -1,3 +1,4 @@
+import { callerCwd } from "@genesiscz/utils/agent/runtime";
 import { createEvaluator, type Evaluator, lazyEvaluator } from "@genesiscz/utils/ai/evaluation/service";
 import { DEFAULT_EVALUATION_PROVIDER } from "@genesiscz/utils/ai/evaluation/types";
 import { logger } from "@genesiscz/utils/logger";
@@ -58,7 +59,7 @@ export function registerJevGrepTool(registry: JevMcpRegistry, deps: JevRouteDeps
         readOnly: true,
         run: async (raw, context) => {
             const input = grepInputSchema.parse(raw);
-            const options = grepOptionsFromInput(input, process.cwd());
+            const options = grepOptionsFromInput(input, callerCwd());
             log.info({ root: options.root, provider }, "jev_grep called over MCP");
             const evaluate = deps.evaluate ?? (await evaluator());
             const result = await prof.measureAsync("mcp-grep", () =>

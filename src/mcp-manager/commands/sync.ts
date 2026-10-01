@@ -1,13 +1,15 @@
-import { persistHarnessDefaults, stripMeta } from "@app/mcp-manager/utils/config.utils.js";
-import type { MCPProvider } from "@app/mcp-manager/utils/providers/types.js";
+import { getGlobalOptions, persistHarnessDefaults, stripMeta } from "@app/mcp-manager/utils/config.utils.js";
+import type { MCPProvider, UnifiedMCPConfig } from "@app/mcp-manager/utils/providers/types.js";
 import { WriteResult } from "@app/mcp-manager/utils/providers/types.js";
 import type { MCPProviderName } from "@app/mcp-manager/utils/types.js";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
 import { logger } from "@genesiscz/utils/logger";
 import * as p from "@genesiscz/utils/prompts/p";
+import { GATEWAY_CLIENT_TOKEN_PATH } from "../lib/auth/paths.ts";
 import { isGatewayOauth } from "../lib/auth/policy.ts";
 import { gatewayListen, projectAllForHarness } from "../lib/auth/project.ts";
-import { ensureGatewayClientToken } from "../lib/auth/secrets.ts";
+import { ensureGatewayClientToken, readSecret } from "../lib/auth/secrets.ts";
+import { isGatewayHosted } from "../lib/gateway/hosted.ts";
 
 export interface SyncOptions {
     provider?: string; // Provider name(s), comma-separated for non-interactive mode
@@ -84,43 +86,63 @@ export async function syncServers(providers: MCPProvider[], options: SyncOptions
         }
 
         try {
-            logger.info(`Syncing to ${providerName}...`);
-            const needsGateway = Object.values(config.mcpServers).some(isGatewayOauth);
-            const localToken = needsGateway ? await ensureGatewayClientToken() : "";
-            const projected = projectAllForHarness(config.mcpServers, {
-                provider: providerName as MCPProviderName,
-                localToken,
-                listen: gatewayListen(config),
-            });
-
-            // First, install servers that need to be in this provider's config
-            for (const [serverName, serverConfig] of Object.entries(projected)) {
-                const existingServerConfig = await provider.getServerConfig(serverName);
-                if (!existingServerConfig) {
-                    // Skip servers that must stay absent from this provider's
-                    // config: Cursor/Codex have no disabled state (presence =
-                    // enabled), and Claude's only TRUE global disable is
-                    // absence from ~/.claude.json mcpServers.
-                    if (!provider.shouldBeInstalled(config.mcpServers[serverName] ?? serverConfig)) {
-                        continue; // Skip - will be handled (deleted) by syncServers
-                    }
-                    logger.info(`  Installing '${serverName}' in ${providerName}...`);
-                    const configToInstall = stripMeta(serverConfig);
-                    await provider.installServer(serverName, configToInstall);
-                }
-            }
-
-            // Sync all servers (with enabled/disabled state from _meta.enabled[providerName])
-            const syncResult = await provider.syncServers(projected);
-            if (syncResult === WriteResult.Applied) {
-                logger.info(`✓ Synced to ${providerName}`);
-            } else if (syncResult === WriteResult.Rejected) {
-                logger.info(`Skipped ${providerName} - user rejected confirmation`);
-            }
+            await syncConfigToProvider(config, provider);
         } catch (error: unknown) {
             if (error instanceof Error) {
                 logger.error(`✗ Failed to sync to ${providerName}: ${error.message}`);
             }
         }
     }
+}
+
+/**
+ * Project `config` for one harness and write it there (diff shown; without --yes in a non-TTY
+ * nothing is written, which is the dry run). `config` may be an in-memory edit not saved yet.
+ */
+export async function syncConfigToProvider(config: UnifiedMCPConfig, provider: MCPProvider): Promise<WriteResult> {
+    const providerName = provider.getName();
+    logger.info(`Syncing to ${providerName}...`);
+    const needsGateway = Object.entries(config.mcpServers).some(
+        ([name, server]) => isGatewayOauth(server) || isGatewayHosted(name, server)
+    );
+    // A dry run (a non-TTY without --yes writes nothing) only reads the token: minting one there would
+    // change durable credential state for a preview. A missing token shows as a placeholder in the diff.
+    const dryRun = !process.stdout.isTTY && !getGlobalOptions().yes;
+    const localToken = !needsGateway
+        ? ""
+        : dryRun
+          ? ((await readSecret(GATEWAY_CLIENT_TOKEN_PATH)) ?? "<minted on the first accepted write>")
+          : await ensureGatewayClientToken();
+    const projected = projectAllForHarness(config.mcpServers, {
+        provider: providerName as MCPProviderName,
+        localToken,
+        listen: gatewayListen(config),
+    });
+
+    // First, install servers that need to be in this provider's config
+    for (const [serverName, serverConfig] of Object.entries(projected)) {
+        const existingServerConfig = await provider.getServerConfig(serverName);
+        if (!existingServerConfig) {
+            // Skip servers that must stay absent from this provider's
+            // config: Cursor/Codex have no disabled state (presence =
+            // enabled), and Claude's only TRUE global disable is
+            // absence from ~/.claude.json mcpServers.
+            if (!provider.shouldBeInstalled(config.mcpServers[serverName] ?? serverConfig)) {
+                continue; // Skip - will be handled (deleted) by syncServers
+            }
+            logger.info(`  Installing '${serverName}' in ${providerName}...`);
+            const configToInstall = stripMeta(serverConfig);
+            await provider.installServer(serverName, configToInstall);
+        }
+    }
+
+    // Sync all servers (with enabled/disabled state from _meta.enabled[providerName])
+    const syncResult = await provider.syncServers(projected);
+    if (syncResult === WriteResult.Applied) {
+        logger.info(`✓ Synced to ${providerName}`);
+    } else if (syncResult === WriteResult.Rejected) {
+        logger.info(`Skipped ${providerName} - user rejected confirmation`);
+    }
+
+    return syncResult;
 }

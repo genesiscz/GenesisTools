@@ -23,6 +23,44 @@ const rohlik = {
     _meta: { enabled: { grok: true } },
 };
 
+describe("projectServerForHarness — gateway-hosted server", () => {
+    const stdio = {
+        type: "stdio" as const,
+        command: "/repo/tools",
+        args: ["claude", "mcp"],
+        env: { GENESIS_TOOLS_MCP_CAPABILITIES: "question_answer,handoff" },
+        _meta: { enabled: { claude: true, codex: true, cursor: true }, gatewayHosted: true },
+    };
+    const opts = { localToken: "tok", listen };
+
+    test("claude and codex get the gateway url, the token, and the env capabilities as a header", () => {
+        for (const provider of ["claude", "codex"] as const) {
+            const projected = projectServerForHarness("genesis-tools", stdio, { ...opts, provider });
+            expect(projected).toMatchObject({
+                type: "http",
+                url: "http://127.0.0.1:8318/mcp/genesis-tools",
+                headers: { [GATEWAY_HEADER]: "tok", "X-Genesis-Mcp-Capabilities": "question_answer,handoff" },
+            });
+            expect(projected.command).toBeUndefined();
+            expect(projected.env).toBeUndefined();
+            expect(isGatewayProjection(projected, listen, "genesis-tools")).toBe(true);
+        }
+    });
+
+    test("cursor, grok and gemini keep the stored stdio definition", () => {
+        for (const provider of ["cursor", "grok", "gemini"] as const) {
+            const projected = projectServerForHarness("genesis-tools", stdio, { ...opts, provider });
+            expect(projected).toMatchObject({ type: "stdio", command: "/repo/tools", args: ["claude", "mcp"] });
+        }
+    });
+
+    test("without the flag, or for a server the gateway cannot host, everyone keeps stdio", () => {
+        const off = { ...stdio, _meta: { enabled: stdio._meta.enabled } };
+        expect(projectServerForHarness("genesis-tools", off, { ...opts, provider: "claude" }).type).toBe("stdio");
+        expect(projectServerForHarness("other-server", stdio, { ...opts, provider: "claude" }).type).toBe("stdio");
+    });
+});
+
 describe("projectServerForHarness", () => {
     test("HTTP harnesses get loopback url and local header, never the upstream url", () => {
         const projected = projectServerForHarness("rohlik", rohlik, {

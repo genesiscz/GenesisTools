@@ -1,4 +1,6 @@
-import { readUnifiedConfig } from "@app/mcp-manager/utils/config.utils.js";
+import { getGlobalOptions, readUnifiedConfig, writeUnifiedConfig } from "@app/mcp-manager/utils/config.utils.js";
+import type { MCPProvider } from "@app/mcp-manager/utils/providers/types.js";
+import type { MCPProviderName } from "@app/mcp-manager/utils/types.js";
 import { suggestCommand } from "@genesiscz/utils/cli";
 import { ui } from "@genesiscz/utils/cli/ui";
 import { logger } from "@genesiscz/utils/logger";
@@ -6,6 +8,7 @@ import { GATEWAY_HEADER } from "../lib/auth/constants.ts";
 import { gatewayListen } from "../lib/auth/project.ts";
 import { ensureGatewayClientToken, rotateGatewayClientToken } from "../lib/auth/secrets.ts";
 import { ensureGatewayUp, gatewayHealth, stopInProcessGateways } from "../lib/gateway/ensure.ts";
+import { HOSTABLE, HOSTED_HTTP_PROVIDERS, hostedServer } from "../lib/gateway/hosted.ts";
 import { startGatewayServer } from "../lib/gateway/server.ts";
 import {
     GATEWAY_LAUNCHD_LABEL,
@@ -18,6 +21,7 @@ import {
     waitForGatewayHealth,
 } from "../lib/gateway/service.ts";
 import { runStdioHttpRelay } from "../lib/gateway/stdio-relay.ts";
+import { syncConfigToProvider } from "./sync.ts";
 
 /** `undefined` means the caller passed something that is not a usable port. */
 function resolvePort(raw: string | undefined, fallback: number): number | undefined {
@@ -34,7 +38,7 @@ function resolvePort(raw: string | undefined, fallback: number): number | undefi
     return parsed;
 }
 
-export async function gatewayStart(opts: { port?: string } = {}): Promise<void> {
+export async function gatewayStart(opts: { port?: string; supervised?: boolean } = {}): Promise<void> {
     const config = await readUnifiedConfig();
     const listen = gatewayListen(config);
     const port = resolvePort(opts.port, listen.port);
@@ -61,7 +65,9 @@ export async function gatewayStart(opts: { port?: string } = {}): Promise<void> 
         return;
     }
 
-    if (isGatewayServiceInstalled()) {
+    // The agent's own run passes --supervised; without it, this guard refused the agent too
+    // and launchd respawned it every 10 s.
+    if (!opts.supervised && isGatewayServiceInstalled()) {
         logger.error("a launchd agent owns this gateway; foreground start would race KeepAlive");
         ui.dim(`    ${suggestCommand("tools mcp-manager", { replaceCommand: ["gateway", "up"] })}`);
         ui.dim(`    log: ${gatewayLogFile()}`);
@@ -241,6 +247,75 @@ export async function gatewayRotateClient(): Promise<void> {
     // config write across every provider, so it stays an explicit user action.
     ui.warn("every harness config still carries the OLD token and will be refused until you resync");
     ui.dim(`    ${suggestCommand("tools mcp-manager", { replaceCommand: ["sync", "-p", "all", "-y"] })}`);
+}
+
+/**
+ * Serve `serverName` from the gateway process for the harnesses in HOSTED_HTTP_PROVIDERS, or
+ * (`off`) give them the stored stdio definition back. Every config write shows its diff first;
+ * without --yes in a non-TTY nothing is written, which is the dry run.
+ */
+export async function gatewayHost(serverName: string, opts: { off: boolean; providers: MCPProvider[] }): Promise<void> {
+    if (!hostedServer(serverName)) {
+        logger.error(`${serverName} cannot be served by the gateway; only ${HOSTABLE.join(", ")} can`);
+        process.exitCode = 1;
+
+        return;
+    }
+
+    const config = await readUnifiedConfig();
+    const entry = config.mcpServers[serverName];
+
+    if (!entry) {
+        logger.error(`${serverName} is not in the unified config`);
+        process.exitCode = 1;
+
+        return;
+    }
+
+    const meta = entry._meta ?? { enabled: {} };
+    const alreadyInState = (meta.gatewayHosted === true) === !opts.off;
+
+    if (opts.off) {
+        delete meta.gatewayHosted;
+    } else {
+        meta.gatewayHosted = true;
+        const listen = gatewayListen(config);
+        const health = await gatewayHealth(listen.host, listen.port);
+
+        if (health !== "ok") {
+            ui.warn(`the gateway answers "${health}"; harnesses switched now fail until it is up`);
+            ui.dim(`    ${suggestCommand("tools mcp-manager", { replaceCommand: ["gateway", "status"] })}`);
+        }
+    }
+
+    entry._meta = meta;
+    const written = await writeUnifiedConfig(config);
+    logger.info({ server: serverName, hosted: !opts.off, written, alreadyInState }, "gateway host flag changed");
+
+    // A declined unified write must not reach the harnesses: their projection would then disagree with
+    // the stored flag, and the next sync would read the accepted switch as a conflict. A non-TTY run
+    // without --yes declines everything, so it keeps going to show the harness diffs as its dry run.
+    const dryRun = !process.stdout.isTTY && !getGlobalOptions().yes;
+
+    if (!written && !alreadyInState && !dryRun) {
+        ui.warn("the unified config was not written; harness configs stay unchanged");
+
+        return;
+    }
+
+    for (const provider of opts.providers) {
+        if (!HOSTED_HTTP_PROVIDERS.has(provider.getName() as MCPProviderName)) {
+            continue;
+        }
+
+        provider.applyHarnessConfig(config);
+
+        if (await provider.configExists()) {
+            await syncConfigToProvider(config, provider);
+        }
+    }
+
+    ui.dim("    running sessions keep the server they started with until they restart");
 }
 
 export async function gatewayStdio(serverName: string | undefined): Promise<void> {

@@ -71,7 +71,7 @@ export function gatewayRepoRoot(): string {
  * directory on the agent's PATH.
  */
 function gatewayCommand(): string[] {
-    return ["bun", join(gatewayRepoRoot(), "tools"), "mcp-manager", "gateway", "start"];
+    return ["bun", join(gatewayRepoRoot(), "tools"), "mcp-manager", "gateway", "start", "--supervised"];
 }
 
 export async function installGatewayService(): Promise<void> {

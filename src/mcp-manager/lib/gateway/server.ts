@@ -8,6 +8,7 @@ import { ensureGatewayClientToken } from "../auth/secrets.ts";
 import { accessTokenForRequest } from "../auth/tokens.ts";
 import { autoLoginRefusal, type LoginLauncher } from "./auto-login.ts";
 import { headersToClient, headersToUpstream, localTokenMatches, loopbackHostOk } from "./headers.ts";
+import { hostedHandler } from "./hosted.ts";
 import { gatewayLoginLauncher } from "./login-runner.ts";
 
 export interface GatewayHandle {
@@ -128,7 +129,7 @@ export async function startGatewayServer(
     const server = Bun.serve({
         hostname,
         port,
-        async fetch(request) {
+        async fetch(request, self) {
             const url = new URL(request.url);
 
             if (!loopbackHostOk(request.headers.get("host"))) {
@@ -160,6 +161,20 @@ export async function startGatewayServer(
                 if (!localTokenMatches(request, localToken)) {
                     return jsonRpcError(`missing ${GATEWAY_HEADER}. Run tools mcp-manager auth login ${name}`);
                 }
+            }
+
+            // Served in this process. Routed by name, not by the `gatewayHosted` flag, so a session
+            // that still holds the http config keeps working after a rollback until it restarts.
+            const hosted = hostedHandler(name);
+
+            if (hosted) {
+                const peer = self.requestIP(request);
+                // Blocking tools (question_wait, boards_wait_for_work) stay silent longer than
+                // Bun's 10 s idle default; the call's own deadline governs instead.
+                self.timeout(request, 0);
+                const serve = await hosted;
+
+                return serve(request, peer ? { clientPort: peer.port, serverPort: self.port ?? port } : null);
             }
 
             const live = opts.readConfig ? await opts.readConfig() : config;

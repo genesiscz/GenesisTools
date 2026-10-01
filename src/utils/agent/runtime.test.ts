@@ -2,7 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { mkdirSync, mkdtempSync, realpathSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { getAgentRuntimeContext, gitCommonRoot } from "./runtime";
+import { callerCwd, currentCaller, getAgentRuntimeContext, gitCommonRoot, runAsCaller } from "./runtime";
 
 function git(args: string[], cwd: string): void {
     const r = Bun.spawnSync(["git", "-c", "user.email=t@t.t", "-c", "user.name=t", ...args], {
@@ -94,6 +94,41 @@ describe("getAgentRuntimeContext", () => {
         const ctx = getAgentRuntimeContext({}, { CLAUDE_CODE_SESSION_ID: "sess-1", GROK_SESSION_ID: "grok-1" });
         expect(ctx.agent).toBe("claude-code");
         expect(ctx.sessionId).toBe("sess-1");
+    });
+});
+
+describe("getAgentRuntimeContext — caller scope (resident server)", () => {
+    it("takes harness, session and cwd from the caller, not from the process env", async () => {
+        const { main, worktree } = makeRepo();
+        const caller = { agent: "claude-code" as const, sessionId: "caller-a", cwd: worktree };
+        const ctx = await runAsCaller(caller, async () => {
+            await Promise.resolve();
+            return getAgentRuntimeContext({}, { GROK_SESSION_ID: "process-env" });
+        });
+        expect(ctx.agent).toBe("claude-code");
+        expect(ctx.sessionId).toBe("caller-a");
+        expect(ctx.cwd).toBe(worktree);
+        expect(ctx.repoRoot).toBe(main);
+        expect(runAsCaller(caller, () => callerCwd())).toBe(worktree);
+    });
+
+    it("keeps two concurrent callers apart", async () => {
+        const { main, deep } = makeRepo();
+        const [a, b] = await Promise.all([
+            runAsCaller({ agent: "claude-code", sessionId: "caller-a", cwd: main }, async () => {
+                await Bun.sleep(5);
+                return getAgentRuntimeContext({}, {});
+            }),
+            runAsCaller({ agent: "codex", sessionId: null, cwd: deep }, async () => getAgentRuntimeContext({}, {})),
+        ]);
+        expect([a.sessionId, a.cwd, a.agent]).toEqual(["caller-a", main, "claude-code"]);
+        expect([b.sessionId, b.cwd, b.agent]).toEqual([null, deep, "codex"]);
+    });
+
+    it("leaves the process env in charge outside a scope", () => {
+        expect(currentCaller()).toBeUndefined();
+        expect(getAgentRuntimeContext({}, { GROK_SESSION_ID: "g-1" }).sessionId).toBe("g-1");
+        expect(callerCwd()).toBe(process.cwd());
     });
 });
 

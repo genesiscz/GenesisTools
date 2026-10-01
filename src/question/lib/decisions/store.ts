@@ -12,7 +12,7 @@ import {
 } from "node:fs";
 import { dirname, isAbsolute, resolve } from "node:path";
 import { canonicalAgent } from "@app/handoff/targeting";
-import { type AgentRuntimeContext, gatherHarnessPoster } from "@genesiscz/utils/agent/runtime";
+import { type AgentRuntimeContext, callerCwd, gatherHarnessPoster } from "@genesiscz/utils/agent/runtime";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { readJsonlRows } from "@genesiscz/utils/jsonl";
@@ -809,7 +809,7 @@ function excerptFrom(
         return undefined;
     }
 
-    const path = isAbsolute(ref.path) ? ref.path : resolve(cwd ?? process.cwd(), ref.path);
+    const path = isAbsolute(ref.path) ? ref.path : resolve(cwd ?? callerCwd(), ref.path);
 
     try {
         const lines = readFile(path).split("\n");

@@ -9,6 +9,7 @@ export { configJson } from "./config-json.js";
 export { disableServer } from "./disable.js";
 export { enableServer } from "./enable.js";
 export {
+    gatewayHost,
     gatewayInstall,
     gatewayRotateClient,
     gatewayStart,

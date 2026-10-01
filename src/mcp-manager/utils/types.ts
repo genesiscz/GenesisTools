@@ -34,6 +34,12 @@ export interface MCPServerMeta {
      * For providers with project support (e.g., Claude), this can be an object mapping project paths to boolean values.
      */
     enabled: Partial<EnabledState>;
+    /**
+     * Serve this server from the gateway process (`lib/gateway/hosted.ts`) for the harnesses in
+     * HOSTED_HTTP_PROVIDERS. The stored stdio definition stays and is what the others get.
+     * Set and cleared by `tools mcp-manager gateway host <server> [--off]`.
+     */
+    gatewayHosted?: boolean;
 }
 
 /**

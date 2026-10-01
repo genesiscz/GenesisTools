@@ -1,5 +1,6 @@
 import type { UnifiedMCPConfig, UnifiedMCPServerConfig } from "@app/mcp-manager/utils/providers/types.js";
 import type { MCPProviderName } from "@app/mcp-manager/utils/types.js";
+import { HOSTED_HTTP_PROVIDERS, hostedServer, isGatewayHosted } from "../gateway/hosted.ts";
 import { DEFAULT_GATEWAY_HOST, DEFAULT_GATEWAY_PORT, GATEWAY_HEADER } from "./constants.ts";
 import { isGatewayOauth } from "./policy.ts";
 
@@ -109,6 +110,21 @@ export function projectServerForHarness(
     config: UnifiedMCPServerConfig,
     opts: { provider: MCPProviderName; localToken: string; listen: GatewayListen }
 ): UnifiedMCPServerConfig {
+    const hosted = isGatewayHosted(name, config) ? hostedServer(name) : undefined;
+
+    if (hosted && HOSTED_HTTP_PROVIDERS.has(opts.provider)) {
+        const headers: Record<string, string> = { [GATEWAY_HEADER]: opts.localToken };
+
+        for (const [envKey, header] of Object.entries(hosted.envHeaders)) {
+            const value = config.env?.[envKey];
+            if (value !== undefined) {
+                headers[header] = value;
+            }
+        }
+
+        return { type: "http", url: gatewayServerUrl(opts.listen, name), headers, _meta: config._meta };
+    }
+
     if (!isGatewayOauth(config)) {
         const { auth: _auth, ...rest } = config;
 

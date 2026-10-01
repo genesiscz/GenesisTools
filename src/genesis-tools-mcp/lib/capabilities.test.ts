@@ -39,7 +39,7 @@ afterEach(() => {
 function withCapabilities(value: string): string[] {
     env.testing.set("GENESIS_TOOLS_MCP_CAPABILITIES", value);
 
-    return Object.keys(filterRegistryByCapabilities(ALL)).sort();
+    return Object.keys(filterRegistryByCapabilities(ALL, env.tools.getMcpCapabilities())).sort();
 }
 
 describe("filterRegistryByCapabilities", () => {
@@ -93,7 +93,15 @@ describe("filterRegistryByCapabilities", () => {
     test("an unset filter leaves every tool enabled", () => {
         env.testing.unset("GENESIS_TOOLS_MCP_CAPABILITIES");
 
-        expect(Object.keys(filterRegistryByCapabilities(ALL))).toHaveLength(Object.keys(ALL).length);
+        expect(Object.keys(filterRegistryByCapabilities(ALL, env.tools.getMcpCapabilities()))).toHaveLength(
+            Object.keys(ALL).length
+        );
+    });
+
+    test("an explicit undefined (an HTTP request with no header) ignores this process's env", () => {
+        env.testing.set("GENESIS_TOOLS_MCP_CAPABILITIES", "boards");
+
+        expect(Object.keys(filterRegistryByCapabilities(ALL, undefined))).toHaveLength(Object.keys(ALL).length);
     });
 
     test("an unknown capability name enables nothing rather than everything", () => {

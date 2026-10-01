@@ -23,6 +23,7 @@ import { summarizeForm } from "@app/question/lib/pending/render";
 import type { AskAnswer, AskChoice, AskForm } from "@app/question/lib/pending/types";
 import { DEFAULT_WAIT_BUDGET_MS } from "@app/question/lib/pending/types";
 import { questionTokenRegistry, transcludeItems, transclusionReport } from "@app/question/lib/transclude";
+import { callerCwd } from "@genesiscz/utils/agent/runtime";
 import { SafeJSON } from "@genesiscz/utils/json";
 import {
     describeTransclusions,
@@ -525,7 +526,7 @@ export async function handleQuestionTokens(args: QuestionTokensArgs, deps: Quest
         registry: questionTokenRegistry(),
         preview: true,
         ...deps.transclude,
-        cwd: args.cwd ?? process.cwd(),
+        cwd: args.cwd ?? callerCwd(),
     });
     const failed = result.tokens.filter((token) => !token.ok);
     const lines = failed.map((token) => `transclude: ${token.raw}: ${token.error}`);
