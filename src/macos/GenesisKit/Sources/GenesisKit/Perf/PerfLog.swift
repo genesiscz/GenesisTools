@@ -119,11 +119,16 @@ public enum PerfLog {
         guard enabled else { return }
         log.info("mark \(label, privacy: .public)")
         append("mark \(label)")
+        // A stall or frame line carries the context itself; as a step it would only repeat it.
+        if !label.hasPrefix("main-stall"), !label.hasPrefix("frames ") {
+            PerfContext.note(label)
+        }
     }
 
     private static func emit(_ label: String, ms: Double) {
         log.info("\(label, privacy: .public) \(ms, format: .fixed(precision: 1))ms")
         append(String(format: "%@ %.1fms", label, ms))
+        PerfContext.note(String(format: "%@ %.0fms", label, ms))
     }
 
     // The unified log is awkward to read back reliably in headless profiling,
