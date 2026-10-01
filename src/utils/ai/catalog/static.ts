@@ -346,6 +346,21 @@ const XAI_THINKING: Record<string, CatalogEntry["thinking"]> = {
  */
 const XAI_IDS = GROK_STATIC_CATALOG.map((model) => model.id);
 
+/**
+ * Static prices for xAI ids that LiteLLM and OpenRouter cannot price. Grok 4.7 Fast runs only in
+ * Grok Build and Cursor and is billed through the plan, so this is the API-equivalent rate: 2x
+ * grok-4.7 ($4 / $1 cached / $12, Cursor's listed Fast price) and 1.5x grok-4.7's $4 / $1 / $12
+ * band above 200K (docs.x.ai/developers/grok-4-7, 2026-09-28).
+ */
+const XAI_PRICING: Record<string, ModelPricing> = {
+    "grok-4.7-build-fast": {
+        inputPer1M: 4,
+        outputPer1M: 12,
+        cachedReadPer1M: 1,
+        rules: [{ ctxFrom: 200_001, inputPer1M: 6, outputPer1M: 18, cachedReadPer1M: 1.5 }],
+    },
+};
+
 const XAI_ENTRIES: CatalogEntry[] = XAI_IDS.map((id) => ({
     id,
     provider: "xai",
@@ -354,6 +369,7 @@ const XAI_ENTRIES: CatalogEntry[] = XAI_IDS.map((id) => ({
     capabilities: CHAT,
     thinking: XAI_THINKING[id] ?? "optional",
     ...(XAI_VISION_MODELS.has(id) ? { inputModalities: ["text", "image"] } : {}),
+    ...(XAI_PRICING[id] ? { pricing: XAI_PRICING[id] } : {}),
     // Both xAI paths the proxy serves advertise tool support unconditionally
     // (`supportsTools: true` in ai-proxy's xai and grok meta builders).
     flags: { tools: true },

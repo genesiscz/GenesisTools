@@ -27,6 +27,9 @@ describe("estimateCostUsd", () => {
         // Above 272K the whole request bills at 2x input and 1.5x output.
         expect(estimateCostUsd("gpt-6-astra", million)).toBeCloseTo(20 + 75, 10);
         expect(estimateCostUsd("grok-4.7", { prompt_tokens: 100_000 })).toBeCloseTo(0.2, 10);
+        // The Grok Build fast tier bills at 2x, and 1.5x of the long band above 200K.
+        expect(estimateCostUsd("grok-4.7-build-fast", { prompt_tokens: 100_000 })).toBeCloseTo(0.4, 10);
+        expect(estimateCostUsd("grok-4.7-build-fast", { prompt_tokens: 300_000 })).toBeCloseTo(1.8, 10);
     });
 
     it("bills GPT-5.6 at its published rates", () => {
@@ -151,9 +154,6 @@ describe("billing table coverage", () => {
         // Subscription-only: absent from the xAI API catalog, so no public
         // per-token rate exists to charge.
         "grok-composer-2.5-fast",
-        // Grok 4.7 Fast runs only in Cursor and Grok Build, billed through the plan; it is not on the public
-        // xAI API (docs.x.ai/developers/grok-4-7, 2026-09-28).
-        "grok-4.7-build-fast",
     ]);
 
     it("prices every grok model it advertises", () => {

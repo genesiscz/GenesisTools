@@ -72,6 +72,8 @@ describe("static catalog", () => {
         });
         expect(byId("gpt-6-sol", "openai")?.pricing).toMatchObject({ cachedReadPer1M: 0.2 });
         expect(byId("gpt-6.1-sol", "openai-sub")?.id).toBe("gpt-6.1-sol");
+        // Plan-billed only, so no feed prices it; the catalog carries the API-equivalent 2x grok-4.7.
+        expect(byId("grok-4.7-build-fast", "xai")?.pricing).toMatchObject({ inputPer1M: 4, outputPer1M: 12 });
         expect(byId("not-a-model")).toBeUndefined();
     });
 

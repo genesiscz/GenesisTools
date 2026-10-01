@@ -18,7 +18,12 @@ import {
     fetchAnthropicSubModels,
     resolveAnthropicSubModel,
 } from "@genesiscz/utils/ai/anthropic/models";
-import { resolveAccountToken } from "@genesiscz/utils/claude/subscription-auth";
+import {
+    type InferenceToken,
+    recoverInferenceToken,
+    resolveAccountToken,
+    resolveInferenceToken,
+} from "@genesiscz/utils/claude/subscription-auth";
 import {
     applySystemPromptPrefix,
     createSubscriptionFetch,
@@ -221,9 +226,9 @@ export class AnthropicSubscriptionProvider implements ProxyProvider {
         clientBetas?: string | null;
     }): Promise<Response> {
         const started = performance.now();
-        let token: string;
+        let token: InferenceToken;
         try {
-            ({ token } = await resolveAccountToken(this.billingAccountName));
+            token = await resolveInferenceToken(this.billingAccountName);
         } catch (err) {
             logger.warn(
                 { err, account: this.account.name, billingAccount: this.billingAccountName },
@@ -251,20 +256,21 @@ export class AnthropicSubscriptionProvider implements ProxyProvider {
 
         let upstream: Response;
         try {
-            upstream = await callUpstream(token);
+            upstream = await callUpstream(token.token);
 
             // A long-running proxy can hold a revoked-but-unexpired token:
             // another process rotating the OAuth chain revokes our cached
             // access token while `expiresAt` still looks valid, so the fast
-            // path in resolveAccountToken never re-reads disk. On 401,
-            // force-resolve once (fresh disk read + refresh if needed) and retry.
+            // path in resolveAccountToken never re-reads disk. On 401, recover
+            // once (a rejected long-lived token falls back to the OAuth pair, a
+            // rejected access token is force-refreshed) and retry.
             if (upstream.status === 401) {
                 logger.warn(
-                    { account: this.account.name, billingAccount: this.billingAccountName },
-                    "ai-proxy: anthropic upstream 401 — force-refreshing subscription token and retrying once"
+                    { account: this.account.name, billingAccount: this.billingAccountName, kind: token.kind },
+                    "ai-proxy: anthropic upstream 401 — recovering the subscription token and retrying once"
                 );
-                ({ token } = await resolveAccountToken(this.billingAccountName, { forceRefresh: true }));
-                upstream = await callUpstream(token);
+                token = await recoverInferenceToken(this.billingAccountName, token);
+                upstream = await callUpstream(token.token);
             }
         } catch (err) {
             const aborted = clientAbortResponse(err, { err, account: this.account.name, model: concreteModel });

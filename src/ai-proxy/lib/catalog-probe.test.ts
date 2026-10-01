@@ -32,6 +32,12 @@ mock.module("@genesiscz/utils/claude/subscription-auth", () => ({
         account: { name, accessToken: "fresh-after-refresh" },
         refreshed: true,
     }),
+    resolveInferenceToken: async (name: string, options?: { noRefresh?: boolean }) => ({
+        ...resolveOrRefuse(name, options),
+        kind: "access",
+        accountName: name,
+    }),
+    recoverInferenceToken: async (name: string) => ({ ...resolveOrRefuse(name), kind: "access", accountName: name }),
 }));
 
 mock.module("@app/ai-proxy/lib/providers/openai-sub-token", () => ({

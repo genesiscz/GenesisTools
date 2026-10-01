@@ -11,6 +11,8 @@ mock.module("@genesiscz/utils/claude/subscription-auth", () => ({
         account: { name: "personal", accessToken: TEST_TOKEN },
         refreshed: false,
     }),
+    resolveInferenceToken: async () => ({ token: TEST_TOKEN, kind: "long-lived", accountName: "personal" }),
+    recoverInferenceToken: async () => ({ token: TEST_TOKEN, kind: "access", accountName: "personal" }),
 }));
 
 const account: AiProxyAccountConfig = {

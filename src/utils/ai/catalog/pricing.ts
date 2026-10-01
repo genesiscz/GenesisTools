@@ -171,8 +171,11 @@ async function fetchLiteLlmPricing(provider: string, modelId: string): Promise<M
  * the wrong vendor's rate for the route actually being paid.
  */
 function scopedStaticPricing(provider: string, modelId: string): ModelPricing | undefined {
-    return byId(modelId, provider)?.pricing;
+    return byId(modelId, SAME_VENDOR_CATALOG[provider] ?? provider)?.pricing;
 }
+
+/** Providers that serve another catalog provider's own models: the Grok subscription is xAI itself. */
+const SAME_VENDOR_CATALOG: Record<string, string> = { grok: "xai", "grok-sub": "xai" };
 
 /**
  * The ladder answers with rates as published, rules included and UNRESOLVED —

@@ -143,6 +143,15 @@ const RATE_GROUPS: Array<{ ids: string[]; rate: ModelRate }> = [
         },
     },
     {
+        // Grok 4.7 Fast is plan-billed in Grok Build, with no public API rate: 2x grok-4.7, 1.5x above 200K.
+        ids: ["grok-4.7-build-fast"],
+        rate: {
+            inputUsdPerMTok: 4,
+            outputUsdPerMTok: 12,
+            rules: [{ contextFrom: LONG_CONTEXT_THRESHOLD, inputUsdPerMTok: 6, outputUsdPerMTok: 18 }],
+        },
+    },
+    {
         ids: ["grok-4.3"],
         rate: {
             inputUsdPerMTok: 1.25,

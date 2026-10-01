@@ -8,6 +8,7 @@ import { NETWORKED_LOCK_WAIT_MS, withFileLock } from "@genesiscz/utils/storage/f
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/storage";
 import type { OAuthTokens } from "./auth";
 import { claudeOAuth } from "./auth";
+import { longLivedTokenUsable } from "./token-verify";
 
 export interface SubscriptionAccount {
     name: string;
@@ -549,4 +550,54 @@ export async function resolveAccountToken(accountName?: string, options?: Resolv
         },
         refreshed: true,
     };
+}
+
+export interface InferenceToken {
+    token: string;
+    kind: "long-lived" | "access";
+    accountName: string;
+    label?: string;
+}
+
+/** Long-lived tokens Anthropic answered 401 to in this process; they are not offered again. */
+const rejectedLongLivedTokens = new Set<string>();
+
+/**
+ * The token for a model request. The long-lived `claude setup-token` token comes first: it survives
+ * every OAuth rotation and never spends a single-use refresh token, while an access token dies the
+ * moment any other process refreshes the pair. The OAuth pair is the fallback for an account with
+ * no usable long-lived token. Only inference may use this: a long-lived token cannot read the
+ * profile or usage endpoints, so those callers stay on `resolveAccountToken`.
+ */
+export async function resolveInferenceToken(
+    accountName?: string,
+    options?: Pick<ResolveOptions, "noRefresh">
+): Promise<InferenceToken> {
+    const { AIConfig } = await import("@genesiscz/utils/ai/AIConfig");
+    const aiConfig = await AIConfig.load();
+    const name = accountName ?? aiConfig.getDefaultAccount("ask")?.name;
+    const acc = name ? aiConfig.getAccount(name) : undefined;
+    const longLived = acc?.tokens.longLivedToken;
+
+    if (name && acc && longLived && longLivedTokenUsable(acc.tokens) && !rejectedLongLivedTokens.has(longLived)) {
+        return { token: longLived, kind: "long-lived", accountName: name, label: acc.label };
+    }
+
+    const resolved = await resolveAccountToken(accountName, options);
+    return { token: resolved.token, kind: "access", accountName: resolved.account.name, label: resolved.account.label };
+}
+
+/**
+ * After a 401 on `rejected`: a rejected long-lived token is dropped for this process and the OAuth
+ * pair takes over (refreshed only if it is expired); a rejected access token is force-refreshed.
+ */
+export async function recoverInferenceToken(accountName: string, rejected: InferenceToken): Promise<InferenceToken> {
+    if (rejected.kind === "long-lived") {
+        rejectedLongLivedTokens.add(rejected.token);
+        logger.warn(`[token] ${accountName}: long-lived token rejected (401); falling back to the OAuth pair`);
+        return resolveInferenceToken(accountName);
+    }
+
+    const refreshed = await resolveAccountToken(accountName, { forceRefresh: true, staleAccessToken: rejected.token });
+    return { token: refreshed.token, kind: "access", accountName, label: refreshed.account.label };
 }

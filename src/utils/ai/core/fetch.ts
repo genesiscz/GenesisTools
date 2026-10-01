@@ -14,8 +14,11 @@ import { logger } from "@genesiscz/utils/logger";
 export interface AuthFetchOptions {
     /** Called before EVERY attempt, so a token rotated mid-process is picked up. */
     getToken: () => Promise<string>;
-    /** Force-refresh path, tried exactly once per request after a 401. */
-    refresh?: () => Promise<string>;
+    /**
+     * Force-refresh path, tried exactly once per request after a 401. It gets the bearer THIS request
+     * sent, so concurrent requests never recover from another request's token.
+     */
+    refresh?: (rejected: string) => Promise<string>;
     /**
      * Retries on 429 and 5xx. Defaults to 0 ON PURPOSE.
      *
@@ -71,13 +74,14 @@ export function composeAuthFetch(options: AuthFetchOptions): typeof fetch {
         let refreshed = false;
 
         for (let attempt = 0; ; attempt++) {
-            let response = await send(await getToken());
+            const bearer = await getToken();
+            let response = await send(bearer);
 
             if (response.status === 401 && refresh && !refreshed) {
                 refreshed = true;
                 log.debug({ url: String(input) }, "upstream rejected the token; forcing a refresh and retrying once");
                 await discard(response);
-                response = await send(await refresh());
+                response = await send(await refresh(bearer));
             }
 
             if (!isRetryable(response.status) || attempt >= maxRetries) {

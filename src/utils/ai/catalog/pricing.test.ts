@@ -53,6 +53,12 @@ describe("pricing ladder", () => {
         expect(await pricingFor("openai", "claude-opus-5")).toBeUndefined();
     });
 
+    test("the Grok subscription is xAI itself, so it reads xAI's static price", async () => {
+        for (const provider of ["grok", "grok-sub", "xai"]) {
+            expect(await pricingFor(provider, "grok-4.7-build-fast")).toMatchObject({ inputPer1M: 4, outputPer1M: 12 });
+        }
+    });
+
     /**
      * Sonnet 4.5 bills >200K context at double, and the static entry is what
      * answers for a dated id — so if the tier fields are missing here, every

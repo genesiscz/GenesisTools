@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -6,7 +6,12 @@ import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { NETWORKED_LOCK_WAIT_MS } from "@genesiscz/utils/storage/file-lock";
 import { claudeOAuth, TOKEN_REQUEST_TIMEOUT_MS } from "./auth";
-import { clearInvalidGrant, readJournalRecovery } from "./subscription-auth";
+import {
+    clearInvalidGrant,
+    readJournalRecovery,
+    recoverInferenceToken,
+    resolveInferenceToken,
+} from "./subscription-auth";
 
 const HOME = join(tmpdir(), `sub-auth-test-${process.pid}`);
 const JOURNAL = join(HOME, ".genesis-tools", "ai", "token-journal.jsonl");
@@ -188,5 +193,79 @@ describe("claudeOAuth.refresh runs inside the config lock, so it must be bounded
         // waiting caller allows, the budget stops meaning anything — which is how one
         // DNS outage turned into a LockTimeoutError on every account but the first.
         expect(TOKEN_REQUEST_TIMEOUT_MS * 3 + 2_000).toBeLessThan(NETWORKED_LOCK_WAIT_MS);
+    });
+});
+
+describe("the token a model request uses", () => {
+    const LONG = `sk-ant-oat01-${"x".repeat(100)}`;
+    const HOUR = 3_600_000;
+    const accounts: Record<string, { name: string; tokens: Record<string, unknown> }> = {
+        both: {
+            name: "both",
+            tokens: { longLivedToken: LONG, accessToken: "at-expired", refreshToken: "rt", expiresAt: 1 },
+        },
+        "no-long": {
+            name: "no-long",
+            tokens: { accessToken: "at-fresh", refreshToken: "rt", expiresAt: Date.now() + HOUR },
+        },
+        "long-expired": {
+            name: "long-expired",
+            tokens: {
+                longLivedToken: LONG,
+                longLivedTokenExpiresAt: 1,
+                accessToken: "at-fresh",
+                expiresAt: Date.now() + HOUR,
+            },
+        },
+        "nothing-fresh": {
+            name: "nothing-fresh",
+            tokens: { accessToken: "at-expired", refreshToken: "rt", expiresAt: 1 },
+        },
+    };
+    const realRefresh = claudeOAuth.refresh;
+
+    beforeEach(() => {
+        mock.module("@genesiscz/utils/ai/AIConfig", () => ({
+            AIConfig: {
+                load: async () => ({
+                    getDefaultAccount: () => undefined,
+                    getAccount: (name: string) => accounts[name],
+                }),
+            },
+        }));
+        claudeOAuth.refresh = async () => {
+            throw new Error("a model request with a usable long-lived token must not spend the refresh token");
+        };
+    });
+
+    afterEach(() => {
+        claudeOAuth.refresh = realRefresh;
+    });
+
+    it("takes the long-lived token even when the OAuth access token has expired, without a refresh", async () => {
+        expect(await resolveInferenceToken("both")).toMatchObject({ token: LONG, kind: "long-lived" });
+    });
+
+    it("falls back to the OAuth pair when there is no long-lived token, or it is past its expiry", async () => {
+        expect(await resolveInferenceToken("no-long")).toMatchObject({ token: "at-fresh", kind: "access" });
+        expect(await resolveInferenceToken("long-expired")).toMatchObject({ token: "at-fresh", kind: "access" });
+    });
+
+    it("still reaches the OAuth refresh path when nothing else is usable", async () => {
+        await expect(resolveInferenceToken("nothing-fresh", { noRefresh: true })).rejects.toThrow(
+            "refresh is disabled for diagnosis"
+        );
+    });
+
+    it("drops a long-lived token Anthropic rejected and uses the OAuth pair from then on", async () => {
+        const rejected = { token: LONG, kind: "long-lived" as const, accountName: "long-expired" };
+        accounts["long-expired"].tokens.longLivedTokenExpiresAt = undefined;
+
+        expect(await resolveInferenceToken("long-expired")).toMatchObject({ kind: "long-lived" });
+        expect(await recoverInferenceToken("long-expired", rejected)).toMatchObject({
+            token: "at-fresh",
+            kind: "access",
+        });
+        expect(await resolveInferenceToken("long-expired")).toMatchObject({ token: "at-fresh", kind: "access" });
     });
 });
