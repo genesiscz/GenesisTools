@@ -1382,3 +1382,211 @@ describe("PR #444 review round 2", () => {
         expect(read(dir, "packages/app/a.ts")).toStartWith('import { moved } from "../shared/moved";\n');
     });
 });
+describe("PR #444 review round 3", () => {
+    const write = (dir: string, files: Record<string, string>): void => {
+        for (const [file, content] of Object.entries(files)) {
+            mkdirSync(dirname(join(dir, file)), { recursive: true });
+            writeFileSync(join(dir, file), content);
+        }
+    };
+    const read = (dir: string, file: string): string => readFileSync(join(dir, file), "utf8");
+    const parse = (dir: string, text: string): { edits: ReturnType<typeof parseSpec>; warnings: string[] } => {
+        const warnings: string[] = [];
+        const edits = parseSpec({ text, cwd: dir, onWarning: (message) => warnings.push(message) });
+        return { edits, warnings };
+    };
+    const fixOf = (warning: string): string =>
+        warning
+            .split("\n")
+            .slice(2)
+            .map((line) => line.slice(4))
+            .join("\n");
+
+    test("t1: PSR-4 finds a class through its longest namespace prefix, not its longest folder", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "fr-r3-psr4-"));
+        const service = [
+            "<?php",
+            "",
+            "namespace App\\Domain\\Orders;",
+            "",
+            "class Service",
+            "{",
+            "    public function check(): Rule",
+            "    {",
+            "        return new Rule();",
+            "    }",
+            "}",
+            "",
+        ].join("\n");
+        write(dir, {
+            "composer.json":
+                '{ "autoload": { "psr-4": { "App\\\\": "lib/a/very/long/folder/app/", "App\\\\Domain\\\\": "dom/" } } }\n',
+            "dom/Orders/Service.php": service,
+            "dom/Orders/Rule.php": "<?php\n\nnamespace App\\Domain\\Orders;\n\nclass Rule\n{\n}\n",
+            "lib/a/very/long/folder/app/Http/Ctl.php":
+                "<?php\n\nnamespace App\\Http;\n\nclass Ctl\n{\n    // methods\n}\n",
+        });
+        const first = service.split("\n").findIndex((l) => l.includes("public function check")) + 1;
+        const { edits } = parse(
+            dir,
+            `@@ dom/Orders/Service.php\n<<< move to=lib/a/very/long/folder/app/Http/Ctl.php lines=${first}-${first + 3} at=after imports=fix\n    // methods\n>>>\n`
+        );
+        await run({ cwd: dir, verbose: false, edits, syntaxCheck: false });
+        expect(read(dir, "lib/a/very/long/folder/app/Http/Ctl.php")).toContain("use App\\Domain\\Orders\\Rule;");
+    });
+
+    const swiftPackage = (targets: string): string =>
+        `// swift-tools-version: 5.9\nimport PackageDescription\n\nlet package = Package(\n    name: "Demo",\n    targets: [\n${targets}\n    ]\n)\n`;
+
+    test("t2: a .target(name:) dependency inside another target is not a target of its own", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "fr-r3-pkg-"));
+        write(dir, {
+            "Package.swift": swiftPackage(
+                [
+                    '        .target(name: "Kit", path: "Kit"),',
+                    '        .target(name: "Core", path: "Core"),',
+                    '        .executableTarget(name: "App", dependencies: [.target(name: "Core"), "Kit"], path: "App/Sources", plugins: [.plugin(name: "Lint", package: "Lint")]),',
+                ].join("\n")
+            ),
+            "Kit/Kit.swift": "public let kitVersion = 1\n",
+            "Core/Core.swift": "public let coreVersion = 1\n",
+            "App/Sources/Helpers.swift":
+                "import Foundation\n\npublic struct Point {\n    public let x: Int\n\n    public init(x: Int) {\n        self.x = x\n    }\n}\n",
+            "App/Sources/main.swift": "import Foundation\n\nlet p = Point(x: 1)\n",
+        });
+        const { edits, warnings } = parse(
+            dir,
+            "@@ App/Sources/Helpers.swift\n<<< move to=Kit/Point.swift symbol=Point imports=fix visibility=widen\n>>>\n"
+        );
+        expect(warnings.filter((w) => w.includes("does not list"))).toEqual([]);
+        await run({ cwd: dir, verbose: false, edits, syntaxCheck: false });
+        expect(read(dir, "App/Sources/main.swift")).toContain("import Kit");
+    });
+
+    test("t3: copied Swift imports keep their attributes, and an import under #if is a warning with the block", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "fr-r3-attr-"));
+        write(dir, {
+            "App/Helpers.swift": [
+                "import Foundation",
+                "@testable import Kit",
+                "#if canImport(UIKit)",
+                "import UIKit",
+                "#endif",
+                "",
+                "struct Point {",
+                "    let x: Int",
+                "}",
+                "",
+                "let keep = 1",
+                "",
+            ].join("\n"),
+        });
+        const move = "@@ App/Helpers.swift\n<<< move to=App/Point.swift symbol=Point imports=fix\n>>>\n";
+        const { edits, warnings } = parse(dir, move);
+        const conditional = warnings.filter((w) => w.includes("#if"));
+        expect(conditional).toHaveLength(1);
+        expect(fixOf(conditional[0])).toContain("#if canImport(UIKit)\nimport UIKit\n#endif");
+        await run({ cwd: dir, verbose: false, edits, syntaxCheck: false });
+        const target = read(dir, "App/Point.swift");
+        expect(target).toContain("@testable import Kit\n");
+        expect(target).not.toContain("import UIKit");
+    });
+
+    test("t3: the #if warning's op clears it", () => {
+        const dir = mkdtempSync(join(tmpdir(), "fr-r3-if-"));
+        write(dir, {
+            "App/Helpers.swift":
+                "import Foundation\n#if canImport(UIKit)\nimport UIKit\n#endif\n\nstruct Point {\n    let x: Int\n}\n\nlet keep = 1\n",
+            "App/Point.swift": "import Foundation\n\nstruct Other {\n}\n",
+        });
+        const move = "@@ App/Helpers.swift\n<<< move to=App/Point.swift symbol=Point imports=fix\n>>>\n";
+        const [warning] = parse(dir, move).warnings.filter((w) => w.includes("#if"));
+        expect(parse(dir, `${move}${fixOf(warning)}\n`).warnings.filter((w) => w.includes("#if"))).toEqual([]);
+    });
+
+    test("t4: one private helper used by moves to two targets is made internal once", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "fr-r3-widen-"));
+        write(dir, {
+            "App/Funcs.swift": [
+                "import Foundation",
+                "",
+                "private func helper() -> Int {",
+                "    1",
+                "}",
+                "",
+                "func a() -> Int {",
+                "    helper()",
+                "}",
+                "",
+                "func b() -> Int {",
+                "    helper()",
+                "}",
+                "",
+            ].join("\n"),
+        });
+        const { edits } = parse(
+            dir,
+            [
+                "@@ App/Funcs.swift",
+                "<<< move to=App/A.swift symbol=a imports=fix visibility=widen",
+                ">>>",
+                "<<< move to=App/B.swift symbol=b imports=fix visibility=widen",
+                ">>>",
+                "",
+            ].join("\n")
+        );
+        const report = await run({ cwd: dir, verbose: false, edits, syntaxCheck: false });
+        expect(report.ok).toBe(true);
+        expect(read(dir, "App/Funcs.swift")).toContain("\nfunc helper() -> Int {");
+    });
+
+    test("t6: a module that only calls a moved extension member is warned about its missing dependency", () => {
+        const dir = mkdtempSync(join(tmpdir(), "fr-r3-dep-"));
+        const ext = "import Foundation\n\nextension Int {\n    func doubled() -> Int {\n        self * 2\n    }\n}\n";
+        write(dir, {
+            "Package.swift": swiftPackage(
+                [
+                    '        .target(name: "Kit", path: "Kit"),',
+                    '        .executableTarget(name: "App", dependencies: [], path: "App"),',
+                ].join("\n")
+            ),
+            "Kit/Kit.swift": "public let kitVersion = 1\n",
+            "App/Ext.swift": ext,
+            "App/main.swift": "import Foundation\n\nlet y = 2.doubled()\n",
+        });
+        const { warnings } = parse(
+            dir,
+            "@@ App/Ext.swift\n<<< move to=Kit/Ext.swift lines=3-7 imports=fix visibility=widen\n>>>\n"
+        );
+        expect(warnings.filter((w) => w.includes("does not list Kit"))).toHaveLength(1);
+    });
+
+    test("t7: importers through a wildcard alias or a bare relative path to an index file are re-pointed", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "fr-r3-wild-"));
+        write(dir, {
+            "tsconfig.json": '{ "compilerOptions": { "baseUrl": ".", "paths": { "@acme/*": ["packages/*/src"] } } }\n',
+            "packages/ui/src/index.ts": "export const keep = 1;\n\nexport const moved = 2;\n",
+            "packages/ui/src/sub/near.ts": 'import { moved } from "..";\n\nexport const near = moved;\n',
+            "apps/web/a.ts": 'import { moved } from "@acme/ui";\n\nexport const a = moved;\n',
+        });
+        const { edits } = parse(
+            dir,
+            "@@ packages/ui/src/index.ts\n<<< move to=packages/ui/src/moved.ts symbol=moved imports=fix\n>>>\n"
+        );
+        await run({ cwd: dir, verbose: false, edits, syntaxCheck: false });
+        expect(read(dir, "packages/ui/src/sub/near.ts")).toStartWith('import { moved } from "../moved";\n');
+        expect(read(dir, "apps/web/a.ts")).toStartWith('import { moved } from "../../packages/ui/src/moved";\n');
+    });
+
+    test("t8: delete doc= keeps the attributes, and a declaration with attributes but no doc comment is refused", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "fr-r3-doc-"));
+        write(dir, {
+            "a.php": "<?php\n\n/** The doc. */\n#[Attr]\nclass X\n{\n}\n",
+            "b.swift": "@MainActor\nfinal class Model {\n}\n",
+        });
+        const { edits } = parse(dir, "@@ a.php\n<<< delete doc=X\n>>>\n");
+        await run({ cwd: dir, verbose: false, edits, syntaxCheck: false });
+        expect(read(dir, "a.php")).toBe("<?php\n\n#[Attr]\nclass X\n{\n}\n");
+        expect(() => parse(dir, "@@ b.swift\n<<< delete doc=Model\n>>>\n")).toThrow("has no doc comment");
+    });
+});

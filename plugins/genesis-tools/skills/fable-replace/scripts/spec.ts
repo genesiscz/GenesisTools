@@ -338,19 +338,20 @@ const buildOp = (
             );
         }
 
-        let span: { docStart: number; declared: number; end: number };
+        let span: { docStart: number; attrStart: number; declared: number; end: number };
         try {
             span = declarationSpan(source, name, section.file);
         } catch (error) {
             fail(line, `delete: ${error instanceof Error ? error.message : String(error)}`);
         }
 
-        if (mods.doc !== undefined && span.docStart === span.declared) {
+        // Attributes and decorators belong to the declaration: `doc=` removes the comment above them.
+        if (mods.doc !== undefined && span.docStart === span.attrStart) {
             fail(line, `delete: ${name} has no doc comment directly above it`);
         }
 
         const lines = source.split("\n");
-        const end = mods.doc === undefined ? span.end : span.declared - 1;
+        const end = mods.doc === undefined ? span.end : span.attrStart - 1;
         const text = lines.slice(span.docStart, end + 1).join("\n");
         section.ops.push({
             find: cutFor(source, { start: span.docStart, end, text }),

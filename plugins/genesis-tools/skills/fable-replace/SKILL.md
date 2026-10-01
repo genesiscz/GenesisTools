@@ -401,9 +401,11 @@ the spec is no longer printed, so a clean run means every case was handled.
 moved type and its members `public`.
 
 **Swift.** Swift imports modules, not names. Inside one module the target gets the source's
-module imports and nothing else changes. Across modules (read from `Package.swift`, custom `path:`
-included) every user of a moved declaration gains `import <Module>`, the moved API needs `public`,
-a struct built from outside gets a proposed `public init`, and a missing target dependency is a
+module imports as written (`@testable import App` stays `@testable`) and nothing else changes. An
+import under `#if` is not copied: it is a warning whose op copies the whole `#if` block. Across
+modules (read from `Package.swift`, custom `path:` included) every user of a moved declaration
+gains `import <Module>`, the moved API needs `public`, a struct built from outside gets a proposed
+`public init`, and every module that gains the import without depending on the target module is a
 warning with the `Package.swift` op. Moved code that names a declaration of a module the target
 cannot see is a WARNING, not a refusal, with the moves that would fix it: an implicit `self`
 member reads the same as a top-level name, so only the compiler can tell. Run the build in

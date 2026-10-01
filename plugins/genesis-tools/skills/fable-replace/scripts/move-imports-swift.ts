@@ -3,8 +3,10 @@
  * different work than in TypeScript:
  *
  * - Inside one module every file already sees every other file. The target only needs the module
- *   imports its new code relies on (copied from the source; an unused Swift import is harmless),
- *   and nothing `private` or `fileprivate` may be used across the cut.
+ *   imports its new code relies on (copied from the source as written, `@testable` included; an
+ *   unused Swift import is harmless), and nothing `private` or `fileprivate` may be used across the
+ *   cut. An import under `#if` is not copied: it is a warning with the whole block, because a plain
+ *   import of a module a platform lacks breaks that platform's build.
  * - Across modules (an app target into a package such as GenesisKit) the boundary comes from
  *   Package.swift. Every file that uses a moved declaration needs `import <TargetModule>`, the
  *   moved API needs `public`, the source target must depend on the target module, and the moved
@@ -116,17 +118,44 @@ export interface SwiftImport {
     /** The line as written, the anchor an inserted import goes next to. */
     line: string;
     module: string;
+    /** The whole outermost `#if … #endif` block when the import sits inside one. */
+    ifBlock?: string;
 }
 
 const IMPORT_LINE =
-    /^(?:@\w+(?:\([^)\n]*\))?[ \t]+)*import[ \t]+(?:(?:typealias|struct|class|enum|protocol|let|var|func)[ \t]+)?([\w.]+)[ \t]*;?[ \t]*$/gm;
+    /^[ \t]*(?:@\w+(?:\([^)\n]*\))?[ \t]+)*import[ \t]+(?:(?:typealias|struct|class|enum|protocol|let|var|func)[ \t]+)?([\w.]+)[ \t]*;?[ \t]*$/gm;
 
-export const parseSwiftImports = (text: string, masked: string = maskSwift(text)): SwiftImport[] =>
-    [...masked.matchAll(IMPORT_LINE)].map((match) => {
+export const parseSwiftImports = (text: string, masked: string = maskSwift(text)): SwiftImport[] => {
+    const lines = text.split("\n");
+    const blockOf: Array<[number, number] | undefined> = [];
+    let depth = 0;
+    let opened = -1;
+    for (const [index, line] of masked.split("\n").entries()) {
+        const directive = line.trim();
+        if (/^#if\b/.test(directive)) {
+            opened = depth === 0 ? index : opened;
+            depth++;
+        } else if (/^#endif\b/.test(directive) && depth > 0) {
+            depth--;
+            if (depth === 0) {
+                for (let k = opened; k <= index; k++) {
+                    blockOf[k] = [opened, index];
+                }
+            }
+        }
+    }
+
+    return [...masked.matchAll(IMPORT_LINE)].map((match) => {
         const start = match.index ?? 0;
         const end = text.indexOf("\n", start);
-        return { line: text.slice(start, end === -1 ? undefined : end).trimEnd(), module: match[1].split(".")[0] };
+        const block = blockOf[masked.slice(0, start).split("\n").length - 1];
+        return {
+            line: text.slice(start, end === -1 ? undefined : end).trimEnd(),
+            module: match[1].split(".")[0],
+            ...(block === undefined ? {} : { ifBlock: lines.slice(block[0], block[1] + 1).join("\n") }),
+        };
     });
+};
 
 type Access = "private" | "fileprivate" | "internal" | "package" | "public" | "open";
 
@@ -201,22 +230,61 @@ const readPackage = (packageFile: string): SwiftModule[] => {
     }
 
     const text = maskSwiftKeepStrings(fs.readFileSync(packageFile, "utf8"));
-    const starts = [...text.matchAll(/\.(executableTarget|target|testTarget|macro|plugin)\s*\(/g)];
-    const modules = starts.flatMap((match, k) => {
-        const chunk = text.slice(match.index ?? 0, starts[k + 1]?.index ?? text.length);
+    // A target's call runs to its closing paren. A `.target(name:)` in its dependencies or a
+    // `.plugin(name:)` in its plugins sits inside that span and is no target of its own.
+    const modules: SwiftModule[] = [];
+    let insideUntil = -1;
+    for (const match of text.matchAll(/\.(executableTarget|target|testTarget|macro|plugin)\s*\(/g)) {
+        const start = match.index ?? 0;
+        if (start < insideUntil) {
+            continue;
+        }
+
+        insideUntil = closingBracket(text, start + match[0].length - 1);
+        const chunk = text.slice(start, insideUntil + 1);
         const name = chunk.match(/name:\s*"([^"]+)"/)?.[1];
         if (name === undefined) {
-            return [];
+            continue;
         }
 
         const folder =
             chunk.match(/path:\s*"([^"]+)"/)?.[1] ?? `${match[1] === "testTarget" ? "Tests" : "Sources"}/${name}`;
-        const list = chunk.match(/dependencies:\s*\[([\s\S]*?)\]\s*[,)]/)?.[1] ?? "";
+        const listStart = chunk.search(/dependencies:\s*\[/);
+        const open = listStart === -1 ? -1 : chunk.indexOf("[", listStart);
+        const list = open === -1 ? "" : chunk.slice(open + 1, closingBracket(chunk, open));
         const dependencies = [...list.matchAll(/(?:name:\s*)?"([^"]+)"/g)].map((dep) => dep[1]);
-        return [{ name, dir: path.resolve(path.dirname(packageFile), folder), packageFile, dependencies }];
-    });
+        modules.push({ name, dir: path.resolve(path.dirname(packageFile), folder), packageFile, dependencies });
+    }
+
     packageCache.set(packageFile, modules);
     return modules;
+};
+
+/** The index of the `)` or `]` that closes the bracket at `open`, string bodies skipped. */
+const closingBracket = (text: string, open: number): number => {
+    let depth = 0;
+    for (let k = open; k < text.length; k++) {
+        const char = text[k];
+        if (char === '"') {
+            k++;
+            while (k < text.length && text[k] !== '"') {
+                k += text[k] === "\\" ? 2 : 1;
+            }
+
+            continue;
+        }
+
+        if (char === "(" || char === "[") {
+            depth++;
+        } else if (char === ")" || char === "]") {
+            depth--;
+            if (depth === 0) {
+                return k;
+            }
+        }
+    }
+
+    return text.length - 1;
 };
 
 /** Comments blanked, strings kept: Package.swift's names and paths ARE strings. */
@@ -259,7 +327,8 @@ interface SwiftFilePlan {
     abs: string;
     text: string;
     imports: SwiftImport[];
-    newImports: Set<string>;
+    /** Module → the line that imports it, as the source wrote it. */
+    newImports: Map<string, string>;
     ops: Op[];
 }
 
@@ -271,18 +340,17 @@ const compareModules = (a: string, b: string): number => {
 
 /** The import lines a file gains, each next to its alphabetical neighbour, or on top when it has none. */
 const importOps = (plan: SwiftFilePlan, label: string): Op[] => {
-    const wanted = [...plan.newImports].filter(
-        (module) => !plan.imports.some((existing) => existing.module === module)
-    );
+    const wanted = [...plan.newImports]
+        .filter(([module]) => !plan.imports.some((existing) => existing.module === module))
+        .sort(([a], [b]) => compareModules(a, b));
     if (wanted.length === 0) {
         return [];
     }
 
-    if (plan.imports.length === 0) {
-        const block = wanted
-            .sort(compareModules)
-            .map((module) => `import ${module}`)
-            .join("\n");
+    // A new import never goes next to one under `#if`: it would land inside the condition.
+    const anchors = plan.imports.filter((existing) => existing.ifBlock === undefined);
+    if (anchors.length === 0) {
+        const block = wanted.map(([, line]) => line).join("\n");
         return [
             {
                 kind: "regex",
@@ -299,24 +367,24 @@ const importOps = (plan: SwiftFilePlan, label: string): Op[] => {
 
     const before = new Map<number, string[]>();
     const after: string[] = [];
-    for (const module of wanted.sort(compareModules)) {
-        const at = plan.imports.findIndex((existing) => compareModules(existing.module, module) > 0);
+    for (const [module, line] of wanted) {
+        const at = anchors.findIndex((existing) => compareModules(existing.module, module) > 0);
         if (at === -1) {
-            after.push(`import ${module}`);
+            after.push(line);
         } else {
-            before.set(at, [...(before.get(at) ?? []), `import ${module}`]);
+            before.set(at, [...(before.get(at) ?? []), line]);
         }
     }
 
     const ops: Op[] = [];
     for (const [index, lines] of before) {
-        const anchor = plan.imports[index].line;
+        const anchor = anchors[index].line;
         ops.push({ find: anchor, replace: [...lines, anchor].join("\n"), label });
     }
 
     if (after.length > 0) {
-        const anchor = plan.imports[plan.imports.length - 1].line;
-        if (before.has(plan.imports.length - 1)) {
+        const anchor = anchors[anchors.length - 1].line;
+        if (before.has(anchors.length - 1)) {
             // Both sides of the last import grow: one op, or the second find would see the first's output.
             const op = ops.find((candidate) => "find" in candidate && candidate.find === anchor);
             if (op !== undefined && "replace" in op && typeof op.replace === "string") {
@@ -441,7 +509,7 @@ export const planSwiftImportFixes = (params: PlanImportFixesParams): FileEdit[] 
         let plan = plans.get(abs);
         if (plan === undefined) {
             const text = read(abs) ?? "";
-            plan = { abs, text, imports: parseSwiftImports(text), newImports: new Set(), ops: [] };
+            plan = { abs, text, imports: parseSwiftImports(text), newImports: new Map(), ops: [] };
             plans.set(abs, plan);
         }
 
@@ -455,6 +523,19 @@ export const planSwiftImportFixes = (params: PlanImportFixesParams): FileEdit[] 
     });
 
     const blockEdits = new Map<PlannedMove, Map<number, string>>();
+    // One remaining declaration can be widened for moves to several targets; its op goes in once.
+    const widened = new Set<string>();
+    const dependencyWarned = new Set<string>();
+    const maskedFiles = new Map<string, string>();
+    const maskedOf = (file: string): string => {
+        let masked = maskedFiles.get(file);
+        if (masked === undefined) {
+            masked = maskSwift(read(file) ?? "");
+            maskedFiles.set(file, masked);
+        }
+
+        return masked;
+    };
     for (const sourceAbs of [...new Set(fixing.map((move) => move.fromAbs))]) {
         const source = planFor(sourceAbs);
         let remaining = source.text;
@@ -463,6 +544,9 @@ export const planSwiftImportFixes = (params: PlanImportFixesParams): FileEdit[] 
         }
 
         const remainingMasked = maskSwift(remaining);
+        // The source is read after its cuts; every other file as it is.
+        const textOf = (file: string): string => (file === sourceAbs ? remaining : (read(file) ?? ""));
+        const maskedUser = (file: string): string => (file === sourceAbs ? remainingMasked : maskedOf(file));
         const remainingDecls = swiftDeclarations(remainingMasked, remaining);
         const sourceModule = swiftModuleOf(sourceAbs);
 
@@ -490,10 +574,42 @@ export const planSwiftImportFixes = (params: PlanImportFixesParams): FileEdit[] 
             const target = planFor(targetAbs);
             const targetModule = swiftModuleOf(targetAbs);
             const crossing = !sameModule(sourceModule, targetModule);
+            const conditional = new Set<string>();
             for (const imported of source.imports) {
-                if (imported.module !== targetModule?.name) {
-                    target.newImports.add(imported.module);
+                if (imported.module === targetModule?.name || target.newImports.has(imported.module)) {
+                    continue;
                 }
+
+                if (imported.ifBlock !== undefined) {
+                    conditional.add(imported.ifBlock);
+                    continue;
+                }
+
+                // As written: `@testable`, `@preconcurrency` and `import struct …` keep their meaning.
+                target.newImports.set(imported.module, imported.line.trim());
+            }
+
+            for (const block of conditional) {
+                if (target.text.includes(block)) {
+                    continue;
+                }
+
+                const lastImport = target.imports.filter((existing) => existing.ifBlock === undefined).at(-1);
+                const firstLine = (text: string): string | undefined =>
+                    text.split("\n").find((candidate) => candidate.trim() !== "");
+                const anchor = firstLine(target.text) ?? firstLine(first.blockText) ?? "";
+                warnWithFix(params, {
+                    abs: targetAbs,
+                    needles: [block],
+                    message: `imports=fix: ${display(sourceAbs)} imports under #if (${block.split("\n")[0].trim()}); a plain copy would break the platforms without that module, so it is not copied`,
+                    fix: {
+                        why: "if the moved code needs it, copy the whole block into the target:",
+                        spec:
+                            lastImport === undefined
+                                ? `@@ ${display(targetAbs)}\n<<< before\n${anchor}\n===\n${block}\n>>>`
+                                : `@@ ${display(targetAbs)}\n<<< after\n${lastImport.line}\n===\n${block}\n>>>`,
+                    },
+                });
             }
 
             if (!crossing) {
@@ -513,7 +629,11 @@ export const planSwiftImportFixes = (params: PlanImportFixesParams): FileEdit[] 
                             );
                         }
 
-                        source.ops.push(widenOp(decl, "", name));
+                        const key = `${sourceAbs}\u0000${decl.line}`;
+                        if (!widened.has(key)) {
+                            widened.add(key);
+                            source.ops.push(widenOp(decl, "", name));
+                        }
                     }
                 }
 
@@ -565,8 +685,7 @@ export const planSwiftImportFixes = (params: PlanImportFixesParams): FileEdit[] 
                     continue;
                 }
 
-                const text = read(file) ?? "";
-                for (const [name, decl] of swiftDeclarations(maskSwift(text), text)) {
+                for (const [name, decl] of swiftDeclarations(maskedOf(file), read(file) ?? "")) {
                     if (!stays.has(name)) {
                         stays.set(name, { decl, file });
                     }
@@ -619,8 +738,8 @@ export const planSwiftImportFixes = (params: PlanImportFixesParams): FileEdit[] 
                     return false;
                 }
 
-                const text = file === sourceAbs ? remaining : (read(file) ?? "");
-                const masked = maskSwift(text);
+                const text = textOf(file);
+                const masked = maskedUser(file);
                 const inSourceModule = file.startsWith(`${sourceModule.dir}${path.sep}`);
                 const importsSource = parseSwiftImports(text, masked).some((i) => i.module === sourceModule.name);
                 return (
@@ -630,9 +749,7 @@ export const planSwiftImportFixes = (params: PlanImportFixesParams): FileEdit[] 
                 );
             });
             const calledMembers = extensionMembers.filter((member) =>
-                users.some((file) =>
-                    callsMember(maskSwift(file === sourceAbs ? remaining : (read(file) ?? "")), member.name)
-                )
+                users.some((file) => callsMember(maskedUser(file), member.name))
             );
             for (const member of calledMembers) {
                 if (!member.move.widen) {
@@ -650,12 +767,13 @@ export const planSwiftImportFixes = (params: PlanImportFixesParams): FileEdit[] 
                 edited.set(member.memberIndex, member.widened);
             }
             const usedOutside = new Set(
-                movedNames.filter((name) =>
-                    users.some((file) => usesName(maskSwift(file === sourceAbs ? remaining : (read(file) ?? "")), name))
-                )
+                movedNames.filter((name) => users.some((file) => usesName(maskedUser(file), name)))
             );
             for (const file of users) {
-                planFor(file).newImports.add(targetModule.name);
+                const plan = planFor(file);
+                if (!plan.newImports.has(targetModule.name)) {
+                    plan.newImports.set(targetModule.name, `import ${targetModule.name}`);
+                }
             }
 
             for (const name of usedOutside) {
@@ -689,9 +807,7 @@ export const planSwiftImportFixes = (params: PlanImportFixesParams): FileEdit[] 
                 }
 
                 const builtOutside = users.some((file) =>
-                    new RegExp(`(?<![\\w.])${name}\\s*\\(`).test(
-                        maskSwift(file === sourceAbs ? remaining : (read(file) ?? ""))
-                    )
+                    new RegExp(`(?<![\\w.])${name}\\s*\\(`).test(maskedUser(file))
                 );
                 if (
                     entry.decl.kind === "struct" &&
@@ -713,24 +829,42 @@ export const planSwiftImportFixes = (params: PlanImportFixesParams): FileEdit[] 
                 }
             }
 
-            const packageText = fs.readFileSync(sourceModule.packageFile, "utf8");
-            if (!sourceModule.dependencies.includes(targetModule.name) && usedOutside.size > 0) {
+            // Every module whose files gain `import <TargetModule>` must list it as a dependency:
+            // the source module, and any module that imports the source module and uses moved API.
+            const userModules = new Map<string, SwiftModule>();
+            for (const file of users) {
+                const module = swiftModuleOf(file);
+                if (module !== null && !sameModule(module, targetModule)) {
+                    userModules.set(`${module.packageFile}\u0000${module.name}`, module);
+                }
+            }
+
+            for (const [key, module] of userModules) {
+                if (
+                    module.dependencies.includes(targetModule.name) ||
+                    dependencyWarned.has(`${key}\u0000${targetModule.name}`)
+                ) {
+                    continue;
+                }
+
+                dependencyWarned.add(`${key}\u0000${targetModule.name}`);
+                const packageText = fs.readFileSync(module.packageFile, "utf8");
                 const declared = packageText.match(
-                    new RegExp(`name:\\s*"${sourceModule.name}"\\s*,\\s*dependencies:\\s*\\[`)
+                    new RegExp(`name:\\s*"${module.name}"\\s*,\\s*dependencies:\\s*\\[`)
                 )?.[0];
                 warnWithFix(params, {
-                    abs: sourceModule.packageFile,
+                    abs: module.packageFile,
                     needles: declared === undefined ? [] : [declared],
-                    message: `imports=fix: target ${sourceModule.name} does not list ${targetModule.name} in its dependencies, so its new \`import ${targetModule.name}\` will not resolve`,
+                    message: `imports=fix: target ${module.name} does not list ${targetModule.name} in its dependencies, so its new \`import ${targetModule.name}\` will not resolve`,
                     fix:
                         declared === undefined
                             ? {
-                                  why: `add ${targetModule.name} to the dependencies of target ${sourceModule.name} in ${display(sourceModule.packageFile)} (as a .product if it lives in another package).`,
+                                  why: `add ${targetModule.name} to the dependencies of target ${module.name} in ${display(module.packageFile)} (as a .product if it lives in another package).`,
                               }
                             : {
                                   why: "add it to the target's dependencies:",
                                   spec: literalOpSpec(
-                                      display(sourceModule.packageFile),
+                                      display(module.packageFile),
                                       declared,
                                       `${declared}"${targetModule.name}", `
                                   ),

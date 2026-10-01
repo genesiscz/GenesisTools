@@ -308,8 +308,8 @@ export interface Resolver {
     resolve: (fromFile: string, specifier: string) => Resolved | null;
     /** A specifier from `fromFile` to `targetAbs` in the style `via` names, falling back to relative. */
     specifierFor: (fromFile: string, targetAbs: string, via: Via) => string;
-    /** `paths` keys without `*` that resolve to `targetAbs` (`"@helpers"`): specifiers that never spell its name. */
-    exactAliases: (fromDir: string, targetAbs: string) => string[];
+    /** Specifiers a `paths` entry gives `targetAbs` (`"@helpers"`, `"@acme/ui"`); they need not spell its name. */
+    aliasSpecifiers: (fromDir: string, targetAbs: string) => string[];
 }
 
 /** Resolves like TypeScript does for the cases a split meets: relative paths, `paths` and `baseUrl`. */
@@ -542,18 +542,47 @@ export const createResolver = (extraFiles: Set<string> = new Set()): Resolver =>
         return checked ?? relativeSpecifier(fromFile, targetAbs, via.ext);
     };
 
-    const exactAliases = (fromDir: string, targetAbs: string): string[] => {
+    const aliasSpecifiers = (fromDir: string, targetAbs: string): string[] => {
         const config = configFor(fromDir);
-        return (config?.paths ?? [])
-            .filter(
-                ({ pattern, targets }) =>
-                    !pattern.includes("*") &&
-                    targets.some((target) => probe(path.resolve(config?.pathsBase ?? "", target)) === targetAbs)
-            )
-            .map(({ pattern }) => pattern);
+        if (config === null) {
+            return [];
+        }
+
+        // A wildcard target can name the file, the file without its extension, or an index's folder.
+        const forms = [targetAbs, withoutExt(targetAbs)];
+        if (path.basename(withoutExt(targetAbs)) === "index") {
+            forms.push(path.dirname(targetAbs));
+        }
+
+        const specifiers: string[] = [];
+        for (const { pattern, targets } of config.paths) {
+            for (const target of targets) {
+                const template = path.resolve(config.pathsBase, target);
+                const star = template.indexOf("*");
+                if (!pattern.includes("*") || star === -1) {
+                    if (!pattern.includes("*") && probe(template) === targetAbs) {
+                        specifiers.push(pattern);
+                    }
+
+                    continue;
+                }
+
+                const pre = template.slice(0, star);
+                const post = template.slice(star + 1);
+                for (const form of forms) {
+                    if (form.startsWith(pre) && form.endsWith(post) && form.length >= pre.length + post.length) {
+                        specifiers.push(
+                            pattern.replace("*", toPosix(form.slice(pre.length, form.length - post.length)))
+                        );
+                    }
+                }
+            }
+        }
+
+        return specifiers;
     };
 
-    return { resolve, specifierFor, exactAliases };
+    return { resolve, specifierFor, aliasSpecifiers };
 };
 
 // ── planning ──────────────────────────────────────────────────────────────
@@ -1426,25 +1455,29 @@ export const planTsImportFixes = (params: PlanImportFixesParams): FileEdit[] => 
         // A cheap pre-filter before resolving every statement: an importer's specifier spells the
         // file's name or its folder's, unless an exact `paths` alias (`"@helpers"`) names it.
         // The alias comes from the importer's own tsconfig, which in a monorepo is not the source's.
+        // An index file is also reached through a bare `"."` or `".."`, which spells no name at all.
         const stem = path.basename(withoutExt(sourceAbs));
         const nameHint = stem === "index" ? path.basename(path.dirname(sourceAbs)) : stem;
+        const bareRelative = stem === "index" ? /(['"])\.\.?(?:\/\.\.)*\/?\1/ : null;
         const aliasHints = new Map<string, string[]>();
         const hintsFor = (dir: string): string[] => {
             let aliases = aliasHints.get(dir);
             if (aliases === undefined) {
-                aliases = resolver.exactAliases(dir, sourceAbs);
+                aliases = resolver.aliasSpecifiers(dir, sourceAbs);
                 aliasHints.set(dir, aliases);
             }
 
             return [nameHint, ...aliases];
         };
+        const mayImport = (file: string, text: string): boolean =>
+            hintsFor(path.dirname(file)).some((hint) => text.includes(hint)) || (bareRelative?.test(text) ?? false);
         for (const file of files) {
             if (file === sourceAbs) {
                 continue;
             }
 
             const text = plans.get(file)?.text ?? read(file);
-            if (text === undefined || !hintsFor(path.dirname(file)).some((hint) => text.includes(hint))) {
+            if (text === undefined || !mayImport(file, text)) {
                 continue;
             }
 

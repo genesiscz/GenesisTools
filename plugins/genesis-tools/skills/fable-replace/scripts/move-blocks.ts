@@ -353,12 +353,12 @@ export function cutFor(source: string, block: LocatedBlock): string {
     return leading + (next === undefined ? block.text : trailingBlank ? `${block.text}\n${next}\n` : `${block.text}\n`);
 }
 
-/** Where a declaration sits: its doc comment's first line, its own line, its last line (0-indexed). */
+/** Where a declaration sits: its doc comment's first line, its first attribute line, its own line, its last line (0-indexed). */
 export function declarationSpan(
     source: string,
     symbol: string,
     file: string
-): { docStart: number; declared: number; end: number } {
+): { docStart: number; attrStart: number; declared: number; end: number } {
     const lines = source.split("\n");
     const pattern = DECLARATION(symbol);
     const matches = lines.map((line, index) => (pattern.test(line) ? index : -1)).filter((index) => index !== -1);
@@ -378,7 +378,7 @@ export function declarationSpan(
         throw new Error(`${symbol} in ${file} is never closed; the file may be malformed`);
     }
 
-    return { docStart: docCommentStart(lines, declared), declared, end };
+    return { docStart: docCommentStart(lines, declared), attrStart: attributesStart(lines, declared), declared, end };
 }
 
 /**

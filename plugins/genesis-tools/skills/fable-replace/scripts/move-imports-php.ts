@@ -295,7 +295,9 @@ export const psr4Namespace = (file: string): string | null => {
 
 /** The file PSR-4 expects for a class, or null when no prefix covers it. */
 const psr4File = (fromFile: string, fqn: string): string | null => {
-    for (const { prefix, dir } of psr4For(fromFile)?.prefixes ?? []) {
+    // The most specific namespace wins (`App\Domain` before `App`), wherever their folders are.
+    const prefixes = [...(psr4For(fromFile)?.prefixes ?? [])].sort((a, b) => b.prefix.length - a.prefix.length);
+    for (const { prefix, dir } of prefixes) {
         if (prefix === "" || fqn.toLowerCase().startsWith(`${prefix.toLowerCase()}\\`)) {
             const rest = prefix === "" ? fqn : fqn.slice(prefix.length + 1);
             return path.join(dir, `${rest.split("\\").join(path.sep)}.php`);
