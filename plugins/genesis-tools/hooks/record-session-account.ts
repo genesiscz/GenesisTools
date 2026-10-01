@@ -385,54 +385,72 @@ function providerId(harness: Harness): string | null {
     return null;
 }
 
-/** Past this the pin file is read from its tail only; a session's earlier pin is near its other lines. */
-const PIN_TAIL_BYTES = 4 * 1024 * 1024;
+/** The pin file is read in chunks this size, the newest first, so memory stays bounded however long it grows. */
+const PIN_CHUNK_BYTES = 1024 * 1024;
 
-/** The account an earlier pin of this session (same provider) recorded, the newest one winning. */
-export function priorAccount(path: string, sessionId: string, harness: string): string | null {
-    let text: string;
+/** The account a pin line names when it is this session's, on this provider; else null. */
+function pinAccount(line: string, sessionId: string, harness: string): string | null {
+    if (!line.includes(sessionId)) {
+        return null;
+    }
 
     try {
-        const size = statSync(path).size;
-        const fd = openSync(path, "r");
+        const pin = SafeJSON.parse(line) as Partial<SessionPin>;
+        return pin.sessionId === sessionId && pin.provider === harness && typeof pin.account === "string" && pin.account
+            ? pin.account
+            : null;
+    } catch {
+        // A corrupt line: skipped.
+        return null;
+    }
+}
 
-        try {
-            const length = Math.min(size, PIN_TAIL_BYTES);
-            const buffer = Buffer.alloc(length);
-            readSync(fd, buffer, 0, length, size - length);
-            text = buffer.toString("utf8");
-        } finally {
-            closeSync(fd);
-        }
+/**
+ * The account an earlier pin of this session (same provider) recorded, the newest one winning. Reads the
+ * journal backwards chunk by chunk and stops at the first (newest) match, so an old session pinned far
+ * from the tail is still found, with memory bounded by one chunk plus one line.
+ */
+export function priorAccount(path: string, sessionId: string, harness: string): string | null {
+    let fd: number;
+    let size: number;
+
+    try {
+        size = statSync(path).size;
+        fd = openSync(path, "r");
     } catch {
         // No pin file yet is the normal case for a first session.
         return null;
     }
 
-    let account: string | null = null;
+    try {
+        let end = size;
+        // The start of the line that straddled the previous chunk's head, carried to the next (earlier) one.
+        let carry = Buffer.alloc(0);
 
-    for (const line of text.split("\n")) {
-        if (!line.includes(sessionId)) {
-            continue;
-        }
+        while (end > 0) {
+            const from = Math.max(0, end - PIN_CHUNK_BYTES);
+            const chunk = Buffer.alloc(end - from);
+            readSync(fd, chunk, 0, chunk.length, from);
+            const text = Buffer.concat([chunk, carry]).toString("utf8");
+            const lines = text.split("\n");
+            // Unless this chunk starts the file, its first line may begin in the earlier chunk.
+            carry = from > 0 ? Buffer.from(lines.shift() ?? "", "utf8") : Buffer.alloc(0);
 
-        try {
-            const pin = SafeJSON.parse(line) as Partial<SessionPin>;
+            for (let i = lines.length - 1; i >= 0; i--) {
+                const account = pinAccount(lines[i] ?? "", sessionId, harness);
 
-            if (
-                pin.sessionId === sessionId &&
-                pin.provider === harness &&
-                typeof pin.account === "string" &&
-                pin.account
-            ) {
-                account = pin.account;
+                if (account) {
+                    return account;
+                }
             }
-        } catch {
-            // A torn first line from the tail read, or a corrupt line: skipped.
-        }
-    }
 
-    return account;
+            end = from;
+        }
+
+        return carry.length > 0 ? pinAccount(carry.toString("utf8"), sessionId, harness) : null;
+    } finally {
+        closeSync(fd);
+    }
 }
 
 function main(raw: string): void {

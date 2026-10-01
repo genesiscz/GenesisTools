@@ -478,3 +478,20 @@ describe("an existing session keeps its pinned account", () => {
         await rm(dir, { recursive: true, force: true });
     });
 });
+
+describe("an old session's pin far from the journal's tail", () => {
+    test("is found past more than a chunk of later pins, and a line split across chunks still reads", async () => {
+        const dir = await mkdtemp(join(tmpdir(), "pins-far-"));
+        const path = join(dir, "session-pins.jsonl");
+        const line = (sessionId: string, account: string) =>
+            SafeJSON.stringify({ sessionId, provider: "codex", account, source: "hook", at: 1 });
+        // About 2.5 MB of other sessions' pins after the one this session wrote long ago.
+        const later = Array.from({ length: 30_000 }, (_, i) => line(`other-${i}`, "side")).join("\n");
+        await writeFile(path, `${line("old-session", "work")}\n${later}\n`);
+
+        expect(priorAccount(path, "old-session", "codex")).toBe("work");
+        expect(priorAccount(path, "other-29999", "codex")).toBe("side");
+        expect(priorAccount(path, "never", "codex")).toBeNull();
+        await rm(dir, { recursive: true, force: true });
+    });
+});
