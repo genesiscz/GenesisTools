@@ -37,7 +37,7 @@ export async function ensurePort(port: number, deps: EnsureDeps, timeoutMs = 20_
     const target = deps.lookup(port);
 
     if (!target) {
-        logger.debug({ port }, "browser-router ensure: port is not registered, nothing started");
+        logger.debug({ port }, "services ensure: port is not registered, nothing started");
         return { ok: false, code: 2, message: `port ${port} is not registered` };
     }
 
@@ -49,13 +49,13 @@ export async function ensurePort(port: number, deps: EnsureDeps, timeoutMs = 20_
         return { ok: false, code: 2, message: `${target.name} has no launch command` };
     }
 
-    logger.debug({ port, name: target.name, launch: target.launch }, "browser-router ensure: starting");
+    logger.debug({ port, name: target.name, launch: target.launch }, "services ensure: starting");
     deps.spawn(target.launch);
     const deadline = deps.now() + timeoutMs;
 
     while (deps.now() < deadline) {
         if (await deps.listening(port)) {
-            logger.debug({ port, name: target.name }, "browser-router ensure: listening");
+            logger.debug({ port, name: target.name }, "services ensure: listening");
             return { ok: true, name: target.name, started: true };
         }
 
@@ -64,7 +64,7 @@ export async function ensurePort(port: number, deps: EnsureDeps, timeoutMs = 20_
     }
 
     const message = `${target.name} did not listen on ${port} within ${timeoutMs}ms. Log: ${deps.logPath()}`;
-    logger.warn({ port, name: target.name, timeoutMs }, "browser-router ensure: timed out");
+    logger.warn({ port, name: target.name, timeoutMs }, "services ensure: timed out");
     return { ok: false, code: 1, message };
 }
 

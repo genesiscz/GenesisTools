@@ -4,7 +4,7 @@ import { appStatus, buildApp } from "@app/macos/lib/permissions/app";
 import { discoverTools } from "@app/tools/lib/discovery";
 import * as p from "@clack/prompts";
 import { getAgentRuntimeContext } from "@genesiscz/utils/agent/runtime";
-import { runTool } from "@genesiscz/utils/cli";
+import { execTool, execToolInteractive, isInteractive, runTool, suggestCommand } from "@genesiscz/utils/cli";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
@@ -138,6 +138,9 @@ const program = new Command()
         // keeps the identity. Rebuilding while this very process runs under the old bundle is safe:
         // the running binary stays mapped until it exits.
         await refreshGenesisApp();
+
+        // 3b. Long-running servers (daemons, gateways, dashboards) keep the code they started with.
+        await offerServiceRestarts();
 
         // 4. Claude Code plugin management
         const inClaudeCode = getAgentRuntimeContext().isInAgent;
@@ -273,6 +276,47 @@ const program = new Command()
  * Never fatal: an update that cannot build the app is still a successful update, tools keep
  * running under the terminal's own permissions, and `tools macos permissions` reports the gap.
  */
+/**
+ * Offers to restart the servers still on the code from before this update. Both steps run
+ * `tools services` as a child, so the freshly pulled code does the work, not the copy this update
+ * process loaded before the pull. Agent sessions are never listed there.
+ */
+async function offerServiceRestarts(): Promise<void> {
+    const listed = await execTool(["services", "list", "--json"]);
+
+    if (listed.exitCode !== 0) {
+        logger.warn({ stderr: listed.stderr }, "update: could not list services");
+        return;
+    }
+
+    let stale = 0;
+
+    try {
+        const rows: unknown = SafeJSON.parse(listed.stdout, { strict: true });
+        stale = Array.isArray(rows)
+            ? rows.filter((row) => Array.isArray(row?.stale) && row.stale.length > 0).length
+            : 0;
+    } catch (error) {
+        logger.warn({ error }, "update: tools services printed no JSON");
+        return;
+    }
+
+    if (stale === 0) {
+        return;
+    }
+
+    const command = suggestCommand("tools services", { replaceCommand: ["restart", "--stale"] });
+
+    if (!isInteractive()) {
+        out.println(pc.yellow(`\n  ${stale} service(s) run code from before this update: ${command}`));
+        return;
+    }
+
+    out.println(pc.dim(`\n  ${stale} service(s) run code from before this update.`));
+    // Only the stale ones, as the non-interactive hint says: the update never restarts a current server.
+    await execToolInteractive(["services", "restart", "--stale"]);
+}
+
 async function refreshGenesisApp(): Promise<void> {
     if (process.platform !== "darwin") {
         return;
