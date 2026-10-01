@@ -4,6 +4,7 @@ import { registerAgentTool } from "@app/ai/commands/agent/register";
 import { runTool } from "@genesiscz/utils/cli";
 import { Command } from "commander";
 import { registerApprovalCommands } from "./commands/approve";
+import { registerDesktopCommand } from "./commands/desktop";
 import { registerLogsCommand } from "./commands/logs";
 import { registerMigrateHomeCommand } from "./commands/migrate-home";
 import { registerReviewCommand } from "./commands/review";
@@ -18,6 +19,7 @@ registerAgentTool(program, codexSpec);
 // Codex's own verbs: a persistent daemon with a control channel is the only backend that can
 // offer mid-turn approvals, a turn rollback, a native review, or a raw event log.
 registerMigrateHomeCommand(program);
+registerDesktopCommand(program);
 registerRollbackCommand(program);
 registerReviewCommand(program);
 registerApprovalCommands(program);
