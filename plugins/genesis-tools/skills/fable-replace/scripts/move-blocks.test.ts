@@ -502,7 +502,7 @@ describe("a move with imports=fix", () => {
         const target = resolve(dir, "src/lib/load.ts");
 
         expect(edits.filter((edit) => resolve(dir, edit.file) === target)).toHaveLength(1);
-        await run({ cwd: dir, verbose: false, edits });
+        await run({ cwd: dir, verbose: false, edits, syntaxCheck: false });
         expect(read(dir, "src/lib/load.ts")).toStartWith('import { readFileSync } from "node:fs";');
         expect(read(dir, "src/lib/load.ts")).toContain("// header\n\nexport function load(");
     });
@@ -564,7 +564,7 @@ describe("imports=fix proposes the spec change that makes it pass", () => {
         );
 
         const { edits } = parse(dir, `@@ a.ts\n${marker} visibility=widen\n>>>\n`);
-        await run({ cwd: dir, verbose: false, edits });
+        await run({ cwd: dir, verbose: false, edits, syntaxCheck: false });
         expect(read(dir, "b.ts")).toBe("export const helper = () => 1;\n");
         expect(read(dir, "a.ts")).toBe('import { helper } from "./b";\n\nexport const user = () => helper();\n');
     });
@@ -604,7 +604,7 @@ describe("imports=fix proposes the spec change that makes it pass", () => {
                 'import {\n    keep, // the one that } stays\n    moved,\n} from "./lib/utils";\n\nexport const y = [keep, moved];\n',
         });
         const { edits } = parse(dir, "@@ lib/utils.ts\n<<< move to=lib/moved.ts symbol=moved imports=fix\n>>>\n");
-        await run({ cwd: dir, verbose: false, edits });
+        await run({ cwd: dir, verbose: false, edits, syntaxCheck: false });
         // Without a formatter the split keeps the statement's own layout, and the comment stays on keep.
         expect(read(dir, "user.ts")).toStartWith(
             'import {\n    moved,\n} from "./lib/moved";\nimport {\n    keep, // the one that } stays\n} from "./lib/utils";\n'
@@ -674,7 +674,7 @@ describe("imports=fix in Swift", () => {
         );
 
         const { edits } = parse(dir, `@@ App/Helpers.swift\n${marker} visibility=widen\n>>>\n`);
-        await run({ cwd: dir, verbose: false, edits });
+        await run({ cwd: dir, verbose: false, edits, syntaxCheck: false });
         expect(read(dir, "App/Other.swift")).toBe("import Foundation\n\nfunc helper() -> Int {\n    secret()\n}\n");
         expect(read(dir, "App/Helpers.swift")).toStartWith(
             "import Foundation\n\nfunc secret() -> Int { 1 }\n\nstruct Point {"
@@ -693,7 +693,7 @@ describe("imports=fix in Swift", () => {
         const { edits, warnings } = parse(dir, `@@ App/Helpers.swift\n${marker} visibility=widen\n>>>\n`);
         expect(warnings).toHaveLength(1);
         expect(warnings[0]).toContain("public init(x: Int, y: Int = 0) {");
-        await run({ cwd: dir, verbose: false, edits });
+        await run({ cwd: dir, verbose: false, edits, syntaxCheck: false });
         expect(read(dir, "Kit/Point.swift")).toBe(
             [
                 "import Foundation",
@@ -829,7 +829,7 @@ describe("imports=fix in PHP", () => {
             dir,
             "@@ app/Http/OrderController.php\n<<< move to=app/Services/OrderService.php lines=14-18 at=after imports=fix\n    // methods\n>>>\n"
         );
-        await run({ cwd: dir, verbose: false, edits });
+        await run({ cwd: dir, verbose: false, edits, syntaxCheck: false });
         expect(read(dir, "app/Services/OrderService.php")).toBe(
             [
                 "<?php",
@@ -862,7 +862,7 @@ describe("imports=fix in PHP", () => {
         const { edits, warnings } = parse(dir, move);
         expect(warnings).toHaveLength(1);
         expect(warnings[0]).toContain("config/money.php names App\\Support\\Money in a string");
-        await run({ cwd: dir, verbose: false, edits });
+        await run({ cwd: dir, verbose: false, edits, syntaxCheck: false });
 
         expect(read(dir, "app/Values/Money.php")).toBe(
             "<?php\n\ndeclare(strict_types=1);\n\nnamespace App\\Values;\n\nfinal class Money\n{\n    public function __construct(public int $cents) {}\n}\n"
@@ -911,7 +911,7 @@ describe("imports=fix in PHP", () => {
             dir,
             "@@ app/Services/Factory.php\n<<< move to=app/Support/Factory.php symbol=Factory imports=fix\n>>>\n"
         );
-        await run({ cwd: dir, verbose: false, edits });
+        await run({ cwd: dir, verbose: false, edits, syntaxCheck: false });
         expect(read(dir, "app/Support/Factory.php")).toStartWith(
             [
                 "<?php",
@@ -993,7 +993,7 @@ describe("doc comments as units", () => {
             text: "@@ from.ts\n<<< move to=to.ts symbol=a at=before\nexport function b\n>>>\n",
             cwd: dir,
         });
-        await run({ cwd: dir, verbose: false, edits });
+        await run({ cwd: dir, verbose: false, edits, syntaxCheck: false });
         expect(readFileSync(join(dir, "to.ts"), "utf8")).toBe(
             "export function a(): number {\n    return 1;\n}\n\n/** Doc of b. */\nexport function b(): number {\n    return 2;\n}\n"
         );
@@ -1096,7 +1096,7 @@ describe("imports=fix reads TypeScript with the compiler when GenesisTools is fo
             text: "@@ lib/utils.ts\n<<< move to=lib/moved.ts symbol=moved imports=fix\n>>>\n",
             cwd: dir,
         });
-        await run({ cwd: dir, verbose: false, edits });
+        await run({ cwd: dir, verbose: false, edits, syntaxCheck: false });
         const user = read(dir, "user.ts");
         if (selectTsReader().reader.kind === "compiler") {
             expect(user).toBe('import{moved}from"./lib/moved";\n\nexport const y = moved;\n');
@@ -1119,7 +1119,7 @@ describe("imports=fix reads TypeScript with the compiler when GenesisTools is fo
             ].join("\n"),
         });
         const edits = parseSpec({ text: "@@ a.ts\n<<< move to=b.ts symbol=paths imports=fix\n>>>\n", cwd: dir });
-        await run({ cwd: dir, verbose: false, edits });
+        await run({ cwd: dir, verbose: false, edits, syntaxCheck: false });
         expect(read(dir, "b.ts")).toStartWith('import { join } from "node:path";\n');
         const source = read(dir, "a.ts");
         if (selectTsReader().reader.kind === "compiler") {
@@ -1153,7 +1153,7 @@ describe("PR #444 review round 1", () => {
             cwd: dir,
             onWarning: () => {},
         });
-        await run({ cwd: dir, verbose: false, edits });
+        await run({ cwd: dir, verbose: false, edits, syntaxCheck: false });
         expect(read(dir, "Kit/Point.swift")).toContain("@MainActor\npublic struct Point {\n    public let x: Int\n}");
     });
 
@@ -1169,7 +1169,7 @@ describe("PR #444 review round 1", () => {
             text: "@@ src/lib/utils.ts\n<<< move to=src/lib/moved.ts symbol=moved imports=fix\n>>>\n",
             cwd: dir,
         });
-        await run({ cwd: dir, verbose: false, edits });
+        await run({ cwd: dir, verbose: false, edits, syntaxCheck: false });
         expect(read(dir, "src/a.ts")).toStartWith('import { moved } from "./lib/moved";\n');
     });
 
@@ -1201,7 +1201,7 @@ describe("PR #444 review round 1", () => {
             text: `@@ app/Http/Db.php\n<<< move to=app/Services/Store.php lines=${first}-${first + 3} at=after imports=fix\n    // methods\n>>>\n`,
             cwd: dir,
         });
-        await run({ cwd: dir, verbose: false, edits });
+        await run({ cwd: dir, verbose: false, edits, syntaxCheck: false });
         expect(read(dir, "app/Services/Store.php")).toContain("namespace App\\Services;\n\nuse PDO;\n");
         expect(read(dir, "app/Http/Db.php")).not.toContain("use PDO;");
     });
@@ -1237,7 +1237,7 @@ describe("PR #444 review round 1", () => {
             text: "@@ app/Support/Legacy.php\n<<< move to=app/Values/Money.php symbol=Money imports=fix\n>>>\n",
             cwd: dir,
         });
-        await run({ cwd: dir, verbose: false, edits });
+        await run({ cwd: dir, verbose: false, edits, syntaxCheck: false });
         const moved = read(dir, "app/Values/Money.php");
         expect(moved).toContain("public static function make(): \\App\\Values\\Money");
         expect(moved).toContain("return new \\App\\Values\\Money();");
@@ -1264,7 +1264,7 @@ describe("PR #444 review round 1", () => {
             ].join("\n"),
         });
         const edits = parseSpec({ text: "@@ a.ts\n<<< move to=b.ts symbol=f imports=fix\n>>>\n", cwd: dir });
-        await run({ cwd: dir, verbose: false, edits });
+        await run({ cwd: dir, verbose: false, edits, syntaxCheck: false });
         expect(read(dir, "b.ts")).toStartWith('import { helper } from "./dep";\n');
     });
 });
@@ -1316,7 +1316,7 @@ describe("PR #444 review round 2", () => {
             ].join("\n"),
             cwd: dir,
         });
-        await run({ cwd: dir, verbose: false, edits });
+        await run({ cwd: dir, verbose: false, edits, syntaxCheck: false });
         const legacy = read(dir, "app/Services/Legacy.php");
         expect(legacy).toContain("public function price(): \\App\\Values\\Money");
         expect(legacy).toContain("return new \\App\\Values\\Money();");
@@ -1360,7 +1360,7 @@ describe("PR #444 review round 2", () => {
             ].join("\n"),
             cwd: dir,
         });
-        await run({ cwd: dir, verbose: false, edits });
+        await run({ cwd: dir, verbose: false, edits, syntaxCheck: false });
         expect(read(dir, "app/Services/Store.php")).toContain("return \\App\\Values\\Money::cents();");
         expect(read(dir, "app/Http/Controller.php")).not.toContain("Money");
     });
@@ -1378,7 +1378,7 @@ describe("PR #444 review round 2", () => {
             text: "@@ packages/shared/utils.ts\n<<< move to=packages/shared/moved.ts symbol=moved imports=fix\n>>>\n",
             cwd: dir,
         });
-        await run({ cwd: dir, verbose: false, edits });
+        await run({ cwd: dir, verbose: false, edits, syntaxCheck: false });
         expect(read(dir, "packages/app/a.ts")).toStartWith('import { moved } from "../shared/moved";\n');
     });
 });

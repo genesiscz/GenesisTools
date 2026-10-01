@@ -243,11 +243,18 @@ const externalParseError = (command: string[], content: string): string | null =
 const brokeSyntax = (file: string, before: string, after: string): string | null => {
     const external = EXTERNAL_PARSERS[path.extname(file)];
     if (external !== undefined) {
-        if (before === after || (before !== "" && externalParseError(external, before) !== null)) {
+        if (before === after) {
             return null;
         }
 
-        return externalParseError(external, after);
+        // One spawn for a file that parses; the old text is parsed only to excuse a file that
+        // was already broken before the sweep.
+        const error = externalParseError(external, after);
+        if (error === null || (before !== "" && externalParseError(external, before) !== null)) {
+            return null;
+        }
+
+        return error;
     }
 
     const loader = loaderFor(file);
