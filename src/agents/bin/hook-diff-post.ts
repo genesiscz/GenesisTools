@@ -3,7 +3,7 @@ import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { fileToolSource } from "../lib/changes/log";
 import { loadHooksConfig, megabytes } from "../lib/hooks/config";
-import { recordFileToolChange, runDiffPost } from "../lib/hooks/diff/run";
+import { noteFileToolInput, recordFileToolChange, runDiffPost } from "../lib/hooks/diff/run";
 import { logDecision, setDiagLogPath, setMaxLogBytes } from "../lib/hooks/log";
 import { isTerminalTool, normalizeEvent, parseHookPayload } from "../lib/hooks/payload";
 
@@ -22,8 +22,10 @@ if (!payload || normalizeEvent(payload.event) !== "posttooluse") {
     process.exit(0);
 }
 
-// Edit and Write render their own diff; they only need a row in the session change log.
+// Edit and Write render their own diff; they only need a row in the session change log, and
+// their file in this session's mention index and the cross-session touches ledger.
 if (fileToolSource(payload.tool)) {
+    noteFileToolInput(payload);
     recordFileToolChange(payload);
     process.exit(0);
 }
@@ -44,6 +46,7 @@ logDecision(
         decision: decision.decision,
         reason: decision.reason,
         files: decision.files,
+        ...(decision.others && decision.others.length > 0 ? { others: decision.others } : {}),
     },
     config.logPath
 );

@@ -67,6 +67,13 @@ export interface DiffConfig {
      */
     dedupeAcrossSessions: boolean;
     /**
+     * What happens to a changed file this session did not cause: another session's edit in a
+     * shared repository, or anything a read-only command could not have written. It is never
+     * diffed. `line` names such files in one short line under the diff; `hidden` drops them.
+     * See `diff/attribution.ts` for how a change is attributed.
+     */
+    othersSummary: "line" | "hidden";
+    /**
      * The most bytes ONE message may carry, escape codes included.
      *
      * 🛑 The harness has its own ceiling, and breaching it loses the TAIL silently. Measured
@@ -168,10 +175,30 @@ export interface DecisionsHookConfig {
     staleness: { warnAfterMinutes: number; alarmAfterMinutes: number; notify: boolean };
 }
 
+/** The genesis-tools plugin's SessionStart reminder about the agents-talk skill. */
+export interface AgentsTalkConfig {
+    hint: boolean;
+}
+
+/**
+ * The Stop-phase reminder about commits that are not pushed yet. It fires for a branch with an
+ * upstream when MORE than `maxCommits` commits are unpushed, or when the oldest unpushed commit
+ * is older than `maxAgeMinutes`, whichever comes first. One reminder per repository per
+ * `remindEveryMinutes`, across every session on the machine. It never pushes.
+ */
+export interface UnpushedConfig {
+    enabled: boolean;
+    maxCommits: number;
+    maxAgeMinutes: number;
+    remindEveryMinutes: number;
+}
+
 export interface HooksConfig {
     guard: GuardConfig;
     diff: DiffConfig;
     decisions: DecisionsHookConfig;
+    agentsTalk: AgentsTalkConfig;
+    unpushed: UnpushedConfig;
     logPath: string;
     /**
      * Log the decision, emit nothing. It lets the new hooks run beside the old ones on real
@@ -262,6 +289,7 @@ export const DEFAULT_HOOKS_CONFIG: HooksConfig = {
         maxNamedPathMB: 2,
         namedPathsShowCreated: false,
         dedupeAcrossSessions: true,
+        othersSummary: "line",
         maxMessageBytes: 9_000,
         categories: { source: true, formatting: true, log: false, generated: false },
         harnesses: {
@@ -283,6 +311,8 @@ export const DEFAULT_HOOKS_CONFIG: HooksConfig = {
         injectAnswers: false,
         staleness: { warnAfterMinutes: 30, alarmAfterMinutes: 120, notify: true },
     },
+    agentsTalk: { hint: true },
+    unpushed: { enabled: true, maxCommits: 3, maxAgeMinutes: 60, remindEveryMinutes: 30 },
     logPath: defaultLogPath(),
     // 🛑 `shadow: true` AND `logCommands: "shadow"` together mean `keepsCommand()` is true out
     // of the box, so EVERY Bash command this machine runs through a hook is written verbatim
@@ -453,6 +483,7 @@ function mergeDiff(stored: StoredHooksConfig["diff"]): DiffConfig {
         }),
         namedPathsShowCreated: boolOr(stored?.namedPathsShowCreated, base.namedPathsShowCreated),
         dedupeAcrossSessions: boolOr(stored?.dedupeAcrossSessions, base.dedupeAcrossSessions),
+        othersSummary: othersSummaryOr(stored?.othersSummary, base.othersSummary),
         maxMessageBytes: countOr({
             field: "diff.maxMessageBytes",
             value: stored?.maxMessageBytes,
@@ -471,6 +502,12 @@ function mergeDiff(stored: StoredHooksConfig["diff"]): DiffConfig {
         // delete the shipped Grok one, which is what turns the diff off there.
         harnesses: mergedHarnesses(stored?.harnesses),
     };
+}
+
+export const OTHERS_SUMMARIES: readonly DiffConfig["othersSummary"][] = ["line", "hidden"];
+
+function othersSummaryOr(value: unknown, fallback: DiffConfig["othersSummary"]): DiffConfig["othersSummary"] {
+    return OTHERS_SUMMARIES.find((mode) => mode === value) ?? fallback;
 }
 
 const LOG_COMMANDS_POLICIES: readonly LogCommandsPolicy[] = ["shadow", "always", "never"];
@@ -591,6 +628,10 @@ function checkedOverride(stored: DiffOverrides, path: string): DiffOverrides {
         checked.highlight = stored.highlight;
     }
 
+    if (stored.othersSummary === "line" || stored.othersSummary === "hidden") {
+        checked.othersSummary = stored.othersSummary;
+    }
+
     const categories: Partial<Record<DiffCategory, boolean>> = {};
 
     for (const category of ["source", "formatting", "log", "generated"] as const) {
@@ -676,6 +717,8 @@ export function mergeStoredConfig(stored: StoredHooksConfig): HooksConfig {
         },
         diff: mergeDiff(stored.diff),
         decisions: mergeDecisions(stored.decisions),
+        agentsTalk: { hint: boolOr(stored.agentsTalk?.hint, DEFAULT_HOOKS_CONFIG.agentsTalk.hint) },
+        unpushed: mergeUnpushed(stored.unpushed),
         shadow: boolOr(stored.shadow, DEFAULT_HOOKS_CONFIG.shadow),
         logCommands: logCommandsOr(stored.logCommands, DEFAULT_HOOKS_CONFIG.logCommands),
         maxLogMB: megabytesOr({
@@ -690,6 +733,31 @@ export function mergeStoredConfig(stored: StoredHooksConfig): HooksConfig {
 const STOP_HOOK_MODES: readonly DecisionStopHook[] = ["off", "warn", "block"];
 
 /** Field by field, like `diff`: a stored value of the wrong type falls back to the default. */
+function mergeUnpushed(stored: Partial<UnpushedConfig> | undefined): UnpushedConfig {
+    const base = DEFAULT_HOOKS_CONFIG.unpushed;
+
+    return {
+        enabled: boolOr(stored?.enabled, base.enabled),
+        maxCommits: countOr({
+            field: "unpushed.maxCommits",
+            value: stored?.maxCommits,
+            fallback: base.maxCommits,
+            min: 0,
+        }),
+        maxAgeMinutes: countOr({
+            field: "unpushed.maxAgeMinutes",
+            value: stored?.maxAgeMinutes,
+            fallback: base.maxAgeMinutes,
+        }),
+        remindEveryMinutes: countOr({
+            field: "unpushed.remindEveryMinutes",
+            value: stored?.remindEveryMinutes,
+            fallback: base.remindEveryMinutes,
+            min: 0,
+        }),
+    };
+}
+
 function mergeDecisions(stored: Partial<DecisionsHookConfig> | undefined): DecisionsHookConfig {
     const base = DEFAULT_HOOKS_CONFIG.decisions;
     const staleness = stored?.staleness;

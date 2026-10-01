@@ -1,0 +1,26 @@
+{
+    "name": "hooks-attribution-pair",
+    "capturedAt": "2026-09-30T22:16:25.112Z",
+    "commit": "7c5abc9c1",
+    "loadAvg": [
+        10.68359375,
+        16.53857421875,
+        16.3642578125
+    ],
+    "hostname": "MacBook-Pro-2262.local",
+    "metrics": {
+        "repo.pairWallMs": 129.8,
+        "repo.pairCpuMs": 8.42,
+        "repo.pairSpawns": 8,
+        "repo.e2eWallMs": 186.15,
+        "repo.e2eCpuMs": 387.17,
+        "vault.pairWallMs": 260.4,
+        "vault.pairCpuMs": 18.71,
+        "vault.pairSpawns": 16,
+        "vault.e2eWallMs": 324.98,
+        "vault.e2eCpuMs": 316.79,
+        "stop.e2eWallMs": 66.47,
+        "stop.e2eCpuMs": 67.42
+    },
+    "notes": "impl /Users/Martin/Tresors/Projects/GenesisTools/.worktrees/hooks-before | 15 pairs | 0:16  up 18 days,  7:38, 24 users, load averages: 10.38 16.92 16.49"
+}

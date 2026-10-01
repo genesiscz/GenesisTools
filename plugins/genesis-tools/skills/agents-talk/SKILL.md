@@ -1,6 +1,6 @@
 ---
 name: agents-talk
-description: "CLAUDE ONLY, and only inside a handoff-to run. Picks the channel for a multi-agent swarm that must talk while it works: tools agents bus across hosts, with a real monitor for async delivery. NOT for spawning ordinary subagents, and NOT for a single worker. Codex must never invoke this skill: it has no monitor, so the protocol here cannot work, and tools codex passes what a codex worker needs into its brief instead."
+description: "Claude and Grok only. Picks the channel when agents must talk WHILE they work: a gt:handoff-to swarm, or a Claude Code agent team whose lead may need to steer a busy teammate (native team mail waits until the teammate's turn ends). Uses the tools agents bus with a real push monitor. NOT for ordinary subagents that report back when finished. Codex must never invoke this skill: it has no monitor; tools codex passes what a codex worker needs into its brief, and the lead steers it with tools codex steer."
 ---
 
 # `/agents-talk` — cross-agent communication protocol
@@ -14,9 +14,27 @@ description: "CLAUDE ONLY, and only inside a handoff-to run. Picks the channel f
 > part of a swarm gets what it needs from the brief that `tools codex` and `gt:handoff-to` build
 > for it. Use the native Codex collaboration tools instead.
 >
-> **🛑 Claude: this is not a "spawning subagents" skill.** Invoke it only when `gt:handoff-to` has
-> established a run whose agents must talk to each other WHILE they work. Ordinary subagents that
-> report back when finished need nothing from this file.
+> **🛑 Claude: this is not a "spawning subagents" skill.** Invoke it when agents must talk to each
+> other WHILE they work: a `gt:handoff-to` run, or an agent team whose lead may need to reach a
+> teammate in the middle of its task. Ordinary subagents that report back when finished need
+> nothing from this file.
+
+## Route by host (measured 2026-10-01 00:00 to 00:12, probes in `/tmp/mailprobe`)
+
+Each row was proven live with a 12-step worker that got a ping mid-turn and answered on the bus.
+
+| Recipient | Send a mid-turn message with | Measured | Wake it when idle with |
+|---|---|---|---|
+| Claude Code agent-team teammate (`Agent` with `name`, in-process) | the bus; the teammate runs a `Monitor` on its own `tools agents login` | about 10 s, mid-turn | a payload-free `SendMessage` nudge that makes it run one tool call (see the Claude section) |
+| Claude Code plain background agent (`Agent` WITHOUT `name`) | native `SendMessage` to its agentId; no bus needed | about 9 s, between tool calls | the same `SendMessage` resumes it |
+| Grok 1.0.44, main session or `tools grok spawn` worker | the bus; the worker wraps its `tools agents login` in the `monitor` tool | about 28 s, mid-turn | not woken by mail; the parent resumes it (`tools grok steer`, or `spawn_subagent` `resume_from`) |
+| Codex `tools codex spawn` worker | `tools codex steer --name <task>`: merged into the running turn | about 26 s, mid-turn | `tools codex steer` starts a new turn |
+| Codex `tools codex spawn` worker, bus mail | the bus, read only at its seeded `login --once` checkpoints | at its next checkpoint | `tools codex steer` |
+
+🛑 Native Claude team mail (`SendMessage` to a teammate NAME) is NOT on this list for mid-turn use.
+In 2.1.280 the harness never injects team mail into a running teammate turn (the mid-turn
+`teammate_mailbox` attachment producer returns an empty list), so it waits for the turn to end.
+Measured in one real team session: 12 to 33 minutes for working teammates, 0 to 2 s for idle ones.
 
 Choose the communication channel before starting receivers. **Codex subagents communicating while they work must use the nonblocking native path below when available.** Do not start a CLI inbox for this path. Use `tools agents` when agents on different hosts or CLI workers need a shared bus. If the user explicitly requires the bus, use a real monitor for asynchronous delivery; without one, explain the capability gap rather than quietly substituting blocking `--once`. No MCP server is required.
 
@@ -165,30 +183,40 @@ With a monitored stream, keep working after `ready` and react when a message arr
 
 > ⚠️ **Monitor the login command itself.** `login` stdout is the JSONL event stream. When stderr is a TTY it may print diagnostics; when piped (Grok `monitor` merges streams) login keeps stderr quiet. Still do not `2>&1` on purpose. Do not redirect stdout to a file and then poll that file.
 
-## ⚠️ Idle teammates do NOT wake on agents-channel traffic (Claude Code)
+## Claude Code agent teams: busy teammates get bus mail, idle ones need a nudge
 
-Empirically verified 2026-07-13 (two live probe tests + teammate-transcript forensics):
+<!-- updated 2026-10-01 00:12: re-measured on Claude Code 2.1.280; replaces the 2026-07-13 section, whose "not injected at wake" finding no longer holds -->
 
-- A teammate whose turn has ENDED (idle) is **not re-invoked** by Monitor events on its login stream, and the pending Monitor notification is **not injected at wake either** — transcript inspection showed no monitor-event entry while idle nor in the wake bundle. At best it trickles in mid-turn once the teammate is already active again (observed arriving AFTER the teammate had manually read the output file). The login background process stays alive and keeps writing events to its output file; the harness just never turns that into a wake for a subagent.
-- Background-task completion (`login --once` exiting when a message arrives) does **not** wake an idle teammate either.
-- The **only** channel that wakes an idle teammate is the harness-native `SendMessage` tool.
-- The MAIN session is different: its Monitor events DO re-invoke it between turns. The asymmetry affects teammates only.
-- Recovery depends on the receiver. Retrieve an existing receiver's pending stdout through the harness. Start `--once` only when that identity has no live receiver. The cursor tracks stdout emission, so `--once` cannot recover lines already emitted to a monitor that dropped them. The historical wake observations above do not establish end-to-end replay safety.
+Measured 2026-09-30 23:10 to 2026-10-01 00:05 on Claude Code 2.1.280 with in-process sonnet teammates (transcripts checked, not self-reports):
 
-**Dual-channel protocol (required whenever the recipient may be idle on Claude Code):**
+- **Busy teammate:** a line on its `Monitor` stream arrives mid-turn, between tool calls. A `tail -F` feed took about 8 s; the real bus (`tools agents login`) took 12 s from `tools agents message` to the teammate's ACK. Native `SendMessage` to the same teammate waited until the turn ended (1 m 42 s in the probe, 12 to 33 minutes in a real team).
+- **Idle teammate:** a Monitor event does **not** wake it (nothing in 45 s, 60 s with the bus). The event is held, not lost.
+- **Waking it:** `SendMessage` wakes an idle teammate in about 2 s. The held Monitor event is then delivered on the teammate's **next tool call**. A teammate that answers the nudge with text only never receives it: observed, the payload arrived only after a second nudge that required one tool call.
+- **Expiry:** a Claude Code `Monitor` lasts at most 30 minutes (`timeout_ms` 1800000). The teammate must re-arm it when the expiry notice arrives, or mail after that point waits for a nudge.
+- **State:** the lead sees each teammate as `running` or `idle` in `ListAgents`.
+- The MAIN session differs: its own Monitor events do re-invoke it between turns.
+- The cursor tracks stdout emission, so `--once` cannot recover lines already emitted to a monitor that dropped them. A receiver that died loses nothing still unread in the feed.
 
-1. Payload goes on the agents channel (stored in the feed; see delivery limits below):
-   `tools agents message --from lead --to researcher --body '...'`
-2. Immediately follow with a harness wake nudge:
-   `SendMessage(to: "researcher", "agents-mail waiting — drain your stream")`
-3. The woken teammate retrieves its existing receiver's output, or starts `login --once` if no receiver is alive, then replies on the agents channel. If a monitor discarded an emitted payload, the sender must resend it; a cursor resume does not restore it.
+**Protocol for a Claude Code team:**
+
+1. Every teammate brief starts with: load `Monitor` (ToolSearch `select:Monitor`), start it with `timeout_ms: 1800000` on `tools agents login --agent-name <name> --format json --kinds message --session <id>`, re-arm it on expiry, and answer mail with `tools agents message --from <name> --reply <message_id> --session <id>`.
+2. The lead sends every payload on the bus: `tools agents message --from lead --to <name> --body '...' --session <id>`. The payload never goes in `SendMessage`, so a busy teammate does not get it twice.
+3. If `ListAgents` shows the teammate `idle`, also send a nudge with no payload that forces a tool call, for example: `SendMessage(to: "<name>", "agents-mail waiting. Run one Bash call now (true), then handle your bus mail.")`. When unsure, send it anyway: a nudge to a busy teammate only costs one short extra turn after its current one.
+4. The lead's own receiver is a `Monitor` on `tools agents login --agent-main --agent-name lead`. A Codex worker on the same bus publishes every lifecycle event to main, so filter those out: `... | grep --line-buffered -v '\\"event\\":'`.
+
+A plain background agent (`Agent` without `name`) needs none of this: its `SendMessage` arrives between tool calls on its own.
 
 On **Grok**:
 
-- Wrap `tools agents login` with the harness `monitor` tool (`persistent: true`). Do not tee to a file.
+- Wrap `tools agents login` with the harness `monitor` tool (`persistent: true`). Do not tee to a file. Verified 2026-10-01 00:09 on grok 1.0.44 in a headless `tools grok spawn` worker: the bus mail reached it mid-turn about 28 s after the send, and its ACK came back on the bus. Stop the monitor with `kill_command_or_subagent` before the turn ends.
 - The **parent** receives: (1) its own main login stream (every swarm hop), and (2) each child's monitor lines (Grok bubbles child monitor events into the parent turn).
-- An idle Grok **child is not re-invoked** when its inbox line arrives. Verified 2026-08-22: the child ended after `monitor`, hop 0 landed on the parent as `[alpha inbox]`, and alpha stayed idle until `resume_from`. Same shape as Claude Code idle teammates, without `SendMessage`.
-- To act inside one child turn, block on `tools agents login --agent-name X --once` (still `tools agents`, not a file). To act after the child has stopped, the parent `resume_from`s that child with the inbox JSON.
+- An idle Grok **child is not re-invoked** when its inbox line arrives. Verified 2026-08-22: the child ended after `monitor`, hop 0 landed on the parent as `[alpha inbox]`, and alpha stayed idle until `resume_from`. For a `tools grok spawn` worker the parent's resume is `tools grok steer`.
+- Budget one bus send per grok turn (`references/grok.md` in `gt:handoff-to`): a second send in the same turn was once cancelled by grok's permission layer and reported as sent.
+
+On **Codex** (`tools codex spawn` workers; the Codex host itself never uses this skill):
+
+- The lead's mid-turn channel is `tools codex steer --name <task> --prompt '...'`. Verified 2026-10-01 00:10: the steer was merged into the running turn (`"merged": true`) and acted on about 26 s later.
+- Bus mail reaches the worker only when it runs its seeded `tools agents login --once` receive, so a brief that relies on bus mail must name the checkpoints where it checks.
 
 In these bus workflows, send payloads through `tools agents` and use the host's native resume operation for idle recipients. Do not assume Claude Code's `SendMessage` wake behavior applies to Codex's `collaboration.send_message`; Codex requires `followup_task` in the tool set described above. Monitor delivery during an active turn still depends on the host.
 

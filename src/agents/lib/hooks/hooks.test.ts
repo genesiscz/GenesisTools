@@ -7,6 +7,7 @@ import {
     mkdtempSync,
     readFileSync,
     readlinkSync,
+    realpathSync,
     rmSync,
     statSync,
     symlinkSync,
@@ -15,6 +16,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { withSpawnCounter } from "@app/benchmark/lib";
 import { postDecisions, readDecisions, updateDecision } from "@app/question/lib/decisions/store";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -33,6 +35,7 @@ import { collectStaleCaptures, parseHorizon } from "./gc";
 import { evaluateCommand, evaluateGuard } from "./guard";
 import { guardFromLegacy, importedHooksConfig, importGuardConfig } from "./import-config";
 import {
+    entriesFor,
     hooksDistPath,
     installAndPoint,
     installHooks,
@@ -48,6 +51,7 @@ import type { HookPayload } from "./payload";
 import { parseHookPayload } from "./payload";
 import { withPrivateTempDir } from "./private-temp";
 import { applySetting, changedOnly, setHooksConfig } from "./set-config";
+import { unpushedReminders, unpushedState } from "./unpushed";
 import { writeJsonFile } from "./write-json";
 
 describe("DEFAULT_HOOKS_CONFIG", () => {
@@ -316,7 +320,7 @@ describe("installHooks", () => {
 
         expect(second.added).toEqual([]);
         expect(second.updated).toEqual([]);
-        expect(second.unchanged).toEqual(["PreToolUse", "PostToolUse", "SessionEnd"]);
+        expect(second.unchanged).toEqual(["Stop", "PreToolUse", "PostToolUse", "SessionEnd"]);
         expect(second.changed).toBe(false);
         expect(readFileSync(path, "utf8")).toBe(bytes);
         // A no-op must be a NO-OP: the earlier version rewrote the file every time.
@@ -331,7 +335,7 @@ describe("installHooks", () => {
         const moved = installHooks({ dist: "/dist-B", settingsPath: path, write: true });
         const after = readFileSync(path, "utf8");
 
-        expect(moved.updated).toEqual(["PreToolUse", "PostToolUse", "SessionEnd"]);
+        expect(moved.updated).toEqual(["Stop", "PreToolUse", "PostToolUse", "SessionEnd"]);
         expect(moved.changed).toBe(true);
         expect(after).toContain("/dist-B/src/agents/bin/hook-pre.ts");
         expect(after).not.toContain("/dist-A");
@@ -403,7 +407,7 @@ describe("installHooks", () => {
         const removed = uninstallHooks({ settingsPath: path, write: true });
         const after = readSettings(path);
 
-        expect(removed.removed).toBe(3);
+        expect(removed.removed).toBe(4);
         expect(after.hooks?.PreToolUse).toEqual([{ hooks: [{ type: "command", command: "/existing.sh" }] }]);
         expect(after.hooks?.PostToolUse).toEqual([]);
         expect(after.hooks?.SessionEnd).toEqual([]);
@@ -417,17 +421,19 @@ describe("installHooks", () => {
             hooks: { PostToolUse: [{ matcher: "Bash", hooks: [{ type: "command", command: post, timeout: 15 }] }] },
         });
 
-        expect(wiringStatus({ dist: "/dist", settingsPath: path, decisions: false })).toEqual({
+        expect(wiringStatus({ dist: "/dist", settingsPath: path, decisions: false, unpushed: false })).toEqual({
             state: "stale",
             events: ["PreToolUse", "SessionEnd", "PostToolUse"],
         });
 
-        installHooks({ dist: "/dist", settingsPath: path, write: true, decisions: false });
-        expect(wiringStatus({ dist: "/dist", settingsPath: path, decisions: false })).toEqual({
+        installHooks({ dist: "/dist", settingsPath: path, write: true, decisions: false, unpushed: false });
+        expect(wiringStatus({ dist: "/dist", settingsPath: path, decisions: false, unpushed: false })).toEqual({
             state: "installed",
             events: [],
         });
-        expect(wiringStatus({ dist: "/dist", settingsPath: settingsFile({}), decisions: false }).state).toBe("missing");
+        expect(
+            wiringStatus({ dist: "/dist", settingsPath: settingsFile({}), decisions: false, unpushed: false }).state
+        ).toBe("missing");
         expect(readSettings(path).hooks?.PostToolUse?.[0]?.matcher).toBe("Bash|Edit|MultiEdit|Write");
     });
 
@@ -435,7 +441,7 @@ describe("installHooks", () => {
         const path = settingsFile({ hooks: {} });
         const result = installHooks({ dist: "/dist", settingsPath: path, write: false });
 
-        expect(result.added).toEqual(["PreToolUse", "PostToolUse", "SessionEnd"]);
+        expect(result.added).toEqual(["Stop", "PreToolUse", "PostToolUse", "SessionEnd"]);
         expect(result.changed).toBe(true);
         expect(readSettings(path).hooks).toEqual({});
     });
@@ -486,6 +492,19 @@ describe("applySetting", () => {
         expect(() => applySetting(DEFAULT_HOOKS_CONFIG, "nonsense", "1")).toThrow("unknown key");
         expect(() => applySetting(DEFAULT_HOOKS_CONFIG, "shadow", "maybe")).toThrow("true or false");
         expect(() => applySetting(DEFAULT_HOOKS_CONFIG, "rules.find-from-root", "loud")).toThrow("takes one of");
+    });
+
+    it("agentsTalk.hint is a boolean switch that ships on and survives a load", () => {
+        expect(DEFAULT_HOOKS_CONFIG.agentsTalk.hint).toBe(true);
+        expect(applySetting(DEFAULT_HOOKS_CONFIG, "agentsTalk.hint", "false").agentsTalk.hint).toBe(false);
+        expect(() => applySetting(DEFAULT_HOOKS_CONFIG, "agentsTalk.hint", "off")).toThrow("true or false");
+
+        const path = join(mkdtempSync(join(tmpdir(), "gt-cfg-hint-")), "hooks.json");
+
+        writeFileSync(path, SafeJSON.stringify({ agentsTalk: { hint: false } }));
+        expect(loadHooksConfig(path).agentsTalk.hint).toBe(false);
+        writeFileSync(path, SafeJSON.stringify({ agentsTalk: { hint: "no" } }));
+        expect(loadHooksConfig(path).agentsTalk.hint).toBe(true);
     });
 
     it("refuses a count outside its domain, in set and on load alike", () => {
@@ -1114,7 +1133,7 @@ describe("installHooks on a machine with no settings file", () => {
         const path = join(dir, "nested", "settings.json");
         const result = installHooks({ dist: "/dist", settingsPath: path, write: true });
 
-        expect(result.added).toEqual(["PreToolUse", "PostToolUse", "SessionEnd"]);
+        expect(result.added).toEqual(["Stop", "PreToolUse", "PostToolUse", "SessionEnd"]);
         expect(result.backup).toBe(`${path}.pre-agents-hooks`);
         expect(existsSync(`${path}.pre-agents-hooks`)).toBe(false);
         expect(readSettings(path).hooks?.PreToolUse).toHaveLength(1);
@@ -1600,14 +1619,14 @@ describe("decision hub hooks", () => {
             SafeJSON.stringify({ hooks: { Stop: [{ hooks: [{ type: "command", command: "/mine.sh" }] }] } })
         );
 
-        const on = installHooks({ dist: "/dist", settingsPath: path, write: true, decisions: true });
+        const on = installHooks({ dist: "/dist", settingsPath: path, write: true, decisions: true, unpushed: false });
         expect(on.added).toEqual(expect.arrayContaining(["Stop", "UserPromptSubmit"]));
         expect(readSettings(path).hooks?.Stop?.map((entry) => entry.hooks[0]?.command)).toEqual([
             "/mine.sh",
             "bun '/dist/src/agents/bin/hook-stop.ts'",
         ]);
 
-        const off = installHooks({ dist: "/dist", settingsPath: path, write: true, decisions: false });
+        const off = installHooks({ dist: "/dist", settingsPath: path, write: true, decisions: false, unpushed: false });
         expect(off.removed).toEqual(["Stop", "UserPromptSubmit"]);
         expect(readSettings(path).hooks?.Stop).toEqual([{ hooks: [{ type: "command", command: "/mine.sh" }] }]);
     });
@@ -1623,5 +1642,118 @@ describe("decision hub hooks", () => {
         ]);
         expect(() => applySetting(next, "decisions.stopHook", "loud")).toThrow(/off, warn or block/);
         expect(() => applySetting(next, "decisions.harnesses", "cursor")).toThrow(/no such harness/);
+    });
+});
+
+describe("the unpushed reminder", () => {
+    const config = DEFAULT_HOOKS_CONFIG.unpushed;
+    const hour = 60 * 60_000;
+
+    /** A clone of a bare "origin" with its branch pushed, so `@{u}` exists. */
+    function pushedClone(): { work: string; run: (args: string[], extra?: Record<string, string>) => void } {
+        const base = mkdtempSync(join(tmpdir(), "gt-unpushed-"));
+        const origin = join(base, "origin.git");
+        const work = join(base, "work");
+        const run = (args: string[], extra: Record<string, string> = {}) => {
+            const result = Bun.spawnSync(["git", "-C", work, ...args], { env: { ...process.env, ...extra } });
+
+            if (result.exitCode !== 0) {
+                throw new Error(`git ${args.join(" ")}: ${result.stderr.toString()}`);
+            }
+        };
+
+        Bun.spawnSync(["git", "init", "-q", "--bare", origin], { env: process.env });
+        Bun.spawnSync(["git", "clone", "-q", origin, work], { env: process.env });
+        run(["config", "user.email", "alice@example.com"]);
+        run(["config", "user.name", "alice"]);
+        run(["commit", "-q", "--allow-empty", "-m", "seed"]);
+        run(["push", "-q", "-u", "origin", "HEAD"]);
+
+        return { work: realpathSync(work), run };
+    }
+
+    function commit(run: (args: string[], extra?: Record<string, string>) => void, count: number, at?: Date): void {
+        for (let index = 0; index < count; index += 1) {
+            const stamp: Record<string, string> = at
+                ? { GIT_COMMITTER_DATE: at.toISOString(), GIT_AUTHOR_DATE: at.toISOString() }
+                : {};
+
+            run(["commit", "-q", "--allow-empty", "-m", `work ${index}`], stamp);
+        }
+    }
+
+    it("stays quiet at or under the thresholds, and fires past 3 commits", () => {
+        const { work, run } = pushedClone();
+
+        commit(run, 3);
+        expect(unpushedReminders([work], config)).toEqual([]);
+
+        commit(run, 1);
+        const [line] = unpushedReminders([work], config);
+
+        expect(line).toMatch(/^⬆ work \S+: 4 commits not pushed, oldest 0m, last push \d\d:\d\d\. Push when ready/);
+    });
+
+    it("fires for ONE commit older than an hour", () => {
+        const { work, run } = pushedClone();
+
+        commit(run, 1, new Date(Date.now() - 2 * hour));
+
+        expect(unpushedReminders([work], config)[0]).toContain("1 commit not pushed, oldest 2h");
+    });
+
+    it("reminds once per repository per 30 minutes, across sessions", () => {
+        const { work, run } = pushedClone();
+        const now = Date.now();
+
+        commit(run, 5);
+
+        expect(unpushedReminders([work], config, now)).toHaveLength(1);
+        expect(unpushedReminders([work], config, now + 10 * 60_000)).toEqual([]);
+        expect(unpushedReminders([work], config, now + 29 * 60_000)).toEqual([]);
+        expect(unpushedReminders([work], config, now + 61 * 60_000)).toHaveLength(1);
+    });
+
+    it("stays quiet on a branch with no upstream, and when turned off", () => {
+        const { work, run } = pushedClone();
+
+        commit(run, 6);
+        expect(unpushedReminders([work], { ...config, enabled: false })).toEqual([]);
+
+        run(["checkout", "-q", "-b", "local-only"]);
+        expect(unpushedReminders([work], config)).toEqual([]);
+    });
+
+    it("spends two git processes on a new HEAD and one once it is cached", async () => {
+        const { work, run } = pushedClone();
+
+        commit(run, 2);
+
+        const first = await withSpawnCounter(async () => unpushedState(work));
+        const again = await withSpawnCounter(async () => unpushedState(work));
+
+        expect(first.result?.count).toBe(2);
+        expect(first.count).toBe(2);
+        expect(again.count).toBe(1);
+        expect(again.result?.count).toBe(2);
+    });
+
+    it("the installer wires Stop for it alone, and not UserPromptSubmit", () => {
+        const events = entriesFor("/dist", { decisions: false, unpushed: true }).map((item) => item.event);
+
+        expect(events).toContain("Stop");
+        expect(events).not.toContain("UserPromptSubmit");
+        expect(entriesFor("/dist", { decisions: false, unpushed: false }).map((item) => item.event)).not.toContain(
+            "Stop"
+        );
+    });
+
+    it("its thresholds are settable and validated", () => {
+        const next = applySetting(DEFAULT_HOOKS_CONFIG, "unpushed.maxCommits", "5");
+
+        expect(next.unpushed.maxCommits).toBe(5);
+        expect(applySetting(next, "unpushed.enabled", "false").unpushed.enabled).toBe(false);
+        expect(() => applySetting(next, "unpushed.maxAgeMinutes", "0")).toThrow(/at least 1/);
+        expect(() => applySetting(next, "unpushed.often", "1")).toThrow(/unknown key/);
     });
 });

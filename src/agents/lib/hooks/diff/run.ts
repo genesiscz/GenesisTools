@@ -18,18 +18,33 @@ import { committedPaths, gitOut, objectId, statusOf } from "../git";
 import { hookDiag } from "../log";
 import { callDir, safeSegment } from "../paths";
 import type { HookPayload } from "../payload";
+import {
+    type Attribution,
+    type AttributionContext,
+    attribute,
+    inFlightRoots,
+    othersTouches,
+    readOnlyCommand,
+    recordTouches,
+    summaryLine,
+    type Touch,
+} from "./attribution";
 import { alreadyGone, beforeCopy, leftOutOfCapture } from "./before";
 import { claimChange } from "./claim";
 import { classifyChange, type DiffCategory } from "./classify";
 import { type ChangedFile, changedFiles } from "./collect";
+import { appendMentions, loadMentions, type Mentions, mentionsFrom, mentionsOf } from "./mentions";
 import { namedChanges } from "./named";
 import { assembleMessage, type DiffBlock, highlightRange, hunkRange, renderBlock, renderPatch } from "./render";
 
 export interface DiffDecision {
-    decision: "emitted" | "silent" | "skip";
+    /** `noted`: no diff block, only the one-line summaries of files it could not show. */
+    decision: "emitted" | "noted" | "silent" | "skip";
     reason: string;
     message?: string;
     files: string[];
+    /** Changed files left to another writer, for the decision log. */
+    others?: string[];
 }
 
 /**
@@ -146,7 +161,8 @@ export function silentReason(
     uncaptured: number,
     claimed: number,
     stale: number,
-    suppressed: Map<DiffCategory, number>
+    suppressed: Map<DiffCategory, number>,
+    unattributed = 0
 ): string {
     const kinds = [...suppressed].map(([kind, count]) => `${count} ${kind}`).join(", ");
 
@@ -160,6 +176,7 @@ export function silentReason(
         [claimed > 0, `${claimed} already rendered`],
         [uncaptured > 0, `${uncaptured} with no captured before-state, over the capture cap`],
         [stale > 0, `${stale} deletion(s) already gone before this command began`],
+        [unattributed > 0, `${unattributed} changed by another writer, not this session`],
     ];
     const active = causes.filter(([holds]) => holds);
 
@@ -186,6 +203,10 @@ export function silentReason(
 
     if (stale > 0) {
         return `${stale} deletion(s) had already happened before this command began`;
+    }
+
+    if (unattributed > 0) {
+        return `${unattributed} changed file(s) were not attributable to this session`;
     }
 
     return "no change since this command began";
@@ -432,6 +453,12 @@ export function runDiffPost(
     let claimed = 0;
     let stale = 0;
     const suppressed = new Map<DiffCategory, number>();
+    const attribution = attributionContext(payload, since);
+    const touches: Touch[] = [];
+    const unattributed: Array<{ path: string; root: string }> = [];
+    const uncapturedFiles: Array<{ path: string; root: string }> = [];
+    const touch = (path: string, kind: Attribution) =>
+        touches.push({ session: payload.sessionId ?? "", start: since, end: attribution.now, kind, path });
 
     roots.forEach((root, index) => {
         // The cap short-circuits the ROOT loop too. Breaking only the inner loop still called
@@ -464,6 +491,20 @@ export function runDiffPost(
                 continue;
             }
 
+            // Before any copy is read: a change another session made is neither rendered, nor
+            // claimed (which would steal that session's render), nor logged as this session's.
+            const kind = attribute(file.path, root, attribution);
+
+            // A read-only command's "others" is no claim at all, so it leaves no row.
+            if (kind !== "others") {
+                touch(file.path, kind);
+            }
+
+            if (kind === "others" || kind === "ambiguous") {
+                unattributed.push({ path: file.path, root });
+                continue;
+            }
+
             const before = file.deleted ? null : beforeCopy(dir, root, file.path);
             // It was already dirty when the command began, and its before-state did not fit the
             // capture budget. The commit is then NOT its before-state: it lacks every earlier
@@ -490,6 +531,7 @@ export function runDiffPost(
 
             if (leftOut) {
                 uncaptured += 1;
+                uncapturedFiles.push({ path: file.path, root });
                 continue;
             }
 
@@ -519,6 +561,7 @@ export function runDiffPost(
         // A named path inside a captured root was already captured, with its git before-state.
         if (!captures.some((item) => item.path === change.path)) {
             captures.push({ path: change.path, before: change.before, deleted: change.deleted });
+            touch(change.path, "named");
         }
 
         if (full()) {
@@ -576,6 +619,7 @@ export function runDiffPost(
     }
 
     record(payload, captures, since);
+    recordTouches(touches);
 
     try {
         rmSync(dir, { recursive: true, force: true });
@@ -583,15 +627,69 @@ export function runDiffPost(
         hookDiag("Could not remove the capture directory", { err, dir });
     }
 
+    const notes = [
+        ...(uncapturedFiles.length > 0
+            ? [summaryLine("dirty file(s) changed with no captured before-state", uncapturedFiles)]
+            : []),
+        ...(unattributed.length > 0 && diff.othersSummary === "line"
+            ? [summaryLine("file(s) changed by others in this root", unattributed)]
+            : []),
+    ];
+    const others = unattributed.map((item) => item.path);
+
     if (blocks.length === 0) {
-        return { decision: "silent", reason: silentReason(covered, uncaptured, claimed, stale, suppressed), files: [] };
+        const reason = silentReason(covered, uncaptured, claimed, stale, suppressed, unattributed.length);
+
+        if (notes.length === 0) {
+            return { decision: "silent", reason, files: [], others };
+        }
+
+        return { decision: "noted", reason, message: notes.join("\n"), files: [], others };
     }
+
+    const noteBytes = notes.reduce((total, line) => total + Buffer.byteLength(line) + 2, 0);
+    const body = assembleMessage(blocks, { ...diff, maxMessageBytes: Math.max(0, diff.maxMessageBytes - noteBytes) });
 
     return {
         decision: "emitted",
         reason: "rendered a diff the harness did not",
-        message: assembleMessage(blocks, diff),
+        message: notes.length > 0 ? `${body}\n\n${notes.join("\n")}` : body,
         files,
+        others,
+    };
+}
+
+/** What `attribute` needs for one post phase. Only what the command names is read eagerly. */
+function attributionContext(payload: HookPayload, since: number): AttributionContext {
+    const session = payload.sessionId ?? "";
+    const now = Date.now();
+    const named = mentionsFrom(mentionsOf({ tool: "Bash", input: { command: payload.command }, cwd: payload.cwd }));
+    let mentions: Mentions | undefined;
+    let readOnly: boolean | undefined;
+    let others: Map<string, Touch[]> | undefined;
+    let busy: Set<string> | undefined;
+
+    return {
+        session,
+        since,
+        now,
+        named,
+        mentions: () => {
+            mentions ??= loadMentions(payload.sessionId);
+            return mentions;
+        },
+        readOnly: () => {
+            readOnly ??= readOnlyCommand(payload.command);
+            return readOnly;
+        },
+        others: () => {
+            others ??= othersTouches(session, since);
+            return others;
+        },
+        busyRoots: () => {
+            busy ??= inFlightRoots(session, now);
+            return busy;
+        },
     };
 }
 
@@ -739,5 +837,34 @@ export function recordFileToolChange(payload: HookPayload): void {
         );
     } catch (err) {
         hookDiag("Could not record the file-tool change", { err });
+    }
+}
+
+/**
+ * An Edit, MultiEdit, Write or NotebookEdit call names its file outright, so it goes into this
+ * session's mention index and the touches ledger at once. A later Bash post phase in another
+ * session then knows the file is not its own, even when that session's command overlapped.
+ * Never throws.
+ */
+export function noteFileToolInput(payload: HookPayload): void {
+    try {
+        const input = payload.raw.tool_input ?? payload.raw.toolInput;
+        const named = mentionsOf({ tool: payload.tool, input, cwd: payload.cwd });
+
+        if (named.length === 0 || !payload.sessionId) {
+            return;
+        }
+
+        appendMentions(payload.sessionId, loadMentions(payload.sessionId), named);
+
+        const now = Date.now();
+
+        recordTouches(
+            named
+                .filter((path) => !path.startsWith("glob:"))
+                .map((path) => ({ session: payload.sessionId ?? "", start: now, end: now, kind: "named", path }))
+        );
+    } catch (err) {
+        hookDiag("Could not note the file-tool input", { err });
     }
 }

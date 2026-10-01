@@ -158,6 +158,7 @@ export function registerHooksCommands(program: Command): void {
             table.push(["diff.maxFiles", String(config.diff.maxFiles)]);
             table.push(["diff.standDownWhenNative", String(config.diff.standDownWhenNative)]);
             table.push(["diff per harness", perHarnessDiff(config)]);
+            table.push(["agentsTalk.hint", String(config.agentsTalk.hint)]);
             table.push(["shadow", config.shadow ? "ON (decides, says nothing)" : "off (it speaks)"]);
             table.push(["log", config.logPath]);
             table.push(["log rotates at", `${config.maxLogMB} MB, keeping one generation`]);

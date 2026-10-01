@@ -48,28 +48,45 @@ export interface SettingsShape {
 /** Every command string this installer writes carries this, so uninstall is exact. */
 export const INSTALL_MARKER = "src/agents/bin/hook-";
 
-/** The Stop and UserPromptSubmit entries of the decision hub. Wired only while its config turns one on. */
-function decisionEntries(script: (name: string) => string): { event: string; entry: HookEntry }[] {
+/**
+ * The Stop entry serves two features, the decision hub and the unpushed reminder, so it is wired
+ * while either is on. UserPromptSubmit belongs to the decision hub alone.
+ */
+function stopEntries(
+    script: (name: string) => string,
+    options: { decisions?: boolean; unpushed?: boolean }
+): { event: string; entry: HookEntry }[] {
     return [
-        {
-            event: "Stop",
-            entry: { hooks: [{ type: "command", command: script("hook-stop.ts"), timeout: 15 }] },
-        },
-        {
-            event: "UserPromptSubmit",
-            entry: { hooks: [{ type: "command", command: script("hook-prompt.ts"), timeout: 15 }] },
-        },
+        ...(options.decisions || options.unpushed
+            ? [
+                  {
+                      event: "Stop",
+                      entry: { hooks: [{ type: "command", command: script("hook-stop.ts"), timeout: 15 }] },
+                  },
+              ]
+            : []),
+        ...(options.decisions
+            ? [
+                  {
+                      event: "UserPromptSubmit",
+                      entry: { hooks: [{ type: "command", command: script("hook-prompt.ts"), timeout: 15 }] },
+                  },
+              ]
+            : []),
     ];
 }
 
-export function entriesFor(dist: string, options: { decisions?: boolean } = {}): { event: string; entry: HookEntry }[] {
+export function entriesFor(
+    dist: string,
+    options: { decisions?: boolean; unpushed?: boolean } = {}
+): { event: string; entry: HookEntry }[] {
     // The harness runs each command through a shell, so a `dist` under a home directory or a
     // `--dist` with a space in it split into two arguments and every hook call failed. The
     // quoted form still contains INSTALL_MARKER, so a re-install converges an older entry.
     const script = (name: string): string => `bun ${shellQuote(`${dist}/src/agents/bin/${name}`)}`;
 
     return [
-        ...(options.decisions ? decisionEntries(script) : []),
+        ...stopEntries(script, options),
         {
             // ONE process for the whole PreToolUse phase. Two entries cost a second bun
             // start and a second module graph, measured at about 10 ms, on every Bash call.
@@ -275,6 +292,8 @@ export function installHooks(options: {
     write: boolean;
     /** Wire the decision hub's Stop and UserPromptSubmit hooks. Omitted: whatever the hooks config asks for. */
     decisions?: boolean;
+    /** Wire the Stop hook for the unpushed reminder. Omitted: `unpushed.enabled` from the hooks config. */
+    unpushed?: boolean;
 }): InstallResult {
     const dist = options.dist ?? hooksDistPath();
     const settingsPath = options.settingsPath ?? claudeSettingsPath();
@@ -284,7 +303,11 @@ export function installHooks(options: {
     const updated: string[] = [];
     const unchanged: string[] = [];
     const removed: string[] = [];
-    const wanted = entriesFor(dist, { decisions: options.decisions ?? decisionHooksWanted(loadHooksConfig()) });
+    const config = loadHooksConfig();
+    const wanted = entriesFor(dist, {
+        decisions: options.decisions ?? decisionHooksWanted(config),
+        unpushed: options.unpushed ?? config.unpushed.enabled,
+    });
     const wantedEvents = new Set(wanted.map((item) => item.event));
 
     settings.hooks ??= {};
@@ -347,7 +370,7 @@ export interface WiringStatus {
  * session change log.
  */
 export function wiringStatus(
-    options: { dist?: string; settingsPath?: string; decisions?: boolean } = {}
+    options: { dist?: string; settingsPath?: string; decisions?: boolean; unpushed?: boolean } = {}
 ): WiringStatus {
     const settingsPath = options.settingsPath ?? claudeSettingsPath();
 

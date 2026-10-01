@@ -74,3 +74,22 @@ export function callDir(harness: string, sessionId: string, toolUseId: string): 
 export function claimsRoot(): string {
     return join(tmpdir(), "GenesisTools", "ai", "hooks", "claims");
 }
+
+/**
+ * Sibling of `claimsRoot()`: one index per session of every path its tool inputs named, and
+ * the transcript offset that index was read up to. Outside the data root for the same reason
+ * the claims are: `collectStaleCaptures` walks that tree as `<harness>/<session>/diff/<call>`.
+ */
+export function mentionsRoot(): string {
+    return join(tmpdir(), "GenesisTools", "ai", "hooks", "mentions");
+}
+
+/** The unpushed reminder's per-repository cache and its once-per-interval claims. */
+export function unpushedRoot(): string {
+    return join(tmpdir(), "GenesisTools", "ai", "hooks", "unpushed");
+}
+
+/** The machine-wide ledger of which session took which changed file; see `diff/attribution.ts`. */
+export function touchesPath(): string {
+    return join(tmpdir(), "GenesisTools", "ai", "hooks", "touches.log");
+}

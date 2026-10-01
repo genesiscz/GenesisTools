@@ -19,12 +19,14 @@ import { DEFAULT_HOOKS_CONFIG, type DiffConfig } from "../config";
 import { isDeleted, statusEntries, untrackedFilesIn } from "../git";
 import { callDir, claimsRoot, sessionDir } from "../paths";
 import type { HookPayload } from "../payload";
+import { readOnlyCommand } from "./attribution";
 import { beforeCopy } from "./before";
 import { capturePre, captureRoots } from "./capture";
 import { claimChange, claimFileName } from "./claim";
 import { classifyChange, type DiffCategory } from "./classify";
 import { changedFiles } from "./collect";
 import { commandDirs, namedArguments } from "./command-paths";
+import { covers, mentionsFrom, textPaths } from "./mentions";
 import { assembleMessage, type DiffBlock, hasContext, highlightRange, hunkRange, renderPatch } from "./render";
 import {
     blobBatches,
@@ -32,6 +34,7 @@ import {
     captureChunks,
     capturedBefore,
     capturedBefores,
+    noteFileToolInput,
     runDiffPost,
     silentReason,
 } from "./run";
@@ -605,6 +608,9 @@ describe("review fixes", () => {
         git(["checkout", "--", "kept.ts"]);
         rmSync(off, { recursive: true, force: true });
         rmSync(on, { recursive: true, force: true });
+        // A capture with no post phase reads as a command still running in `repo`, which makes
+        // every later unnamed change there ambiguous for the other sessions in this file.
+        rmSync(sessionDir("claude", "harness-on"), { recursive: true, force: true });
     });
 });
 
@@ -972,6 +978,10 @@ describe("two sessions sharing one repository", () => {
     // during session A's command window is newer than A's stamp, so without a claim every
     // session prints every session's edits.
     const plain = { ...DEFAULT_HOOKS_CONFIG, diff: { ...DEFAULT_HOOKS_CONFIG.diff, highlight: "none" as const } };
+    // Every session NAMES the file, so each can attribute the change to itself and the claim
+    // is what decides who prints it. An unnamed change with two sessions in flight is the
+    // attribution case, covered in "a change another session made".
+    const SHARED_WRITER = "bun run fmt shared.ts";
     let shared: string;
 
     beforeAll(() => {
@@ -988,8 +998,8 @@ describe("two sessions sharing one repository", () => {
     });
 
     it("prints the change once, not once per session", () => {
-        const a = begin({ sessionId: "gt-diff-a", toolUseId: "share-1" });
-        const b = begin({ sessionId: "gt-diff-b", toolUseId: "share-1" });
+        const a = begin({ sessionId: "gt-diff-a", command: SHARED_WRITER, toolUseId: "share-1" });
+        const b = begin({ sessionId: "gt-diff-b", command: SHARED_WRITER, toolUseId: "share-1" });
 
         writeFileSync(shared, "one\nSHARED-ONCE\nthree\n");
 
@@ -1003,7 +1013,7 @@ describe("two sessions sharing one repository", () => {
     });
 
     it("prints the NEXT change to the same file again", () => {
-        const c = begin({ sessionId: "gt-diff-c", toolUseId: "share-2" });
+        const c = begin({ sessionId: "gt-diff-c", command: SHARED_WRITER, toolUseId: "share-2" });
 
         writeFileSync(shared, "one\nSHARED-SECOND-EDIT\nthree\n");
 
@@ -1011,13 +1021,13 @@ describe("two sessions sharing one repository", () => {
     });
 
     it("prints a later edit by the same session, then not the unchanged state again", () => {
-        const again = begin({ sessionId: "gt-diff-c", toolUseId: "share-3" });
+        const again = begin({ sessionId: "gt-diff-c", command: SHARED_WRITER, toolUseId: "share-3" });
 
         writeFileSync(shared, "one\nSAME-SESSION-AGAIN\nthree\n");
 
         expect(runDiffPost(again, plain).message).toContain("SAME-SESSION-AGAIN");
 
-        const retry = begin({ sessionId: "gt-diff-c", toolUseId: "share-4" });
+        const retry = begin({ sessionId: "gt-diff-c", command: SHARED_WRITER, toolUseId: "share-4" });
 
         // No further edit, so the mtime is older than this call's stamp. This is the `since`
         // filter, NOT the claim: the claim's own behaviour is pinned in "the render claim,
@@ -1027,8 +1037,8 @@ describe("two sessions sharing one repository", () => {
 
     it("dedupeAcrossSessions:false lets both sessions print it", () => {
         const diff = { ...DEFAULT_HOOKS_CONFIG.diff, highlight: "none" as const, dedupeAcrossSessions: false };
-        const a = begin({ sessionId: "gt-diff-a", toolUseId: "loose-1" }, diff);
-        const b = begin({ sessionId: "gt-diff-b", toolUseId: "loose-1" }, diff);
+        const a = begin({ sessionId: "gt-diff-a", command: SHARED_WRITER, toolUseId: "loose-1" }, diff);
+        const b = begin({ sessionId: "gt-diff-b", command: SHARED_WRITER, toolUseId: "loose-1" }, diff);
 
         writeFileSync(shared, "one\nBOTH-PRINT\nthree\n");
 
@@ -1092,8 +1102,11 @@ describe("a tree too dirty to capture whole", () => {
 
         const decision = runDiffPost(current, { ...plain, diff });
 
-        expect(decision.decision).toBe("silent");
+        // No diff, since a whole-file `Added` would be a lie, but the file is NAMED.
+        expect(decision.decision).toBe("noted");
         expect(decision.reason).toContain("no captured before-state");
+        expect(decision.message).toContain("dirty file(s) changed with no captured before-state:");
+        expect(decision.message).toContain("note.md");
     });
 });
 
@@ -1623,6 +1636,9 @@ describe("a deletion that is still sitting in `git status`", () => {
     // `git rm --cached`: 14 renders over seven minutes, one per later command in that
     // repository, 13 of them spurious.
     const plain = { ...DEFAULT_HOOKS_CONFIG, diff: { ...DEFAULT_HOOKS_CONFIG.diff, highlight: "none" as const } };
+    // Named, because this file's other sessions leave captures behind that read as commands
+    // still running in `repo`, and an unnamed change beside one of those is not attributable.
+    const command = "bun run prune doomed.ts";
 
     beforeAll(() => {
         writeFileSync(join(repo, "doomed.ts"), "one\ntwo\nthree\n");
@@ -1636,7 +1652,7 @@ describe("a deletion that is still sitting in `git status`", () => {
     });
 
     it("renders the removal once, on the command that made it", () => {
-        const removing = begin({ sessionId: "gt-diff-gone", toolUseId: "gone-1" }, plain.diff);
+        const removing = begin({ sessionId: "gt-diff-gone", command, toolUseId: "gone-1" }, plain.diff);
 
         rmSync(join(repo, "doomed.ts"));
 
@@ -1650,7 +1666,7 @@ describe("a deletion that is still sitting in `git status`", () => {
         // The precondition, asserted rather than assumed: git has not forgotten it.
         expect(statusEntries(repo).some((entry) => entry.path === "doomed.ts" && isDeleted(entry))).toBe(true);
 
-        const later = begin({ sessionId: "gt-diff-gone", toolUseId: "gone-2" }, plain.diff);
+        const later = begin({ sessionId: "gt-diff-gone", command, toolUseId: "gone-2" }, plain.diff);
         const decision = runDiffPost(later, plain);
 
         expect(decision.decision).toBe("silent");
@@ -1662,7 +1678,7 @@ describe("a deletion that is still sitting in `git status`", () => {
         // claim. A fixed deletion key made this second, separate deletion read as rendered.
         git(["checkout", "--", "doomed.ts"]);
 
-        const again = begin({ sessionId: "gt-diff-gone", toolUseId: "gone-3" }, plain.diff);
+        const again = begin({ sessionId: "gt-diff-gone", command, toolUseId: "gone-3" }, plain.diff);
 
         rmSync(join(repo, "doomed.ts"));
 
@@ -2042,5 +2058,276 @@ describe("listing a wide untracked directory", () => {
 
     it("says null, not empty, when git cannot list at all", () => {
         expect(untrackedFilesIn(join(wide, "not-a-repo-at-all"), "many/", 5)).toBeNull();
+    });
+});
+
+describe("a change another session made", () => {
+    // Measured 2026-09-30: a session ran one command in a shared checkout while a second
+    // session rewrote a file there, and the first session was shown that diff. Its transcript
+    // never named the file in any tool input.
+    const plain = { ...DEFAULT_HOOKS_CONFIG, diff: { ...DEFAULT_HOOKS_CONFIG.diff, highlight: "none" as const } };
+    let shared: string;
+    let turn = 0;
+
+    function as(session: string, overrides: Partial<HookPayload>, diff: DiffConfig = plain.diff): HookPayload {
+        turn += 1;
+        return begin({ sessionId: session, toolUseId: `attr-${turn}`, cwd: shared, ...overrides }, diff);
+    }
+
+    const own = (overrides: Partial<HookPayload>, diff?: DiffConfig) => as("gt-attr-mine", overrides, diff);
+    const other = (overrides: Partial<HookPayload>) => as("gt-attr-other", overrides);
+
+    beforeAll(() => {
+        shared = realpathSync(mkdtempSync(join(tmpdir(), "gt-attr-")));
+
+        const run = (args: string[]) =>
+            spawnSync("git", ["-C", shared, ...args], { encoding: "utf8", env: process.env });
+
+        run(["init", "-q"]);
+        run(["config", "user.email", "probe@local"]);
+        run(["config", "user.name", "probe"]);
+        mkdirSync(join(shared, "src"), { recursive: true });
+
+        for (const name of ["lifecycle.ts", "readme.md", "plan.md", "codemod-target.ts"]) {
+            writeFileSync(join(shared, "src", name), "one\ntwo\nthree\n");
+        }
+
+        run(["add", "-A"]);
+        run(["commit", "-qm", "init"]);
+    });
+
+    afterAll(() => {
+        rmSync(shared, { recursive: true, force: true });
+
+        for (const session of ["gt-attr-mine", "gt-attr-other"]) {
+            rmSync(sessionDir("claude", session), { recursive: true, force: true });
+        }
+    });
+
+    it("does not show a file a second session wrote with Edit during the command", () => {
+        const mine = own({ command: "bun run build" });
+        const lifecycle = join(shared, "src", "lifecycle.ts");
+
+        writeFileSync(lifecycle, "one\nOTHER-SESSION\nthree\n");
+        noteFileToolInput(
+            payload({ sessionId: "gt-attr-other", tool: "Write", raw: { tool_input: { file_path: lifecycle } } })
+        );
+
+        const decision = runDiffPost(mine, plain);
+
+        expect(decision.files).not.toContain(lifecycle);
+        expect(decision.message ?? "").not.toContain("OTHER-SESSION");
+        expect(decision.message).toBe("1 file(s) changed by others in this root: src/lifecycle.ts");
+        expect(decision.others).toEqual([lifecycle]);
+    });
+
+    it("does not show a file changed while another session's command was running there", () => {
+        const readme = join(shared, "src", "readme.md");
+        // A command that names nothing, beside another session's running command: not provable.
+        const theirs = other({ command: "bun run gen" });
+        const unnamed = own({ command: "bun run build" });
+
+        writeFileSync(readme, "one\nWHOSE-EDIT\nthree\n");
+
+        const decision = runDiffPost(unnamed, plain);
+
+        expect(decision.files).not.toContain(readme);
+        expect(decision.message).toContain("changed by others in this root:");
+        expect(decision.others).toContain(readme);
+
+        // `cd src` names a directory strictly INSIDE the root, so that command owns `src/`.
+        const cdInto = as("gt-attr-cd", { command: "cd src && bun run build" });
+
+        writeFileSync(readme, "one\nWHOSE-EDIT-2\nthree\n");
+
+        expect(runDiffPost(cdInto, plain).files).toContain(readme);
+
+        runDiffPost(theirs, plain);
+        rmSync(sessionDir("claude", "gt-attr-cd"), { recursive: true, force: true });
+    });
+
+    it("shows a file an EARLIER tool input of this session named, even beside another session", () => {
+        const plan = join(shared, "src", "plan.md");
+        const transcript = join(shared, "..", `gt-attr-transcript-${process.pid}.jsonl`);
+        const line = (input: Record<string, unknown>, name: string) =>
+            `${SafeJSON.stringify({ type: "assistant", cwd: shared, message: { content: [{ type: "tool_use", name, input }] } })}\n`;
+
+        // A Read earlier in the session, found by tailing the transcript, never by a hook of its own.
+        writeFileSync(transcript, line({ file_path: "src/plan.md" }, "Read"));
+
+        const theirs = other({ command: "bun run gen" });
+        const mine = own({ command: "bun run build", raw: { transcript_path: transcript } });
+
+        writeFileSync(plan, "one\nMENTIONED-EARLIER\nthree\n");
+
+        const decision = runDiffPost(mine, plain);
+
+        expect(decision.files).toContain(plan);
+        expect(decision.message).toContain("MENTIONED-EARLIER");
+
+        runDiffPost(theirs, plain);
+        rmSync(transcript, { force: true });
+    });
+
+    it("shows a codemod's unnamed change when no other writer was in the root, never for a read-only command", () => {
+        const target = join(shared, "src", "codemod-target.ts");
+        const codemod = own({ command: "bun scripts/rename-symbols.ts" });
+
+        writeFileSync(target, "one\nCODEMOD\nthree\n");
+
+        const ran = runDiffPost(codemod, plain);
+
+        expect(ran.files).toContain(target);
+        expect(ran.message).toContain("CODEMOD");
+
+        const status = own({ command: "git status --short | head" });
+
+        writeFileSync(target, "one\nWHILE-READING\nthree\n");
+
+        const read = runDiffPost(status, plain);
+
+        expect(read.files).not.toContain(target);
+        expect(read.decision).toBe("noted");
+    });
+
+    it("hides the others line when othersSummary is hidden", () => {
+        const diff = { ...plain.diff, othersSummary: "hidden" as const };
+        const status = own({ command: "git log -1" }, diff);
+
+        writeFileSync(join(shared, "src", "lifecycle.ts"), "one\nHIDDEN-LINE\nthree\n");
+
+        const decision = runDiffPost(status, { ...plain, diff });
+
+        expect(decision.decision).toBe("silent");
+        expect(decision.reason).toContain("not attributable to this session");
+        expect(decision.message).toBeUndefined();
+    });
+});
+
+describe("a dirty tree past the capture cap", () => {
+    // Measured 2026-09-30 on the vault: 835 dirty entries against a 400-file cap, and the notes
+    // a session was editing were among the 435 left out, so its edits printed nothing.
+    const diff = { ...DEFAULT_HOOKS_CONFIG.diff, highlight: "none" as const, maxCaptureFiles: 2 };
+    const plain = { ...DEFAULT_HOOKS_CONFIG, diff };
+    let vault: string;
+
+    beforeAll(() => {
+        vault = realpathSync(mkdtempSync(join(tmpdir(), "gt-cap-")));
+
+        const run = (args: string[]) =>
+            spawnSync("git", ["-C", vault, ...args], { encoding: "utf8", env: process.env });
+
+        run(["init", "-q"]);
+        run(["config", "user.email", "probe@local"]);
+        run(["config", "user.name", "probe"]);
+        writeFileSync(join(vault, "seed.md"), "seed\n");
+        run(["add", "-A"]);
+        run(["commit", "-qm", "init"]);
+        mkdirSync(join(vault, "inbox"), { recursive: true });
+
+        // One wholly-untracked directory holding more files than the capture may take.
+        // Backdated, so only what the command itself touches is newer than its stamp.
+        const past = new Date(Date.now() - 60_000);
+
+        for (const name of ["a.md", "b.md", "c.md", "d.md", "e.md"]) {
+            writeFileSync(join(vault, "inbox", name), `${name}\nbody\n`);
+            utimesSync(join(vault, "inbox", name), past, past);
+        }
+    });
+
+    afterAll(() => {
+        rmSync(vault, { recursive: true, force: true });
+        rmSync(sessionDir("claude", "gt-cap-mine"), { recursive: true, force: true });
+    });
+
+    it("diffs a NEW file against empty, names an uncaptured one, and captures a mentioned one first", () => {
+        // An earlier command of this session named e.md, the largest name in sort order.
+        begin({ sessionId: "gt-cap-mine", toolUseId: "cap-0", cwd: vault, command: "cat inbox/e.md" }, diff);
+
+        const current = begin(
+            { sessionId: "gt-cap-mine", toolUseId: "cap-1", cwd: vault, command: "bun run sync" },
+            diff
+        );
+
+        writeFileSync(join(vault, "inbox", "new-note.md"), "brand\nNEW-NOTE\n");
+        writeFileSync(join(vault, "inbox", "e.md"), "e.md\nMENTIONED-DELTA\n");
+        writeFileSync(join(vault, "inbox", "c.md"), "c.md\nUNCAPTURED\n");
+
+        const decision = runDiffPost(current, plain);
+
+        expect(decision.message).toContain("NEW-NOTE");
+        expect(decision.message).toContain("MENTIONED-DELTA");
+        expect(decision.message).toContain("(+1 -1)");
+        expect(decision.message ?? "").not.toContain("UNCAPTURED");
+        expect(decision.message).toContain("1 dirty file(s) changed with no captured before-state: inbox/c.md");
+        expect(decision.message ?? "").not.toContain("inbox/a.md");
+    });
+});
+
+describe("mention extraction", () => {
+    it("reads paths out of heredoc bodies, inline scripts and --file flags", () => {
+        const found = textPaths(
+            [
+                "cd /work/app && python3 - <<'EOF'",
+                'p="src/notes/README.md"; open(p,"w")',
+                "EOF",
+                "bun -e 'await Bun.write(\"docs/out.md\", x)'",
+                "fable-replace --file=/tmp/ops.json src/a.ts,src/b.ts lib/x.ts:42",
+                "echo https://example.com/not/a/path $HOME/nope",
+            ].join("\n")
+        );
+
+        expect(found).toEqual(
+            expect.arrayContaining([
+                "/work/app",
+                "src/notes/README.md",
+                "docs/out.md",
+                "/tmp/ops.json",
+                "src/a.ts",
+                "src/b.ts",
+                "lib/x.ts",
+            ])
+        );
+        expect(found.some((token) => token.includes("example.com"))).toBe(false);
+        expect(found.some((token) => token.includes("nope"))).toBe(false);
+    });
+
+    it("never lets the repository root itself, or a glob over it, cover every file", () => {
+        const root = "/work/app";
+        const mentions = mentionsFrom([root, `${root}/src/feature`, `glob:${root}/**/*.ts`, `glob:${root}/docs/*.md`]);
+
+        expect(covers(mentions, `${root}/src/feature/x.ts`, root)).toBe(true);
+        expect(covers(mentions, `${root}/docs/y.md`, root)).toBe(true);
+        expect(covers(mentions, `${root}/src/other/z.ts`, root)).toBe(false);
+    });
+
+    it("an EARLIER mention reaches only a directory's direct children and a glob without **", () => {
+        const root = "/work/app";
+        // `ls <root>/src/` and `rg x <root>/src/` earlier in a session are what claimed every
+        // file under `src` for it, another session's new file included.
+        const mentions = mentionsFrom([`${root}/src`, `glob:${root}/lib/**/*.ts`, `glob:${root}/docs/*.md`]);
+
+        expect(covers(mentions, `${root}/src/index.ts`, root, "shallow")).toBe(true);
+        expect(covers(mentions, `${root}/src/utils/services/lifecycle.ts`, root, "shallow")).toBe(false);
+        expect(covers(mentions, `${root}/src/utils/services/lifecycle.ts`, root, "deep")).toBe(true);
+        expect(covers(mentions, `${root}/lib/deep/a.ts`, root, "shallow")).toBe(false);
+        expect(covers(mentions, `${root}/docs/y.md`, root, "shallow")).toBe(true);
+    });
+
+    it("classifies read-only commands, and anything that writes or runs a program as a runner", () => {
+        expect(readOnlyCommand("git -C /work status --short | head -5")).toBe(true);
+        expect(readOnlyCommand('rg -n "rm -rf" src && cat a.ts | wc -l')).toBe(true);
+        expect(readOnlyCommand("git status > /tmp/status.txt")).toBe(false);
+        expect(readOnlyCommand("sed -i '' s/a/b/ x.ts")).toBe(false);
+        expect(readOnlyCommand("find . -name '*.log' -delete")).toBe(false);
+        expect(readOnlyCommand("git commit -m x")).toBe(false);
+        expect(readOnlyCommand("bun scripts/codemod.ts")).toBe(false);
+        // Reading commands that write through their own flags or programs.
+        expect(readOnlyCommand("sort -o out.txt in.txt")).toBe(false);
+        expect(readOnlyCommand("tree -o report.txt")).toBe(false);
+        expect(readOnlyCommand('awk \'BEGIN { print "x" > "out" }\'')).toBe(false);
+        expect(readOnlyCommand("sed 's/a/b/w out.txt' f")).toBe(false);
+        expect(readOnlyCommand("rg -n foo | sort | uniq -c")).toBe(true);
+        expect(readOnlyCommand("awk '{print $1}' f")).toBe(true);
     });
 });

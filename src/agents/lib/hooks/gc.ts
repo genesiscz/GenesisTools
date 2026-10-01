@@ -1,7 +1,7 @@
 import { readdirSync, rmdirSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { hookDiag } from "./log";
-import { claimsRoot, hookDataRoot } from "./paths";
+import { claimsRoot, hookDataRoot, mentionsRoot, unpushedRoot } from "./paths";
 
 export interface StaleCapture {
     path: string;
@@ -148,6 +148,71 @@ export function collectStaleCaptures(options: {
                     rmSync(path, { force: true });
                 } catch (err) {
                     hookDiag("Could not remove a stale render claim", { err, path });
+                }
+            }
+        }
+    }
+
+    // A session's mention index (and its transcript offset) goes with the session, or once
+    // nothing has touched it for the horizon. A session that comes back rebuilds it from its
+    // transcript, so removing one costs a single backfill read, never a wrong answer.
+    for (const name of safeList(mentionsRoot())) {
+        const owner = name.replace(/\.(?:txt|json)$/, "");
+        const path = join(mentionsRoot(), name);
+        let stat: ReturnType<typeof statSync>;
+
+        try {
+            stat = statSync(path);
+        } catch (err) {
+            hookDiag("Could not stat a mention index", { err, path });
+            continue;
+        }
+
+        const ageMs = options.now - stat.mtimeMs;
+
+        if (options.sessionId ? owner !== options.sessionId : ageMs < horizonMs) {
+            continue;
+        }
+
+        removed.push({ path, ageMs, bytes: stat.size });
+        bytes += stat.size;
+
+        if (write) {
+            try {
+                rmSync(path, { force: true });
+            } catch (err) {
+                hookDiag("Could not remove a mention index", { err, path });
+            }
+        }
+    }
+
+    // The unpushed reminder's cache and claims: one small file per repository per interval.
+    if (!options.sessionId) {
+        for (const name of safeList(unpushedRoot())) {
+            const path = join(unpushedRoot(), name);
+            let stat: ReturnType<typeof statSync>;
+
+            try {
+                stat = statSync(path);
+            } catch (err) {
+                hookDiag("Could not stat an unpushed reminder file", { err, path });
+                continue;
+            }
+
+            const ageMs = options.now - stat.mtimeMs;
+
+            if (ageMs < horizonMs) {
+                continue;
+            }
+
+            removed.push({ path, ageMs, bytes: stat.size });
+            bytes += stat.size;
+
+            if (write) {
+                try {
+                    rmSync(path, { force: true });
+                } catch (err) {
+                    hookDiag("Could not remove an unpushed reminder file", { err, path });
                 }
             }
         }

@@ -9,6 +9,7 @@ import {
     isCount,
     isMegabytes,
     loadHooksConfigForWrite,
+    OTHERS_SUMMARIES,
 } from "./config";
 import { writeJsonFile } from "./write-json";
 
@@ -34,6 +35,8 @@ export const SETTABLE_KEYS = [
     "diff.maxCaptureMB",
     "diff.maxCaptureFileMB",
     "diff.maxNamedPathMB",
+    "diff.othersSummary",
+    "unpushed.<enabled|maxCommits|maxAgeMinutes|remindEveryMinutes>",
     "diff.harnesses.<claude|codex|grok>.<enabled|maxFiles|…>",
     "maxLogMB",
     "guard.longCommand.lines",
@@ -47,6 +50,7 @@ export const SETTABLE_KEYS = [
     "decisions.harvest",
     "decisions.injectAnswers",
     "decisions.staleness.<warnAfterMinutes|alarmAfterMinutes|notify>",
+    "agentsTalk.hint",
 ] as const;
 
 /** One `decisions.*` key. The stop hook takes off|warn|block; `harnesses` a comma list. */
@@ -213,6 +217,40 @@ export function applySetting(config: HooksConfig, key: string, value: string): H
         return next;
     }
 
+    if (key.startsWith("unpushed.")) {
+        const field = key.slice("unpushed.".length);
+
+        if (field === "enabled") {
+            next.unpushed = { ...config.unpushed, enabled: asBoolean(key, value) };
+            return next;
+        }
+
+        if (field === "maxCommits" || field === "remindEveryMinutes") {
+            next.unpushed = { ...config.unpushed, [field]: asCount(key, value, 0) };
+            return next;
+        }
+
+        if (field === "maxAgeMinutes") {
+            next.unpushed = { ...config.unpushed, maxAgeMinutes: asCount(key, value) };
+            return next;
+        }
+
+        throw new Error(
+            `unknown key: ${key}. Settable: unpushed.enabled, maxCommits, maxAgeMinutes, remindEveryMinutes`
+        );
+    }
+
+    if (key === "diff.othersSummary") {
+        const mode = OTHERS_SUMMARIES.find((candidate) => candidate === value);
+
+        if (!mode) {
+            throw new Error(`${key} takes ${OTHERS_SUMMARIES.join(" or ")}, not ${SafeJSON.stringify(value)}`);
+        }
+
+        next.diff.othersSummary = mode;
+        return next;
+    }
+
     const perHarnessDiff = /^diff\.harnesses\.([^.]+)\.(.+)$/.exec(key);
 
     if (perHarnessDiff?.[1] && perHarnessDiff[2]) {
@@ -233,6 +271,11 @@ export function applySetting(config: HooksConfig, key: string, value: string): H
 
     if (key.startsWith("decisions.")) {
         return withDecisions(next, key, value);
+    }
+
+    if (key === "agentsTalk.hint") {
+        next.agentsTalk = { ...config.agentsTalk, hint: asBoolean(key, value) };
+        return next;
     }
 
     if (key === "maxLogMB") {

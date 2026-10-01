@@ -1,7 +1,6 @@
 import { spawnSync } from "node:child_process";
-import { chmodSync, type Dirent, lstatSync, mkdirSync, readdirSync, type Stats, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { isAbsolute, join, relative, sep } from "node:path";
+import { chmodSync, type Dirent, lstatSync, readdirSync, type Stats, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import type { StatusEntry } from "@genesiscz/utils/git/porcelain";
 import { type DiffConfig, megabytes } from "../config";
 import { gitOut, isDeleted, isUntrackedDirectory, objectId, statusEntries, untrackedFilesIn } from "../git";
@@ -9,7 +8,16 @@ import { hookDiag } from "../log";
 import { callDir, safeSegment } from "../paths";
 import type { HookPayload } from "../payload";
 import { commandDirs, namedArguments } from "./command-paths";
+import { coverage, refreshMentions } from "./mentions";
 import { captureNamed } from "./named";
+import { makePrivateDir } from "./private-dir";
+
+/** The Claude transcript this call belongs to, from the payload. */
+function transcriptOf(payload: HookPayload): string | null {
+    const value = payload.raw.transcript_path ?? payload.raw.transcriptPath;
+
+    return typeof value === "string" && value.length > 0 ? value : null;
+}
 
 export interface CaptureResult {
     roots: string[];
@@ -25,45 +33,7 @@ export interface CaptureResult {
  * mode 700 on macOS, but on Linux and in CI it is a world-readable `/tmp`, so the platform
  * cannot be relied on for this.
  */
-const DIR_MODE = 0o700;
 const FILE_MODE = 0o600;
-
-/**
- * Creates `dir` and proves that every directory from `tmpdir()` down to it is a plain directory
- * owned by this user. Setting 0700 on the leaf alone was not enough on a shared `/tmp`: another
- * user could pre-create `GenesisTools/...` or plant a symlink in the chain, and the copies of
- * dirty files would land in a tree that user controls. Returns the reason it refused, or `null`.
- */
-function makePrivateDir(dir: string): string | null {
-    mkdirSync(dir, { recursive: true, mode: DIR_MODE });
-
-    const base = tmpdir();
-    const rel = relative(base, dir);
-    const parts = rel.startsWith("..") || isAbsolute(rel) ? [] : rel.split(sep);
-    const chain = parts.length === 0 ? [dir] : parts.map((_, i) => join(base, ...parts.slice(0, i + 1)));
-    const uid = process.getuid?.();
-
-    for (const path of chain) {
-        const stat = lstatSync(path);
-
-        if (stat.isSymbolicLink() || !stat.isDirectory()) {
-            return `${path} is not a plain directory`;
-        }
-
-        if (uid !== undefined && stat.uid !== uid) {
-            return `${path} belongs to uid ${stat.uid}, not to this user`;
-        }
-
-        try {
-            // `mkdirSync`'s mode is masked by the umask, and the parents may pre-date this call.
-            chmodSync(path, DIR_MODE);
-        } catch (err) {
-            hookDiag("Could not tighten a capture directory mode", { err, path });
-        }
-    }
-
-    return null;
-}
 
 function writePrivateFile(path: string, contents: string): void {
     writeFileSync(path, contents, { mode: FILE_MODE });
@@ -142,8 +112,14 @@ interface CapturePlan {
  * holds more files than the whole capture may take is left out as a unit rather than expanded
  * without bound, and deletions are skipped because `tar` cannot stat them.
  */
-function captureList(root: string, entries: StatusEntry[], config: DiffConfig): { files: string[]; tooWide: string[] } {
+function captureList(
+    root: string,
+    entries: StatusEntry[],
+    config: DiffConfig,
+    mentioned: (relativePath: string) => boolean
+): { files: string[]; namesOnly: string[]; tooWide: string[] } {
     const files: string[] = [];
+    const namesOnly: string[] = [];
     const tooWide: string[] = [];
 
     for (const entry of entries) {
@@ -163,20 +139,44 @@ function captureList(root: string, entries: StatusEntry[], config: DiffConfig): 
             continue;
         }
 
-        const inside = untrackedFilesIn(root, entry.path, config.maxCaptureFiles + 1);
+        // The common directory fits the capture, and its listing stays as cheap as before. Only one
+        // that overflows is listed again, by name, up to the larger cap.
+        const small = untrackedFilesIn(root, entry.path, config.maxCaptureFiles + 1);
+        const inside =
+            small !== null && small.length > config.maxCaptureFiles
+                ? untrackedFilesIn(root, entry.path, MAX_RECORDED_NAMES + 1)
+                : small;
 
         // A listing that failed is left out as a unit too: treating it as empty would record
         // the directory as neither captured nor left out, and its files would read as created.
-        if (inside === null || inside.length > config.maxCaptureFiles) {
+        if (inside === null || inside.length > MAX_RECORDED_NAMES) {
             tooWide.push(entry.path);
             continue;
         }
 
-        files.push(...inside);
+        if (inside.length <= config.maxCaptureFiles) {
+            files.push(...inside);
+            continue;
+        }
+
+        // Too many to size and copy, few enough to NAME. A name is what lets the post phase
+        // tell a file that existed (no before-state, stays quiet) from one the command created
+        // (diffed against empty). Only the session's own files among them compete for a copy.
+        for (const name of inside) {
+            (mentioned(name) ? files : namesOnly).push(name);
+        }
     }
 
-    return { files, tooWide };
+    return { files, namesOnly, tooWide };
 }
+
+/**
+ * How many files of ONE wholly-untracked directory are listed by name when there are too many
+ * to capture. Past it the directory is recorded as a unit, and a file created inside it reads
+ * as one that existed. Measured 2026-09-30: the vault had 835 dirty entries against a 400-file
+ * capture cap.
+ */
+const MAX_RECORDED_NAMES = 5_000;
 
 /**
  * Which dirty files fit the budget, SMALLEST FIRST.
@@ -191,15 +191,24 @@ function captureList(root: string, entries: StatusEntry[], config: DiffConfig): 
  * not fit are written out, because a file that EXISTED but has no copy must never be reported
  * as one the command created.
  */
-function planCapture(root: string, files: string[], config: DiffConfig): CapturePlan {
+function planCapture(
+    root: string,
+    files: string[],
+    config: DiffConfig,
+    mentioned: (relativePath: string) => boolean
+): CapturePlan {
     const fileCap = megabytes(config.maxCaptureFileMB);
     const totalCap = megabytes(config.maxCaptureMB);
     const sized = files.map((file) => ({
         file,
         size: entryBytes(join(root, file), fileCap),
+        mine: mentioned(file),
     }));
 
-    sized.sort((left, right) => left.size - right.size);
+    // The session's own files first, then smallest first. Measured 2026-09-30 on the vault: 835
+    // dirty entries, 400 captured, and the notes a session was editing were among the 435 left
+    // out, so six of its edits that day printed nothing.
+    sized.sort((left, right) => Number(right.mine) - Number(left.mine) || left.size - right.size);
 
     const take: string[] = [];
     const left: string[] = [];
@@ -332,6 +341,15 @@ export function capturePre(payload: HookPayload, config: DiffConfig): CaptureRes
         return { roots, captured, named: 0, skipped };
     }
 
+    // Before the early return below: a command outside every repository still names paths
+    // that a later command's post phase must recognise as this session's.
+    const mentions = refreshMentions({
+        sessionId: payload.sessionId,
+        transcript: payload.harness === "claude" ? transcriptOf(payload) : null,
+        current: { tool: "Bash", input: { command: payload.command }, cwd: payload.cwd },
+        roots,
+    });
+
     if (roots.length === 0 && wanted.length === 0) {
         // Nothing to compare later, so no directory is created and the collector has nothing
         // to sweep. This is the normal case for a command that touches no file at all.
@@ -365,7 +383,10 @@ export function capturePre(payload: HookPayload, config: DiffConfig): CaptureRes
         // exits 1, and one such entry discards the whole archive — the root then loses its
         // before-state for every file. Observed on 2026-09-20 during a `git rm`. The post
         // phase renders a deletion from `git diff HEAD` and needs no captured copy.
-        const { files, tooWide } = captureList(root, entries, config);
+        const named = coverage(mentions.current, root, "deep");
+        const earlier = coverage(mentions.index, root, "shallow");
+        const mentioned = (name: string) => named(join(root, name)) || earlier(join(root, name));
+        const { files, namesOnly, tooWide } = captureList(root, entries, config, mentioned);
         // Excluding them from the archive also leaves the post phase unable to tell a
         // deletion this command MADE from one that was already sitting in `git status`.
         // Writing the names down is what closes that. See `alreadyGone` for the measurement.
@@ -375,19 +396,19 @@ export function capturePre(payload: HookPayload, config: DiffConfig): CaptureRes
             writePrivateFile(join(dir, `${index + 1}.gone`), `${gone.join("\n")}\n`);
         }
 
-        if (files.length === 0 && tooWide.length === 0) {
+        if (files.length === 0 && namesOnly.length === 0 && tooWide.length === 0) {
             return;
         }
 
-        const plan = planCapture(root, files, config);
-        const left = [...plan.left, ...tooWide];
+        const plan = planCapture(root, files, config, mentioned);
+        const left = [...plan.left, ...namesOnly, ...tooWide];
 
         // The refusal is RECORDED rather than silent, so the post phase can tell a file it
         // has no copy of from a file the command genuinely created. A directory too wide to
         // expand is recorded whole; `leftOutOfCapture` matches every file under a `dir/` entry.
         if (left.length > 0) {
             skipped.push(
-                `${root}: ${plan.reason ?? `${tooWide.length} untracked director(ies) over the ${config.maxCaptureFiles} file cap left out`}`
+                `${root}: ${plan.reason ?? `${namesOnly.length} untracked file(s) named but not captured, ${tooWide.length} untracked director(ies) over the ${MAX_RECORDED_NAMES} name cap left out`}`
             );
             writePrivateFile(join(dir, `${index + 1}.left`), `${left.join("\n")}\n`);
         }
