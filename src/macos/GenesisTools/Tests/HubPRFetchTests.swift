@@ -87,4 +87,15 @@ final class HubPRFetchTests: XCTestCase {
             XCTAssertTrue(scope.readsTheCheckout, "\(scope)")
         }
     }
+
+    /// A show answer moves the row only while the row still has the head the request started from.
+    func testAnOlderShowAnswerNeverRollsBackANewerListHead() {
+        // show(A) starts, the list installs B, show(A) lands: the row keeps B.
+        XCTAssertFalse(PRsModel.showMovesHead(started: "a", current: "b", shown: "a"))
+        // show starts at A, a push makes the show answer B while the row still shows A: it follows B.
+        XCTAssertTrue(PRsModel.showMovesHead(started: "a", current: "a", shown: "b"))
+        XCTAssertFalse(PRsModel.showMovesHead(started: "a", current: "a", shown: "a"))
+        XCTAssertFalse(PRsModel.showMovesHead(started: "a", current: "a", shown: nil))
+    }
+
 }

@@ -243,6 +243,10 @@ final class PRsModel: ObservableObject {
     private(set) var query = ""
     /// The cache key of the list on screen; a new key (state, mine, search) starts at its cached page.
     private var shownKey: String?
+    /// Counts list loads, so a cached list read off the main actor never paints over a newer request
+    /// or over the fresh answer that came first.
+    private var listGeneration = 0
+    private var freshGeneration = -1
     /// The key of the rows on screen (the cache paints before the fresh answer).
     private var appliedKey: String?
     private var lastLoad: Date?
@@ -284,8 +288,16 @@ final class PRsModel: ObservableObject {
             limit = max(Self.pageSize, PRListCache.limit(key))
             // The list for these very projects, else the last list of any projects with the same
             // filters: the project set follows the recent sessions, so the exact key often misses.
-            if let cached = PRListCache.readList(key) ?? PRListCache.readLastList(state: state, mine: mineOnly, query: query),
-               let list = try? JSONDecoder().decode(HubPRList.self, from: cached) {
+            // Read and decoded off the main actor (a widened list carries every description); applied only
+            // while this list is still the one shown and its fresh answer has not landed first.
+            listGeneration += 1
+            let generation = listGeneration
+            Task {
+                let cached = await Task.detached(priority: .userInitiated) { () -> HubPRList? in
+                    guard let data = PRListCache.readList(key) ?? PRListCache.readLastList(state: state, mine: mineOnly, query: query) else { return nil }
+                    return try? JSONDecoder().decode(HubPRList.self, from: data)
+                }.value
+                guard let list = cached, generation == listGeneration, shownKey == key, freshGeneration != generation else { return }
                 apply(list, key: key, flash: false)
                 showingCache = true
                 HubSWR.painted("prs.list", "\(list.prs.count) prs")
@@ -294,6 +306,7 @@ final class PRsModel: ObservableObject {
                 }
             }
         }
+        let generation = listGeneration
         // A PR asked for by a link or the browser extension: its detail starts now, from the cached row
         // or straight from its checkout, never after the whole list (11 s for ten projects).
         startWanted()
@@ -335,8 +348,11 @@ final class PRsModel: ObservableObject {
                 span.end("\(list.prs.count) prs")
                 HubMainBusy.measure("prs.list.render")
                 if list.repos.allSatisfy({ $0.error == nil }) {
-                    PRListCache.writeList(data, key: key, limit: limit, state: state, mine: mineOnly, query: query)
+                    Task.detached(priority: .utility) {
+                        PRListCache.writeList(data, key: key, limit: limit, state: state, mine: mineOnly, query: query)
+                    }
                 }
+                freshGeneration = generation
                 apply(list, key: key, flash: true)
                 // Once per list load, never on a timer (Hub/HubPRReadiness.swift). The open PR's verdict first.
                 let selectedID = selectedID
@@ -428,7 +444,9 @@ final class PRsModel: ObservableObject {
     }
 
     /// One PR's row and detail from `tools hub pr show <root>#<n>` (the detail is a list row plus its
-    /// body, commits and checks): selected at once, with its diff and threads, while the list loads.
+    /// body, commits and checks), while the list loads. Its threads and head fetch start once that answer
+    /// lands, not with it: for a PR with no cached row only the show names its forge thread target and
+    /// its head commit. A cached row (`startWanted`) starts all three at once.
     private func openDirect(_ ref: HubPRRef, root: String) {
         let arg = "\(root)#\(ref.number)"
         directOpen = (ref, selectedID)
@@ -449,7 +467,7 @@ final class PRsModel: ObservableObject {
                 return
             }
             span.end(row.label)
-            PRListCache.writeDetail(data, id: row.id)
+            Task.detached(priority: .utility) { PRListCache.writeDetail(data, id: row.id) }
             details[row.id] = detail
             detailFetched[row.id] = Date()
             // Still wanted: the list has not answered, or it answered and nobody picked another row since.
@@ -684,14 +702,27 @@ final class PRsModel: ObservableObject {
         }
         selectedID = pr.id
         let key = pr.id
-        if details[key] == nil, let cached = PRListCache.readDetail(key),
-           let detail = try? JSONDecoder().decode(HubPRDetail.self, from: cached) {
-            // The last known detail at once; the fresh one below replaces it.
-            details[key] = detail
+        if details[key] == nil {
+            // The last known detail, read off the main actor; the fresh one below replaces it and wins a race.
+            Task {
+                let cached = await Task.detached(priority: .userInitiated) { () -> HubPRDetail? in
+                    PRListCache.readDetail(key).flatMap { try? JSONDecoder().decode(HubPRDetail.self, from: $0) }
+                }.value
+                if let cached, details[key] == nil {
+                    details[key] = cached
+                }
+            }
         }
         loadDetail(pr, force: opened)
         prefetchThreads(pr)
         showDiff(pr)
+    }
+
+    /// Whether a `hub pr show` answer may move the row to its head. Only when the row still shows the head the
+    /// request started from: a list that installed a newer head meanwhile is never rolled back by an older answer.
+    nonisolated static func showMovesHead(started: String?, current: String?, shown: String?) -> Bool {
+        guard let shown, shown != current else { return false }
+        return current == started
     }
 
     /// The diff of `pr`: its worktree's, else its head fetched into the main checkout (`fetchHead`).
@@ -772,13 +803,14 @@ final class PRsModel: ObservableObject {
                 return
             }
             detailFetched[key] = Date()
-            PRListCache.writeDetail(data, id: key)
+            Task.detached(priority: .utility) { PRListCache.writeDetail(data, id: key) }
             let previous = details[key]
             if previous != detail {
                 details[key] = detail
             }
             let current = prs.first { $0.id == key } ?? pr
-            if let row, row.id == key, let head = row.headSha, head != current.headSha {
+            if let row, row.id == key, Self.showMovesHead(started: pr.headSha, current: current.headSha, shown: row.headSha) {
+                let head = row.headSha ?? ""
                 // Pushed since the list answered (a force push): the row, its diff and its threads
                 // follow the head the host has now, instead of keeping the old numbers on screen.
                 HubPerf.log("prs.show \(pr.label) head moved \(current.headSha?.prefix(10) ?? "-") -> \(head.prefix(10)): row and diff follow")
