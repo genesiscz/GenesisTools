@@ -4,7 +4,9 @@
  * transaction as the cut and the paste.
  */
 
+import { planPhpImportFixes } from "./move-imports-php";
 import { importLanguage, MoveError, markerWith, type PlanImportFixesParams, withFix } from "./move-imports-shared";
+import { planSwiftImportFixes } from "./move-imports-swift";
 import { planTsImportFixes } from "./move-imports-ts";
 import type { FileEdit } from "./types";
 
@@ -57,5 +59,9 @@ export const planImportFixes = (params: PlanImportFixesParams): FileEdit[] => {
         ...params,
         moves: params.moves.filter((move) => importLanguage(move.fromAbs) === language),
     });
-    return [...planTsImportFixes(forLanguage("ts"))];
+    return [
+        ...planTsImportFixes(forLanguage("ts")),
+        ...planSwiftImportFixes(forLanguage("swift")),
+        ...planPhpImportFixes(forLanguage("php")),
+    ];
 };

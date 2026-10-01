@@ -16,6 +16,7 @@
  * costs a full-context round trip per turn. The files stay; the undo command is printed.
  */
 
+import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -221,7 +222,34 @@ const loaderFor = (file: string): "ts" | "tsx" | "js" | "jsx" | null => {
  * Returns the parser message, or null when the file is fine (or was already broken,
  * or is not a script, or Bun's transpiler is unavailable).
  */
+/** Bun cannot parse PHP or Swift; their own tools can, through stdin, when they are installed. */
+const EXTERNAL_PARSERS: Record<string, string[]> = {
+    ".php": ["php", "-l"],
+    ".swift": ["swiftc", "-parse", "-"],
+};
+
+/** The parser's first error line, or null when the content parses or the tool is not installed. */
+const externalParseError = (command: string[], content: string): string | null => {
+    const result = spawnSync(command[0], command.slice(1), { input: content, encoding: "utf8", timeout: 30_000 });
+    if (result.error !== undefined || result.status === 0) {
+        return null;
+    }
+
+    const output = `${result.stderr ?? ""}\n${result.stdout ?? ""}`;
+    const line = output.split("\n").find((candidate) => /error/i.test(candidate)) ?? "does not parse";
+    return `${path.basename(command[0])}: ${line.trim().slice(0, 160)}`;
+};
+
 const brokeSyntax = (file: string, before: string, after: string): string | null => {
+    const external = EXTERNAL_PARSERS[path.extname(file)];
+    if (external !== undefined) {
+        if (before === after || (before !== "" && externalParseError(external, before) !== null)) {
+            return null;
+        }
+
+        return externalParseError(external, after);
+    }
+
     const loader = loaderFor(file);
     if (loader === null || before === after) {
         return null;

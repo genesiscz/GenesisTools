@@ -72,13 +72,17 @@ spec (git-marker shaped, no escaping, heredoc-friendly; pick a delimiter that ca
   <<< before  (anchor === lines)   same, above it
   <<< append  (lines)              append at end of file
   <<< delete  (lines)              remove these lines, newline included
+  <<< delete symbol=<name> | doc=<name>   (empty body) the declaration with its doc comment and
+                                   attributes, or only the doc comment above it
   <<< block   (from === to === replacement)   replace a region; empty replacement deletes it
   <<< create  (whole file content) create a new file; refuses an existing one
   <<< move to=<path> symbol=<name> | lines=<a>-<b>   (empty body) cut the block here, paste it there;
                                    a target that does not exist is created. at=after|before puts it
                                    against the body as anchor. imports=fix: the target gains the imports
                                    the block uses, this file drops the ones only the block used, and
-                                   every importer of a moved export is re-pointed (mixed imports split)
+                                   every importer of a moved export is re-pointed (TS/JS, Swift, PHP).
+                                   visibility=widen also exports or widens what must cross the cut.
+                                   Every refusal and warning prints the spec text that fixes it.
 
 Bodies are raw, line for line. Only a line that is exactly === or >>> is special inside a block:
 write such a line as \\=== or \\>>>. Ops apply in order, each sees the previous op's output.

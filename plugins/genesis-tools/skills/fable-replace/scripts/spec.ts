@@ -35,9 +35,10 @@
  * `find` as a string plus optional `flags`).
  */
 
+import * as fs from "node:fs";
 import * as path from "node:path";
 import { parseJson } from "./json";
-import { expandMoves, type MoveSpec } from "./move-blocks";
+import { cutFor, declarationSpan, expandMoves, type MoveSpec } from "./move-blocks";
 import { MoveError } from "./move-imports-shared";
 import { mergeFileEdits } from "./sweep-many-files";
 import type { FileEdit, Op } from "./types";
@@ -95,13 +96,15 @@ interface Modifiers {
     lines?: string;
     /** `move` only: `after` or `before`; the body is then the anchor. Default: append. */
     at?: string;
+    /** `delete` only: the declaration whose doc comment goes, and nothing else. */
+    doc?: string;
     /** `move` only: `fix` carries the imports along and re-points importers. */
     imports?: string;
     /** `move` with `imports=fix` only: `widen` exports or widens what must cross the boundary. */
     visibility?: string;
 }
 
-const KEY_VALUE_MODIFIER = /^(count|flags|to|symbol|lines|at|imports|visibility)=\S/;
+const KEY_VALUE_MODIFIER = /^(count|flags|to|symbol|doc|lines|at|imports|visibility)=\S/;
 
 /**
  * The modifier a label swallowed, if it reads as one. A `key=value` token anywhere is never prose.
@@ -170,6 +173,8 @@ const parseModifiers = (raw: string, line: number): Modifiers => {
             mods.flags = value;
         } else if (key === "to" && value !== undefined) {
             mods.to = value;
+        } else if (key === "doc" && value !== undefined) {
+            mods.doc = value;
         } else if (key === "symbol" && value !== undefined) {
             mods.symbol = value;
         } else if (key === "lines" && value !== undefined) {
@@ -216,9 +221,23 @@ const parseModifiers = (raw: string, line: number): Modifiers => {
     if (mods.flags !== undefined && mods.kind !== "regex") {
         fail(line, `flags= only applies to regex, not ${mods.kind}`);
     }
+    if (mods.symbol !== undefined && mods.kind !== "move" && mods.kind !== "delete") {
+        fail(line, `symbol= only applies to move and delete, not ${mods.kind}`);
+    }
+
+    if (mods.doc !== undefined && mods.kind !== "delete") {
+        fail(line, `doc= only applies to delete, not ${mods.kind}`);
+    }
+
+    if (mods.doc !== undefined && mods.symbol !== undefined) {
+        fail(
+            line,
+            "delete takes symbol= (the declaration and its doc comment) or doc= (the doc comment only), not both"
+        );
+    }
+
     for (const [key, value] of [
         ["to", mods.to],
-        ["symbol", mods.symbol],
         ["lines", mods.lines],
         ["at", mods.at],
         ["imports", mods.imports],
@@ -277,7 +296,14 @@ interface PendingMove {
     move: MoveSpec;
 }
 
-const buildOp = (mods: Modifiers, parts: string[], line: number, section: Section, moves: PendingMove[]): void => {
+const buildOp = (
+    mods: Modifiers,
+    parts: string[],
+    line: number,
+    section: Section,
+    moves: PendingMove[],
+    cwd: string
+): void => {
     const need = partsNeeded(mods.kind);
     if (parts.length !== need) {
         fail(line, `${mods.kind} needs ${need} bod${need === 1 ? "y" : "ies"} (separated by ===), got ${parts.length}`);
@@ -293,14 +319,54 @@ const buildOp = (mods: Modifiers, parts: string[], line: number, section: Sectio
         }
     }
     const [a, b, c] = parts;
+    const common = { optional: mods.optional, label: mods.label };
     const emptyFirst = mods.kind === "fuzzy" ? a.trim() === "" : a === "";
+    const namedDelete = mods.kind === "delete" && (mods.symbol !== undefined || mods.doc !== undefined);
+    if (namedDelete) {
+        if (a !== "") {
+            fail(line, "delete symbol=/doc= takes an empty body: the declaration names what goes");
+        }
+
+        const name = mods.symbol ?? mods.doc ?? "";
+        let source: string;
+        try {
+            source = fs.readFileSync(path.resolve(cwd, section.file), "utf8");
+        } catch (error) {
+            fail(
+                line,
+                `delete: cannot read ${section.file}: ${error instanceof Error ? error.message : String(error)}`
+            );
+        }
+
+        let span: { docStart: number; declared: number; end: number };
+        try {
+            span = declarationSpan(source, name, section.file);
+        } catch (error) {
+            fail(line, `delete: ${error instanceof Error ? error.message : String(error)}`);
+        }
+
+        if (mods.doc !== undefined && span.docStart === span.declared) {
+            fail(line, `delete: ${name} has no doc comment directly above it`);
+        }
+
+        const lines = source.split("\n");
+        const end = mods.doc === undefined ? span.end : span.declared - 1;
+        const text = lines.slice(span.docStart, end + 1).join("\n");
+        section.ops.push({
+            find: cutFor(source, { start: span.docStart, end, text }),
+            replace: "",
+            ...common,
+            label: mods.label ?? (mods.doc === undefined ? `delete ${name}` : `delete the doc comment of ${name}`),
+        });
+        return;
+    }
+
     if (emptyFirst && mods.kind !== "create" && mods.kind !== "append" && mods.kind !== "move") {
         // An empty needle or anchor matches everywhere or nowhere; the runner refuses it
         // too, but a spec error names the line before anything is planned.
         fail(line, `${mods.kind}: the first body is empty, so there is nothing to find, delete or anchor on`);
     }
 
-    const common = { optional: mods.optional, label: mods.label };
     if (mods.kind === "move") {
         // A move spans two files, so it cannot be an op on this section. It resolves here, against
         // the file on disk, and contributes the cut and the paste as ordinary edits that the
@@ -572,7 +638,7 @@ export const parseSpec = ({ text, onWarning, cwd }: ParseSpecParams): FileEdit[]
                     `spec line ${lineNo}: the last body of this block ends inside a code fence opened at its line ${openedAt + 1}. If a body line was exactly >>> it closed the block early and the rest was dropped; write such a line as \\>>>`
                 );
             }
-            buildOp(mods, parts, lineNo, current, moves);
+            buildOp(mods, parts, lineNo, current, moves, cwd ?? process.cwd());
             continue;
         }
         const cond = line.match(/^(expect|absent):\s?(.*)$/);
@@ -617,6 +683,10 @@ export const parseSpec = ({ text, onWarning, cwd }: ParseSpecParams): FileEdit[]
     }
     const isHandled = (abs: string, needle: string): boolean =>
         (opsByFile.get(abs) ?? []).some((op) => {
+            if ("text" in op && typeof op.text === "string" && op.text.includes(needle)) {
+                return true;
+            }
+
             if (!("find" in op)) {
                 return false;
             }

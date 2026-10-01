@@ -14,6 +14,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { planImportFixes } from "./move-imports";
+import { phpPreamble } from "./move-imports-php";
 import { MoveError, type PlannedMove } from "./move-imports-shared";
 import type { FileEdit, Op } from "./types";
 
@@ -264,8 +265,55 @@ export function blockEndLine(lines: string[], from: number): number {
     return -1;
 }
 
-/** The first line of the doc comment attached directly above `line`, or `line` itself. */
-export function docCommentStart(lines: string[], line: number): number {
+/** A line that opens an attribute or decorator: PHP `#[...]`, Swift `@MainActor`, TS `@Component(...)`. */
+const ATTRIBUTE_LINE = /^(?:#\[|@[A-Za-z_])/;
+
+/**
+ * The first attribute or decorator line directly above `line`, or `line` itself. They belong to the
+ * declaration: a cut that left `#[Attr]` behind broke the source file and stripped the class.
+ * An attribute over several lines counts from its opening line down to its closing `)` or `]`.
+ */
+function attributesStart(lines: string[], line: number): number {
+    let first = line;
+    while (first > 0) {
+        const previous = lines[first - 1].trim();
+        if (ATTRIBUTE_LINE.test(previous)) {
+            first--;
+            continue;
+        }
+
+        if (!/[)\]]$/.test(previous)) {
+            break;
+        }
+
+        let opening = first - 2;
+        while (opening >= 0 && first - opening <= 30) {
+            const candidate = lines[opening].trim();
+            if (candidate === "" || /[;{}]$/.test(candidate)) {
+                opening = -1;
+                break;
+            }
+
+            if (ATTRIBUTE_LINE.test(candidate)) {
+                break;
+            }
+
+            opening--;
+        }
+
+        if (opening < 0 || first - opening > 30) {
+            break;
+        }
+
+        first = opening;
+    }
+
+    return first;
+}
+
+/** The first line of the doc comment (and attributes) attached directly above `line`, or `line` itself. */
+export function docCommentStart(lines: string[], declared: number): number {
+    const line = attributesStart(lines, declared);
     let index = line - 1;
     while (index >= 0 && lines[index].trim().length === 0) {
         return line;
@@ -285,6 +333,79 @@ export function docCommentStart(lines: string[], line: number): number {
     }
 
     return index < 0 ? line : index;
+}
+
+/**
+ * The text a cut removes: the block with its own line terminator, plus one blank line after it
+ * (or, for the file's last block, the blank line above it), so repeated cuts leave no gaps.
+ */
+export function cutFor(source: string, block: LocatedBlock): string {
+    const sourceLines = source.split("\n");
+    const next = sourceLines[block.end + 1];
+    // `block.end + 2 < length` excludes the "" that follows a file's final newline.
+    const trailingBlank = next !== undefined && next.trim().length === 0 && block.end + 2 < sourceLines.length;
+    // The file's last block has no blank line after it to take, so it takes the one above it;
+    // otherwise every split that moves the tail leaves the source ending on an empty line.
+    const previous = sourceLines[block.start - 1];
+    const endsFile = next === undefined || (next === "" && block.end + 2 === sourceLines.length);
+    const leading =
+        !trailingBlank && endsFile && previous !== undefined && previous.trim().length === 0 ? `${previous}\n` : "";
+    return leading + (next === undefined ? block.text : trailingBlank ? `${block.text}\n${next}\n` : `${block.text}\n`);
+}
+
+/** Where a declaration sits: its doc comment's first line, its own line, its last line (0-indexed). */
+export function declarationSpan(
+    source: string,
+    symbol: string,
+    file: string
+): { docStart: number; declared: number; end: number } {
+    const lines = source.split("\n");
+    const pattern = DECLARATION(symbol);
+    const matches = lines.map((line, index) => (pattern.test(line) ? index : -1)).filter((index) => index !== -1);
+    if (matches.length === 0) {
+        throw new Error(`no declaration of ${symbol} in ${file}`);
+    }
+
+    if (matches.length > 1) {
+        throw new Error(
+            `${symbol} is declared more than once in ${file} (lines ${matches.map((i) => i + 1).join(", ")})`
+        );
+    }
+
+    const declared = matches[0];
+    const end = blockEndLine(lines, declared);
+    if (end === -1) {
+        throw new Error(`${symbol} in ${file} is never closed; the file may be malformed`);
+    }
+
+    return { docStart: docCommentStart(lines, declared), declared, end };
+}
+
+/**
+ * The anchor an `at=before` paste uses: when the anchor line carries a doc comment, the comment
+ * and the line together, so the block lands above the comment instead of between the comment and
+ * the line it documents.
+ */
+function beforeAnchor(target: string | undefined, anchor: string): string {
+    if (target === undefined) {
+        return anchor;
+    }
+
+    const lines = target.split("\n");
+    const firstLine = anchor.split("\n")[0];
+    const hits = lines.map((line, index) => (line.includes(firstLine) ? index : -1)).filter((index) => index !== -1);
+    if (hits.length !== 1 || hits[0] === 0) {
+        return anchor;
+    }
+
+    const index = hits[0];
+    const start = docCommentStart(lines, index);
+    if (start === index) {
+        return anchor;
+    }
+
+    const prefix = lines[index].slice(0, lines[index].indexOf(firstLine));
+    return [...lines.slice(start, index), `${prefix}${anchor}`].join("\n");
 }
 
 /** Find the block a spec names. Throws with a reason rather than guessing. */
@@ -323,24 +444,12 @@ export function locateBlock(source: string, spec: MoveSpec): LocatedBlock {
         throw new Error("move: name the block with `symbol`, `lines` or `between`");
     }
 
-    const pattern = DECLARATION(spec.symbol);
-    const matches = lines.map((line, index) => (pattern.test(line) ? index : -1)).filter((index) => index !== -1);
-    if (matches.length === 0) {
-        throw new Error(`move: no declaration of ${spec.symbol} in ${spec.from}`);
+    try {
+        const { docStart, end } = declarationSpan(source, spec.symbol, spec.from);
+        return slice(docStart, end);
+    } catch (error) {
+        throw new Error(`move: ${error instanceof Error ? error.message : String(error)}`);
     }
-
-    if (matches.length > 1) {
-        const where = matches.map((index) => index + 1).join(", ");
-        throw new Error(`move: ${spec.symbol} is declared more than once in ${spec.from} (lines ${where})`);
-    }
-
-    const declared = matches[0];
-    const end = blockEndLine(lines, declared);
-    if (end === -1) {
-        throw new Error(`move: ${spec.symbol} in ${spec.from} is never closed; the file may be malformed`);
-    }
-
-    return slice(docCommentStart(lines, declared), end);
 }
 
 /**
@@ -374,17 +483,65 @@ export function expandMoves(moves: MoveSpec[], options: ExpandMovesOptions = {})
         }
     }
 
-    edits.push(
-        ...planImportFixes({
-            moves: planned,
-            cwd,
-            read: readAbs,
-            ...(options.onWarning === undefined ? {} : { onWarning: options.onWarning }),
-            ...(options.projectFiles === undefined ? {} : { projectFiles: options.projectFiles }),
-            ...(options.isHandled === undefined ? {} : { isHandled: options.isHandled }),
-        })
-    );
+    const importEdits = planImportFixes({
+        moves: planned,
+        cwd,
+        read: readAbs,
+        ...(options.onWarning === undefined ? {} : { onWarning: options.onWarning }),
+        ...(options.projectFiles === undefined ? {} : { projectFiles: options.projectFiles }),
+        ...(options.isHandled === undefined ? {} : { isHandled: options.isHandled }),
+    });
+    // A widened move rewrites its pasted block in one op; the paste's post-condition then names
+    // the rewritten text, or it would fail on the very change the batch asked for.
+    for (const importEdit of importEdits) {
+        for (const op of importEdit.ops ?? []) {
+            if (
+                !("find" in op) ||
+                typeof op.find !== "string" ||
+                !("replace" in op) ||
+                typeof op.replace !== "string"
+            ) {
+                continue;
+            }
+
+            const rewritten = op.replace;
+            for (const move of planned) {
+                if (move.blockText !== op.find || path.resolve(cwd, importEdit.file) !== move.toAbs) {
+                    continue;
+                }
+
+                const before = landmark(move.blockText);
+                for (const edit of edits) {
+                    if (path.resolve(cwd, edit.file) === move.toAbs && edit.expectAfter !== undefined) {
+                        edit.expectAfter = edit.expectAfter.map((text) =>
+                            text === before ? landmark(rewritten) : text
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    edits.push(...importEdits);
     return edits;
+}
+
+/**
+ * What a paste's post-condition looks for: the block's first code line, not the whole block. A
+ * later op in the same batch may edit inside the pasted block (add an init, export it), and
+ * the whole-block check failed exactly those batches; the first code line still proves the
+ * block landed.
+ */
+function landmark(blockText: string): string {
+    const lines = blockText.split("\n");
+    return (
+        lines.find((line) => {
+            const trimmed = line.trim();
+            return trimmed !== "" && !/^(?:\/\/|\/\*|\*|#)/.test(trimmed);
+        }) ??
+        lines[0] ??
+        blockText
+    );
 }
 
 interface ExpandOneParams {
@@ -414,18 +571,7 @@ function expandOne({ move, index, cwd, readAbs, created, edits }: ExpandOneParam
     // Take one blank line with the block when it is followed by one, so a move does not leave a
     // widening gap behind every time something is lifted out.
     // The cut always takes the block's own line terminator, or an empty line stays where it was.
-    const sourceLines = source.split("\n");
-    const next = sourceLines[block.end + 1];
-    // `block.end + 2 < length` excludes the "" that follows a file's final newline.
-    const trailingBlank = next !== undefined && next.trim().length === 0 && block.end + 2 < sourceLines.length;
-    // The file's last block has no blank line after it to take, so it takes the one above it;
-    // otherwise every split that moves the tail leaves the source ending on an empty line.
-    const previous = sourceLines[block.start - 1];
-    const endsFile = next === undefined || (next === "" && block.end + 2 === sourceLines.length);
-    const leading =
-        !trailingBlank && endsFile && previous !== undefined && previous.trim().length === 0 ? `${previous}\n` : "";
-    const cut =
-        leading + (next === undefined ? block.text : trailingBlank ? `${block.text}\n${next}\n` : `${block.text}\n`);
+    const cut = cutFor(source, block);
     // Cut by CONTENT, not by line number. The block text was just read from the file, so it is
     // exact; if the file moved under us between locating and applying, this MISSes and the
     // batch fails instead of cutting whatever now sits at those lines.
@@ -443,7 +589,10 @@ function expandOne({ move, index, cwd, readAbs, created, edits }: ExpandOneParam
         throw new Error(`move: ${move.to} does not exist yet, so it has no anchor for at=; drop at= to create it`);
     }
 
-    const startsFile = targetIsNew && (move.createWith ?? "") === "";
+    // A new PHP file is code only after `<?php`, its namespace and the source's strict types.
+    const createWith =
+        move.createWith ?? (targetIsNew && toAbs.endsWith(".php") ? phpPreamble(toAbs, source) : undefined);
+    const startsFile = targetIsNew && (createWith ?? "") === "";
     if (targetIsNew) {
         created.add(toAbs);
     }
@@ -460,15 +609,15 @@ function expandOne({ move, index, cwd, readAbs, created, edits }: ExpandOneParam
                 }
               : {
                     kind: "insertBefore",
-                    anchor: anchor.before,
+                    anchor: beforeAnchor(readAbs(toAbs), anchor.before),
                     text: `${block.text}\n\n`,
                     label: `${label}: paste`,
                 };
     edits.push({
         file: move.to,
-        ...(targetIsNew ? { createWith: move.createWith ?? "" } : {}),
+        ...(targetIsNew ? { createWith: createWith ?? "" } : {}),
         ops: [paste],
-        expectAfter: [block.text],
+        expectAfter: [landmark(block.text)],
     });
 
     return {

@@ -610,3 +610,352 @@ describe("imports=fix proposes the spec change that makes it pass", () => {
         );
     });
 });
+describe("imports=fix in Swift", () => {
+    const write = (dir: string, files: Record<string, string>): void => {
+        for (const [file, content] of Object.entries(files)) {
+            mkdirSync(dirname(join(dir, file)), { recursive: true });
+            writeFileSync(join(dir, file), content);
+        }
+    };
+    const read = (dir: string, file: string): string => readFileSync(join(dir, file), "utf8");
+    const packageSwift = (appDependencies: string): string =>
+        [
+            "// swift-tools-version: 5.9",
+            "import PackageDescription",
+            "",
+            "let package = Package(",
+            '    name: "Demo",',
+            "    targets: [",
+            '        .target(name: "Kit", path: "Kit"),',
+            `        .executableTarget(name: "App", dependencies: [${appDependencies}], path: "App"),`,
+            "    ]",
+            ")",
+            "",
+        ].join("\n");
+    const project = (appDependencies = '"Kit"'): string => {
+        const dir = mkdtempSync(join(tmpdir(), "fr-swift-"));
+        write(dir, {
+            "Package.swift": packageSwift(appDependencies),
+            "Kit/Kit.swift": "public let kitVersion = 1\n",
+            "App/Helpers.swift": [
+                "import Foundation",
+                "",
+                "private func secret() -> Int { 1 }",
+                "",
+                "func helper() -> Int {",
+                "    secret()",
+                "}",
+                "",
+                "struct Point {",
+                "    let x: Int",
+                "    var y: Int = 0",
+                "",
+                "    func sum() -> Int {",
+                "        x + y",
+                "    }",
+                "}",
+                "",
+            ].join("\n"),
+            "App/main.swift": "import Foundation\n\nlet p = Point(x: 1)\nprint(helper(), p.sum())\n",
+        });
+        return dir;
+    };
+    const parse = (dir: string, text: string): { edits: ReturnType<typeof parseSpec>; warnings: string[] } => {
+        const warnings: string[] = [];
+        return { edits: parseSpec({ text, cwd: dir, onWarning: (message) => warnings.push(message) }), warnings };
+    };
+
+    test("inside one module: the target gets the module imports, and a private helper across the cut is refused or made internal", async () => {
+        const dir = project();
+        const marker = "<<< move to=App/Other.swift symbol=helper imports=fix";
+        expect(() => parse(dir, `@@ App/Helpers.swift\n${marker}\n>>>\n`)).toThrow(
+            `<<< move to=App/Other.swift symbol=secret imports=fix\n    ${marker} visibility=widen`
+        );
+
+        const { edits } = parse(dir, `@@ App/Helpers.swift\n${marker} visibility=widen\n>>>\n`);
+        await run({ cwd: dir, verbose: false, edits });
+        expect(read(dir, "App/Other.swift")).toBe("import Foundation\n\nfunc helper() -> Int {\n    secret()\n}\n");
+        expect(read(dir, "App/Helpers.swift")).toStartWith(
+            "import Foundation\n\nfunc secret() -> Int { 1 }\n\nstruct Point {"
+        );
+        // Same module: no file gains an import of a module.
+        expect(read(dir, "App/main.swift")).toStartWith("import Foundation\n\nlet p");
+    });
+
+    test("across modules: users import the target module, the moved type and its members turn public", async () => {
+        const dir = project();
+        const marker = "<<< move to=Kit/Point.swift symbol=Point imports=fix";
+        expect(() => parse(dir, `@@ App/Helpers.swift\n${marker}\n>>>\n`)).toThrow(
+            `Point moves into module Kit but is internal, and App still uses it`
+        );
+
+        const { edits, warnings } = parse(dir, `@@ App/Helpers.swift\n${marker} visibility=widen\n>>>\n`);
+        expect(warnings).toHaveLength(1);
+        expect(warnings[0]).toContain("public init(x: Int, y: Int = 0) {");
+        await run({ cwd: dir, verbose: false, edits });
+        expect(read(dir, "Kit/Point.swift")).toBe(
+            [
+                "import Foundation",
+                "",
+                "public struct Point {",
+                "    public let x: Int",
+                "    public var y: Int = 0",
+                "",
+                "    public func sum() -> Int {",
+                "        x + y",
+                "    }",
+                "}",
+                "",
+            ].join("\n")
+        );
+        expect(read(dir, "App/main.swift")).toStartWith("import Foundation\nimport Kit\n\nlet p");
+    });
+
+    test("across modules without a dependency: the warning carries the Package.swift op, and the op clears it", () => {
+        const dir = project("");
+        const move =
+            "@@ App/Helpers.swift\n<<< move to=Kit/Point.swift symbol=Point imports=fix visibility=widen\n>>>\n";
+        const { warnings } = parse(dir, move);
+        const dependency = warnings.find((w) => w.includes("does not list Kit")) ?? "";
+        expect(dependency).toContain('name: "App", dependencies: ["Kit", ');
+
+        const op = dependency
+            .split("\n")
+            .slice(2)
+            .map((line) => line.slice(4))
+            .join("\n");
+        expect(parse(dir, `${move}${op}\n`).warnings.filter((w) => w.includes("does not list Kit"))).toEqual([]);
+    });
+});
+describe("imports=fix in PHP", () => {
+    const write = (dir: string, files: Record<string, string>): void => {
+        for (const [file, content] of Object.entries(files)) {
+            mkdirSync(dirname(join(dir, file)), { recursive: true });
+            writeFileSync(join(dir, file), content);
+        }
+    };
+    const read = (dir: string, file: string): string => readFileSync(join(dir, file), "utf8");
+    const parse = (dir: string, text: string): { edits: ReturnType<typeof parseSpec>; warnings: string[] } => {
+        const warnings: string[] = [];
+        return { edits: parseSpec({ text, cwd: dir, onWarning: (message) => warnings.push(message) }), warnings };
+    };
+    const project = (): string => {
+        const dir = mkdtempSync(join(tmpdir(), "fr-php-"));
+        write(dir, {
+            "composer.json": '{ "autoload": { "psr-4": { "App\\\\": "app/" } } }\n',
+            "app/Http/OrderController.php": [
+                "<?php",
+                "",
+                "namespace App\\Http;",
+                "",
+                "use App\\Models\\Invoice;",
+                "use Illuminate\\Support\\Collection;",
+                "",
+                "class OrderController",
+                "{",
+                "    public function show(Invoice $invoice): Invoice",
+                "    {",
+                "        return $invoice;",
+                "    }",
+                "",
+                "    public function total(Collection $items): int",
+                "    {",
+                "        return $items->count();",
+                "    }",
+                "}",
+                "",
+            ].join("\n"),
+            "app/Services/OrderService.php":
+                "<?php\n\nnamespace App\\Services;\n\nclass OrderService\n{\n    // methods\n}\n",
+            "app/Support/Legacy.php": [
+                "<?php",
+                "",
+                "declare(strict_types=1);",
+                "",
+                "namespace App\\Support;",
+                "",
+                "final class Money",
+                "{",
+                "    public function __construct(public int $cents) {}",
+                "}",
+                "",
+                "class Legacy",
+                "{",
+                "    public function price(): Money",
+                "    {",
+                "        return new Money(1);",
+                "    }",
+                "}",
+                "",
+            ].join("\n"),
+            "app/Http/Checkout.php":
+                "<?php\n\nnamespace App\\Http;\n\nuse App\\Support\\Money;\n\nclass Checkout\n{\n    public function pay(Money $m): void {}\n}\n",
+            "app/Http/Grouped.php":
+                "<?php\n\nnamespace App\\Http;\n\nuse App\\Support\\{Legacy, Money};\n\nclass Grouped\n{\n    public function x(Legacy $l, Money $m): void {}\n}\n",
+            "app/Support/Sibling.php":
+                "<?php\n\nnamespace App\\Support;\n\nclass Sibling\n{\n    public function m(): Money\n    {\n        return \\App\\Support\\Money::class === 'x' ? new Money(2) : new Money(3);\n    }\n}\n",
+            "config/money.php": "<?php\n\nreturn ['class' => 'App\\Support\\Money'];\n",
+        });
+        return dir;
+    };
+
+    test("a method moved between classes takes the use lines it needs and the source drops the ones it no longer needs", async () => {
+        const dir = project();
+        const { edits } = parse(
+            dir,
+            "@@ app/Http/OrderController.php\n<<< move to=app/Services/OrderService.php lines=14-18 at=after imports=fix\n    // methods\n>>>\n"
+        );
+        await run({ cwd: dir, verbose: false, edits });
+        expect(read(dir, "app/Services/OrderService.php")).toBe(
+            [
+                "<?php",
+                "",
+                "namespace App\\Services;",
+                "",
+                "use Illuminate\\Support\\Collection;",
+                "",
+                "class OrderService",
+                "{",
+                "    // methods",
+                "",
+                "    public function total(Collection $items): int",
+                "    {",
+                "        return $items->count();",
+                "    }",
+                "",
+                "}",
+                "",
+            ].join("\n")
+        );
+        expect(read(dir, "app/Http/OrderController.php")).toStartWith(
+            "<?php\n\nnamespace App\\Http;\n\nuse App\\Models\\Invoice;\n\nclass OrderController"
+        );
+    });
+
+    test("a class moved to another namespace: a new file with its preamble, and every reference follows", async () => {
+        const dir = project();
+        const move = "@@ app/Support/Legacy.php\n<<< move to=app/Values/Money.php symbol=Money imports=fix\n>>>\n";
+        const { edits, warnings } = parse(dir, move);
+        expect(warnings).toHaveLength(1);
+        expect(warnings[0]).toContain("config/money.php names App\\Support\\Money in a string");
+        await run({ cwd: dir, verbose: false, edits });
+
+        expect(read(dir, "app/Values/Money.php")).toBe(
+            "<?php\n\ndeclare(strict_types=1);\n\nnamespace App\\Values;\n\nfinal class Money\n{\n    public function __construct(public int $cents) {}\n}\n"
+        );
+        expect(read(dir, "app/Support/Legacy.php")).toStartWith(
+            "<?php\n\ndeclare(strict_types=1);\n\nnamespace App\\Support;\n\nuse App\\Values\\Money;\n\nclass Legacy"
+        );
+        expect(read(dir, "app/Http/Checkout.php")).toContain("use App\\Values\\Money;\n");
+        expect(read(dir, "app/Http/Grouped.php")).toContain("use App\\Support\\Legacy;\nuse App\\Values\\Money;\n");
+        const sibling = read(dir, "app/Support/Sibling.php");
+        expect(sibling).toContain("namespace App\\Support;\n\nuse App\\Values\\Money;\n");
+        expect(sibling).toContain("\\App\\Values\\Money::class");
+    });
+
+    test("the string warning's op clears it", () => {
+        const dir = project();
+        const move = "@@ app/Support/Legacy.php\n<<< move to=app/Values/Money.php symbol=Money imports=fix\n>>>\n";
+        const [warning] = parse(dir, move).warnings;
+        const op = warning
+            .split("\n")
+            .slice(2)
+            .map((line) => line.slice(4))
+            .join("\n");
+        expect(parse(dir, `${move}${op}\n`).warnings).toEqual([]);
+    });
+});
+describe("doc comments as units", () => {
+    const fixture = (files: Record<string, string>): string => {
+        const dir = mkdtempSync(join(tmpdir(), "fr-doc-"));
+        for (const [file, content] of Object.entries(files)) {
+            writeFileSync(join(dir, file), content);
+        }
+        return dir;
+    };
+
+    test("at=before lands above the anchor's doc comment, not between the comment and its line", async () => {
+        const dir = fixture({
+            "from.ts": "export function a(): number {\n    return 1;\n}\n",
+            "to.ts": "/** Doc of b. */\nexport function b(): number {\n    return 2;\n}\n",
+        });
+        const edits = parseSpec({
+            text: "@@ from.ts\n<<< move to=to.ts symbol=a at=before\nexport function b\n>>>\n",
+            cwd: dir,
+        });
+        await run({ cwd: dir, verbose: false, edits });
+        expect(readFileSync(join(dir, "to.ts"), "utf8")).toBe(
+            "export function a(): number {\n    return 1;\n}\n\n/** Doc of b. */\nexport function b(): number {\n    return 2;\n}\n"
+        );
+    });
+
+    test("delete symbol= removes the declaration with its doc comment; delete doc= removes only the comment", async () => {
+        const source =
+            "/** One. */\nexport const one = 1;\n\n/**\n * Two.\n */\nexport function two(): number {\n    return 2;\n}\n";
+        const dir = fixture({ "a.ts": source });
+        await run({
+            cwd: dir,
+            verbose: false,
+            edits: parseSpec({ text: "@@ a.ts\n<<< delete symbol=one\n>>>\n<<< delete doc=two\n>>>\n", cwd: dir }),
+        });
+        expect(readFileSync(join(dir, "a.ts"), "utf8")).toBe("export function two(): number {\n    return 2;\n}\n");
+        expect(() => parseSpec({ text: "@@ a.ts\n<<< delete doc=two\n>>>\n", cwd: dir })).toThrow(
+            "delete: two has no doc comment directly above it"
+        );
+        expect(() => parseSpec({ text: "@@ a.ts\n<<< delete symbol=two\nbody\n>>>\n", cwd: dir })).toThrow(
+            "takes an empty body"
+        );
+    });
+});
+describe("the post-edit syntax check covers PHP and Swift", () => {
+    test("an op that breaks a PHP or Swift file fails the batch, and the same op on a broken file does not", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "fr-syntax-"));
+        writeFileSync(join(dir, "a.php"), "<?php\n\nfunction a(): int\n{\n    return 1;\n}\n");
+        writeFileSync(join(dir, "a.swift"), "func a() -> Int {\n    return 1\n}\n");
+        const breaking = (file: string, find: string): Promise<unknown> =>
+            run({ cwd: dir, verbose: false, edits: [{ file, ops: [{ find, replace: `${find} {` }] }] }).catch(
+                (error: unknown) => error
+            );
+
+        for (const [file, find, tool] of [
+            ["a.php", "return 1;", "php"],
+            ["a.swift", "return 1", "swiftc"],
+        ] as const) {
+            const failure = await breaking(file, find);
+            if (Bun.which(tool) === null) {
+                continue;
+            }
+
+            expect(
+                String(
+                    (failure as { report?: { files?: Array<{ postConditionFailures?: string[] }> } }).report?.files?.[0]
+                        ?.postConditionFailures
+                )
+            ).toContain(`${tool}: `);
+        }
+    });
+});
+describe("attributes and decorators belong to their declaration", () => {
+    test("a PHP attribute, a Swift attribute and a TS decorator move with the declaration", () => {
+        const php = [
+            "<?php",
+            "",
+            "/** Doc. */",
+            "#[ContainerLifecycle(",
+            "    Lifecycle::Scoped,",
+            ")]",
+            "#[Other]",
+            "class Money",
+            "{",
+            "}",
+            "",
+        ];
+        expect(docCommentStart(php, 7)).toBe(2);
+        const swift = ["import Foundation", "", "@MainActor", "final class Model {", "}", ""];
+        expect(docCommentStart(swift, 3)).toBe(2);
+        const ts = ["const x = f()", "", '@Component({ selector: "a" })', "export class A {}", ""];
+        expect(docCommentStart(ts, 3)).toBe(2);
+        // A call statement ending in `)` above a declaration is not an attribute.
+        expect(docCommentStart(["foo()", "export const a = 1;"], 1)).toBe(1);
+    });
+});
