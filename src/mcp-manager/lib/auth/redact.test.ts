@@ -84,3 +84,13 @@ describe("redactConfigText TOML multiline strings", () => {
         expect(out).toContain('NAME = "kept"');
     });
 });
+
+describe("redactConfigText escaped quotes in a multiline basic string", () => {
+    test("an escaped quote followed by two quotes is not the closing delimiter", () => {
+        const toml = 'PRIVATE_KEY = """\nabc \\""" remaining-secret\n"""\nNAME = "kept"\n';
+        const out = redactConfigText(toml);
+
+        expect(out).not.toContain("remaining-secret");
+        expect(out).toContain('NAME = "kept"');
+    });
+});

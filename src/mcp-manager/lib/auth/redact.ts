@@ -9,10 +9,11 @@ const SECRET_KEY = `(?:${[...HEADER_KEYS].map((key) => key.replace(/[-]/g, "\\-"
  * credential header or an env name that reads like one (`OPENAI_API_KEY`, `DB_PASSWORD`,
  * `DOCKER_AUTH_CONFIG`). A double-quoted value runs to its closing quote past escaped quotes
  * (`\"`), so no tail of the secret survives; a TOML literal string ends at the next `'`. A TOML
- * multiline string (`"""` or `'''`) is matched first and redacted whole, across its lines.
+ * multiline string (`"""` or `'''`) is matched first and redacted whole, across its lines; a basic one honours
+ * escapes, so an escaped quote inside it never reads as its closing delimiter.
  */
 const SECRET_VALUE_IN_TEXT = new RegExp(
-    `(${SECRET_KEY}["']?\\s*[:=]\\s*)(?:"""[\\s\\S]*?"""|'''[\\s\\S]*?'''|"(?:[^"\\\\\\n]|\\\\.)*"|'[^'\\n]*')`,
+    `(${SECRET_KEY}["']?\\s*[:=]\\s*)(?:"""(?:[^"\\\\]|\\\\[\\s\\S]|"(?!""))*"""|'''[\\s\\S]*?'''|"(?:[^"\\\\\\n]|\\\\.)*"|'[^'\\n]*')`,
     "gi"
 );
 
