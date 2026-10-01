@@ -35,7 +35,8 @@ async function resolveTaskSessionState(name: string): Promise<ResolvedSessionSta
         exitedAt: meta.exitedAt ? Date.parse(meta.exitedAt) : undefined,
     };
 
-    if (meta.exitCode !== undefined) {
+    // A deliberate stop is terminal too, never an active session for the dashboard.
+    if (meta.exitCode !== undefined || meta.stopped) {
         return { state: "exited", stateLabel: label, ...exitFields };
     }
 

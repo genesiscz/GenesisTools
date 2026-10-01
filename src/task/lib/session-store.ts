@@ -30,6 +30,11 @@ export type { ResolvedRunSession } from "@app/task/types";
 const TOOL_NAME = "tools task";
 export const ACTIVE_THRESHOLD_MS = 60 * 60 * 1000;
 
+/** Still running as far as the record knows: neither an exit nor a deliberate stop was written. */
+function isRunning(meta: TaskSessionMeta): boolean {
+    return meta.exitCode === undefined && !meta.stopped;
+}
+
 export class TaskSessionStore {
     private storage = new Storage("task");
 
@@ -385,6 +390,12 @@ export class TaskSessionStore {
             return;
         }
 
+        // A deliberate stop wins in either order: the run supervisor can flush its exit after markStopped.
+        if (meta.stopped) {
+            logger.debug({ name: input.name, exitCode: input.exitCode }, "task: exit after a stop, the stop stays");
+            return;
+        }
+
         meta.exitCode = input.exitCode;
         meta.durationMs = input.durationMs;
         meta.exitedAt = new Date().toISOString();
@@ -438,7 +449,7 @@ export class TaskSessionStore {
 
         for (const name of names) {
             const meta = await this.reconcileSessionState(name);
-            if (meta && meta.exitCode === undefined && now - meta.lastActivityAt < ACTIVE_THRESHOLD_MS) {
+            if (meta && isRunning(meta) && now - meta.lastActivityAt < ACTIVE_THRESHOLD_MS) {
                 active.push(meta);
             }
         }
@@ -461,7 +472,7 @@ export class TaskSessionStore {
         const config = await this.loadConfig();
         if (config.recentSession && names.includes(config.recentSession)) {
             const meta = await this.reconcileSessionState(config.recentSession);
-            if (meta && meta.exitCode === undefined && Date.now() - meta.lastActivityAt < ACTIVE_THRESHOLD_MS) {
+            if (meta && isRunning(meta) && Date.now() - meta.lastActivityAt < ACTIVE_THRESHOLD_MS) {
                 return config.recentSession;
             }
         }

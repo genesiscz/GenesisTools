@@ -64,6 +64,9 @@ function describeOutcome(name: string, outcome: Awaited<ReturnType<typeof stopSe
                 );
             }
             return true;
+        case "failed":
+            out.printlnErr(`${name}: not stopped, ${outcome.reason}; still alive: ${outcome.alivePids.join(", ")}`);
+            return false;
         default:
             return true;
     }

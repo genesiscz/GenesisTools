@@ -131,3 +131,49 @@ describe("stopSession", () => {
         expect(await stopSession({ name: "no-such-session-at-all" })).toEqual({ status: "not-found" });
     });
 });
+
+describe("stopSession refusals and late writers", () => {
+    it("a refused signal leaves the session running and reports failed; the spy proves the primitive was reached", async () => {
+        const store = new TaskSessionStore();
+        const name = "stop-refused";
+        await store.prepareSession({ name, command: "sleep 5", mode: "pipe", cwd: "/tmp" });
+        const child = Bun.spawn(["sleep", "5"], {
+            stdout: "ignore",
+            stderr: "ignore",
+            stdin: "ignore",
+            env: process.env,
+        });
+
+        try {
+            await store.updatePid(name, child.pid);
+            const calls: number[] = [];
+            const outcome = await stopSession({
+                name,
+                graceMs: 200,
+                kill: (pid) => {
+                    calls.push(pid);
+                    throw Object.assign(new Error("not permitted"), { code: "EPERM" });
+                },
+            });
+
+            expect(calls).toContain(child.pid);
+            expect(outcome.status).toBe("failed");
+            expect((await store.getSessionMeta(name))?.stopped).toBeUndefined();
+        } finally {
+            child.kill("SIGKILL");
+        }
+    });
+
+    it("an exit the supervisor writes after the stop keeps the session stopped", async () => {
+        const store = new TaskSessionStore();
+        const name = "stop-late-exit";
+        await store.prepareSession({ name, command: "sleep 5", mode: "pipe", cwd: "/tmp" });
+        await store.markStopped({ name, durationMs: 10 });
+        await store.markExited({ name, exitCode: 143, durationMs: 20 });
+
+        const meta = await store.getSessionMeta(name);
+        expect(meta?.stopped).toBe(true);
+        expect(meta?.exitCode).toBeUndefined();
+        expect((await store.getActiveSessions()).map((session) => session.name)).not.toContain(name);
+    });
+});
