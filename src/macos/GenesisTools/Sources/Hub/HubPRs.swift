@@ -455,7 +455,15 @@ final class PRsModel: ObservableObject {
             // Still wanted: the list has not answered, or it answered and nobody picked another row since.
             let untouched = request.map { $0.ref == ref && selectedID == $0.selectionAtStart } ?? false
             guard wanted == ref || untouched || selectedID == row.id else { return }
-            if !prs.contains(where: { $0.id == row.id }) {
+            if let index = prs.firstIndex(where: { $0.id == row.id }) {
+                // The list may have added and selected this PR first, with an older head: the fresh row wins.
+                let older = prs[index]
+                prs[index] = row
+                if selectedID == row.id, older.headSha != row.headSha {
+                    prefetchThreads(row)
+                    showDiff(row)
+                }
+            } else {
                 directIDs.insert(row.id)
                 prs.append(row)
             }

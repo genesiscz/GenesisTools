@@ -52,6 +52,8 @@ struct HubSessionDetailHost: View {
     @State private var loadingEarlier = false
     @State private var banner: String?
     @State private var loadID = 0
+    /// Between onAppear and onDisappear. A page load that finishes after the detail left must not start a follow.
+    @State private var onScreen = false
     /// The latest `rebuild()`; an older one that finishes later is dropped.
     @State private var buildID = 0
     /// ⌘F over the whole session: the window plus the earlier turns that match, while a query is on.
@@ -100,7 +102,14 @@ struct HubSessionDetailHost: View {
         .panelFindNative("transcript")
         .background(HostWindowReader(host: host))
         // The follow process lives exactly as long as the detail is on screen.
-        .onDisappear { stopTail() }
+        .onAppear {
+            onScreen = true
+            resumeTail()
+        }
+        .onDisappear {
+            onScreen = false
+            stopTail()
+        }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didHideNotification)) { _ in stopTail() }
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.didMiniaturizeNotification)) { note in
             if note.object as? NSWindow === host.window { stopTail() }
@@ -484,7 +493,7 @@ struct HubSessionDetailHost: View {
     private func startTail() {
         tail?.stop()
         tail = nil
-        guard let current = envelope, loadState == .loaded, !isPaused else { return }
+        guard onScreen, let current = envelope, loadState == .loaded, !isPaused else { return }
         let owner = session.id
         tail = HubTranscriptTail(query: session.sessionId, offset: max(windowStart, current.nextOffset - 1)) { batch in
             guard owner == session.id else { return }

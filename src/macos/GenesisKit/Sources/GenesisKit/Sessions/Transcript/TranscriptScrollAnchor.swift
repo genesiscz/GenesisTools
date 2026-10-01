@@ -141,7 +141,8 @@ public final class TranscriptScrollAnchor: ObservableObject {
                     : scroll.bounds.contains(scroll.convert(event.locationInWindow, from: nil))
                 if reader {
                     self.releaseHold()
-                    if event.type == .scrollWheel {
+                    // A key moves the viewport as a wheel does (Page Up, Home, the arrows): a glide in flight stops too.
+                    if event.type == .scrollWheel || event.type == .keyDown {
                         self.stopFollowing()
                     }
                     if event.type == .leftMouseDown {
