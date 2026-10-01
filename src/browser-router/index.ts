@@ -6,7 +6,7 @@ import { presets } from "@genesiscz/utils/browser-router/presets";
 import { RouteError, route } from "@genesiscz/utils/browser-router/route";
 import { routerStatus } from "@genesiscz/utils/browser-router/status";
 import { mintBundleToken, withTokenLock } from "@genesiscz/utils/browser-router/tokens";
-import { runTool } from "@genesiscz/utils/cli";
+import { runTool, suggestEnumFlag } from "@genesiscz/utils/cli";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
 import { Command } from "commander";
@@ -19,6 +19,7 @@ import {
     routeFromFlags,
     upsertRoute,
 } from "./lib/config";
+import { displayRoutesTable } from "./lib/display";
 import { ensureRegisteredPort, parsePort } from "./lib/ensure";
 import { defaultBrowserStatus, installRouterApp, restorePreviousBrowser } from "./lib/install";
 import { launchOpen, openMintedLink, openUrl } from "./lib/launch";
@@ -209,10 +210,13 @@ presetsCommand
         }
     });
 
+const ROUTES_FORMATS = ["table", "json"] as const;
+
 program
     .command("routes")
     .description("List the saved routes")
-    .action(async () => {
+    .option("--format [format]", `table (default) or json: ${ROUTES_FORMATS.join(" | ")}`)
+    .action(async (options: { format?: string }) => {
         const config = await loadConfig();
 
         if (!config) {
@@ -220,7 +224,23 @@ program
             return;
         }
 
-        out.println(SafeJSON.stringify(config.routes, null, 2));
+        if (options.format !== undefined && !(ROUTES_FORMATS as readonly string[]).includes(options.format)) {
+            out.error(
+                suggestEnumFlag("tools browser-router routes", "--format", ROUTES_FORMATS, {
+                    subcommand: ["routes"],
+                    given: options.format,
+                })
+            );
+            process.exitCode = 1;
+            return;
+        }
+
+        if (options.format === "json") {
+            out.result(config.routes);
+            return;
+        }
+
+        displayRoutesTable(config.routes);
     });
 
 program
