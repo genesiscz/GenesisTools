@@ -13,6 +13,7 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { MoveError, type PlannedMove, planImportFixes } from "./move-imports";
 import type { FileEdit, Op } from "./types";
 
 /**
@@ -40,6 +41,20 @@ export interface MoveSpec {
     /** Content for `to` when it does not exist yet; the block is appended to it. */
     createWith?: string;
     label?: string;
+    /**
+     * `fix`: the target gains the imports the block uses, the source drops the ones only the block
+     * used, and every importer of a moved export is re-pointed (mixed imports split).
+     */
+    imports?: "fix";
+}
+
+export interface ExpandMovesOptions {
+    cwd?: string;
+    /** Content a file will have before any op runs, by absolute path: a `create` in the same batch. */
+    files?: Map<string, string>;
+    onWarning?: (message: string) => void;
+    /** Overrides the files scanned for importers (tests); defaults to git's view of the repository. */
+    projectFiles?: string[];
 }
 
 export interface LocatedBlock {
@@ -320,60 +335,142 @@ export function locateBlock(source: string, spec: MoveSpec): LocatedBlock {
     return slice(docCommentStart(lines, declared), end);
 }
 
-/** Turn moves into the file edits the sweep engine already knows how to run atomically. */
-export function expandMoves(moves: MoveSpec[], options: { cwd?: string } = {}): FileEdit[] {
+/**
+ * Turn moves into the file edits the sweep engine already knows how to run atomically. A failure
+ * that belongs to one move is a `MoveError` carrying that move's position in `moves`.
+ */
+export function expandMoves(moves: MoveSpec[], options: ExpandMovesOptions = {}): FileEdit[] {
     const cwd = options.cwd ?? process.cwd();
-    const read = (file: string): string => fs.readFileSync(path.resolve(cwd, file), "utf8");
-    const edits: FileEdit[] = [];
-    for (const move of moves) {
-        if (move.from === move.to) {
-            throw new Error("move: `from` and `to` are the same file; use an ordinary op instead");
+    const readAbs = (abs: string): string | undefined => {
+        const planned = options.files?.get(abs);
+        if (planned !== undefined) {
+            return planned;
         }
 
-        const source = read(move.from);
-        const block = locateBlock(source, move);
-        const label = move.label ?? `move ${move.symbol ?? `${block.start + 1}..${block.end + 1}`}`;
-        // Take one blank line with the block when it is followed by one, so a move does not leave a
-        // widening gap behind every time something is lifted out.
-        // The cut always takes the block's own line terminator, or an empty line stays where it was.
-        const sourceLines = source.split("\n");
-        const next = sourceLines[block.end + 1];
-        // `block.end + 2 < length` excludes the "" that follows a file's final newline.
-        const trailingBlank = next !== undefined && next.trim().length === 0 && block.end + 2 < sourceLines.length;
-        const cut = next === undefined ? block.text : trailingBlank ? `${block.text}\n${next}\n` : `${block.text}\n`;
-        // Cut by CONTENT, not by line number. The block text was just read from the file, so it is
-        // exact; if the file moved under us between locating and applying, this MISSes and the
-        // batch fails instead of cutting whatever now sits at those lines.
-        edits.push({
-            file: move.from,
-            ops: [{ find: cut, replace: "", label: `${label}: cut` }],
-            absentAfter: [block.text],
-        });
-
-        const anchor = move.at ?? "end";
-        const paste: Op =
-            anchor === "end"
-                ? { kind: "append", text: `\n${block.text}\n`, label: `${label}: paste` }
-                : "after" in anchor
-                  ? {
-                        kind: "insertAfter",
-                        anchor: anchor.after,
-                        text: `\n${block.text}\n`,
-                        label: `${label}: paste`,
-                    }
-                  : {
-                        kind: "insertBefore",
-                        anchor: anchor.before,
-                        text: `${block.text}\n\n`,
-                        label: `${label}: paste`,
-                    };
-        edits.push({
-            file: move.to,
-            ...(move.createWith === undefined ? {} : { createWith: move.createWith }),
-            ops: [paste],
-            expectAfter: [block.text],
-        });
+        try {
+            return fs.readFileSync(abs, "utf8");
+        } catch {
+            return undefined;
+        }
+    };
+    const edits: FileEdit[] = [];
+    const planned: PlannedMove[] = [];
+    const created = new Set<string>();
+    for (const [index, move] of moves.entries()) {
+        try {
+            planned.push(expandOne({ move, index, cwd, readAbs, created, edits }));
+        } catch (error) {
+            throw error instanceof MoveError
+                ? error
+                : new MoveError(error instanceof Error ? error.message : String(error), index);
+        }
     }
 
+    edits.push(
+        ...planImportFixes({
+            moves: planned,
+            cwd,
+            read: readAbs,
+            ...(options.onWarning === undefined ? {} : { onWarning: options.onWarning }),
+            ...(options.projectFiles === undefined ? {} : { projectFiles: options.projectFiles }),
+        })
+    );
     return edits;
+}
+
+interface ExpandOneParams {
+    move: MoveSpec;
+    index: number;
+    cwd: string;
+    readAbs: (abs: string) => string | undefined;
+    /** Targets an earlier move in this batch creates. */
+    created: Set<string>;
+    edits: FileEdit[];
+}
+
+function expandOne({ move, index, cwd, readAbs, created, edits }: ExpandOneParams): PlannedMove {
+    const fromAbs = path.resolve(cwd, move.from);
+    const toAbs = path.resolve(cwd, move.to);
+    if (fromAbs === toAbs) {
+        throw new Error("move: `from` and `to` are the same file; use an ordinary op instead");
+    }
+
+    const source = readAbs(fromAbs);
+    if (source === undefined) {
+        throw new Error(`move: ${move.from} does not exist`);
+    }
+
+    const block = locateBlock(source, move);
+    const label = move.label ?? `move ${move.symbol ?? `${block.start + 1}..${block.end + 1}`}`;
+    // Take one blank line with the block when it is followed by one, so a move does not leave a
+    // widening gap behind every time something is lifted out.
+    // The cut always takes the block's own line terminator, or an empty line stays where it was.
+    const sourceLines = source.split("\n");
+    const next = sourceLines[block.end + 1];
+    // `block.end + 2 < length` excludes the "" that follows a file's final newline.
+    const trailingBlank = next !== undefined && next.trim().length === 0 && block.end + 2 < sourceLines.length;
+    // The file's last block has no blank line after it to take, so it takes the one above it;
+    // otherwise every split that moves the tail leaves the source ending on an empty line.
+    const previous = sourceLines[block.start - 1];
+    const endsFile = next === undefined || (next === "" && block.end + 2 === sourceLines.length);
+    const leading =
+        !trailingBlank && endsFile && previous !== undefined && previous.trim().length === 0 ? `${previous}\n` : "";
+    const cut =
+        leading + (next === undefined ? block.text : trailingBlank ? `${block.text}\n${next}\n` : `${block.text}\n`);
+    // Cut by CONTENT, not by line number. The block text was just read from the file, so it is
+    // exact; if the file moved under us between locating and applying, this MISSes and the
+    // batch fails instead of cutting whatever now sits at those lines.
+    edits.push({
+        file: move.from,
+        ops: [{ find: cut, replace: "", label: `${label}: cut` }],
+        absentAfter: [block.text],
+    });
+
+    const anchor = move.at ?? "end";
+    // A target that does not exist yet is created by its first move, so a split into a new
+    // file is one batch. Its first block starts the file instead of following a blank line.
+    const targetIsNew = !created.has(toAbs) && readAbs(toAbs) === undefined;
+    if (targetIsNew && anchor !== "end") {
+        throw new Error(`move: ${move.to} does not exist yet, so it has no anchor for at=; drop at= to create it`);
+    }
+
+    const startsFile = targetIsNew && (move.createWith ?? "") === "";
+    if (targetIsNew) {
+        created.add(toAbs);
+    }
+
+    const paste: Op =
+        anchor === "end"
+            ? { kind: "append", text: startsFile ? `${block.text}\n` : `\n${block.text}\n`, label: `${label}: paste` }
+            : "after" in anchor
+              ? {
+                    kind: "insertAfter",
+                    anchor: anchor.after,
+                    text: `\n${block.text}\n`,
+                    label: `${label}: paste`,
+                }
+              : {
+                    kind: "insertBefore",
+                    anchor: anchor.before,
+                    text: `${block.text}\n\n`,
+                    label: `${label}: paste`,
+                };
+    edits.push({
+        file: move.to,
+        ...(targetIsNew ? { createWith: move.createWith ?? "" } : {}),
+        ops: [paste],
+        expectAfter: [block.text],
+    });
+
+    return {
+        index,
+        from: move.from,
+        to: move.to,
+        fromAbs,
+        toAbs,
+        blockText: block.text,
+        cutText: cut,
+        fixImports: move.imports === "fix",
+        label,
+    };
 }

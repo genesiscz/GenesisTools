@@ -77,6 +77,7 @@ skill loaded. Keep the quotes: an install path can contain spaces.
 | `<<< move to=<path> symbol=<name>` | cut that declaration (doc comment included) out of this file and paste it into `<path>`; body empty |
 | `<<< move to=<path> lines=<first>-<last>` | same, for a block that is not one declaration |
 | `<<< move … at=after` / `at=before` (body is the anchor) | place it against an anchor in the target instead of appending |
+| `<<< move … imports=fix` | also carry the imports: the target gains what the block uses, the source drops what only the block used, every importer of a moved export is re-pointed |
 
 Per-file post-conditions go between `@@` and the first op: `expect: text` (must be present
 afterwards), `absent: text` (must be gone). Both repeatable. `# comments` and blank lines are
@@ -313,7 +314,7 @@ await run({
     moves: [
         // A whole declaration, doc comment included, appended to the target.
         { from: "src/jev/commands/listen.ts", to: "src/jev/lib/listen/dispatch.ts", symbol: "actOnSurface" },
-        // A target that does not exist yet gets its imports from createWith, then the block.
+        // A target that does not exist yet is created by its first move; createWith gives it a header.
         {
             from: "src/jev/commands/listen.ts",
             to: "src/jev/lib/listen/target.ts",
@@ -347,9 +348,46 @@ It refuses rather than guesses: an unknown symbol, a symbol declared more than o
 line range outside the file, a marker that never appears, or `from` equal to `to` all fail
 pre-flight with the reason.
 
-⚠️ A move does not fix imports. The block arrives without whatever it used to reach for, so pair
-it with ordinary `edits` for the import lines, and let the syntax check plus your typechecker tell
-you what is still missing.
+### Splitting a file: `imports=fix`
+
+Without it, a move carries text only: the block arrives without what it used to reach for, the
+source keeps imports nothing uses, and every importer of a moved export still points at the old
+module. With `imports=fix` (script: `imports: "fix"`) one spec does the whole split:
+
+```
+@@ src/api/utils.ts
+<<< move to=src/api/utils-complex.ts symbol=defineQuery imports=fix
+>>>
+<<< move to=src/api/utils-complex.ts lines=109-467 imports=fix
+>>>
+```
+
+- **The target** gains the imports its new code uses. A relative path is recomputed from the
+  target's folder; a package or alias path is kept. A declaration that stays behind and is exported
+  is imported back from the source.
+- **The source** drops each import binding that only the moved code used. A binding that was
+  already unused stays, so the diff holds only what the move caused. A moved export the remaining
+  code still uses is imported from the target.
+- **Every importer** in the repository (`git ls-files`) follows its moved names. A statement whose
+  every name moved keeps its line and changes only the module path. A mixed statement splits, and
+  the new line goes into its import group in alphabetical order by module path. `export * from`
+  the source gains `export * from` the target.
+- Module paths follow each file's own style: relative, a tsconfig `paths` alias, or a `baseUrl`
+  path, read from the nearest `tsconfig.json` (its `extends` chain included).
+- An import list wraps when it is wider than the formatter's `lineWidth` (biome or prettier JSON
+  config). Without an active formatter, a statement keeps its own layout.
+- A target that does not exist is created, so `create` (for a header) plus the moves into the same
+  file is one spec, however the two paths are spelled.
+
+It refuses rather than guesses: a block that holds an import statement or an `export default`; a
+moved declaration that is not exported but still used by the source; a declaration left behind
+that the block uses and that is not exported; `imports=fix` on some moves out of a file but not
+all. It warns, and does not edit, where a name is reached through a namespace import (`U.moved`)
+or a string path in a call (`import("…")`, `jest.mock("…")`).
+
+It is lexical, not a type checker: a name counts as used when it appears as an identifier outside
+comments, strings, property access and object keys. Every doubt keeps an import, because a spare
+import fails a lint and a missing one fails the build. Run the typechecker in `--verify`.
 
 ## Renames: the two forks
 

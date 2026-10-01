@@ -74,6 +74,11 @@ spec (git-marker shaped, no escaping, heredoc-friendly; pick a delimiter that ca
   <<< delete  (lines)              remove these lines, newline included
   <<< block   (from === to === replacement)   replace a region; empty replacement deletes it
   <<< create  (whole file content) create a new file; refuses an existing one
+  <<< move to=<path> symbol=<name> | lines=<a>-<b>   (empty body) cut the block here, paste it there;
+                                   a target that does not exist is created. at=after|before puts it
+                                   against the body as anchor. imports=fix: the target gains the imports
+                                   the block uses, this file drops the ones only the block used, and
+                                   every importer of a moved export is re-pointed (mixed imports split)
 
 Bodies are raw, line for line. Only a line that is exactly === or >>> is special inside a block:
 write such a line as \\=== or \\>>>. Ops apply in order, each sees the previous op's output.
@@ -270,17 +275,18 @@ entry.spec = {
     hash: createHash("sha256").update(text).digest("hex").slice(0, 12),
 };
 
+// Before the parse: a move marker reads its files while the spec is parsed.
+const cwd = value("--cwd") ?? process.cwd();
+
 let edits: ReturnType<typeof parseSpec>;
 try {
-    edits = parseSpec({ text, onWarning: (message) => console.error(`WARNING: ${message}`) });
+    edits = parseSpec({ text, cwd, onWarning: (message) => console.error(`WARNING: ${message}`) });
 } catch (err) {
     entry.outcome = "spec-error";
     entry.specError = err instanceof Error ? err.message : String(err);
     console.error(`SPEC ERROR: ${entry.specError}`);
     process.exit(2);
 }
-
-const cwd = value("--cwd") ?? process.cwd();
 
 const opCount = edits.reduce((sum, e) => sum + (e.ops?.length ?? 0), 0);
 entry.spec.files = edits.length;

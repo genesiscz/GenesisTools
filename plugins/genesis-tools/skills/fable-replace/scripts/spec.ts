@@ -26,6 +26,7 @@
  *   <<< delete                    # one body only: these lines go, newline included
  *   <<< block                     # three bodies: from === to === replacement (empty = delete the block)
  *   <<< create                    # one body only: create the file with this content (must not exist)
+ *   <<< move to=b.ts symbol=x imports=fix   # move x; its imports follow, importers are re-pointed
  *
  * A body is the lines between the markers, joined with "\n", no trailing newline.
  * Everything between `<<<` and `>>>` is raw: only a line that is exactly `===` or
@@ -34,8 +35,10 @@
  * `find` as a string plus optional `flags`).
  */
 
+import * as path from "node:path";
 import { parseJson } from "./json";
-import { expandMoves } from "./move-blocks";
+import { expandMoves, type MoveSpec } from "./move-blocks";
+import { MoveError } from "./move-imports";
 import { mergeFileEdits } from "./sweep-many-files";
 import type { FileEdit, Op } from "./types";
 
@@ -92,7 +95,31 @@ interface Modifiers {
     lines?: string;
     /** `move` only: `after` or `before`; the body is then the anchor. Default: append. */
     at?: string;
+    /** `move` only: `fix` carries the imports along and re-points importers. */
+    imports?: string;
 }
+
+const KEY_VALUE_MODIFIER = /^(count|flags|to|symbol|lines|at|imports)=\S/;
+
+/**
+ * The modifier a label swallowed, if it reads as one. A `key=value` token anywhere is never prose.
+ * A bare word (`block`, `optional`) counts only when everything after the last comma, or the
+ * whole label without a comma, is modifier words: `label=the import block shrinks` is prose.
+ */
+const swallowedModifier = (labelText: string): string | undefined => {
+    const keyValue = labelText.split(/\s+/).find((t) => KEY_VALUE_MODIFIER.test(t));
+    if (keyValue !== undefined) {
+        return keyValue;
+    }
+
+    const tail = labelText.slice(labelText.lastIndexOf(",") + 1).trim();
+    const words = tail.split(/\s+/).filter((t) => t.length > 0);
+    if (words.length > 0 && words.every((t) => KINDS.has(t) || t === "optional")) {
+        return words[0];
+    }
+
+    return undefined;
+};
 
 const parseModifiers = (raw: string, line: number): Modifiers => {
     const mods: Modifiers = { kind: "replace", optional: false };
@@ -108,9 +135,7 @@ const parseModifiers = (raw: string, line: number): Modifiers => {
             ((labelText.startsWith('"') && labelText.endsWith('"')) ||
                 (labelText.startsWith("'") && labelText.endsWith("'")));
         if (!quoted) {
-            const swallowed = labelText
-                .split(/\s+/)
-                .find((t) => KINDS.has(t) || t === "optional" || /^(count|flags)=/.test(t));
+            const swallowed = swallowedModifier(labelText);
             if (swallowed !== undefined) {
                 fail(
                     line,
@@ -155,6 +180,12 @@ const parseModifiers = (raw: string, line: number): Modifiers => {
             }
 
             mods.at = value;
+        } else if (key === "imports" && value !== undefined) {
+            if (value !== "fix") {
+                fail(line, `imports= takes fix, got "${value}"`);
+            }
+
+            mods.imports = value;
         } else if ((key === "before" || key === "after") && value !== undefined) {
             // Not an alias, and not a bare unknown modifier either: name the form that works.
             // The anchor text is the body.
@@ -182,6 +213,7 @@ const parseModifiers = (raw: string, line: number): Modifiers => {
         ["symbol", mods.symbol],
         ["lines", mods.lines],
         ["at", mods.at],
+        ["imports", mods.imports],
     ] as const) {
         if (value !== undefined && mods.kind !== "move") {
             fail(line, `${key}= only applies to move, not ${mods.kind}`);
@@ -227,14 +259,12 @@ const compileRegex = ({ source, flags, line }: { source: string; flags: string; 
 // biome-ignore lint/suspicious/noControlCharactersInRegex: the parser refuses control characters in a spec on purpose
 const CONTROL_CHAR = /[\x00-\x08\x0B\x0C\x0E-\x1F]/;
 
-const buildOp = (
-    mods: Modifiers,
-    parts: string[],
-    line: number,
-    section: Section,
-    moved: FileEdit[],
-    cwd: string
-): void => {
+interface PendingMove {
+    line: number;
+    move: MoveSpec;
+}
+
+const buildOp = (mods: Modifiers, parts: string[], line: number, section: Section, moves: PendingMove[]): void => {
     const need = partsNeeded(mods.kind);
     if (parts.length !== need) {
         fail(line, `${mods.kind} needs ${need} bod${need === 1 ? "y" : "ies"} (separated by ===), got ${parts.length}`);
@@ -283,26 +313,19 @@ const buildOp = (
             fail(line, `lines= must be <first>-<last>, both positive integers, got "${mods.lines}"`);
         }
 
-        try {
-            moved.push(
-                ...expandMoves(
-                    [
-                        {
-                            from: section.file,
-                            to: mods.to as string,
-                            ...(mods.symbol === undefined ? {} : { symbol: mods.symbol }),
-                            ...(span ? { lines: [span[0], span[1]] as [number, number] } : {}),
-                            ...(at === undefined ? {} : { at }),
-                            ...(mods.label === undefined ? {} : { label: mods.label }),
-                        },
-                    ],
-                    { cwd }
-                )
-            );
-        } catch (error) {
-            fail(line, error instanceof Error ? error.message : String(error));
-        }
-
+        // Expanded together at the end, so several moves out of one file plan their imports as one.
+        moves.push({
+            line,
+            move: {
+                from: section.file,
+                to: mods.to as string,
+                ...(mods.symbol === undefined ? {} : { symbol: mods.symbol }),
+                ...(span ? { lines: [span[0], span[1]] as [number, number] } : {}),
+                ...(at === undefined ? {} : { at }),
+                ...(mods.label === undefined ? {} : { label: mods.label }),
+                ...(mods.imports === "fix" ? { imports: "fix" as const } : {}),
+            },
+        });
         return;
     }
 
@@ -435,7 +458,7 @@ const fromJson = (text: string): FileEdit[] => {
 
 /** Parse the marker format (or a JSON array) into FileEdits for `run()`. Throws with a line number on any malformed input. */
 export const parseSpec = ({ text, onWarning, cwd }: ParseSpecParams): FileEdit[] => {
-    const moved: FileEdit[] = [];
+    const moves: PendingMove[] = [];
     const trimmed = text.trimStart();
     if (trimmed.startsWith("[")) {
         try {
@@ -535,7 +558,7 @@ export const parseSpec = ({ text, onWarning, cwd }: ParseSpecParams): FileEdit[]
                     `spec line ${lineNo}: the last body of this block ends inside a code fence opened at its line ${openedAt + 1}. If a body line was exactly >>> it closed the block early and the rest was dropped; write such a line as \\>>>`
                 );
             }
-            buildOp(mods, parts, lineNo, current, moved, cwd ?? process.cwd());
+            buildOp(mods, parts, lineNo, current, moves);
             continue;
         }
         const cond = line.match(/^(expect|absent):\s?(.*)$/);
@@ -562,5 +585,26 @@ export const parseSpec = ({ text, onWarning, cwd }: ParseSpecParams): FileEdit[]
     // A move contributes edits to a file the spec may never name with @@, and to one it does, so
     // the two lists are merged rather than concatenated.
     const edits = sections.map(toFileEdit);
-    return moved.length === 0 ? edits : mergeFileEdits([...moved, ...edits]);
+    if (moves.length === 0) {
+        return edits;
+    }
+
+    const base = cwd ?? process.cwd();
+    const files = new Map(
+        sections
+            .filter((section) => section.createWith !== undefined)
+            .map((section) => [path.resolve(base, section.file), section.createWith ?? ""] as const)
+    );
+    let moved: FileEdit[];
+    try {
+        moved = expandMoves(
+            moves.map((pending) => pending.move),
+            { cwd: base, files, ...(onWarning === undefined ? {} : { onWarning }) }
+        );
+    } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        return fail(error instanceof MoveError ? (moves[error.index]?.line ?? moves[0].line) : moves[0].line, message);
+    }
+
+    return mergeFileEdits([...moved, ...edits], { cwd: base });
 };

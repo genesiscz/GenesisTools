@@ -323,7 +323,16 @@ export const run = async ({ edits, moves, ...opts }: RunParams): Promise<RunRepo
     let allEdits: FileEdit[] = edits ?? [];
     if (moves?.length) {
         try {
-            allEdits = mergeFileEdits([...expandMoves(moves, { cwd: opts.cwd }), ...allEdits]);
+            allEdits = mergeFileEdits(
+                [
+                    ...expandMoves(moves, {
+                        ...(opts.cwd === undefined ? {} : { cwd: opts.cwd }),
+                        onWarning: (message) => console.error(`WARNING: ${message}`),
+                    }),
+                    ...allEdits,
+                ],
+                { ...(opts.cwd === undefined ? {} : { cwd: opts.cwd }) }
+            );
         } catch (err) {
             moveErrors.push(err instanceof Error ? err.message : String(err));
         }
@@ -921,14 +930,17 @@ export const run = async ({ edits, moves, ...opts }: RunParams): Promise<RunRepo
  * Without this, a file appearing in both lists is two FileEdits and pre-flight
  * refuses the batch. Ops are concatenated in order and post-conditions are unioned.
  * Anything that cannot be merged unambiguously (two different `renameTo`, a delete
- * beside ops) throws rather than guessing. Merging is by the exact `file` string.
+ * beside ops) throws rather than guessing. Merging is by the resolved path, so `./a.ts`
+ * and `a.ts` are one file; the first spelling is kept.
  */
-export const mergeFileEdits = (edits: FileEdit[]): FileEdit[] => {
+export const mergeFileEdits = (edits: FileEdit[], options: { cwd?: string } = {}): FileEdit[] => {
+    const cwd = options.cwd ?? process.cwd();
     const byFile = new Map<string, FileEdit>();
     for (const edit of edits) {
-        const existing = byFile.get(edit.file);
+        const key = path.resolve(cwd, edit.file);
+        const existing = byFile.get(key);
         if (existing === undefined) {
-            byFile.set(edit.file, { ...edit, ops: [...(edit.ops ?? [])] });
+            byFile.set(key, { ...edit, ops: [...(edit.ops ?? [])] });
             continue;
         }
         for (const field of ["delete", "renameTo", "createWith"] as const) {
@@ -943,9 +955,10 @@ export const mergeFileEdits = (edits: FileEdit[]): FileEdit[] => {
         if ((existing.delete === true && edit.ops?.length) || (edit.delete === true && existing.ops?.length)) {
             throw new Error(`mergeFileEdits: ${edit.file} is both deleted and edited in the same batch`);
         }
-        byFile.set(edit.file, {
+        byFile.set(key, {
             ...existing,
             ...Object.fromEntries(Object.entries(edit).filter(([, v]) => v !== undefined)),
+            file: existing.file,
             ops: [...(existing.ops ?? []), ...(edit.ops ?? [])],
             expectAfter: [...(existing.expectAfter ?? []), ...(edit.expectAfter ?? [])],
             absentAfter: [...(existing.absentAfter ?? []), ...(edit.absentAfter ?? [])],

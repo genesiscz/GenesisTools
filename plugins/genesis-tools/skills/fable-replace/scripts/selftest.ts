@@ -2139,6 +2139,19 @@ console.log("round 3: error payload and recon guards");
         )?.kind === "regex"
     );
 
+    // A kind word inside the label's prose is prose: the kind already sits before label=.
+    check(
+        "a label whose prose holds a kind word is not a swallowed modifier",
+        (
+            parseSpec({ text: "@@ a.md\n<<< block label=the import block shrinks\nx\n===\ny\n===\nz\n>>>\n" })[0]
+                .ops?.[0] as { label?: string } | undefined
+        )?.label === "the import block shrinks"
+    );
+    check(
+        "a bare modifier after the label's last comma is still caught",
+        parseErr("@@ a.md\n<<< label=see ticket, optional\nx\n===\ny\n>>>\n").includes('"optional" was absorbed')
+    );
+
     // A spec pasted from two sources carries CRLF on some lines only; splitting on "\n"
     // alone left "\r" on the markers and swallowed the next op into the previous body.
     const mixed = parseSpec({

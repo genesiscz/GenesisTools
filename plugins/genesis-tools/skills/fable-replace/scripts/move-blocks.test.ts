@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { FableReplaceError } from "./internal";
 import { blockEndLine, docCommentStart, expandMoves, locateBlock } from "./move-blocks";
 import { parseSpec } from "./spec";
@@ -371,6 +371,11 @@ describe("the cut left behind in the source", () => {
         expect(afterCut("A\nBLOCK\n", [2, 2])).toBe("A\n");
         expect(afterCut("A\nBLOCK", [2, 2])).toBe("A\n");
     });
+
+    test("the last block of a file takes the blank line above it, so the file does not end on one", () => {
+        expect(afterCut("A\n\nBLOCK\n", [3, 3])).toBe("A\n");
+        expect(afterCut("A\n  \nBLOCK", [3, 3])).toBe("A\n");
+    });
 });
 
 describe("a move that cannot be expanded", () => {
@@ -386,5 +391,150 @@ describe("a move that cannot be expanded", () => {
         expect(failure).toBeInstanceOf(FableReplaceError);
         expect(failure).toMatchObject({ code: 2 });
         expect(String(failure)).toContain("no declaration of nope");
+    });
+});
+describe("a move with imports=fix", () => {
+    const write = (dir: string, files: Record<string, string>): void => {
+        for (const [file, content] of Object.entries(files)) {
+            mkdirSync(dirname(join(dir, file)), { recursive: true });
+            writeFileSync(join(dir, file), content);
+        }
+    };
+    const project = (): string => {
+        const dir = mkdtempSync(join(tmpdir(), "fr-move-imports-"));
+        write(dir, {
+            "tsconfig.json":
+                '{\n  // aliases\n  "compilerOptions": { "baseUrl": ".", "paths": { "@app/*": ["src/*"] }, },\n}\n',
+            "src/lib/types.ts": "export interface Options {\n    name: string;\n}\n",
+            "src/lib/utils.ts": [
+                'import { readFileSync } from "node:fs";',
+                'import { join } from "node:path";',
+                'import type { Options } from "./types";',
+                "",
+                'export const root = "/";',
+                "",
+                "export function load(options: Options): string {",
+                '    return readFileSync(join(root, options.name), "utf8");',
+                "}",
+                "",
+                'export const keep = join(root, "x");',
+                "",
+            ].join("\n"),
+            "src/feature/a.ts": 'import { keep, load } from "@app/lib/utils";\n\nexport const a = [keep, load];\n',
+            "src/feature/b.ts": 'import { load } from "../lib/utils.js";\n\nexport const b = load;\n',
+            "src/feature/c.ts":
+                'import type { Options } from "@app/lib/types";\nimport { load } from "@app/lib/utils";\n\nexport const c: [Options?, typeof load?] = [];\n',
+        });
+        return dir;
+    };
+    const read = (dir: string, file: string): string => readFileSync(join(dir, file), "utf8");
+    const MOVE_LOAD = "@@ src/lib/utils.ts\n<<< move to=src/lib/load.ts symbol=load imports=fix\n>>>\n";
+
+    test("one spec splits a file: the target gets its imports, the source drops dead ones, importers follow", async () => {
+        const dir = project();
+        await run({ cwd: dir, verbose: false, edits: parseSpec({ text: MOVE_LOAD, cwd: dir }) });
+
+        expect(read(dir, "src/lib/load.ts")).toBe(
+            [
+                'import { readFileSync } from "node:fs";',
+                'import { join } from "node:path";',
+                'import type { Options } from "./types";',
+                'import { root } from "./utils";',
+                "",
+                "export function load(options: Options): string {",
+                '    return readFileSync(join(root, options.name), "utf8");',
+                "}",
+                "",
+            ].join("\n")
+        );
+        expect(read(dir, "src/lib/utils.ts")).toBe(
+            'import { join } from "node:path";\n\nexport const root = "/";\n\nexport const keep = join(root, "x");\n'
+        );
+        // A mixed import splits, and the new line lands in alphabetical order by module path.
+        expect(read(dir, "src/feature/a.ts")).toBe(
+            'import { load } from "@app/lib/load";\nimport { keep } from "@app/lib/utils";\n\nexport const a = [keep, load];\n'
+        );
+        // A relative importer stays relative and keeps its .js spelling.
+        expect(read(dir, "src/feature/b.ts")).toBe(
+            'import { load } from "../lib/load.js";\n\nexport const b = load;\n'
+        );
+        // A statement whose every name moves keeps its line; only the module path changes.
+        expect(read(dir, "src/feature/c.ts")).toStartWith(
+            'import type { Options } from "@app/lib/types";\nimport { load } from "@app/lib/load";\n'
+        );
+    });
+
+    test("a configured formatter width wraps a long new import; a disabled formatter keeps one line", async () => {
+        const wide =
+            "export function load(): string {\n    return [alphaAlphaAlpha, betaBetaBeta, gammaGammaGamma].join();\n}\n";
+        const source = `import { alphaAlphaAlpha, betaBetaBeta, gammaGammaGamma } from "./words";\n\n${wide}`;
+        const words =
+            "export const alphaAlphaAlpha = 'a';\nexport const betaBetaBeta = 'b';\nexport const gammaGammaGamma = 'c';\n";
+        const spec = "@@ src/a.ts\n<<< move to=src/b.ts symbol=load imports=fix\n>>>\n";
+
+        const formatted = mkdtempSync(join(tmpdir(), "fr-move-width-"));
+        write(formatted, {
+            "biome.json": '{ "formatter": { "lineWidth": 60, "indentStyle": "space", "indentWidth": 4 } }\n',
+            "src/a.ts": source,
+            "src/words.ts": words,
+        });
+        await run({ cwd: formatted, verbose: false, edits: parseSpec({ text: spec, cwd: formatted }) });
+        expect(read(formatted, "src/b.ts")).toStartWith(
+            'import {\n    alphaAlphaAlpha,\n    betaBetaBeta,\n    gammaGammaGamma,\n} from "./words";\n'
+        );
+
+        const disabled = mkdtempSync(join(tmpdir(), "fr-move-width-off-"));
+        write(disabled, {
+            "biome.json": '{ "formatter": { "lineWidth": 60 }, "javascript": { "formatter": { "enabled": false } } }\n',
+            "src/a.ts": source,
+            "src/words.ts": words,
+        });
+        await run({ cwd: disabled, verbose: false, edits: parseSpec({ text: spec, cwd: disabled }) });
+        expect(read(disabled, "src/b.ts")).toStartWith(
+            'import { alphaAlphaAlpha, betaBetaBeta, gammaGammaGamma } from "./words";\n'
+        );
+    });
+
+    test("a create and a move into the same file are one edit, however the path is spelled", async () => {
+        const dir = project();
+        const edits = parseSpec({ text: `@@ ./src/lib/load.ts\n<<< create\n// header\n>>>\n${MOVE_LOAD}`, cwd: dir });
+        const target = resolve(dir, "src/lib/load.ts");
+
+        expect(edits.filter((edit) => resolve(dir, edit.file) === target)).toHaveLength(1);
+        await run({ cwd: dir, verbose: false, edits });
+        expect(read(dir, "src/lib/load.ts")).toStartWith('import { readFileSync } from "node:fs";');
+        expect(read(dir, "src/lib/load.ts")).toContain("// header\n\nexport function load(");
+    });
+
+    test("a cross-file dependency that cannot be imported is refused, naming the spec line", () => {
+        const dir = project();
+        write(dir, {
+            "src/lib/hidden.ts": "const secret = 1;\n\nexport const uses = () => secret;\n",
+            "src/lib/helper.ts": "const helper = () => 1;\n\nexport const user = () => helper();\n",
+            "src/lib/two.ts": "export const one = 1;\n\nexport const two = 2;\n",
+            "src/lib/def.ts": "export default function main() {\n    return 1;\n}\n",
+        });
+        const bad =
+            (spec: string): (() => unknown) =>
+            () =>
+                parseSpec({ text: spec, cwd: dir });
+
+        expect(bad("@@ src/lib/hidden.ts\n<<< move to=src/lib/x.ts symbol=uses imports=fix\n>>>\n")).toThrow(
+            /spec line 2: move: the moved code uses secret, which stays in src\/lib\/hidden.ts and is not exported/
+        );
+        expect(bad("@@ src/lib/helper.ts\n<<< move to=src/lib/x.ts symbol=helper imports=fix\n>>>\n")).toThrow(
+            /still uses helper after the move, and helper is not exported/
+        );
+        expect(
+            bad(
+                "@@ src/lib/two.ts\n<<< move to=src/lib/x.ts symbol=one imports=fix\n>>>\n<<< move to=src/lib/x.ts symbol=two\n>>>\n"
+            )
+        ).toThrow(/spec line 4: .*imports=fix must be on every move out of src\/lib\/two.ts/);
+        expect(bad("@@ src/lib/def.ts\n<<< move to=src/lib/x.ts symbol=main imports=fix\n>>>\n")).toThrow(
+            /export default/
+        );
+        expect(bad("@@ src/lib/two.ts\n<<< move to=src/lib/x.ts symbol=one imports=keep\n>>>\n")).toThrow(
+            /imports= takes fix/
+        );
     });
 });
