@@ -275,6 +275,38 @@ struct PRThreadsList: View {
     @AppStorage("review.prThreads.thisFile", store: HubDefaults.store) private var onlyThisFile = false
     @AppStorage("review.prThreads.closed", store: HubDefaults.store) private var showClosed = false
     @State private var find = PanelFindModel(scope: "pr.threads", title: "the threads")
+    /// A narrow side panel (the review window's Context panel, 320 pt at its minimum): shorter filter
+    /// labels, and the actions on a second row, so nothing runs past the panel's edge.
+    var compact = false
+
+    @ViewBuilder
+    private var filters: some View {
+        Toggle(compact ? "This file" : "Only the selected file", isOn: $onlyThisFile)
+            .toggleStyle(.checkbox)
+            .fixedSize()
+            .instantTooltip("Show only the threads on the file open in the diff")
+        Toggle(compact ? "Closed too" : "Resolved and outdated", isOn: $showClosed)
+            .toggleStyle(.checkbox)
+            .fixedSize()
+            .instantTooltip("Also show threads that are resolved, or whose lines changed since")
+    }
+
+    @ViewBuilder
+    private func actions(_ threads: [PRThread]) -> some View {
+        Spacer(minLength: 0)
+        let fixable = threads.filter { !$0.resolved && !$0.isMyDraft }.map(\.id)
+        if !fixable.isEmpty {
+            Button("Select open for Fix") {
+                model.selectedThreads.formUnion(fixable)
+            }
+            .buttonStyle(.genHoverPlain())
+            .fixedSize()
+            .instantTooltip("Pick every open thread shown here for Fix threads")
+        }
+        Text(verbatim: "\(threads.count) shown")
+            .foregroundColor(ReviewPalette.dim)
+            .fixedSize()
+    }
 
     private var visible: [PRThread] {
         let selectedPath = model.repoPath(of: model.selectedID)
@@ -287,27 +319,25 @@ struct PRThreadsList: View {
     var body: some View {
         let threads = visible
         VStack(spacing: 0) {
-            HStack(spacing: 12) {
-                Toggle("Only the selected file", isOn: $onlyThisFile)
-                    .toggleStyle(.checkbox)
-                    .instantTooltip("Show only the threads on the file open in the diff")
-                Toggle("Resolved and outdated", isOn: $showClosed)
-                    .toggleStyle(.checkbox)
-                    .instantTooltip("Also show threads that are resolved, or whose lines changed since")
-                Spacer()
-                let fixable = threads.filter { !$0.resolved && !$0.isMyDraft }.map(\.id)
-                if !fixable.isEmpty {
-                    Button("Select open for Fix") {
-                        model.selectedThreads.formUnion(fixable)
+            Group {
+                if compact {
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack(spacing: 12) {
+                            filters
+                        }
+                        HStack(spacing: 12) {
+                            actions(threads)
+                        }
                     }
-                    .buttonStyle(.genHoverPlain())
-                    .instantTooltip("Pick every open thread shown here for Fix threads")
+                } else {
+                    HStack(spacing: 12) {
+                        filters
+                        actions(threads)
+                    }
                 }
-                Text(verbatim: "\(threads.count) shown")
-                    .foregroundColor(ReviewPalette.dim)
             }
             .font(.system(size: 11.5))
-            .padding(.horizontal, 14)
+            .padding(.horizontal, compact ? 10 : 14)
             .padding(.vertical, 6)
             PanelFindBar(find: find)
             if threads.isEmpty {
@@ -480,6 +510,10 @@ private struct PRThreadRow: View {
                     .findField("comment:\(comment.id)")
                     .font(.system(size: 12))
                     .textSelection(.enabled)
+                    // A code block keeps its lines whole and asks for more width than a narrow panel
+                    // has: pin the body to the row, from the left, and cut the long lines at the right.
+                    .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
+                    .clipped()
             }
         }
         .padding(.leading, comment.id == thread.comments.first?.id ? 0 : 12)

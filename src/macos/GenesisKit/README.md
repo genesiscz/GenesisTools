@@ -1,47 +1,61 @@
 # GenesisKit
 
-The SwiftUI components GenesisTools.app and Genesis.app share. One copy, two consumers:
+The Swift code GenesisTools.app and Genesis.app share: the session screen, the `tools` clients under it, perf
+logging, the title bar zone and the small controls. One copy, two consumers:
 
 - GenesisTools.app: `.package(path: "../GenesisKit")`; `Sources/Hub/GenesisKitHost.swift` re-exports it
   (`@_exported import GenesisKit`) and implements `GenesisKitHost`.
-- Genesis: `Genesis/lib/GenesisAIMonitorKit` depends on `../../../../GenesisTools/src/macos/GenesisKit` and
-  re-exports it, so the Genesis app sees it through `import GenesisAIMonitorKit`. Genesis therefore builds only
-  next to a GenesisTools checkout at `~/Tresors/Projects/GenesisTools`.
+- Genesis: the app target and `Genesis/lib/GenesisAIMonitorKit` depend on
+  `../../../../GenesisTools/src/macos/GenesisKit`; the kit re-exports it. Genesis therefore builds only next to a
+  GenesisTools checkout at `~/Tresors/Projects/GenesisTools`. The app lists it directly as well: through the
+  re-export alone, a changed initializer here left a stale caller in the app and the link failed.
 
-## What is here
+## Layout
 
-| Need | Use |
+One target, folders by job. A file goes where its job is, not where its first caller was.
+
+| Folder | What |
 |---|---|
-| The cmux layout from `tools ai cmux tree --json` | `CmuxTree.decode(data)`, `CmuxTarget` |
-| Pick where to open something in cmux (Tree / Layout) | `CmuxTargetPicker(tree:loading:selection:highlightSession:modeKey:modeStore:reload:onPick:)` |
-| A session's cmux block (refs, Focus, Open in last pane, Choose a pane…) | `CmuxSessionPanel` |
-| An icon-only button | `IconButton(systemName:tooltip:)` |
-| A text action in a hairline outline | `GhostButton(_:symbol:tooltip:fullWidth:)` |
-| A path | `PathLabel(path:line:title:)`, `PathActionsMenu`, `PathOpener` (folder in Finder by bundle id) |
-| Copy a value | `CopyChip`, `Clipboard.copy(_:what:)` (shows `CopyToast`) |
-| A pull-down menu | `MenuButton(items:label:)` or `MenuButton(style:items:label:)` |
-| An agent's initial | `ProviderBadge(provider:size:)` |
-| A tag, a status, a count | `Badge(_:color:look:)` (`.tag`, `.tone`, `.filled`), `CountBadge` |
-| Nothing to show | `EmptyState(symbol:text:)` |
-| A warning or note that stays | `InfoStrip(_:tone:action:dismiss:)`; a passing confirmation is `NoticePill` |
-| A relative time | `LiveAgo(date:style:)`, `LiveTime(date:style:)` |
+| `Style/` | hover styles (`.genHover*`, `.genHoverEffect`), `.instantTooltip` + `TooltipGuard`, `.rowButton` / `RowButtonStyle`, `KitPalette` / `KitTheme`, `GenesisKitHost`, `SWR` (stale-while-revalidate: `changed`, `fade`, `rowTransition`, `animation`) + `.swrFlash` |
+| `Controls/` | `IconButton`, `GhostButton`, `MenuButton`, `CopyChip`, `NoticePill`, `InfoStrip`, `EmptyState`, `Badge` / `CountBadge`, `ProviderBadge`, `.kicker`, `RefreshingMark` (the spinner over last known data) |
+| `Paths/` | `PathOpener` (folder in Finder by bundle id, file in Cursor at a line), `PathLabel`, `PathActionsMenu`, `Clipboard` + `CopyToast` |
+| `Time/` | `LiveTime`, `LiveAgo`, `LiveTimeFormat` |
+| `Cmux/` | `CmuxTree`, `CmuxTarget`, `CmuxTargetPicker` (Tree / Layout), `CmuxSessionPanel` |
+| `Window/` | `WindowTitlebar`: `.titlebarZone()`, `.titlebarBackground`, `.titlebarRow()`, the snapshot audit |
+| `Perf/` | `PerfLog`, `HangWatch`, `MainStackSampler`, `MonitorPerf`, `RenderProbe`, `PerfConfiguration` |
+| `Tools/` | `ToolsBridge` (runs `tools`), `MonitorJSON`, `TitleFormatter`, `SessionTranscriptClient` (the `tools ai sessions tail` envelope), `TranscriptPromptPart`, `DiskCache` (last answers on disk; `load` / `loadData` read off the main thread) |
+| `Providers/` | `AIProviderMeta`, `AIProviders`, `AIProviderGlyph` |
+| `Sessions/` | `SessionPalette`, `SessionFormat` |
+| `Sessions/Transcript/` | `SessionTranscriptList`, `TranscriptDocument`, prompt parts, `TranscriptScrollAnchor`, `TranscriptBus` / `TranscriptFilters`, `TranscriptMarkdownStyle` |
+| `Sessions/ToolCalls/` | `SessionToolCallView` + `TranscriptServices`, `SessionNativeLog`, `SessionToolChanges` |
+| `Sessions/Code/` | `CodeBlock`, `CodeBlockText`, `SessionSyntaxHighlighter` |
+| `Sessions/Detail/` | `SessionDetailScreen`, its header and sidebar, `SessionSidebarSplit` |
 
-Also here: `.instantTooltip` (with `TooltipGuard`), the `.genHover*` button styles and `.genHoverEffect`, `.rowButton` /
-`RowButtonStyle`, `.kicker`, and `KitPalette` / `KitTheme`.
+## API rules
+
+- Views take values and closures, never an app's model. What an app does differently is a hook or an option,
+  never a second copy and never an `#if`:
+  - `GenesisKitHost` (one class per app, `@objc(GenesisKitHostAdapter)`, found by name): the log line, the perf
+    configuration, the transcript's markdown renderer, text a panel find can mark, opening a terminal.
+  - `TranscriptServices` (per loaded session): the session file, the change log, "Open diff", a detail loader,
+    row actions, notice buttons, the search query.
+  - `SessionDetailActions` (per screen): refresh, copy, Finder, Cursor, focus, wake, the alert and hub actions.
+  - `TranscriptBus` / `TranscriptFilters`: a host that wants to reveal a row or filter to one tool posts there.
+  - Options on the view: `followsLatest` (a live chat), `emptyMessage`, `sidebarExtraFirst`, `showsSidebar`.
+- A public struct a host builds gets an explicit `public init` (the synthesized one is internal).
+- Keep a component small and composed: a row, a strip, a panel. A new need is a parameter or a new component here,
+  not a local copy in an app.
 
 ## The visibility rule
 
-A type an app declares shadows the package's public type of the same name, so an app copy and the package copy
-can live side by side while a move is in progress. An extension member (`.instantTooltip`, `.genHoverPlain()`,
-`.rowButton`) declared in both is "ambiguous use" in every file of the app. So never add an app copy of a modifier or
-button style that lives here. (Until 2026-09-30 these stayed `internal` while both apps still had copies.)
+A type an app declares shadows the package's public type of the same name. An extension member (`.instantTooltip`,
+`.genHoverPlain()`, `.rowButton`) declared in both is "ambiguous use" in every file of the app, and breaks the
+build. So never add an app copy of anything that lives here.
 
-## App hooks
+## Tests
 
-`GenesisKitHost` (log line, open a terminal in a folder, render text a panel find can mark). The kit finds the
-app's host by the Objective-C class name `GenesisKitHostAdapter`; `GenesisKit.install(_:)` sets one by hand.
-
-## Check
-
-`swift test` here, then build both apps (`bun run app` in GenesisTools, `bun scripts/install.ts --debug` in
-`Genesis/apps/Genesis`).
+`swift test` here covers the shared code, including `SessionTranscriptScrollTests` (the transcript's scroll,
+streaming and resize cost; `SESSION_SCROLL_PERF=1` for the timing runs) and `WindowTitlebarTests`, which open
+windows at alpha 0, below the desktop, never activated. Then build both apps (`bun run app` in GenesisTools,
+`bun scripts/install.ts --debug` in `Genesis/apps/Genesis`) and run their suites: GenesisTools `swift test`,
+GenesisAIMonitorKit `swift test`, Genesis `bun run test:scope`.

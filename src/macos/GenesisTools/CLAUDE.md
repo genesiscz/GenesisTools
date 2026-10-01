@@ -34,7 +34,7 @@ Hub/HubComponents.swift.
 | A relative time on screen ("5 min. ago", "active 20s ago") | `LiveAgo(date:)` or `LiveTime(date:style:)` (GenesisKit): the label keeps its own clock, nothing above it re-renders per tick | `HubFormat.ago` in a body (formats once and goes stale), or a `Timer` / `TimelineView` above the label (re-renders the whole row or list per tick) |
 | Find inside a panel (⌘F) | Hub/HubPanelFind.swift: `@State` `PanelFindModel`, `PanelFindBar` under the header as its own row above the scroll view, `.panelFind(find, revision:rows:)` on the root, `.findRow(id)` per row, `FindText(text, field:)` for shown text (`MarkdownContentView` + `.findField(key)` for markdown). A pane with its own find registers with `.panelFindNative(scope)`, an overlay that owns the keyboard with `.panelFindModal()` | a bar in `.safeAreaInset(edge: .top)` (selectable text draws through it), a SwiftUI `.keyboardShortcut("f")` button or a local key monitor per view: `PanelFindRouter` is the one ⌘F / ⌘G / ⇧⌘G / Esc owner and sends the key to the panel of the last click |
 | A main view's header (every hub mode, and any new one) | `TitlebarHeader { row } details: { rows }` (Hub/HubComponents.swift): the first row goes into the title bar row, the rest under it, then the hairline; plain title text in the row gets `.titlebarLabel()` so a double-click on it zooms | a header with `.padding(.top, 34)` under the title bar: every hub mode had one, an empty band the `--snapshot` audit now names ("an empty band N pt tall under the title bar") |
-| A window whose content runs under the title bar (`.fullSizeContentView`, transparent title bar) | `.titlebarZone()` on the window's root view, `.titlebarBackground(fill)` for any fill that paints the strip (`.hubSurface` already does), `.titlebarRow()` for a row of controls placed in the strip (Sources/WindowTitlebar.swift) | a view, or a `.background(… .ignoresSafeArea(edges: .top))`, over the title bar without them: the double-click never reaches the window, so it does not zoom |
+| A window whose content runs under the title bar (`.fullSizeContentView`, transparent title bar) | `.titlebarZone()` on the window's root view, `.titlebarBackground(fill)` for any fill that paints the strip (`.hubSurface` already does), `.titlebarRow()` for a row of controls placed in the strip (GenesisKit Window/WindowTitlebar.swift) | a view, or a `.background(… .ignoresSafeArea(edges: .top))`, over the title bar without them: the double-click never reaches the window, so it does not zoom |
 | A PR/MR's review threads or any write to them | `ReviewModel.attachPR` → `PRThreadsStore` + `PRCommand` argv (Review/PRThreads.swift, fed by `tools hub pr`). The diff's thread cards carry Reply / Resolve / Edit / Delete (web/diff-viewer/main.ts, `renderLiveThread`): the page only posts `thread.action`, and Swift confirms, runs `tools`, then answers `threadDone`. The PR bar and threads list are in Review/PRThreadsPanel.swift. 🛑 `PRCommand.publish` has one caller, the Submit review confirmation (a test scans Sources for it) | `tools github …` / `tools gitlab …` calls from a view, or a second path to `publish` |
 
 **Every button has a hover effect.** Icon buttons: `IconButton` (uses `.genHoverIcon()`); text-like buttons and
@@ -49,7 +49,7 @@ Martin, 2026-09-28: "the top of the window is not clickable to fill in the whole
 all swift stuff you do". In a `.fullSizeContentView` window the SwiftUI hosting view covers the title bar, so every
 click there lands in SwiftUI (hit test: `NSHostingView`, never `NSTitlebarView`) and AppKit never zooms the window.
 The window server still drags it from anywhere in the strip, a control placed there included. So every window with
-a title bar gets, through Sources/WindowTitlebar.swift:
+a title bar gets, through GenesisKit Window/WindowTitlebar.swift:
 
 - `.titlebarZone()` on its root view: the empty strip does what System Settings says on a double-click
   (`AppleActionOnDoubleClick`: zoom, minimize or nothing) and drags the window; controls keep their clicks and drags.
@@ -89,7 +89,7 @@ window once per accessibility node an update touches: a click's cost grows with 
 row × rows (stall stacks: `AccessibilityNode.updateFocusResponder`). Rows of a dense list take values,
 not the hub's models (`TimelineRowView`), and carry buttons, hover sensors and tooltips only while the
 pointer is on them (its `live`, `ExternalLink(interactive:)`). A list that inserts rows above the
-viewport holds it with `TranscriptScrollAnchor` (Hub/HubTranscriptAnchor.swift).
+viewport holds it with `TranscriptScrollAnchor` (GenesisKit Sessions/Transcript/TranscriptScrollAnchor.swift).
 
 🛑 Moving a SwiftUI `List`'s viewport inside the resize of a row insert (a frame-change observer that
 scrolls at once, as `TranscriptScrollAnchor` does to stay still) stops AppKit re-measuring the rows on
@@ -102,18 +102,24 @@ otherwise (a prepend under a hold); follow appends at the latest turn one turn l
 
 ## Look
 
-- Palette: `ReviewPalette` (Review/ReviewWindow.swift) for hub and review; `SessionPalette` inside the stolen session screen. Dark only, near-black background, white-alpha hairlines, green/red/orange/blue status colours.
+- Palette: `ReviewPalette` (Review/ReviewWindow.swift) for hub and review; `SessionPalette` (GenesisKit) inside the session screen. Dark only, near-black background, white-alpha hairlines, green/red/orange/blue status colours.
 - Group and project names keep their own case. No uppercase section titles except tiny kickers ("AGENT ANALYSIS").
 - Dense rows (24–28 pt), monospaced numbers with `Text(verbatim:)` (locale grouping turned "+7711" into "+7 711").
 
-## Stolen code (Hub/Stolen/)
+## Shared with Genesis: GenesisKit, and the three copies left in Hub/Stolen/
 
-Files copied from GenesisPlayground/Genesis carry a `// Copied from <path> at <time> at commit hash <sha>` header.
-Keep them verbatim so `/steal-code --reconcile` can three-way merge upstream changes. Any local change is a
-marked adaptation (`// GenesisTools adaptation: …`). Missing Genesis types go in `Hub/StolenShims.swift` or
-`Hub/MarkdownShim.swift`, not into the stolen files. The UI pieces both apps use (hover styles, tooltip, LiveTime,
-MenuButton) are no longer copied: they live once in `../GenesisKit`. A reconcile that brings a copy of one back must
-drop it again.
+The session screen and everything under it lives once in `../GenesisKit` (Sessions/: transcript list and
+document, tool calls, code blocks, detail screen and sidebar, prompt parts, scroll anchor; Tools/: ToolsBridge,
+TitleFormatter, SessionTranscriptClient, MonitorJSON; Perf/: PerfLog, HangWatch, MainStackSampler, RenderProbe;
+Window/: WindowTitlebar). Change them there; its README has the layout and the API rules. What differs between
+the apps is a host hook, never a marked copy: `GenesisKitHost` (Hub/GenesisKitHost.swift: perf file, markdown
+renderer, panel find, cmux), `TranscriptServices`, `TranscriptBus` / `TranscriptFilters` (the sidebar's reveal
+and tool filter), and options such as `sidebarExtraFirst`. The provenance headers and `/steal-code --reconcile` do
+not apply to any of it.
+
+Hub/Stolen/ still holds `MonitorSnapshot` (excerpt), `SessionListClient` and `SessionStatusFormat`: they need the
+monitor kit's session-row types, which move to GenesisKit once that file's pending edits in GenesisPlayground are
+committed. Keep them verbatim until then; `Hub/StolenShims.swift` stands in for the scored-usage type.
 
 ## Verify without a screen
 
@@ -127,7 +133,8 @@ drop it again.
   `activity` (the Activity rail's filters clicked) and `inbox` (the mode switch). 🛑 Measure clicks with
   `GENESIS_HUB_BENCH_AX=1`: the live hub always has an accessibility client (dictation, `tools control`), and with
   one SwiftUI walks every responder per changed accessibility node; a click that costs 90 ms without it costs 1.6 s.
-- Logic tests: `swift test` in this folder (Tests/). Only LiveTimeTests, SessionTranscriptScrollTests and WindowTitlebarTests
+- Logic tests: `swift test` in this folder (Tests/), and in `../GenesisKit` for the shared code (its SessionTranscriptScrollTests
+  and WindowTitlebarTests open windows the same way). Here only LiveTimeTests
   open a window, alpha 0 below the desktop and never activated; `SESSION_SCROLL_PERF=1` adds the transcript's scroll and idle cost lines.
 - Read the PNG. The web diff is composited from WKWebView's own snapshot, so it needs no Screen Recording grant.
 - A `--snapshot` run uses the `.prohibited` activation policy and an alpha-0 window (`orderInForSnapshot`): it never

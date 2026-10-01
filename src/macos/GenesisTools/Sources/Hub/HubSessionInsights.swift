@@ -4,7 +4,7 @@ import SwiftUI
 // Session Details insights: the per-prompt cost timeline and the tool analytics in the sidebar. The
 // numbers come from `tools hub insights <id> --json` (src/hub/lib/insights), run off the main thread
 // and cached per session file by the CLI; nothing here recomputes them. A click on a bar or a tool
-// reaches the transcript through `HubTranscriptBus` (jump to a turn, filter to one tool).
+// reaches the transcript through `TranscriptBus` (jump to a turn, filter to one tool).
 
 // MARK: - Payload
 
@@ -119,85 +119,8 @@ enum HubInsights {
     }
 }
 
-// MARK: - Transcript bus
-
-/// What the sidebar asks of the transcript. A jump goes to the host first, which loads the window
-/// holding the turn when it is before the loaded one, then tells the list to reveal the row.
-enum HubTranscriptCommand: Equatable {
-    case jump(turnIndex: Int, rowId: String)
-    case reveal(rowId: String)
-}
-
-struct HubTranscriptMessage {
-    let sessionId: String
-    let command: HubTranscriptCommand
-}
-
-enum HubTranscriptBus {
-    /// Sidebar → host (`HubSessionDetailHost`).
-    static let request = Notification.Name("hub.transcript.request")
-    /// Host → list (`SessionTranscriptList`, a marked adaptation).
-    static let list = Notification.Name("hub.transcript.list")
-
-    static func post(_ name: Notification.Name, sessionId: String, _ command: HubTranscriptCommand) {
-        NotificationCenter.default.post(name: name, object: HubTranscriptMessage(sessionId: sessionId, command: command))
-    }
-
-    static func message(_ note: Notification, for name: Notification.Name, sessionId: String) -> HubTranscriptCommand? {
-        guard note.name == name, let message = note.object as? HubTranscriptMessage, !sessionId.isEmpty, message.sessionId == sessionId else {
-            return nil
-        }
-
-        return message.command
-    }
-
-    /// Only the calls of one tool, each under its prompt; a prompt with none of them goes.
-    static func onlyTool(_ name: String?, in sections: [TranscriptSection]) -> [TranscriptSection] {
-        guard let name else { return sections }
-        return sections.compactMap { section in
-            var copy = section
-            copy.rows = section.rows.filter { row in
-                if row.isPrompt { return true }
-                if case .tool(let line) = row.kind { return line.name == name }
-                return false
-            }
-            return copy.rows.contains { !$0.isPrompt } ? copy : nil
-        }
-    }
-
-    /// The visible row that shows `rowId`: the row itself, or the folded group holding that call.
-    static func visibleRow(_ rowId: String, in sections: [TranscriptSection]) -> String? {
-        for section in sections {
-            for row in section.rows {
-                if row.id == rowId { return row.id }
-                if case .toolGroup(let group) = row.kind, group.members.contains(where: { $0.id == rowId }) {
-                    return row.id
-                }
-            }
-        }
-        return nil
-    }
-
-    static func contains(_ rowId: String, in sections: [TranscriptSection]) -> Bool {
-        visibleRow(rowId, in: sections) != nil
-    }
-}
-
-/// The transcript's tool filter per session: set by a click in the sidebar's tool list, cleared by
-/// the chip it puts in the transcript toolbar. Keyed by session id so another session opens unfiltered.
-@MainActor
-final class HubTranscriptFilters: ObservableObject {
-    static let shared = HubTranscriptFilters()
-    @Published private(set) var tools: [String: String] = [:]
-
-    func tool(for sessionId: String) -> String? { tools[sessionId] }
-
-    func setTool(_ name: String?, for sessionId: String) {
-        guard !sessionId.isEmpty, tools[sessionId] != name else { return }
-        HubPerf.log("transcript.toolFilter \(sessionId.prefix(8)) \(name ?? "off")")
-        tools[sessionId] = name
-    }
-}
+// The transcript bus and tool filter (`TranscriptBus`, `TranscriptFilters`) are GenesisKit's
+// (Sessions/Transcript/TranscriptBus.swift), shared with Genesis.
 
 // MARK: - Model
 
@@ -381,7 +304,7 @@ struct SessionInsightsSection: View {
     /// The session's turn count as the transcript knows it; a change means the file grew.
     let turnCount: Int
     @StateObject private var model = SessionInsightsModel()
-    @ObservedObject private var filters = HubTranscriptFilters.shared
+    @ObservedObject private var filters = TranscriptFilters.shared
     @State private var composer: HandoffComposerRequest?
 
     var body: some View {
@@ -428,7 +351,7 @@ struct SessionInsightsSection: View {
     }
 
     private func jump(turnIndex: Int, rowId: String) {
-        HubTranscriptBus.post(HubTranscriptBus.request, sessionId: session.sessionId, .jump(turnIndex: turnIndex, rowId: rowId))
+        TranscriptBus.post(TranscriptBus.request, sessionId: session.sessionId, .jump(turnIndex: turnIndex, rowId: rowId))
     }
 }
 

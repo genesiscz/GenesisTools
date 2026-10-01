@@ -98,8 +98,7 @@ final class LiveTimeTests: XCTestCase {
     /// The label ticks each second on its own; the view that holds it renders once.
     func testALiveLabelTicksWithoutItsParent() throws {
         RenderProbe.enabled = true
-        // LiveTime is GenesisKit's; it reports its ticks through this hook.
-        GenesisKit.renderProbe = { RenderProbe.hit($0) }
+
         _ = RenderProbe.take()
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 320, height: 80), styleMask: [.titled], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
@@ -113,7 +112,7 @@ final class LiveTimeTests: XCTestCase {
             window.orderOut(nil)
             window.close()
             RenderProbe.enabled = false
-            GenesisKit.renderProbe = nil
+
         }
 
         RunLoop.main.run(until: Date().addingTimeInterval(0.5))

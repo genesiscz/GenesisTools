@@ -1,7 +1,7 @@
 import AppKit
 import SwiftUI
 
-/// Hosts Genesis's redesigned session screen (Hub/Stolen/Sessions/SessionDetailScreen.swift) for a
+/// Hosts the shared session screen (GenesisKit Sessions/Detail/SessionDetailScreen.swift) for a
 /// hub session. Modeled on Genesis's `SessionDetailsPane.swift` (branch
 /// feat/2026-09-24-genesis-session-redesign): same paging, same off-main document build, same
 /// liveness rules, with the hub's data (MonitorSessionRow) and ToolsBridge instead of MonitorModel.
@@ -78,6 +78,8 @@ struct HubSessionDetailHost: View {
             services: services,
             // `--set hub.session.sidebarFolded=true`: a snapshot of the folded sidebar in a single pane.
             showsSidebar: showsSidebar && !HubDefaults.store.bool(forKey: "hub.session.sidebarFolded"),
+            // Cost per prompt and tool analytics sit under the usage grid, above a long sub-agent list.
+            sidebarExtraFirst: true,
             actions: actions
         ) {
             SessionTerminalSection(session: session)
@@ -87,8 +89,8 @@ struct HubSessionDetailHost: View {
         // A click in the transcript keeps ⌘F on its own search (Hub/HubPanelFind.swift).
         .panelFindNative("transcript")
         // The sidebar asks for a turn: load the window holding it when it is earlier, then reveal it.
-        .onReceive(NotificationCenter.default.publisher(for: HubTranscriptBus.request)) { note in
-            if case .jump(let index, let rowId)? = HubTranscriptBus.message(note, for: HubTranscriptBus.request, sessionId: session.sessionId) {
+        .onReceive(NotificationCenter.default.publisher(for: TranscriptBus.request)) { note in
+            if case .jump(let index, let rowId)? = TranscriptBus.message(note, for: TranscriptBus.request, sessionId: session.sessionId) {
                 Task { await jump(toTurn: index, rowId: rowId) }
             }
         }
@@ -314,7 +316,7 @@ struct HubSessionDetailHost: View {
             await load(offset: offset, limit: max(Self.pageSize, end - offset))
         }
         // The list knows its session by the transcript's own id (`services.sessionId`).
-        HubTranscriptBus.post(HubTranscriptBus.list, sessionId: services.sessionId, .reveal(rowId: rowId))
+        TranscriptBus.post(TranscriptBus.list, sessionId: services.sessionId, .reveal(rowId: rowId))
     }
 
     /// Types one line into the session's cmux pane, off the main thread; a failure shows in the banner.
@@ -452,7 +454,7 @@ struct HubSessionDetailHost: View {
             turns = page.turns.filter { !known.contains($0.id) } + turns
             windowStart = page.windowStart
             await rebuild()
-            // The list inserting the earlier rows above the viewport (Hub/HubTranscriptAnchor.swift).
+            // The list inserting the earlier rows above the viewport (GenesisKit `TranscriptScrollAnchor`).
             HubMainBusy.measure("transcript.earlier.render")
             return true
         } catch {
@@ -671,40 +673,3 @@ enum HubSessionSearch {
     }
 }
 
-/// The session screen's transcript and its details sidebar (Hub/Stolen/Sessions/SessionDetailScreen.swift).
-/// Wide enough for both, they sit side by side; narrower, the sidebar covers the transcript's trailing
-/// edge. The screen never grows past its frame: as an HStack of the transcript (`minWidth: 460`) and the
-/// 301 pt sidebar it grew to 761 pt in a narrower pane, the parent clipped both edges, and the sidebar
-/// and the header's sidebar toggle went off screen (2026-09-25).
-struct SessionSidebarSplit: Layout {
-    /// The details sidebar; the screen draws a 1 pt hairline before it.
-    static let sidebarWidth: CGFloat = 300
-
-    var mainMinWidth: CGFloat = 460
-
-    /// True when the sidebar has to cover the transcript at this width.
-    static func overlays(width: CGFloat, sidebar: CGFloat, mainMinWidth: CGFloat) -> Bool {
-        width - sidebar < mainMinWidth
-    }
-
-    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
-        proposal.replacingUnspecifiedDimensions()
-    }
-
-    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
-        guard let main = subviews.first else {
-            return
-        }
-
-        guard subviews.count > 1, let sidebar = subviews.last else {
-            main.place(at: bounds.origin, proposal: ProposedViewSize(bounds.size))
-            return
-        }
-
-        let sidebarWidth = min(sidebar.sizeThatFits(ProposedViewSize(width: nil, height: bounds.height)).width, bounds.width)
-        let covers = Self.overlays(width: bounds.width, sidebar: sidebarWidth, mainMinWidth: mainMinWidth)
-        let mainWidth = covers ? bounds.width : bounds.width - sidebarWidth
-        main.place(at: bounds.origin, proposal: ProposedViewSize(width: mainWidth, height: bounds.height))
-        sidebar.place(at: CGPoint(x: bounds.maxX - sidebarWidth, y: bounds.minY), proposal: ProposedViewSize(width: sidebarWidth, height: bounds.height))
-    }
-}

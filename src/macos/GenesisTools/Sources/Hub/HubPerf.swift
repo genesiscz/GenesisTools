@@ -1,7 +1,7 @@
 import Foundation
 import os
 
-/// Spans for the hub and review window, on top of the stolen `PerfLog` (Hub/Stolen/UI/PerfLog.swift).
+/// Spans for the hub and review window, on top of GenesisKit's `PerfLog` (Perf/PerfLog.swift).
 /// Every load that can be slow (a `tools` call, git, a transcript page, a diff render) runs inside a
 /// span. Lines land in `~/.genesis-tools/logs/app-perf.log`:
 ///
@@ -100,5 +100,25 @@ enum HubMainBusy {
             open.remove(label)
             HubPerf.log(String(format: "%@ main busy %.1f ms of %.0f ms", label, meter.busy * 1000, window * 1000))
         }
+    }
+}
+
+/// `GENESIS_HUB_STALL_TEST=<ms>`: blocks the main thread once, 3 s after launch, in a frame with a
+/// known name, so a run proves the stall capture end to end (the stack file must name `block(ms:)`).
+enum HubStallTest {
+    @MainActor
+    static func scheduleIfRequested() {
+        guard let raw = ProcessInfo.processInfo.environment["GENESIS_HUB_STALL_TEST"], let ms = Double(raw), ms > 0 else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3) { block(ms: ms) }
+    }
+
+    @inline(never)
+    static func block(ms: Double) {
+        let end = CFAbsoluteTimeGetCurrent() + ms / 1000
+        var spins = 0
+        while CFAbsoluteTimeGetCurrent() < end {
+            spins &+= 1
+        }
+        PerfLog.mark("stall test: blocked the main thread \(Int(ms)) ms (\(spins) spins)")
     }
 }

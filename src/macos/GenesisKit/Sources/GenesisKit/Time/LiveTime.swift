@@ -54,7 +54,7 @@ public struct LiveTime: View {
 
     public var body: some View {
         TimelineView(LiveTimeSchedule(date: date, style: style)) { context in
-            let _ = GenesisKit.renderProbe?("liveTime.tick")
+            let _ = RenderProbe.hit("liveTime.tick")
             let text = format(LiveTimeFormat.text(style, date, now: context.date) ?? "")
             Text(verbatim: LiveTimeFormat.widthTemplate(text))
                 .hidden()

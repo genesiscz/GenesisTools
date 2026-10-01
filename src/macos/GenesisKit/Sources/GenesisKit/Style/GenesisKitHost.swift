@@ -16,6 +16,11 @@ public protocol GenesisKitHost: AnyObject {
     func openTerminal(folder: String)
     /// Text a panel find can mark (GenesisTools: `FindText`); nil draws a plain `Text`.
     func findText(_ text: String, field: String) -> AnyView?
+    /// Where PerfLog, HangWatch and MainStackSampler write, and whether they are on. Read once.
+    var perf: PerfConfiguration { get }
+    /// The transcript's markdown (replies, prompt parts) in the app's own renderer; nil draws inline
+    /// markdown in one `Text`.
+    func transcriptMarkdown(_ text: String, style: TranscriptMarkdownStyle) -> AnyView?
 }
 
 public extension GenesisKitHost {
@@ -23,6 +28,8 @@ public extension GenesisKitHost {
     var opensTerminal: Bool { false }
     func openTerminal(folder: String) {}
     func findText(_ text: String, field: String) -> AnyView? { nil }
+    var perf: PerfConfiguration { .fallback }
+    func transcriptMarkdown(_ text: String, style: TranscriptMarkdownStyle) -> AnyView? { nil }
 }
 
 public enum GenesisKit {
@@ -51,9 +58,6 @@ public enum GenesisKit {
         return installed
     }
 
-    /// Counts renders by name for an app's render tests (Genesis `RenderProbe.hit`); nil counts nothing.
-    /// `LiveTime` reports "liveTime.tick" on every tick.
-    nonisolated(unsafe) public static var renderProbe: ((String) -> Void)?
 
     static func log(_ line: String) {
         host?.log(line)

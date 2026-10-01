@@ -230,4 +230,30 @@ final class InstantTooltipTests: XCTestCase {
         XCTAssertLessThanOrEqual(wrapped.width, TooltipPresenter.maxBubbleWidth + 0.5)
         XCTAssertGreaterThan(wrapped.height, oneLine.height * 2)
     }
+
+    /// Long bullets wrap inside the cap too, with the title above them.
+    func testTitledBulletsWrapWithinTheWidthCap() throws {
+        let owner = UUID()
+        owners.append(owner)
+        let long = String(repeating: "a reason that keeps going ", count: 6)
+        let content = TooltipContent(title: "Blocked", bullets: [long, "CI is still running"])
+        TooltipPresenter.shared.show(owner: owner, content: content, anchorView: defaultAnchor(), below: true)
+        let frame = try XCTUnwrap(TooltipPresenter.shared.panel?.frame)
+
+        XCTAssertLessThanOrEqual(frame.width, TooltipPresenter.maxBubbleWidth + 0.5)
+        XCTAssertGreaterThan(frame.height, 60)
+    }
+
+    func testPlainTextReadsAsTitleParagraphsAndBullets() {
+        XCTAssertEqual(TooltipContent("one line"), TooltipContent(lines: [.text("one line")]))
+        XCTAssertEqual(
+            TooltipContent("Blocked\n• It is a draft\n• CI is still running\nDetails on the forge"),
+            TooltipContent(title: "Blocked", lines: [.bullet("It is a draft"), .bullet("CI is still running"), .text("Details on the forge")])
+        )
+        // A list with no title line stays a list.
+        XCTAssertEqual(TooltipContent("• a\n• b"), TooltipContent(lines: [.bullet("a"), .bullet("b")]))
+        // Monospaced text is shown as it is: no title, no bullets.
+        XCTAssertEqual(TooltipContent("git push\n• x", monospaced: true), TooltipContent(lines: [.text("git push\n• x")], monospaced: true))
+        XCTAssertTrue(TooltipContent("").isEmpty)
+    }
 }

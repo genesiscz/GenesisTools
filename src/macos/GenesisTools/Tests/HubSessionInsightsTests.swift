@@ -96,31 +96,31 @@ final class HubSessionInsightsTests: XCTestCase {
     }
 
     func testOnlyToolKeepsItsCallsUnderTheirPromptsAndDropsOtherPrompts() {
-        let sections = HubTranscriptBus.onlyTool("Bash", in: document().sections)
+        let sections = TranscriptBus.onlyTool("Bash", in: document().sections)
 
         XCTAssertEqual(sections.count, 1)
         XCTAssertEqual(sections[0].rows.map(\.id), ["p-u1", "t-b1"])
-        XCTAssertEqual(HubTranscriptBus.onlyTool(nil, in: document().sections).count, 2)
-        XCTAssertTrue(HubTranscriptBus.onlyTool("Grep", in: document().sections).isEmpty)
+        XCTAssertEqual(TranscriptBus.onlyTool(nil, in: document().sections).count, 2)
+        XCTAssertTrue(TranscriptBus.onlyTool("Grep", in: document().sections).isEmpty)
     }
 
     func testVisibleRowFindsACallInsideAFoldedGroup() {
         let folded = TranscriptDocument.folded(document().sections)
 
-        XCTAssertEqual(HubTranscriptBus.visibleRow("t-r1", in: folded), "g-t-b1")
-        XCTAssertEqual(HubTranscriptBus.visibleRow("p-u2", in: folded), "p-u2")
-        XCTAssertNil(HubTranscriptBus.visibleRow("t-missing", in: folded))
+        XCTAssertEqual(TranscriptBus.visibleRow("t-r1", in: folded), "g-t-b1")
+        XCTAssertEqual(TranscriptBus.visibleRow("p-u2", in: folded), "p-u2")
+        XCTAssertNil(TranscriptBus.visibleRow("t-missing", in: folded))
     }
 
     func testBusMessagesReachOnlyTheirSession() {
-        let note = Notification(name: HubTranscriptBus.list, object: HubTranscriptMessage(sessionId: "s-1", command: .reveal(rowId: "p-u1")))
+        let note = Notification(name: TranscriptBus.list, object: TranscriptMessage(sessionId: "s-1", command: .reveal(rowId: "p-u1")))
 
-        XCTAssertEqual(HubTranscriptBus.message(note, for: HubTranscriptBus.list, sessionId: "s-1"), .reveal(rowId: "p-u1"))
-        XCTAssertNil(HubTranscriptBus.message(note, for: HubTranscriptBus.list, sessionId: "s-2"))
-        XCTAssertNil(HubTranscriptBus.message(note, for: HubTranscriptBus.request, sessionId: "s-1"))
+        XCTAssertEqual(TranscriptBus.message(note, for: TranscriptBus.list, sessionId: "s-1"), .reveal(rowId: "p-u1"))
+        XCTAssertNil(TranscriptBus.message(note, for: TranscriptBus.list, sessionId: "s-2"))
+        XCTAssertNil(TranscriptBus.message(note, for: TranscriptBus.request, sessionId: "s-1"))
         // A list whose services have not loaded (empty id) takes nothing.
-        let unloaded = Notification(name: HubTranscriptBus.list, object: HubTranscriptMessage(sessionId: "", command: .reveal(rowId: "top")))
-        XCTAssertNil(HubTranscriptBus.message(unloaded, for: HubTranscriptBus.list, sessionId: ""))
+        let unloaded = Notification(name: TranscriptBus.list, object: TranscriptMessage(sessionId: "", command: .reveal(rowId: "top")))
+        XCTAssertNil(TranscriptBus.message(unloaded, for: TranscriptBus.list, sessionId: ""))
     }
 
     func testStuckEnvelopeDecodes() throws {

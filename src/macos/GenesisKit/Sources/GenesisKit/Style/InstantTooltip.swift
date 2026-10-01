@@ -29,6 +29,53 @@ public struct InstantTooltipStyle: Sendable {
     @MainActor public static var current = InstantTooltipStyle()
 }
 
+/// What a tooltip says: an optional bold title, then paragraphs and bullets.
+///
+/// A plain string reads as one: with several lines the first is the title, and a line that starts
+/// with "• " is a bullet (hanging indent under its dot). A monospaced tooltip (a command, a path)
+/// keeps its text as it is.
+public struct TooltipContent: Equatable, Sendable {
+    public enum Line: Equatable, Sendable {
+        case text(String)
+        case bullet(String)
+    }
+
+    public var title: String?
+    public var lines: [Line]
+    public var monospaced: Bool
+
+    public init(title: String? = nil, lines: [Line] = [], monospaced: Bool = false) {
+        self.title = title
+        self.lines = lines
+        self.monospaced = monospaced
+    }
+
+    public init(title: String?, bullets: [String], footer: [String] = []) {
+        self.init(title: title, lines: bullets.map(Line.bullet) + footer.map(Line.text))
+    }
+
+    public init(_ text: String, monospaced: Bool = false) {
+        guard !monospaced else {
+            self.init(lines: text.isEmpty ? [] : [.text(text)], monospaced: true)
+            return
+        }
+        var rows = text.split(separator: "\n", omittingEmptySubsequences: true).map(String.init)
+        let lines = { (rows: [String]) in
+            rows.map { $0.hasPrefix(Self.bulletPrefix) ? Line.bullet(String($0.dropFirst(Self.bulletPrefix.count))) : .text($0) }
+        }
+        guard rows.count > 1, !rows[0].hasPrefix(Self.bulletPrefix) else {
+            self.init(lines: lines(rows))
+            return
+        }
+        let title = rows.removeFirst()
+        self.init(title: title, lines: lines(rows))
+    }
+
+    public static let bulletPrefix = "• "
+
+    public var isEmpty: Bool { (title ?? "").isEmpty && lines.isEmpty }
+}
+
 /// Owns the single reusable tooltip panel, plus a watchdog that kills the
 /// bubble whenever its anchor stops being hoverable. `mouseExited` alone is
 /// not enough: it never fires when the anchor's window closes (menu-bar
@@ -51,7 +98,11 @@ public final class TooltipPresenter {
     static let maxBubbleWidth: CGFloat = 360
 
     func show(owner: UUID, text: String, anchorView: NSView, below: Bool) {
-        guard !text.isEmpty, let window = anchorView.window else { return }
+        show(owner: owner, content: TooltipContent(text), anchorView: anchorView, below: below)
+    }
+
+    func show(owner: UUID, content: TooltipContent, anchorView: NSView, below: Bool) {
+        guard !content.isEmpty, let window = anchorView.window else { return }
         guard TooltipGuard.allows(owner, in: window) else { return } // never over an open menu or popover (TooltipGuard.swift).
         let anchorScreenRect = window.convertToScreen(anchorView.convert(anchorView.bounds, to: nil))
         // An enclosing control (a whole row) must not replace the tooltip of
@@ -64,12 +115,12 @@ public final class TooltipPresenter {
             return
         }
         let style = InstantTooltipStyle.current
-        let hosting = NSHostingView(rootView: TooltipBubble(text: text, style: style, wrapWidth: nil))
+        let hosting = NSHostingView(rootView: TooltipBubble(content: content, style: style, wrapWidth: nil))
         hosting.layout()
         var size = hosting.fittingSize
         if size.width > Self.maxBubbleWidth {
             // Too wide: wrap inside a fixed width and let the height follow.
-            hosting.rootView = TooltipBubble(text: text, style: style, wrapWidth: Self.maxBubbleWidth)
+            hosting.rootView = TooltipBubble(content: content, style: style, wrapWidth: Self.maxBubbleWidth)
             hosting.layout()
             size = hosting.fittingSize
         }
@@ -188,7 +239,7 @@ public final class TooltipPresenter {
 }
 
 private struct TooltipBubble: View {
-    let text: String
+    let content: TooltipContent
     let style: InstantTooltipStyle
     /// nil: natural width, no wrapping. Otherwise the whole bubble is this
     /// wide and the text wraps inside it.
@@ -198,47 +249,65 @@ private struct TooltipBubble: View {
         // Text only — the vibrancy material, border and corner radius live on
         // the NSVisualEffectView the presenter wraps this in, and the drop
         // shadow comes from the panel itself.
+        let stack = VStack(alignment: .leading, spacing: 3) {
+            if let title = content.title, !title.isEmpty {
+                wrapping(Text(verbatim: title).font(.system(size: style.fontSize, weight: .semibold)))
+                    .foregroundColor(style.textColor)
+                    .padding(.bottom, content.lines.isEmpty ? 0 : 1)
+            }
+            ForEach(Array(content.lines.enumerated()), id: \.offset) { _, line in
+                switch line {
+                case .text(let text):
+                    wrapping(Text(verbatim: text).font(bodyFont))
+                case .bullet(let text):
+                    // Hanging indent: a wrapped bullet continues under its text, not under the dot.
+                    HStack(alignment: .firstTextBaseline, spacing: 5) {
+                        Text(verbatim: "•").font(bodyFont.weight(.bold))
+                        wrapping(Text(verbatim: text).font(bodyFont))
+                    }
+                }
+            }
+            .foregroundColor(content.title == nil ? style.textColor : style.textColor.opacity(0.82))
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, content.title == nil && content.lines.count < 2 ? 5 : 7)
         if let wrapWidth {
-            label
-                .lineLimit(nil)
-                .multilineTextAlignment(.leading)
-                .fixedSize(horizontal: false, vertical: true)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 5)
-                .frame(width: wrapWidth, alignment: .leading)
+            stack.frame(width: wrapWidth, alignment: .leading)
         } else {
-            // Natural width. Explicit "\n" breaks still start new lines (a
-            // Focus timeline block puts the site on a second line).
-            label
-                .lineLimit(nil)
-                .fixedSize()
-                .padding(.horizontal, 10)
-                .padding(.vertical, 5)
+            stack.fixedSize()
         }
     }
 
-    private var label: some View {
-        Text(text)
-            .font(.system(size: style.fontSize, weight: .medium, design: .monospaced))
-            .foregroundColor(style.textColor)
+    private var bodyFont: Font {
+        content.monospaced
+            ? .system(size: style.fontSize, weight: .medium, design: .monospaced)
+            : .system(size: style.fontSize)
+    }
+
+    /// Natural width: explicit lines stay one line each. Wrapped: the text breaks inside the width.
+    private func wrapping(_ text: Text) -> some View {
+        text
+            .lineLimit(nil)
+            .multilineTextAlignment(.leading)
+            .fixedSize(horizontal: wrapWidth == nil, vertical: true)
     }
 }
 
 /// A hover sensor placed over the target. Uses an NSTrackingArea so it fires in
 /// ANY host (incl. the titlebar) and `hitTest → nil` so it never eats clicks.
 private struct TooltipHoverSensor: NSViewRepresentable {
-    let text: String
+    let content: TooltipContent
     let below: Bool
 
     func makeNSView(context: Context) -> SensorView {
         let v = SensorView()
-        v.text = text
+        v.content = content
         v.below = below
         return v
     }
 
     func updateNSView(_ v: SensorView, context: Context) {
-        v.text = text
+        v.content = content
         v.below = below
     }
 
@@ -246,7 +315,7 @@ private struct TooltipHoverSensor: NSViewRepresentable {
         /// Ownership token — a UUID, never an address, so a recycled allocation
         /// can't steal a live tooltip's hide (see the app-side history).
         let tooltipToken = UUID()
-        var text = ""
+        var content = TooltipContent()
         var below = true
         private var tracking: NSTrackingArea?
         private var pending: DispatchWorkItem?
@@ -305,10 +374,10 @@ private struct TooltipHoverSensor: NSViewRepresentable {
         }
 
         private func present() {
-            guard window != nil, !text.isEmpty else { return }
+            guard window != nil, !content.isEmpty else { return }
             TooltipPresenter.shared.show(
                 owner: tooltipToken,
-                text: text,
+                content: content,
                 anchorView: self,
                 below: below
             )
@@ -331,11 +400,15 @@ private struct TooltipHoverSensor: NSViewRepresentable {
 /// Public modifier so the app target can forward its own `.instantTooltip`
 /// extension here without creating an ambiguous duplicate extension.
 public struct InstantTooltip: ViewModifier {
-    let text: String
+    let tooltip: TooltipContent
     let below: Bool
 
-    public init(text: String, below: Bool = true) {
-        self.text = text
+    public init(text: String, monospaced: Bool = false, below: Bool = true) {
+        self.init(content: TooltipContent(text, monospaced: monospaced), below: below)
+    }
+
+    public init(content: TooltipContent, below: Bool = true) {
+        self.tooltip = content
         self.below = below
     }
 
@@ -352,15 +425,26 @@ public struct InstantTooltip: ViewModifier {
             }
             .overlay {
                 if hovering {
-                    TooltipHoverSensor(text: text, below: below)
+                    TooltipHoverSensor(content: tooltip, below: below)
                 }
             }
     }
 }
 
 public extension View {
-    /// The instant hover label every control in both apps uses (a floating panel, no delay).
-    func instantTooltip(_ text: String, below: Bool = true) -> some View {
-        modifier(InstantTooltip(text: text, below: below))
+    /// The instant hover label every control in both apps uses (a floating panel, no delay). Several
+    /// lines: the first is a bold title and "• " lines are bullets (`TooltipContent`). `monospaced` for
+    /// a command or a path, shown as it is.
+    func instantTooltip(_ text: String, monospaced: Bool = false, below: Bool = true) -> some View {
+        modifier(InstantTooltip(text: text, monospaced: monospaced, below: below))
+    }
+
+    /// A title over a bulleted list: `.instantTooltip(title: "Blocked", bullets: ["It is a draft", …])`.
+    func instantTooltip(title: String?, bullets: [String], below: Bool = true) -> some View {
+        modifier(InstantTooltip(content: TooltipContent(title: title, bullets: bullets), below: below))
+    }
+
+    func instantTooltip(_ content: TooltipContent, below: Bool = true) -> some View {
+        modifier(InstantTooltip(content: content, below: below))
     }
 }

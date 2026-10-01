@@ -3,7 +3,7 @@ import PackageDescription
 
 let package = Package(
     name: "GenesisTools",
-    // macOS 14: the session views stolen from Genesis (Hub/Stolen/Sessions) use onChange(of:initial:).
+    // macOS 14: the session views (GenesisKit Sessions/) use onChange(of:initial:).
     platforms: [.macOS(.v14)],
     // The components shared with Genesis.app (cmux picker, path and copy controls, menu buttons).
     dependencies: [.package(path: "../GenesisKit")],

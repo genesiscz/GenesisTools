@@ -22,6 +22,25 @@ struct MarkdownStyle {
     var monoBody: Bool = false
 }
 
+extension MarkdownStyle {
+    /// GenesisKit's transcript style (`TranscriptMarkdownStyle.sessionTranscript`) in this renderer's terms.
+    init(_ style: TranscriptMarkdownStyle) {
+        self.init(
+            bodySize: style.bodySize,
+            textColor: style.textColor,
+            secondaryColor: style.secondaryColor,
+            mutedColor: style.mutedColor,
+            accentColor: style.accentColor,
+            codeColor: style.codeColor,
+            codeBackground: style.codeBackground,
+            taskDoneColor: style.taskDoneColor,
+            lineSpacing: style.lineSpacing,
+            blockSpacing: style.blockSpacing,
+            headingScale: style.headingScale
+        )
+    }
+}
+
 struct MarkdownContentView: View {
     let markdown: String
     var style = MarkdownStyle()

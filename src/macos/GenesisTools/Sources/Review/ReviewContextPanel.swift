@@ -84,7 +84,7 @@ struct ReviewContextPanelView: View {
                 ReviewCommitsList(model: model)
             case .threads:
                 if let store = model.pr {
-                    PRThreadsList(model: model, store: store)
+                    PRThreadsList(model: model, store: store, compact: true)
                 }
             case .session:
                 if let session = model.session {
@@ -92,7 +92,7 @@ struct ReviewContextPanelView: View {
                 }
             }
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .frame(minWidth: 0, maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .hubSurface(.chrome)
     }
 }
