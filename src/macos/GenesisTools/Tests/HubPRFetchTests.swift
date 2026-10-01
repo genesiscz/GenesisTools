@@ -98,4 +98,11 @@ final class HubPRFetchTests: XCTestCase {
         XCTAssertFalse(PRsModel.showMovesHead(started: "a", current: "a", shown: nil))
     }
 
+    /// show(A) starts, the list installs B, show(A) lands: its detail is stale and is not installed.
+    func testAShowAnswerOlderThanTheListIsStale() {
+        XCTAssertTrue(PRsModel.showIsStale(started: "a", current: "b", shown: "a"))
+        XCTAssertFalse(PRsModel.showIsStale(started: "a", current: "b", shown: "b"))
+        XCTAssertFalse(PRsModel.showIsStale(started: "a", current: "a", shown: "c"))
+    }
+
 }

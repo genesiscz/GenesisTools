@@ -725,6 +725,12 @@ final class PRsModel: ObservableObject {
         return current == started
     }
 
+    /// Whether a `hub pr show` answer is older than the row: the list moved the head while it ran, and the
+    /// answer names a head other than the one on screen now.
+    nonisolated static func showIsStale(started: String?, current: String?, shown: String?) -> Bool {
+        current != started && shown != nil && shown != current
+    }
+
     /// The diff of `pr`: its worktree's, else its head fetched into the main checkout (`fetchHead`).
     private func showDiff(_ pr: HubPR) {
         if let path = pr.localWorktree {
@@ -802,13 +808,21 @@ final class PRsModel: ObservableObject {
                 }
                 return
             }
+            let current = prs.first { $0.id == key } ?? pr
+            // The list installed a newer head while this show ran, and the show answered another one: its
+            // detail (commits, checks, base) belongs to an older observation. Nothing of it is installed;
+            // the detail is asked again for the head on screen.
+            if Self.showIsStale(started: pr.headSha, current: current.headSha, shown: row?.headSha) {
+                HubPerf.log("prs.show \(pr.label) answered head \(row?.headSha?.prefix(10) ?? "-") after the list moved to \(current.headSha?.prefix(10) ?? "-"): discarded")
+                loadDetail(current, force: true)
+                return
+            }
             detailFetched[key] = Date()
             Task.detached(priority: .utility) { PRListCache.writeDetail(data, id: key) }
             let previous = details[key]
             if previous != detail {
                 details[key] = detail
             }
-            let current = prs.first { $0.id == key } ?? pr
             if let row, row.id == key, Self.showMovesHead(started: pr.headSha, current: current.headSha, shown: row.headSha) {
                 let head = row.headSha ?? ""
                 // Pushed since the list answered (a force push): the row, its diff and its threads
