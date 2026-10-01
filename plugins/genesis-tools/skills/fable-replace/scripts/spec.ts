@@ -97,9 +97,11 @@ interface Modifiers {
     at?: string;
     /** `move` only: `fix` carries the imports along and re-points importers. */
     imports?: string;
+    /** `move` with `imports=fix` only: `widen` exports or widens what must cross the boundary. */
+    visibility?: string;
 }
 
-const KEY_VALUE_MODIFIER = /^(count|flags|to|symbol|lines|at|imports)=\S/;
+const KEY_VALUE_MODIFIER = /^(count|flags|to|symbol|lines|at|imports|visibility)=\S/;
 
 /**
  * The modifier a label swallowed, if it reads as one. A `key=value` token anywhere is never prose.
@@ -180,6 +182,12 @@ const parseModifiers = (raw: string, line: number): Modifiers => {
             }
 
             mods.at = value;
+        } else if (key === "visibility" && value !== undefined) {
+            if (value !== "widen") {
+                fail(line, `visibility= takes widen, got "${value}"`);
+            }
+
+            mods.visibility = value;
         } else if (key === "imports" && value !== undefined) {
             if (value !== "fix") {
                 fail(line, `imports= takes fix, got "${value}"`);
@@ -214,6 +222,7 @@ const parseModifiers = (raw: string, line: number): Modifiers => {
         ["lines", mods.lines],
         ["at", mods.at],
         ["imports", mods.imports],
+        ["visibility", mods.visibility],
     ] as const) {
         if (value !== undefined && mods.kind !== "move") {
             fail(line, `${key}= only applies to move, not ${mods.kind}`);
@@ -228,6 +237,10 @@ const parseModifiers = (raw: string, line: number): Modifiers => {
             fail(line, "move needs exactly one of symbol=<name> or lines=<first>-<last>");
         }
     }
+    if (mods.visibility !== undefined && mods.imports === undefined) {
+        fail(line, "visibility=widen only works with imports=fix; add imports=fix to this marker");
+    }
+
     if (mods.optional && (mods.kind === "append" || mods.kind === "create")) {
         fail(line, `optional has no meaning for ${mods.kind}: it cannot miss`);
     }
@@ -324,6 +337,7 @@ const buildOp = (mods: Modifiers, parts: string[], line: number, section: Sectio
                 ...(at === undefined ? {} : { at }),
                 ...(mods.label === undefined ? {} : { label: mods.label }),
                 ...(mods.imports === "fix" ? { imports: "fix" as const } : {}),
+                ...(mods.visibility === "widen" ? { visibility: "widen" as const } : {}),
             },
         });
         return;
@@ -595,11 +609,27 @@ export const parseSpec = ({ text, onWarning, cwd }: ParseSpecParams): FileEdit[]
             .filter((section) => section.createWith !== undefined)
             .map((section) => [path.resolve(base, section.file), section.createWith ?? ""] as const)
     );
+    // A warning's proposed fix is an op in this spec; once the op is there, the warning is not.
+    const opsByFile = new Map<string, Op[]>();
+    for (const section of sections) {
+        const abs = path.resolve(base, section.file);
+        opsByFile.set(abs, [...(opsByFile.get(abs) ?? []), ...section.ops]);
+    }
+    const isHandled = (abs: string, needle: string): boolean =>
+        (opsByFile.get(abs) ?? []).some((op) => {
+            if (!("find" in op)) {
+                return false;
+            }
+
+            return typeof op.find === "string"
+                ? op.find.includes(needle)
+                : new RegExp(op.find.source, op.find.flags.replace("g", "")).test(needle);
+        });
     let moved: FileEdit[];
     try {
         moved = expandMoves(
             moves.map((pending) => pending.move),
-            { cwd: base, files, ...(onWarning === undefined ? {} : { onWarning }) }
+            { cwd: base, files, isHandled, ...(onWarning === undefined ? {} : { onWarning }) }
         );
     } catch (error) {
         const message = error instanceof Error ? error.message : String(error);

@@ -47,6 +47,11 @@ export interface MoveSpec {
      * used, and every importer of a moved export is re-pointed (mixed imports split).
      */
     imports?: "fix";
+    /**
+     * `widen`, with `imports: "fix"`: a declaration that must cross the new file boundary is
+     * exported (TS) or loses `private`/`fileprivate`, or gains `public` across modules (Swift).
+     */
+    visibility?: "widen";
 }
 
 export interface ExpandMovesOptions {
@@ -56,6 +61,8 @@ export interface ExpandMovesOptions {
     onWarning?: (message: string) => void;
     /** Overrides the files scanned for importers (tests); defaults to git's view of the repository. */
     projectFiles?: string[];
+    /** True when an op elsewhere in the same spec already rewrites `needle` in `abs`. */
+    isHandled?: (abs: string, needle: string) => boolean;
 }
 
 export interface LocatedBlock {
@@ -374,6 +381,7 @@ export function expandMoves(moves: MoveSpec[], options: ExpandMovesOptions = {})
             read: readAbs,
             ...(options.onWarning === undefined ? {} : { onWarning: options.onWarning }),
             ...(options.projectFiles === undefined ? {} : { projectFiles: options.projectFiles }),
+            ...(options.isHandled === undefined ? {} : { isHandled: options.isHandled }),
         })
     );
     return edits;
@@ -470,9 +478,11 @@ function expandOne({ move, index, cwd, readAbs, created, edits }: ExpandOneParam
         fromAbs,
         toAbs,
         blockText: block.text,
+        startLine: block.start + 1,
+        endLine: block.end + 1,
         cutText: cut,
         fixImports: move.imports === "fix",
-        widen: false,
+        widen: move.visibility === "widen",
         marker: markerFor(move),
         label,
     };
@@ -487,5 +497,6 @@ function markerFor(move: MoveSpec): string {
               ? `lines=${move.lines[0]}-${move.lines[1]}`
               : "";
     const at = move.at === undefined || move.at === "end" ? "" : "after" in move.at ? " at=after" : " at=before";
-    return `<<< move to=${move.to} ${what}${at}${move.imports === "fix" ? " imports=fix" : ""}`;
+    const imports = move.imports === "fix" ? " imports=fix" : "";
+    return `<<< move to=${move.to} ${what}${at}${imports}${move.visibility === "widen" ? " visibility=widen" : ""}`;
 }

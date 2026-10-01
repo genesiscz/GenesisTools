@@ -18,6 +18,9 @@ export interface PlannedMove {
     fromAbs: string;
     toAbs: string;
     blockText: string;
+    /** 1-indexed, inclusive: where the block sat in the source. */
+    startLine: number;
+    endLine: number;
     cutText: string;
     fixImports: boolean;
     /** `visibility=widen`: the planner may export (TS) or widen access (Swift) to make the split compile. */

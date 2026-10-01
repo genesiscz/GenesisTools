@@ -538,3 +538,75 @@ describe("a move with imports=fix", () => {
         );
     });
 });
+describe("imports=fix proposes the spec change that makes it pass", () => {
+    const write = (dir: string, files: Record<string, string>): void => {
+        for (const [file, content] of Object.entries(files)) {
+            mkdirSync(dirname(join(dir, file)), { recursive: true });
+            writeFileSync(join(dir, file), content);
+        }
+    };
+    const read = (dir: string, file: string): string => readFileSync(join(dir, file), "utf8");
+    const parse = (dir: string, text: string): { edits: ReturnType<typeof parseSpec>; warnings: string[] } => {
+        const warnings: string[] = [];
+        const edits = parseSpec({ text, cwd: dir, onWarning: (message) => warnings.push(message) });
+        return { edits, warnings };
+    };
+
+    test("a private name used across the cut: the refusal names visibility=widen, and with it the move exports", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "fr-widen-"));
+        write(dir, {
+            "a.ts": "const helper = () => 1;\n\nexport const user = () => helper();\n",
+        });
+        const marker = "<<< move to=b.ts symbol=helper imports=fix";
+        expect(() => parse(dir, `@@ a.ts\n${marker}\n>>>\n`)).toThrow(
+            `Fix: let the move export it, or move its users along:\n    ${marker} visibility=widen`
+        );
+
+        const { edits } = parse(dir, `@@ a.ts\n${marker} visibility=widen\n>>>\n`);
+        await run({ cwd: dir, verbose: false, edits });
+        expect(read(dir, "b.ts")).toBe("export const helper = () => 1;\n");
+        expect(read(dir, "a.ts")).toBe('import { helper } from "./b";\n\nexport const user = () => helper();\n');
+    });
+
+    test("a namespace or mock warning carries its op, and the warning is gone once that op is in the spec", () => {
+        const dir = mkdtempSync(join(tmpdir(), "fr-warn-fix-"));
+        write(dir, {
+            "lib/utils.ts": "export const keep = 1;\n\nexport const moved = 2;\n",
+            "ns.ts": 'import * as U from "./lib/utils";\n\nexport const x = [U.keep, U.moved];\n',
+            "ns.test.ts": 'mock("./lib/utils", () => ({}));\n',
+        });
+        const move = "@@ lib/utils.ts\n<<< move to=lib/moved.ts symbol=moved imports=fix\n>>>\n";
+
+        const first = parse(dir, move);
+        expect(first.warnings).toHaveLength(2);
+        const namespaceWarning = first.warnings.find((w) => w.includes("through the namespace U")) ?? "";
+        const mockWarning = first.warnings.find((w) => w.includes("in a call")) ?? "";
+        expect(namespaceWarning).toContain('import * as UMoved from "./lib/moved";');
+        expect(mockWarning).toContain('mock("./lib/moved"');
+
+        // Paste each proposed spec block (everything after the "Fix:" line) and parse again.
+        const proposed = (warning: string): string =>
+            warning
+                .split("\n")
+                .slice(2)
+                .map((line) => line.slice(4))
+                .join("\n");
+        const second = parse(dir, `${move}${proposed(namespaceWarning)}\n${proposed(mockWarning)}\n`);
+        expect(second.warnings).toEqual([]);
+    });
+
+    test("a comment inside an import list neither ends the statement nor survives as a name", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "fr-comment-braces-"));
+        write(dir, {
+            "lib/utils.ts": "export const keep = 1;\n\nexport const moved = 2;\n",
+            "user.ts":
+                'import {\n    keep, // the one that } stays\n    moved,\n} from "./lib/utils";\n\nexport const y = [keep, moved];\n',
+        });
+        const { edits } = parse(dir, "@@ lib/utils.ts\n<<< move to=lib/moved.ts symbol=moved imports=fix\n>>>\n");
+        await run({ cwd: dir, verbose: false, edits });
+        // Without a formatter the split keeps the statement's own layout, and the comment stays on keep.
+        expect(read(dir, "user.ts")).toStartWith(
+            'import {\n    moved,\n} from "./lib/moved";\nimport {\n    keep, // the one that } stays\n} from "./lib/utils";\n'
+        );
+    });
+});

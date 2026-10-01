@@ -21,12 +21,16 @@ import {
     importLanguage,
     lineOf,
     listProjectFiles,
+    literalOpSpec,
     MoveError,
+    markerWith,
     type PlanImportFixesParams,
     type PlannedMove,
     parseJsonc,
     toPosix,
     usesName,
+    warnWithFix,
+    withFix,
 } from "./move-imports-shared";
 import type { FileEdit, Op } from "./types";
 
@@ -35,6 +39,8 @@ export interface NamedSpecifier {
     raw: string;
     imported: string;
     local: string;
+    /** Comments on the entry's own lines above it, and after it on its line; they move with it. */
+    comments?: { leading: string[]; trailing?: string };
 }
 
 export interface ImportStatement {
@@ -61,8 +67,13 @@ export interface ImportStatement {
 export const maskNonCode = (text: string): string => {
     const literals: Array<{ start: number; end: number }> = [];
     const comments = scanComments(text, literals);
+    return blankSpans(text, [...comments, ...literals]);
+};
+
+/** `text` with each span replaced by spaces; newlines stay, so every offset still points at the same place. */
+const blankSpans = (text: string, spans: Array<{ start: number; end: number }>): string => {
     const chars = text.split("");
-    for (const span of [...comments, ...literals]) {
+    for (const span of spans) {
         for (let k = span.start; k < span.end && k < chars.length; k++) {
             if (chars[k] !== "\n") {
                 chars[k] = " ";
@@ -88,10 +99,66 @@ const parseNamed = (inner: string): NamedSpecifier[] =>
                 : { raw, imported: match[1], local: match[2] ?? match[1] };
         });
 
+/**
+ * The entries of an import list with their comments. `inner` has its comments blanked; `rawInner`
+ * is the same span as written. A comment on its own line belongs to the entry below it, a comment
+ * after an entry on its line belongs to that entry, so a re-rendered list loses no comment.
+ */
+const parseNamedWithComments = (rawInner: string, inner: string): NamedSpecifier[] => {
+    const commentsIn = (from: number, to: number): string[] =>
+        to <= from ? [] : scanComments(rawInner.slice(from, to)).map((span) => span.text.trim());
+    const out: NamedSpecifier[] = [];
+    let freeFrom = 0;
+    let segmentStart = 0;
+    while (segmentStart <= inner.length) {
+        const found = inner.indexOf(",", segmentStart);
+        const comma = found === -1 ? inner.length : found;
+        const segment = inner.slice(segmentStart, comma);
+        const core = segment.trim();
+        if (core.length > 0) {
+            const coreStart = segmentStart + segment.indexOf(core);
+            const coreEnd = coreStart + core.length;
+            const rest = inner.slice(comma + 1);
+            const nextCore = comma + 1 + (rest.length - rest.trimStart().length);
+            const newline = rawInner.indexOf("\n", coreEnd);
+            const lineEnd = Math.min(
+                newline === -1 ? rawInner.length : newline,
+                found === -1 ? rawInner.length : nextCore
+            );
+            const leading = commentsIn(freeFrom, coreStart);
+            const trailing = commentsIn(coreEnd, lineEnd);
+            const [entry] = parseNamed(core);
+            out.push(
+                leading.length + trailing.length === 0
+                    ? entry
+                    : {
+                          ...entry,
+                          comments: { leading, ...(trailing.length > 0 ? { trailing: trailing.join(" ") } : {}) },
+                      }
+            );
+            freeFrom = lineEnd;
+        }
+
+        segmentStart = comma + 1;
+    }
+
+    const tail = commentsIn(freeFrom, rawInner.length);
+    const last = out[out.length - 1];
+    if (tail.length > 0 && last !== undefined) {
+        const trailing = [last.comments?.trailing, ...tail].filter((c): c is string => c !== undefined).join(" ");
+        out[out.length - 1] = { ...last, comments: { leading: last.comments?.leading ?? [], trailing } };
+    }
+
+    return out;
+};
+
 /** Every static `import … from` and `export … from` statement of `text`, in file order. */
 export const parseImports = (text: string, masked: string = maskNonCode(text)): ImportStatement[] => {
     const statements: ImportStatement[] = [];
-    for (const match of text.matchAll(STATEMENT)) {
+    // Matched on the text with only its comments blanked: a `}` or `from` in a comment inside the
+    // braces cannot end the statement, while the module path, a string, stays readable.
+    const commentless = blankSpans(text, scanComments(text));
+    for (const match of commentless.matchAll(STATEMENT)) {
         const start = match.index ?? 0;
         // A statement-shaped line inside a comment or a template is text, not an import.
         if (masked[start] !== text[start]) {
@@ -102,6 +169,9 @@ export const parseImports = (text: string, masked: string = maskNonCode(text)): 
         const braceAt = clause.indexOf("{");
         const head = (braceAt === -1 ? clause : clause.slice(0, braceAt)).replace(/,\s*$/, "").trim();
         const inner = braceAt === -1 ? undefined : clause.slice(braceAt + 1, clause.lastIndexOf("}"));
+        const clauseAt = start + whole.indexOf(clause, keyword.length);
+        const rawInner =
+            inner === undefined ? undefined : text.slice(clauseAt + braceAt + 1, clauseAt + braceAt + 1 + inner.length);
         const namespace = head.match(/^\*\s+as\s+([\w$]+)$/)?.[1];
         const star = head === "*";
         const defaultName = namespace === undefined && !star && head.length > 0 ? head : undefined;
@@ -109,12 +179,14 @@ export const parseImports = (text: string, masked: string = maskNonCode(text)): 
         statements.push({
             start,
             end: start + whole.length,
-            text: whole,
+            text: text.slice(start, start + whole.length),
             keyword: keyword === "export" ? "export" : "import",
             typeOnly: typeWord !== undefined,
             ...(defaultName === undefined ? {} : { defaultName }),
             ...(namespace === undefined ? {} : { namespace }),
-            ...(inner === undefined ? {} : { named: parseNamed(inner) }),
+            ...(inner === undefined || rawInner === undefined
+                ? {}
+                : { named: parseNamedWithComments(rawInner, inner) }),
             star,
             specifier,
             quote,
@@ -138,9 +210,16 @@ const blankStatements = (masked: string, statements: ImportStatement[]): string 
     return out;
 };
 
+export interface DeclarationInfo {
+    exported: boolean;
+    /** An interface or type alias, which an import must name with `type`. */
+    typeOnly: boolean;
+    /** The declaration's first line as written, the anchor a `visibility=widen` export edits. */
+    line: string;
+}
+
 export interface Declarations {
-    /** `typeOnly`: an interface or type alias, which an import must name with `type`. */
-    names: Map<string, { exported: boolean; typeOnly: boolean }>;
+    names: Map<string, DeclarationInfo>;
     exportDefault: boolean;
 }
 
@@ -149,14 +228,17 @@ const DECLARATION_LINE =
 const LOCAL_EXPORT_LIST = /^export[ \t]+(?:type[ \t]+)?\{([^}]*)\}(?!\s*from\b)/gm;
 
 /** Declarations that start at column 0 of `masked`: a split's unit is a top-level declaration. */
-export const topLevelDeclarations = (masked: string): Declarations => {
-    const names = new Map<string, { exported: boolean; typeOnly: boolean }>();
+export const topLevelDeclarations = (masked: string, raw: string = masked): Declarations => {
+    const names = new Map<string, DeclarationInfo>();
     for (const match of masked.matchAll(DECLARATION_LINE)) {
         const name = match[4];
-        const exported = match[1] !== undefined || names.get(name)?.exported === true;
+        const known = names.get(name);
+        const exported = match[1] !== undefined || known?.exported === true;
         // A function or namespace merging with an interface of the same name is a value too.
-        const typeOnly = (match[3] === "interface" || match[3] === "type") && names.get(name)?.typeOnly !== false;
-        names.set(name, { exported, typeOnly });
+        const typeOnly = (match[3] === "interface" || match[3] === "type") && known?.typeOnly !== false;
+        const at = match.index ?? 0;
+        const end = raw.indexOf("\n", at);
+        names.set(name, { exported, typeOnly, line: known?.line ?? raw.slice(at, end === -1 ? undefined : end) });
     }
 
     for (const match of masked.matchAll(LOCAL_EXPORT_LIST)) {
@@ -497,6 +579,8 @@ interface FilePlan {
     /** Names the file binds at top level (imports and declarations), for skipping duplicates. */
     bound: Set<string>;
     style: FileStyle;
+    /** Ops that are not about import statements, such as an `export` a widened move adds. */
+    extraOps: Op[];
 }
 
 /** Case-insensitive, the way biome and the common import sorters order module paths. */
@@ -559,7 +643,17 @@ const renderStatement = (
         if (named !== undefined && named.length > 0) {
             parts.push(
                 wrap
-                    ? `{\n${named.map((entry) => `${layout.indent}${entry.raw}`).join(",\n")}${layout.trailingComma ? "," : ""}\n}`
+                    ? `{\n${named
+                          .flatMap((entry, k) => {
+                              const comma = k < named.length - 1 || layout.trailingComma ? "," : "";
+                              const trailing =
+                                  entry.comments?.trailing === undefined ? "" : ` ${entry.comments.trailing}`;
+                              return [
+                                  ...(entry.comments?.leading ?? []).map((comment) => `${layout.indent}${comment}`),
+                                  `${layout.indent}${entry.raw}${comma}${trailing}`,
+                              ];
+                          })
+                          .join("\n")}\n}`
                     : `{ ${named.map((entry) => entry.raw).join(", ")} }`
             );
         }
@@ -568,8 +662,11 @@ const renderStatement = (
         return `${head.keyword}${typeWord} ${parts.join(", ")} from ${layout.quote}${specifier}${layout.quote}${layout.semicolon ? ";" : ""}`;
     };
     const single = build(false);
+    // A line comment cannot sit inside a one-line list, so a list that carries comments wraps.
+    const commented = named?.some((entry) => entry.comments !== undefined) === true;
     const wrap =
-        layout.multiline === "auto" ? layout.width !== undefined && single.length > layout.width : layout.multiline;
+        commented ||
+        (layout.multiline === "auto" ? layout.width !== undefined && single.length > layout.width : layout.multiline);
     return wrap ? build(true) : single;
 };
 
@@ -836,7 +933,82 @@ const planOps = (plan: FilePlan, label: string): Op[] => {
         });
     }
 
+    ops.push(...plan.extraOps);
     return ops;
+};
+
+/** The op a `visibility=widen` move adds: `export` in front of a declaration's first line. */
+const exportOp = (name: string, line: string): Op => ({
+    find: line,
+    replace: `export ${line}`,
+    label: `imports=fix: export ${name}`,
+});
+
+/** A refusal's fix for a block that holds import lines: the same move, minus the lines they take. */
+const importFreeRange = (move: PlannedMove, statements: ImportStatement[]): { why: string; spec: string } => {
+    const lines = move.blockText.split("\n");
+    const lastImportLine = Math.max(...statements.map((s) => lineOf(move.blockText, s.end) - 1));
+    let first = lastImportLine + 1;
+    while (first < lines.length && lines[first].trim() === "") {
+        first++;
+    }
+
+    const leading =
+        statements.every((s) => lineOf(move.blockText, s.start) - 1 <= lastImportLine) && first < lines.length;
+    const range = `lines=${move.startLine + first}-${move.endLine}`;
+    return leading
+        ? {
+              why: "start the range after the import lines; imports=fix carries the imports itself:",
+              spec: move.marker.replace(/symbol=\S+|lines=\S+/, range),
+          }
+        : {
+              why: `write a lines= range without the import lines (block lines ${move.startLine}-${move.endLine}); imports=fix carries the imports itself:`,
+              spec: move.marker,
+          };
+};
+
+const pascal = (stem: string): string =>
+    stem
+        .split(/[^A-Za-z0-9]+/)
+        .filter((part) => part.length > 0)
+        .map((part) => `${part[0].toUpperCase()}${part.slice(1)}`)
+        .join("");
+
+/** A namespace import that reaches moved names: a second namespace for the new module, and the uses re-pointed. */
+const namespaceFix = ({
+    file,
+    text,
+    statement,
+    reached,
+    resolver,
+    via,
+    exported,
+    display,
+}: {
+    file: string;
+    text: string;
+    statement: ImportStatement;
+    reached: string[];
+    resolver: Resolver;
+    via: Via;
+    exported: Map<string, { toAbs: string }>;
+    display: (abs: string) => string;
+}): { abs: string; needles: string[]; message: string; fix: { why: string; spec: string } } => {
+    const ns = statement.namespace ?? "";
+    const destination = exported.get(reached[0])?.toAbs ?? file;
+    const alias = `${ns}${pascal(path.basename(withoutExt(destination)))}`;
+    const pattern = `(?<![\\w$.])${ns.replace(/\$/g, "\\$")}\\.(${reached.map((name) => name.replace(/\$/g, "\\$")).join("|")})\\b`;
+    const count = [...text.matchAll(new RegExp(pattern, "g"))].length;
+    const newImport = `import * as ${alias} from ${statement.quote}${resolver.specifierFor(file, destination, via)}${statement.quote};`;
+    return {
+        abs: file,
+        needles: reached.map((name) => `${ns}.${name}`),
+        message: `imports=fix: ${display(file)}:${lineOf(text, statement.start)} reaches ${reached.join(", ")} through the namespace ${ns}, which no longer has them`,
+        fix: {
+            why: `import the new module as ${alias} and point those uses at it:`,
+            spec: `${literalOpSpec(display(file), statement.text, `${statement.text}\n${newImport}`)}\n<<< regex count=${count}\n${pattern}\n===\n${alias}.$1\n>>>`,
+        },
+    };
 };
 
 /**
@@ -844,7 +1016,7 @@ const planOps = (plan: FilePlan, label: string): Op[] => {
  * that imported a moved export. Every edit is a literal op on one import statement.
  */
 export const planTsImportFixes = (params: PlanImportFixesParams): FileEdit[] => {
-    const { moves, cwd, read, projectFiles, onWarning } = params;
+    const { moves, cwd, read, projectFiles } = params;
     const fixing = moves.filter((move) => move.fixImports);
     if (fixing.length === 0) {
         return [];
@@ -892,6 +1064,7 @@ export const planTsImportFixes = (params: PlanImportFixesParams): FileEdit[] => 
                 additions: [],
                 bound,
                 style: fileStyle(abs, text, statements),
+                extraOps: [],
             };
             plans.set(abs, plan);
         }
@@ -918,33 +1091,37 @@ export const planTsImportFixes = (params: PlanImportFixesParams): FileEdit[] => 
         return best?.via ?? { kind: "relative", ext: "" };
     };
 
-    const movedBySource = new Map<
-        string,
-        Map<string, { toAbs: string; exported: boolean; typeOnly: boolean; move: PlannedMove }>
-    >();
+    const movedBySource = new Map<string, Map<string, DeclarationInfo & { toAbs: string; move: PlannedMove }>>();
     const sources = [...new Set(fixing.map((move) => move.fromAbs))];
     for (const sourceAbs of sources) {
         const sourceMoves = fixing.filter((move) => move.fromAbs === sourceAbs);
-        const moved = new Map<string, { toAbs: string; exported: boolean; typeOnly: boolean; move: PlannedMove }>();
+        const moved = new Map<string, DeclarationInfo & { toAbs: string; move: PlannedMove }>();
         for (const move of sourceMoves) {
             const masked = maskNonCode(move.blockText);
-            if (parseImports(move.blockText, masked).length > 0) {
+            const inBlock = parseImports(move.blockText, masked);
+            if (inBlock.length > 0) {
                 throw new MoveError(
-                    `move: ${move.label} includes an import statement; with imports=fix move code only, the imports follow by themselves`,
+                    withFix(`move: ${move.label} includes an import statement`, importFreeRange(move, inBlock)),
                     move.index
                 );
             }
 
-            const declared = topLevelDeclarations(masked);
+            const declared = topLevelDeclarations(masked, move.blockText);
             if (declared.exportDefault) {
                 throw new MoveError(
-                    `move: ${move.label} holds an export default; imports=fix re-points named exports only`,
+                    withFix(
+                        `move: ${move.label} holds an export default, and imports=fix re-points named exports only`,
+                        {
+                            why: "move it without imports=fix and fix its importers by hand, or name the export in a run of its own first:",
+                            spec: move.marker.replace(" imports=fix", "").replace(" visibility=widen", ""),
+                        }
+                    ),
                     move.index
                 );
             }
 
             for (const [name, info] of declared.names) {
-                moved.set(name, { toAbs: move.toAbs, exported: info.exported, typeOnly: info.typeOnly, move });
+                moved.set(name, { ...info, toAbs: move.toAbs, move });
             }
         }
         movedBySource.set(sourceAbs, moved);
@@ -958,7 +1135,7 @@ export const planTsImportFixes = (params: PlanImportFixesParams): FileEdit[] => 
         const remainingMasked = maskNonCode(remainingText);
         const remainingBody = blankStatements(remainingMasked, parseImports(remainingText, remainingMasked));
         const originalBody = blankStatements(maskNonCode(source.text), source.statements);
-        const remainingDeclarations = topLevelDeclarations(remainingBody).names;
+        const remainingDeclarations = topLevelDeclarations(remainingBody, remainingText).names;
         const sourceStyle = styleOf(source);
 
         // The source: bindings only the blocks used go; moved exports it still uses come back in.
@@ -996,10 +1173,21 @@ export const planTsImportFixes = (params: PlanImportFixesParams): FileEdit[] => 
             }
 
             if (!info.exported) {
-                throw new MoveError(
-                    `move: ${display(sourceAbs)} still uses ${name} after the move, and ${name} is not exported. Export it in the block, or move its users too.`,
-                    info.move.index
-                );
+                if (!info.move.widen) {
+                    throw new MoveError(
+                        withFix(
+                            `move: ${display(sourceAbs)} still uses ${name} after the move, and ${name} is not exported`,
+                            {
+                                why: "let the move export it, or move its users along:",
+                                spec: markerWith(info.move, "visibility=widen"),
+                            }
+                        ),
+                        info.move.index
+                    );
+                }
+
+                planFor(info.toAbs).extraOps.push(exportOp(name, info.line));
+                info.exported = true;
             }
 
             addTo(source, {
@@ -1075,18 +1263,24 @@ export const planTsImportFixes = (params: PlanImportFixesParams): FileEdit[] => 
                 }
             }
 
-            const reachBack = (
-                name: string,
-                fromAbs: string,
-                info: { exported: boolean; typeOnly: boolean },
-                index: number
-            ): void => {
-                const { exported } = info;
-                if (!exported) {
-                    throw new MoveError(
-                        `move: the moved code uses ${name}, which stays in ${display(fromAbs)} and is not exported. Move it too, or export it.`,
-                        index
-                    );
+            const reachBack = (name: string, fromAbs: string, info: DeclarationInfo, index: number): void => {
+                if (!info.exported) {
+                    const first = toTarget[0];
+                    if (!toTarget.some((move) => move.widen)) {
+                        throw new MoveError(
+                            withFix(
+                                `move: the moved code uses ${name}, which stays in ${display(fromAbs)} and is not exported`,
+                                {
+                                    why: "move it along (first line), or let the move export it (second line):",
+                                    spec: `<<< move to=${first.to} symbol=${name} imports=fix\n${markerWith(first, "visibility=widen")}`,
+                                }
+                            ),
+                            index
+                        );
+                    }
+
+                    planFor(fromAbs).extraOps.push(exportOp(name, info.line));
+                    info.exported = true;
                 }
 
                 addTo(target, {
@@ -1140,10 +1334,25 @@ export const planTsImportFixes = (params: PlanImportFixesParams): FileEdit[] => 
             for (const dynamic of text.matchAll(
                 /\b(?:import|require|mock|doMock|requireActual|importActual)\s*\(\s*(['"])([^'"\n]+)\1/g
             )) {
-                if (resolver.resolve(file, dynamic[2])?.abs === sourceAbs) {
-                    onWarning?.(
-                        `imports=fix: ${display(file)}:${lineOf(text, dynamic.index ?? 0)} names ${dynamic[2]} in a call; moved exports (${[...exported.keys()].join(", ")}) are not re-pointed there. Check it by hand.`
-                    );
+                const called = resolver.resolve(file, dynamic[2]);
+                if (called?.abs === sourceAbs) {
+                    const call = dynamic[0];
+                    const destination = [...exported.values()][0].toAbs;
+                    const quote = dynamic[1];
+                    const newSpecifier = resolver.specifierFor(file, destination, called.via);
+                    warnWithFix(params, {
+                        abs: file,
+                        needles: [call],
+                        message: `imports=fix: ${display(file)}:${lineOf(text, dynamic.index ?? 0)} names ${dynamic[2]} in a call, and ${[...exported.keys()].join(", ")} moved out of it`,
+                        fix: {
+                            why: "point the call at the new module (keep the old call too if it must still cover the names that stay):",
+                            spec: literalOpSpec(
+                                display(file),
+                                call,
+                                call.replace(`${quote}${dynamic[2]}${quote}`, `${quote}${newSpecifier}${quote}`)
+                            ),
+                        },
+                    });
                 }
             }
 
@@ -1177,8 +1386,9 @@ export const planTsImportFixes = (params: PlanImportFixesParams): FileEdit[] => 
                         ).test(masked)
                     );
                     if (reached.length > 0) {
-                        onWarning?.(
-                            `imports=fix: ${display(file)}:${lineOf(text, statement.start)} reaches ${reached.join(", ")} through the namespace ${statement.namespace}; that cannot be re-pointed. Fix it by hand.`
+                        warnWithFix(
+                            params,
+                            namespaceFix({ file, text, statement, reached, resolver, via, exported, display })
                         );
                     }
                 }
@@ -1251,9 +1461,20 @@ export const planTsImportFixes = (params: PlanImportFixesParams): FileEdit[] => 
             target?.additions.some((a) => a.resolvedAbs === move.fromAbs) === true &&
             source?.additions.some((a) => a.resolvedAbs === move.toAbs) === true;
         if (crossing) {
-            onWarning?.(
-                `imports=fix: ${move.from} and ${move.to} now import each other. That is legal, but a top-level value read at load time can be undefined; consider moving the shared part too.`
-            );
+            const shared = (target?.additions ?? [])
+                .filter((addition) => addition.resolvedAbs === move.fromAbs)
+                .flatMap((addition) => (addition.named ?? []).map((entry) => entry.imported));
+            const stem = path.basename(withoutExt(move.fromAbs));
+            const sharedFile = toPosix(path.join(path.dirname(move.from), `${stem}-shared${path.extname(move.from)}`));
+            warnWithFix(params, {
+                abs: move.fromAbs,
+                needles: [],
+                message: `imports=fix: ${move.from} and ${move.to} now import each other; legal, but a top-level value read at load time can be undefined`,
+                fix: {
+                    why: "move what both use into a third file, so the two stop importing each other:",
+                    spec: `@@ ${move.from}\n${shared.map((name) => `<<< move to=${sharedFile} symbol=${name} imports=fix\n>>>`).join("\n")}`,
+                },
+            });
             break;
         }
     }
