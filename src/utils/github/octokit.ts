@@ -5,7 +5,37 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
+import { profiler } from "@genesiscz/utils/profile";
 import { Octokit } from "octokit";
+
+const httpProf = profiler.scope("forge-http");
+
+/**
+ * Every request of this client (REST and GraphQL) as one forge-http profiling line: method, URL, status
+ * and time. The URL never carries the token, which travels in a header. Off unless the scope is on.
+ */
+function profiled(octokit: Octokit): Octokit {
+    if (!httpProf.enabled) {
+        return octokit;
+    }
+
+    octokit.hook.wrap("request", async (request, options) => {
+        const { method, url } = octokit.request.endpoint.parse(options);
+        const stop = httpProf.start(`${method} ${url}`);
+
+        try {
+            const response = await request(options);
+            stop(String(response.status));
+            return response;
+        } catch (error) {
+            const status = typeof error === "object" && error !== null && "status" in error ? error.status : undefined;
+            stop(`failed${typeof status === "number" ? ` ${status}` : ""}`);
+            throw error;
+        }
+    });
+
+    return octokit;
+}
 
 let _octokit: Octokit | null = null;
 
@@ -21,9 +51,11 @@ export function getOctokit(): Octokit {
 
     const token = getGitHubToken("default");
 
-    _octokit = new Octokit({
-        auth: token,
-    });
+    _octokit = profiled(
+        new Octokit({
+            auth: token,
+        })
+    );
 
     return _octokit;
 }
@@ -44,9 +76,11 @@ export function getOctokitForWrite(): Octokit {
 
     const token = getGitHubToken("prefer-gh-cli");
 
-    _octokitWrite = new Octokit({
-        auth: token,
-    });
+    _octokitWrite = profiled(
+        new Octokit({
+            auth: token,
+        })
+    );
 
     return _octokitWrite;
 }

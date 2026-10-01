@@ -13,6 +13,14 @@ export const PROFILER_SCOPE_NAMES = [
     "clones",
     "teams",
     "hub-agents",
+    // `tools hub pr *` phases; with spawn, forge-http and cache below, the hub's PR calls end to end.
+    "hub-pr",
+    // Every child process an Executor runs (git, gh, glab), with its exit code.
+    "spawn",
+    // Every GitHub (octokit) and GitLab HTTP request: method, URL without credentials, status.
+    "forge-http",
+    // Every `cached()` lookup: hit, or miss and why.
+    "cache",
     "claude-cmux-tree",
     "claude-cmux-open",
     "claude-sessions",

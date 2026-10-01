@@ -24,6 +24,7 @@ import { branchMentions, localBranchNames } from "@genesiscz/utils/git/branch-na
 import { type RepoFacts, repoFacts, repoFactsMany } from "@genesiscz/utils/git/repo-facts";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { profiler } from "@genesiscz/utils/profile";
 import { cached } from "@genesiscz/utils/storage/cache-flag";
 import { Storage } from "@genesiscz/utils/storage/storage";
 import { type ProposalSummary, proposalFor } from "./proposal";
@@ -70,6 +71,7 @@ export interface HubPrsResult {
 }
 
 const log = logger.child({ component: "review/prs" });
+const prof = profiler.scope("hub-pr");
 
 function toHubPr({
     pr,
@@ -203,7 +205,7 @@ export async function hubPrs({
     runner?: CommandRunner;
     storage?: Pick<Storage, "getCacheFile" | "putCacheFile">;
 }): Promise<HubPrsResult> {
-    const facts = await repoFactsMany({ paths });
+    const facts = await prof.measureAsync(`list.facts ${paths.length} paths`, () => repoFactsMany({ paths }));
     const { groups, skipped } = groupByOrigin(facts);
     const key = `pr-list/${cacheHash({
         groups: groups.map((group) => [group.key, group.paths]),
@@ -264,7 +266,9 @@ async function collectHubPrs({
         concurrency: 4,
         fn: async (group): Promise<{ repo: HubPrRepo; prs: HubPr[] }> => {
             const first = group.facts[0];
-            const worktrees = await localWorktrees(group.facts.map((fact) => fact.root ?? fact.path));
+            const worktrees = await prof.measureAsync(`list.worktrees ${first.repo ?? first.path}`, () =>
+                localWorktrees(group.facts.map((fact) => fact.root ?? fact.path))
+            );
             const repoRoot = worktrees.main ?? first.root;
             const repoName = first.repo ?? basename(repoRoot ?? first.path);
             const origin = first.origin
@@ -291,8 +295,10 @@ async function collectHubPrs({
 
             const cwd = repoRoot ?? first.path;
             const [listed, viewer] = await Promise.all([
-                listPrs({ project, state, mine, limit, updatedSince, query, cwd, runner }),
-                viewerFor(project, cwd),
+                prof.measureAsync(`list.prs ${repoName}`, () =>
+                    listPrs({ project, state, mine, limit, updatedSince, query, cwd, runner })
+                ),
+                prof.measureAsync(`list.viewer ${project.host}`, () => viewerFor(project, cwd)),
             ]);
             const byBranch = worktreeByBranch(worktrees.all);
             entry.error = listed.error;
@@ -375,7 +381,7 @@ export async function hubPr({
         number = fromUrl.number;
         repo = basename(project.path);
     } else {
-        const facts = await repoFacts({ path: parsedRef.path });
+        const facts = await prof.measureAsync("show.facts", () => repoFacts({ path: parsedRef.path }));
 
         if (!facts.root) {
             throw new PrRefError(`not a git checkout: ${parsedRef.path}`);
@@ -389,10 +395,11 @@ export async function hubPr({
             );
         }
 
-        const local = await localWorktrees([facts.root]);
+        const root = facts.root;
+        const local = await prof.measureAsync("show.worktrees", () => localWorktrees([root]));
         project = fromOrigin;
         number = parsedRef.number;
-        repoRoot = local.main ?? facts.root;
+        repoRoot = local.main ?? root;
         repo = facts.repo ?? basename(repoRoot);
         worktrees = worktreeByBranch(local.all);
     }
@@ -427,9 +434,11 @@ async function fetchHubPr({
 }): Promise<HubPrDetail> {
     const cwd = repoRoot ?? process.cwd();
     const [viewed, viewer, branches] = await Promise.all([
-        viewPr({ project, number, cwd, runner }),
-        viewerLogin({ project, cwd, runner }),
-        repoRoot ? localBranchNames(repoRoot) : Promise.resolve(new Set<string>()),
+        prof.measureAsync(`show.view ${project.path}#${number}`, () => viewPr({ project, number, cwd, runner })),
+        prof.measureAsync(`show.viewer ${project.host}`, () => viewerLogin({ project, cwd, runner })),
+        repoRoot
+            ? prof.measureAsync("show.branches", () => localBranchNames(repoRoot))
+            : Promise.resolve(new Set<string>()),
     ]);
     log.debug({ project: project.path, number, error: viewed.error, warnings: viewed.warnings }, "hub pr");
 

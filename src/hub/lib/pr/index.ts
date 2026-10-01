@@ -2,6 +2,7 @@ import { defaultReviewCommentClient } from "@app/github/lib/review-comments";
 import { resolveProjectApi } from "@app/gitlab/lib/client";
 import type { CommandRunner } from "@genesiscz/utils/git/origins";
 import { logger } from "@genesiscz/utils/logger";
+import { profiler } from "@genesiscz/utils/profile";
 import { Storage } from "@genesiscz/utils/storage";
 import { cached } from "@genesiscz/utils/storage/cache-flag";
 import { type FactsReader, findBranchPr, findPrByRef } from "./find";
@@ -13,6 +14,7 @@ export { findBranchPr, findPrByRef } from "./find";
 export * from "./types";
 
 const log = logger.child({ component: "hub/pr" });
+const prof = profiler.scope("hub-pr");
 /** How old a thread list a library caller gets when it does not say (the window polls while open). */
 const THREADS_MAX_AGE_SECONDS = 30;
 
@@ -27,10 +29,13 @@ export async function resolvePr(options: {
     readFacts?: FactsReader;
 }): Promise<FoundPr> {
     if (options.pr) {
-        return findPrByRef({ ref: options.pr, runner: options.runner, readFacts: options.readFacts });
+        const ref = options.pr;
+        return prof.measureAsync("resolve.ref", () =>
+            findPrByRef({ ref, runner: options.runner, readFacts: options.readFacts })
+        );
     }
 
-    const found = await findBranchPr(options);
+    const found = await prof.measureAsync("resolve.branch", () => findBranchPr(options));
 
     if (found.provider === null) {
         throw new HubPrError("no-pr", found.reason);
@@ -45,7 +50,9 @@ export async function backendFor(pr: FoundPr): Promise<PrBackend> {
         return githubBackend({ pr, client: defaultReviewCommentClient() });
     }
 
-    const api = await resolveProjectApi({ host: gitlabBaseUrl(pr), project: pr.project });
+    const api = await prof.measureAsync("backend.gitlab", () =>
+        resolveProjectApi({ host: gitlabBaseUrl(pr), project: pr.project })
+    );
     return gitlabBackend({ pr, api });
 }
 
@@ -90,7 +97,12 @@ export async function prThreads({
         key,
         maxAgeSeconds: maxCacheAgeSeconds,
         isValid: (stored) => stored.pr.headSha === pr.headSha,
-        fetch: async () => ({ pr, ...(await backend.threads()), cached: false, fetchedAt: new Date().toISOString() }),
+        fetch: async () => ({
+            pr,
+            ...(await prof.measureAsync(`threads.fetch ${pr.project}#${pr.number}`, () => backend.threads())),
+            cached: false,
+            fetchedAt: new Date().toISOString(),
+        }),
     });
 
     if (hit) {

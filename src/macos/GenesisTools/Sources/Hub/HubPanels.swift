@@ -78,6 +78,13 @@ final class HubLiveResize: ObservableObject {
 /// Smaller meanwhile: clipped. Larger: the pane background shows at the trailing and bottom edges.
 /// The height is held too: any frame change of a focusable list makes SwiftUI rebuild the window's
 /// key view loop, which walks every row of the transcript.
+/// A rectangle that reaches far above its frame: clips the trailing and bottom edges only.
+private struct OpenTopRectangle: Shape {
+    func path(in rect: CGRect) -> Path {
+        Path(CGRect(x: rect.minX, y: rect.minY - 10_000, width: rect.width, height: rect.height + 10_000))
+    }
+}
+
 private struct FreezeWidthWhileResizing: ViewModifier {
     /// A heavy pane (the transcript list) also holds during a pane-divider drag. A light one follows
     /// the divider: frozen, it left a dark gap beside the divider until release (recording 15:09).
@@ -100,7 +107,9 @@ private struct FreezeWidthWhileResizing: ViewModifier {
             // Explicit zero minimums: without them the flexible frame takes the frozen child's size
             // as its minimum, and a shrinking window pushed the whole root off its left edge.
             .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity, alignment: .topLeading)
-            .clipped()
+            // Open at the top: a `TitlebarHeader` row sits above this frame, in the title bar strip. A plain
+            // `.clipped()` cut it away, so the PR header (forge badge, title, Diff) never drew (2026-10-01).
+            .clipShape(OpenTopRectangle())
             .onGeometryChange(for: CGSize.self, of: \.size) { size = $0 }
             .onChange(of: holds) { _, hold in
                 var transaction = Transaction()

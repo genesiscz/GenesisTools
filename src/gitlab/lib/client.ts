@@ -15,6 +15,7 @@ import { retry } from "@genesiscz/utils/async";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { profiler } from "@genesiscz/utils/profile";
 
 /** `host` is `https://gitlab.example.com`, no trailing slash. */
 export interface GitLabApi {
@@ -319,6 +320,27 @@ export interface RestOptions {
     retries?: number;
 }
 
+const httpProf = profiler.scope("forge-http");
+
+/** The URL a profiling line names: a query value that could carry a credential is hidden. */
+function shownUrl(url: string): string {
+    return url.replace(/([?&](?:private_token|access_token|token)=)[^&]*/gi, "$1***");
+}
+
+/** One timed request: `GET https://host/api/v4/… 200 41ms` in the forge-http profiling scope. */
+async function timedFetch(url: string, init: RequestInit & { method: string }): Promise<Response> {
+    const stop = httpProf.start(`${init.method} ${shownUrl(url)}`);
+
+    try {
+        const res = await fetch(url, init);
+        stop(String(res.status));
+        return res;
+    } catch (err) {
+        stop("failed");
+        throw err;
+    }
+}
+
 function apiUrl(api: GitLabApi, path: string): string {
     return `${api.host}/api/v4${path}`;
 }
@@ -330,7 +352,7 @@ async function send(
     const url = apiUrl(api, request.path);
     logger.debug({ method: request.method, url }, "gitlab: request");
 
-    const res = await fetch(url, {
+    const res = await timedFetch(url, {
         method: request.method,
         headers: {
             "PRIVATE-TOKEN": api.token,
@@ -434,7 +456,7 @@ export async function graphql<T>(api: GitLabApi, query: string, variables?: Reco
     const url = `${api.host}/api/graphql`;
     logger.debug({ url }, "gitlab: graphql");
 
-    const res = await fetch(url, {
+    const res = await timedFetch(url, {
         method: "POST",
         headers: { Authorization: `Bearer ${api.token}`, "Content-Type": "application/json" },
         body: SafeJSON.stringify({ query, variables }),

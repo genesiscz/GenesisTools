@@ -1,6 +1,7 @@
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
+import { profiler } from "@genesiscz/utils/profile";
 import { type Command, Help, type Option } from "commander";
 import pc from "picocolors";
 
@@ -420,6 +421,37 @@ export function suggestEnumFlag(
     });
 }
 
+const spawnProf = profiler.scope("spawn");
+
+/** An argument that names or carries a credential (a header, a token flag) never reaches a log line. */
+const SECRET_ARG = /authorization|token|password|secret|bearer|private-token/i;
+
+/** `git rev-parse --show-toplevel`, `gh pr view 42 --json …`: the command, its first arguments, credentials hidden. */
+export function spawnLabel(cmd: string[]): string {
+    const [program = "", ...args] = cmd;
+    const name = program.split(/[\\/]/).pop() ?? program;
+    // `--token value`: the flag names the credential, the next argument carries it.
+    const shown = args
+        .slice(0, 6)
+        .map((arg, index) =>
+            SECRET_ARG.test(arg) || isSecretFlag(args[index - 1])
+                ? "***"
+                : arg.length > 80
+                  ? `${arg.slice(0, 77)}…`
+                  : arg
+        );
+    return [name, ...shown, ...(args.length > 6 ? ["…"] : [])].join(" ");
+}
+
+/** A flag that names a credential and takes its value as the next argument (`--password x`, `-H x`). */
+function isSecretFlag(arg: string | undefined): boolean {
+    return (
+        arg?.startsWith("-") === true &&
+        !arg.includes("=") &&
+        (SECRET_ARG.test(arg) || arg === "-H" || arg === "--header")
+    );
+}
+
 export interface ExecResult {
     success: boolean;
     stdout: string;
@@ -513,6 +545,7 @@ export class Executor {
             out.println(pc.gray(`  $ ${cmd.join(" ")}`));
         }
 
+        const stopTimer = spawnProf.start(spawnLabel(cmd));
         const proc = Bun.spawn({
             cmd,
             cwd,
@@ -547,6 +580,7 @@ export class Executor {
             if (timeoutResult.type === "timeout") {
                 proc.kill();
                 await proc.exited;
+                stopTimer("timeout");
                 throw new Error(`Command timed out after ${timeoutMs}ms: ${cmd.join(" ")}`);
             }
 
@@ -554,6 +588,8 @@ export class Executor {
         } else {
             [stdout, stderr, exitCode] = await collectOutput;
         }
+
+        stopTimer(`exit=${exitCode}`);
 
         const result: ExecResult = {
             success: exitCode === 0,

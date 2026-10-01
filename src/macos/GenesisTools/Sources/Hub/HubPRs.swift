@@ -160,6 +160,8 @@ struct HubPRDetail: Decodable, Equatable {
     }
 
     let body: String?
+    /// The head this detail describes; a newer one than the list's row means a push since the list.
+    let headSha: String?
     let commits: [Commit]?
     let changedFiles: Int?
     let additions: Int?
@@ -248,6 +250,18 @@ final class PRsModel: ObservableObject {
     /// PR details being fetched, and when each last arrived fresh.
     private var detailLoading: Set<String> = []
     private var detailFetched: [String: Date] = [:]
+    /// The wanted PR whose detail was already asked for straight away (`startWanted`), so a list load
+    /// that lands meanwhile does not ask again.
+    private var wantedStarted: HubPRRef?
+    /// The deep-linked PR `openDirect` is fetching, and the selection when it started: its answer
+    /// still selects it after the list cleared `wanted`, unless someone picked another row meanwhile.
+    private var directOpen: (ref: HubPRRef, selectionAtStart: String?)?
+    /// The selected PR's live threads, started with its detail: the review adopts the store when it
+    /// exists, so the threads never wait for the head fetch and the diff.
+    private var prefetchedThreads: PRThreadsStore?
+    /// PRs shown from `openDirect` (a link to a PR the list does not hold, another author's under
+    /// "Mine"): the open one stays in the rows when a list answers without it.
+    private var directIDs: Set<String> = []
 
     var selected: HubPR? { prs.first { $0.id == selectedID } }
 
@@ -262,19 +276,27 @@ final class PRsModel: ObservableObject {
         loading = true
         let state = state
         let query = query
+        let mineOnly = mineOnly
         let key = PRListCache.key(paths: paths, state: state, mine: mineOnly, query: query)
         if key != shownKey {
             // Another list (state, mine, search): its last known rows at once, then the fresh ones.
             shownKey = key
             limit = max(Self.pageSize, PRListCache.limit(key))
-            if let cached = PRListCache.readList(key), let list = try? JSONDecoder().decode(HubPRList.self, from: cached) {
+            // The list for these very projects, else the last list of any projects with the same
+            // filters: the project set follows the recent sessions, so the exact key often misses.
+            if let cached = PRListCache.readList(key) ?? PRListCache.readLastList(state: state, mine: mineOnly, query: query),
+               let list = try? JSONDecoder().decode(HubPRList.self, from: cached) {
                 apply(list, key: key, flash: false)
                 showingCache = true
+                HubSWR.painted("prs.list", "\(list.prs.count) prs")
                 if wanted == nil, selectedID == nil || selected == nil, let first = prs.first(where: { $0.isMine == true }) ?? prs.first {
                     select(first)
                 }
             }
         }
+        // A PR asked for by a link or the browser extension: its detail starts now, from the cached row
+        // or straight from its checkout, never after the whole list (11 s for ten projects).
+        startWanted()
         let limit = limit
         // Mine asks the forge (`gh --author @me`, glab's own filter): filtering the capped list here
         // lost every authored PR past the first 40.
@@ -313,14 +335,18 @@ final class PRsModel: ObservableObject {
                 span.end("\(list.prs.count) prs")
                 HubMainBusy.measure("prs.list.render")
                 if list.repos.allSatisfy({ $0.error == nil }) {
-                    PRListCache.writeList(data, key: key, limit: limit)
+                    PRListCache.writeList(data, key: key, limit: limit, state: state, mine: mineOnly, query: query)
                 }
                 apply(list, key: key, flash: true)
-                // Once per list load, never on a timer (Hub/HubPRReadiness.swift).
-                PRReadinessStore.shared.refresh(prs)
+                // Once per list load, never on a timer (Hub/HubPRReadiness.swift). The open PR's verdict first.
+                let selectedID = selectedID
+                PRReadinessStore.shared.refresh(prs.filter { $0.id == selectedID } + prs.filter { $0.id != selectedID })
                 if let wanted {
                     self.wanted = nil
-                    if !select(wanted) {
+                    wantedStarted = nil
+                    // A deep-linked PR outside the list is on its way from its checkout (`openDirect`):
+                    // that answer selects it, so the list neither reports it missing nor picks another row.
+                    if !select(wanted), directOpen?.ref != wanted {
                         if widen(to: wanted) {
                             widening = true
                             return
@@ -328,7 +354,8 @@ final class PRsModel: ObservableObject {
                         errors.append("\(wanted.label) is not among these PRs")
                     }
                 }
-                if selectedID == nil || selected == nil, let first = prs.first(where: { $0.isMine == true }) ?? prs.first {
+                if directOpen == nil, selectedID == nil || selected == nil,
+                   let first = prs.first(where: { $0.isMine == true }) ?? prs.first {
                     select(first)
                 } else if let current = selected, (current.localWorktree ?? current.repoRoot) != nil,
                           current.proposalStamp != reviewProposalStamp || current.headSha != reviewHeadSha {
@@ -348,16 +375,94 @@ final class PRsModel: ObservableObject {
     /// of a PR without a worktree, and the diff load, so one click is enough.
     func request(_ ref: HubPRRef, reveal: PRReveal? = nil) {
         pendingReveal = reveal
+        HubPerf.log("prs.request \(ref.label) loading=\(loading) rows=\(prs.count)")
         if loading || prs.isEmpty {
             wanted = ref
-        } else if !select(ref) {
+            wantedStarted = nil
+            startWanted()
+        } else if !select(ref, opened: true) {
             if widen(to: ref) {
                 reload()
             } else {
-                errors.append("\(ref.label) is not among these PRs")
+                // Not in the list (newer than it, or of a project it does not hold): straight from its checkout.
+                wanted = ref
+                wantedStarted = nil
+                if !startWanted() {
+                    wanted = nil
+                    errors.append("\(ref.label) is not among these PRs")
+                }
             }
         }
         revealPending()
+    }
+
+    /// The wanted PR before the list answers: its row on screen (the cache's) is selected now, else its
+    /// detail comes straight from the checkout its project lives in (`openDirect`). The list still
+    /// selects it again when it lands. False when neither is possible yet (no row, no known checkout).
+    @discardableResult
+    private func startWanted() -> Bool {
+        guard let ref = wanted else { return false }
+        if wantedStarted == ref { return true }
+        let matches = prs.filter(ref.matches)
+        if matches.count == 1, let match = matches.first {
+            wantedStarted = ref
+            HubPerf.log("prs.request \(ref.label) from the row on screen, before the list answers")
+            select(match, opened: true)
+            return true
+        }
+        guard matches.isEmpty, let root = directRoot(ref) else { return false }
+        wantedStarted = ref
+        openDirect(ref, root: root)
+        return true
+    }
+
+    /// The checkout `tools hub pr show <root>#<n>` can answer `ref` from: a row of the same project on
+    /// screen names it, else a project folder of the same name. The answer is checked against `ref`.
+    private func directRoot(_ ref: HubPRRef) -> String? {
+        guard let project = ref.project else { return nil }
+        if let root = prs.first(where: { HubPRRef(project: project, number: $0.number).matches($0) })?.repoRoot {
+            return root
+        }
+        let name = (project.split(separator: "/").last.map(String.init) ?? project).lowercased()
+        return paths.first { URL(fileURLWithPath: $0).lastPathComponent.lowercased() == name }
+    }
+
+    /// One PR's row and detail from `tools hub pr show <root>#<n>` (the detail is a list row plus its
+    /// body, commits and checks): selected at once, with its diff and threads, while the list loads.
+    private func openDirect(_ ref: HubPRRef, root: String) {
+        let arg = "\(root)#\(ref.number)"
+        directOpen = (ref, selectedID)
+        Task {
+            let span = HubPerf.begin("prs.show.direct", arg, awaits: true)
+            let fresh = await Task.detached(priority: .userInitiated) { () -> (HubPR, HubPRDetail, Data)? in
+                guard let data = try? ToolsCLIRunner.run(["hub", "pr", "show", arg]),
+                      let row = try? JSONDecoder().decode(HubPR.self, from: data),
+                      let detail = try? JSONDecoder().decode(HubPRDetail.self, from: data) else { return nil }
+                return (row, detail, data)
+            }.value
+            let request = directOpen
+            if request?.ref == ref {
+                directOpen = nil
+            }
+            guard let (row, detail, data) = fresh, ref.matches(row) else {
+                span.end(fresh == nil ? "failed" : "another PR")
+                return
+            }
+            span.end(row.label)
+            PRListCache.writeDetail(data, id: row.id)
+            details[row.id] = detail
+            detailFetched[row.id] = Date()
+            // Still wanted: the list has not answered, or it answered and nobody picked another row since.
+            let untouched = request.map { $0.ref == ref && selectedID == $0.selectionAtStart } ?? false
+            guard wanted == ref || untouched || selectedID == row.id else { return }
+            if !prs.contains(where: { $0.id == row.id }) {
+                directIDs.insert(row.id)
+                prs.append(row)
+            }
+            if selectedID != row.id {
+                select(row)
+            }
+        }
     }
 
     /// The pending reveal, once the review on screen is its PR's.
@@ -381,7 +486,7 @@ final class PRsModel: ObservableObject {
     /// Selects the one PR `ref` names; false when none matches. A bare number found in several
     /// projects selects nothing and says which projects, since picking one would be a guess.
     @discardableResult
-    private func select(_ ref: HubPRRef) -> Bool {
+    private func select(_ ref: HubPRRef, opened: Bool = false) -> Bool {
         let matches = prs.filter(ref.matches)
         if matches.count > 1 {
             let projects = matches.map(\.repo).joined(separator: ", ")
@@ -389,7 +494,7 @@ final class PRsModel: ObservableObject {
             return true
         }
         guard let match = matches.first else { return false }
-        select(match)
+        select(match, opened: opened)
         return true
     }
 
@@ -431,7 +536,11 @@ final class PRsModel: ObservableObject {
     private func apply(_ list: HubPRList, key: String, flash: Bool) {
         let sameList = appliedKey == key
         appliedKey = key
-        let sorted = list.prs.sorted { ($0.updatedAt ?? "") > ($1.updatedAt ?? "") }
+        var sorted = list.prs.sorted { ($0.updatedAt ?? "") > ($1.updatedAt ?? "") }
+        // The open PR came from `openDirect` and this list does not hold it: it stays, at the end.
+        if let open = selected, directIDs.contains(open.id), !sorted.contains(where: { $0.id == open.id }) {
+            sorted.append(open)
+        }
         let before = Dictionary(prs.map { ($0.id, $0.updatedAt ?? "") }, uniquingKeysWith: { first, _ in first })
         let moved: Set<String> = flash && sameList
             ? SWR.changed(before: before, after: sorted.map { ($0.id, $0.updatedAt ?? "") })
@@ -451,8 +560,9 @@ final class PRsModel: ObservableObject {
         // Same PR in a different worktree: the old model still points at the old checkout.
         guard reviewPRID != pr.id || review?.repo.path != URL(fileURLWithPath: path).path
             || reviewProposalStamp != pr.proposalStamp || reviewHeadSha != pr.headSha else { return }
-        if reviewPRID == pr.id, reviewHeadSha != pr.headSha {
-            // A new head can come with a new recorded base (a rebase): fetch the detail again.
+        if reviewPRID == pr.id, reviewHeadSha != pr.headSha, details[pr.id]?.headSha != pr.headSha {
+            // A new head can come with a new recorded base (a rebase): fetch the detail again. A detail
+            // already for this head (it is what noticed the push) stays.
             details[pr.id] = nil
         }
         reviewPRID = pr.id
@@ -466,8 +576,14 @@ final class PRsModel: ObservableObject {
             next.remoteHead = ReviewRemoteHead(branch: pr.headBranch, sha: fetch.head, base: fetch.mergeBase ?? fetch.base,
                                                hostURL: { path, line in pr.blobURL(fetch.head, path: path, line: line) })
         }
-        // The PR's live threads on their lines, with reply / resolve / submit (`tools hub pr`).
-        next.attachPR(.ref(pr.url.isEmpty ? "\(path)#\(pr.number)" : pr.url))
+        // The PR's live threads on their lines, with reply / resolve / submit (`tools hub pr`): the store
+        // `select` started with the detail when it is this PR's, so they are often in already.
+        let target = Self.threadsTarget(pr, path: path)
+        if let prefetched = prefetchedThreads, prefetched.target == target {
+            next.attachPR(prefetched)
+        } else {
+            next.attachPR(target)
+        }
         // The agent's drafts sit on the lines they are about, with accept / edit / reject.
         if let proposal = pr.proposal {
             do {
@@ -548,12 +664,29 @@ final class PRsModel: ObservableObject {
         fetchHead(pr, root: root)
     }
 
-    func select(_ pr: HubPR) {
+    /// Opens `pr`. The PR itself comes first: its detail (`tools hub pr show`), its live threads and,
+    /// for a PR without a worktree, its head fetch all start at once and in parallel; the agent
+    /// sessions follow the fresh detail. `opened`: a click, a link or the extension asked for it, so the
+    /// detail is asked again even within the 15 s a list refresh re-selecting it waits.
+    func select(_ pr: HubPR, opened: Bool = false) {
         // Another PR picked meanwhile: a reveal still waiting for the first one no longer applies.
         if let pending = pendingReveal, !pending.ref.matches(pr) {
             pendingReveal = nil
         }
         selectedID = pr.id
+        let key = pr.id
+        if details[key] == nil, let cached = PRListCache.readDetail(key),
+           let detail = try? JSONDecoder().decode(HubPRDetail.self, from: cached) {
+            // The last known detail at once; the fresh one below replaces it.
+            details[key] = detail
+        }
+        loadDetail(pr, force: opened)
+        prefetchThreads(pr)
+        showDiff(pr)
+    }
+
+    /// The diff of `pr`: its worktree's, else its head fetched into the main checkout (`fetchHead`).
+    private func showDiff(_ pr: HubPR) {
         if let path = pr.localWorktree {
             showReview(pr, path: path, fetch: nil)
         } else if let root = pr.repoRoot {
@@ -571,40 +704,86 @@ final class PRsModel: ObservableObject {
         } else {
             clearReview()
         }
+    }
+
+    static func threadsTarget(_ pr: HubPR, path: String) -> PRTarget {
+        .ref(pr.url.isEmpty ? "\(path)#\(pr.number)" : pr.url)
+    }
+
+    /// The selected PR's threads, asked for now rather than after its head fetch and diff load.
+    /// `headMoved`: a push since the threads were read; the target (the PR URL) is the same, so the
+    /// store on hand is asked again rather than kept with the old head's threads and line mappings.
+    private func prefetchThreads(_ pr: HubPR, headMoved: Bool = false) {
+        guard let path = pr.localWorktree ?? pr.repoRoot else {
+            prefetchedThreads = nil
+            return
+        }
+        let target = Self.threadsTarget(pr, path: path)
+        if let current = prefetchedThreads, current.target == target {
+            if headMoved {
+                current.load(noCache: true)
+            }
+            return
+        }
+        if let review, review.pr?.target == target {
+            prefetchedThreads = review.pr
+            return
+        }
+        let store = PRThreadsStore(target: target)
+        prefetchedThreads = store
+        store.load()
+    }
+
+    /// `tools hub pr show` for `pr`, off the main thread. Opening a PR always asks again (the
+    /// description, commits, checks and head move), at most once per 15 s unless `force`, so a list
+    /// refresh re-selecting it does not spawn another. The agent sessions load after it.
+    private func loadDetail(_ pr: HubPR, force: Bool) {
         let key = pr.id
-        if details[key] == nil, let cached = PRListCache.readDetail(key),
-           let detail = try? JSONDecoder().decode(HubPRDetail.self, from: cached) {
-            // The last known detail at once; the fresh one below replaces it.
-            details[key] = detail
-        }
-        if let detail = details[key] {
-            sessions.load(pr, detail: detail)
-        }
-        // Opening a PR always asks again (the description, commits and checks move), at most once
-        // per 15 s so a list refresh re-selecting it does not spawn another `tools hub pr show`.
         guard let root = pr.repoRoot, !detailLoading.contains(key),
-              detailFetched[key].map({ Date().timeIntervalSince($0) > 15 }) ?? true else { return }
+              force || detailFetched[key].map({ Date().timeIntervalSince($0) > 15 }) ?? true else {
+            if let detail = details[key] {
+                sessions.load(pr, detail: detail)
+            }
+            return
+        }
         detailLoading.insert(key)
         Task {
             let span = HubPerf.begin("prs.show", key, awaits: true)
-            let fresh = await Task.detached(priority: .userInitiated) { () -> (HubPRDetail, Data)? in
+            let fresh = await Task.detached(priority: .userInitiated) { () -> (HubPRDetail, HubPR?, Data)? in
                 guard let data = try? ToolsCLIRunner.run(["hub", "pr", "show", "\(root)#\(pr.number)"]),
                       let detail = try? JSONDecoder().decode(HubPRDetail.self, from: data) else { return nil }
-                return (detail, data)
+                return (detail, try? JSONDecoder().decode(HubPR.self, from: data), data)
             }.value
             span.end(fresh == nil ? "failed" : "")
             detailLoading.remove(key)
-            guard let (detail, data) = fresh else { return }
+            guard let (detail, row, data) = fresh else {
+                if let detail = details[key] {
+                    sessions.load(pr, detail: detail)
+                }
+                return
+            }
             detailFetched[key] = Date()
             PRListCache.writeDetail(data, id: key)
             let previous = details[key]
             if previous != detail {
                 details[key] = detail
             }
-            if reviewPRID == key, detail.baseSha != nil, previous?.baseSha != detail.baseSha {
-                review?.setScope(Self.scope(pr, detail: detail, fetch: fetchedHead(pr)))
+            let current = prs.first { $0.id == key } ?? pr
+            if let row, row.id == key, let head = row.headSha, head != current.headSha {
+                // Pushed since the list answered (a force push): the row, its diff and its threads
+                // follow the head the host has now, instead of keeping the old numbers on screen.
+                HubPerf.log("prs.show \(pr.label) head moved \(current.headSha?.prefix(10) ?? "-") -> \(head.prefix(10)): row and diff follow")
+                if let index = prs.firstIndex(where: { $0.id == key }) {
+                    prs[index] = row
+                }
+                if selectedID == key {
+                    prefetchThreads(row, headMoved: true)
+                    showDiff(row)
+                }
+            } else if reviewPRID == key, detail.baseSha != nil, previous?.baseSha != detail.baseSha {
+                review?.setScope(Self.scope(current, detail: detail, fetch: fetchedHead(current)))
             }
-            sessions.load(pr, detail: detail)
+            sessions.load(prs.first { $0.id == key } ?? current, detail: detail)
         }
     }
 
@@ -612,7 +791,7 @@ final class PRsModel: ObservableObject {
     @discardableResult
     func open(id: String) -> Bool {
         guard let pr = prs.first(where: { $0.id == id }) else { return false }
-        select(pr)
+        select(pr, opened: true)
         return true
     }
 
@@ -794,7 +973,7 @@ struct PRListView: View {
         // New and updated rows after a refresh flash once.
         .swrFlash(prs.changed.contains(pr.id))
         .contentShape(Rectangle())
-        .rowButton(cornerRadius: 8) { prs.select(pr) }
+        .rowButton(cornerRadius: 8) { prs.select(pr, opened: true) }
         .padding(.horizontal, 6)
         .instantTooltip("\(pr.label) \(pr.headBranch) → \(pr.baseBranch)\nRight-click for its web pages")
         // The row stays one button (select); its labels' web pages live here, since a link inside
@@ -1058,13 +1237,24 @@ struct PRDetailView: View {
     private var header: some View {
         TitlebarHeader {
             HStack(spacing: 10) {
-                PRStateIcon(pr: pr)
+                // Where it lives first ("GitHub #436", a click opens it), then its title on one line.
+                if let forge = Forge(kind: pr.origin?.kind) {
+                    ForgeBadge(forge: forge, number: pr.number, url: URL(string: pr.url)) { ExternalOpener.open($0) }
+                } else {
+                    PRStateIcon(pr: pr)
+                    ExternalLink(text: pr.label, url: URL(string: pr.url), font: .system(size: 13, weight: .semibold), color: Color(red: 0.62, green: 0.78, blue: 1))
+                }
                 Text(pr.title)
                     .font(.system(size: 15, weight: .semibold))
                     .lineLimit(1)
+                    .truncationMode(.tail)
                     .textSelection(.enabled)
                     .instantTooltip(pr.title)
-                ExternalLink(text: pr.label, url: URL(string: pr.url), font: .system(size: 13, weight: .semibold), color: Color(red: 0.62, green: 0.78, blue: 1))
+                    .contextMenu {
+                        Button("Copy title") { Clipboard.copy(pr.title, what: "title") }
+                        Button("Copy \(pr.label) and title") { Clipboard.copy("\(pr.label) \(pr.title)", what: "title") }
+                    }
+                    .layoutPriority(1)
                 statePill
                 CIBadge(ci: pr.ci, url: detail?.webUrls?.checks.flatMap(URL.init(string:)))
                 PRReadinessHeaderChip(pr: pr)
@@ -1127,7 +1317,9 @@ struct PRDetailView: View {
                     tooltip: pr.author.map { "\($0)'s profile" }
                 )
                 branches
-                if let detail {
+                // A cached detail for another head (pushed since) would show its old numbers: they wait
+                // for the fresh one, which `select` asks for on every open.
+                if let detail, detail.headSha == nil || pr.headSha == nil || detail.headSha == pr.headSha {
                     let filesURL = detail.webUrls?.files.flatMap(URL.init(string:))
                     if let files = detail.changedFiles {
                         ExternalLink(
@@ -1274,9 +1466,8 @@ struct PRDetailView: View {
         ScrollView {
             // Lazy, rows included: every realized row is a focus responder, and SwiftUI walks all of
             // them whenever a sidebar group folds (1.1 s of main thread with #424's 92 commits shown).
+            // The PR first (description, commits, checks), the agent sessions that touched it after.
             LazyVStack(alignment: .leading, spacing: 0) {
-                PRSessionsSection(model: model, prs: prs, store: prs.sessions, pr: pr, folded: $foldSessions)
-                    .id(Self.sessionsID)
                 if let body = detail?.body?.trimmed, !body.isEmpty {
                     PRSection(title: "Description", folded: $foldDescription) {
                         MarkdownContentView(markdown: linkedDescription(body))
@@ -1315,6 +1506,8 @@ struct PRDetailView: View {
                     PRChecksSection(model: model, pr: pr, checks: checks, folded: $foldChecks)
                         .id(Self.checksID)
                 }
+                PRSessionsSection(model: model, prs: prs, store: prs.sessions, pr: pr, folded: $foldSessions)
+                    .id(Self.sessionsID)
             }
             .padding(18)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -1334,11 +1527,9 @@ struct PRDetailView: View {
         return sessions + [detail?.body ?? "", pr.id] + (detail?.commits ?? []).map(\.sha) + (detail?.checks ?? []).map(\.id)
     }
 
-    /// Sessions, description, commits and checks, in the order the overview shows them.
+    /// Description, commits, checks and sessions, in the order the overview shows them.
     private func findRows() -> [PanelFindRow] {
-        var rows = PRSessionsSection.rows(model: model, store: prs.sessions, pr: pr).map { row in
-            PanelFindRow(id: "session:\(row.id)", fields: [PanelFindField("title", row.session.displayTitle)], container: Self.sessionsID)
-        }
+        var rows: [PanelFindRow] = []
         if let body = detail?.body?.trimmed, !body.isEmpty {
             let markdown = linkedDescription(body)
             rows.append(PanelFindRow(id: Self.descriptionID, fields: [PanelFindField("desc", markdown, markdown: true)], container: Self.descriptionSectionID))
@@ -1346,6 +1537,9 @@ struct PRDetailView: View {
         rows += (detail?.commits ?? []).reversed().map(PRCommitRow.searchable)
         rows += PRChecksSection.sorted(detail?.checks ?? []).map { check in
             PanelFindRow(id: "check:\(check.id)", fields: [PanelFindField("link", check.name)], container: Self.checksID)
+        }
+        rows += PRSessionsSection.rows(model: model, store: prs.sessions, pr: pr).map { row in
+            PanelFindRow(id: "session:\(row.id)", fields: [PanelFindField("title", row.session.displayTitle)], container: Self.sessionsID)
         }
         return rows
     }

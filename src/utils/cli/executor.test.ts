@@ -11,6 +11,7 @@ import { enhanceHelp } from "@genesiscz/utils/cli";
 import {
     formatMissingEnumHelp,
     setSuggestCommandProgram,
+    spawnLabel,
     suggestCommand,
     suggestEnumFlag,
 } from "@genesiscz/utils/cli/executor";
@@ -281,5 +282,24 @@ describe("suggestEnumFlag", () => {
         } finally {
             process.argv = saved;
         }
+    });
+});
+
+describe("spawnLabel", () => {
+    test("names the program by its basename and keeps the first arguments", () => {
+        expect(spawnLabel(["/usr/bin/git", "rev-parse", "--show-toplevel"])).toBe("git rev-parse --show-toplevel");
+    });
+
+    test("hides an argument that carries a credential", () => {
+        expect(spawnLabel(["gh", "api", "-H", "Authorization: token abc123", "user"])).toBe("gh api -H *** user");
+        expect(spawnLabel(["glab", "api", "--private-token=abc123"])).toBe("glab api ***");
+        expect(spawnLabel(["client", "--password", "invented-credential", "go"])).toBe("client *** *** go");
+        expect(spawnLabel(["C:\\tools\\gh.exe", "pr", "list"])).toBe("gh.exe pr list");
+    });
+
+    test("cuts long and many arguments", () => {
+        const label = spawnLabel(["gh", "api", "graphql", "-f", `query=${"x".repeat(200)}`, "a", "b", "c"]);
+        expect(label.endsWith(" …")).toBe(true);
+        expect(label.length).toBeLessThan(140);
     });
 });

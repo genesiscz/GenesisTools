@@ -14,9 +14,20 @@ enum PRListCache {
 
     static func readList(_ key: String) -> Data? { lists.readData(key: key) }
 
-    static func writeList(_ data: Data, key: String, limit: Int) {
+    /// The last list written with these filters, whatever its projects: the project set follows the
+    /// recent sessions, so the exact key misses after any new folder, and the old rows still paint.
+    static func readLastList(state: String, mine: Bool, query: String) -> Data? {
+        lists.readData(key: lastKey(state: state, mine: mine, query: query))
+    }
+
+    static func writeList(_ data: Data, key: String, limit: Int, state: String, mine: Bool, query: String) {
         lists.writeData(data, key: key)
+        lists.writeData(data, key: lastKey(state: state, mine: mine, query: query))
         HubDefaults.store.set(limit, forKey: "hub.prs.limit.\(lists.url(for: key).lastPathComponent)")
+    }
+
+    private static func lastKey(state: String, mine: Bool, query: String) -> String {
+        "last|\(state)|\(mine)|\(query)"
     }
 
     /// How many PRs per project the list held when it was cached ("Load more" raises it).

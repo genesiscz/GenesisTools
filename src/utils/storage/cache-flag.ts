@@ -1,6 +1,9 @@
 import { logger } from "@genesiscz/utils/logger";
+import { profiler } from "@genesiscz/utils/profile";
 import { InvalidArgumentError, Option } from "commander";
 import type { Storage } from "./storage";
+
+const cacheProf = profiler.scope("cache");
 
 /**
  * The CLI answers fresh by default; a cached answer only when the caller passes `--max-cache-age
@@ -31,14 +34,20 @@ export async function cached<T>({
     isValid?: (hit: T) => boolean;
     shouldStore?: (value: T) => boolean;
 }): Promise<{ value: T; hit: boolean }> {
+    let miss = "fresh asked";
+
     if (maxAgeSeconds !== undefined && maxAgeSeconds > 0) {
         const hit = await storage.getCacheFile<T>(key, `${Math.ceil(maxAgeSeconds)} seconds`);
 
         if (hit !== null && (!isValid || isValid(hit))) {
+            cacheProf.mark(`hit ${key} (max ${maxAgeSeconds} s)`);
             return { value: hit, hit: true };
         }
+
+        miss = hit === null ? `none within ${maxAgeSeconds} s` : "stored answer rejected";
     }
 
+    cacheProf.mark(`miss ${key} (${miss})`);
     const value = await fetch();
 
     if (!shouldStore || shouldStore(value)) {
