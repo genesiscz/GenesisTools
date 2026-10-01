@@ -210,3 +210,34 @@ describe("stopSession never signals a reused pid's tree", () => {
         }
     });
 });
+
+describe("stopSession when the process table cannot be read", () => {
+    it("a live root missing from the table fails the stop and leaves the session running", async () => {
+        const store = new TaskSessionStore();
+        const name = "stop-no-table";
+        await store.prepareSession({ name, command: "sleep 5", mode: "pipe", cwd: "/tmp" });
+        const child = Bun.spawn(["sleep", "5"], {
+            stdout: "ignore",
+            stderr: "ignore",
+            stdin: "ignore",
+            env: process.env,
+        });
+
+        try {
+            await store.updatePid(name, child.pid);
+            const calls: number[] = [];
+            const outcome = await stopSession({
+                name,
+                graceMs: 200,
+                readTable: async () => [],
+                kill: (pid) => calls.push(pid),
+            });
+
+            expect(outcome.status).toBe("failed");
+            expect(calls).toEqual([]);
+            expect((await store.getSessionMeta(name))?.stopped).toBeUndefined();
+        } finally {
+            child.kill("SIGKILL");
+        }
+    });
+});

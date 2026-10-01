@@ -130,7 +130,11 @@ async function waitForPidsToExit(pids: number[], deadline: number): Promise<numb
  * exit code (130/143), which reads as if the child chose to exit that way.
  */
 export async function stopSession(
-    opts: StopSessionOptions & { kill?: (pid: number, signal: NodeJS.Signals) => void }
+    opts: StopSessionOptions & {
+        kill?: (pid: number, signal: NodeJS.Signals) => void;
+        /** The process table read; a test passes an unreadable one. */
+        readTable?: () => Promise<PsRow[]>;
+    }
 ): Promise<StopSessionOutcome> {
     const store = new TaskSessionStore();
     const meta = await store.reconcileSessionState(opts.name);
@@ -152,7 +156,7 @@ export async function stopSession(
         return { status: "no-pid" };
     }
 
-    const rows = await listPsTable();
+    const rows = await (opts.readTable ?? listPsTable)();
     const byPid = new Map(rows.map((row) => [row.pid, row]));
 
     // The root must still be the recorded task after the await above: the same start-time reader and
