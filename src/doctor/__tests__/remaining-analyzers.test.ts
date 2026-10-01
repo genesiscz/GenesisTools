@@ -2,7 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { createRemainingAnalyzers, remainingAnalyzerConstructors } from "@app/doctor/analyzers/remaining";
 
 describe("remaining analyzer barrel", () => {
-    it("exports all seven analyzers in picker order", () => {
+    it("exports all eight analyzers in picker order", () => {
         const analyzers = createRemainingAnalyzers();
 
         expect(analyzers.map((analyzer) => analyzer.id)).toEqual([
@@ -13,7 +13,8 @@ describe("remaining analyzer barrel", () => {
             "battery",
             "network",
             "security",
+            "extensions",
         ]);
-        expect(remainingAnalyzerConstructors).toHaveLength(7);
+        expect(remainingAnalyzerConstructors).toHaveLength(8);
     });
 });

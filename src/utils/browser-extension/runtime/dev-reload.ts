@@ -1,15 +1,9 @@
+/// <reference types="chrome" />
+
 /**
  * Dev builds only, inside an extension's service worker: connects to `dev-reload/server.ts` and does
  * the reload each message names. Browser-side: uses the `chrome` global and nothing from Bun.
  */
-
-interface DevReloadChrome {
-    tabs: { query(info: { url: string }): Promise<{ id?: number }[]> };
-    scripting: { executeScript(injection: { target: { tabId: number }; files: string[] }): Promise<unknown> };
-    runtime: { reload(): void };
-}
-
-declare const chrome: DevReloadChrome;
 
 export interface DevReloadOptions {
     /** `ws://127.0.0.1:<port>/reload`. */

@@ -75,8 +75,8 @@ Page features have CLI doors that run the same code as the extension: `checkout`
 `explain`, `review`, `action`, `route`.
 
 First install: `build`, `install-host`, then `brave://extensions` > Developer mode > Load unpacked >
-`dist/browser-extension`. `tools browser-router status` reports whether it is loaded, and an older
-build.
+`dist/browser-extension`. `tools browser-router status` and `tools doctor --only extensions` report
+whether it is loaded, and an older build.
 
 ## Config
 

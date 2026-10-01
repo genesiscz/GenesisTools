@@ -299,7 +299,9 @@ async function syncGitlabScripts(): Promise<string[]> {
     return active;
 }
 
-const MENU_TITLES: Record<MenuItem, [string, string[]]> = {
+type MenuContext = `${chrome.contextMenus.ContextType}`;
+
+const MENU_TITLES: Record<MenuItem, [string, [MenuContext, ...MenuContext[]]]> = {
     "open-hub": ["Open in GenesisTools", ["page", "selection", "link"]],
     "open-file": ["Open locally in the editor", ["page", "selection", "link"]],
     "open-terminal": ["Open the checkout in a terminal", ["page"]],

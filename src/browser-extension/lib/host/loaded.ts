@@ -35,13 +35,27 @@ function toolsCommand(args: string[]): string {
     return suggestCommand(`tools ${tool}`, { replaceCommand: rest });
 }
 
-function adviceFor(entry: BrowserExtensionEntry): string[] {
+/** One finding about one extension: `ok` when nothing needs doing, else `fix` names the next step. */
+export interface ExtensionCheck {
+    extension: string;
+    ok: boolean;
+    message: string;
+    fix: string[];
+}
+
+function checksFor(entry: BrowserExtensionEntry): ExtensionCheck[] {
     const manifest = join(entry.distDir, "manifest.json");
-    const build = `  build:  ${toolsCommand(entry.buildArgs)}`;
-    const load = `  load:   brave://extensions (or chrome://extensions) > Developer mode > Load unpacked > ${entry.distDir}`;
+    const build = `build: ${toolsCommand(entry.buildArgs)}`;
+    const load = `load: brave://extensions (or chrome://extensions) > Developer mode > Load unpacked > ${entry.distDir}`;
+    const check = (ok: boolean, message: string, fix: string[] = []): ExtensionCheck => ({
+        extension: entry.name,
+        ok,
+        message: `${entry.name} extension: ${message}`,
+        fix,
+    });
 
     if (!existsSync(manifest)) {
-        return [`${entry.name} extension: not built (${entry.purpose})`, build, load];
+        return [check(false, `not built (${entry.purpose})`, [build, load])];
     }
 
     const loaded = extensionProfiles({
@@ -51,13 +65,15 @@ function adviceFor(entry: BrowserExtensionEntry): string[] {
     }).filter((profile) => profile.loaded);
 
     if (loaded.length === 0) {
-        return [`${entry.name} extension: not loaded in any browser (${entry.purpose})`, load];
+        return [check(false, `not loaded in any browser (${entry.purpose})`, [load])];
     }
 
-    const lines = loaded.map((profile) =>
+    const checks = loaded.map((profile) =>
         profile.stale
-            ? `${entry.name} extension: OLDER BUILD in ${profile.browser} (${profile.profile}). Reload: ${toolsCommand(entry.reloadArgs)}`
-            : `${entry.name} extension: loaded in ${profile.browser} (${profile.profile})`
+            ? check(false, `OLDER BUILD in ${profile.browser} (${profile.profile})`, [
+                  `reload: ${toolsCommand(entry.reloadArgs)}`,
+              ])
+            : check(true, `loaded in ${profile.browser} (${profile.profile})`)
     );
 
     if (entry.status === "native-host") {
@@ -67,19 +83,27 @@ function adviceFor(entry: BrowserExtensionEntry): string[] {
         );
 
         if (!hosts.launcherExists || unreachable) {
-            lines.push(
-                `${entry.name} extension: its native host is not registered, so it cannot ask the router. Run: ${toolsCommand(["browser-extension", "install-host"])}`
+            checks.push(
+                check(false, "its native host is not registered, so it cannot ask the router", [
+                    `run: ${toolsCommand(["browser-extension", "install-host"])}`,
+                ])
             );
         }
     }
 
-    return lines;
+    return checks;
 }
 
 /**
- * What `tools browser-router status` and `install` print about the GenesisTools extensions: not
- * built, not loaded, an older build than `dist` (a Reload is due), or a native host out of reach.
+ * The state of every GenesisTools extension: not built, not loaded, an older build than `dist` (a
+ * Reload is due), or a native host out of reach. Read-only. `tools browser-router status` and
+ * `tools doctor` both report it.
  */
+export function extensionChecks(): ExtensionCheck[] {
+    return BROWSER_EXTENSIONS.flatMap(checksFor);
+}
+
+/** `extensionChecks()` as printable lines, each fix indented under its finding. */
 export function extensionAdvice(): string[] {
-    return BROWSER_EXTENSIONS.flatMap(adviceFor);
+    return extensionChecks().flatMap((check) => [check.message, ...check.fix.map((line) => `  ${line}`)]);
 }

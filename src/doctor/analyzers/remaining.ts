@@ -2,6 +2,7 @@ import type { Analyzer } from "@app/doctor/lib/analyzer";
 import { BatteryAnalyzer } from "./battery";
 import { BrewAnalyzer } from "./brew";
 import { DevCachesAnalyzer } from "./dev-caches";
+import { ExtensionsAnalyzer } from "./extensions";
 import { NetworkAnalyzer } from "./network";
 import { SecurityAnalyzer } from "./security";
 import { StartupAnalyzer } from "./startup";
@@ -17,6 +18,7 @@ export const remainingAnalyzerConstructors: AnalyzerConstructor[] = [
     BatteryAnalyzer,
     NetworkAnalyzer,
     SecurityAnalyzer,
+    ExtensionsAnalyzer,
 ];
 
 export function createRemainingAnalyzers(): Analyzer[] {
