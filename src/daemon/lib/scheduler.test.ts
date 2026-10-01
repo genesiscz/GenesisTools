@@ -306,3 +306,51 @@ describe("runSchedulerLoop resilience (Jul 3/6 incident class)", () => {
         expect(codes).toEqual([1]);
     });
 });
+
+describe('notify: "failure"', () => {
+    async function messagesFor(exitCode: number, notifyMode: DaemonTask["notify"]): Promise<string[]> {
+        const messages: string[] = [];
+        const now = new Date();
+        const taskStates = new Map<string, TaskState>([
+            ["quiet", { nextRunAt: new Date(now.getTime() - 1_000), attemptCount: 0, running: false }],
+        ]);
+        const activeRuns = new Set<string>();
+        const tasks: DaemonTask[] = [
+            {
+                name: "quiet",
+                command: "true",
+                every: "every 15 minutes",
+                retries: 0,
+                enabled: true,
+                notify: notifyMode,
+            },
+        ];
+
+        dispatchDueTasks({
+            tasks,
+            taskStates,
+            activeRuns,
+            logsBaseDir,
+            now,
+            notify: async (options) => {
+                messages.push(options.message);
+                return true;
+            },
+            runTask: async () => ({ exitCode, duration_ms: 1, logFile: "/tmp/test.jsonl" }),
+        });
+        await drainActiveRuns(activeRuns);
+        return messages;
+    }
+
+    test("a successful run sends no banner", async () => {
+        expect(await messagesFor(0, "failure")).toEqual([]);
+    });
+
+    test("a failed run still sends the failure banner", async () => {
+        expect(await messagesFor(1, "failure")).toEqual(["Failed after 1 attempt, retries exhausted"]);
+    });
+
+    test("the default still sends start and completion", async () => {
+        expect(await messagesFor(0, undefined)).toEqual(["Task started", "Completed in 1ms"]);
+    });
+});

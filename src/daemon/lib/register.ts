@@ -13,8 +13,8 @@ export interface RegisterTaskOptions {
     description?: string;
     timeoutMs?: number;
     overwrite?: boolean;
-    /** Send macOS notifications on start/complete/fail. Default: true */
-    notify?: boolean;
+    /** Send macOS notifications on start/complete/fail. Default: true. `"failure"`: only when it fails. */
+    notify?: boolean | "failure";
     /** Optional run-log retention; daemon prunes post-run. */
     retention?: RunLogRetention;
 }
@@ -49,7 +49,7 @@ export async function registerTask(opts: RegisterTaskOptions): Promise<boolean> 
         enabled: opts.enabled ?? true,
         description: opts.description,
         ...(opts.timeoutMs !== undefined ? { timeoutMs: opts.timeoutMs } : {}),
-        ...(opts.notify === false ? { notify: false } : {}),
+        ...(opts.notify === false || opts.notify === "failure" ? { notify: opts.notify } : {}),
         retention: opts.retention ?? DEFAULT_RETENTION,
     };
 

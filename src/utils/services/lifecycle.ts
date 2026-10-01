@@ -62,7 +62,7 @@ export async function stopService(
         }
     }
 
-    logger.info({ id: row.id, pids: ours, of: row.pids }, "services: stopping");
+    logger.debug({ id: row.id, pids: ours, of: row.pids }, "services: stopping");
 
     const stopped = await until(
         async () => ours.every((pid) => !isProcessAlive(pid)) && (row.port === null || !(await portIsOpen(row.port))),
@@ -89,6 +89,7 @@ export async function stopService(
         }
     }
 
+    logger.debug({ id: row.id, pids: ours, graceful: stopped }, "services: stopped");
     return { ok: true, message: `stopped ${row.name}${stopped ? "" : " (killed after 10 s)"}` };
 }
 
@@ -171,7 +172,7 @@ export async function restartService(row: ServiceRow): Promise<LifecycleResult> 
         logger.warn({ id: row.id }, "services: the server's working directory was unreadable; starting it in ours");
     }
 
-    logger.info({ id: row.id, args, cwd }, "services: starting again");
+    logger.debug({ id: row.id, args, cwd }, "services: starting again");
     spawnToolDetached(args, { cwd });
     const up = await until(() => portIsOpen(port), RESTART_WAIT_MS);
     return up

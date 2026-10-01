@@ -1,3 +1,5 @@
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 import { chunk } from "../array";
 
 /**
@@ -74,9 +76,32 @@ export interface PsListRow {
 /** Re-exported from `../array`, where it now lives; batching pids is only one of its uses. */
 export { chunk };
 
+/** Where macOS keeps `lsof`, `sysctl` and friends: absent from a launchd job's PATH unless its plist adds them. */
+const SYSTEM_BIN_DIRS = ["/usr/sbin", "/sbin"];
+
+/**
+ * A bare command name the PATH cannot resolve, found in the system bin folders instead. The daemon
+ * runs tasks with a PATH without `/usr/sbin`, so a bare `lsof` failed there and read as "no output".
+ */
+export function resolveSystemCommand(command: string): string {
+    if (command.includes("/") || Bun.which(command)) {
+        return command;
+    }
+
+    for (const dir of SYSTEM_BIN_DIRS) {
+        const candidate = join(dir, command);
+
+        if (existsSync(candidate)) {
+            return candidate;
+        }
+    }
+
+    return command;
+}
+
 /** Run a binary with an argv and capture both streams. No shell, so no quoting hazard. */
 export function captureSync(command: string, args: string[], options?: { timeoutMs?: number }): CaptureResult {
-    const result = spawnSync(command, args, {
+    const result = spawnSync(resolveSystemCommand(command), args, {
         encoding: "utf8",
         stdio: ["ignore", "pipe", "pipe"],
         timeout: options?.timeoutMs,
@@ -102,7 +127,7 @@ export async function capture(
     args: string[],
     options?: { timeoutMs?: number; cwd?: string; env?: NodeJS.ProcessEnv }
 ): Promise<CaptureResult> {
-    const proc = Bun.spawn([command, ...args], {
+    const proc = Bun.spawn([resolveSystemCommand(command), ...args], {
         stdin: "ignore",
         stdout: "pipe",
         stderr: "pipe",

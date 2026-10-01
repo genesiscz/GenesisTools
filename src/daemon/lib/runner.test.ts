@@ -1,9 +1,9 @@
 import { afterEach, describe, expect, it } from "bun:test";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { skip } from "@genesiscz/utils/test/skip";
-import { runTask } from "./runner";
+import { runTask, taskPath } from "./runner";
 import type { DaemonTask } from "./types";
 
 const tempDirs: string[] = [];
@@ -20,6 +20,22 @@ afterEach(() => {
             rmSync(dir, { recursive: true, force: true });
         }
     }
+});
+
+describe("taskPath", () => {
+    it("puts the checkout first, so a bare `tools` task resolves, and adds the system bin folders", () => {
+        const repo = resolve(import.meta.dir, "../../..");
+        expect(existsSync(join(repo, "tools"))).toBe(true);
+        expect(taskPath("/usr/bin:/bin").split(":")).toEqual([repo, "/usr/bin", "/bin", "/usr/sbin", "/sbin"]);
+    });
+
+    it("does not repeat a folder the inherited PATH already has", () => {
+        expect(
+            taskPath("/usr/sbin:/usr/bin")
+                .split(":")
+                .filter((dir) => dir === "/usr/sbin")
+        ).toHaveLength(1);
+    });
 });
 
 describe("runTask", () => {

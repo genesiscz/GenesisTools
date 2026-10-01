@@ -2,8 +2,9 @@
 
 import { isTaskRegistered, registerTask, unregisterTask } from "@app/daemon/lib/register";
 import { isInteractive, runTool, suggestCommand } from "@genesiscz/utils/cli";
-import { formatDuration } from "@genesiscz/utils/format";
+import { formatDuration, formatList } from "@genesiscz/utils/format";
 import { logger, out } from "@genesiscz/utils/logger";
+import { sendNotification } from "@genesiscz/utils/macos/notifications";
 import * as p from "@genesiscz/utils/prompts/p";
 import { idleDecisions, readClientPorts, readIdleState, writeIdleState } from "@genesiscz/utils/services/idle";
 import { listServices, type ServiceRow } from "@genesiscz/utils/services/inventory";
@@ -92,7 +93,7 @@ program
 
         for (const row of chosen) {
             const result = await restartService(row);
-            logger.info({ id: row.id, ok: result.ok, message: result.message }, "services: restart");
+            logger.debug({ id: row.id, ok: result.ok, message: result.message }, "services: restart");
             out.println(result.ok ? `${pc.green("✓")} ${result.message}` : `${pc.red("✗")} ${result.message}`);
 
             if (!result.ok) {
@@ -164,10 +165,12 @@ program
 
         if (!Number.isFinite(hours) || hours <= 0) {
             out.error(`--idle-hours must be a positive number, got ${options.idleHours}`);
+            logger.warn({ idleHours: options.idleHours }, "services: reap-idle refused an invalid --idle-hours");
             process.exitCode = 1;
             return;
         }
 
+        logger.debug({ idleHours: hours, dryRun: options.dryRun === true }, "services: reap-idle start");
         const rows = listServices();
         const clients = readClientPorts();
 
@@ -185,8 +188,22 @@ program
             idleMs: hours * 3_600_000,
         });
 
+        const stoppedIds: string[] = [];
+        const failed: string[] = [];
+
         for (const decision of decisions) {
             const idle = formatDuration(Date.now() - decision.lastActive);
+            logger.debug(
+                {
+                    id: decision.row.id,
+                    port: decision.row.port,
+                    pids: decision.row.pids,
+                    active: decision.active,
+                    idleMs: Date.now() - decision.lastActive,
+                    stop: decision.stop,
+                },
+                "services: idle decision"
+            );
 
             if (!decision.stop) {
                 out.println(`${decision.row.id}: ${decision.active ? "in use" : `idle ${idle}`}`);
@@ -212,12 +229,42 @@ program
             }
 
             const stopped = await stopService(decision.row);
-            logger.info({ id: decision.row.id, idle, message: stopped.message }, "services: idle stop");
             out.println(`${decision.row.id}: idle ${idle}, ${stopped.message}`);
+
+            if (stopped.ok) {
+                logger.debug({ id: decision.row.id, idle, message: stopped.message }, "services: idle stop");
+                stoppedIds.push(decision.row.id);
+            } else {
+                logger.warn({ id: decision.row.id, idle, message: stopped.message }, "services: idle stop failed");
+                failed.push(decision.row.id);
+            }
         }
 
         if (!options.dryRun) {
             await writeIdleState(next);
+        }
+
+        logger.debug(
+            {
+                services: rows.length,
+                considered: decisions.length,
+                inUse: decisions.filter((decision) => decision.active).length,
+                stopped: stoppedIds,
+                failed,
+                dryRun: options.dryRun === true,
+            },
+            "services: reap-idle done"
+        );
+
+        if (stoppedIds.length > 0) {
+            const message = `${formatList(stoppedIds)}: no client for ${hours} h.`;
+
+            try {
+                await sendNotification({ title: "Idle servers stopped", message, group: IDLE_TASK });
+                logger.debug({ stopped: stoppedIds }, "services: idle stop notification sent");
+            } catch (error) {
+                logger.warn({ error, stopped: stoppedIds }, "services: idle stop notification failed");
+            }
         }
     });
 
@@ -240,16 +287,21 @@ idle.command("install")
             command: `tools services reap-idle --idle-hours ${hours}`,
             every: "every 15 minutes",
             retries: 0,
+            // The reaper notifies when it stops a server; a banner per 15-minute run is noise.
+            notify: "failure",
             description: "Stop on-demand GenesisTools servers nobody used for a while",
             overwrite: true,
         });
+        logger.debug({ task: IDLE_TASK, idleHours: hours }, "services: idle task registered");
         out.println(`Registered ${IDLE_TASK}: every 15 minutes, idle after ${hours} h`);
     });
 
 idle.command("uninstall")
     .description("Remove the daemon task")
     .action(async () => {
-        out.println((await unregisterTask(IDLE_TASK)) ? `Removed ${IDLE_TASK}` : `${IDLE_TASK} was not registered`);
+        const removed = await unregisterTask(IDLE_TASK);
+        logger.debug({ task: IDLE_TASK, removed }, "services: idle task unregistered");
+        out.println(removed ? `Removed ${IDLE_TASK}` : `${IDLE_TASK} was not registered`);
     });
 
 idle.command("status")

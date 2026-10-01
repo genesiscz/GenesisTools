@@ -93,13 +93,19 @@ export function clientPortsFrom(run: CaptureResult): Set<number> | null {
 export function readClientPorts(): Set<number> | null {
     // lsof can hang on an unresponsive mount: past the deadline it is killed (status null), which
     // `clientPortsFrom` reads as unknown, never as idle.
-    return clientPortsFrom(captureSync("lsof", ["-nP", "-iTCP", "-sTCP:ESTABLISHED", "-Fn"], { timeoutMs: 10_000 }));
+    const ports = clientPortsFrom(
+        captureSync("lsof", ["-nP", "-iTCP", "-sTCP:ESTABLISHED", "-Fn"], { timeoutMs: 10_000 })
+    );
+    logger.debug({ ports: ports ? [...ports] : null }, "services: client check");
+    return ports;
 }
 
 const storage = new Storage("services");
 
 export async function readIdleState(): Promise<IdleState> {
-    return (await storage.getConfigValue<IdleState>("activity")) ?? {};
+    const state = (await storage.getConfigValue<IdleState>("activity")) ?? {};
+    logger.debug({ tracked: Object.keys(state).length, file: storage.getConfigPath() }, "services: idle state read");
+    return state;
 }
 
 export async function writeIdleState(state: IdleState): Promise<void> {

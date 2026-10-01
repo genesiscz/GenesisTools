@@ -15,8 +15,8 @@ export interface DaemonTask {
     description?: string;
     /** Kill a task that has not exited after this many milliseconds. Default: 10 minutes. */
     timeoutMs?: number;
-    /** Send macOS notifications on start/complete/fail. Default: true */
-    notify?: boolean;
+    /** Send macOS notifications on start/complete/fail. Default: true. `"failure"`: only when it fails. */
+    notify?: boolean | "failure";
     /** Optional run-log retention; the daemon prunes post-run. Absent = keep all. */
     retention?: RunLogRetention;
 }

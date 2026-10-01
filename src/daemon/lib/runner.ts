@@ -1,9 +1,22 @@
 import { appendFileSync, mkdirSync } from "node:fs";
-import { join } from "node:path";
+import { delimiter, join, resolve } from "node:path";
 import { formatLocalFileTimestamp } from "@genesiscz/utils/date";
+import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import type { DaemonTask, RunResult } from "./types";
+
+/** This checkout's root, where the `tools` entry lives. */
+const REPO_ROOT = resolve(import.meta.dir, "../../..");
+
+/**
+ * The PATH a task's shell gets: the checkout first, so a task written as `tools <name> ...` resolves
+ * to this checkout's `tools`, then the system bin folders, which a launchd job's PATH lacks.
+ */
+export function taskPath(inherited: string | undefined): string {
+    const parts = [REPO_ROOT, ...(inherited ?? "").split(delimiter), "/usr/sbin", "/sbin"].filter(Boolean);
+    return [...new Set(parts)].join(delimiter);
+}
 
 const DEFAULT_TASK_TIMEOUT_MS = 10 * 60 * 1000;
 const FORCE_KILL_GRACE_MS = 500;
@@ -91,7 +104,9 @@ export async function runTask(task: DaemonTask, attempt: number, logsBaseDir: st
     // so a kill can target the whole group (`sh` + every descendant). Without
     // it, killing the Bun.spawn child only reaps `sh`; a runaway grandchild
     // survives, holds the stdout pipe open, and hangs the result forever.
+    const inherited = env.getProcessEnv();
     const proc = Bun.spawn(["sh", "-c", task.command], {
+        env: { ...inherited, PATH: taskPath(inherited.PATH) },
         stdout: "pipe",
         stderr: "pipe",
         stdin: "ignore",

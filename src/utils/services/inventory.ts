@@ -124,15 +124,37 @@ export function parseLsofListeners(stdout: string): Map<number, number[]> {
     return ports;
 }
 
+/**
+ * Runs one probe command and logs how it went. A command that could not run (status null) left the
+ * inventory blind, which once read as "no servers" under the daemon's PATH, so it is a warning.
+ */
+function probeRun(name: string, command: string, args: string[]): string {
+    const run = captureSync(command, args);
+    const fields = {
+        probe: name,
+        status: run.status,
+        bytes: run.stdout.length,
+        stderr: run.stderr.trim() || undefined,
+    };
+
+    if (run.status === null) {
+        logger.warn(fields, "services: probe command did not run; the inventory is incomplete");
+    } else {
+        logger.debug(fields, "services: probe");
+    }
+
+    return run.stdout;
+}
+
 export function liveProbe(): ServiceProbe {
     return {
         processes: () => {
             // lstart is strftime's %c: a localized LC_TIME would spell it in words Date cannot read.
-            const run = captureSync("env", ["LC_ALL=C", "ps", "-axo", PS_COLUMNS_SPEC]);
-            return run.stdout.split("\n").flatMap((line) => parsePsLine(line) ?? []);
+            const stdout = probeRun("processes", "env", ["LC_ALL=C", "ps", "-axo", PS_COLUMNS_SPEC]);
+            return stdout.split("\n").flatMap((line) => parsePsLine(line) ?? []);
         },
-        listeners: () => parseLsofListeners(captureSync("lsof", ["-nP", "-iTCP", "-sTCP:LISTEN", "-Fpn"]).stdout),
-        launchdJobs: () => parseLaunchctlList(captureSync("launchctl", ["list"]).stdout),
+        listeners: () => parseLsofListeners(probeRun("listeners", "lsof", ["-nP", "-iTCP", "-sTCP:LISTEN", "-Fpn"])),
+        launchdJobs: () => parseLaunchctlList(probeRun("launchd", "launchctl", ["list"])),
         cwd: readProcessCwd,
     };
 }

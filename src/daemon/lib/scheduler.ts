@@ -337,9 +337,10 @@ async function runAttempts(
 ): Promise<void> {
     const maxAttempts = task.retries + 1;
 
-    const shouldNotify = task.notify !== false;
+    const notifyProgress = task.notify === undefined || task.notify === true;
+    const notifyFailure = task.notify !== false;
 
-    if (shouldNotify) {
+    if (notifyProgress) {
         notify({
             app: "daemon",
             title: "Daemon",
@@ -349,7 +350,10 @@ async function runAttempts(
     }
 
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-        log.info({ task: task.name, attempt, maxAttempts, timeoutMs: task.timeoutMs }, "[daemon] running task");
+        log.info(
+            { task: task.name, attempt, maxAttempts, timeoutMs: task.timeoutMs, notify: task.notify ?? true },
+            "[daemon] running task"
+        );
 
         const result = await runTaskImpl(task, attempt, logsBaseDir);
 
@@ -359,7 +363,7 @@ async function runAttempts(
                 "[daemon] task completed"
             );
 
-            if (shouldNotify) {
+            if (notifyProgress) {
                 notify({
                     app: "daemon",
                     title: "Daemon",
@@ -383,7 +387,7 @@ async function runAttempts(
         }
     }
 
-    if (shouldNotify) {
+    if (notifyFailure) {
         notify({
             app: "daemon",
             title: "Daemon",
