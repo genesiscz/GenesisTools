@@ -1,5 +1,6 @@
 import { loadConfig } from "../config";
 import type { AskChoice, CreateAskItemInput } from "../pending/types";
+import { decisionTransclusion, type ItemTransclusion } from "../transclude";
 import { notifyPostedDecisions } from "./notify";
 import { decisionsMarkdown } from "./read";
 import { parseDecisionInput, postDecisionsInputSchema } from "./schema";
@@ -24,6 +25,10 @@ export interface QuestionItemInput extends CreateAskItemInput {
     confidence?: "high" | "medium" | "low";
     refs?: DecisionRef[];
     blocking?: boolean;
+    /** Decision/todo: the id of an open or drafted item this post replaces; the old text is kept as a version. */
+    supersedes?: string;
+    /** Set by `transcludeItems`, never by the caller: the fields as written and every inline token. */
+    transclusion?: ItemTransclusion;
 }
 
 /** Every key a `question_post` item may carry; anything else is a typo or the decision store's names. */
@@ -46,6 +51,7 @@ const ITEM_KEYS = new Set([
     "confidence",
     "refs",
     "blocking",
+    "supersedes",
 ]);
 
 /** The names agents reach for instead: the decision store's own fields, and the single-question shortcut. */
@@ -98,6 +104,17 @@ export function validateQuestionItems(value: unknown, help: string): QuestionIte
 
         if (record.choices !== undefined && !Array.isArray(record.choices)) {
             problems.push(`${at}: choices must be an array of labels`);
+        }
+
+        if (record.supersedes !== undefined && record.type !== "decision" && record.type !== "todo") {
+            problems.push(`${at}: supersedes applies to decision and todo items; cancel the form and post a new one`);
+        }
+
+        if (
+            record.supersedes !== undefined &&
+            (typeof record.supersedes !== "string" || !isDecisionId(record.supersedes))
+        ) {
+            problems.push(`${at}: supersedes must be a decision or todo id like d_3_<session>`);
         }
     });
 
@@ -166,6 +183,8 @@ export function decisionPayload(items: QuestionItemInput[], hint: DecisionSessio
             ...(item.blocking === undefined ? {} : { blocking: item.blocking }),
             ...(item.for ? { for: item.for } : {}),
             ...(item.reevaluateWhen ? { reevaluateWhen: item.reevaluateWhen } : {}),
+            ...(item.supersedes ? { supersedes: item.supersedes } : {}),
+            ...decisionTransclusion(item.transclusion),
         })),
     };
 }

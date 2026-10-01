@@ -22,7 +22,15 @@ import {
 import { summarizeForm } from "@app/question/lib/pending/render";
 import type { AskAnswer, AskChoice, AskForm } from "@app/question/lib/pending/types";
 import { DEFAULT_WAIT_BUDGET_MS } from "@app/question/lib/pending/types";
+import { questionTokenRegistry, transcludeItems, transclusionReport } from "@app/question/lib/transclude";
 import { SafeJSON } from "@genesiscz/utils/json";
+import {
+    describeTransclusions,
+    formatTransclusionHelp,
+    TRANSCLUSION_GRAMMAR,
+    type TranscludeOptions,
+    transclude,
+} from "@genesiscz/utils/transclude";
 
 export interface QuestionPostArgs {
     projectPath?: string;
@@ -39,6 +47,8 @@ export interface QuestionPostArgs {
     sessionHint?: string;
     wait?: boolean;
     waitTimeoutMs?: number;
+    /** false stores {{…}} tokens as written; the default resolves them at save time. */
+    transclude?: boolean;
 }
 
 /** The decision log a post or poll reads and writes. Tests point it at a scratch directory. */
@@ -47,7 +57,12 @@ export interface DecisionLogDeps {
 }
 
 /** `askViaQuestionTool` overrides the question config's opt-in (tests); unset reads the config. */
-export type QuestionDeps = AskDeps & DecisionLogDeps & { askViaQuestionTool?: boolean };
+export type QuestionDeps = AskDeps &
+    DecisionLogDeps & {
+        askViaQuestionTool?: boolean;
+        /** Test seams for inline-token resolution (a fake runner, fetch or asset folder). */
+        transclude?: Partial<Omit<TranscludeOptions, "cwd" | "label">>;
+    };
 
 export interface QuestionWaitArgs {
     id: string;
@@ -126,11 +141,18 @@ export async function handleQuestionPost(args: QuestionPostArgs, deps: QuestionD
 }
 
 async function postQuestionItems(args: QuestionPostArgs, deps: QuestionDeps): Promise<string> {
-    const { questions, decisions } = splitItems(itemsFrom(args));
+    const items = itemsFrom(args);
+    const transcluded =
+        args.transclude === false
+            ? { items, tokens: [] }
+            : await transcludeItems({ items, cwd: args.projectPath, options: deps.transclude });
+    const report = transclusionReport(transcluded.tokens);
+    const reportText = report.length > 0 ? `\n\n${report.join("\n")}` : "";
+    const { questions, decisions } = splitItems(transcluded.items);
 
     if (questions.length === 0) {
         const posted = await postDecisionHalf(args, decisions, deps);
-        return describeDecisions(posted.decisions, posted.markdown);
+        return `${describeDecisions(posted.decisions, posted.markdown)}${reportText}`;
     }
 
     // Both halves are checked before either is written; see `checkDecisionItems`.
@@ -146,7 +168,7 @@ async function postQuestionItems(args: QuestionPostArgs, deps: QuestionDeps): Pr
         deps
     );
     const posted = decisions.length > 0 ? await postDecisionHalf(args, decisions, deps) : null;
-    const suffix = posted ? `\n\n${describeDecisions(posted.decisions, posted.markdown)}` : "";
+    const suffix = `${posted ? `\n\n${describeDecisions(posted.decisions, posted.markdown)}` : ""}${reportText}`;
 
     if (args.wait !== true) {
         return (
@@ -304,6 +326,13 @@ const ITEM_SCHEMA = {
             },
         },
         blocking: { type: "boolean", description: "decision: true when you cannot continue without the answer" },
+        supersedes: {
+            type: "string",
+            description:
+                "decision/todo: id of an OPEN or DRAFTED item of the same kind this one replaces. It keeps its id " +
+                "and number, the earlier text stays as a prior version (`tools question show <id> --versions`). " +
+                "Answered items cannot be superseded: post a new one.",
+        },
     },
     required: ["promptMarkdown"],
 } as const;
@@ -338,6 +367,11 @@ export const QUESTION_POST_INPUT_SCHEMA = {
                 "Set true only when you genuinely cannot continue without the answer.",
         },
         waitTimeoutMs: { type: "number", description: "how long `wait` blocks before giving up (default 120000)" },
+        transclude: {
+            type: "boolean",
+            description:
+                "default true: resolve {{kind …}} tokens in the item text when saving. false stores them as written.",
+        },
     },
 } as const;
 
@@ -426,7 +460,13 @@ export function questionPostDescription(askViaQuestionTool: boolean): string {
         "(numbers are session-wide and never reused) and the result is the markdown ❓ DECISION / TODO section to " +
         `paste into your reply. ${nudge}The inbox is a copy: the question must also be written in your own ` +
         "reply. The user answers them in the GenesisTools hub; answers reach you in a later prompt or through " +
-        "question_poll, and you record progress with question_update."
+        "question_poll, and you record progress with question_update. To correct an item nobody answered yet, " +
+        "post it again with supersedes: <its id>; it keeps its number and the old text is kept as a version.\n" +
+        'INLINE TOKENS: promptMarkdown, reasoning, proposal and choices may carry {{kind key="value"}} tokens, ' +
+        "resolved when the item is saved into real content (code lines, a diff, a PR thread) that never goes " +
+        "stale. The result lists every failed token with its reason; a failed token stays visible in the text. " +
+        "question_tokens returns the full definitions.\n" +
+        formatTransclusionHelp(questionTokenRegistry(), { indent: "", descriptions: false })
     );
 }
 
@@ -448,3 +488,47 @@ export const QUESTION_RESPOND_DESCRIPTION =
 
 export const QUESTION_CANCEL_DESCRIPTION =
     "Withdraw a pending form you no longer need answered; any blocked waiter is released as `cancelled`.";
+
+export interface QuestionTokensArgs {
+    /** A text to preview: resolved exactly as question_post would, without storing anything. */
+    text?: string;
+    cwd?: string;
+}
+
+export const QUESTION_TOKENS_INPUT_SCHEMA = {
+    type: "object",
+    properties: {
+        text: {
+            type: "string",
+            description: "optional: a text whose tokens to resolve as a preview. Nothing is stored.",
+        },
+        cwd: { type: "string", description: "where relative paths resolve for the preview (default: the server cwd)" },
+    },
+} as const;
+
+export const QUESTION_TOKENS_DESCRIPTION =
+    "Read-only. Lists the inline {{kind …}} tokens question_post resolves (kind, params with types and " +
+    "defaults, examples) as JSON. With `text`, previews the resolution of that text and reports every " +
+    "token's status and failure reason, without storing anything.";
+
+/** The token definitions, or a preview of one text. Generated from the same registry question_post uses. */
+export async function handleQuestionTokens(args: QuestionTokensArgs, deps: QuestionDeps = {}): Promise<string> {
+    if (!args.text?.trim()) {
+        return SafeJSON.stringify(
+            { grammar: TRANSCLUSION_GRAMMAR, kinds: describeTransclusions(questionTokenRegistry()) },
+            null,
+            2
+        );
+    }
+
+    const result = await transclude(args.text, {
+        registry: questionTokenRegistry(),
+        preview: true,
+        ...deps.transclude,
+        cwd: args.cwd ?? process.cwd(),
+    });
+    const failed = result.tokens.filter((token) => !token.ok);
+    const lines = failed.map((token) => `transclude: ${token.raw}: ${token.error}`);
+    lines.push(`transclude: ${result.tokens.length - failed.length} resolved, ${failed.length} failed`);
+    return `${result.text}\n\n${lines.join("\n")}\n\n${SafeJSON.stringify(result.tokens, null, 2)}`;
+}

@@ -6,12 +6,16 @@ import { registerDecisionCommands } from "./commands/decisions";
 import { registerInboxCommand } from "./commands/inbox";
 import { registerLogCommand } from "./commands/log";
 import { registerRecordCommand } from "./commands/record";
+import { registerShowCommand } from "./commands/show";
 import { registerTailCommand } from "./commands/tail";
+import { registerTokensCommand } from "./commands/tokens";
 
 const program = new Command();
 program.name("question").description("Ask the user a blocking question, and capture & review Q→A mid-session");
 registerAskCommand(program);
 registerDecisionCommands(program);
+registerShowCommand(program);
+registerTokensCommand(program);
 registerInboxCommand(program);
 registerRecordCommand(program);
 registerLogCommand(program);

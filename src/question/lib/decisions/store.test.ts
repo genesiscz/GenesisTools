@@ -686,3 +686,80 @@ describe("delivery routes", () => {
         expect(queued.channel).toBe("queued");
     });
 });
+
+describe("superseding", () => {
+    function log(): { file: string; events: string } {
+        const dir = mkdtempSync(join(tmpdir(), "decisions-supersede-"));
+        return { file: join(dir, "decisions.jsonl"), events: join(dir, "events.jsonl") };
+    }
+
+    test("a drafted item goes back to open; its draft moves into the version with the old text", async () => {
+        const { file, events } = log();
+        await postDecisions(file, events, { sessionId: "s", decisions: [{ prompt: "v1?", options: ["a", "b"] }] });
+        await updateDecision(file, events, "d_1_s", { state: "drafted", draft: "leaning b", draftOption: "b" });
+        const [revised] = await postDecisions(file, events, {
+            sessionId: "s",
+            decisions: [{ prompt: "v2?", options: ["x"], supersedes: "d_1_s" }],
+        });
+
+        expect(revised).toMatchObject({ id: "d_1_s", number: 1, prompt: "v2?", state: "open", revision: 2 });
+        expect(revised.draft).toBeUndefined();
+        expect(revised.versions?.[0]).toMatchObject({
+            revision: 1,
+            prompt: "v1?",
+            state: "drafted",
+            draft: "leaning b",
+            draftOption: "b",
+        });
+        expect(readFileSync(events, "utf8")).toContain('"ev":"superseded"');
+    });
+
+    test("a batch with one bad supersede writes nothing, not even its new items", async () => {
+        const { file, events } = log();
+        await postDecisions(file, events, { sessionId: "s", decisions: [{ prompt: "one?", options: [] }] });
+
+        await expect(
+            postDecisions(file, events, {
+                sessionId: "s",
+                decisions: [
+                    { prompt: "two?", options: [] },
+                    { prompt: "one again?", options: [], supersedes: "d_1_s" },
+                    { prompt: "one thrice?", options: [], supersedes: "d_1_s" },
+                ],
+            })
+        ).rejects.toThrow("cannot supersede d_1_s twice in one post");
+        expect(readDecisions(file).map((row) => row.prompt)).toEqual(["one?"]);
+    });
+
+    test("another session cannot supersede an item", async () => {
+        const { file, events } = log();
+        await postDecisions(file, events, { sessionId: "s", decisions: [{ prompt: "mine?", options: [] }] });
+
+        await expect(
+            postDecisions(file, events, {
+                sessionId: "other",
+                decisions: [{ prompt: "theirs?", options: [], supersedes: "d_1_s" }],
+            })
+        ).rejects.toThrow("it belongs to another session");
+        expect(readDecisions(file).map((row) => row.prompt)).toEqual(["mine?"]);
+    });
+
+    test("a third revision keeps both earlier versions, oldest first", async () => {
+        const { file, events } = log();
+        await postDecisions(file, events, { sessionId: "s", decisions: [{ type: "todo", prompt: "r1", options: [] }] });
+        await postDecisions(file, events, {
+            sessionId: "s",
+            decisions: [{ type: "todo", prompt: "r2", options: [], supersedes: "t_1_s" }],
+        });
+        const [third] = await postDecisions(file, events, {
+            sessionId: "s",
+            decisions: [{ type: "todo", prompt: "r3", options: [], supersedes: "t_1_s" }],
+        });
+
+        expect(third.revision).toBe(3);
+        expect(third.versions?.map((version) => [version.revision, version.prompt])).toEqual([
+            [1, "r1"],
+            [2, "r2"],
+        ]);
+    });
+});

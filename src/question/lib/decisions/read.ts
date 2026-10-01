@@ -148,6 +148,9 @@ export function decisionsMarkdown(rows: DecisionRecord[]): string {
                 row.for ? `for: ${row.for}` : null,
                 row.blocking ? "blocking" : null,
                 row.reevaluateWhen ? `reevaluate when: ${row.reevaluateWhen}` : null,
+                (row.revision ?? 1) > 1
+                    ? `revision ${row.revision} (earlier text: tools question show ${row.id} --versions)`
+                    : null,
             ].filter((part): part is string => part !== null);
 
             return [

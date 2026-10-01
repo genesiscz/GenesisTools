@@ -26,6 +26,20 @@ const refSchema = z.object({
     sha: z.string().optional(),
 });
 
+/** The fields as the agent wrote them, before inline tokens were resolved. Only fields that had tokens. */
+const sourceSchema = z.object({
+    prompt: z.string().optional(),
+    reasoning: z.string().optional(),
+    proposal: z.string().optional(),
+    options: z.array(z.string()).optional(),
+});
+
+/** One inline token as recorded on the item (see `TransclusionToken`), plus the field it was in. */
+const storedTransclusionSchema = z.looseObject({ raw: z.string(), kind: z.string(), ok: z.boolean() });
+
+export type DecisionSource = z.infer<typeof sourceSchema>;
+export type StoredTransclusion = z.infer<typeof storedTransclusionSchema>;
+
 export const postedDecisionSchema = z.object({
     type: z
         .enum(DECISION_KINDS)
@@ -43,6 +57,17 @@ export const postedDecisionSchema = z.object({
     blocking: z.boolean().optional().describe("True when work cannot continue without the answer."),
     for: z.string().optional().describe('Who acts on it: "human", "agent", or a harness or model name like "fable".'),
     reevaluateWhen: z.string().optional().describe('A condition that should reopen it, e.g. "after the PR merges".'),
+    supersedes: z
+        .string()
+        .optional()
+        .describe(
+            "Id of an open or drafted item of the same kind this post replaces. It keeps its id and number; " +
+                "the earlier text is kept as a prior version (tools question show <id> --versions)."
+        ),
+    source: sourceSchema
+        .optional()
+        .describe("Set by the server when inline tokens were resolved: the fields as written, tokens included."),
+    transclusions: z.array(storedTransclusionSchema).optional(),
 });
 
 export const postDecisionsInputSchema = z.object({

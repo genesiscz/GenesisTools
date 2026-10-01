@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { Command } from "commander";
-import { parseItems, parseMs, registerAskCommand } from "./ask";
+import { parseItems, parseMs, registerAskCommand, withSupersedes } from "./ask";
 
 describe("parseMs", () => {
     test("a non-numeric duration is refused instead of silently becoming NaN", () => {
@@ -94,5 +94,27 @@ describe("parseItems", () => {
 
         expect(help).toContain("promptMarkdown   required");
         expect(help).toContain('"recommended":"a"');
+        expect(help).toContain("supersedes       decision/todo");
+        expect(help).toContain("--no-transclude");
+
+        for (const kind of ["lines", "file", "symbol", "diff", "tail", "json", "cmd", "url", "image", "pr-thread"]) {
+            expect(help).toMatch(new RegExp(`\\n\\s+${kind}\\s+.*\\n.*params: .*\\n.*e\\.g\\. \\{\\{`));
+        }
+    });
+});
+
+describe("withSupersedes", () => {
+    const decision = { type: "decision" as const, promptMarkdown: "Q?" };
+
+    test("names the one decision or todo item of the post", () => {
+        expect(withSupersedes([{ promptMarkdown: "form" }, decision], "d_2_s")).toEqual([
+            { promptMarkdown: "form" },
+            { ...decision, supersedes: "d_2_s" },
+        ]);
+    });
+
+    test("refuses an ambiguous post and a form id", () => {
+        expect(() => withSupersedes([decision, decision], "d_2_s")).toThrow("found 2");
+        expect(() => withSupersedes([decision], "ask_123")).toThrow('not "ask_123"');
     });
 });

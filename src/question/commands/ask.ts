@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
 import { createBoxTable, renderCliHeader, truncateDisplay } from "@genesiscz/utils/table";
+import { formatTransclusionHelp } from "@genesiscz/utils/transclude";
 import { type Command, InvalidArgumentError } from "commander";
 import pc from "picocolors";
 import { agentNote } from "../lib/agent-note";
@@ -27,6 +28,7 @@ import {
 } from "../lib/pending/ask";
 import { summarizeForm } from "../lib/pending/render";
 import { type AskAnswer, type AskForm, DEFAULT_WAIT_BUDGET_MS, type WaiterStatus } from "../lib/pending/types";
+import { questionTokenRegistry, transcludeItems, transclusionReport } from "../lib/transclude";
 
 const { log } = logger.scoped("question-ask");
 
@@ -94,11 +96,16 @@ const ASK_JSON_HELP = `
   for              decision/todo: who acts on it, "human" (default for a decision), "agent" or a model name
   reevaluateWhen   decision/todo: a condition that reopens it, e.g. "after the PR merges"
   refs             decision: [{ path, line?, endLine?, sha? }]; the first ref's lines become the excerpt
+  supersedes       decision/todo: id of an open or drafted item this one replaces (it keeps its id and
+                   number; the old text stays as a version: tools question show <id> --versions)
   id, allowMultiple, allowFreeText, allowFileTags, allowImagePaste, required   question items only
 
 Example:
   echo '[{"type":"decision","title":"Cache","promptMarkdown":"Keep the cache?","choices":["Keep it","Drop it"],"recommended":"a","blocking":true}]' \\
     | tools question ask --json -
+
+Inline tokens in promptMarkdown, reasoning, proposal and choices are resolved when the item is saved
+(--no-transclude skips; tools question tokens lists them, tools question tokens resolve "<text>" previews):
 `;
 
 /** The question_post fields `ask --json -` honours besides `items`; a CLI flag still wins. */
@@ -234,6 +241,32 @@ function parseAnswers(
     ];
 }
 
+/** `--supersedes <id>` names the one decision or todo item of the post; anything else is ambiguous. */
+export function withSupersedes(items: QuestionItemInput[], id: string | undefined): QuestionItemInput[] {
+    if (!id) {
+        return items;
+    }
+
+    const stored = items.filter((item) => item.type === "decision" || item.type === "todo");
+
+    if (stored.length !== 1) {
+        throw new Error(`--supersedes needs exactly one decision or todo item in the post, found ${stored.length}`);
+    }
+
+    if (!isDecisionId(id)) {
+        throw new Error(`--supersedes must be a decision or todo id like d_3_<session>, not "${id}"`);
+    }
+
+    return items.map((item) => (item === stored[0] ? { ...item, supersedes: id } : item));
+}
+
+/** One stderr line per failed token, then the summary; failures in yellow so they are not missed. */
+function printTransclusionReport(lines: string[]): void {
+    for (const line of lines) {
+        out.printlnErr(line.includes(" resolved, 0 failed") ? pc.dim(line) : pc.yellow(line));
+    }
+}
+
 function renderForm(form: AskForm): void {
     renderCliHeader(`Ask form ${form.id}`, `${form.status} · ${form.items.length} item(s)`);
     const table = createBoxTable(["ITEM", "PROMPT", "CHOICES", "ANSWER"]);
@@ -299,20 +332,36 @@ export function registerAskCommand(program: Command): void {
         .option("--wait", "block until the form is answered, cancelled or timed out")
         .option("--wait-timeout <ms>", "how long --wait blocks before giving up", parseMs)
         .option("--no-notify", "do not raise a notification for this form or these decisions")
+        .option("--no-transclude", "store {{…}} tokens as written instead of resolving them")
+        .option(
+            "--supersedes <id>",
+            "replace this open or drafted decision/todo with the one decision/todo item posted"
+        )
         .option("--format <fmt>", "human|json", "human")
-        .addHelpText("after", ASK_JSON_HELP)
+        .addHelpText("after", () => `${ASK_JSON_HELP}${formatTransclusionHelp(questionTokenRegistry())}\n`)
         .action(async (opts: Record<string, unknown>) => {
             let parsed: ReturnType<typeof parseItems>;
 
             try {
                 parsed = parseItems(opts);
+                parsed.items = withSupersedes(parsed.items, flag(opts.supersedes));
             } catch (err) {
                 out.error(pc.red(err instanceof Error ? err.message : String(err)));
                 process.exit(1);
             }
 
-            const { questions, decisions } = splitItems(parsed.items);
             const projectPath = flag(opts.project) ?? parsed.fields.projectPath;
+            const transcluded =
+                opts.transclude === false
+                    ? { items: parsed.items, tokens: [] }
+                    : await transcludeItems({
+                          items: parsed.items,
+                          cwd: projectPath,
+                          options: { callerReports: true },
+                      });
+            printTransclusionReport(transclusionReport(transcluded.tokens));
+            const { questions, decisions } = splitItems(transcluded.items);
+            const transclusions = transcluded.tokens.length > 0 ? { transclusions: transcluded.tokens } : {};
             const sessionHint = flag(opts.session) ?? parsed.fields.sessionHint;
             const { file, events } = decisionFiles();
             const hint = { sessionId: sessionHint, cwd: projectPath };
@@ -325,7 +374,7 @@ export function registerAskCommand(program: Command): void {
                 const posted = await postDecisionItems({ file, events, items: decisions, hint, notify });
 
                 if (opts.format === "json") {
-                    out.result(SafeJSON.stringify({ ...posted, agentNote: note }, null, 2));
+                    out.result(SafeJSON.stringify({ ...posted, ...transclusions, agentNote: note }, null, 2));
                 } else {
                     out.print(posted.markdown);
                     out.printlnErr(pc.yellow(`Note for the agent: ${note}`));
@@ -350,7 +399,7 @@ export function registerAskCommand(program: Command): void {
 
             if (opts.wait !== true) {
                 if (opts.format === "json") {
-                    out.result(SafeJSON.stringify({ form, ...posted, agentNote: note }, null, 2));
+                    out.result(SafeJSON.stringify({ form, ...posted, ...transclusions, agentNote: note }, null, 2));
                 } else {
                     renderForm(form);
 

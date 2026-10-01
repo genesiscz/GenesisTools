@@ -1,8 +1,8 @@
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
-import { existsSync, mkdtempSync } from "node:fs";
+import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 interface Banner {
     title?: string;
@@ -29,6 +29,7 @@ mock.module("@app/question/lib/hub-link", () => ({
     hubItemClickCommand: (kind: string, id: string) => (appInstalled ? `open-hub --${kind} ${id}` : null),
 }));
 
+import { readDecisions } from "@app/question/lib/decisions/store";
 import { type AskDeps, getAskForm } from "@app/question/lib/pending/ask";
 import { PENDING_MIGRATIONS } from "@app/question/lib/pending/store";
 import { type Migration, runMigrations } from "@genesiscz/utils/database/migrations";
@@ -39,6 +40,7 @@ import {
     handleQuestionPoll,
     handleQuestionPost,
     handleQuestionRespond,
+    handleQuestionTokens,
     handleQuestionWait,
     QUESTION_RESPOND_INPUT_SCHEMA,
     type QuestionDeps,
@@ -495,5 +497,157 @@ describe("question_post item validation", () => {
             /unknown key "prompt" \(did you mean promptMarkdown\?\).*question_post input schema/
         );
         expect(existsSync(join(dir, "decisions.jsonl"))).toBe(false);
+    });
+});
+
+describe("question_post inline tokens and superseding", () => {
+    function withLogIn(): QuestionDeps & { decisionLog: { file: string; events: string; session: string } } {
+        const dir = mkdtempSync(join(tmpdir(), "gt-mcp-tokens-"));
+        writeFileSync(join(dir, "code.ts"), "one\ntwo\nthree\nfour\n");
+
+        return {
+            ...deps,
+            decisionLog: { file: join(dir, "decisions.jsonl"), events: join(dir, "events.jsonl"), session: "sess-t" },
+        };
+    }
+
+    test("tokens resolve at save time; the row keeps the resolved text, the text as written and every token", async () => {
+        const logDeps = withLogIn();
+        const dir = dirname(logDeps.decisionLog.file);
+        const text = await handleQuestionPost(
+            {
+                sessionHint: "sess-t",
+                projectPath: dir,
+                items: [
+                    {
+                        type: "decision",
+                        promptMarkdown: 'Keep this?\n{{lines path="code.ts" range="2-3"}}',
+                        reasoning: 'See {{lines path="gone.ts" range="1"}}',
+                        choices: ["yes", 'no, use {{lines path="code.ts" range="4"}}'],
+                    },
+                ],
+            },
+            logDeps
+        );
+        const [row] = readDecisions(logDeps.decisionLog.file);
+
+        expect(row.prompt).toContain("two\nthree");
+        expect(row.prompt).not.toContain("\n{{lines");
+        expect(row.prompt).toContain('· re-check: `{{lines path="code.ts" range="2-3"}}`_');
+        expect(row.options[1]).toContain("four");
+        expect(row.reasoning).toContain('⚠️ unresolved `{{lines path="gone.ts" range="1"}}`: file not found:');
+        expect(row.source).toEqual({
+            prompt: 'Keep this?\n{{lines path="code.ts" range="2-3"}}',
+            reasoning: 'See {{lines path="gone.ts" range="1"}}',
+            options: ["yes", 'no, use {{lines path="code.ts" range="4"}}'],
+        });
+        expect(row.transclusions?.map((token) => [token.field, token.ok])).toEqual([
+            ["promptMarkdown", true],
+            ["reasoning", false],
+            ["choices[1]", true],
+        ]);
+        expect(text).toContain('transclude: item 1 reasoning: {{lines path="gone.ts" range="1"}}: file not found:');
+        expect(text).toContain("transclude: 2 resolved, 1 failed");
+    });
+
+    test("transclude: false stores the tokens as written", async () => {
+        const logDeps = withLogIn();
+        await handleQuestionPost(
+            {
+                sessionHint: "sess-t",
+                transclude: false,
+                items: [{ type: "todo", promptMarkdown: '{{lines path="code.ts" range="1"}}' }],
+            },
+            logDeps
+        );
+
+        expect(readDecisions(logDeps.decisionLog.file)[0].prompt).toBe('{{lines path="code.ts" range="1"}}');
+    });
+
+    test("supersedes replaces an open item in place and keeps the earlier text as a version", async () => {
+        const logDeps = withLogIn();
+        await handleQuestionPost(
+            { sessionHint: "sess-t", items: [{ type: "decision", promptMarkdown: "Old question?", choices: ["a"] }] },
+            logDeps
+        );
+        const text = await handleQuestionPost(
+            {
+                sessionHint: "sess-t",
+                items: [
+                    {
+                        type: "decision",
+                        promptMarkdown: "New question?",
+                        choices: ["x", "y"],
+                        supersedes: "d_1_sess-t",
+                    },
+                ],
+            },
+            logDeps
+        );
+        const rows = readDecisions(logDeps.decisionLog.file);
+
+        expect(rows).toHaveLength(1);
+        expect(rows[0]).toMatchObject({
+            id: "d_1_sess-t",
+            number: 1,
+            prompt: "New question?",
+            revision: 2,
+            state: "open",
+        });
+        expect(rows[0].versions).toEqual([
+            expect.objectContaining({ revision: 1, prompt: "Old question?", options: ["a"], state: "open" }),
+        ]);
+        expect(text).toContain("### ❓ DECISION 1");
+        expect(text).toContain("revision 2 (earlier text: tools question show d_1_sess-t --versions)");
+    });
+
+    test("an answered item, a kind mismatch and a question item cannot be superseded", async () => {
+        const logDeps = withLogIn();
+        await handleQuestionPost(
+            {
+                sessionHint: "sess-t",
+                items: [
+                    { type: "decision", promptMarkdown: "Q?", choices: ["a"] },
+                    { type: "todo", promptMarkdown: "T" },
+                ],
+            },
+            logDeps
+        );
+        await handleQuestionUpdate({ updates: [{ id: "d_1_sess-t", state: "answered", option: "a" }] }, logDeps);
+        const post = (item: Record<string, unknown>) =>
+            handleQuestionPost(
+                { sessionHint: "sess-t", items: [item] as unknown as QuestionPostArgs["items"] },
+                logDeps
+            );
+
+        await expect(post({ type: "decision", promptMarkdown: "Q2?", supersedes: "d_1_sess-t" })).rejects.toThrow(
+            "cannot supersede d_1_sess-t: it is answered"
+        );
+        await expect(post({ type: "decision", promptMarkdown: "Q3?", supersedes: "t_1_sess-t" })).rejects.toThrow(
+            "it is a todo, and the new item is a decision"
+        );
+        await expect(post({ promptMarkdown: "Form?", supersedes: "d_1_sess-t" })).rejects.toThrow(
+            "supersedes applies to decision and todo items"
+        );
+        await expect(post({ type: "todo", promptMarkdown: "T2", supersedes: "t_9_sess-t" })).rejects.toThrow(
+            "cannot supersede t_9_sess-t: no such decision or todo"
+        );
+        expect(readDecisions(logDeps.decisionLog.file)).toHaveLength(2);
+    });
+
+    test("question_tokens lists every kind, and previews a text without storing it", async () => {
+        const kinds = SafeJSON.parse(await handleQuestionTokens({}), { strict: true }) as {
+            kinds: Array<{ name: string }>;
+        };
+        expect(kinds.kinds.map((kind) => kind.name)).toContain("pr-thread");
+        const logDeps = withLogIn();
+        const preview = await handleQuestionTokens({
+            text: '{{lines path="code.ts" range="1"}} {{tial n=1}}',
+            cwd: dirname(logDeps.decisionLog.file),
+        });
+        expect(preview).toContain("one");
+        expect(preview).toContain('transclude: {{tial n=1}}: unknown kind "tial" (did you mean tail?)');
+        expect(existsSync(logDeps.decisionLog.file)).toBe(false);
+        expect(questionPostDescription(false)).toContain("pr-thread");
     });
 });

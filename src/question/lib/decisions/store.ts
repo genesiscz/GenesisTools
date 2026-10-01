@@ -24,12 +24,14 @@ import {
     type DECISION_KINDS,
     type DECISION_STATES,
     type DecisionPatch,
+    type DecisionSource,
     type DecisionUpdate,
     decisionBatchUpdateSchema,
     decisionPatchSchema,
     parseDecisionInput,
     postDecisionsInputSchema,
     type postedDecisionSchema,
+    type StoredTransclusion,
     storedDecisionSchema,
 } from "./schema";
 
@@ -107,9 +109,58 @@ export interface DecisionRecord {
     notified?: string[];
     /** The last send of this answer (`sendAnsweredDecisions`); absent on rows never sent. */
     delivery?: DecisionDelivery;
+    /** The fields as the agent wrote them, inline tokens included; only fields that had tokens. */
+    source?: DecisionSource;
+    /** Every inline token of the post, resolved or failed, with the field it was in. */
+    transclusions?: StoredTransclusion[];
+    /** Counts up each time a post supersedes this item; absent means the first version. */
+    revision?: number;
+    /** The superseded versions, oldest first. Never shown by the inbox, listed by `show --versions`. */
+    versions?: DecisionVersion[];
+    /** When the current version replaced the previous one. */
+    revisedTs?: string;
     createdTs?: string;
     updatedTs: string;
 }
+
+/**
+ * The optional fields a superseding post replaces, besides `prompt` and `options`; everything else
+ * (id, number, comments) stays with the item.
+ */
+const VERSIONED_KEYS = [
+    "excerpt",
+    "title",
+    "proposal",
+    "recommended",
+    "for",
+    "reevaluateWhen",
+    "reasoning",
+    "confidence",
+    "refs",
+    "blocking",
+    "source",
+    "transclusions",
+    "draft",
+    "draftOption",
+    // Parallel to `options`, and the text around a harvested block: they go with the old version.
+    "rationales",
+    "context",
+    "notes",
+] as const satisfies readonly (keyof DecisionRecord)[];
+
+type VersionedKey = (typeof VERSIONED_KEYS)[number];
+
+/** One earlier version of an item, as it stood when a later post superseded it. */
+export type DecisionVersion = Pick<DecisionRecord, "prompt" | "options" | VersionedKey> & {
+    revision: number;
+    state: DecisionState;
+    /** When this version was posted. */
+    createdTs?: string;
+    supersededTs: string;
+};
+
+/** Only an item nobody has answered yet may be replaced: an answer must keep pointing at the text it answered. */
+const SUPERSEDABLE: ReadonlySet<DecisionState> = new Set(["open", "drafted"]);
 
 const NEXT: Record<DecisionKind, Record<DecisionState, DecisionState[]>> = {
     decision: {
@@ -201,55 +252,193 @@ export async function postDecisions(
     const sessionTitle = input.title ?? poster.sessionTitle ?? undefined;
     const excerpts = input.decisions.map((decision) => decision.excerpt ?? excerptFrom(decision.refs, readFile, cwd));
 
+    const context: Partial<DecisionRecord> = {
+        ...(provider ? { provider } : {}),
+        ...(cwd ? { cwd } : {}),
+        ...(poster.repoRoot ? { repoRoot: poster.repoRoot } : {}),
+        ...(poster.branch ? { branch: poster.branch } : {}),
+        ...(poster.project ? { project: poster.project } : {}),
+        ...(poster.commitSha ? { commitSha: poster.commitSha } : {}),
+        ...(poster.aiAgent ? { aiAgent: poster.aiAgent } : {}),
+        isWorktree: poster.isWorktree,
+        ...(cmuxSurface ? { cmuxSurface } : {}),
+        ...(sessionTitle ? { sessionTitle } : {}),
+    };
+
     return withDecisionsLock(file, () => {
-        const numbers = sessionNumbers(readDecisions(file), sessionId);
+        const existing = readDecisions(file);
+        const numbers = sessionNumbers(existing, sessionId);
+        const byId = new Map(existing.map((row) => [row.id, row]));
+        const revised = new Map<string, DecisionRecord>();
+        const appended: DecisionRecord[] = [];
         const created: DecisionRecord[] = [];
 
+        // Every row is built and checked before the first write, so a bad supersede stores nothing.
         for (const [index, decision] of input.decisions.entries()) {
             const kind = decision.type ?? "decision";
+            const ts = now();
+            const content = contentOf(decision, excerpts[index]);
+
+            if (decision.supersedes) {
+                const row = supersede({
+                    target: byId.get(decision.supersedes),
+                    id: decision.supersedes,
+                    kind,
+                    sessionId,
+                    revised,
+                });
+                const next: DecisionRecord = {
+                    ...withoutVersioned(row),
+                    ...content,
+                    ...context,
+                    state: "open",
+                    revision: (row.revision ?? 1) + 1,
+                    versions: [...(row.versions ?? []), versionOf(row, ts)],
+                    revisedTs: ts,
+                    updatedTs: ts,
+                };
+                delete next.notified;
+                revised.set(next.id, next);
+                created.push(next);
+                continue;
+            }
+
             const used = numbers[kind];
             const number = used.size === 0 ? 1 : Math.max(...used) + 1;
-            const excerpt = excerpts[index];
-            const ts = now();
             const row: DecisionRecord = {
                 id: `${ID_PREFIX[kind]}_${number}_${sessionId}`,
                 sessionId,
                 ...(kind === "decision" ? {} : { type: kind }),
                 number,
-                prompt: decision.prompt,
-                options: decision.options,
-                ...(excerpt ? { excerpt } : {}),
-                ...(decision.title ? { title: decision.title } : {}),
-                ...(decision.proposal ? { proposal: decision.proposal } : {}),
-                ...(decision.recommended ? { recommended: decision.recommended } : {}),
-                ...(decision.for ? { for: decision.for } : {}),
-                ...(decision.reevaluateWhen ? { reevaluateWhen: decision.reevaluateWhen } : {}),
-                ...(decision.reasoning ? { reasoning: decision.reasoning } : {}),
-                ...(decision.confidence ? { confidence: decision.confidence } : {}),
-                ...(decision.refs ? { refs: decision.refs } : {}),
-                ...(decision.blocking === undefined ? {} : { blocking: decision.blocking }),
-                ...(provider ? { provider } : {}),
-                ...(cwd ? { cwd } : {}),
-                ...(poster.repoRoot ? { repoRoot: poster.repoRoot } : {}),
-                ...(poster.branch ? { branch: poster.branch } : {}),
-                ...(poster.project ? { project: poster.project } : {}),
-                ...(poster.commitSha ? { commitSha: poster.commitSha } : {}),
-                ...(poster.aiAgent ? { aiAgent: poster.aiAgent } : {}),
-                isWorktree: poster.isWorktree,
-                ...(cmuxSurface ? { cmuxSurface } : {}),
-                ...(sessionTitle ? { sessionTitle } : {}),
+                ...content,
+                ...context,
                 state: "open",
                 createdTs: ts,
                 updatedTs: ts,
             };
             used.add(number);
+            appended.push(row);
             created.push(row);
-            append(file, row);
-            appendEvent(events, { ev: "created", id: row.id, ts: row.updatedTs });
+        }
+
+        if (revised.size > 0) {
+            rewrite(file, [...existing.map((row) => revised.get(row.id) ?? row), ...appended]);
+        } else {
+            for (const row of appended) {
+                append(file, row);
+            }
+        }
+
+        for (const row of created) {
+            const superseded = revised.get(row.id) === row;
+            appendEvent(events, {
+                ev: superseded ? "superseded" : "created",
+                id: row.id,
+                ts: row.updatedTs,
+                ...(superseded ? { revision: row.revision } : {}),
+            });
+        }
+
+        if (revised.size > 0) {
+            logger.debug(
+                { ids: [...revised.keys()] },
+                "[decisions] superseded items; the earlier text is kept in versions"
+            );
         }
 
         return created;
     });
+}
+
+type ContentFields = Pick<DecisionRecord, "prompt" | "options" | VersionedKey>;
+
+/** The versioned fields of a posted item, without the keys it leaves empty. */
+function contentOf(decision: PostedDecision, excerpt: string | undefined): ContentFields {
+    return {
+        prompt: decision.prompt,
+        options: decision.options,
+        ...(excerpt ? { excerpt } : {}),
+        ...(decision.title ? { title: decision.title } : {}),
+        ...(decision.proposal ? { proposal: decision.proposal } : {}),
+        ...(decision.recommended ? { recommended: decision.recommended } : {}),
+        ...(decision.for ? { for: decision.for } : {}),
+        ...(decision.reevaluateWhen ? { reevaluateWhen: decision.reevaluateWhen } : {}),
+        ...(decision.reasoning ? { reasoning: decision.reasoning } : {}),
+        ...(decision.confidence ? { confidence: decision.confidence } : {}),
+        ...(decision.refs ? { refs: decision.refs } : {}),
+        ...(decision.blocking === undefined ? {} : { blocking: decision.blocking }),
+        ...(decision.source ? { source: decision.source } : {}),
+        ...(decision.transclusions?.length ? { transclusions: decision.transclusions } : {}),
+    };
+}
+
+/** The item a post may replace, or a thrown reason naming why it may not. */
+function supersede({
+    target,
+    id,
+    kind,
+    sessionId,
+    revised,
+}: {
+    target: DecisionRecord | undefined;
+    id: string;
+    kind: DecisionKind;
+    sessionId: string;
+    revised: Map<string, DecisionRecord>;
+}): DecisionRecord {
+    if (revised.has(id)) {
+        throw new Error(`cannot supersede ${id} twice in one post`);
+    }
+
+    if (!target) {
+        throw new Error(`cannot supersede ${id}: no such decision or todo`);
+    }
+
+    if (kindOf(target) !== kind) {
+        throw new Error(`cannot supersede ${id}: it is a ${kindOf(target)}, and the new item is a ${kind}`);
+    }
+
+    // An item belongs to the session that posted it; another session may only post its own item.
+    if (target.sessionId !== sessionId) {
+        throw new Error(`cannot supersede ${id}: it belongs to another session; post a new item instead`);
+    }
+
+    if (!SUPERSEDABLE.has(target.state)) {
+        throw new Error(
+            `cannot supersede ${id}: it is ${target.state}, and only an open or drafted item can be replaced; post a new item instead`
+        );
+    }
+
+    return target;
+}
+
+function versionOf(row: DecisionRecord, supersededTs: string): DecisionVersion {
+    const version: DecisionVersion = {
+        prompt: row.prompt,
+        options: row.options,
+        revision: row.revision ?? 1,
+        state: row.state,
+        createdTs: row.revisedTs ?? row.createdTs,
+        supersededTs,
+    };
+
+    for (const key of VERSIONED_KEYS) {
+        if (row[key] !== undefined) {
+            Object.assign(version, { [key]: row[key] });
+        }
+    }
+
+    return version;
+}
+
+export function withoutVersioned(row: DecisionRecord): DecisionRecord {
+    const rest: DecisionRecord = { ...row };
+
+    for (const key of VERSIONED_KEYS) {
+        delete rest[key];
+    }
+
+    return rest;
 }
 
 /** Numbers already taken in one session, per kind: a decision and a todo may both be number 1. */

@@ -81,6 +81,7 @@ import {
     handleQuestionPoll,
     handleQuestionPost,
     handleQuestionRespond,
+    handleQuestionTokens,
     handleQuestionWait,
     QUESTION_CANCEL_DESCRIPTION,
     QUESTION_CANCEL_INPUT_SCHEMA,
@@ -89,12 +90,15 @@ import {
     QUESTION_POST_INPUT_SCHEMA,
     QUESTION_RESPOND_DESCRIPTION,
     QUESTION_RESPOND_INPUT_SCHEMA,
+    QUESTION_TOKENS_DESCRIPTION,
+    QUESTION_TOKENS_INPUT_SCHEMA,
     QUESTION_WAIT_DESCRIPTION,
     QUESTION_WAIT_INPUT_SCHEMA,
     type QuestionCancelArgs,
     type QuestionPollArgs,
     type QuestionPostArgs,
     type QuestionRespondArgs,
+    type QuestionTokensArgs,
     type QuestionWaitArgs,
     questionPostDescription,
 } from "./tools/question-post";
@@ -152,7 +156,10 @@ export function serverInstructions(askViaQuestionTool: boolean): string {
         "Record " +
         "progress (acknowledged, implemented, commit refs, verdict, comments, a copy of a chat answer) with " +
         "`question_update`, several items per call. CLI: `tools question ask --json -`, " +
-        "`tools question list|update|answers|answer|draft|send`.\n\n" +
+        "`tools question list|update|answers|answer|draft|send`.\n" +
+        'INLINE TOKENS: item text may carry {{kind key="value"}} tokens (lines, file, symbol, diff, tail, json, ' +
+        "cmd, url, image, pr-thread), resolved into real content when the item is saved; `question_tokens` lists " +
+        "them and previews a text. To correct an unanswered item, post it again with `supersedes: <id>`.\n\n" +
         "2. LOG YOUR OWN ANSWER (after the fact, no waiting): `question_answer`, described next.\n\n" +
         "WHEN TO USE THE question_answer TOOL:\n" +
         '- The user directly asks a question important enough to preserve for later review: rationale ("why did ' +
@@ -269,6 +276,11 @@ function buildToolRegistry(askViaQuestionTool: boolean): Record<string, ToolEntr
             description: QUESTION_CANCEL_DESCRIPTION,
             inputSchema: QUESTION_CANCEL_INPUT_SCHEMA as unknown as Record<string, unknown>,
             handler: async (args) => handleQuestionCancel(args as unknown as QuestionCancelArgs),
+        },
+        question_tokens: {
+            description: QUESTION_TOKENS_DESCRIPTION,
+            inputSchema: QUESTION_TOKENS_INPUT_SCHEMA as unknown as Record<string, unknown>,
+            handler: async (args) => handleQuestionTokens(args as unknown as QuestionTokensArgs),
         },
         handoff_post: {
             description: HANDOFF_POST_DESCRIPTION,
@@ -542,13 +554,14 @@ const QUESTION_ASK_TOOLS = new Set([
     "question_respond",
     "question_cancel",
     "question_update",
+    "question_tokens",
 ]);
 
 /**
  * `decision` predates the merge into question_post: a config that enabled it for the decision
  * tools still gets what posting and updating a decision needs, without the rest of the ask surface.
  */
-const DECISION_TOOLS = new Set(["question_post", "question_poll", "question_update"]);
+const DECISION_TOOLS = new Set(["question_post", "question_poll", "question_update", "question_tokens"]);
 
 /**
  * Known capability names, keyed to what counts as membership.

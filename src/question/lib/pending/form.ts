@@ -150,6 +150,7 @@ export function createAskForm(input: CreateAskFormInput & { projectPath: string 
             allowFileTags: item.allowFileTags ?? false,
             allowImagePaste: item.allowImagePaste ?? false,
             required: item.required ?? true,
+            ...(item.transclusion ? { transclusion: item.transclusion } : {}),
         })),
         status: "pending",
         timeoutMs: sanitizeTimeoutMs(input.timeoutMs),

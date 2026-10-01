@@ -1,3 +1,5 @@
+import type { ItemTransclusion } from "../transclude";
+
 /**
  * Wire types for interactive (blocking) ask forms.
  *
@@ -35,6 +37,8 @@ export interface AskItem {
     allowFileTags?: boolean;
     allowImagePaste?: boolean;
     required?: boolean;
+    /** The prompt and choices as written, and their inline tokens, when any were resolved at post time. */
+    transclusion?: ItemTransclusion;
 }
 
 export interface AskImage {
@@ -81,6 +85,7 @@ export interface CreateAskItemInput {
     allowFileTags?: boolean;
     allowImagePaste?: boolean;
     required?: boolean;
+    transclusion?: ItemTransclusion;
 }
 
 export interface CreateAskFormInput {

@@ -441,6 +441,11 @@
             "types": "./tokens.ts",
             "default": "./tokens.ts"
         },
+        "./transclude": {
+            "bun": "./transclude/index.ts",
+            "types": "./transclude/index.ts",
+            "default": "./transclude/index.ts"
+        },
         "./tsconfig.consumer.json": "./tsconfig.consumer.json",
         "./ui": {
             "bun": "./ui/index.ts",
