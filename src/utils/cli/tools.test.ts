@@ -58,3 +58,34 @@ describe.skipIf(process.platform === "win32")("collectOutput with a process grou
         expect(await until(() => !isProcessAlive(member), 2000)).toBe(true);
     });
 });
+
+describe.skipIf(process.platform === "win32")("collectOutput bounds", () => {
+    test("maxBytes keeps that many bytes, stops the child and says truncated", async () => {
+        const proc = Bun.spawn(["/bin/sh", "-c", "yes 0123456789"], {
+            env: process.env,
+            stdin: "ignore",
+            stdout: "pipe",
+            stderr: "pipe",
+        });
+
+        const result = await collectOutput(proc, 5000, { maxBytes: 1000 });
+
+        expect(result.truncated).toBe(true);
+        expect(result.stdout.length).toBe(1000);
+    });
+
+    test("an aborted signal ends the child like the deadline", async () => {
+        const proc = Bun.spawn(["/bin/sh", "-c", "exec sleep 30"], {
+            stdin: "ignore",
+            stdout: "pipe",
+            stderr: "pipe",
+            env: process.env,
+        });
+        const controller = new AbortController();
+        setTimeout(() => controller.abort(), 50);
+
+        const result = await collectOutput(proc, undefined, { signal: controller.signal, graceMs: 200 });
+
+        expect(result).toMatchObject({ exitCode: 124, timedOut: true });
+    });
+});
