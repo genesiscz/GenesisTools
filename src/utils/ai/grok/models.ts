@@ -58,6 +58,8 @@ export interface GrokModelSpecs {
  */
 const GROK_MODEL_SPECS: Record<string, GrokModelSpecs> = {
     "grok-4.7": { contextWindow: 500_000, inputModalities: ["text", "image"] },
+    // The grok CLI's own model cache (~/.grok/models_cache.json): context_window 256000.
+    "grok-4.7-build-fast": { contextWindow: 256_000, inputModalities: ["text"] },
     "grok-4.6": { contextWindow: 500_000, inputModalities: ["text", "image"] },
     "grok-4.5": { contextWindow: 500_000, inputModalities: ["text", "image"] },
     "grok-4.3": { contextWindow: 1_000_000, inputModalities: ["text", "image"] },
@@ -73,6 +75,7 @@ export function grokModelSpecs(id: string): GrokModelSpecs | undefined {
 
 export const GROK_STATIC_CATALOG: GrokModelRecord[] = [
     seed("grok-4.7", "high", "medium", "optional", "ok"),
+    seed("grok-4.7-build-fast", "high", "fast", "reasoning", "ok"),
     seed("grok-4.6", "high", "medium", "optional", "ok"),
     seed("grok-4.5", "high", "medium", "optional", "ok"),
     seed("grok-build", "high", "slow", "reasoning", "ok"),

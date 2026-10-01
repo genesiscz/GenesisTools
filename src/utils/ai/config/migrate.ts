@@ -1,9 +1,11 @@
 import { runMigrations } from "@genesiscz/utils/config/migration";
 import { migrateAI } from "@genesiscz/utils/config/migrations/2026-04-07-migrateAI";
 import { logger } from "@genesiscz/utils/logger";
-import { migrationAllowedHere } from "./migration-guard";
+import { Storage } from "@genesiscz/utils/storage/storage";
+import { MIGRATION_SKIPPED_MESSAGE, migrationAllowedHere } from "./migration-guard";
 import { migrateConfigV4 } from "./migrations/2026-08-configV4";
 import { migrateSecretsToVault } from "./migrations/2026-08-secretsToVault";
+import { CONFIG_VERSION } from "./schema";
 
 /**
  * The AI config migration chain, in dependency order: legacy consolidation,
@@ -46,6 +48,7 @@ export async function ensureAiConfigMigrated(): Promise<void> {
     // are what stop a bug in one from reaching the user's real file.
     if (!migrationAllowedHere()) {
         migrated = true;
+        await warnIfConfigIsBehind();
         return;
     }
 
@@ -57,6 +60,19 @@ export async function ensureAiConfigMigrated(): Promise<void> {
     // (plaintext credentials still in the file) with every later load in this
     // process skipping the retry. Re-asking each migration costs a stat apiece.
     migrated = !(await chainStillPending());
+}
+
+/**
+ * The guard only says a migration MAY not run here; this says whether one was due. The config's
+ * version is the cheap tell: the members' own `shouldRun` cannot answer, since each asks the same
+ * guard and says "no" in a worktree.
+ */
+async function warnIfConfigIsBehind(): Promise<void> {
+    const raw = await new Storage("ai").getConfig<{ version?: number; _schemaVersion?: number }>();
+    const version = raw?.version ?? raw?._schemaVersion;
+    if (typeof version === "number" && version < CONFIG_VERSION) {
+        logger.warn({ cwd: process.cwd(), version, current: CONFIG_VERSION }, MIGRATION_SKIPPED_MESSAGE);
+    }
 }
 
 async function chainStillPending(): Promise<boolean> {

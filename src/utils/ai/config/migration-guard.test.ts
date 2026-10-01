@@ -1,7 +1,8 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
+import { logger } from "@genesiscz/utils/logger";
 import {
     _setCodeDirForTest,
     assertSafeToWriteRealConfig,
@@ -74,6 +75,22 @@ describe("migrationAllowedHere", () => {
                 expect(migrationAllowedHere()).toBe(true);
             } finally {
                 process.cwd = cwd;
+            }
+        });
+    });
+
+    test("a refusal is not a warning: every worktree process asks, almost always with nothing to migrate", () => {
+        const warn = spyOn(logger, "warn");
+        env.testing.withOverrides({ GENESIS_TOOLS_HOME: undefined }, () => {
+            const cwd = process.cwd;
+            process.cwd = () => REAL_WORKTREE;
+
+            try {
+                expect(migrationAllowedHere()).toBe(false);
+                expect(warn).not.toHaveBeenCalled();
+            } finally {
+                process.cwd = cwd;
+                warn.mockRestore();
             }
         });
     });

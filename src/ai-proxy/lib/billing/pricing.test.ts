@@ -149,6 +149,9 @@ describe("billing table coverage", () => {
         // Subscription-only: absent from the xAI API catalog, so no public
         // per-token rate exists to charge.
         "grok-composer-2.5-fast",
+        // Grok 4.7 Fast runs only in Cursor and Grok Build, billed through the plan; it is not on the public
+        // xAI API (docs.x.ai/developers/grok-4-7, 2026-09-28).
+        "grok-4.7-build-fast",
     ]);
 
     it("prices every grok model it advertises", () => {

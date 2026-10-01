@@ -8,9 +8,12 @@ import { NotificationManager } from "@genesiscz/utils/ai/usage-poll/notification
 import { pollAccounts } from "@genesiscz/utils/ai/usage-poll/poll";
 import { usagePollStorage } from "@genesiscz/utils/ai/usage-poll/storage";
 import type { AccountUsageSnapshot } from "@genesiscz/utils/ai/usage-poll/types";
+import { withTimeout } from "@genesiscz/utils/async";
 import { logger, out } from "@genesiscz/utils/logger";
 
 const ANTHROPIC_SUB = "anthropic-sub";
+/** The daemon runner kills this task at 60 s (`timeoutMs` in the task log); the tick keeps 10 s of headroom. */
+const TICK_BUDGET_MS = 50_000;
 
 /**
  * Every window worth a threshold notification, flattened out of a round.
@@ -132,10 +135,19 @@ async function main(): Promise<void> {
         // already awake, so it recomputes the last query the CLI asked for and the CLI reads
         // the file. It does nothing until something has asked once, and stops an hour after
         // the last ask, so an idle machine pays nothing.
+        // Bounded by what is left of the tick: this walk took up to 52.7 s on 2026-09-29 (p99 24 s),
+        // and with the poll before it the runner's 60 s timeout SIGTERMed the tick 20 times that day,
+        // losing its "completed" line. A walk cut short leaves the previous file for the next tick;
+        // `process.exit` below ends it.
+        const budgetMs = TICK_BUDGET_MS - (Date.now() - startedAt);
         try {
             const { listAgentSessionRows } = await import("@app/ai/lib/sessions/agent-session-rows");
             const { refreshSessionRowsCache } = await import("@app/ai/lib/sessions/rows-cache");
-            const outcome = await refreshSessionRowsCache(listAgentSessionRows);
+            const outcome = await withTimeout(
+                refreshSessionRowsCache(listAgentSessionRows),
+                Math.max(0, budgetMs),
+                new Error(`session rows walk passed the tick's budget (${Math.round(budgetMs / 1000)} s left)`)
+            );
             logger.info(outcome, "[ai-usage] session rows cache");
         } catch (err) {
             logger.warn({ err }, "[ai-usage] session rows cache refresh failed");

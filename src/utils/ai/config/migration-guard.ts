@@ -72,9 +72,12 @@ export function migrationAllowedHere(): boolean {
         return true;
     }
 
-    logger.warn(
-        { cwd: process.cwd(), codeDir },
-        "skipping AI config migration: this is a worktree build and the real config is shared with the installed tools. Set GENESIS_TOOLS_ALLOW_REAL_MIGRATION=1 to override."
-    );
+    // Debug, not warn: every `tools` process started in a worktree asks this on its first config read,
+    // almost always with nothing to migrate (420 warnings on 2026-09-29/30, all with a current config).
+    // `ensureAiConfigMigrated` warns when a skipped migration was really due.
+    logger.debug({ cwd: process.cwd(), codeDir }, MIGRATION_SKIPPED_MESSAGE);
     return false;
 }
+
+export const MIGRATION_SKIPPED_MESSAGE =
+    "skipping AI config migration: this is a worktree build and the real config is shared with the installed tools. Set GENESIS_TOOLS_ALLOW_REAL_MIGRATION=1 to override.";

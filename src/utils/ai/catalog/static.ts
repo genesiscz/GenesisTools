@@ -281,6 +281,7 @@ const ANTHROPIC_ENTRIES: CatalogEntry[] = [
  */
 const XAI_WINDOWS: Record<string, number> = {
     "grok-4.7": 500_000,
+    "grok-4.7-build-fast": 256_000,
     "grok-4.6": 500_000,
     "grok-4.5": 500_000,
     "grok-4.3": 1_000_000,
@@ -300,6 +301,7 @@ const XAI_VISION_MODELS = new Set(["grok-4.7", "grok-4.6", "grok-4.5", "grok-4.3
 /** id → thinking mode; anything unlisted reasons optionally. */
 const XAI_THINKING: Record<string, CatalogEntry["thinking"]> = {
     "grok-build": "reasoning",
+    "grok-4.7-build-fast": "reasoning",
     "grok-composer-2.5-fast": "reasoning",
     "grok-build-0.1": "reasoning",
     "grok-code-fast": "none",
