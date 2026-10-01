@@ -3,11 +3,13 @@ import { createHash } from "node:crypto";
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { SafeJSON } from "@genesiscz/utils/json";
 
 import {
     backupDirFor,
     developerIdFromFindIdentity,
     launchableEntitlements,
+    pruneOtherVersionBackups,
     readBackupMeta,
     readDesktopApp,
 } from "./app-bundle";
@@ -434,5 +436,33 @@ describe("apply and revert", () => {
         const after = inspectDesktop(appPath, backupRoot, deps().deps);
         expect(after.headerHash).toBe(before.headerHash);
         expect(after.patched).toBe(false);
+    });
+});
+
+describe("pruneOtherVersionBackups", () => {
+    function backup(root: string, version: string, appPath: string): string {
+        const dir = join(root, version);
+        mkdirSync(dir, { recursive: true });
+        writeFileSync(
+            join(dir, "meta.json"),
+            `${SafeJSON.stringify({ version, bundleVersion: "1", bundleId: "com.openai.codex", appPath, headerHash: "a".repeat(64), executable: "Codex", backedUpAt: "2026-09-30T00:00:00Z" })}\n`
+        );
+        return dir;
+    }
+
+    test("removes older versions of the same app and keeps the current one and other installs", () => {
+        const root = mkdtempSync(join(tmpdir(), "codex-desktop-prune-"));
+        const old = backup(root, "1.0.0", "/Applications/Codex.app");
+        const current = backup(root, "2.0.0", "/Applications/Codex.app");
+        const other = backup(root, "1.5.0", "/Users/alice/Applications/Codex.app");
+        mkdirSync(join(root, "stray"));
+
+        const removed = pruneOtherVersionBackups({ root, keepVersion: "2.0.0", appPath: "/Applications/Codex.app" });
+
+        expect(removed).toEqual([old]);
+        expect(existsSync(old)).toBe(false);
+        expect(existsSync(current)).toBe(true);
+        expect(existsSync(other)).toBe(true);
+        expect(existsSync(join(root, "stray"))).toBe(true);
     });
 });

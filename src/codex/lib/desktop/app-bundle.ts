@@ -1,5 +1,16 @@
 import { createHash } from "node:crypto";
-import { copyFileSync, existsSync, mkdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
+import {
+    copyFileSync,
+    existsSync,
+    constants as fsConstants,
+    mkdirSync,
+    readdirSync,
+    readFileSync,
+    realpathSync,
+    rmSync,
+    statSync,
+    writeFileSync,
+} from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -185,10 +196,12 @@ function copyTree(source: string, dest: string): void {
 export function writeOriginalBackup(app: DesktopAppInfo, dir: string, headerHash: string, backedUpAt: string): void {
     assertSignaturePieces(app);
     mkdirSync(dir, { recursive: true });
-    copyFileSync(app.asarPath, join(dir, "app.asar"));
-    copyFileSync(app.plistPath, join(dir, "Info.plist"));
-    copyFileSync(app.codeResourcesPath, join(dir, "CodeResources"));
-    copyFileSync(app.executablePath, join(dir, "executable"));
+    // APFS clones: the backup shares blocks with the installed app until the patch rewrites them, so it
+    // costs no space up front (a plain copy of app.asar alone was 480 MB). Elsewhere it falls back to a copy.
+    copyFileSync(app.asarPath, join(dir, "app.asar"), fsConstants.COPYFILE_FICLONE);
+    copyFileSync(app.plistPath, join(dir, "Info.plist"), fsConstants.COPYFILE_FICLONE);
+    copyFileSync(app.codeResourcesPath, join(dir, "CodeResources"), fsConstants.COPYFILE_FICLONE);
+    copyFileSync(app.executablePath, join(dir, "executable"), fsConstants.COPYFILE_FICLONE);
     copyTree(app.appPath, join(dir, "app"));
     const meta: BackupMeta = {
         version: app.version,
@@ -200,6 +213,55 @@ export function writeOriginalBackup(app: DesktopAppInfo, dir: string, headerHash
         backedUpAt,
     };
     writeFileSync(join(dir, "meta.json"), `${SafeJSON.stringify(meta, null, 2)}\n`);
+}
+
+/**
+ * Removes the backups of other versions of the same app. A backup restores only its own version, so
+ * once the app updated it is dead weight, and its clone no longer shares blocks with anything: about
+ * 1.5 GB per old version. Backups of another app path (a second install) are kept.
+ */
+export function pruneOtherVersionBackups({
+    root,
+    keepVersion,
+    appPath,
+}: {
+    root: string;
+    keepVersion: string;
+    appPath: string;
+}): string[] {
+    if (!existsSync(root)) {
+        return [];
+    }
+
+    const removed: string[] = [];
+
+    // Entry types without following links: a dangling symlink in the root is skipped, never a throw.
+    for (const entry of readdirSync(root, { withFileTypes: true })) {
+        const name = entry.name;
+        const dir = join(root, name);
+
+        if (name === keepVersion || !entry.isDirectory()) {
+            continue;
+        }
+
+        let meta: BackupMeta | null;
+        try {
+            meta = readBackupMeta(dir);
+        } catch (err) {
+            log.debug({ err, dir }, "backup prune: unreadable manifest, kept");
+            continue;
+        }
+
+        if (!meta || meta.appPath !== appPath || meta.version === keepVersion) {
+            continue;
+        }
+
+        rmSync(dir, { recursive: true, force: true });
+        removed.push(dir);
+        log.info({ dir, version: meta.version, keepVersion }, "removed the backup of an older Codex desktop version");
+    }
+
+    return removed;
 }
 
 export function restoreOriginalBackup(app: DesktopAppInfo, dir: string): void {

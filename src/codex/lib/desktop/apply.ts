@@ -20,6 +20,7 @@ import {
     backupDirFor,
     backupMatches,
     codexDesktopIsRunning,
+    pruneOtherVersionBackups,
     readBackupMeta,
     readDesktopApp,
     replaceAsarIntegrityHash,
@@ -373,6 +374,11 @@ function applyUnlocked(input: ApplyDesktopPatchInput, deps: DesktopPatchDeps): A
     if (!status.patched && (!backup || !backupMatches(backup, status.app, status.headerHash))) {
         writeOriginalBackup(status.app, dir, status.headerHash, resolved.now());
         log.debug({ dir, version: status.app.version }, "saved original Codex desktop bundle");
+        pruneOtherVersionBackups({
+            root: input.backupRoot,
+            keepVersion: status.app.version,
+            appPath: status.app.appPath,
+        });
     }
 
     const nextAsar = join(dir, "next-app.asar");
