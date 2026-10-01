@@ -779,10 +779,20 @@ final class HubModel: ObservableObject {
     func setMode(_ next: HubMode) {
         // A switch costs the renders after it: the old mode's views go and the new mode's arrive.
         MainActor.assumeIsolated { HubMainBusy.measure("mode.\(next.rawValue)") }
+        let previous = mode
         mode = next
         MainActor.assumeIsolated {
             if next == .agents {
                 agents.activate()
+                // One screen with two sidebars: the session open in Sessions stays open, as its Main row
+                // (Martin, 2026-10-01). An agent of that same session that was open stays open.
+                if previous == .sessions, let session = selected, session.provider == MonitorSessionRow.claudeProvider,
+                   agents.selectedParent?.sessionId != session.sessionId {
+                    agents.request(parent: session.sessionId, child: AgentTree.mainChild)
+                    if !agents.parents.contains(where: { $0.sessionId == session.sessionId }) {
+                        agents.refresh(sessions: [session.sessionId])
+                    }
+                }
             } else {
                 agents.deactivate()
             }
