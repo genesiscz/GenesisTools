@@ -166,12 +166,14 @@ public final class ToolsServerClient: @unchecked Sendable {
         if let traceId { message["traceId"] = traceId }
         // A failed write takes this request out BEFORE the disconnect, which answers every pending
         // request: the caller learns of the failure once, from the nil, and never also from its callback.
-        if !write(message, disconnectOnFailure: false) {
+        let attempt = writeOnce(message)
+        if !attempt.written {
             lock.withLock {
                 calls.removeValue(forKey: id)
                 streams.removeValue(forKey: id)
             }
-            disconnect()
+            // Only the connection the write used: a reconnect in between keeps its newer one.
+            if attempt.socketFd >= 0 { disconnect(expectedFd: attempt.socketFd) }
             return nil
         }
 
@@ -241,8 +243,16 @@ public final class ToolsServerClient: @unchecked Sendable {
     }
 
     @discardableResult
-    private func write(_ message: [String: Any], disconnectOnFailure: Bool = true) -> Bool {
-        guard var data = try? JSONSerialization.data(withJSONObject: message) else { return false }
+    private func write(_ message: [String: Any]) -> Bool {
+        let attempt = writeOnce(message)
+        // Only this connection: a failed write must not end a newer one a reconnect already made.
+        if !attempt.written, attempt.socketFd >= 0 { disconnect(expectedFd: attempt.socketFd) }
+        return attempt.written
+    }
+
+    /// One message on the current connection, and the descriptor it used (-1 when there was none).
+    private func writeOnce(_ message: [String: Any]) -> (written: Bool, socketFd: Int32) {
+        guard var data = try? JSONSerialization.data(withJSONObject: message) else { return (false, -1) }
 
         data.append(0x0A)
         var socketFd: Int32 = -1
@@ -267,9 +277,7 @@ public final class ToolsServerClient: @unchecked Sendable {
                 return true
             }
         }
-        // Only this connection: a failed write must not end a newer one a reconnect already made.
-        if !written, disconnectOnFailure, socketFd >= 0 { disconnect(expectedFd: socketFd) }
-        return written
+        return (written, socketFd)
     }
 
     private func readAvailable(_ socketFd: Int32, lines: LineSplitter) {

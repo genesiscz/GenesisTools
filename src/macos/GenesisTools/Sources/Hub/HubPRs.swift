@@ -460,7 +460,8 @@ final class PRsModel: ObservableObject {
                 let older = prs[index]
                 prs[index] = row
                 if selectedID == row.id, older.headSha != row.headSha {
-                    prefetchThreads(row)
+                    // The store already holds this PR at the older head: reload it, as loadDetail does.
+                    prefetchThreads(row, headMoved: true)
                     showDiff(row)
                 }
             } else {
