@@ -18,6 +18,10 @@ export interface RunToolOptions {
     cwd?: string;
     /** Written to the child's stdin, then closed. Without it stdin is closed from the start. */
     stdin?: string;
+    /** Ends the child (its whole process group) the way the timeout does, with `timedOut` set. */
+    signal?: AbortSignal;
+    /** Keeps at most this many bytes of each stream; past it the child is stopped and `truncated` is set. */
+    maxOutputBytes?: number;
 }
 
 export interface CollectedOutput {
@@ -25,27 +29,90 @@ export interface CollectedOutput {
     stderr: string;
     exitCode: number;
     timedOut: boolean;
+    /** Set when a stream passed `maxBytes`: the output is cut there and the child was stopped. */
+    truncated?: boolean;
 }
 
 /** How long a killed child gets to close its pipes before its output is given up. */
 const KILL_GRACE_MS = 1000;
 
 /**
- * The work's value, or `"deadline"` once `ms` pass. The timer is cleared however the race ends,
- * a rejection included: a stream that errors must not leave a timer holding the process open for
- * the rest of the timeout.
+ * The work's value, or `"deadline"` once `ms` pass or `signal` aborts. The timer and the listener
+ * are cleared however the race ends, a rejection included: a stream that errors must not leave a
+ * timer holding the process open for the rest of the timeout.
  */
-async function within<T>(work: Promise<T>, ms: number): Promise<T | "deadline"> {
+async function within<T>(work: Promise<T>, ms: number | undefined, signal?: AbortSignal): Promise<T | "deadline"> {
     let timer: ReturnType<typeof setTimeout> | undefined;
+    let onAbort: (() => void) | undefined;
     const expired = new Promise<"deadline">((resolve) => {
-        timer = setTimeout(() => resolve("deadline"), ms);
+        if (ms !== undefined) {
+            timer = setTimeout(() => resolve("deadline"), ms);
+        }
+
+        if (signal) {
+            onAbort = () => resolve("deadline");
+
+            if (signal.aborted) {
+                onAbort();
+            } else {
+                signal.addEventListener("abort", onAbort, { once: true });
+            }
+        }
     });
 
     try {
         return await Promise.race([work, expired]);
     } finally {
         clearTimeout(timer);
+
+        if (onAbort) {
+            signal?.removeEventListener("abort", onAbort);
+        }
     }
+}
+
+/**
+ * A stream's text, keeping at most `maxBytes` of it. Past the cap it stops reading, cancels the
+ * stream (the writer then gets EPIPE) and calls `onCap`, so a chatty child cannot grow memory.
+ */
+async function readCapped(
+    stream: ReadableStream<Uint8Array>,
+    maxBytes: number | undefined,
+    onCap: () => void
+): Promise<string> {
+    if (maxBytes === undefined) {
+        return new Response(stream).text();
+    }
+
+    const reader = stream.getReader();
+    const chunks: Uint8Array[] = [];
+    let size = 0;
+
+    try {
+        while (true) {
+            const { done, value } = await reader.read();
+
+            if (done) {
+                break;
+            }
+
+            const room = maxBytes - size;
+
+            if (value.byteLength > room) {
+                chunks.push(value.subarray(0, room));
+                onCap();
+                reader.cancel().catch((error) => logger.debug({ error }, "cancelling a capped output stream failed"));
+                break;
+            }
+
+            chunks.push(value);
+            size += value.byteLength;
+        }
+    } finally {
+        reader.releaseLock();
+    }
+
+    return new TextDecoder().decode(Buffer.concat(chunks));
 }
 
 /** Signals the process group our detached child leads; an ended group is logged, not an error. */
@@ -59,11 +126,12 @@ function signalGroup(groupId: number, signal: NodeJS.Signals): void {
 }
 
 /**
- * A piped child's output and exit code, bounded by `deadlineMs` when given. On the deadline the
- * child is killed and its output is kept if the pipes close within a short grace. They may never
- * close: a grandchild the kill did not reach (the `tools` wrapper's own child, `claude` under
- * `tools claude run`) holds them for as long as it lives, so the call returns anyway, with empty
- * output, instead of waiting on it.
+ * A piped child's output and exit code, bounded by `deadlineMs` when given. On the deadline (or
+ * when `signal` aborts) the child is killed and its output is kept if the pipes close within a
+ * short grace. They may never close: a grandchild the kill did not reach (the `tools` wrapper's
+ * own child, `claude` under `tools claude run`) holds them for as long as it lives, so the call
+ * returns anyway, with empty output, instead of waiting on it. With `maxBytes`, a stream that
+ * passes the cap is cut there and the child is stopped; the result then says `truncated`.
  */
 export async function collectOutput(
     proc: {
@@ -82,7 +150,12 @@ export async function collectOutput(
      * `tools claude run`) running and changing files after the caller had reported exit 124.
      * `graceMs`: how long the pipes get to close after each signal.
      */
-    { group = false, graceMs = KILL_GRACE_MS }: { group?: boolean; graceMs?: number } = {}
+    {
+        group = false,
+        graceMs = KILL_GRACE_MS,
+        signal,
+        maxBytes,
+    }: { group?: boolean; graceMs?: number; signal?: AbortSignal; maxBytes?: number } = {}
 ): Promise<CollectedOutput> {
     // The group is signalled by its id even when the leader is gone: it may have exited before the
     // deadline or on the SIGTERM, while a member that still holds the pipes must not outlive the
@@ -95,18 +168,34 @@ export async function collectOutput(
 
         proc.kill(signal);
     };
-    const collected = Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited]);
+    let truncated = false;
+    const onCap = () => {
+        if (!truncated) {
+            truncated = true;
+            terminate("SIGTERM");
+        }
+    };
+    const collected = Promise.all([
+        readCapped(proc.stdout, maxBytes, onCap),
+        readCapped(proc.stderr, maxBytes, onCap),
+        proc.exited,
+    ]);
+    const finished = ([stdout, stderr, exitCode]: [string, string, number]): CollectedOutput => ({
+        stdout,
+        stderr,
+        exitCode,
+        timedOut: false,
+        ...(truncated ? { truncated: true } : {}),
+    });
 
-    if (!deadlineMs) {
-        const [stdout, stderr, exitCode] = await collected;
-        return { stdout, stderr, exitCode, timedOut: false };
+    if (!deadlineMs && !signal) {
+        return finished(await collected);
     }
 
-    const first = await within(collected, deadlineMs);
+    const first = await within(collected, deadlineMs || undefined, signal);
 
     if (first !== "deadline") {
-        const [stdout, stderr, exitCode] = first;
-        return { stdout, stderr, exitCode, timedOut: false };
+        return finished(first);
     }
 
     terminate("SIGTERM");
@@ -126,18 +215,21 @@ export async function collectOutput(
  * Usage: `execTool(["claude", "usage"])` runs `tools claude usage`
  */
 export async function execTool(args: string[], options?: RunToolOptions): Promise<ExecResult> {
+    // Only a bounded run gets its own process group, so its deadline (or abort) can end everything
+    // it started. An unbounded run stays in the caller's group and still gets the caller's Ctrl-C.
+    const bounded = options?.timeout !== undefined || options?.signal !== undefined;
     const proc = Bun.spawn([namedBunExecPath("tools"), "run", getToolsPath(), ...args], {
         cwd: options?.cwd ?? process.cwd(),
         stdin: options?.stdin === undefined ? "ignore" : new TextEncoder().encode(options.stdin),
         stdout: "pipe",
         stderr: "pipe",
         env: { ...env.getProcessEnv(), ...options?.env },
-        // Only a bounded run gets its own process group, so its deadline can end everything it
-        // started. An unbounded run stays in the caller's group and still gets the caller's Ctrl-C.
-        detached: options?.timeout !== undefined,
+        detached: bounded,
     });
-    const { stdout, stderr, exitCode, timedOut } = await collectOutput(proc, options?.timeout, {
-        group: options?.timeout !== undefined,
+    const { stdout, stderr, exitCode, timedOut, truncated } = await collectOutput(proc, options?.timeout, {
+        group: bounded,
+        signal: options?.signal,
+        maxBytes: options?.maxOutputBytes,
     });
 
     return {
@@ -146,6 +238,7 @@ export async function execTool(args: string[], options?: RunToolOptions): Promis
         stderr: stderr.trim(),
         exitCode,
         ...(timedOut ? { timedOut: true } : {}),
+        ...(truncated ? { truncated: true } : {}),
     };
 }
 

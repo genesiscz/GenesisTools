@@ -427,6 +427,8 @@ export interface ExecResult {
     exitCode: number;
     /** Set when the caller's `timeout` killed the child. */
     timedOut?: boolean;
+    /** Set when the output passed the caller's `maxOutputBytes`: it is cut there and the child was stopped. */
+    truncated?: boolean;
 }
 
 export interface ExecutorOptions {
