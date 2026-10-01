@@ -228,16 +228,39 @@ const EXTERNAL_PARSERS: Record<string, string[]> = {
     ".swift": ["swiftc", "-parse", "-"],
 };
 
-/** The parser's first error line, or null when the content parses or the tool is not installed. */
-const externalParseError = (command: string[], content: string): string | null => {
-    const result = spawnSync(command[0], command.slice(1), { input: content, encoding: "utf8", timeout: 30_000 });
-    if (result.error !== undefined || result.status === 0) {
+export interface ExternalParseError {
+    message: string;
+    /** False when the parser did not finish (a timeout, an output overflow): nothing was checked. */
+    ran: boolean;
+}
+
+/**
+ * The parser's first error line, or null when the content parses or the tool is not installed.
+ * A parser that starts but does not finish is an error too: a check that never ran is no pass.
+ */
+export const externalParseError = (
+    command: string[],
+    content: string,
+    timeoutMs = 30_000
+): ExternalParseError | null => {
+    const tool = path.basename(command[0]);
+    const result = spawnSync(command[0], command.slice(1), { input: content, encoding: "utf8", timeout: timeoutMs });
+    if (result.error !== undefined) {
+        const code = (result.error as NodeJS.ErrnoException).code;
+        if (code === "ENOENT") {
+            return null;
+        }
+
+        return { message: `${tool}: the syntax check did not finish (${code ?? result.error.message})`, ran: false };
+    }
+
+    if (result.status === 0) {
         return null;
     }
 
     const output = `${result.stderr ?? ""}\n${result.stdout ?? ""}`;
     const line = output.split("\n").find((candidate) => /error/i.test(candidate)) ?? "does not parse";
-    return `${path.basename(command[0])}: ${line.trim().slice(0, 160)}`;
+    return { message: `${tool}: ${line.trim().slice(0, 160)}`, ran: true };
 };
 
 const brokeSyntax = (file: string, before: string, after: string): string | null => {
@@ -248,13 +271,17 @@ const brokeSyntax = (file: string, before: string, after: string): string | null
         }
 
         // One spawn for a file that parses; the old text is parsed only to excuse a file that
-        // was already broken before the sweep.
+        // was already broken before the sweep, and only a finished parse can excuse it.
         const error = externalParseError(external, after);
-        if (error === null || (before !== "" && externalParseError(external, before) !== null)) {
+        if (error === null) {
             return null;
         }
 
-        return error;
+        if (error.ran && before !== "" && externalParseError(external, before)?.ran === true) {
+            return null;
+        }
+
+        return error.message;
     }
 
     const loader = loaderFor(file);

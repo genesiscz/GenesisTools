@@ -6,7 +6,7 @@ import { FableReplaceError } from "./internal";
 import { blockEndLine, docCommentStart, expandMoves, locateBlock } from "./move-blocks";
 import { selectTsReader } from "./move-imports-ts";
 import { parseSpec } from "./spec";
-import { run } from "./sweep-many-files";
+import { externalParseError, run } from "./sweep-many-files";
 
 const TRICKY = `import { a } from "b";
 
@@ -1588,5 +1588,138 @@ describe("PR #444 review round 3", () => {
         await run({ cwd: dir, verbose: false, edits, syntaxCheck: false });
         expect(read(dir, "a.php")).toBe("<?php\n\n#[Attr]\nclass X\n{\n}\n");
         expect(() => parse(dir, "@@ b.swift\n<<< delete doc=Model\n>>>\n")).toThrow("has no doc comment");
+    });
+});
+describe("PR #444 review round 4", () => {
+    const write = (dir: string, files: Record<string, string>): void => {
+        for (const [file, content] of Object.entries(files)) {
+            mkdirSync(dirname(join(dir, file)), { recursive: true });
+            writeFileSync(join(dir, file), content);
+        }
+    };
+    const read = (dir: string, file: string): string => readFileSync(join(dir, file), "utf8");
+    const swiftPackage = (targets: string): string =>
+        `// swift-tools-version: 5.9\nimport PackageDescription\n\nlet package = Package(\n    name: "Demo",\n    targets: [\n${targets}\n    ]\n)\n`;
+
+    test("r4: two adjacent cuts in one batch do not both take the blank line between them", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "fr-r4-cuts-"));
+        write(dir, { "a.ts": "export const a = 1;\n\nexport const b = 2;\n" });
+        const edits = parseSpec({
+            text: "@@ a.ts\n<<< move to=out.ts symbol=a\n>>>\n<<< move to=out.ts symbol=b\n>>>\n",
+            cwd: dir,
+        });
+        const report = await run({ cwd: dir, verbose: false, edits, syntaxCheck: false });
+        expect(report.ok).toBe(true);
+        expect(read(dir, "a.ts")).toBe("");
+        expect(read(dir, "out.ts")).toContain("export const a = 1;");
+        expect(read(dir, "out.ts")).toContain("export const b = 2;");
+    });
+
+    test("r4: a name used inside Swift string interpolation is a use", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "fr-r4-interp-"));
+        write(dir, {
+            "Package.swift": swiftPackage(
+                [
+                    '        .target(name: "Kit", path: "Kit"),',
+                    '        .executableTarget(name: "App", dependencies: ["Kit"], path: "App"),',
+                ].join("\n")
+            ),
+            "Kit/Kit.swift": "public let kitVersion = 1\n",
+            "App/Helpers.swift":
+                "import Foundation\n\npublic struct Point {\n    public let x: Int\n\n    public init(x: Int) {\n        self.x = x\n    }\n}\n",
+            "App/main.swift": 'import Foundation\n\nprint("point: \\(Point(x: 1))")\n',
+        });
+        const edits = parseSpec({
+            text: "@@ App/Helpers.swift\n<<< move to=Kit/Point.swift symbol=Point imports=fix visibility=widen\n>>>\n",
+            cwd: dir,
+            onWarning: () => {},
+        });
+        await run({ cwd: dir, verbose: false, edits, syntaxCheck: false });
+        expect(read(dir, "App/main.swift")).toContain("import Kit\n");
+    });
+
+    test("r4: a target that already binds the alias to another class refuses the move", () => {
+        const dir = mkdtempSync(join(tmpdir(), "fr-r4-alias-"));
+        const ctl = [
+            "<?php",
+            "",
+            "namespace App\\Http;",
+            "",
+            "use App\\Models\\Invoice;",
+            "",
+            "class Ctl",
+            "{",
+            "    public function make(): Invoice",
+            "    {",
+            "        return new Invoice();",
+            "    }",
+            "}",
+            "",
+        ].join("\n");
+        write(dir, {
+            "composer.json": '{ "autoload": { "psr-4": { "App\\\\": "app/" } } }\n',
+            "app/Http/Ctl.php": ctl,
+            "app/Services/Store.php":
+                "<?php\n\nnamespace App\\Services;\n\nuse Vendor\\Invoice;\n\nclass Store\n{\n    // methods\n}\n",
+        });
+        const first = ctl.split("\n").findIndex((l) => l.includes("public function make")) + 1;
+        expect(() =>
+            parseSpec({
+                text: `@@ app/Http/Ctl.php\n<<< move to=app/Services/Store.php lines=${first}-${first + 3} at=after imports=fix\n    // methods\n>>>\n`,
+                cwd: dir,
+            })
+        ).toThrow("Vendor\\Invoice");
+    });
+
+    test("r4: a private Swift declaration moved inside one module and widened passes the paste check", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "fr-r4-paste-"));
+        write(dir, {
+            "App/Funcs.swift": [
+                "import Foundation",
+                "",
+                "private func helper() -> Int {",
+                "    1",
+                "}",
+                "",
+                "func keep() -> Int {",
+                "    helper()",
+                "}",
+                "",
+            ].join("\n"),
+        });
+        const edits = parseSpec({
+            text: "@@ App/Funcs.swift\n<<< move to=App/Helper.swift symbol=helper imports=fix visibility=widen\n>>>\n",
+            cwd: dir,
+        });
+        const report = await run({ cwd: dir, verbose: false, edits, syntaxCheck: false });
+        expect(report.ok).toBe(true);
+        expect(read(dir, "App/Helper.swift")).toContain("\nfunc helper() -> Int {");
+        expect(read(dir, "App/Helper.swift")).not.toContain("private");
+    });
+
+    test("r4: a parser that does not finish is a failed check; a missing parser is no check", () => {
+        expect(externalParseError(["sleep", "5"], "", 50)).toMatchObject({ ran: false });
+        expect(externalParseError(["fable-replace-no-such-parser"], "")).toBeNull();
+    });
+
+    test("r4: a mixed PHP group keeps its function and const entries when a class leaves it", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "fr-r4-group-"));
+        write(dir, {
+            "composer.json": '{ "autoload": { "psr-4": { "App\\\\": "app/" } } }\n',
+            "app/Support/Legacy.php":
+                "<?php\n\nnamespace App\\Support;\n\nfinal class Money\n{\n}\n\nclass Keep\n{\n}\n",
+            "app/Http/Ctl.php":
+                "<?php\n\nnamespace App\\Http;\n\nuse App\\Support\\{Money, Keep, function helper, const FLAG};\n\nclass Ctl\n{\n    public function a(): Money\n    {\n        helper();\n        return FLAG ? new Money() : new Money();\n    }\n\n    public function k(): Keep\n    {\n        return new Keep();\n    }\n}\n",
+            "app/Http/Two.php":
+                "<?php\n\nnamespace App\\Http;\n\nuse App\\Support\\{Money, function helper};\n\nclass Two\n{\n    public function a(): Money\n    {\n        helper();\n        return new Money();\n    }\n}\n",
+        });
+        const edits = parseSpec({
+            text: "@@ app/Support/Legacy.php\n<<< move to=app/Values/Money.php symbol=Money imports=fix\n>>>\n",
+            cwd: dir,
+            onWarning: () => {},
+        });
+        await run({ cwd: dir, verbose: false, edits, syntaxCheck: false });
+        expect(read(dir, "app/Http/Ctl.php")).toContain("use App\\Support\\{Keep, function helper, const FLAG};");
+        expect(read(dir, "app/Http/Two.php")).toContain("use function App\\Support\\helper;");
     });
 });

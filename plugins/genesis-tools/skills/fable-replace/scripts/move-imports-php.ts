@@ -19,11 +19,13 @@ import * as path from "node:path";
 import {
     listProjectFiles,
     literalOpSpec,
+    MoveError,
     type PlanImportFixesParams,
     type PlannedMove,
     parseJsonc,
     toPosix,
     warnWithFix,
+    withFix,
 } from "./move-imports-shared";
 import type { FileEdit, Op } from "./types";
 
@@ -138,16 +140,19 @@ export const parseUses = (text: string, masked: string = maskPhp(text)): UseStat
 };
 
 const renderUse = (statement: { kind: UseStatement["kind"]; group?: string }, entries: UseEntry[]): string => {
-    const keyword = statement.kind === "class" ? "use" : `use ${statement.kind}`;
+    const keyword = (kind: UseEntry["kind"]): string => (kind === "class" ? "use" : `use ${kind}`);
     const name = (entry: UseEntry, prefix: string): string => {
         const short = prefix === "" ? entry.fqn : entry.fqn.slice(prefix.length + 1);
         return entry.alias === lastSegment(entry.fqn) ? short : `${short} as ${entry.alias}`;
     };
     if (statement.group !== undefined && entries.length > 1) {
-        return `${keyword} ${statement.group}\\{${entries.map((entry) => name(entry, statement.group ?? "")).join(", ")}};`;
+        // A mixed group (`use A\{B, function c, const D}`) names every entry whose kind is not the statement's.
+        const inGroup = (entry: UseEntry): string =>
+            `${entry.kind === statement.kind ? "" : `${entry.kind} `}${name(entry, statement.group ?? "")}`;
+        return `${keyword(statement.kind)} ${statement.group}\\{${entries.map(inGroup).join(", ")}};`;
     }
 
-    return entries.map((entry) => `${keyword} ${name(entry, "")};`).join("\n");
+    return entries.map((entry) => `${keyword(entry.kind)} ${name(entry, "")};`).join("\n");
 };
 
 export const fileNamespace = (masked: string): string | null =>
@@ -492,8 +497,27 @@ export const planPhpImportFixes = (params: PlanImportFixesParams): FileEdit[] =>
                 phpDeclarations(maskPhp(move.blockText)).map((d) => ({ ...d, move }))
             );
             const movedNames = new Set(moved.map((d) => d.name.toLowerCase()));
-            const targetUses = new Set(target.uses.flatMap((s) => s.entries.map((e) => e.alias.toLowerCase())));
+            // What each alias already means in the target. Classes, functions and constants are
+            // separate PHP namespaces, so the kind is part of the key.
+            const bindingKey = (entry: UseEntry): string => `${entry.kind}:${entry.alias.toLowerCase()}`;
+            const targetUses = new Map(
+                [...target.uses.flatMap((s) => s.entries), ...target.added].map((e) => [bindingKey(e), e.fqn])
+            );
             const need = (entry: UseEntry): void => {
+                const bound = targetUses.get(bindingKey(entry));
+                if (bound !== undefined && !same(bound, entry.fqn)) {
+                    const alias = `${lastSegment(namespaceOf(entry.fqn))}${entry.alias}`;
+                    throw new MoveError(
+                        withFix(
+                            `move: the moved code means ${entry.fqn} by ${entry.alias}, and ${display(targetAbs)} already imports ${bound} as ${entry.alias}`,
+                            {
+                                why: `give one of them another name first (for example \`use ${entry.fqn} as ${alias};\` in ${display(sourceAbs)}, with the moved code's ${entry.alias} renamed to ${alias}), then move again.`,
+                            }
+                        ),
+                        toTarget[0].index
+                    );
+                }
+
                 if (
                     namespaceOf(entry.fqn).toLowerCase() === targetNs.toLowerCase() &&
                     entry.alias === lastSegment(entry.fqn)
@@ -501,9 +525,9 @@ export const planPhpImportFixes = (params: PlanImportFixesParams): FileEdit[] =>
                     return;
                 }
 
-                if (!targetUses.has(entry.alias.toLowerCase())) {
+                if (bound === undefined) {
                     target.added.push(entry);
-                    targetUses.add(entry.alias.toLowerCase());
+                    targetUses.set(bindingKey(entry), entry.fqn);
                 }
             };
 

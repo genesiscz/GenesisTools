@@ -339,17 +339,37 @@ export function docCommentStart(lines: string[], declared: number): number {
  * The text a cut removes: the block with its own line terminator, plus one blank line after it
  * (or, for the file's last block, the blank line above it), so repeated cuts leave no gaps.
  */
-export function cutFor(source: string, block: LocatedBlock): string {
+export function cutFor(source: string, block: LocatedBlock, taken?: Set<number>): string {
     const sourceLines = source.split("\n");
     const next = sourceLines[block.end + 1];
-    // `block.end + 2 < length` excludes the "" that follows a file's final newline.
-    const trailingBlank = next !== undefined && next.trim().length === 0 && block.end + 2 < sourceLines.length;
+    // `block.end + 2 < length` excludes the "" that follows a file's final newline. A blank line
+    // another cut of the same batch already takes stays with that cut (`taken`, which this adds to).
+    const trailingBlank =
+        next !== undefined &&
+        next.trim().length === 0 &&
+        block.end + 2 < sourceLines.length &&
+        !taken?.has(block.end + 1);
     // The file's last block has no blank line after it to take, so it takes the one above it;
     // otherwise every split that moves the tail leaves the source ending on an empty line.
     const previous = sourceLines[block.start - 1];
     const endsFile = next === undefined || (next === "" && block.end + 2 === sourceLines.length);
-    const leading =
-        !trailingBlank && endsFile && previous !== undefined && previous.trim().length === 0 ? `${previous}\n` : "";
+    const takesPrevious =
+        !trailingBlank &&
+        endsFile &&
+        previous !== undefined &&
+        previous.trim().length === 0 &&
+        !taken?.has(block.start - 1);
+    if (taken !== undefined) {
+        for (let line = takesPrevious ? block.start - 1 : block.start; line <= block.end; line++) {
+            taken.add(line);
+        }
+
+        if (trailingBlank) {
+            taken.add(block.end + 1);
+        }
+    }
+
+    const leading = takesPrevious ? `${previous}\n` : "";
     return leading + (next === undefined ? block.text : trailingBlank ? `${block.text}\n${next}\n` : `${block.text}\n`);
 }
 
@@ -475,9 +495,10 @@ export function expandMoves(moves: MoveSpec[], options: ExpandMovesOptions = {})
     // A created target's content before any op: the planner reads it, so a new PHP file is seen
     // with its `<?php` and namespace lines and its `use` lines go under them.
     const created = new Map<string, string>();
+    const cutLines = new Map<string, Set<number>>();
     for (const [index, move] of moves.entries()) {
         try {
-            planned.push(expandOne({ move, index, cwd, readAbs, created, edits }));
+            planned.push(expandOne({ move, index, cwd, readAbs, created, cutLines, edits }));
         } catch (error) {
             throw error instanceof MoveError
                 ? error
@@ -553,10 +574,12 @@ interface ExpandOneParams {
     readAbs: (abs: string) => string | undefined;
     /** Targets an earlier move in this batch creates. */
     created: Map<string, string>;
+    /** Per source, the lines (blank separators included) the batch's earlier cuts take. */
+    cutLines: Map<string, Set<number>>;
     edits: FileEdit[];
 }
 
-function expandOne({ move, index, cwd, readAbs, created, edits }: ExpandOneParams): PlannedMove {
+function expandOne({ move, index, cwd, readAbs, created, cutLines, edits }: ExpandOneParams): PlannedMove {
     const fromAbs = path.resolve(cwd, move.from);
     const toAbs = path.resolve(cwd, move.to);
     if (fromAbs === toAbs) {
@@ -573,7 +596,9 @@ function expandOne({ move, index, cwd, readAbs, created, edits }: ExpandOneParam
     // Take one blank line with the block when it is followed by one, so a move does not leave a
     // widening gap behind every time something is lifted out.
     // The cut always takes the block's own line terminator, or an empty line stays where it was.
-    const cut = cutFor(source, block);
+    const taken = cutLines.get(fromAbs) ?? new Set<number>();
+    cutLines.set(fromAbs, taken);
+    const cut = cutFor(source, block, taken);
     // Cut by CONTENT, not by line number. The block text was just read from the file, so it is
     // exact; if the file moved under us between locating and applying, this MISSes and the
     // batch fails instead of cutting whatever now sits at those lines.

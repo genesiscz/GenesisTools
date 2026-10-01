@@ -54,6 +54,13 @@ export { countMatches, findFiles, grepPreview, leftovers, shadowedFiles } from "
 export { renameSymbol, renameSymbolAcross, sameOpsAcross } from "./rename-symbols";
 export type { ParseSpecParams } from "./spec";
 export { parseSpec } from "./spec";
-export { looksGenerated, mergeFileEdits, run, simpleDiff } from "./sweep-many-files";
+export type { ExternalParseError } from "./sweep-many-files";
+export {
+    externalParseError,
+    looksGenerated,
+    mergeFileEdits,
+    run,
+    simpleDiff,
+} from "./sweep-many-files";
 export * from "./types";
 export { checkVerifyCommand, runVerifyCommand, trimOutput, verifyUnknownReason } from "./verify-command";

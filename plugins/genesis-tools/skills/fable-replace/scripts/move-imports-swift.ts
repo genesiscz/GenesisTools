@@ -33,7 +33,37 @@ import {
 } from "./move-imports-shared";
 import type { FileEdit, Op } from "./types";
 
-/** `text` with comments (nested block comments too) and string bodies blanked; offsets are kept. */
+/** The index of the `)` closing an interpolation whose body starts at `from`; nested strings skipped. */
+const interpolationEnd = (text: string, from: number): number => {
+    let depth = 1;
+    for (let k = from; k < text.length; k++) {
+        const char = text[k];
+        if (char === '"') {
+            k++;
+            while (k < text.length && text[k] !== '"') {
+                k += text[k] === "\\" ? 2 : 1;
+            }
+
+            continue;
+        }
+
+        if (char === "(") {
+            depth++;
+        } else if (char === ")") {
+            depth--;
+            if (depth === 0) {
+                return k;
+            }
+        }
+    }
+
+    return text.length;
+};
+
+/**
+ * `text` with comments (nested block comments too) and string bodies blanked; offsets are kept.
+ * An interpolation (`\(expr)`, `\#(expr)` in a raw string) is code and stays, itself masked.
+ */
 export const maskSwift = (text: string): string => {
     const chars = text.split("");
     const blank = (from: number, to: number): void => {
@@ -85,8 +115,24 @@ export const maskSwift = (text: string): string => {
             const [, hashes, quote] = opener;
             const open = i + hashes.length + quote.length;
             const close = `${quote}${hashes}`;
+            const interpolation = `\\${hashes}(`;
+            let literal = open;
             let j = open;
             while (j < text.length) {
+                if (text.startsWith(interpolation, j)) {
+                    const from = j + interpolation.length;
+                    const end = interpolationEnd(text, from);
+                    blank(literal, from);
+                    const inner = maskSwift(text.slice(from, end));
+                    for (let k = 0; k < inner.length; k++) {
+                        chars[from + k] = inner[k];
+                    }
+
+                    literal = end;
+                    j = end + 1;
+                    continue;
+                }
+
                 if (hashes === "" && text[j] === "\\") {
                     j += 2;
                     continue;
@@ -103,7 +149,7 @@ export const maskSwift = (text: string): string => {
                 j++;
             }
 
-            blank(open, j);
+            blank(literal, j);
             i = Math.min(text.length, j + close.length);
             continue;
         }
@@ -652,7 +698,10 @@ export const planSwiftImportFixes = (params: PlanImportFixesParams): FileEdit[] 
                             );
                         }
 
-                        target.ops.push(widenOp(decl, "", name));
+                        // Through the whole-block rewrite, whose op the paste's own check follows.
+                        const edited = blockEdits.get(move) ?? new Map<number, string>();
+                        blockEdits.set(move, edited);
+                        edited.set(move.blockText.split("\n").indexOf(decl.line), decl.withAccess(""));
                     }
                 }
 
