@@ -346,9 +346,9 @@ export async function discoverCodexHistorySources(
                         issues.push({ path, message: "Projection fingerprint read failed" });
                         incompleteRoots.add(file.root);
                     });
-                projectionIndex = profiler
+                projectionIndex = await profiler
                     .scope("agent-sessions")
-                    .measure("discover.codex-projection-sqlite", readProjection);
+                    .measureAsync("discover.codex-projection-sqlite", readProjection);
                 projectionByHome.set(home, projectionIndex);
             }
             projection = await readCodexProjectionFingerprint(source, {

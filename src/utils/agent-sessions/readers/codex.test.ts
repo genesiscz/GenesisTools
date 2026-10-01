@@ -534,23 +534,104 @@ test("the projection index equals the per-thread fingerprints and reuses its sta
     const issues: string[] = [];
 
     const perThread = await readCodexProjectionFingerprint(source);
-    const first = readCodexProjectionIndex([projectionPath], (issue) => issues.push(issue));
+    const first = await readCodexProjectionIndex([projectionPath], (issue) => issues.push(issue));
     expect(await readCodexProjectionFingerprint(source, { nativeId: CHILD_ID, projection: first })).toBe(perThread);
     expect(first.get(PARENT_ID)).toEqual([{ database: 0, count: 1, ordinal: 1, revision: 1 }]);
     expect(existsSync(codexProjectionCachePath())).toBe(true);
 
     // Same stamp: the cached parts come back without the database being opened.
-    const cached = readCodexProjectionIndex([projectionPath], (issue) => issues.push(issue));
+    const cached = await readCodexProjectionIndex([projectionPath], (issue) => issues.push(issue));
     expect(cached).toEqual(first);
 
     projection.run("UPDATE thread_items SET updated_at_ordinal = 9 WHERE thread_id = ? AND rollout_ordinal = 2", [
         CHILD_ID,
     ]);
-    const moved = readCodexProjectionIndex([projectionPath], (issue) => issues.push(issue));
+    const moved = await readCodexProjectionIndex([projectionPath], (issue) => issues.push(issue));
     projection.close();
 
     expect(moved.get(CHILD_ID)).toEqual([{ database: 0, count: 2, ordinal: 2, revision: 9 }]);
     expect(issues).toEqual([]);
+});
+
+test("a projection database codex is rewriting is retried once, then read from the last cached parts", async () => {
+    const home = mkdtempSync(join(tmpdir(), "gt-codex-projection-busy-"));
+    const projectionPath = join(home, "thread_history_1.sqlite");
+    const projection = new Database(projectionPath);
+    projection.run("PRAGMA journal_mode = WAL");
+    projection.run(
+        "CREATE TABLE thread_items (thread_id TEXT, rollout_ordinal INTEGER, created_at_ms INTEGER, item_json TEXT, updated_at_ordinal INTEGER)"
+    );
+    projection.run("INSERT INTO thread_items VALUES (?, 1, 1788257400000, ?, 1)", [
+        CHILD_ID,
+        '{"type":"agentMessage"}',
+    ]);
+    const issues: string[] = [];
+    const record = (issue: string) => issues.push(issue);
+    const cantOpen = () => Object.assign(new Error("unable to open database file"), { code: "SQLITE_CANTOPEN" });
+    const realOpen = (path: string) => new Database(path, { readonly: true });
+
+    const fresh = await readCodexProjectionIndex([projectionPath], record);
+    expect(fresh.get(CHILD_ID)).toEqual([{ database: 0, count: 1, ordinal: 1, revision: 1 }]);
+
+    // The stamp moves, so the cache no longer answers alone and the database must be opened.
+    projection.run("UPDATE thread_items SET updated_at_ordinal = 5");
+
+    // Busy on the first open only: the retry reads the new rows.
+    let opens = 0;
+    const retried = await readCodexProjectionIndex([projectionPath], record, {
+        retryDelayMs: 1,
+        open: (path) => {
+            opens++;
+            if (opens === 1) {
+                throw cantOpen();
+            }
+
+            return realOpen(path);
+        },
+    });
+    expect(opens).toBe(2);
+    expect(retried.get(CHILD_ID)).toEqual([{ database: 0, count: 1, ordinal: 1, revision: 5 }]);
+
+    // Busy on both opens: the last cached parts stand in, and it is not an issue.
+    projection.run("UPDATE thread_items SET updated_at_ordinal = 7");
+    opens = 0;
+    const fallback = await readCodexProjectionIndex([projectionPath], record, {
+        retryDelayMs: 1,
+        open: () => {
+            opens++;
+            throw cantOpen();
+        },
+    });
+    expect(opens).toBe(2);
+    expect(fallback.get(CHILD_ID)).toEqual([{ database: 0, count: 1, ordinal: 1, revision: 5 }]);
+    expect(issues).toEqual([]);
+
+    // Negative control: a normal open after that still reads the fresh rows.
+    const normal = await readCodexProjectionIndex([projectionPath], record);
+    expect(normal.get(CHILD_ID)).toEqual([{ database: 0, count: 1, ordinal: 1, revision: 7 }]);
+
+    // A corrupt file is not a lock: the cache does not hide it, it is an issue.
+    projection.run("UPDATE thread_items SET updated_at_ordinal = 8");
+    const corrupt = await readCodexProjectionIndex([projectionPath], record, {
+        retryDelayMs: 1,
+        open: () => {
+            throw Object.assign(new Error("file is not a database"), { code: "SQLITE_NOTADB" });
+        },
+    });
+    expect(corrupt.size).toBe(0);
+    expect(issues).toEqual([projectionPath]);
+    projection.close();
+
+    // Nothing cached for a path: the failure stays an issue.
+    const unknownPath = join(home, "thread_history_2.sqlite");
+    const missing = await readCodexProjectionIndex([unknownPath], record, {
+        retryDelayMs: 1,
+        open: () => {
+            throw cantOpen();
+        },
+    });
+    expect(missing.size).toBe(0);
+    expect(issues).toEqual([projectionPath, unknownPath]);
 });
 
 test("metadata bounds Unicode fields without retaining huge tool output", async () => {
