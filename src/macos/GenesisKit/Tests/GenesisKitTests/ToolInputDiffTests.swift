@@ -53,4 +53,15 @@ final class ToolInputDiffTests: XCTestCase {
         )
         XCTAssertEqual(shown.summary, "Updated x.swift")
     }
+
+    func testAClosedRowCountsItsLinesWithoutBuildingTheBlock() {
+        for result in ["     1→a\n     2→b\n     3→c\n", "one\ntwo", "only", "x\n\ny\n"] {
+            let call = line("Read", input: "/tmp/a.swift", result: result)
+            let open = ToolPresentation.make(line: call, loaded: nil, context: 0, cwd: "/tmp")
+            let closed = ToolPresentation.make(line: call, loaded: nil, context: 0, cwd: "/tmp", body: false)
+            XCTAssertEqual(closed.summary, open.summary, result)
+            XCTAssertNotNil(open.block, result)
+            XCTAssertNil(closed.block, result)
+        }
+    }
 }

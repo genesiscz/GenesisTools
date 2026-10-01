@@ -234,14 +234,16 @@ public struct ToolPresentation: Equatable {
     /// Lines of an Edit's diff before "… +N lines".
     public static let editCap = 60
 
-    public static func make(line: TranscriptToolLine, loaded: ToolLoaded?, context: Int, cwd: String?) -> ToolPresentation {
+    /// `body: false` is a closed row: only its header is drawn, so the numbered result and input
+    /// blocks are not built (a long Read split every line of its file into strings on each pass).
+    public static func make(line: TranscriptToolLine, loaded: ToolLoaded?, context: Int, cwd: String?, body: Bool = true) -> ToolPresentation {
         let kind = TranscriptToolKind.of(line.name)
         let detail = loaded?.detail
         let failed = line.status == .failed
         let path = detail?.filePath ?? ((kind == .read || kind == .edit) && line.input.hasPrefix("/") ? line.input : nil)
         let shownPath = path.map { relative($0, to: cwd) }
         let resultText = detail?.fullResult ?? line.result ?? ""
-        let resultBlock = resultText.isEmpty ? nil : CodeBlockBuilder.numbered(
+        let resultBlock = resultText.isEmpty || !body ? nil : CodeBlockBuilder.numbered(
             resultText,
             language: looksLikeJSON(resultText) ? .json : .plain,
             failed: failed
@@ -256,11 +258,13 @@ public struct ToolPresentation: Equatable {
             filePath: path,
             line: loaded?.editStart
         )
-        let count = resultBlock?.lines.count ?? 0
+        let count = resultBlock?.lines.count ?? lineCount(resultText)
         let rawInput = detail?.command ?? line.input
         // A call whose header shows one field of its input (an Agent's description, a Grep's
         // pattern) opens to all of it (`ToolCallDetail.arguments`).
-        if [.search, .web, .agent, .skill, .mcp, .other].contains(kind), let arguments = detail?.arguments {
+        if !body {
+            // Closed: the header reads `input` only when open.
+        } else if [.search, .web, .agent, .skill, .mcp, .other].contains(kind), let arguments = detail?.arguments {
             presentation.input = CodeBlockBuilder.numbered(arguments, language: .json)
         } else if [.command, .search, .web, .agent, .skill, .mcp, .other].contains(kind), rawInput.contains("\n") || rawInput.count > 120 {
             presentation.input = CodeBlockBuilder.numbered(rawInput, language: kind == .command ? .shell : (looksLikeJSON(rawInput) ? .json : .plain))
@@ -382,6 +386,13 @@ public struct ToolPresentation: Equatable {
         return first.utf8.count > 400 ? String(decoding: first.utf8.prefix(400), as: UTF8.self) + "…" : first
     }
 
+    /// Lines of a result as `CodeBlockBuilder.numbered` would make them, without building them.
+    private static func lineCount(_ text: String) -> Int {
+        guard !text.isEmpty else { return 0 }
+        let breaks = text.utf8.reduce(0) { $1 == 10 ? $0 + 1 : $0 }
+        return text.hasSuffix("\n") ? breaks : breaks + 1
+    }
+
     /// Non-empty lines of an input, as `argument` counts them.
     private static func inputLines(_ source: String) -> Int {
         source.split(separator: "\n", omittingEmptySubsequences: true).count
@@ -452,7 +463,7 @@ public struct ToolCallRowView: View, Equatable {
         // current services loaded wins over detail this row took from an earlier one.
         let cached = open && finished ? services.loaded(toolId: toolId) : nil
         let current = loadedFrom == ObjectIdentifier(services) ? (loaded ?? cached) : (cached ?? loaded)
-        let presentation = ToolPresentation.make(line: line, loaded: current, context: context, cwd: services.cwd)
+        let presentation = ToolPresentation.make(line: line, loaded: current, context: context, cwd: services.cwd, body: open)
         // Edit and Write caps apply only at a trimming verbosity: Verbose shows every line of everything.
         let cap = verbosity.bodyLimit == nil ? nil : (presentation.bodyCap ?? verbosity.bodyLimit)
         VStack(alignment: .leading, spacing: 2) {

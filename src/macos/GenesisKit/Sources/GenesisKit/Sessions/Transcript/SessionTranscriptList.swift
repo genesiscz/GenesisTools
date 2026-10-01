@@ -823,10 +823,11 @@ public struct SessionTranscriptList: View {
     }
 
     /// Tool calls start open at "Inputs + output" and above, thinking only at Verbose; a folded
-    /// group and a long prompt start closed.
+    /// group and a long prompt start closed. A Read starts closed at every level (Martin,
+    /// 2026-10-01): its output is the file, which the reader already has.
     private func defaultOpen(_ row: TranscriptRow) -> Bool {
         switch row.kind {
-        case .tool: return verbosity.opensTools
+        case .tool(let line): return verbosity.opensTools && TranscriptToolKind.of(line.name) != .read
         case .thinking: return verbosity.opensThinking
         default: return false
         }
