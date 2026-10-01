@@ -114,9 +114,21 @@ struct ServicesView: View {
 
 struct SettingsView: View {
     @ObservedObject var model: SettingsModel
+    @AppStorage(AppMainWindow.key) private var mainWindow = AppMainWindow.permissions
 
     var body: some View {
         Form {
+            Section("Main window") {
+                Picker("Opening GenesisTools shows", selection: $mainWindow) {
+                    ForEach(AppMainWindow.allCases) { option in
+                        Text(option.title).tag(option)
+                    }
+                }
+                Text("A Dock click, a Finder double-click or `open -a GenesisTools`. This window stays one click away: the hub's lock button, ⌘, in the hub, or `tools macos permissions ui`.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
             Section("Launcher") {
                 Toggle("Route `tools` through this app (owns the privacy grants)", isOn: $model.launcherEnabled)
                 Text(model.launcherEnabled

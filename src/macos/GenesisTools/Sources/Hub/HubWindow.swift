@@ -1825,6 +1825,10 @@ private struct SessionListView: View {
             HStack(spacing: 0) {
                 HubNavButtons(model: model)
                 Spacer(minLength: 0)
+                IconButton(systemName: "lock.shield", tooltip: "Permissions and settings (⌘,)") {
+                    AppMenuTarget.shared.openSettings(nil)
+                }
+                .foregroundColor(ReviewPalette.dim)
                 GlassToggle()
             }
             .padding(.horizontal, 12)

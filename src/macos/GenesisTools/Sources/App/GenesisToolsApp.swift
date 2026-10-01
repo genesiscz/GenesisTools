@@ -59,6 +59,14 @@ final class GenesisAppDelegate: NSObject, NSApplicationDelegate {
                 return
             }
 
+            if AppMainWindow.current == .hub {
+                logClick("no click within \(notificationClickGraceSeconds)s, opening the hub (main window setting)")
+                MainActor.assumeIsolated { AppDock.showHub(nil) }
+                // The hub runs in its own process; this one only had to start or wake it.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1) { NSApp.terminate(nil) }
+                return
+            }
+
             logClick("no click within \(notificationClickGraceSeconds)s, opening the settings window")
             self?.showWindow()
         }
@@ -107,13 +115,17 @@ struct RootView: View {
     @StateObject private var settings = SettingsModel()
 
     var body: some View {
-        TabView {
-            PermissionsView(model: permissions)
-                .tabItem { Label("Permissions", systemImage: "lock.shield") }
-            ServicesView(model: services)
-                .tabItem { Label("Services", systemImage: "gearshape.2") }
-            SettingsView(model: settings)
-                .tabItem { Label("Settings", systemImage: "slider.horizontal.3") }
+        VStack(spacing: 8) {
+            HStack {
+                Spacer()
+                Button {
+                    MainActor.assumeIsolated { AppDock.showHub(nil) }
+                } label: {
+                    Label("Open Hub", systemImage: "rectangle.3.group")
+                }
+                .help("Sessions, agents, PRs and worktrees in the hub window")
+            }
+            tabs
         }
         .padding(12)
         .frame(minWidth: 760, minHeight: 540)
@@ -121,6 +133,17 @@ struct RootView: View {
             permissions.refresh()
             services.refresh()
             settings.refresh()
+        }
+    }
+
+    private var tabs: some View {
+        TabView {
+            PermissionsView(model: permissions)
+                .tabItem { Label("Permissions", systemImage: "lock.shield") }
+            ServicesView(model: services)
+                .tabItem { Label("Services", systemImage: "gearshape.2") }
+            SettingsView(model: settings)
+                .tabItem { Label("Settings", systemImage: "slider.horizontal.3") }
         }
     }
 }
