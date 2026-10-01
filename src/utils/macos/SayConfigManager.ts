@@ -14,6 +14,12 @@ export interface SayAppConfig {
     model?: string | null;
     format?: "mp3" | "wav" | null;
     language?: string | null;
+    /**
+     * AI account id or name (`tools ai config account list`) whose key a cloud provider
+     * speaks with. It also picks the provider when none is set. A `gate-only` account's key
+     * comes through `tools ai gate`.
+     */
+    account?: string | null;
     mute?: boolean | null;
 }
 
@@ -72,6 +78,7 @@ export const SETTABLE_FIELDS = [
     "model",
     "format",
     "language",
+    "account",
     "mute",
 ] as const satisfies readonly Exclude<keyof SayAppConfig, "name">[];
 

@@ -27,16 +27,27 @@ import { AIXAITextToSpeechProvider } from "./xai/AIXAITextToSpeechProvider";
  * This table is the seam that dies in Phase 10 with the rest of the legacy
  * provider classes; until then it is the honest way to keep the behaviour.
  */
-const ENGINES: Record<string, () => AITextToSpeechProvider> = {
+const ENGINES: Record<string, (options: SpeechEngineOptions) => AITextToSpeechProvider> = {
     macos: () => new AIMacOSTextToSpeechProvider(),
-    xai: () => new AIXAITextToSpeechProvider(),
-    openai: () => new AIOpenAITextToSpeechProvider(),
-    elevenlabs: () => new AIElevenLabsTextToSpeechProvider(),
+    xai: ({ apiKey }) => new AIXAITextToSpeechProvider({ apiKey }),
+    openai: ({ apiKey }) => new AIOpenAITextToSpeechProvider({ apiKey }),
+    elevenlabs: ({ apiKey }) => new AIElevenLabsTextToSpeechProvider({ apiKey }),
 };
 
+export interface SpeechEngineOptions {
+    /**
+     * The key of one account the caller chose (`tools say --account`). Without it
+     * each cloud engine walks the provider ladder (`providerApiKey`) itself.
+     */
+    apiKey?: string;
+}
+
 /** The engine for a plugin id, or undefined when that provider does not speak. */
-export function speechEngineFor(providerId: string): AITextToSpeechProvider | undefined {
-    return ENGINES[providerId]?.();
+export function speechEngineFor(
+    providerId: string,
+    options: SpeechEngineOptions = {}
+): AITextToSpeechProvider | undefined {
+    return ENGINES[providerId]?.(options);
 }
 
 /** Plugin ids this table can build an engine for. */

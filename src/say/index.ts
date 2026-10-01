@@ -31,7 +31,13 @@ import { SayAudioCache } from "./lib/cache";
 import { captureCallerContext } from "./lib/caller";
 import { failedSayOutcome, newCallId, type SayCallRequest, tryRecordCall, withCallLog } from "./lib/calls";
 import { registerCallLogCommands, showCallLogs, showCallStats } from "./lib/calls-view";
-import { checkSayCredential } from "./lib/credential";
+import {
+    checkSayAccountCredential,
+    checkSayCredential,
+    findSayAccount,
+    recordSayAccountUsage,
+    type SayAccount,
+} from "./lib/credential";
 import { speakWithProfile } from "./lib/speak";
 import { getSayStorage } from "./lib/storage";
 
@@ -44,6 +50,7 @@ interface SayOptions {
     mute?: boolean;
     unmute?: boolean;
     provider?: SayProvider;
+    account?: string;
     language?: string;
     format?: "mp3" | "wav";
     file?: string;
@@ -77,6 +84,10 @@ const program = new Command()
     .option("--mute", "Mute (requires --save to persist)")
     .option("--unmute", "Unmute (requires --save to persist)")
     .option("--provider <name>", "TTS backend: macos, xai, openai (defaults to profile or macos)")
+    .option(
+        "--account <id|name>",
+        "AI account whose key speaks (tools ai config account list). Picks the provider when --provider is not given; a gate-only account asks tools ai gate."
+    )
     .option("--language <bcp47>", "Language hint (xai only; defaults to 'auto')")
     .option("--format <codec>", "Output codec: mp3 or wav")
     .option("--file <path>", "Read text from a file instead of args")
@@ -208,6 +219,43 @@ const program = new Command()
         const effectiveForRun: EffectiveSettings = { ...effective };
         let provider: SayProvider = effective.provider ?? "macos";
         let fallbackFrom: SayProvider | null = null;
+        let account: SayAccount | null = null;
+
+        // The account decides the provider, so it is found before the text overrides run. No key
+        // is read here: a phrase routed to macos below must never cost a gate prompt.
+        if (effective.account) {
+            const found = await findSayAccount(effective.account).catch((err: unknown) =>
+                err instanceof Error ? err : new Error(String(err))
+            );
+            const mismatch =
+                !(found instanceof Error) && isFromCLI(cmd, "provider") && opts.provider !== found.provider
+                    ? `--provider ${opts.provider} does not match account ${found.entry.name} (${found.provider})`
+                    : null;
+
+            if (found instanceof Error || mismatch) {
+                const error = found instanceof Error ? found.message : (mismatch as string);
+                await withCallLog(request, async (setOutcome) => {
+                    setOutcome(failedSayOutcome({ provider, error }));
+                });
+                out.error(pc.red(`[say] --account: ${error}`));
+                process.exit(1);
+            }
+
+            // An account on another provider than the profile's: its voice and model belong to the old
+            // provider (a macOS voice sent to xAI), so they go unless passed on the CLI, as for a text override.
+            if (found.provider !== provider) {
+                if (!isFromCLI(cmd, "voice")) {
+                    effectiveForRun.voice = null;
+                }
+
+                if (!isFromCLI(cmd, "model")) {
+                    effectiveForRun.model = null;
+                }
+            }
+
+            account = found;
+            provider = found.provider;
+        }
 
         // Per-text provider override: route phrases like "Permission needed"
         // to a different provider (typically local macos) regardless of the
@@ -240,7 +288,11 @@ const program = new Command()
         let exitCode = 0;
 
         await withCallLog(request, async (setOutcome) => {
-            const credential = await checkSayCredential({ provider, fallback: opts.fallback !== false });
+            const speakingAccount = account !== null && account.provider === provider ? account : null;
+            const credential = speakingAccount
+                ? await checkSayAccountCredential({ account: speakingAccount, fallback: opts.fallback !== false })
+                : await checkSayCredential({ provider, fallback: opts.fallback !== false });
+            const apiKey = credential.kind === "ok" ? credential.apiKey : undefined;
 
             if (credential.kind === "fail") {
                 setOutcome(failedSayOutcome({ provider, error: credential.reason }));
@@ -271,8 +323,17 @@ const program = new Command()
                     effective: effectiveForRun,
                     opts,
                     stream,
+                    apiKey,
                 });
                 setOutcome({ status: doneStatus, provider, voice: effectiveForRun.voice, cacheHit, fallbackFrom });
+
+                if (speakingAccount && apiKey && !cacheHit) {
+                    await recordSayAccountUsage({
+                        account: speakingAccount,
+                        model: effectiveForRun.model ?? null,
+                        characters: text.length,
+                    });
+                }
             } catch (err) {
                 const message = err instanceof Error ? err.message : String(err);
 
@@ -403,6 +464,7 @@ interface EffectiveSettings {
     model?: string | null;
     format?: "mp3" | "wav" | null;
     language?: string | null;
+    account?: string | null;
 }
 
 /**
@@ -473,6 +535,8 @@ interface SpeakCachedArgs {
     effective: EffectiveSettings;
     opts: SayOptions;
     stream?: boolean;
+    /** The chosen account's key; absent means each engine walks its provider's accounts. */
+    apiKey?: string;
 }
 
 /**
@@ -489,7 +553,7 @@ interface SpeakCachedArgs {
  * Reports whether the audio came from the cache, for the call log.
  */
 async function speakCached(args: SpeakCachedArgs): Promise<{ cacheHit: boolean }> {
-    const { mgr, text, provider, effective, opts, stream } = args;
+    const { mgr, text, provider, effective, opts, stream, apiKey } = args;
     const outputPath = opts.output ? resolve(opts.output) : undefined;
 
     // Bypass the cache when:
@@ -509,6 +573,7 @@ async function speakCached(args: SpeakCachedArgs): Promise<{ cacheHit: boolean }
             stream,
             wait: opts.wait,
             model: effective.model ?? undefined,
+            apiKey,
         });
         return { cacheHit: false };
     }
@@ -522,6 +587,7 @@ async function speakCached(args: SpeakCachedArgs): Promise<{ cacheHit: boolean }
             format: effective.format ?? undefined,
             rate: effective.rate ?? undefined,
             model: effective.model ?? undefined,
+            apiKey,
         });
         writeAudioFile(outputPath as string, result.audio, result.contentType);
         return { cacheHit: false };
@@ -582,6 +648,7 @@ async function speakCached(args: SpeakCachedArgs): Promise<{ cacheHit: boolean }
         format: effective.format ?? undefined,
         rate: effective.rate ?? undefined,
         model: effective.model ?? undefined,
+        apiKey,
     });
 
     // recordMiss writes to disk synchronously — wrap so a cache-write failure
@@ -746,6 +813,10 @@ function buildPatchFromCLI(cmd: Command, opts: SayOptions): Partial<SayAppConfig
         patch.language = opts.language;
     }
 
+    if (isFromCLI(cmd, "account") && opts.account) {
+        patch.account = opts.account;
+    }
+
     if (isFromCLI(cmd, "mute") && opts.mute) {
         patch.mute = true;
     } else if (isFromCLI(cmd, "unmute") && opts.unmute) {
@@ -795,6 +866,7 @@ async function resolveEffective(args: {
         model: opts.model ?? profile.model ?? null,
         format: opts.format ?? profile.format ?? null,
         language: opts.language ?? profile.language ?? null,
+        account: opts.account ?? profile.account ?? null,
     };
 }
 
@@ -1337,6 +1409,10 @@ async function promptText(field: SettableField, profile: SayAppConfig): Promise<
 
     if (field === "language") {
         return { kind: "set", patch: { language: raw } };
+    }
+
+    if (field === "account") {
+        return { kind: "set", patch: { account: raw } };
     }
 
     return "keep";

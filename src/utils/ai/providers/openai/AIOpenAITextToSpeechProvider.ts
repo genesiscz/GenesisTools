@@ -48,16 +48,30 @@ function readApiKey(): Promise<string> {
     return providerApiKey("openai");
 }
 
+export interface AIOpenAITextToSpeechProviderOptions {
+    /** A key the caller already resolved for one account; skips the provider ladder. */
+    apiKey?: string;
+}
+
 function resolveModel(modelOpt?: string): string {
     return modelOpt ?? "tts-1";
 }
 
 export class AIOpenAITextToSpeechProvider implements AITextToSpeechProvider {
     readonly type: AIProviderType = "openai";
+    private readonly apiKey?: string;
+
+    constructor(options?: AIOpenAITextToSpeechProviderOptions) {
+        this.apiKey = options?.apiKey?.trim() || undefined;
+    }
+
+    private readApiKey(): Promise<string> {
+        return this.apiKey ? Promise.resolve(this.apiKey) : readApiKey();
+    }
 
     async isAvailable(): Promise<boolean> {
         try {
-            await readApiKey();
+            await this.readApiKey();
             return true;
         } catch (err) {
             logger.debug({ err }, "openai has no usable credential");
@@ -84,7 +98,7 @@ export class AIOpenAITextToSpeechProvider implements AITextToSpeechProvider {
     }
 
     private async synthesizeOnce(text: string, options?: TTSOptions & { model?: string }): Promise<TTSResult> {
-        const apiKey = await readApiKey();
+        const apiKey = await this.readApiKey();
         const format = options?.format ?? "mp3";
         const body = {
             model: resolveModel(options?.model),
@@ -131,8 +145,9 @@ export class AIOpenAITextToSpeechProvider implements AITextToSpeechProvider {
             response_format: format,
         };
 
+        const readKey = () => this.readApiKey();
         const audio = (async function* iter(): AsyncIterable<Uint8Array> {
-            const apiKey = await readApiKey();
+            const apiKey = await readKey();
             const response = await fetch(`${BASE_URL}/audio/speech`, {
                 method: "POST",
                 headers: {

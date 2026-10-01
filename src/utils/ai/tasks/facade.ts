@@ -240,6 +240,7 @@ export const ai = {
             ...(options?.provider ? { provider: options.provider } : {}),
             ...(options?.model ? { model: options.model } : {}),
             ...(options?.app ? { app: options.app } : {}),
+            ...(options?.apiKey ? { apiKey: options.apiKey } : {}),
         });
 
         await synth.speak(text, options);
@@ -251,6 +252,7 @@ export const ai = {
             ...(options?.provider ? { provider: options.provider } : {}),
             ...(options?.model ? { model: options.model } : {}),
             ...(options?.app ? { app: options.app } : {}),
+            ...(options?.apiKey ? { apiKey: options.apiKey } : {}),
         });
 
         return synth.synthesize(text, options);

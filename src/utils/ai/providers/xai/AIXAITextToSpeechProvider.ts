@@ -34,6 +34,8 @@ function pickContentType(format?: TTSOptions["format"]): string {
 export interface AIXAITextToSpeechProviderOptions {
     /** Bypass the 7-day voice list cache (used by tests). */
     forceFreshVoices?: boolean;
+    /** A key the caller already resolved for one account; skips the provider ladder. */
+    apiKey?: string;
 }
 
 export class AIXAITextToSpeechProvider implements AITextToSpeechProvider {
@@ -47,7 +49,7 @@ export class AIXAITextToSpeechProvider implements AITextToSpeechProvider {
      * loudness. The limiter keeps peaks below -0.3 dBFS so no audible distortion at any user volume.
      */
     readonly loudnessOffsetDb = 7;
-    private readonly client = new XAIClient();
+    private readonly client: XAIClient;
     /**
      * The voice list is a 7-day presentation cache, not configuration. It used to
      * live under `Storage("ai")` beside the credential config, whose lock
@@ -58,6 +60,7 @@ export class AIXAITextToSpeechProvider implements AITextToSpeechProvider {
 
     constructor(options?: AIXAITextToSpeechProviderOptions) {
         this.forceFreshVoices = options?.forceFreshVoices ?? false;
+        this.client = new XAIClient(options?.apiKey);
     }
 
     async isAvailable(): Promise<boolean> {

@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { AiConfigStore } from "@genesiscz/utils/ai/config/AiConfigStore";
 import type { AccountEntry } from "@genesiscz/utils/ai/config/schema";
 import { ai } from "@genesiscz/utils/ai/tasks/facade";
+import { queryUsage } from "@genesiscz/utils/ai/usage";
 import { env } from "@genesiscz/utils/env";
 import {
     _resetMasterKeyProviders,
@@ -14,7 +15,14 @@ import {
     type MasterKeyProvider,
     secrets,
 } from "@genesiscz/utils/security";
-import { checkSayCredential } from "./credential";
+import {
+    checkSayAccountCredential,
+    checkSayCredential,
+    findSayAccount,
+    recordSayAccountUsage,
+    SayAccountError,
+    sayAccountKey,
+} from "./credential";
 
 /**
  * `tools say` spawned by Genesis.app has no shell exports, so the xAI key must
@@ -225,5 +233,117 @@ describe("tools say: the OpenAI key", () => {
 
         expect(requests[0].authorization).toBe("Bearer openai-fixture-from-env");
         expect(keyringReads).toBe(0);
+    });
+});
+
+describe("tools say --account", () => {
+    const SECOND_KEY = "xai-fixture-second-account";
+
+    async function twoXaiAccounts(): Promise<void> {
+        await addAccounts([
+            await vaultAccount({ id: "acc_shop", name: "shop", provider: "xai", key: VAULT_KEY }),
+            await vaultAccount({ id: "acc_work", name: "work", provider: "xai", key: SECOND_KEY }),
+        ]);
+        freshProcess();
+    }
+
+    test("the named account's key reaches the engine, not the provider's first account", async () => {
+        await twoXaiAccounts();
+
+        const account = await findSayAccount("work");
+        const check = await checkSayAccountCredential({ account, fallback: false });
+
+        expect(account.provider).toBe("xai");
+        expect(check).toEqual({ kind: "ok", apiKey: SECOND_KEY });
+        await expect(ai.synthesize("hello", { provider: "xai", apiKey: SECOND_KEY })).rejects.toThrow(SPY_REFUSAL);
+        expect(requests[0].authorization).toBe(`Bearer ${SECOND_KEY}`);
+    });
+
+    test("without an account the ladder still picks the first account (negative control)", async () => {
+        await twoXaiAccounts();
+
+        await expect(ai.synthesize("hello", { provider: "xai" })).rejects.toThrow(SPY_REFUSAL);
+        expect(requests[0].authorization).toBe(`Bearer ${VAULT_KEY}`);
+    });
+
+    test("finds by id, and refuses unknown, disabled and non-speech accounts", async () => {
+        await addAccounts([
+            account({ id: "acc_side", name: "side", enabled: false }),
+            account({ id: "acc_personal", name: "personal", provider: "anthropic-sub" }),
+            ENV_ONLY,
+        ]);
+
+        expect((await findSayAccount("acc_env_only")).entry.name).toBe("env-only");
+        await expect(findSayAccount("nobody")).rejects.toThrow('no AI account "nobody"');
+        await expect(findSayAccount("side")).rejects.toThrow("is disabled");
+        await expect(findSayAccount("personal")).rejects.toThrow("is anthropic-sub");
+    });
+
+    test("a gate-only account asks the gate and never reads the vault itself", async () => {
+        const gated = account({ id: "acc_gated", name: "shop", tags: ["gate-only"] });
+        const asked: string[] = [];
+        const key = await sayAccountKey(
+            { entry: gated, provider: "xai" },
+            {
+                requestGate: async (entry) => {
+                    asked.push(entry.id);
+                    return "xai-fixture-from-gate";
+                },
+                resolveKey: async () => {
+                    throw new Error("a gate-only key must not be read directly");
+                },
+            }
+        );
+
+        expect(key).toBe("xai-fixture-from-gate");
+        expect(asked).toEqual(["acc_gated"]);
+    });
+
+    test("an ordinary account never asks the gate", async () => {
+        const key = await sayAccountKey(
+            { entry: account({ id: "acc_work", name: "work" }), provider: "xai" },
+            {
+                requestGate: async () => {
+                    throw new Error("an ordinary account must not ask the gate");
+                },
+                resolveKey: async () => "xai-fixture-direct",
+            }
+        );
+
+        expect(key).toBe("xai-fixture-direct");
+    });
+
+    test("a refused gate falls back to macos, or fails with --no-fallback", async () => {
+        const deps = {
+            requestGate: async () => {
+                throw new SayAccountError("denied: Access was denied");
+            },
+        };
+        const gated = {
+            entry: account({ id: "acc_gated", name: "shop", tags: ["gate-only"] }),
+            provider: "xai" as const,
+        };
+
+        const soft = await checkSayAccountCredential({ account: gated, fallback: true, deps });
+        const hard = await checkSayAccountCredential({ account: gated, fallback: false, deps });
+
+        expect(soft.kind).toBe("fallback");
+        expect(hard.kind).toBe("fail");
+        expect(hard.kind === "fail" ? hard.line : "").toStartWith("[say] account shop has no usable key.");
+    });
+
+    test("a spoken call books usage on the chosen account", async () => {
+        const chosen = { entry: account({ id: "acc_work", name: "work" }), provider: "xai" as const };
+        const day = new Date().toISOString().slice(0, 10);
+
+        await recordSayAccountUsage({ account: chosen, model: null, characters: 5 });
+
+        const result = queryUsage({ from: day, to: "2999-01-01", app: "say", accountId: "acc_work" });
+        expect(result.events).toHaveLength(1);
+        expect(result.events[0]).toMatchObject({
+            provider: "xai",
+            modelId: "xai-tts",
+            meta: { kind: "tts", characters: 5 },
+        });
     });
 });

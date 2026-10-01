@@ -22,6 +22,8 @@ export interface SynthesizerCreateOptions {
     model?: ModelRef;
     /** Tool name, for `defaults.app.<app>.tts`. */
     app?: string;
+    /** The chosen account's key, handed to a NAMED provider's engine (see `SpeechEngineOptions`). */
+    apiKey?: string;
 }
 
 export interface SpeakOptions extends TTSOptions {
@@ -37,6 +39,8 @@ export interface SpeakOptions extends TTSOptions {
     rate?: number;
     wait?: boolean;
     app?: string;
+    /** See `SynthesizerCreateOptions.apiKey`. */
+    apiKey?: string;
 }
 
 const MACOS_MIN_WPM = 80;
@@ -110,7 +114,12 @@ export class Synthesizer {
      */
     static async create(options?: SynthesizerCreateOptions): Promise<Synthesizer> {
         const selector = options?.provider ?? "local";
-        const provider = await resolveProvider({ selector, model: options?.model, app: options?.app });
+        const provider = await resolveProvider({
+            selector,
+            model: options?.model,
+            app: options?.app,
+            apiKey: options?.apiKey,
+        });
 
         if (options?.persist) {
             const config = await AIConfig.load();
@@ -209,7 +218,7 @@ export class Synthesizer {
 
     private async providerFor(options: SpeakOptions | undefined): Promise<AITextToSpeechProvider> {
         if (options?.provider && options.provider !== this.defaultSelector) {
-            return resolveProvider({ selector: options.provider });
+            return resolveProvider({ selector: options.provider, apiKey: options.apiKey });
         }
 
         return this.provider;
@@ -291,12 +300,14 @@ async function resolveProvider(opts: {
     selector: ProviderSelector;
     model?: ModelRef;
     app?: string;
+    apiKey?: string;
 }): Promise<AITextToSpeechProvider> {
     const { selector } = opts;
+    const engineOptions = { apiKey: opts.apiKey };
     const { log } = logger.scoped("ai-tts");
 
     if (selector !== "any" && selector !== "local" && selector !== "cloud") {
-        const engine = speechEngineFor(selector);
+        const engine = speechEngineFor(selector, engineOptions);
 
         if (!engine) {
             throw new Error(`Provider "${selector}" has no speech engine. Known: ${speechEngineIds().join(", ")}.`);
@@ -320,7 +331,7 @@ async function resolveProvider(opts: {
             // The binding is only consulted for WHO; the rich engine carries the
             // native speak/stream/loudness behaviour the SDK shape cannot.
             resolved.binding.dispose?.();
-            const engine = speechEngineFor(resolved.plugin.id);
+            const engine = speechEngineFor(resolved.plugin.id, engineOptions);
 
             if (engine && (await engine.isAvailable())) {
                 return engine;
