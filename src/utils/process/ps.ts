@@ -513,6 +513,52 @@ export async function batchOpenFileCounts(
 }
 
 /**
+ * `rootPid` plus every descendant found in `rows`, walked via `ppid`.
+ *
+ * `rootPid` is always included, even when it is not itself present in `rows`
+ * (already gone) — a caller that needs "is there anything left to signal"
+ * checks the returned pids against a fresh snapshot itself, same as any other
+ * pid. Built from one already-captured {@link listPsTable} snapshot, so a
+ * whole-tree kill costs the one `ps` spawn that produced `rows`, not one per
+ * pid or one per depth.
+ */
+export function collectProcessTree(rootPid: number, rows: PsRow[]): number[] {
+    const childrenByParent = new Map<number, number[]>();
+
+    for (const row of rows) {
+        const siblings = childrenByParent.get(row.ppid);
+
+        if (siblings) {
+            siblings.push(row.pid);
+        } else {
+            childrenByParent.set(row.ppid, [row.pid]);
+        }
+    }
+
+    const order = [rootPid];
+    const seen = new Set<number>(order);
+    const stack = [rootPid];
+
+    while (stack.length > 0) {
+        const pid = stack.pop();
+
+        if (pid === undefined) {
+            continue;
+        }
+
+        for (const child of childrenByParent.get(pid) ?? []) {
+            if (!seen.has(child)) {
+                seen.add(child);
+                order.push(child);
+                stack.push(child);
+            }
+        }
+    }
+
+    return order;
+}
+
+/**
  * The readable name of a process, from its argv: the basename of argv[0].
  *
  * Matches what `ps aux` parsing produced before, so a filter that used to match

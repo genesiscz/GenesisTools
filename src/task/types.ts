@@ -24,9 +24,23 @@ export interface TaskSessionMeta {
     pid?: number;
     /** Command line of `pid` captured when it was recorded — detects pid reuse. */
     pidCommand?: string;
+    /**
+     * When `pid` started (epoch ms), captured alongside `pidCommand`.
+     *
+     * A wrapped command's own command line can legitimately change after start
+     * (a shell's `-c <simple command>` execs in place, a CLI retitles itself),
+     * which `pidCommand` alone cannot tell apart from the pid being recycled
+     * onto an unrelated process. The start time can: it survives exec() and a
+     * retitle, so a match here rescues a `pidCommand` mismatch instead of the
+     * session being wrongly marked exited under the still-running process.
+     */
+    pidStartedAt?: number;
     exitCode?: number;
     durationMs?: number;
     exitedAt?: string;
+    /** Deliberately stopped via `tools task stop` — distinct from a process exit so the UI never reports a signal's exit code (130/143) as if the child chose it. */
+    stopped?: boolean;
+    stoppedAt?: string;
 }
 
 export interface TaskConfig {
@@ -73,6 +87,11 @@ export interface PrepareSessionInput {
 export interface MarkExitedInput {
     name: string;
     exitCode: number;
+    durationMs: number;
+}
+
+export interface MarkStoppedInput {
+    name: string;
     durationMs: number;
 }
 

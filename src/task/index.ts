@@ -7,6 +7,7 @@ import { registerGetCommand } from "@app/task/commands/get";
 import { registerLogsCommand } from "@app/task/commands/logs";
 import { registerRunCommand } from "@app/task/commands/run";
 import { registerSessionsCommand } from "@app/task/commands/sessions";
+import { registerStopCommand } from "@app/task/commands/stop";
 import { registerTailCommand } from "@app/task/commands/tail";
 import { registerWaitCommand } from "@app/task/commands/wait";
 import { runTool } from "@genesiscz/utils/cli";
@@ -27,6 +28,7 @@ registerTailCommand(program);
 registerWaitCommand(program);
 registerConfigCommand(program);
 registerSessionsCommand(program);
+registerStopCommand(program);
 registerCleanCommand(program);
 registerDashboardCommand(program);
 

@@ -1,9 +1,10 @@
 import { afterAll } from "bun:test";
 import { type SpawnOptions, spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { env } from "@genesiscz/utils/env";
+import { SafeJSON } from "@genesiscz/utils/json";
 
 const TASK_TOOL = resolve(import.meta.dir, "../../../tools");
 
@@ -94,4 +95,32 @@ export async function waitForSession(env: TaskIntegrationEnv, session: string, t
     }
 
     throw new Error(`task session "${session}" not ready within ${timeoutMs}ms`);
+}
+
+/**
+ * Wait until the session's meta carries a recorded pid, instead of a fixed
+ * sleep after {@link waitForSession} — `updatePid` lands a tick after the
+ * meta/jsonl files first appear, and a `stop` sent before it would have
+ * nothing to signal yet.
+ */
+export async function waitForSessionPid(env: TaskIntegrationEnv, session: string, timeoutMs = 10_000): Promise<void> {
+    const meta = join(env.sessionsDir(), `${session}.meta.json`);
+    const deadline = Date.now() + timeoutMs;
+
+    while (Date.now() < deadline) {
+        if (existsSync(meta)) {
+            try {
+                const parsed = SafeJSON.parse(readFileSync(meta, "utf-8"), { strict: true }) as { pid?: number };
+                if (typeof parsed.pid === "number") {
+                    return;
+                }
+            } catch {
+                // Write in progress — the file can be read mid-flush. Keep polling.
+            }
+        }
+
+        await Bun.sleep(25);
+    }
+
+    throw new Error(`task session "${session}" has no recorded pid within ${timeoutMs}ms`);
 }

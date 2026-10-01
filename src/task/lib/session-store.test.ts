@@ -84,6 +84,90 @@ describe("TaskSessionStore.resolveRunSessionName", () => {
         expect(reconciled?.durationMs).toBe(1200);
     });
 
+    it("reconcileSessionState rescues a live pid whose command line drifted after start (shell exec / retitle), using pidStartedAt", async () => {
+        const store = new TaskSessionStore();
+        await store.getSessionsDir();
+        const name = "metro-rescue-live";
+        await store.prepareSession({ name, command: "sleep 2", mode: "pipe", cwd: "/tmp" });
+
+        const child = Bun.spawn(["bash", "-c", "sleep 2"], {
+            stdout: "ignore",
+            stderr: "ignore",
+            stdin: "ignore",
+            env: process.env,
+        });
+        try {
+            await store.updatePid(name, child.pid);
+
+            // Simulate the exact failure mode: the command captured at spawn time
+            // ("bash -c …") no longer matches what `ps` reports for the SAME,
+            // still-alive pid (a shell execs in place, or the CLI retitles
+            // itself). pidStartedAt is untouched — it is what should rescue this.
+            const meta = await store.getSessionMeta(name);
+            expect(meta).not.toBeNull();
+            if (meta) {
+                meta.pidCommand = "totally-different-command --that-ps-will-never-report";
+                store.writeSessionMeta(meta);
+            }
+
+            const reconciled = await store.reconcileSessionState(name);
+
+            expect(reconciled?.exitCode).toBeUndefined();
+            expect(reconciled?.stopped).toBeUndefined();
+            // Self-healed to the live command, so the NEXT check compares against reality.
+            expect(reconciled?.pidCommand).not.toBe("totally-different-command --that-ps-will-never-report");
+        } finally {
+            child.kill();
+            await child.exited;
+        }
+    });
+
+    it("reconcileSessionState still marks exited when the start time ALSO disagrees (pid-reuse protection stays)", async () => {
+        const store = new TaskSessionStore();
+        await store.getSessionsDir();
+        const name = "metro-rescue-reject";
+        await store.prepareSession({ name, command: "echo hi", mode: "pipe", cwd: "/tmp" });
+
+        // A live pid (our own test process — never signalled, only inspected)
+        // with a mismatched command AND a start time nowhere near its real one.
+        const meta = await store.getSessionMeta(name);
+        expect(meta).not.toBeNull();
+        if (meta) {
+            meta.pid = process.pid;
+            meta.pidCommand = "definitely-not-the-bun-test-runner";
+            meta.pidStartedAt = Date.now() - 999_999_999;
+            store.writeSessionMeta(meta);
+        }
+
+        const reconciled = await store.reconcileSessionState(name);
+
+        expect(reconciled?.exitCode).toBe(130);
+    });
+
+    it("markStopped short-circuits reconcileSessionState — a stopped session is never re-derived from a pid check", async () => {
+        const store = new TaskSessionStore();
+        await store.getSessionsDir();
+        const name = "metro-stopped-lock";
+        await store.prepareSession({ name, command: "sleep 2", mode: "pipe", cwd: "/tmp" });
+
+        const meta = await store.getSessionMeta(name);
+        expect(meta).not.toBeNull();
+        if (meta) {
+            // A pid that unambiguously reads as dead, so a reconcile that did NOT
+            // short-circuit would try to "fix" this into exitCode 130.
+            meta.pid = 999_999;
+            store.writeSessionMeta(meta);
+        }
+
+        await store.markStopped({ name, durationMs: 4200 });
+
+        const reconciled = await store.reconcileSessionState(name);
+
+        expect(reconciled?.stopped).toBe(true);
+        expect(reconciled?.exitCode).toBeUndefined();
+        expect(reconciled?.durationMs).toBe(4200);
+    });
+
     it("reconcileSessionState synthesizes meta from jsonl-only sessions", async () => {
         const store = new TaskSessionStore();
         await store.getSessionsDir();

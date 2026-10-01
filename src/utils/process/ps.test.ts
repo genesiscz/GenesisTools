@@ -3,7 +3,9 @@ import { parseLaunchctlList } from "@genesiscz/utils/process/launchctl";
 import {
     capture,
     chunk,
+    collectProcessTree,
     PS_BATCH_SIZE,
+    type PsRow,
     parseCpuTime,
     parseOpenFileCounts,
     parsePsLine,
@@ -12,6 +14,10 @@ import {
     processBasename,
 } from "@genesiscz/utils/process/ps";
 import { parseTopPower, readTopEnergy } from "@genesiscz/utils/process/top";
+
+function fakeRow(pid: number, ppid: number): PsRow {
+    return { pid, ppid, user: "alice", stat: "S", cpu: 0, rss: 0, startTime: null, command: `pid-${pid}` };
+}
 
 // Real `ps` and `lsof` output shapes, with invented user names.
 const PS_INFO_LINE = "17512 40508 alice    Ss     0.4   3584 Wed Sep 16 17:58:55 2026 /bin/zsh -c echo hello world";
@@ -170,6 +176,35 @@ describe("processBasename", () => {
     test("survives an empty command", () => {
         expect(processBasename("")).toBe("");
         expect(processBasename("   ")).toBe("");
+    });
+});
+
+describe("collectProcessTree", () => {
+    test("walks every descendant, not just direct children", () => {
+        const rows = [
+            fakeRow(1, 0),
+            fakeRow(10, 1), // root
+            fakeRow(11, 10), // child of root
+            fakeRow(12, 10), // child of root
+            fakeRow(13, 11), // grandchild, via 11
+            fakeRow(99, 1), // unrelated sibling — must not appear
+        ];
+
+        const tree = collectProcessTree(10, rows);
+
+        expect(new Set(tree)).toEqual(new Set([10, 11, 12, 13]));
+        expect(tree).not.toContain(99);
+    });
+
+    test("includes the root even when it is not itself in rows", () => {
+        expect(collectProcessTree(404, [fakeRow(1, 0)])).toEqual([404]);
+    });
+
+    test("does not loop forever on a cyclic ppid graph", () => {
+        // Not a shape the kernel can produce, but the walk must still terminate.
+        const rows = [fakeRow(10, 11), fakeRow(11, 10)];
+
+        expect(new Set(collectProcessTree(10, rows))).toEqual(new Set([10, 11]));
     });
 });
 

@@ -10,6 +10,7 @@ import {
 import { buildTimestampedSessionName, isRelatedSessionName } from "@app/task/lib/session-name";
 import type {
     MarkExitedInput,
+    MarkStoppedInput,
     PrepareSessionInput,
     ResolvedRunSession,
     TaskConfig,
@@ -21,7 +22,7 @@ import { fuzzyResolveSession } from "@genesiscz/utils/log-session/fuzzy-resolver
 import { filterLineRecords, readJsonlFile } from "@genesiscz/utils/log-session/jsonl-reader";
 import type { JsonlExitRecord, JsonlLineRecord, JsonlMetaRecord } from "@genesiscz/utils/log-session/types";
 import { logger } from "@genesiscz/utils/logger";
-import { classifyPid, readProcessCommand } from "@genesiscz/utils/process-identity";
+import { classifyPid, processStartMs, readProcessCommand, START_MS_TOLERANCE } from "@genesiscz/utils/process-identity";
 import { atomicWriteFileSync, Storage } from "@genesiscz/utils/storage/storage";
 
 export type { ResolvedRunSession } from "@app/task/types";
@@ -287,7 +288,7 @@ export class TaskSessionStore {
     async reconcileSessionState(name: string): Promise<TaskSessionMeta | null> {
         const meta = await this.getSessionMeta(name);
 
-        if (meta?.exitCode !== undefined) {
+        if (meta?.exitCode !== undefined || meta?.stopped) {
             return meta;
         }
 
@@ -316,6 +317,31 @@ export class TaskSessionStore {
                 // NOT this session — without the check the dead session shows
                 // as running forever.
                 const identity = classifyPid(meta.pid, meta.pidCommand);
+
+                if (identity.status === "foreign" && meta.pidStartedAt !== undefined) {
+                    // The wrapped command's own command line can legitimately change after
+                    // start — a shell's `bash -c "<single simple command>"` execs in place
+                    // (verified: ps for that pid shows the exec'd program, not "bash -c …"),
+                    // and a long-running CLI (Metro included) may retitle itself once it is
+                    // up. classifyPid cannot tell that apart from the pid being recycled onto
+                    // an unrelated process — but the start time can, because it survives both
+                    // exec() and a retitle. A match rescues the session: it is still the same
+                    // live process, just no longer the one `pidCommand` describes, so that
+                    // expectation is refreshed to the current, live command for next time.
+                    const currentStartedAt = processStartMs(meta.pid);
+
+                    if (
+                        currentStartedAt !== null &&
+                        Math.abs(currentStartedAt - meta.pidStartedAt) <= START_MS_TOLERANCE
+                    ) {
+                        if (identity.command && identity.command !== meta.pidCommand) {
+                            meta.pidCommand = identity.command;
+                            await this.writeSessionMeta(meta);
+                        }
+
+                        return meta;
+                    }
+                }
 
                 if (identity.status === "dead" || identity.status === "foreign") {
                     const durationMs = Date.now() - meta.createdAt;
@@ -366,6 +392,33 @@ export class TaskSessionStore {
         await this.writeSessionMeta(meta);
     }
 
+    /**
+     * Record a deliberate `tools task stop`, distinct from `markExited`: no `exitCode` is
+     * written, so the session never reports the signal's exit code (130/143) as if the
+     * child chose it. `reconcileSessionState`'s fast path treats `stopped` exactly like a
+     * recorded `exitCode` — once set, it is never re-derived from a later pid check.
+     *
+     * Clears any `exitCode`/`exitedAt` a concurrent writer may have landed first: the kill
+     * target's own `tools task run` supervisor notices the same death (via `proc.exited`,
+     * which the kernel resolves faster than this function's ps-based poll) and may have
+     * already recorded its own exit code moments earlier. This write is the one that
+     * sticks, so it must not leave that stale pair sitting next to `stopped: true`.
+     */
+    async markStopped(input: MarkStoppedInput): Promise<void> {
+        const meta = await this.getSessionMeta(input.name);
+        if (!meta) {
+            return;
+        }
+
+        meta.stopped = true;
+        meta.stoppedAt = new Date().toISOString();
+        meta.durationMs = input.durationMs;
+        meta.lastActivityAt = Date.now();
+        meta.exitCode = undefined;
+        meta.exitedAt = undefined;
+        await this.writeSessionMeta(meta);
+    }
+
     async updatePid(name: string, pid: number): Promise<void> {
         const meta = await this.getSessionMeta(name);
         if (!meta) {
@@ -374,6 +427,7 @@ export class TaskSessionStore {
 
         meta.pid = pid;
         meta.pidCommand = readProcessCommand(pid) ?? undefined;
+        meta.pidStartedAt = processStartMs(pid) ?? undefined;
         await this.writeSessionMeta(meta);
     }
 

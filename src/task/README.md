@@ -134,6 +134,26 @@ tools task tail --session jest --follow --propagate-exit
 
 Exit codes: 0 on match or normal exit (without `--propagate-exit`), child's code with `--propagate-exit`, 124 on timeout.
 
+## Stop a session
+
+`stop` SIGTERMs the session's whole process tree (every descendant it can find via `ppid`, not just the top pid), waits a grace period (default 5s), then SIGKILLs whatever is still alive. The session is recorded as **stopped** — never a signal's exit code (130/143), which would read as if the child chose to exit that way.
+
+```bash
+# Stop one session (fuzzy-matched like get/logs/tail)
+tools task stop --session metro
+
+# Shorter grace period before escalating to SIGKILL
+tools task stop --session metro --timeout 2
+
+# Stop whichever session owns a TCP listener
+tools task stop --port 8081
+
+# Stop every currently running session (TTY confirms; non-TTY needs --yes)
+tools task stop --all --yes
+```
+
+`tools task sessions` / `get` show a stopped session as `stopped (<duration>)`, distinct from `exited (code N, …)`.
+
 ## Retention
 
 Sessions older than `sessionRetentionDays` (default **30**) are GC'd on the next `tools task run` when `gcOnRunStart` is true (default). Configure interactively or via flags:

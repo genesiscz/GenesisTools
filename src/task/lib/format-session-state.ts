@@ -17,6 +17,10 @@ export function formatSessionState(meta: TaskSessionMeta | null): string {
         return "unknown";
     }
 
+    if (meta.stopped) {
+        return `stopped (${formatDurationMs(meta.durationMs ?? Date.now() - meta.createdAt)})`;
+    }
+
     if (meta.exitCode !== undefined) {
         return `exited (code ${meta.exitCode}, ${formatDurationMs(meta.durationMs ?? 0)})`;
     }
