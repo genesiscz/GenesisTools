@@ -1,8 +1,9 @@
 import { spawnSync } from "node:child_process";
-import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { readFileSync, statSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import type { UnpushedConfig } from "./config";
+import { assertPrivateFile, makePrivateDir } from "./diff/private-dir";
 import { hookDiag } from "./log";
 import { unpushedRoot } from "./paths";
 
@@ -60,8 +61,9 @@ function readCache(root: string): Cached | null {
 
 function writeCache(root: string, cached: Cached): void {
     try {
-        mkdirSync(unpushedRoot(), { recursive: true, mode: 0o700 });
-        writeFileSync(join(unpushedRoot(), `${keyOf(root)}.json`), SafeJSON.stringify(cached), { mode: 0o600 });
+        const path = join(unpushedRoot(), `${keyOf(root)}.json`);
+        assertPrivateFile(path);
+        writeFileSync(path, SafeJSON.stringify(cached), { mode: 0o600 });
     } catch (err) {
         hookDiag("Could not cache the unpushed count", { err, root });
     }
@@ -164,7 +166,13 @@ export function claimReminder(root: string, everyMinutes: number, now: number, d
     }
 
     try {
-        mkdirSync(dir, { recursive: true, mode: 0o700 });
+        // "wx" never follows an existing link; the folder is checked like every other private tree.
+        const refused = makePrivateDir(dir);
+
+        if (refused) {
+            throw new Error(refused);
+        }
+
         writeFileSync(name(window), String(now), { flag: "wx", mode: 0o600 });
         return true;
     } catch (err) {

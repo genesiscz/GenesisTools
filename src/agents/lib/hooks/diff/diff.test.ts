@@ -841,6 +841,19 @@ describe("files the command NAMES rather than works in", () => {
         expect(runDiffPost(current, plain).message).toContain("TWO-OUTSIDE-GIT");
     });
 
+    it("a read-only command that names an absolute path never claims a concurrent edit to it", () => {
+        // `cat /abs/MEMORY.md` while another writer edits it: the change is not this session's.
+        const note = join(outside, "MEMORY.md");
+        writeFileSync(note, "one\ntwo\nthree\n");
+        const current = begin({ command: `cat ${note}` });
+
+        writeFileSync(note, "one\nTWO-BY-SOMEONE-ELSE\nthree\n");
+        const decision = runDiffPost(current, plain);
+
+        expect(decision.files ?? []).not.toContain(note);
+        expect(decision.message ?? "").not.toContain("TWO-BY-SOMEONE-ELSE");
+    });
+
     it("stays quiet about a scratch file the command created, and prints it when asked", () => {
         // Two consecutive calls writing /tmp reports each got a 30-line block of a file the
         // command had just described in its own output. A creation found only through a

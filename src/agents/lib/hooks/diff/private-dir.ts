@@ -1,6 +1,6 @@
 import { chmodSync, lstatSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { isAbsolute, join, relative, sep } from "node:path";
+import { dirname, isAbsolute, join, relative, sep } from "node:path";
 import { hookDiag } from "../log";
 
 const DIR_MODE = 0o700;
@@ -40,4 +40,35 @@ export function makePrivateDir(dir: string): string | null {
     }
 
     return null;
+}
+
+/**
+ * A file this user may write in a private tree: refuses one that exists as a symlink or as anything but a
+ * plain file this user owns, since an append or write would follow it. Returns the reason, or `null`.
+ */
+export function refuseUnsafeLeaf(path: string): string | null {
+    let stat: ReturnType<typeof lstatSync>;
+
+    try {
+        stat = lstatSync(path);
+    } catch {
+        // Not there yet: the write creates it, mode 0600.
+        return null;
+    }
+
+    if (stat.isSymbolicLink() || !stat.isFile()) {
+        return `${path} is not a plain file`;
+    }
+
+    const uid = process.getuid?.();
+    return uid !== undefined && stat.uid !== uid ? `${path} belongs to uid ${stat.uid}, not to this user` : null;
+}
+
+/** `makePrivateDir` for the file's folder and `refuseUnsafeLeaf` for the file; throws the reason it refused. */
+export function assertPrivateFile(path: string): void {
+    const refused = makePrivateDir(dirname(path)) ?? refuseUnsafeLeaf(path);
+
+    if (refused) {
+        throw new Error(refused);
+    }
 }

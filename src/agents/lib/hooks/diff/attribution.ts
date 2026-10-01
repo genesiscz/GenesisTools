@@ -2,7 +2,6 @@ import {
     appendFileSync,
     closeSync,
     fstatSync,
-    mkdirSync,
     openSync,
     readdirSync,
     readFileSync,
@@ -10,12 +9,13 @@ import {
     renameSync,
     statSync,
 } from "node:fs";
-import { dirname, join, relative } from "node:path";
+import { join, relative } from "node:path";
 import { commandTokenIndex, commandWord, scanShell, splitPipeline, tokenize } from "@genesiscz/utils/shell/scan";
 import { commandEditsFiles } from "../../changes/log";
 import { hookDiag } from "../log";
 import { hookDataRoot, touchesPath } from "../paths";
 import { covers, type Mentions, readSessionState } from "./mentions";
+import { assertPrivateFile } from "./private-dir";
 
 /**
  * Who changed a file the post phase found. A root is shared: other sessions, other harnesses and
@@ -226,7 +226,8 @@ export function recordTouches(rows: Touch[], path = touchesPath()): void {
     const lines = rows.map((row) => `${row.end}\t${row.start}\t${row.session}\t${row.kind}\t${row.path}\n`).join("");
 
     try {
-        mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+        // A shared temp tree: another user's planted folder or a linked ledger is refused, never followed.
+        assertPrivateFile(path);
 
         try {
             if (statSync(path).size > LEDGER_MAX_BYTES) {
@@ -240,6 +241,7 @@ export function recordTouches(rows: Touch[], path = touchesPath()): void {
             }
         }
 
+        assertPrivateFile(path);
         appendFileSync(path, lines, { mode: 0o600 });
     } catch (err) {
         hookDiag("Could not append to the touches ledger", { err, path });

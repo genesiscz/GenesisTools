@@ -558,6 +558,17 @@ export function runDiffPost(
             break;
         }
 
+        // The same attribution as the root pass: a read-only command changed nothing it named (`cat
+        // /repo/a.ts` while another session edits it), and a path the root pass gave to another session
+        // stays theirs. Neither is captured, claimed, logged or rendered as this session's.
+        if (attribution.readOnly() || unattributed.some((item) => item.path === change.path)) {
+            if (!unattributed.some((item) => item.path === change.path)) {
+                unattributed.push({ path: change.path, root: dirname(change.path) });
+            }
+
+            continue;
+        }
+
         // A named path inside a captured root was already captured, with its git before-state.
         if (!captures.some((item) => item.path === change.path)) {
             captures.push({ path: change.path, before: change.before, deleted: change.deleted });
