@@ -38,7 +38,7 @@
 import * as path from "node:path";
 import { parseJson } from "./json";
 import { expandMoves, type MoveSpec } from "./move-blocks";
-import { MoveError } from "./move-imports";
+import { MoveError } from "./move-imports-shared";
 import { mergeFileEdits } from "./sweep-many-files";
 import type { FileEdit, Op } from "./types";
 

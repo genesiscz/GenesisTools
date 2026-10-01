@@ -13,7 +13,8 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { MoveError, type PlannedMove, planImportFixes } from "./move-imports";
+import { planImportFixes } from "./move-imports";
+import { MoveError, type PlannedMove } from "./move-imports-shared";
 import type { FileEdit, Op } from "./types";
 
 /**
@@ -471,6 +472,20 @@ function expandOne({ move, index, cwd, readAbs, created, edits }: ExpandOneParam
         blockText: block.text,
         cutText: cut,
         fixImports: move.imports === "fix",
+        widen: false,
+        marker: markerFor(move),
         label,
     };
+}
+
+/** The move as the spec marker that would produce it. */
+function markerFor(move: MoveSpec): string {
+    const what =
+        move.symbol !== undefined
+            ? `symbol=${move.symbol}`
+            : move.lines !== undefined
+              ? `lines=${move.lines[0]}-${move.lines[1]}`
+              : "";
+    const at = move.at === undefined || move.at === "end" ? "" : "after" in move.at ? " at=after" : " at=before";
+    return `<<< move to=${move.to} ${what}${at}${move.imports === "fix" ? " imports=fix" : ""}`;
 }
