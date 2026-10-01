@@ -100,6 +100,11 @@ needs `TranscriptScrollAnchor.remeasureVisibleRows` after each such move, and th
 (about 230 ms per call, 2026-09-30). So move inside the resize only when the rows on screen would jump
 otherwise (a prepend under a hold); follow appends at the latest turn one turn later (`scheduleFollow`).
 
+🛑 A live transcript moves the reader ONLY while they are at the end (`TranscriptScrollAnchor.atEnd`), with one
+0.2 s ease-out glide per change (instant under Reduce Motion); scrolled up, it never moves them and shows
+`NewItemsPill` ("N new ↓") instead. New rows fade in with `RowArrival`. No second `scrollTo` after an append: the
+three-pass scroll that used to follow each new row moved the viewport twice more and read as a jump (2026-10-01).
+
 ## Look
 
 - Palette: `ReviewPalette` (Review/ReviewWindow.swift) for hub and review; `SessionPalette` (GenesisKit) inside the session screen. Dark only, near-black background, white-alpha hairlines, green/red/orange/blue status colours.
@@ -157,8 +162,12 @@ committed. Keep them verbatim until then; `Hub/StolenShims.swift` stands in for 
   (Review/ReviewRoots.swift, `ReviewModel.setRoots`): one toolbar, one diff, one Files tree with one top-level folder
   per root, every path under its root's folder name. Map a merged file back with `locate(fileID:)`,
   `absolutePath(of:)`, `file(atPath:)`; never join `model.repo` with `file.path`.
-- The open transcript follows its session file (Hub/HubTranscriptTail.swift, a file event source, no timer) and
-  appends turns from the last known one; ⌘F searches the whole session (`tools ai sessions grep` + `tail --turns`).
+- The open transcript follows its session with ONE long-running `tools ai sessions tail <id> --live --offset <n>`
+  per open detail (Hub/HubTranscriptTail.swift on GenesisKit `ToolsLineStream`): each stdout line is a turn with its
+  `index` (a changed turn comes again and replaces its row) or a totals line. It stops when the detail closes, the
+  session changes, the window hides or minimizes, and when the app quits (the child ends on stdin EOF); one restart
+  on an unexpected exit, stderr in `app-perf.log` (`hub.transcript.follow`). Never spawn a `tools` process per file
+  growth again. ⌘F searches the whole session (`tools ai sessions grep` + `tail --turns`).
 - To SEE the live window (not a snapshot), `tools control screenshot --app GenesisTools --path /tmp/x.png`: a window
   capture with no accessibility walk, so it works while a transcript streams. Since 2026-09-27 (24a236c41) a
   snapshot skips the web diff's own image under a modal panel (digest, rules, search, prompts, handoff, palette,

@@ -222,6 +222,17 @@ public struct ToolPresentation: Equatable {
     public var filePath: String?
     /// Line to open the file's diff at.
     public var line: Int?
+    /// The block is the call's input (an Edit's diff, a Write's content): it comes first and the
+    /// status line goes under it, as Claude Code draws them.
+    public var inputFirst = false
+    /// Body lines shown before "… +N lines" at every level: an input diff is the point of the row,
+    /// so it opens even at a trimming level, and a long one is cut until the reader asks.
+    public var bodyCap: Int?
+
+    /// Lines of a Write's content before "… +N lines".
+    public static let writeCap = 20
+    /// Lines of an Edit's diff before "… +N lines".
+    public static let editCap = 60
 
     public static func make(line: TranscriptToolLine, loaded: ToolLoaded?, context: Int, cwd: String?) -> ToolPresentation {
         let kind = TranscriptToolKind.of(line.name)
@@ -271,14 +282,18 @@ public struct ToolPresentation: Equatable {
         }
 
         switch (kind, line.name) {
-        case (.edit, "Write"), (.edit, "write_file"), (.edit, "create_file"):
+        case (.edit, "Write"), (.edit, "write_file"), (.edit, "create_file"), (.edit, "NotebookEdit"):
             if let content = detail?.content {
-                let block = CodeBlockBuilder.numbered(content, language: .forPath(path ?? ""))
+                // A new file is all added lines.
+                let numbered = CodeBlockBuilder.numbered(content, language: .forPath(path ?? ""))
+                let block = CodeBlock(lines: numbered.lines.map { CodeLine(number: $0.number, mark: .added, text: $0.text) }, language: numbered.language)
                 presentation.block = block
                 presentation.summary = "Wrote \(lines(block.lines.count)) to \(shownPath ?? "the file")"
                 presentation.line = 1
+                presentation.inputFirst = true
+                presentation.bodyCap = writeCap
             } else {
-                presentation.summary = firstLine(resultText) ?? "Wrote the file"
+                presentation.summary = shownPath.map { "Wrote \($0)" } ?? firstLine(resultText) ?? "Wrote the file"
                 presentation.block = nil
             }
         case (.edit, _):
@@ -286,12 +301,18 @@ public struct ToolPresentation: Equatable {
                 let block = CodeBlockBuilder.patch(patch, language: .forPath(path ?? ""))
                 presentation.block = block
                 presentation.summary = "Patched with \(changeWords(block))"
+                presentation.inputFirst = true
+                presentation.bodyCap = editCap
             } else if let edits = detail?.edits, !edits.isEmpty {
                 let block = editBlock(edits, loaded: loaded, context: context, language: .forPath(path ?? ""))
                 presentation.block = block
                 presentation.summary = "Updated \(shownPath ?? "the file") with \(changeWords(block))"
+                presentation.inputFirst = true
+                presentation.bodyCap = editCap
             } else {
-                presentation.summary = firstLine(resultText) ?? "Updated the file"
+                // Not the tool's own words ("The file … has been updated successfully. (file state is
+                // current in your context …)"): they say nothing a reader needs.
+                presentation.summary = shownPath.map { "Updated \($0)" } ?? firstLine(resultText) ?? "Updated the file"
                 presentation.block = nil
             }
         case (.read, _):
@@ -442,8 +463,8 @@ public struct ToolCallRowView: View, Equatable {
                 ToolResultBody(
                     rowId: rowId,
                     presentation: presentation,
-                    limit: showAll ? nil : verbosity.bodyLimit,
-                    expandedByReader: showAll && verbosity.bodyLimit != nil,
+                    limit: showAll ? nil : (presentation.bodyCap ?? verbosity.bodyLimit),
+                    expandedByReader: showAll && (presentation.bodyCap != nil || verbosity.bodyLimit != nil),
                     wrap: wrap,
                     canAddContext: current?.fileLines != nil && (current?.detail.edits.count ?? 0) == 1,
                     onShowAll: { onToggle(rowId + "#all") },
@@ -595,6 +616,43 @@ private struct ToolResultBody: View {
                     .instantTooltip("Show the whole input and output")
                 }
             }
+            if !presentation.inputFirst {
+                status
+            }
+            if let block = presentation.block, !block.lines.isEmpty {
+                CodeBlockText(block: block, limit: limit, cacheKey: rowId, wrap: wrap.outputs)
+                    .padding(.leading, 16)
+                    .background(ClickUpCatcher(action: onCollapse))
+                if let limit, block.lines.count > limit {
+                    Button(action: onShowAll) {
+                        Text(verbatim: "… +\(block.lines.count - limit) lines")
+                            .font(SessionPalette.mono(11.5))
+                            .foregroundStyle(SessionPalette.blue)
+                    }
+                    .buttonStyle(.genHoverPlain())
+                    .padding(.leading, 16)
+                    .instantTooltip("Show every line")
+                    .accessibilityIdentifier("transcript-tool-show-all")
+                } else if limit == nil, block.lines.count > (presentation.bodyCap ?? TranscriptVerbosity.outputs.bodyLimit ?? 0), expandedByReader {
+                    Button(action: onShowAll) {
+                        Text("Show fewer lines")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(SessionPalette.blue)
+                    }
+                    .buttonStyle(.genHoverPlain())
+                    .padding(.leading, 16)
+                }
+            }
+            if presentation.inputFirst {
+                status
+            }
+        }
+        .padding(.leading, 20)
+        .padding(.bottom, 6)
+    }
+
+    /// The one-line status: the call's summary, and its context and diff buttons.
+    private var status: some View {
             HStack(alignment: .firstTextBaseline, spacing: 6) {
                 Text(verbatim: "⎿")
                     .font(SessionPalette.mono(12))
@@ -613,33 +671,6 @@ private struct ToolResultBody: View {
                         .accessibilityIdentifier("transcript-tool-open-diff")
                 }
             }
-            if let block = presentation.block, !block.lines.isEmpty {
-                CodeBlockText(block: block, limit: limit, cacheKey: rowId, wrap: wrap.outputs)
-                    .padding(.leading, 16)
-                    .background(ClickUpCatcher(action: onCollapse))
-                if let limit, block.lines.count > limit {
-                    Button(action: onShowAll) {
-                        Text(verbatim: "… +\(block.lines.count - limit) lines")
-                            .font(SessionPalette.mono(11.5))
-                            .foregroundStyle(SessionPalette.blue)
-                    }
-                    .buttonStyle(.genHoverPlain())
-                    .padding(.leading, 16)
-                    .instantTooltip("Show every line")
-                    .accessibilityIdentifier("transcript-tool-show-all")
-                } else if limit == nil, block.lines.count > (TranscriptVerbosity.outputs.bodyLimit ?? 0), expandedByReader {
-                    Button(action: onShowAll) {
-                        Text("Show fewer lines")
-                            .font(.system(size: 11, weight: .semibold))
-                            .foregroundStyle(SessionPalette.blue)
-                    }
-                    .buttonStyle(.genHoverPlain())
-                    .padding(.leading, 16)
-                }
-            }
-        }
-        .padding(.leading, 20)
-        .padding(.bottom, 6)
     }
 
     private func smallButton(_ title: String, symbol: String, tip: String, action: @escaping () -> Void) -> some View {

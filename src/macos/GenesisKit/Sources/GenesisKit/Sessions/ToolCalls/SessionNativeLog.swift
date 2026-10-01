@@ -413,12 +413,25 @@ public final class SessionNativeLog: @unchecked Sendable {
         toolUse: inout [String: Range<Int>],
         toolResult: inout [String: Range<Int>]
     ) {
-        if object["isSidechain"] as? Bool == true { return }
         let type = object["type"] as? String
-        let uuid = object["uuid"] as? String
-        if let uuid { summary.ordinals[uuid] = ordinal }
         guard let message = object["message"] as? [String: Any] else { return }
         let content = message["content"] as? [[String: Any]] ?? []
+        // Tool calls are indexed on every line. A sub-agent file (`subagents/agent-*.jsonl`) is all
+        // sidechain lines, so skipping them first left every call of an agent without its input: its
+        // Edit and Write rows showed "The file … has been updated successfully" instead of the diff
+        // (Martin, 2026-10-01). Usage and models stay the parent's own, as before.
+        if type == "assistant" {
+            for item in content where item["type"] as? String == "tool_use" {
+                if let id = item["id"] as? String { toolUse[id] = range }
+            }
+        } else if type == "user" {
+            for item in content where item["type"] as? String == "tool_result" {
+                if let id = item["tool_use_id"] as? String { toolResult[id] = range }
+            }
+        }
+        if object["isSidechain"] as? Bool == true { return }
+        let uuid = object["uuid"] as? String
+        if let uuid { summary.ordinals[uuid] = ordinal }
 
         if type == "assistant" {
             if let uuid, let model = message["model"] as? String { summary.models[uuid] = shortModel(model) }
@@ -433,13 +446,6 @@ public final class SessionNativeLog: @unchecked Sendable {
                 if let cost = object["costUSD"] as? Double { usage.costUsd = cost }
                 summary.usageByMessage[id] = usage
                 summary.calls.append(.init(ordinal: ordinal, messageId: id))
-            }
-            for item in content where item["type"] as? String == "tool_use" {
-                if let id = item["id"] as? String { toolUse[id] = range }
-            }
-        } else if type == "user" {
-            for item in content where item["type"] as? String == "tool_result" {
-                if let id = item["tool_use_id"] as? String { toolResult[id] = range }
             }
         }
     }
@@ -498,7 +504,8 @@ public final class SessionNativeLog: @unchecked Sendable {
             detail.arguments = String(decoding: data, as: UTF8.self)
         }
         detail.filePath = (input["file_path"] ?? input["path"] ?? input["notebook_path"]) as? String
-        detail.content = input["content"] as? String
+        // NotebookEdit writes one cell: its new source shows like a Write.
+        detail.content = (input["content"] ?? input["new_source"]) as? String
         detail.command = (input["command"] as? String) ?? (input["cmd"] as? String)
             ?? (input["command"] as? [String])?.joined(separator: " ")
         if let old = input["old_string"] as? String, let new = input["new_string"] as? String {

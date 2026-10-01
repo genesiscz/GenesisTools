@@ -111,9 +111,10 @@ public enum CodeBlockBuilder {
         let a = old.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
         let b = new.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
         var lines: [CodeLine] = []
+        // Without the file's line, the numbers count from the hunk's own first line.
         var oldNumber = start ?? 1
         var newNumber = start ?? 1
-        let numbered = start != nil
+        let numbered = true
         for step in lineDiff(a, b) {
             switch step {
             case .same(let text):

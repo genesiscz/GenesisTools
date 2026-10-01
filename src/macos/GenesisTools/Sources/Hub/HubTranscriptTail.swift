@@ -1,68 +1,115 @@
 import Foundation
 
-/// Wakes the open transcript when its session file grows: a file-system event source on the JSONL
-/// (write, extend), coalesced to one callback per `debounce`, never a timer poll. A rename or delete
-/// (a rotated or replaced file) reopens the file once, so a new inode keeps being followed.
+/// Follows the open transcript with ONE `tools ai sessions tail <query> --live --offset <n>` process
+/// for as long as the detail shows it (src/utils/ai/transcripts/live.ts). Each stdout line is a turn
+/// with its session-wide `index`, sent again whenever it changes, or a `totals` line after a change;
+/// the lines of one chunk arrive together as a `Batch`. No timer and no file watcher here: the child
+/// watches the file, and a process per growth (about 150 ms each, most of them finding nothing) is gone.
+///
+/// An exit we did not ask for starts the follow once more from the last turn it saw; a second one
+/// stays down and is logged with its stderr.
 @MainActor
 final class HubTranscriptTail {
-    private let path: String
-    private let debounce: TimeInterval
-    private let onGrow: () -> Void
-    private var source: DispatchSourceFileSystemObject?
-    private var pending: DispatchWorkItem?
+    struct Totals: Decodable, Equatable {
+        var modelCalls: Int?
+        var inputTokens: Int?
+        var cacheReadTokens: Int?
+        var outputTokens: Int?
+        var reasoningTokens: Int?
+        var costUsd: Double?
+        var terminated: String?
+        var nextOffset: Int
+        var turnCount: Int?
 
-    init(path: String, debounce: TimeInterval = 0.25, onGrow: @escaping () -> Void) {
-        self.path = path
-        self.debounce = debounce
-        self.onGrow = onGrow
-        open()
+        var transcriptTotals: TranscriptTotals {
+            TranscriptTotals(
+                modelCalls: modelCalls,
+                inputTokens: inputTokens,
+                cacheReadTokens: cacheReadTokens,
+                outputTokens: outputTokens,
+                reasoningTokens: reasoningTokens,
+                costUsd: costUsd
+            )
+        }
     }
 
-    deinit {
-        source?.cancel()
+    /// Turns carry their `index`; `totals` is the last totals line of the chunk, if any.
+    struct Batch {
+        var turns: [TranscriptTurn] = []
+        var totals: Totals?
+    }
+
+    private let query: String
+    private let onBatch: (Batch) -> Void
+    private var stream: ToolsLineStream?
+    private var offset: Int
+    private var restarted = false
+    private var stopped = false
+
+    init(query: String, offset: Int, onBatch: @escaping (Batch) -> Void) {
+        self.query = query
+        self.offset = offset
+        self.onBatch = onBatch
+        start()
     }
 
     func stop() {
-        pending?.cancel()
-        pending = nil
-        source?.cancel()
-        source = nil
+        stopped = true
+        stream?.stop()
+        stream = nil
     }
 
-    private func open() {
-        let descriptor = Darwin.open(path, O_EVTONLY)
-        guard descriptor >= 0 else {
-            HubPerf.log("transcript.tail cannot watch \((path as NSString).lastPathComponent) (errno \(errno))")
-            return
+    private func start() {
+        let args = ["sessions", "tail", query, "--live", "--offset", String(max(0, offset))]
+        do {
+            let stream = try ToolsLineStream(
+                bridge: HubSource.bridge,
+                subcommand: "ai",
+                args: args,
+                onLines: { [weak self] lines in self?.receive(lines) },
+                onExit: { [weak self] exit in self?.exited(exit) }
+            )
+            self.stream = stream
+            HubPerf.log("transcript.follow started pid=\(stream.processIdentifier) \(query.suffix(24)) offset=\(offset)")
+        } catch {
+            HubPerf.log("transcript.follow cannot start: \(error.localizedDescription)")
         }
-        let source = DispatchSource.makeFileSystemObjectSource(fileDescriptor: descriptor, eventMask: [.write, .extend, .rename, .delete], queue: .main)
-        source.setEventHandler { [weak self] in
-            MainActor.assumeIsolated {
-                guard let self, let source = self.source else { return }
-                if source.data.contains(.rename) || source.data.contains(.delete) {
-                    self.stop()
-                    // The writer replaced the file: follow the new one at the same path.
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
-                        MainActor.assumeIsolated { self?.open() }
-                    }
+    }
+
+    private func receive(_ lines: [String]) {
+        guard !stopped else { return }
+        let decoder = JSONDecoder()
+        var batch = Batch()
+        for line in lines {
+            let data = Data(line.utf8)
+            if line.hasPrefix("{\"kind\":\"totals\"") {
+                if let totals = try? decoder.decode(Totals.self, from: data) {
+                    batch.totals = totals
                 }
-                self.schedule()
+                continue
+            }
+
+            do {
+                let turn = try decoder.decode(TranscriptTurn.self, from: data)
+                batch.turns.append(turn)
+                if let index = turn.index {
+                    offset = max(offset, index)
+                }
+            } catch {
+                HubPerf.log("transcript.follow unreadable line (\(line.count) chars): \(error.localizedDescription)")
             }
         }
-        source.setCancelHandler { Darwin.close(descriptor) }
-        self.source = source
-        source.resume()
+        guard !batch.turns.isEmpty || batch.totals != nil else { return }
+        onBatch(batch)
     }
 
-    private func schedule() {
-        guard pending == nil else { return }
-        let work = DispatchWorkItem { [weak self] in
-            MainActor.assumeIsolated {
-                self?.pending = nil
-                self?.onGrow()
-            }
-        }
-        pending = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + debounce, execute: work)
+    private func exited(_ exit: ToolsLineStream.Exit) {
+        guard !stopped, !exit.stopped else { return }
+        let stderr = exit.stderr.trimmingCharacters(in: .whitespacesAndNewlines).suffix(600)
+        HubPerf.log("transcript.follow exited \(exit.status) \(query.suffix(24)): \(stderr.isEmpty ? "(no stderr)" : String(stderr))")
+        stream = nil
+        guard !restarted else { return }
+        restarted = true
+        start()
     }
 }

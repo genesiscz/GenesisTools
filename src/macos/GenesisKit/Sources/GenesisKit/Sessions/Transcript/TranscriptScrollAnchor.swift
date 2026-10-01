@@ -39,8 +39,12 @@ public final class TranscriptScrollAnchor: ObservableObject {
     private var documentHeight: CGFloat = 0
     /// Set while this moves the viewport, so its own move is not taken for someone else's.
     private var adjusting = false
-    /// Within this of the content's end is reading the latest turn (the list ends in a 12 pt spacer).
-    private static let endSlack: CGFloat = 40
+    /// Within this of the content's end is reading the latest turn. The list ends in a 12 pt spacer
+    /// under the last section's end marker, and scrolled fully down the live hub measured a gap of 39 to
+    /// 51 pt (2026-10-01): at 40 a reader at the very end counted as scrolled up half the time.
+    private static let endSlack: CGFloat = 80
+    /// `atEnd` turns off only past this.
+    private static let leaveSlack: CGFloat = 200
     /// The reader's last click in the list, and how long the growth after it stays theirs (the row
     /// opens on the next layout, its detail lands a few milliseconds later).
     private var readerClickAt: Date?
@@ -48,6 +52,13 @@ public final class TranscriptScrollAnchor: ObservableObject {
     private var remeasureScheduled = false
     /// The distance from the end a reader at the latest turn keeps, while the follow waits for the pass.
     private var follow: CGFloat?
+    /// Whether the viewport shows the content's end (within `endSlack`). Published only when it flips,
+    /// so a list reads it for its "N new" pill without re-rendering per scroll step.
+    @Published public private(set) var atEnd = true
+    /// An animated follow to the end is on its way: growth meanwhile is still the reader's at the end.
+    private var animatingToEnd = false
+    /// The follow glides instead of jumping; off under Reduce Motion.
+    private static let followDuration: TimeInterval = 0.2
 
     /// Call before rows are inserted above the viewport. Until `seconds` pass, or the reader scrolls
     /// or clicks in the list, the viewport keeps its distance from the content's end.
@@ -130,6 +141,9 @@ public final class TranscriptScrollAnchor: ObservableObject {
                     : scroll.bounds.contains(scroll.convert(event.locationInWindow, from: nil))
                 if reader {
                     self.releaseHold()
+                    if event.type == .scrollWheel {
+                        self.stopFollowing()
+                    }
                     if event.type == .leftMouseDown {
                         self.readerClickAt = Date()
                     }
@@ -149,8 +163,45 @@ public final class TranscriptScrollAnchor: ObservableObject {
             keep(held)
             // Only this move inside the resize costs the rows on screen their height listener.
             scheduleRemeasure()
-        } else if follow == nil, before <= Self.endSlack, !readerIsChanging {
-            scheduleFollow(max(0, before))
+        } else if follow == nil, before <= Self.endSlack || animatingToEnd, !readerIsChanging {
+            scheduleFollow(animatingToEnd ? 0 : max(0, before))
+        } else {
+            updateAtEnd()
+        }
+    }
+
+    /// The reader's own scroll wins over a follow: a pending one is dropped and a glide stops where it
+    /// is. Without this a glide in flight kept `animatingToEnd` set, each arriving row started the next
+    /// one, and a reader who scrolled up mid-stream was pulled back down.
+    private func stopFollowing() {
+        follow = nil
+        guard animatingToEnd, let clip = scrollView?.contentView else { return }
+        animatingToEnd = false
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0
+            clip.animator().setBoundsOrigin(clip.bounds.origin)
+        }
+    }
+
+    /// Glides to the content's end (the "N new" pill); instant under Reduce Motion.
+    public func scrollToEnd() {
+        releaseHold()
+        keep(0, animated: true)
+    }
+
+    /// `scrolled`: the viewport moved (the reader's scroll decides at `endSlack`, exactly where the follow
+    /// stops). Otherwise the content changed under a still viewport.
+    private func updateAtEnd(scrolled: Bool = false) {
+        guard let scroll = scrollView, let document = scroll.documentView else { return }
+        let gap = document.frame.height - scroll.contentView.bounds.maxY
+        // A follow on its way is at the end: rows measure between the resize and the follow's pass, and
+        // that gap (100+ pt for 20 ms) flipped the pill on and off. Growth under a still viewport keeps a
+        // reader at the end up to `leaveSlack`; only their own scroll up takes them off it.
+        let slack = scrolled || !atEnd ? Self.endSlack : Self.leaveSlack
+        let next = animatingToEnd || follow != nil || gap <= slack
+        if next != atEnd {
+            PerfLog.mark(String(format: "transcript.anchor atEnd=%@ gap=%.0f doc=%.0f", next ? "yes" : "no", gap, document.frame.height))
+            atEnd = next
         }
     }
 
@@ -161,14 +212,16 @@ public final class TranscriptScrollAnchor: ObservableObject {
     /// measured the table again: 2.1 s of the 2.75 s main thread a streamed session cost in
     /// `testStreamingCost`, and the most common main-thread stall of the live hub (2026-09-30: 179 of
     /// 273 stall stacks in 48 h, p50 1.3 s). A resize fires several times per pass as rows measure;
-    /// the first one's distance is the reader's.
+    /// the first one schedules the follow, which glides to the end (`keep(0, animated:)`).
     private func scheduleFollow(_ distance: CGFloat) {
         follow = distance
         DispatchQueue.main.async { [weak self] in
             MainActor.assumeIsolated {
-                guard let self, let distance = self.follow else { return }
+                guard let self, self.follow != nil else { return }
                 self.follow = nil
-                self.keep(distance)
+                // To the end itself (a glide, 2026-10-01): the few points the reader sat above it are
+                // the list's spacer, and a glide to a fixed distance fell behind rows measured mid-way.
+                self.keep(0, animated: true)
             }
         }
     }
@@ -209,20 +262,51 @@ public final class TranscriptScrollAnchor: ObservableObject {
     }
 
     private func viewportMoved() {
-        guard !adjusting, let held else { return }
+        guard !adjusting else { return }
+        guard let held else {
+            updateAtEnd(scrolled: true)
+            return
+        }
         keep(held)
     }
 
-    /// Puts the viewport's end `distance` above the content's end.
-    private func keep(_ distance: CGFloat) {
+    /// Puts the viewport's end `distance` above the content's end. `animated`: an ease-out glide of
+    /// `followDuration` (the follow of a reader at the latest turn and the pill), never under Reduce
+    /// Motion and never for a hold, which must not move what is on screen.
+    private func keep(_ distance: CGFloat, animated: Bool = false) {
         guard let scroll = scrollView, let document = scroll.documentView else { return }
         let clip = scroll.contentView
         let y = max(0, document.frame.height - clip.bounds.height - distance)
-        guard abs(clip.bounds.origin.y - y) > 0.5 else { return }
+        guard abs(clip.bounds.origin.y - y) > 0.5 else {
+            updateAtEnd()
+            return
+        }
+        let target = NSPoint(x: clip.bounds.origin.x, y: y)
+        if animated, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
+            // Every glide goes to the end (a follow or the pill); rows that measure meanwhile are
+            // still the reader's at the end.
+            animatingToEnd = true
+            NSAnimationContext.runAnimationGroup({ context in
+                context.duration = Self.followDuration
+                context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+                context.allowsImplicitAnimation = true
+                clip.animator().setBoundsOrigin(target)
+            }, completionHandler: { [weak self] in
+                MainActor.assumeIsolated {
+                    guard let self else { return }
+                    self.animatingToEnd = false
+                    scroll.reflectScrolledClipView(clip)
+                    self.updateAtEnd()
+                }
+            })
+            return
+        }
+
         adjusting = true
-        clip.scroll(to: NSPoint(x: clip.bounds.origin.x, y: y))
+        clip.scroll(to: target)
         scroll.reflectScrolledClipView(clip)
         adjusting = false
+        updateAtEnd()
     }
 
     nonisolated private func detach() {

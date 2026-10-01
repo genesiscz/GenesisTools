@@ -140,6 +140,37 @@ final class SessionTranscriptScrollTests: XCTestCase {
         try rig.opensWholeOutput(row: row, lines: output, in: table)
     }
 
+    // GenesisTools adaptation: Martin, 2026-10-01: "the scrolling / the updates should not jump". A reader at
+    // the end is followed as rows arrive; one who scrolled up is never moved, and sees the "N new" pill.
+    func testAReaderAtTheEndIsFollowedAsRowsArrive() throws {
+        let session = try InventedSession.make(sections: 3)
+        let rig = Rig(Streaming(session: session), size: NSSize(width: 560, height: 700))
+        defer { rig.close() }
+        rig.settle(4.5)
+        let list = try XCTUnwrap(rig.transcript, "no transcript scroll view")
+        let document = try XCTUnwrap(list.documentView)
+        XCTAssertEqual(list.documentView.map { ($0 as? NSTableView)?.numberOfRows ?? 0 }, session.tableRows().count, "not every streamed row arrived")
+        XCTAssertLessThanOrEqual(document.frame.height - list.contentView.bounds.maxY, 80, "the reader at the end was left behind")
+    }
+
+    func testAReaderWhoScrolledUpIsNeverMovedByArrivingRows() throws {
+        let session = try InventedSession.make(sections: 3)
+        let rig = Rig(Streaming(session: session), size: NSSize(width: 560, height: 700))
+        defer { rig.close() }
+        rig.settle(0.8)
+        let list = try XCTUnwrap(rig.transcript, "no transcript scroll view")
+        // The reader's own wheel, while rows stream in and a follow may be on its way.
+        let start = list.contentView.bounds.origin.y
+        rig.notches(at: rig.center(of: list), dx: 0, dy: 10, count: 30)
+        rig.settle(0.3)
+        let before = list.contentView.bounds.origin.y
+        XCTAssertLessThan(before, start - 100, "the wheel did not scroll the transcript up")
+        let height = list.documentView?.frame.height ?? 0
+        rig.settle(3.5)
+        XCTAssertGreaterThan(list.documentView?.frame.height ?? 0, height, "no rows arrived while scrolled up")
+        XCTAssertEqual(list.contentView.bounds.origin.y, before, accuracy: 0.5, "an arriving row moved a reader who scrolled up")
+    }
+
     // GenesisTools adaptation: Martin, 2026-09-30: "the Verbose and all other picker items are literally not
     // doing anything". The level is picked while the transcript is on screen, so each pick must re-measure
     // the rows it opens or trims, not only the first draw at a level.
