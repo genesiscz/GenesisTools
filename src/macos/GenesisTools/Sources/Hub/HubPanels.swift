@@ -14,9 +14,12 @@ final class HubLiveResize: ObservableObject {
     static let shared = HubLiveResize()
 
     @Published private(set) var active = false
-    /// Only a pane divider is moving. Light panes follow it live; only the transcript list holds.
+    /// Only a pane divider, or a side panel that lays out live (`ResizableSidePanel.holdsLayout` off), is
+    /// moving: its source starts with "split". Light panes follow it live; only the transcript list holds.
     @Published private(set) var splitOnly = false
-    private var sources: Set<String> = []
+    /// What resizes now: "window", "split" (a pane divider), "panel.<key>" (a side panel holding its
+    /// layout), "split.panel.<key>" (a side panel laid out live).
+    @Published private(set) var sources: Set<String> = []
     private var observers: [NSObjectProtocol] = []
 
     func begin(_ source: String) {
@@ -32,7 +35,7 @@ final class HubLiveResize: ObservableObject {
     }
 
     private func updateSplitOnly() {
-        let value = sources == ["split"]
+        let value = !sources.isEmpty && sources.allSatisfy { $0 == "split" || $0.hasPrefix("split.") }
         if splitOnly != value { splitOnly = value }
     }
 
@@ -79,9 +82,17 @@ private struct FreezeWidthWhileResizing: ViewModifier {
     /// A heavy pane (the transcript list) also holds during a pane-divider drag. A light one follows
     /// the divider: frozen, it left a dark gap beside the divider until release (recording 15:09).
     let heavy: Bool
+    /// Set: holds only while that live side panel drags (`ResizableSidePanel.holdsLayout` off), and
+    /// follows every other resize. A main view beside the hub sidebar outside Sessions mode.
+    var panel: String?
     @ObservedObject private var live = HubLiveResize.shared
     @State private var size: CGSize = .zero
     @State private var frozen: CGSize?
+
+    private var holds: Bool {
+        if let panel { return live.sources.contains("split.panel.\(panel)") }
+        return live.active && (heavy || !live.splitOnly)
+    }
 
     func body(content: Content) -> some View {
         content
@@ -91,7 +102,7 @@ private struct FreezeWidthWhileResizing: ViewModifier {
             .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity, alignment: .topLeading)
             .clipped()
             .onGeometryChange(for: CGSize.self, of: \.size) { size = $0 }
-            .onChange(of: live.active && (heavy || !live.splitOnly)) { _, hold in
+            .onChange(of: holds) { _, hold in
                 var transaction = Transaction()
                 transaction.disablesAnimations = true
                 withTransaction(transaction) { frozen = hold && size.width > 0 ? size : nil }
@@ -101,6 +112,12 @@ private struct FreezeWidthWhileResizing: ViewModifier {
 
 extension View {
     func freezesWidthWhileResizing(heavy: Bool = true) -> some View { modifier(FreezeWidthWhileResizing(heavy: heavy)) }
+
+    /// Holds only while the live side panel `key` drags; it moves with the panel's edge at once and
+    /// reflows on release.
+    func freezesWidthWhileDragging(panel key: String) -> some View {
+        modifier(FreezeWidthWhileResizing(heavy: false, panel: key))
+    }
 }
 
 // MARK: - Resizable side panel
@@ -117,6 +134,9 @@ enum SidePanelEdge { case leading, trailing }
 /// the panel shows its rail without forgetting that it was open, and the rail opens it as a drawer
 /// over the content instead.
 ///
+/// `holdsLayout` off: the neighbour follows the drag on every step (the PRs list beside a PR). On, the
+/// default: the layout keeps its start width until release (the transcript beside the session list).
+///
 /// `fitWidth` is the width the content asks to open at (the file list's widest row). The panel uses
 /// it, never narrower than `minWidth`, until the reader drags this panel in this window; from then on
 /// the dragged width stays, as for any other panel.
@@ -131,6 +151,7 @@ struct ResizableSidePanel<Content: View>: View {
     var maxWidth: CGFloat = 900
     var autoCollapse = false
     var fitWidth: CGFloat?
+    var holdsLayout = true
     @ViewBuilder let content: () -> Content
 
     @AppStorage private var width: Double
@@ -144,7 +165,8 @@ struct ResizableSidePanel<Content: View>: View {
     static var railWidth: CGFloat { 28 }
 
     init(key: String, edge: Edge, title: String = "panel", defaultWidth: CGFloat = 300, minWidth: CGFloat = 180,
-         maxWidth: CGFloat = 900, autoCollapse: Bool = false, fitWidth: CGFloat? = nil, @ViewBuilder content: @escaping () -> Content) {
+         maxWidth: CGFloat = 900, autoCollapse: Bool = false, fitWidth: CGFloat? = nil, holdsLayout: Bool = true,
+         @ViewBuilder content: @escaping () -> Content) {
         self.key = key
         self.edge = edge
         self.title = title
@@ -153,6 +175,7 @@ struct ResizableSidePanel<Content: View>: View {
         self.maxWidth = maxWidth
         self.autoCollapse = autoCollapse
         self.fitWidth = fitWidth
+        self.holdsLayout = holdsLayout
         self.content = content
         _width = AppStorage(wrappedValue: Double(defaultWidth), "panel.\(key).width")
         _collapsed = AppStorage(wrappedValue: false, "panel.\(key).collapsed")
@@ -170,8 +193,16 @@ struct ResizableSidePanel<Content: View>: View {
     /// While a drag runs, the layout keeps the width the drag began with and the panel draws over its
     /// neighbour (or leaves a gap); everything reflows once, on release. Moving the neighbour made
     /// SwiftUI rebuild the window's key view loop on every step, which walks every transcript row:
-    /// 82 ms of main thread per step, 23 ms with the layout held (`--bench`, 2026-09-24).
-    private var slotWidth: CGFloat { min(CGFloat(dragStart ?? baseWidth), max(minWidth, maxWidth)) }
+    /// 82 ms of main thread per step, 23 ms with the layout held (`--bench`, 2026-09-24). Beside the PR
+    /// detail the held slot read as the pane lagging behind the divider with a dark gap, then jumping on
+    /// release (recording 2026-09-30). With `holdsLayout` off the neighbour moves with the edge on every
+    /// step instead, and keeps its content's size until release (`freezesWidthWhileDragging(panel:)`).
+    private var slotWidth: CGFloat {
+        guard holdsLayout else { return shownWidth }
+        return min(CGFloat(dragStart ?? baseWidth), max(minWidth, maxWidth))
+    }
+    /// A live layout still has the light panes follow instead of freezing (`HubLiveResize.splitOnly`).
+    private var resizeSource: String { holdsLayout ? "panel.\(key)" : "split.panel.\(key)" }
     private var dragShift: CGFloat {
         guard dragStart != nil else { return 0 }
         return (edge == .leading ? 1 : -1) * (shownWidth - slotWidth)
@@ -342,7 +373,7 @@ struct ResizableSidePanel<Content: View>: View {
     private func dragChanged(_ translation: CGFloat) {
         if dragStart == nil {
             dragStart = min(baseWidth, Double(maxWidth))
-            HubLiveResize.shared.begin("panel.\(key)")
+            HubLiveResize.shared.begin(resizeSource)
         }
         let delta = edge == .leading ? translation : -translation
         // Past the room the parent has, the panel would clip the content next to it.
@@ -368,7 +399,7 @@ struct ResizableSidePanel<Content: View>: View {
             liveWidth = nil
             dragStart = nil
         }
-        HubLiveResize.shared.end("panel.\(key)")
+        HubLiveResize.shared.end(resizeSource)
     }
 }
 

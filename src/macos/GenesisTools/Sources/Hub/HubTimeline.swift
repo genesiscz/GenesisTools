@@ -212,6 +212,13 @@ final class HubTimelineModel: ObservableObject {
     /// so the empty-list error line never renders then).
     @Published private(set) var olderError: String?
     private var nextBefore: String?
+    /// The page on screen is the last run's for this range and filters, from disk; the fresh one is loading.
+    @Published private(set) var showingCache = false
+    /// Events the last refresh of the same page added or changed; they flash once.
+    @Published private(set) var changed = Set<String>()
+    /// The cache key of the page on screen: a refresh of the same page flashes, another page does not.
+    private var shownKey: String?
+    private static let cache = HubSWR.cache("timeline")
 
     /// The sidebar's project filter; nil = every project.
     @Published var project: String? = HubDefaults.store.string(forKey: "hub.timeline.project") {
@@ -328,7 +335,8 @@ final class HubTimelineModel: ObservableObject {
         if let before { args += ["--before", before] }
         if author != .all { args += ["--author", author.rawValue] }
         if needsMe { args.append("--needs-me") }
-        if fresh { args.append("--fresh") }
+        // The CLI caps it at 1 min for the live page, 10 min for an older one and 5 min for the PR list.
+        args += fresh ? ["--fresh"] : ["--max-cache-age", "600"]
         return args
     }
 
@@ -353,25 +361,40 @@ final class HubTimelineModel: ObservableObject {
         error = nil
         let interval = interval
         let args = Self.arguments(interval: interval, before: nil, limit: Self.pageSize, author: author, needsMe: needsMe, fresh: fresh)
+        // The range by name, not its instants: "last 24 hours" moves with the clock and stays one page.
+        let custom = range == .custom ? "\(customFrom.timeIntervalSince1970)-\(customTo.timeIntervalSince1970)" : ""
+        let key = "\(range.rawValue)|\(custom)|\(author.rawValue)|\(needsMe)"
+        let paintCache = key != shownKey
+        let cache = Self.cache
         DispatchQueue.global(qos: .userInitiated).async {
             let span = HubPerf.begin("timeline.load", "\(fresh ? "fresh " : "")\(args.dropFirst(3).joined(separator: " "))")
-            let result = Result { try JSONDecoder().decode(TimelineEnvelope.self, from: ToolsCLIRunner.run(args)) }
+            if paintCache, let cached = cache.read(TimelineEnvelope.self, key: key) {
+                DispatchQueue.main.async { [weak self] in
+                    MainActor.assumeIsolated {
+                        guard let self, self.generation == mine, self.loading else { return }
+                        HubSWR.painted("timeline.load", "\(cached.events.count) events")
+                        self.showingCache = true
+                        self.apply(cached, key: key, interval: interval)
+                    }
+                }
+            }
+            let result = Result { () -> TimelineEnvelope in
+                let data = try ToolsCLIRunner.run(args)
+                let envelope = try JSONDecoder().decode(TimelineEnvelope.self, from: data)
+                cache.writeData(data, key: key)
+                return envelope
+            }
             span.end((try? result.get()).map { "\($0.events.count) events, tools \($0.elapsedMs) ms\($0.cached ? " cached" : "")" } ?? "failed")
             DispatchQueue.main.async { [weak self] in
                 MainActor.assumeIsolated {
                     guard let self, self.generation == mine else { return }
                     self.loading = false
+                    self.showingCache = false
                     switch result {
                     case .success(let envelope):
                         // A range or filter reload redraws the list when its page lands.
                         HubMainBusy.measure("timeline.page.render")
-                        self.events = envelope.events
-                        self.warnings = envelope.warnings
-                        self.truncated = envelope.truncated ?? []
-                        self.since = HubFormat.date(envelope.since) ?? interval.start
-                        self.until = HubFormat.date(envelope.until) ?? interval.end
-                        self.hasMore = envelope.hasMore ?? false
-                        self.nextBefore = envelope.nextBefore
+                        self.apply(envelope, key: key, interval: interval)
                         self.error = nil
                         self.loadedAt = Date()
                         // The next run's "since my last visit" starts at the last look of this one.
@@ -386,6 +409,28 @@ final class HubTimelineModel: ObservableObject {
                 }
             }
         }
+    }
+
+    /// Shows one first page, sliding new rows in. A refresh of the page on screen flashes the rows
+    /// it added or changed; another range or filter does not.
+    private func apply(_ envelope: TimelineEnvelope, key: String, interval: DateInterval) {
+        let samePage = shownKey == key
+        shownKey = key
+        let before = samePage ? Dictionary(events.map { ($0.id, "\($0.hashValue)") }, uniquingKeysWith: { first, _ in first }) : [:]
+        let moved = SWR.changed(before: before, after: envelope.events.map { ($0.id, "\($0.hashValue)") })
+        withAnimation(SWR.animation) {
+            if events != envelope.events {
+                events = envelope.events
+            }
+            changed = moved
+        }
+        warnings = envelope.warnings
+        truncated = envelope.truncated ?? []
+        since = HubFormat.date(envelope.since) ?? interval.start
+        until = HubFormat.date(envelope.until) ?? interval.end
+        hasMore = envelope.hasMore ?? false
+        nextBefore = envelope.nextBefore
+        SWR.fade(moved, current: { [weak self] in self?.changed }, clear: { [weak self] in self?.changed = [] })
     }
 
     /// The next older page of the same range; rows already shown (a boundary shared by two pages) are skipped.
@@ -452,7 +497,8 @@ final class HubTimelineModel: ObservableObject {
         let interval = interval
         args += ["--since", HubFormat.iso.string(from: interval.start), "--until", HubFormat.iso.string(from: interval.end)]
         if let file { args += ["--file", file] }
-        if fresh { args.append("--fresh") }
+        // The CLI caps it per kind: a commit or push for a day, a session, PR or CI row for a minute.
+        args += fresh ? ["--fresh"] : ["--max-cache-age", "86400"]
         return args
     }
 
@@ -1057,8 +1103,10 @@ struct TimelineMain: View {
                                         projectPicked: event.project != nil && timeline.project == event.project,
                                         forge: event.repo.flatMap { repos.facts(for: $0)?.forge }
                                     )
+                                    .swrFlash(timeline.changed.contains(event.id), cornerRadius: 6)
                                     .findRow(event.id)
                                         .padding(.horizontal, 10)
+                                        .transition(SWR.rowTransition)
                                 }
                             }
                         } header: {
@@ -1184,7 +1232,7 @@ struct TimelineMain: View {
                         .instantTooltip(timeline.warnings.joined(separator: "\n"))
                 }
                 if timeline.loading {
-                    ProgressView().controlSize(.small)
+                    RefreshingMark(showingCache: timeline.showingCache, what: "activity")
                 } else if let loadedAt = timeline.loadedAt {
                     LiveAgo(date: loadedAt) { "read \($0)" }
                         .font(.system(size: 11))

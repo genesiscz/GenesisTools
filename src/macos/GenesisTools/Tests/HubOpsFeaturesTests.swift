@@ -135,13 +135,23 @@ final class HubOpsFeaturesTests: XCTestCase {
         XCTAssertEqual(outcomes.count, 2)
         XCTAssertNil(outcomes[1].readiness)
         let readiness = try XCTUnwrap(outcomes[0].readiness)
-        XCTAssertEqual(readiness.tooltip, """
-        blocked: 3 unresolved threads (bot-b ×2, bot-a ×1) (+1 more)
-        also: CI is still running
-        re-review due from bot-a
-        1 outdated thread still unresolved (not blocking)
-        """)
+        XCTAssertEqual(readiness.tooltip, TooltipContent(title: "Blocked", bullets: [
+            "3 unresolved threads (bot-b ×2, bot-a ×1)",
+            "CI is still running",
+            "Re-review due from bot-a",
+            "1 outdated thread still unresolved (not blocking)",
+        ]))
         XCTAssertEqual(PRReadinessBadge.look(readiness).2, "3 open")
+    }
+
+    /// The PR row's meta line: the author is whole, then truncated to at least 48 pt, then hidden with its dot.
+    func testMetaLineAuthorGivesWayFirst() {
+        let ideal: [CGFloat] = [40, 80, 4, 30, 50]
+        // label 40 + author 80 + dot 4 + age 30 + three 5 pt gaps + 4 pt badge gap + badges 50 = 223.
+        XCTAssertEqual(PRMetaLineLayout.widths(ideal: ideal, width: 230), ideal)
+        XCTAssertEqual(PRMetaLineLayout.widths(ideal: ideal, width: 200), [40, 57, 4, 30, 50])
+        XCTAssertEqual(PRMetaLineLayout.widths(ideal: ideal, width: 180), [40, 0, 0, 30, 50])
+        XCTAssertEqual(PRMetaLineLayout.widths(ideal: [40, 0, 4, 30, 50], width: 400), [40, 0, 0, 30, 50])
     }
 
     func testReadinessAsksForOpenPRsOnlyWithTheirKnownHead() throws {

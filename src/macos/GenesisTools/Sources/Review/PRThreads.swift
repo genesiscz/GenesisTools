@@ -1,4 +1,5 @@
 import Foundation
+import SwiftUI
 
 // The review window's side of `tools hub pr` (src/hub/lib/pr/*): the PR/MR's live review threads,
 // and every write the window makes to them. Swift only builds argv and reads JSON; the host rules
@@ -56,7 +57,7 @@ enum PRReviewEvent: String, CaseIterable, Identifiable {
 /// caller is `PRThreadsStore.submitReview`, reached only from the Submit review confirmation.
 enum PRCommand {
     static func threads(_ target: PRTarget, noCache: Bool = false) -> [String] {
-        ["hub", "pr", "threads"] + target.argv + ["--json"] + (noCache ? ["--no-cache"] : [])
+        ["hub", "pr", "threads"] + target.argv + ["--json"] + (noCache ? ["--no-cache"] : ["--max-cache-age", "30"])
     }
 
     /// A reply in an existing thread: a draft in the pending review, or published at once.
@@ -317,6 +318,15 @@ enum PRThreadRendering {
         }
     }
 
+    /// A card without Reply and Resolve, for threads read from the disk cache.
+    static func readOnly(_ comment: RenderedComment) -> RenderedComment {
+        guard comment.live != nil else { return comment }
+        var copy = comment
+        copy.live?.canReply = false
+        copy.live?.resolvable = false
+        return copy
+    }
+
     static func ago(_ iso: String, now: Date = Date()) -> String {
         guard let date = HubFormat.date(iso) else { return iso }
         return HubFormat.relative.localizedString(for: date, relativeTo: now)
@@ -328,12 +338,18 @@ enum PRThreadRendering {
 /// The live review threads of one PR/MR, loaded off the main thread. It loads when the window
 /// shows it, after every write, and when the app becomes active again more than 30 s after the
 /// last load (the CLI keeps its own 30 s cache, and a write drops it). No timer.
+/// The first load paints the last answer from disk (`ReviewCache.threads`) while it asks the host.
 final class PRThreadsStore: ObservableObject {
     static let staleAfter: TimeInterval = 30
 
     let target: PRTarget
     @Published private(set) var payload: PRThreadsPayload?
     @Published private(set) var loading = false
+    /// The threads on screen came from the disk cache and the host has not answered yet. 🛑 Every write
+    /// waits for the fresh answer: a stale thread id or state must never reach the host.
+    @Published private(set) var stale = false
+    /// Threads that are new or whose notes or state moved in the last refresh; they flash once.
+    @Published private(set) var changed: Set<String> = []
     /// A write in flight ("Resolving…"); the thread buttons wait for it.
     @Published private(set) var busy: String?
     @Published var notice: String?
@@ -353,6 +369,8 @@ final class PRThreadsStore: ObservableObject {
     var label: String { payload?.pr.identity.label ?? "the PR" }
     /// Loaded at least once, or failed: a `--snapshot` waits for this before it captures.
     var settled: Bool { !loading && (payload != nil || error != nil) }
+    /// Submit review, Fix and every thread write: only on the host's fresh answer.
+    var canWrite: Bool { payload != nil && !stale }
 
     func load(noCache: Bool = false) {
         if loading {
@@ -363,9 +381,27 @@ final class PRThreadsStore: ObservableObject {
 
         loading = true
         let args = PRCommand.threads(target, noCache: noCache)
+        let cacheKey = ReviewCache.threadsKey(target)
+        let seed = payload == nil
         DispatchQueue.global(qos: .userInitiated).async {
+            let cached = seed ? HubPerf.measure("pr.threads.cache") { Self.cached(cacheKey) } : nil
+            if let cached {
+                // Queued before the fresh answer below, so it can never land after it.
+                DispatchQueue.main.async { [weak self] in
+                    guard let self, self.payload == nil else { return }
+                    HubPerf.log("pr.threads paint cached \(cached.threads.count) threads")
+                    self.stale = true
+                    self.payload = cached
+                    self.onChange?()
+                }
+            }
             let span = HubPerf.begin("pr.threads", args.suffix(from: 3).joined(separator: " "))
-            let result = Result { try JSONDecoder().decode(PRThreadsPayload.self, from: PRCLI.run(args)) }
+            let result = Result { () -> PRThreadsPayload in
+                let data = try PRCLI.run(args)
+                let payload = try JSONDecoder().decode(PRThreadsPayload.self, from: data)
+                ReviewCache.threads.writeData(data, key: cacheKey)
+                return payload
+            }
             if case .success(let payload) = result {
                 span.end("\(payload.threads.count) threads\(payload.cached == true ? " cached" : "")")
             } else {
@@ -378,8 +414,13 @@ final class PRThreadsStore: ObservableObject {
                 switch result {
                 case .success(let payload):
                     self.error = nil
+                    let wasStale = self.stale
+                    self.stale = false
                     if payload != self.payload {
-                        self.payload = payload
+                        self.show(payload)
+                        self.onChange?()
+                    } else if wasStale {
+                        // The same threads: the diff's cards get their buttons back.
                         self.onChange?()
                     }
                 case .failure(let failure):
@@ -393,6 +434,31 @@ final class PRThreadsStore: ObservableObject {
                     self.load(noCache: noCache)
                 }
             }
+        }
+    }
+
+    private static func cached(_ key: String) -> PRThreadsPayload? {
+        guard let data = ReviewCache.threads.readData(key: key) else { return nil }
+        do {
+            return try JSONDecoder().decode(PRThreadsPayload.self, from: data)
+        } catch {
+            HubPerf.log("pr.threads cache unreadable, ignored: \(error)")
+            return nil
+        }
+    }
+
+    /// Shows a fresh answer, animating threads in and out; the ones that moved flash once.
+    private func show(_ next: PRThreadsPayload) {
+        let before = Dictionary((payload?.threads ?? []).map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        let moved: Set<String> = before.isEmpty ? [] : Set(next.threads.filter { before[$0.id] != $0 }.map(\.id))
+        withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+            payload = next
+            changed = moved
+        }
+        guard !moved.isEmpty else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.6) { [weak self] in
+            guard let self, self.changed == moved else { return }
+            withAnimation(.easeOut(duration: 0.6)) { self.changed = [] }
         }
     }
 
@@ -483,6 +549,12 @@ final class PRThreadsStore: ObservableObject {
     /// Runs one write off the main thread with the text in a temp file, then reloads the threads
     /// (the write dropped the CLI's cache). `then` runs on the main thread.
     func write(_ status: String, body: String?, args: @escaping (String) -> [String], then: @escaping (Result<Data, Error>) -> Void) {
+        if stale {
+            // The threads on screen are the disk cache's: wait for the host's answer before any write.
+            then(.failure(PRThreadsStale()))
+            return
+        }
+
         if let busy {
             // One write at a time: a second click on a draft reply would save it twice, and the
             // first write to end would clear the status of the one still running.
@@ -521,6 +593,10 @@ final class PRThreadsStore: ObservableObject {
             }
         }
     }
+}
+
+private struct PRThreadsStale: Error, CustomStringConvertible {
+    var description: String { "the threads are still refreshing from the host; try again when they are in." }
 }
 
 private struct PRWriteBusy: Error, CustomStringConvertible {

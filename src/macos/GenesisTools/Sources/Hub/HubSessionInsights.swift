@@ -115,7 +115,25 @@ enum HubInsights {
 
     /// Blocking (a `tools` run; a cache hit is ~0.4 s, a large session's first run a few seconds): off the main thread.
     static func load(sessionId: String) throws -> SessionInsightsPayload {
-        try decode(ToolsCLIRunner.run(["hub", "insights", sessionId, "--json"]))
+        // The cache key names the transcript's size and mtime, so a week-old entry is still exact.
+        let data = try ToolsCLIRunner.run(["hub", "insights", sessionId, "--json", "--max-cache-age", "604800"])
+        let payload = try decode(data)
+        cache.writeData(data, key: sessionId)
+        return payload
+    }
+
+    /// The session's last answer, kept by `load` (Hub/HubSWR.swift): shown while the fresh one loads.
+    static let cache = HubSWR.cache("insights")
+
+    /// Blocking (a file read): off the main thread.
+    static func cached(sessionId: String) -> SessionInsightsPayload? {
+        guard let data = cache.readData(key: sessionId) else { return nil }
+        do {
+            return try decode(data)
+        } catch {
+            HubPerf.log("insights cache unreadable, ignored: \(error)")
+            return nil
+        }
     }
 }
 
@@ -131,6 +149,8 @@ final class SessionInsightsModel: ObservableObject {
     @Published private(set) var payload: SessionInsightsPayload?
     @Published private(set) var error: String?
     @Published private(set) var loading = false
+    /// The payload on screen is the last run's, from disk, and the fresh one is still loading.
+    @Published private(set) var showingCache = false
 
     static let minInterval: TimeInterval = 90
     private var sessionId = ""
@@ -177,18 +197,26 @@ final class SessionInsightsModel: ObservableObject {
         loading = true
         lastLoad = Date()
         let span = HubPerf.begin("insights.load", String(id.prefix(8)), awaits: true)
-        let result = await Task.detached(priority: .utility) { Result { try HubInsights.load(sessionId: id) } }.value
+        let fetch = Task.detached(priority: .utility) { Result { try HubInsights.load(sessionId: id) } }
+        if payload == nil, let cached = await Task.detached(priority: .userInitiated, operation: { HubInsights.cached(sessionId: id) }).value,
+           id == sessionId, payload == nil, loading {
+            HubSWR.painted("insights.load", "\(cached.turns.count) prompts")
+            showingCache = true
+            withAnimation(SWR.animation) { payload = cached }
+        }
+        let result = await fetch.value
         guard id == sessionId else {
             span.end("superseded")
             return
         }
 
         loading = false
+        showingCache = false
         switch result {
         case .success(let fresh):
             span.end("\(fresh.turns.count) prompts, \(fresh.tools.count) tools")
             if payload != fresh {
-                payload = fresh
+                withAnimation(SWR.animation) { payload = fresh }
             }
             error = nil
             HubStuckStore.shared.apply(fresh.stuck, sessionId: id)
@@ -338,6 +366,12 @@ struct SessionInsightsSection: View {
                 thresholds: model.payload?.thresholds,
                 onCompose: { composer = HandoffComposerRequest(session: session, prompts: model.payload?.prompts ?? [], from: nil) }
             )
+        }
+        // The last run's analytics show at once; the mark says the current ones are on their way.
+        .overlay(alignment: .topTrailing) {
+            if model.showingCache {
+                RefreshingMark(showingCache: true, what: "cost and tool analytics", size: .mini)
+            }
         }
         .task(id: session.sessionId) { await model.open(session.sessionId) }
         .onChange(of: turnCount) { model.grew() }

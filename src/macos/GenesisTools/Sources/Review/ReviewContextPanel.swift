@@ -178,20 +178,36 @@ private struct ReviewSessionTranscript: View {
             }
         }
         .task(id: sessionId) {
-            let span = HubPerf.begin("review.context.session", sessionId, awaits: true)
+            // Another session id never shows the previous session's transcript while this one loads.
+            let id = sessionId
             session = nil
             unresolved = nil
+            // The row found last time paints at once (ReviewCache.sessions); the list scan below still runs.
+            if let cached = await Task.detached(priority: .userInitiated, operation: {
+                ReviewCache.sessions.read(HubSession.self, key: id)
+            }).value {
+                HubPerf.log("review.context.session paint cached \(id)")
+                session = cached
+            }
+            let span = HubPerf.begin("review.context.session", id, awaits: true)
             do {
                 let rows = try await HubSource.sessions(hours: 24 * 14)
                 span.end()
-                session = rows.first { $0.sessionId == sessionId }
-                if session == nil {
-                    unresolved = "Session \(sessionId.prefix(8)) is not among the last 14 days of sessions, so its transcript cannot open here."
+                if let found = rows.first(where: { $0.sessionId == id }) {
+                    Task.detached(priority: .utility) { ReviewCache.sessions.write(found, key: id) }
+                    if found != session {
+                        session = found
+                    }
+                } else {
+                    session = nil
+                    unresolved = "Session \(id.prefix(8)) is not among the last 14 days of sessions, so its transcript cannot open here."
                 }
             } catch {
                 span.end()
                 HubPerf.log("review.context.session list failed: \(error)")
-                unresolved = "The session list did not load: \(error.localizedDescription)"
+                if session == nil {
+                    unresolved = "The session list did not load: \(error.localizedDescription)"
+                }
             }
         }
     }

@@ -96,10 +96,39 @@ final class SettingsModel: ObservableObject {
         }
     }
 
+    /// The bundle's signature, read once per bundle build: `codesign` runs off the main thread (its
+    /// `waitUntilExit` spun the main run loop from `onAppear`), and the answer is kept for the bundle's
+    /// executable as it is on disk now, since only a rebuild changes it.
+    private static var signatureCache: (stamp: String, signature: String, teamId: String)?
+    private static let signatureLock = NSLock()
+
     private func readSignature() {
+        let bundle = Bundle.main.bundlePath
+        let executable = Bundle.main.executablePath ?? bundle
+        DispatchQueue.global(qos: .userInitiated).async {
+            let modified = (try? FileManager.default.attributesOfItem(atPath: executable))?[.modificationDate] as? Date
+            let stamp = "\(executable)|\(modified?.timeIntervalSince1970 ?? 0)"
+            Self.signatureLock.lock()
+            let known = Self.signatureCache.flatMap { $0.stamp == stamp ? $0 : nil }
+            Self.signatureLock.unlock()
+            let read = known.map { ($0.signature, $0.teamId) } ?? HubPerf.measure("settings.codesign") { Self.codesign(bundle) }
+            if known == nil {
+                Self.signatureLock.lock()
+                Self.signatureCache = (stamp, read.0, read.1)
+                Self.signatureLock.unlock()
+            }
+            DispatchQueue.main.async {
+                self.signature = read.0
+                self.teamId = read.1
+            }
+        }
+    }
+
+    /// Blocking: call it off the main thread only.
+    private static func codesign(_ bundle: String) -> (signature: String, teamId: String) {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/codesign")
-        process.arguments = ["-dvv", Bundle.main.bundlePath]
+        process.arguments = ["-dvv", bundle]
         let pipe = Pipe()
         process.standardError = pipe
         process.standardOutput = FileHandle.nullDevice
@@ -110,10 +139,9 @@ final class SettingsModel: ObservableObject {
             let text = String(decoding: data, as: UTF8.self)
             let authority = text.split(separator: "\n").first { $0.hasPrefix("Authority=") }.map { String($0.dropFirst("Authority=".count)) }
             let team = text.split(separator: "\n").first { $0.hasPrefix("TeamIdentifier=") }.map { String($0.dropFirst("TeamIdentifier=".count)) }
-            signature = authority ?? (text.contains("Signature=adhoc") ? "ad-hoc (grants die on rebuild)" : "unsigned")
-            teamId = team == "not set" ? "" : (team ?? "")
+            return (authority ?? (text.contains("Signature=adhoc") ? "ad-hoc (grants die on rebuild)" : "unsigned"), team == "not set" ? "" : (team ?? ""))
         } catch {
-            signature = "codesign failed: \(error.localizedDescription)"
+            return ("codesign failed: \(error.localizedDescription)", "")
         }
     }
 }

@@ -180,7 +180,7 @@ final class HubTimelineTests: XCTestCase {
     func testPageArgumentsCarryTheRangeCursorAndFilters() {
         let interval = DateInterval(start: date("2026-03-02T00:00:00Z"), end: date("2026-03-02T14:00:00Z"))
         let live = HubTimelineModel.arguments(interval: interval, before: nil, limit: 200, author: .all, needsMe: false, fresh: false)
-        XCTAssertEqual(live, ["hub", "timeline", "--json", "--since", "2026-03-02T00:00:00.000Z", "--until", "2026-03-02T14:00:00.000Z", "--limit", "200"])
+        XCTAssertEqual(live, ["hub", "timeline", "--json", "--since", "2026-03-02T00:00:00.000Z", "--until", "2026-03-02T14:00:00.000Z", "--limit", "200", "--max-cache-age", "600"])
 
         let older = HubTimelineModel.arguments(interval: interval, before: "2026-03-02T10:00:00.000Z", limit: 200, author: .me, needsMe: true, fresh: true)
         XCTAssertEqual(older.suffix(6), ["--before", "2026-03-02T10:00:00.000Z", "--author", "me", "--needs-me", "--fresh"])

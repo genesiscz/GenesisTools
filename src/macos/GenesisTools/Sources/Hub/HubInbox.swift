@@ -364,10 +364,16 @@ final class HubInboxModel: ObservableObject {
     @Published private(set) var queueHookOn = false
     /// Bumped after every draft, dismiss or send has written the store: the Decisions pane reloads on it.
     @Published private(set) var writeGeneration = 0
-    /// `--inbox-resume <id>` / `--inbox-info <id>`: opened once the list has loaded, then cleared.
+    /// The card a `--decision` / `--question` launch asked for (a banner click): outlined and scrolled to.
+    @Published var focusedItemID: String?
+    /// Bumped per reveal, so a second click on the same banner scrolls back to the card.
+    @Published private(set) var focusRequest = 0
+    /// `--inbox-resume <id>` / `--inbox-info <id>` / `--decision <id>` / `--question <id>`: opened once the
+    /// list has loaded, then cleared.
     enum Reveal {
         case resume(String)
         case info(String)
+        case item(String)
     }
     var reveal: Reveal?
     /// Called once after the next load (a snapshot run waits for it).
@@ -449,6 +455,16 @@ final class HubInboxModel: ObservableObject {
                 infoFor = session.sessionId
                 self.reveal = nil
             }
+        case .item(let id):
+            // Once per load: a card already answered is not listed, and must not jump the list later.
+            self.reveal = nil
+            guard let session = sessions.first(where: { $0.items.contains { $0.id == id } }) else {
+                HubPerf.log("inbox.reveal: \(id) is not waiting in the Inbox")
+                return
+            }
+            selectedID = session.id
+            focusedItemID = id
+            focusRequest += 1
         }
     }
 
@@ -920,6 +936,14 @@ struct InboxMain: View {
                     guard let id else { return }
                     withAnimation(.easeInOut(duration: 0.25)) { proxy.scrollTo(id, anchor: .top) }
                 }
+                .onChange(of: inbox.focusRequest) { _, _ in
+                    guard let id = inbox.focusedItemID else { return }
+                    // The section first, so the lazy stack builds the card; then the card itself.
+                    if let session = inbox.selectedID { proxy.scrollTo(session, anchor: .top) }
+                    DispatchQueue.main.async {
+                        withAnimation(.easeInOut(duration: 0.25)) { proxy.scrollTo(id, anchor: .top) }
+                    }
+                }
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -993,11 +1017,20 @@ private struct InboxSessionSection: View {
             header
                 .findRow("session:\(session.id)")
             ForEach(session.items) { item in
-                if item.isForm {
-                    InboxFormCard(inbox: inbox, item: item)
-                } else {
-                    InboxDecisionCard(model: model, inbox: inbox, session: session, item: item)
+                Group {
+                    if item.isForm {
+                        InboxFormCard(inbox: inbox, item: item)
+                    } else {
+                        InboxDecisionCard(model: model, inbox: inbox, session: session, item: item)
+                    }
                 }
+                .overlay(
+                    RoundedRectangle(cornerRadius: 11)
+                        .stroke(InboxStyle.accent, lineWidth: 2)
+                        .opacity(inbox.focusedItemID == item.id ? 1 : 0)
+                        .allowsHitTesting(false)
+                )
+                .id(item.id)
             }
             InboxSendBar(model: model, inbox: inbox, session: session)
         }

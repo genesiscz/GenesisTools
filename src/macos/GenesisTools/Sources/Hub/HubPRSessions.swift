@@ -57,27 +57,46 @@ final class PRSessionsStore: ObservableObject {
         if let first = dates.min() {
             args += ["--since", HubFormat.isoPlain.string(from: first)]
         }
-        if fresh {
-            args.append("--no-cache")
-        }
+        args += fresh ? ["--no-cache"] : ["--max-cache-age", "60"]
         return args
     }
 
+    /// When each PR's matches last arrived fresh in this run; the ones on screen may be the last run's.
+    private var fetchedAt: [String: Date] = [:]
+    /// The last answer per PR (Hub/HubSWR.swift): it shows while the fresh search runs.
+    private static let cache = HubSWR.cache("pr-sessions")
+
+    /// Opening a PR shows its last known matches and asks again, at most once a minute.
     func load(_ pr: HubPR, detail: HubPRDetail?, fresh: Bool = false) {
         let key = pr.id
-        guard !loading.contains(key), fresh || results[key] == nil,
+        let recent = fetchedAt[key].map { Date().timeIntervalSince($0) < 60 } ?? false
+        guard !loading.contains(key), fresh || !recent,
               let args = Self.arguments(pr, detail: detail, fresh: fresh) else { return }
         loading.insert(key)
+        let cache = Self.cache
         Task {
             let span = HubPerf.begin("prs.sessions", key, awaits: true)
-            let result = await Task.detached(priority: .utility) { () -> Result<HubPRSessions, Error> in
-                Result { try JSONDecoder().decode(HubPRSessions.self, from: ToolsCLIRunner.run(args)) }
-            }.value
+            let fetch = Task.detached(priority: .utility) { () -> Result<HubPRSessions, Error> in
+                Result {
+                    let data = try ToolsCLIRunner.run(args)
+                    let found = try JSONDecoder().decode(HubPRSessions.self, from: data)
+                    cache.writeData(data, key: key)
+                    return found
+                }
+            }
+            if results[key] == nil, let cached = await cache.load(HubPRSessions.self, key: key), results[key] == nil {
+                HubSWR.painted("prs.sessions", "\(cached.sessions.count) sessions")
+                withAnimation(SWR.animation) { results[key] = cached }
+            }
+            let result = await fetch.value
             loading.remove(key)
             switch result {
             case .success(let found):
                 span.end("\(found.sessions.count) sessions\(found.cached == true ? " cached" : "") \(found.elapsedMs ?? 0) ms")
-                results[key] = found
+                fetchedAt[key] = Date()
+                if results[key] != found {
+                    withAnimation(SWR.animation) { results[key] = found }
+                }
                 errors[key] = nil
             case .failure(let error):
                 span.end("failed")

@@ -8,8 +8,8 @@ import SwiftUI
 // 10 minutes old) without calling the forge, so a reload costs one `tools` process, not a GraphQL
 // query per PR.
 
-struct PRReadiness: Decodable, Equatable {
-    struct AuthorCount: Decodable, Equatable {
+struct PRReadiness: Codable, Equatable {
+    struct AuthorCount: Codable, Equatable {
         let author: String
         let count: Int
     }
@@ -34,17 +34,29 @@ struct PRReadiness: Decodable, Equatable {
     let fetchedAt: String
     let cached: Bool
 
-    /// The badge's tooltip: the verdict line, every other reason, and who still owes a re-review.
-    var tooltip: String {
-        var lines = [summary]
-        lines += reasons.dropFirst().map { "also: \($0)" }
+    /// The badge's tooltip: the verdict as its title, then every reason and who still owes a re-review
+    /// as bullets. A ready PR has no reasons; its summary's facts ("CI green, no open threads") stand in.
+    var tooltip: TooltipContent {
+        let title: String
+        var bullets = reasons
+        switch verdict {
+        case "ready":
+            title = "Ready to merge"
+            if bullets.isEmpty, let facts = summary.split(separator: ":", maxSplits: 1).dropFirst().first {
+                bullets = facts.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
+            }
+        case "closed":
+            title = "Closed"
+        default:
+            title = verdict.prefix(1).uppercased() + verdict.dropFirst()
+        }
         if !staleReviewers.isEmpty {
-            lines.append("re-review due from \(staleReviewers.joined(separator: ", "))")
+            bullets.append("re-review due from \(staleReviewers.joined(separator: ", "))")
         }
         if outdatedUnresolved > 0 {
-            lines.append("\(outdatedUnresolved) outdated thread\(outdatedUnresolved == 1 ? "" : "s") still unresolved (not blocking)")
+            bullets.append("\(outdatedUnresolved) outdated thread\(outdatedUnresolved == 1 ? "" : "s") still unresolved (not blocking)")
         }
-        return lines.joined(separator: "\n")
+        return TooltipContent(title: title, bullets: bullets.map { $0.prefix(1).uppercased() + $0.dropFirst() })
     }
 }
 
@@ -74,6 +86,7 @@ final class PRReadinessStore: ObservableObject {
     @Published private(set) var byURL: [String: PRReadiness] = [:]
     @Published private(set) var loading = false
     private var pending: [HubPR]?
+    nonisolated private static let cache = HubSWR.cache("pr-readiness")
 
     func readiness(for pr: HubPR) -> PRReadiness? {
         guard let found = byURL[pr.url] else { return nil }
@@ -93,6 +106,16 @@ final class PRReadinessStore: ObservableObject {
 
         loading = true
         Task {
+            // The last known verdicts paint first (Hub/HubSWR.swift); `readiness(for:)` still drops
+            // one whose head is not the PR's head now.
+            if byURL.isEmpty, let cached = await Self.cache.load([String: PRReadiness].self, key: "all"), byURL.isEmpty {
+                HubSWR.painted("prs.readiness", "\(cached.count) prs")
+                withAnimation(SWR.animation) { byURL = cached }
+            }
+            defer {
+                let snapshot = byURL
+                Task.detached(priority: .utility) { Self.cache.write(snapshot, key: "all") }
+            }
             var index = 0
             while index < inputs.count {
                 let batch = Array(inputs[index..<min(index + PRReadinessQuery.batch, inputs.count)])
@@ -101,7 +124,7 @@ final class PRReadinessStore: ObservableObject {
                 let result = await Task.detached(priority: .utility) { () -> Result<[PRReadinessOutcome], Error> in
                     Result {
                         // Exit 1 means "some failed"; each outcome carries its own error.
-                        let capture = try ToolsCLIRunner.capture(["hub", "pr", "readiness"] + batch + ["--json"], timeout: 120)
+                        let capture = try ToolsCLIRunner.capture(["hub", "pr", "readiness"] + batch + ["--json", "--max-cache-age", "600"], timeout: 120)
                         return try JSONDecoder().decode([PRReadinessOutcome].self, from: capture.stdout)
                     }
                 }.value

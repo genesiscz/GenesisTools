@@ -40,6 +40,20 @@ enum HubSource {
     }
 }
 
+/// The last `tools ai usage sessions` list (Hub/HubSWR.swift): the hub paints it at launch, marked
+/// as refreshing, while the fresh list loads.
+enum HubSessionListCache {
+    private static let cache = HubSWR.cache("sessions")
+
+    static func read(hours: Int) async -> [HubSession]? {
+        await cache.load([HubSession].self, key: "hours=\(hours)")
+    }
+
+    static func write(_ rows: [HubSession], hours: Int) {
+        Task.detached(priority: .utility) { cache.write(rows, key: "hours=\(hours)") }
+    }
+}
+
 enum HubFormat {
     static let iso: ISO8601DateFormatter = {
         let formatter = ISO8601DateFormatter()

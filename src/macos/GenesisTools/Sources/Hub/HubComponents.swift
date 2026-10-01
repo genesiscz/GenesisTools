@@ -109,15 +109,15 @@ struct ExternalLink: View {
 /// What `tools hub repo --json` says about a folder: checkout, branch, origin web pages, PR/MR.
 /// The TypeScript side owns remote parsing and host rules (src/review/lib/repo.ts,
 /// src/utils/git/origins/web.ts); Swift only reads the result.
-struct RepoFacts: Decodable, Equatable {
-    struct Origin: Decodable, Equatable {
+struct RepoFacts: Codable, Equatable {
+    struct Origin: Codable, Equatable {
         let url: String
         let host: String?
         let kind: String?
         let web: String?
     }
 
-    struct PullRequest: Decodable, Equatable {
+    struct PullRequest: Codable, Equatable {
         let number: Int
         let state: String
         let target: String
@@ -157,7 +157,8 @@ struct RepoFacts: Decodable, Equatable {
         let span = HubPerf.begin("repoFacts", "\(paths.count) paths pr=\(pr)")
         defer { span.end() }
         do {
-            let data = try ToolsCLIRunner.run(["hub", "repo"] + paths + (pr ? ["--pr"] : []))
+            // The CLI answers fresh by default; the PR lookup cache's own TTL (tools hub config) still caps a day.
+            let data = try ToolsCLIRunner.run(["hub", "repo"] + paths + (pr ? ["--pr", "--max-cache-age", "86400"] : []))
             return try JSONDecoder().decode([RepoFacts].self, from: data)
         } catch {
             HubPerf.log("repoFacts failed: \(error)")
@@ -170,6 +171,8 @@ struct RepoFacts: Decodable, Equatable {
 /// unknown folder is queued and fetched in one batch on a background queue, never in the body:
 /// a `Process.waitUntilExit()` inside a body spins the main run loop, AppKit lays out inside the
 /// body being computed, and that re-entry corrupted SwiftUI's StackLayout (hub crash 2026-09-24).
+/// The last facts of every folder stay on disk (Hub/HubSWR.swift): links paint at launch from
+/// them, and each folder is still fetched once per run.
 @MainActor
 final class RepoFactsStore: ObservableObject {
     static let shared = RepoFactsStore()
@@ -180,6 +183,29 @@ final class RepoFactsStore: ObservableObject {
     private var queue: [String] = []
     private var queuePR: [String] = []
     private var flushScheduled = false
+    private static let cache = HubSWR.cache("repo-facts")
+    private static let cacheKey = "all"
+    /// Folders whose facts on screen came from a fetch of this run, not the disk.
+    private var fresh = Set<String>()
+    private var saveScheduled = false
+
+    init() {
+        Task { [weak self] in
+            let span = HubPerf.begin("repoFacts.cache", awaits: true)
+            let cached = await Self.cache.load([String: RepoFacts].self, key: Self.cacheKey) ?? [:]
+            span.end("\(cached.count) folders")
+            guard let self, !cached.isEmpty else { return }
+            // A fetch that landed first wins; the cache only fills the folders still unknown.
+            var merged = self.byPath
+            for (path, facts) in cached where merged[path] == nil {
+                merged[path] = facts
+            }
+            if merged != self.byPath {
+                self.byPath = merged
+                HubSWR.painted("repoFacts", "\(cached.count) folders")
+            }
+        }
+    }
 
     /// The cached facts, or nil until the batch that fetches them lands. `pr` adds the PR/MR lookup (gh / glab).
     func facts(for path: String, pr: Bool = false) -> RepoFacts? {
@@ -222,13 +248,40 @@ final class RepoFactsStore: ObservableObject {
                 DispatchQueue.main.async { [weak self] in
                     guard let self else { return }
                     for facts in found {
-                        // A plain batch must not drop a PR the slower batch already stored.
-                        if !pr, let old = self.byPath[facts.path], old.pr != nil {
+                        // A plain batch must not drop a PR the slower batch stored, or will store: a
+                        // cached PR stays on screen until the --pr answer replaces it.
+                        if !pr, let old = self.byPath[facts.path], old.pr != nil,
+                           self.fresh.contains(facts.path) || self.requestedPR.contains(facts.path) {
                             continue
                         }
-                        self.byPath[facts.path] = facts
+                        self.fresh.insert(facts.path)
+                        if self.byPath[facts.path] != facts {
+                            self.byPath[facts.path] = facts
+                        }
+                    }
+                    if !found.isEmpty {
+                        self.scheduleSave()
                     }
                 }
+            }
+        }
+    }
+
+    /// Writes the fresh facts once per burst of batches, off the main thread.
+    private func scheduleSave() {
+        guard !saveScheduled else { return }
+        saveScheduled = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
+            guard let self else { return }
+            self.saveScheduled = false
+            let snapshot = self.byPath.filter { self.fresh.contains($0.key) }
+            let cache = Self.cache
+            let key = Self.cacheKey
+            DispatchQueue.global(qos: .utility).async {
+                // Folders fetched in an earlier run and not seen in this one stay.
+                var all = cache.read([String: RepoFacts].self, key: key) ?? [:]
+                all.merge(snapshot) { _, new in new }
+                cache.write(all, key: key)
             }
         }
     }

@@ -57,6 +57,8 @@ final class PRThreadsTests: XCTestCase {
         XCTAssertEqual(PRCommand.resolve(target, thread: "PRRT_1", resolved: false).last, "--unresolve")
         XCTAssertEqual(PRCommand.threads(.ref("/work/shop#7"), noCache: true),
                        ["hub", "pr", "threads", "--pr", "/work/shop#7", "--json", "--no-cache"])
+        XCTAssertEqual(PRCommand.threads(.ref("/work/shop#7")),
+                       ["hub", "pr", "threads", "--pr", "/work/shop#7", "--json", "--max-cache-age", "30"])
     }
 
     func testThePublishArgvPerEvent() {

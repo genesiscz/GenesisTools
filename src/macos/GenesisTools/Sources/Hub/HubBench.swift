@@ -160,6 +160,10 @@ enum HubBench {
             let only = Set((ProcessInfo.processInfo.environment["GENESIS_HUB_BENCH_ONLY"] ?? "").split(separator: ",").map(String.init))
             let wants = { (name: String) in only.isEmpty || only.contains(name) }
             if wants("sidebar") { addPanelSweep(scenario: "sidebar", key: "hub.sidebar", path: [0, -150, 420, 0]) }
+            // PRs mode with the diff open: the PR overview beside the diff.
+            if only.contains("overview"), model.mode == .prs {
+                addPanelSweep(scenario: "overview", key: "prs.overview", path: [0, -120, 200, 0])
+            }
             if wants("files"), model.panes.contains(.changes) {
                 addPanelSweep(scenario: "files", key: "review.files", path: [0, -260, 150, 0])
             }

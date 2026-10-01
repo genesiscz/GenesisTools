@@ -70,21 +70,37 @@ final class CheckLogStore: ObservableObject {
     @Published private(set) var logs: [String: CheckLogRender] = [:]
     @Published private(set) var loading: Set<String> = []
     @Published private(set) var failures: [String: String] = [:]
+    /// Finished logs, as `tools hub pr check-log` printed them (Hub/HubSWR.swift).
+    private static let cache = HubSWR.cache("check-log")
 
     func load(_ url: String, fresh: Bool = false) {
         guard !loading.contains(url), fresh || logs[url] == nil else { return }
         loading.insert(url)
         failures[url] = nil
-        let args = ["hub", "pr", "check-log", url, "--json"] + (fresh ? ["--no-cache"] : [])
+        // Only a finished log is ever stored, and it never changes: a week is the old cache's age.
+        let args = ["hub", "pr", "check-log", url, "--json"] + (fresh ? ["--no-cache"] : ["--max-cache-age", "604800"])
+        let cache = Self.cache
         Task {
             let span = HubPerf.begin("prs.checkLog", url, awaits: true)
-            let result = await Task.detached(priority: .userInitiated) { () -> Result<CheckLogRender, Error> in
+            let fetch = Task.detached(priority: .userInitiated) { () -> Result<CheckLogRender, Error> in
                 Result {
                     // A run URL can fetch three jobs' logs; the CLI's own host calls time out at 90 s each.
                     let output = try ToolsCLIRunner.capture(args, timeout: 180)
-                    return CheckLogRender.build(try JSONDecoder().decode(HubCheckLog.self, from: output.stdout))
+                    let log = try JSONDecoder().decode(HubCheckLog.self, from: output.stdout)
+                    if log.final {
+                        cache.writeData(output.stdout, key: url)
+                    }
+                    return CheckLogRender.build(log)
                 }
-            }.value
+            }
+            // A finished log never changes: the last one read paints at once, the fresh read confirms it.
+            if logs[url] == nil,
+               let cached = await Task.detached(priority: .userInitiated, operation: { cache.read(HubCheckLog.self, key: url).map(CheckLogRender.build) }).value,
+               logs[url] == nil, loading.contains(url) {
+                HubSWR.painted("prs.checkLog", "\(cached.log.sections.count) sections")
+                logs[url] = cached
+            }
+            let result = await fetch.value
             loading.remove(url)
             switch result {
             case .success(let render):

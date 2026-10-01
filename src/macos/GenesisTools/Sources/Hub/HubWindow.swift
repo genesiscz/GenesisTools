@@ -10,6 +10,7 @@ import SwiftUI
 //                    [--panel-find <scope>:<text>] [--panel-find-next <n>] (Hub/HubPanelFind.swift)
 //                    [--timeline-open <event id>] [--timeline-action <action id>] (Hub/HubTimeline.swift)
 //                    [--session-search [text]] [--digest] (Hub/HubDaily.swift) [--prompts] [--handoff]
+//                    [--decision <id>|--question <id>] (the Inbox at that card, Hub/HubInbox.swift)
 // (`tools hub` builds the app when needed and runs this; a second launch goes to the running hub.)
 // `--snapshot` and `--bench` run off screen on a scratch copy of the hub's settings (HubDefaults).
 //
@@ -61,6 +62,9 @@ struct HubRequest {
     /// (`--inbox-info <id>`) for this session (id or prefix) once the list has loaded; for snapshots.
     var inboxResume: String?
     var inboxInfo: String?
+    /// Inbox mode: selects and scrolls to this card, a decision or todo (`--decision d_3_<session>`) or
+    /// a pending form (`--question ask_…`). A question banner's click sends it (src/question/lib/hub-link.ts).
+    var inboxItem: String?
     /// Activity: runs this row's action once the feed holds it (`--timeline-open <event id>`, with
     /// `--timeline-action diff` for a review comment's "Open in the diff"), else the row's click.
     var timelineOpen: String?
@@ -123,6 +127,7 @@ struct HubRequest {
             case "--worktree": worktree = value; index += 1
             case "--inbox-resume": inboxResume = value; index += 1
             case "--inbox-info": inboxInfo = value; index += 1
+            case "--decision", "--question": inboxItem = value; index += 1
             case "--timeline-open": timelineOpen = value; index += 1
             case "--timeline-action": timelineAction = value; index += 1
             case "--set":
@@ -159,7 +164,7 @@ func runHub(_ args: [String]) -> Never {
     let wantedPR = request.pr
     let tab = request.tab ?? .transcript
     // `--pr` alone means the PRs mode, as it does for a request handed to a running hub (`apply`).
-    let mode = request.mode ?? (request.pr != nil ? .prs : .sessions)
+    let mode = request.mode ?? (request.pr != nil ? .prs : request.inboxItem != nil ? .inbox : .sessions)
     let activate = request.activate
     if !request.isScripted, !HubSingleInstance.claim() {
         exit(HubSingleInstance.forwardToRunningHub(args) ? 0 : 1)
@@ -429,6 +434,10 @@ final class HubModel: ObservableObject {
         didSet { worktreeSessions = nil }
     }
     @Published var loadingSessions = false
+    /// The list on screen is the last run's, from disk, and the fresh one is loading (Hub/HubSWR.swift).
+    @Published private(set) var showingCachedSessions = false
+    /// Sessions the last refresh added or moved; their rows flash once.
+    @Published private(set) var changedSessions = Set<String>()
     @Published var error: String?
     /// The sidebar's filter text, which every mode's list applies.
     @Published var filter = "" {
@@ -734,11 +743,26 @@ final class HubModel: ObservableObject {
             let sessions = sessions
             DispatchQueue.global(qos: .userInitiated).async {
                 let span = HubPerf.begin("worktrees.discover", "\(sessions.count) sessions")
+                // The last run's worktrees paint while git answers again (Hub/HubSWR.swift).
+                if let cached = WorktreeDiscovery.cached(), !cached.isEmpty {
+                    DispatchQueue.main.async { [weak self] in
+                        guard let self, self.loadingWorktrees, self.worktrees.isEmpty else { return }
+                        HubSWR.painted("worktrees.discover", "\(cached.count) worktrees")
+                        self.worktrees = cached
+                        if self.selectedWorktree == nil,
+                           let busiest = cached.max(by: { self.sessionCount(for: $0) < self.sessionCount(for: $1) }) {
+                            self.selectWorktree(busiest)
+                        }
+                    }
+                }
                 let found = WorktreeDiscovery.discover(sessions: sessions)
                 span.end("\(found.count) worktrees")
+                WorktreeDiscovery.save(found)
                 DispatchQueue.main.async { [weak self] in
                     guard let self else { return }
-                    self.worktrees = found
+                    if self.worktrees != found {
+                        withAnimation(SWR.animation) { self.worktrees = found }
+                    }
                     self.loadingWorktrees = false
                     if self.selectedWorktree == nil,
                        let busiest = found.max(by: { self.sessionCount(for: $0) < self.sessionCount(for: $1) }) {
@@ -849,61 +873,105 @@ final class HubModel: ObservableObject {
 
     func loadSessions() {
         loadingSessions = true
+        let hours = Self.recentHours
         Task { @MainActor in
+            let fetch = Task { try await HubSource.sessions(hours: hours) }
+            // The last run's list paints at once and the window settles on it, unless a scripted
+            // `--session` names one it does not hold; the fresh list then slides in behind it.
+            var settled = false
+            if sessions.isEmpty, let cached = await HubSessionListCache.read(hours: hours), !cached.isEmpty, sessions.isEmpty, loadingSessions {
+                HubSWR.painted("sessions.list", "\(cached.count) sessions")
+                showingCachedSessions = true
+                applySessions(cached)
+                // Worktrees mode discovers from the session list once, so it settles on the fresh rows only.
+                if initialMode != .worktrees,
+                   wantedSession == nil || wantedSession == AgentProcs.selectionID || wantedSessionRow != nil {
+                    settleSessions()
+                    settled = true
+                }
+            }
             do {
-                let rows = try await HubSource.sessions(hours: Self.recentHours)
+                let rows = try await fetch.value
                 PerfLog.markOnce("hub.sessions.first-loaded")
                 loadingSessions = false
-                var fresh = rows
-                    .filter { !($0.archived ?? false) }
-                    .sorted { $0.mtime > $1.mtime }
-                // A session opened from search or the digest (older than the list's window) stays while
-                // it is selected, or the detail pane would go blank on the next load.
-                if let current = selected, !fresh.contains(where: { $0.id == current.id }) {
-                    fresh.append(current)
-                    fresh.sort { $0.mtime > $1.mtime }
-                }
-                sessions = fresh
-                let wanted = wantedSession.flatMap { wanted in
-                    sessions.first { $0.id == wanted || $0.sessionId.hasPrefix(wanted) }
-                }
-                if initialMode == .worktrees {
-                    if let first = sessions.first {
-                        selectedID = first.id
-                    }
-                    setMode(.worktrees)
-                } else if initialMode == .prs {
-                    MainActor.assumeIsolated {
-                        prs.onLoaded = { [weak self] in
-                            self?.onSettled?()
-                            self?.onSettled = nil
-                        }
-                    }
-                    setMode(.prs)
-                } else if initialMode == .inbox || initialMode == .timeline {
-                    let settle: () -> Void = { [weak self] in
-                        self?.onSettled?()
-                        self?.onSettled = nil
-                    }
-                    MainActor.assumeIsolated {
-                        if initialMode == .inbox { inbox.onLoaded = settle } else { timeline.onLoaded = settle }
-                    }
-                    setMode(initialMode)
-                } else if wantedSession == AgentProcs.selectionID {
-                    // `--session ::procs` opens the Agent processes pane, which has no transcript to settle on.
-                    select(AgentProcs.selectionID)
-                    onSettled?()
-                    onSettled = nil
-                } else if let first = wanted ?? sessions.first {
-                    select(first.id)
-                } else {
-                    onSettled?()
+                showingCachedSessions = false
+                HubSessionListCache.write(rows, hours: hours)
+                applySessions(rows)
+                if !settled {
+                    settleSessions()
                 }
             } catch {
                 loadingSessions = false
+                showingCachedSessions = false
                 self.error = "\(error)"
-                onSettled?()
+                if !settled {
+                    onSettled?()
+                }
             }
+        }
+    }
+
+    private var wantedSessionRow: HubSession? {
+        wantedSession.flatMap { wanted in
+            sessions.first { $0.id == wanted || $0.sessionId.hasPrefix(wanted) }
+        }
+    }
+
+    /// Shows `rows`, sliding new ones in; over a list already on screen, the new and moved ones flash.
+    @MainActor
+    private func applySessions(_ rows: [HubSession]) {
+        var fresh = rows
+            .filter { !($0.archived ?? false) }
+            .sorted { $0.mtime > $1.mtime }
+        // A session opened from search or the digest (older than the list's window) stays while
+        // it is selected, or the detail pane would go blank on the next load.
+        if let current = selected, !fresh.contains(where: { $0.id == current.id }) {
+            fresh.append(current)
+            fresh.sort { $0.mtime > $1.mtime }
+        }
+        guard fresh != sessions else { return }
+        let before = Dictionary(sessions.map { ($0.id, "\($0.mtime)") }, uniquingKeysWith: { first, _ in first })
+        let moved = SWR.changed(before: before, after: fresh.map { ($0.id, "\($0.mtime)") })
+        withAnimation(SWR.animation) {
+            sessions = fresh
+            changedSessions = moved
+        }
+        SWR.fade(moved, current: { [weak self] in self?.changedSessions }, clear: { [weak self] in self?.changedSessions = [] })
+    }
+
+    /// The first selection after a load: the scripted mode or session, else the newest session.
+    private func settleSessions() {
+        if initialMode == .worktrees {
+            if let first = sessions.first {
+                selectedID = first.id
+            }
+            setMode(.worktrees)
+        } else if initialMode == .prs {
+            MainActor.assumeIsolated {
+                prs.onLoaded = { [weak self] in
+                    self?.onSettled?()
+                    self?.onSettled = nil
+                }
+            }
+            setMode(.prs)
+        } else if initialMode == .inbox || initialMode == .timeline {
+            let settle: () -> Void = { [weak self] in
+                self?.onSettled?()
+                self?.onSettled = nil
+            }
+            MainActor.assumeIsolated {
+                if initialMode == .inbox { inbox.onLoaded = settle } else { timeline.onLoaded = settle }
+            }
+            setMode(initialMode)
+        } else if wantedSession == AgentProcs.selectionID {
+            // `--session ::procs` opens the Agent processes pane, which has no transcript to settle on.
+            select(AgentProcs.selectionID)
+            onSettled?()
+            onSettled = nil
+        } else if let first = wantedSessionRow ?? sessions.first {
+            select(first.id)
+        } else {
+            onSettled?()
         }
     }
 
@@ -1088,6 +1156,11 @@ final class HubModel: ObservableObject {
                 inbox.reveal = .info(id)
                 inbox.load()
             }
+        } else if let id = request.inboxItem {
+            MainActor.assumeIsolated {
+                inbox.reveal = .item(id)
+                inbox.load()
+            }
         }
         if let id = request.timelineOpen {
             MainActor.assumeIsolated { openTimelineRequest(id, action: request.timelineAction) }
@@ -1108,6 +1181,8 @@ final class HubModel: ObservableObject {
             select(match.id)
         } else if let mode = request.mode {
             setMode(mode)
+        } else if request.inboxItem != nil {
+            setMode(.inbox)
         }
         if let worktree = request.worktree {
             setMode(.worktrees)
@@ -1342,21 +1417,32 @@ struct HubRootView: View {
         HStack(spacing: 0) {
             ResizableSidePanel(key: "hub.sidebar", edge: .leading, title: "Sessions", defaultWidth: 320,
                                minWidth: Self.sidebarMinWidth, maxWidth: max(Self.sidebarMinWidth, sidebarRoom),
-                               autoCollapse: width > 0 && sidebarRoom < Self.sidebarMinWidth) {
+                               autoCollapse: width > 0 && sidebarRoom < Self.sidebarMinWidth,
+                               // Sessions mode holds the layout for the transcript; every other
+                               // mode's main view moves with the edge and reflows on release.
+                               holdsLayout: model.mode == .sessions) {
                 SessionListView(model: model)
             }
             if model.mode == .prs {
+                // Every main view outside Sessions mode moves with the sidebar's edge at once and
+                // reflows on release: reflowed per step, a sidebar drag cost 1 to 15 ms more per step
+                // than the held layout (`--bench`, 2026-09-30).
                 PRsMain(model: model, prs: model.prs)
+                    .freezesWidthWhileDragging(panel: "hub.sidebar")
             } else if model.mode == .inbox {
                 // InboxMain with its ⌘F find (Hub/HubInboxFind.swift).
                 InboxFindHost(model: model, inbox: model.inbox)
+                    .freezesWidthWhileDragging(panel: "hub.sidebar")
             } else if model.mode == .timeline {
                 TimelineMain(model: model, timeline: model.timeline)
+                    .freezesWidthWhileDragging(panel: "hub.sidebar")
             } else if model.mode == .worktrees {
                 if let path = model.selectedWorktree, let worktree = model.worktrees.first(where: { $0.path == path }) {
                     WorktreeDetailView(model: model, worktree: worktree)
+                        .freezesWidthWhileDragging(panel: "hub.sidebar")
                 } else if model.selectedWorktree == WorktreeCleanup.selectionID, !model.loadingWorktrees {
                     WorktreeCleanupView(model: model)
+                        .freezesWidthWhileDragging(panel: "hub.sidebar")
                 } else {
                     Text(model.loadingWorktrees ? "Finding worktrees…" : "Pick a worktree")
                         .foregroundColor(ReviewPalette.dim)
@@ -1624,7 +1710,7 @@ private struct SessionListView: View {
                 // A slot that stays while idle: the spinner used to narrow the field on every refresh.
                 ZStack {
                     if model.loadingSessions {
-                        ProgressView().controlSize(.small)
+                        RefreshingMark(showingCache: model.showingCachedSessions, what: "session list")
                     }
                 }
                 .frame(width: 16, height: 16)
@@ -1669,6 +1755,8 @@ private struct SessionListView: View {
                                     ForEach(section.rows) { session in
                                         SessionRowView(session: session, selected: session.id == model.selectedID, stuck: stuck.verdicts[session.sessionId])
                                             .rowButton { model.select(session.id) }
+                                            .swrFlash(model.changedSessions.contains(session.id), cornerRadius: 6)
+                                            .transition(SWR.rowTransition)
                                     }
                                 }
                             } header: {

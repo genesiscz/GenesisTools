@@ -713,4 +713,36 @@ final class HubLogicTests: XCTestCase {
         XCTAssertEqual(decoded["t2"]?.count, 0)
     }
 
+    private func queryPR(number: Int, title: String, author: String) throws -> HubPR {
+        let json = """
+        {"repo":"app","repoRoot":null,"origin":{"kind":"gitlab","host":"h","web":"https://gitlab.example.test/group/app"},
+         "number":\(number),"title":"\(title)","state":"opened","draft":false,"author":"\(author)","headBranch":"feature/x","baseBranch":"main",
+         "url":"https://gitlab.example.test/group/app/-/merge_requests/\(number)","labels":[],"reviewers":[]}
+        """
+        return try JSONDecoder().decode(HubPR.self, from: Data(json.utf8))
+    }
+
+    func testPRQueryReadsAuthorIdsAndText() throws {
+        let query = PRQuery("author:Alice !7412 login")
+        XCTAssertEqual(query.author, "alice")
+        XCTAssertEqual(query.numbers, [7412])
+        XCTAssertEqual(query.text, ["login"])
+        XCTAssertEqual(PRQuery("@bob").author, "bob")
+        // A bare number is an id and title text at once.
+        XCTAssertEqual(PRQuery("Expo 57").numbers, [57])
+        XCTAssertEqual(PRQuery("Expo 57").text, ["expo", "57"])
+        XCTAssertTrue(PRQuery("  ").isEmpty)
+    }
+
+    func testPRQueryMatchesByIdAuthorOrTitle() throws {
+        let pr = try queryPR(number: 7412, title: "Fix the login form", author: "alice")
+        XCTAssertTrue(PRQuery("!7412").matches(pr))
+        XCTAssertTrue(PRQuery("7412").matches(pr))
+        XCTAssertFalse(PRQuery("#12").matches(pr))
+        XCTAssertTrue(PRQuery("author:ali").matches(pr))
+        XCTAssertFalse(PRQuery("author:bob").matches(pr))
+        XCTAssertTrue(PRQuery("author:alice login").matches(pr))
+        XCTAssertFalse(PRQuery("author:alice signup").matches(pr))
+        XCTAssertTrue(PRQuery("login 57").matches(try queryPR(number: 3, title: "login 57", author: "bob")))
+    }
 }

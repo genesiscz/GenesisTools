@@ -250,16 +250,32 @@ struct HandoffComposerSheet: View {
         guard prompts.isEmpty else { return }
         let id = request.session.sessionId
         let span = HubPerf.begin("handoff.prompts", String(id.prefix(8)), awaits: true)
-        let loaded = await Task.detached(priority: .utility) { try? HubInsights.load(sessionId: id).prompts }.value
+        let fetch = Task.detached(priority: .utility) { try? HubInsights.load(sessionId: id).prompts }
+        // The last run's prompts fill the pickers at once (Hub/HubSWR.swift); the fresh list replaces them.
+        if let cached = await Task.detached(priority: .userInitiated, operation: { HubInsights.cached(sessionId: id)?.prompts }).value,
+           let first = cached.first, let last = cached.last, prompts.isEmpty {
+            HubSWR.painted("handoff.prompts", "\(cached.count) prompts")
+            prompts = cached
+            from = first.number
+            to = last.number
+        }
+        let loaded = await fetch.value
         guard let loaded, let first = loaded.first, let last = loaded.last else {
             span.end("none")
             return
         }
 
         span.end("\(loaded.count) prompts")
+        // A range picked from the cached prompts stays; a range that ended at the last prompt follows it.
+        let shown = !prompts.isEmpty
+        let followsEnd = !shown || to == prompts.last?.number
         prompts = loaded
-        from = first.number
-        to = last.number
+        if !shown {
+            from = first.number
+        }
+        if followsEnd {
+            to = last.number
+        }
     }
 
     private var header: some View {

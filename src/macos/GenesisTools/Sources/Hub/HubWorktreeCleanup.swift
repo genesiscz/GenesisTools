@@ -41,12 +41,12 @@ enum WorktreeCleanup {
     }
 }
 
-struct CleanupBlocker: Decodable, Hashable {
+struct CleanupBlocker: Codable, Hashable {
     let kind: String
     let text: String
 }
 
-struct CleanupRow: Decodable, Identifiable, Hashable {
+struct CleanupRow: Codable, Identifiable, Hashable {
     let path: String
     let repoRoot: String
     let repo: String
@@ -88,13 +88,13 @@ struct CleanupRow: Decodable, Identifiable, Hashable {
     }
 }
 
-struct CleanupReport: Decodable {
+struct CleanupReport: Codable {
     let rows: [CleanupRow]
     let warnings: [String]
     let elapsedMs: Int
 }
 
-struct CleanupSize: Decodable {
+struct CleanupSize: Codable {
     let path: String
     let bytes: Double
     let freeableBytes: Double?
@@ -152,7 +152,20 @@ final class WorktreeCleanupStore: ObservableObject {
     /// A scan asked for while one ran (the worktree list changed meanwhile): it runs when that one ends.
     private var pendingScan: (repos: [String], force: Bool)?
 
+    /// The rows on screen are the last scan's, from disk, and the fresh scan is still running.
+    /// Remove and Move aside wait for the fresh rows: a cached "removable" is never acted on.
+    @Published private(set) var showingCache = false
+    /// Rows the last fresh scan added or changed; they flash once.
+    @Published private(set) var changed = Set<String>()
+    /// Sizes measured in this run; a cached size shows until its path is measured again.
+    private var measured = Set<String>()
+    private static let scanCache = HubSWR.cache("worktree-cleanup")
+    private static let sizeCache = HubSWR.cache("worktree-size")
+
     var removable: [CleanupRow] { rows.filter(\.removable) }
+
+    /// A size belongs to one worktree at one HEAD: after a checkout the old size is a miss.
+    nonisolated private static func sizeKey(_ row: CleanupRow) -> String { "\(row.path)@\(row.head)" }
 
     func load(repos: [String], force: Bool = false) {
         let repos = repos.sorted()
@@ -164,14 +177,25 @@ final class WorktreeCleanupStore: ObservableObject {
 
         loading = true
         let args = WorktreeCleanup.listArgs(repos: repos, olderThanDays: olderThanDays)
+        let cacheKey = args.joined(separator: "\n")
+        let paintCache = rows.isEmpty || repos != loadedRepos
         Task {
             let span = HubPerf.begin("worktrees.cleanup.scan", "\(repos.count) repos", awaits: true)
-            let result = await Task.detached(priority: .utility) { () -> Result<CleanupReport, Error> in
+            let scan = Task.detached(priority: .utility) { () -> Result<(CleanupReport, Data), Error> in
                 Result {
-                    try JSONDecoder().decode(CleanupReport.self, from: ToolsCLIRunner.run(args))
+                    let data = try ToolsCLIRunner.run(args)
+                    return (try JSONDecoder().decode(CleanupReport.self, from: data), data)
                 }
-            }.value
+            }
+            if paintCache, let cached = await Self.scanCache.load(CleanupReport.self, key: cacheKey), loading {
+                HubSWR.painted("worktrees.cleanup.scan", "\(cached.rows.count) rows")
+                showingCache = true
+                apply(cached.rows, flash: false)
+                await paintCachedSizes(cached.rows)
+            }
+            let result = await scan.value
             loading = false
+            showingCache = false
             loadedRepos = repos
             defer {
                 if let next = pendingScan {
@@ -180,12 +204,12 @@ final class WorktreeCleanupStore: ObservableObject {
                 }
             }
             switch result {
-            case .success(let report):
+            case .success(let (report, data)):
                 span.end("\(report.rows.count) rows, \(report.rows.filter(\.removable).count) removable, \(report.elapsedMs) ms in tools")
-                rows = report.rows
+                Self.scanCache.writeData(data, key: cacheKey)
+                apply(report.rows, flash: true)
                 HubMainBusy.measure("worktrees.cleanup.rows")
                 scanMs = report.elapsedMs
-                selected = selected.intersection(Set(report.rows.filter(\.removable).map(\.path)))
                 if let warning = report.warnings.first {
                     notice = (warning, true)
                 }
@@ -199,8 +223,39 @@ final class WorktreeCleanupStore: ObservableObject {
         }
     }
 
+    /// Shows `next`, sliding new rows in; `flash` marks the rows a fresh scan added or changed.
+    private func apply(_ next: [CleanupRow], flash: Bool) {
+        let before = Dictionary(rows.map { ($0.path, "\($0.hashValue)") }, uniquingKeysWith: { first, _ in first })
+        let moved = flash ? SWR.changed(before: before, after: next.map { ($0.path, "\($0.hashValue)") }) : []
+        withAnimation(SWR.animation) {
+            rows = next
+            changed = moved
+        }
+        selected = selected.intersection(Set(next.filter(\.removable).map(\.path)))
+        SWR.fade(moved, current: { [weak self] in self?.changed }, clear: { [weak self] in self?.changed = [] })
+    }
+
+    /// The last measured size of each cached row at its HEAD, until the fresh measure lands.
+    private func paintCachedSizes(_ rows: [CleanupRow]) async {
+        let wanted = rows.filter { sizes[$0.path] == nil }
+        guard !wanted.isEmpty else { return }
+        let cache = Self.sizeCache
+        let found = await Task.detached(priority: .utility) { () -> [String: CleanupSize] in
+            var found: [String: CleanupSize] = [:]
+            for row in wanted {
+                if let size = cache.read(CleanupSize.self, key: Self.sizeKey(row)) {
+                    found[row.path] = size
+                }
+            }
+            return found
+        }.value
+        for (path, size) in found where sizes[path] == nil {
+            sizes[path] = size
+        }
+    }
+
     func queueSizes(_ paths: [String]) {
-        sizeQueue += paths.filter { sizes[$0] == nil && !sizing.contains($0) && !sizeQueue.contains($0) }
+        sizeQueue += paths.filter { !measured.contains($0) && !sizing.contains($0) && !sizeQueue.contains($0) }
         guard sizingTask == nil else { return }
         sizingTask = Task {
             while !sizeQueue.isEmpty {
@@ -214,11 +269,23 @@ final class WorktreeCleanupStore: ObservableObject {
                     }
                 }.value
                 sizing.subtract(batch)
+                measured.formUnion(batch)
                 switch result {
                 case .success(let found):
                     span.end(found.map { "\($0.elapsedMs)" }.joined(separator: ",") + " ms")
+                    let heads = Dictionary(rows.map { ($0.path, $0) }, uniquingKeysWith: { first, _ in first })
+                    var keep: [(CleanupSize, String)] = []
                     for size in found {
                         sizes[size.path] = size
+                        if size.error == nil, let row = heads[size.path] {
+                            keep.append((size, Self.sizeKey(row)))
+                        }
+                    }
+                    let cache = Self.sizeCache
+                    Task.detached(priority: .utility) {
+                        for (size, key) in keep {
+                            cache.write(size, key: key)
+                        }
                     }
                 case .failure(let error):
                     span.end("failed")
@@ -367,6 +434,7 @@ struct WorktreeCleanupView: View {
                             Section {
                                 ForEach(group.rows) { row in
                                     rowView(row)
+                                        .transition(SWR.rowTransition)
                                 }
                             } header: {
                                 sectionHeader(group.repo, rows: group.rows)
@@ -544,14 +612,14 @@ struct WorktreeCleanupView: View {
                 } label: {
                     Label("Remove selected (\(chosen.count))", systemImage: "trash")
                 }
-                .disabled(chosen.isEmpty || store.removing != nil || store.moving != nil)
+                .disabled(chosen.isEmpty || store.removing != nil || store.moving != nil || store.showingCache)
                 .instantTooltip("Asks first, listing every folder that goes")
                 Button {
                     pendingMove = chosen
                 } label: {
                     Label("Move aside (\(chosen.count))", systemImage: "archivebox")
                 }
-                .disabled(chosen.isEmpty || store.removing != nil || store.moving != nil)
+                .disabled(chosen.isEmpty || store.removing != nil || store.moving != nil || store.showingCache)
                 .instantTooltip("Deletes nothing: `git worktree move` into today's /tmp folder, with a restore command (asks first)")
                 IconButton(systemName: "arrow.clockwise", tooltip: "Check every worktree again") {
                     store.load(repos: repos, force: true)
@@ -565,7 +633,7 @@ struct WorktreeCleanupView: View {
                     // A fixed slot: the summary beside it stays put on every reload.
                     ZStack {
                         if store.loading {
-                            ProgressView().controlSize(.small)
+                            RefreshingMark(showingCache: store.showingCache, what: "worktree check")
                         }
                     }
                     .frame(width: 16, height: 16)
@@ -703,11 +771,11 @@ struct WorktreeCleanupView: View {
                 IconButton(systemName: "archivebox", tooltip: "Move this worktree aside into today's /tmp folder: nothing is deleted (asks first)") {
                     pendingMove = [row]
                 }
-                .disabled(store.removing != nil || store.moving != nil)
+                .disabled(store.removing != nil || store.moving != nil || store.showingCache)
                 IconButton(systemName: "trash", tooltip: "Remove this worktree (asks first; the branch stays)") {
                     pending = [row]
                 }
-                .disabled(store.removing != nil || store.moving != nil)
+                .disabled(store.removing != nil || store.moving != nil || store.showingCache)
             } else {
                 Color.clear.frame(width: 40, height: 1)
             }
@@ -715,6 +783,7 @@ struct WorktreeCleanupView: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 7)
         .background(RoundedRectangle(cornerRadius: 8).fill(isSelected ? Color.white.opacity(0.07) : Color.clear))
+        .swrFlash(store.changed.contains(row.path))
         .findRow(row.path, cornerRadius: 8)
         .padding(.horizontal, 6)
     }
@@ -752,6 +821,8 @@ struct WorktreeCleanupView: View {
                 Text("—").foregroundColor(ReviewPalette.dim)
             }
         }
+        // A size from the last run stays dim while it is measured again.
+        .opacity(store.sizes[row.path] != nil && store.sizing.contains(row.path) ? 0.55 : 1)
         .frame(width: 110, alignment: .trailing)
     }
 }

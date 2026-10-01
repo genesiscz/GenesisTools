@@ -87,10 +87,18 @@ enum AgentBlame {
     /// diff's new-side line: a scope whose new side is a commit or the index gets no blame, since its
     /// line numbers would name other lines.
     static func arguments(repo: String, files: [DiffFile], scope: DiffScope) -> [String]? {
+        paths(files: files, scope: scope).map { arguments(repo: repo, paths: $0) }
+    }
+
+    /// The repo-relative paths `arguments(repo:files:scope:)` asks about; nil when there are none.
+    static func paths(files: [DiffFile], scope: DiffScope) -> [String]? {
         guard scope.newSideIsWorkingTree else { return nil }
         let paths = files.filter { $0.status != .deleted && $0.skipped == nil && $0.additions > 0 }.prefix(maxFiles).map(\.path)
-        guard !paths.isEmpty else { return nil }
-        return ["agents", "blame", "--repo", repo, "--files"] + paths + ["--json"]
+        return paths.isEmpty ? nil : Array(paths)
+    }
+
+    static func arguments(repo: String, paths: [String]) -> [String] {
+        ["agents", "blame", "--repo", repo, "--files"] + paths + ["--json"]
     }
 
     /// The hub's session with its transcript searched for the turn's first words (`--transcript-query`).

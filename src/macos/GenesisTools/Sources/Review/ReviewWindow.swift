@@ -256,6 +256,11 @@ final class ReviewModel: ObservableObject {
     private var reloadAgain = false
     /// Root folders whose files changed since the last load started; the next load reads only these.
     private var pendingLoads: Set<String> = []
+    /// Root folders showing their last snapshot from disk (`ReviewCache.diffs`) until their load answers.
+    @Published private(set) var cachedFolders: Set<String> = []
+    /// Root folders that have a fresh answer for this scope: a cached snapshot never replaces one.
+    private var freshFolders: Set<String> = []
+    var showingCache: Bool { !cachedFolders.isEmpty }
     private var rendered = false
     /// A file asked for by `reveal(path:)` before the diff had it.
     private var pendingRevealPath: String?
@@ -526,6 +531,13 @@ final class ReviewModel: ObservableObject {
         }
         let loadsPrimary = jobs.contains { $0.repo.path == primary.path }
         let namesRoot = roots.count > 1
+        let seeds = jobs.filter { job in
+            !freshFolders.contains(job.folder) && (!onlyPrimary || job.repo.path == primary.path)
+                && (roots.first { $0.folder == job.folder }?.files.isEmpty ?? false)
+        }
+        if !seeds.isEmpty {
+            seedFromCache(seeds, scope: scope, session: session)
+        }
         DispatchQueue.global(qos: .userInitiated).async {
             let lock = NSLock()
             var results: [String: Result<GitWorkingTreeSource.Snapshot, Error>] = [:]
@@ -565,7 +577,67 @@ final class ReviewModel: ObservableObject {
                     self.loading = false
                 }
             }
+            // After the answer is on its way to the screen, so encoding a large diff never delays it.
+            let loaded = jobs.compactMap { job -> (repo: URL, snapshot: GitWorkingTreeSource.Snapshot)? in
+                guard !onlyPrimary || job.repo.path == primary.path, case .success(let snapshot)? = results[job.folder] else { return nil }
+                return (job.repo, snapshot)
+            }
+            ReviewCache.writer.async {
+                for item in loaded {
+                    HubPerf.measure("review.cache.write", "\(item.snapshot.files.count) files") {
+                        ReviewCache.writeDiff(item.snapshot, repo: item.repo.path, scope: scope, session: session)
+                    }
+                }
+            }
         }
+    }
+
+    /// Paints each root's last snapshot of this scope from disk while its load runs. Read and decoded
+    /// off the main thread; a root whose fresh answer landed first keeps it.
+    private func seedFromCache(_ jobs: [(folder: String, repo: URL)], scope: DiffScope, session: String?) {
+        DispatchQueue.global(qos: .userInitiated).async {
+            var found: [String: ReviewCache.Diff] = [:]
+            for job in jobs {
+                let span = HubPerf.begin("review.cache.read", "\(scope)")
+                let diff = ReviewCache.readDiff(repo: job.repo.path, scope: scope, session: session)
+                span.end(diff.map { "\($0.files.count) files\($0.stripped ? " (list only)" : "")" } ?? "miss")
+                found[job.folder] = diff
+            }
+            guard !found.isEmpty else { return }
+            DispatchQueue.main.async { [weak self] in
+                self?.applyCached(found, scope: scope)
+            }
+        }
+    }
+
+    @MainActor
+    private func applyCached(_ found: [String: ReviewCache.Diff], scope: DiffScope) {
+        guard scope == self.scope, loading else { return }
+        var next = roots
+        var seeded: Set<String> = []
+        for index in next.indices {
+            let folder = next[index].folder
+            guard let diff = found[folder], next[index].shown, next[index].files.isEmpty, !freshFolders.contains(folder) else { continue }
+            next[index].files = diff.files
+            next[index].branch = diff.branch
+            if next[index].repo?.path == repo.path {
+                branch = diff.branch
+                base = diff.base
+            }
+            seeded.insert(folder)
+        }
+        guard !seeded.isEmpty else { return }
+        HubPerf.log("review.cache paint \(files.count) -> \(ReviewRoots.merge(next).count) files, \(scope)")
+        HubMainBusy.measure("review.cache.paint")
+        // No comment re-anchoring here: that writes the comments file, and a list-only snapshot has no lines.
+        roots = next
+        cachedFolders.formUnion(seeded)
+        files = ReviewRoots.merge(roots)
+        if selectedID == nil || !files.contains(where: { $0.id == selectedID }) {
+            selectedID = files.first?.id
+        }
+        pushToRenderer()
+        resetBlame()
     }
 
     /// One load's answers, per root folder. A failed root keeps its last files and shows the error on
@@ -577,6 +649,8 @@ final class ReviewModel: ObservableObject {
             guard let result = results[next[index].folder] else { continue }
             switch result {
             case .success(let snapshot):
+                freshFolders.insert(next[index].folder)
+                cachedFolders.remove(next[index].folder)
                 next[index].error = nil
                 next[index].files = snapshot.files
                 next[index].branch = snapshot.branch
@@ -589,6 +663,9 @@ final class ReviewModel: ObservableObject {
                 }
                 commentStore(for: next[index])?.reanchor(files: snapshot.files)
             case .failure(let failure):
+                // The cached files stay on screen with the error on their row, but the root no longer
+                // counts as "showing the cache": blame and the header follow the error, not the paint.
+                cachedFolders.remove(next[index].folder)
                 next[index].error = "\(failure)"
                 HubPerf.log("review.load \(next[index].folder) failed: \(failure)")
             }
@@ -613,6 +690,8 @@ final class ReviewModel: ObservableObject {
             resetBlame()
         } else {
             pushComments()
+            // The cached files were already the current ones: the hovers asked meanwhile go now.
+            runBlame()
         }
     }
 
@@ -674,6 +753,8 @@ final class ReviewModel: ObservableObject {
         for index in roots.indices {
             roots[index].files = []
         }
+        freshFolders = []
+        cachedFolders = []
         rendered = false
         reload()
     }
@@ -723,7 +804,12 @@ final class ReviewModel: ObservableObject {
         }
         let owned = commentRoots
         let local = owned.flatMap { root, store in Self.globalized(store.rendered(for: root.files), root) }
-        let all = local + Self.globalized(proposalComments + liveComments, primary)
+        var threadComments = proposalComments + liveComments
+        if pr?.stale == true {
+            // Cached threads: the cards show, their Reply and Resolve wait for the host's fresh answer.
+            threadComments = threadComments.map(PRThreadRendering.readOnly)
+        }
+        let all = local + Self.globalized(threadComments, primary)
         renderer.showComments(all)
         threadCards = ReviewKeyNav.threadCards(all, files: files)
         if let focusedCard, !threadCards.contains(where: { $0.id == focusedCard }) {
@@ -987,7 +1073,8 @@ final class ReviewModel: ObservableObject {
     /// Which session and turn wrote each new line of the hovered files, off the main thread. One call
     /// at a time, for one repository (`--repo`); files hovered meanwhile, or in another root, go in the next one.
     private func runBlame() {
-        guard blameRunning.isEmpty, !blamePending.isEmpty else { return }
+        // Cached files may not be the text on disk, and blame numbers the lines on disk: hovers wait for the load.
+        guard blameRunning.isEmpty, !blamePending.isEmpty, !showingCache else { return }
         guard let index = roots.indices.first(where: { index in blamePending.contains { ReviewRoots.index(of: $0, in: roots) == index } }),
               let root = roots[index].repo else {
             // Files of no root any more (the roots changed): nothing to ask.
@@ -1005,7 +1092,7 @@ final class ReviewModel: ObservableObject {
             copy.id = owner.global(file.id)
             return copy
         }
-        guard let args = AgentBlame.arguments(repo: root.path, files: chosen, scope: scope) else {
+        guard let paths = AgentBlame.paths(files: chosen, scope: scope) else {
             // Deleted or skipped files have no line to own, and a scope whose new side is not the
             // working tree has no line `tools` could number: asked, with no blame.
             blame.merge(AgentBlameResult(sources: [], files: [], elapsedMs: nil), files: files, asked: asked)
@@ -1017,17 +1104,28 @@ final class ReviewModel: ObservableObject {
         blameRunning = asked
         let generation = blameGeneration
         DispatchQueue.global(qos: .utility).async {
-            let span = HubPerf.begin("review.blame", "\(chosen.count) files in \(root.lastPathComponent)")
-            let result = Result { try JSONDecoder().decode(AgentBlameResult.self, from: ToolsCLIRunner.run(args)) }
-            switch result {
-            case .success(let found): span.end("\(found.files.count) with agent lines, \(found.sources.count) turns, \(found.elapsedMs ?? 0) ms in tools")
-            case .failure(let error): span.end("failed: \(error)")
+            // Files whose text on disk still hashes as cached need no call (ReviewCache.readBlame).
+            let cached = HubPerf.measure("review.blame.cache", "\(paths.count) files") { ReviewCache.readBlame(repo: root.path, paths: paths) }
+            var answer = cached.found
+            if !cached.missing.isEmpty {
+                let span = HubPerf.begin("review.blame", "\(cached.missing.count) files in \(root.lastPathComponent), \(paths.count - cached.missing.count) cached")
+                let args = AgentBlame.arguments(repo: root.path, paths: cached.missing)
+                switch Result(catching: { try JSONDecoder().decode(AgentBlameResult.self, from: ToolsCLIRunner.run(args)) }) {
+                case .success(let found):
+                    span.end("\(found.files.count) with agent lines, \(found.sources.count) turns, \(found.elapsedMs ?? 0) ms in tools")
+                    ReviewCache.writeBlame(found, repo: root.path, asked: cached.missing, hashes: cached.hashes)
+                    answer = ReviewCache.combine(cached.found, found)
+                case .failure(let error):
+                    span.end("failed: \(error)")
+                }
+            } else {
+                HubPerf.log("review.blame \(paths.count) files in \(root.lastPathComponent) all cached")
             }
             DispatchQueue.main.async { [weak self] in
                 guard let self, generation == self.blameGeneration else { return }
                 self.blameRunning = []
                 // A failure counts as asked too: the hover must not start a call per line.
-                self.blame.merge((try? result.get()) ?? AgentBlameResult(sources: [], files: [], elapsedMs: nil), files: files, asked: asked)
+                self.blame.merge(answer, files: files, asked: asked)
                 self.renderer.setBlame(self.blame.payload)
                 self.runBlame()
             }
@@ -1625,6 +1723,7 @@ private struct ReviewHeader: View {
             ZStack {
                 if model.loading {
                     ProgressView().controlSize(.small)
+                        .instantTooltip(model.showingCache ? "Showing the last known diff; reading the current one" : "Reading the diff")
                 }
             }
             .frame(width: 16, height: 16)

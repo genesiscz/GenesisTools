@@ -42,6 +42,15 @@ struct PRReviewBar: View {
                     .layoutPriority(1)
                 if store.loading || store.busy != nil {
                     ProgressView().controlSize(.small)
+                        .instantTooltip(store.stale ? "Showing the last known threads; asking the host for the current ones" : "Loading the PR threads")
+                }
+                if store.stale {
+                    Text(store.loading ? "refreshing" : "last known")
+                        .foregroundColor(ReviewPalette.dim)
+                        .fixedSize()
+                        .instantTooltip(store.loading
+                            ? "These threads are the last answer on disk. Reply, Resolve and Submit review wait for the host's fresh answer."
+                            : "The host did not answer, so these are the last known threads. Writes stay off until a reload succeeds.")
                 }
                 if let busy = store.busy {
                     Text(busy).foregroundColor(ReviewPalette.dim).fixedSize()
@@ -66,7 +75,7 @@ struct PRReviewBar: View {
                             .labelStyle(.titleOnly)
                             .fixedSize()
                     }
-                    .disabled(store.payload == nil)
+                    .disabled(!store.canWrite)
                     .instantTooltip("Send the selected threads as one task to the agent that owns the branch, then focus its cmux pane (f)")
                     .popover(isPresented: $fixing, arrowEdge: .bottom) {
                         FixThreadsForm(model: model, store: store) { fixing = false }
@@ -82,7 +91,7 @@ struct PRReviewBar: View {
                         .labelStyle(.titleOnly)
                         .fixedSize()
                 }
-                .disabled(store.payload == nil || store.busy != nil)
+                .disabled(!store.canWrite || store.busy != nil)
                 .instantTooltip("Publish your pending drafts as one review (Comment, Approve or Request changes); asks first")
                 .popover(isPresented: $submitting, arrowEdge: .bottom) {
                     SubmitReviewForm(store: store) { submitting = false }
@@ -104,11 +113,11 @@ struct PRReviewBar: View {
         .overlay(Rectangle().fill(ReviewPalette.hairline).frame(height: 1), alignment: .bottom)
         // s and f from the diff: the same forms the buttons open, each still asking before it sends.
         .onChange(of: model.submitRequests) { _, _ in
-            if store.payload != nil, store.busy == nil { submitting = true }
+            if store.canWrite, store.busy == nil { submitting = true }
         }
         .onChange(of: model.fixRequests) { _, _ in
             // The Fix button waits for the threads too; before they load there is nothing to fix.
-            if store.payload != nil, !model.selectedThreads.isEmpty { fixing = true }
+            if store.canWrite, !model.selectedThreads.isEmpty { fixing = true }
         }
     }
 
@@ -423,6 +432,8 @@ private struct PRThreadRow: View {
                     .instantTooltip("Write a reply: save it as a draft in your pending review, or post it now")
                 }
             }
+            // Cached threads: Resolve, Reply and the Fix pick wait for the host's fresh answer.
+            .disabled(store.stale)
             ForEach(thread.comments) { comment in
                 commentView(comment)
             }
@@ -434,7 +445,7 @@ private struct PRThreadRow: View {
         .buttonStyle(.genHoverPlain())
         .disabled(store.busy != nil)
         .padding(10)
-        .background(RoundedRectangle(cornerRadius: 8).fill(Color.white.opacity(0.03)))
+        .background(RoundedRectangle(cornerRadius: 8).fill(store.changed.contains(thread.id) ? ReviewPalette.renamed.opacity(0.16) : Color.white.opacity(0.03)))
         .overlay(RoundedRectangle(cornerRadius: 8).stroke(ReviewPalette.hairline))
         .opacity(thread.resolved || thread.outdated ? 0.72 : 1)
     }
@@ -484,6 +495,7 @@ private struct PRThreadRow: View {
                             store.deleteDraft(thread: thread.id, note: comment.id)
                         }
                     }
+                    .disabled(store.stale)
                     .instantTooltip("Delete this draft from your pending review (asks first)")
                 }
             }
@@ -502,7 +514,7 @@ private struct PRThreadRow: View {
                             }
                         }
                     }
-                    .disabled(editText.trimmed.isEmpty)
+                    .disabled(editText.trimmed.isEmpty || store.stale)
                     .instantTooltip("Replace the draft's text; it stays a draft")
                 }
             } else {

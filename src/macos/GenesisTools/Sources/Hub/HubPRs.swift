@@ -177,6 +177,7 @@ private struct HubPRList: Decodable {
     struct Repo: Decodable {
         let repo: String
         let error: String?
+        let count: Int?
     }
 
     let prs: [HubPR]
@@ -227,6 +228,26 @@ final class PRsModel: ObservableObject {
     private var paths: [String] = []
     /// A load asked for while one ran (the state picker changed mid-load). It runs when that one ends.
     private var reloadPending = false
+    static let pageSize = 40
+    /// PRs per project the list asks for; "Load more" adds a page.
+    @Published private(set) var limit = PRsModel.pageSize
+    /// Some project returned a full page, so the forge may hold more.
+    @Published private(set) var canLoadMore = false
+    /// The rows on screen came from the disk cache and the fresh list is still loading.
+    @Published private(set) var showingCache = false
+    /// Rows that are new or whose update time moved in the last refresh; they flash once.
+    @Published private(set) var changed: Set<String> = []
+    /// The forge-side search (`--query`), taken from the sidebar filter.
+    private(set) var query = ""
+    /// The cache key of the list on screen; a new key (state, mine, search) starts at its cached page.
+    private var shownKey: String?
+    /// The key of the rows on screen (the cache paints before the fresh answer).
+    private var appliedKey: String?
+    private var lastLoad: Date?
+    private var searchTask: Task<Void, Never>?
+    /// PR details being fetched, and when each last arrived fresh.
+    private var detailLoading: Set<String> = []
+    private var detailFetched: [String: Date] = [:]
 
     var selected: HubPR? { prs.first { $0.id == selectedID } }
 
@@ -237,20 +258,39 @@ final class PRsModel: ObservableObject {
             return
         }
 
+        guard !paths.isEmpty else { return }
         loading = true
         let state = state
+        let query = query
+        let key = PRListCache.key(paths: paths, state: state, mine: mineOnly, query: query)
+        if key != shownKey {
+            // Another list (state, mine, search): its last known rows at once, then the fresh ones.
+            shownKey = key
+            limit = max(Self.pageSize, PRListCache.limit(key))
+            if let cached = PRListCache.readList(key), let list = try? JSONDecoder().decode(HubPRList.self, from: cached) {
+                apply(list, key: key, flash: false)
+                showingCache = true
+                if wanted == nil, selectedID == nil || selected == nil, let first = prs.first(where: { $0.isMine == true }) ?? prs.first {
+                    select(first)
+                }
+            }
+        }
+        let limit = limit
         // Mine asks the forge (`gh --author @me`, glab's own filter): filtering the capped list here
         // lost every authored PR past the first 40.
         let mine = mineOnly ? ["--mine"] : []
+        let search = query.isEmpty ? [] : ["--query", query]
         Task {
-            let span = HubPerf.begin("prs.list", "\(paths.count) projects state=\(state) mine=\(mineOnly)", awaits: true)
-            let result = await Task.detached(priority: .userInitiated) { () -> Result<HubPRList, Error> in
+            let span = HubPerf.begin("prs.list", "\(paths.count) projects state=\(state) mine=\(mineOnly) limit=\(limit) query=\(query.isEmpty ? "-" : "yes")", awaits: true)
+            let result = await Task.detached(priority: .userInitiated) { () -> Result<(HubPRList, Data), Error> in
                 Result {
-                    let data = try ToolsCLIRunner.run(["hub", "pr", "list"] + paths + ["--state", state, "--limit", "40"] + mine)
-                    return try JSONDecoder().decode(HubPRList.self, from: data)
+                    let data = try ToolsCLIRunner.run(["hub", "pr", "list"] + paths + ["--state", state, "--limit", String(limit)] + mine + search)
+                    return (try JSONDecoder().decode(HubPRList.self, from: data), data)
                 }
             }.value
             loading = false
+            showingCache = false
+            lastLoad = Date()
             if reloadPending {
                 // The result answers an older state or path set; the newer request replaces it.
                 reloadPending = false
@@ -269,13 +309,15 @@ final class PRsModel: ObservableObject {
                 }
             }
             switch result {
-            case .success(let list):
+            case .success(let (list, data)):
                 span.end("\(list.prs.count) prs")
                 HubMainBusy.measure("prs.list.render")
-                prs = list.prs.sorted { ($0.updatedAt ?? "") > ($1.updatedAt ?? "") }
+                if list.repos.allSatisfy({ $0.error == nil }) {
+                    PRListCache.writeList(data, key: key, limit: limit)
+                }
+                apply(list, key: key, flash: true)
                 // Once per list load, never on a timer (Hub/HubPRReadiness.swift).
                 PRReadinessStore.shared.refresh(prs)
-                errors = list.repos.compactMap { repo in repo.error.map { "\(repo.repo): \($0)" } }
                 if let wanted {
                     self.wanted = nil
                     if !select(wanted) {
@@ -354,6 +396,53 @@ final class PRsModel: ObservableObject {
     func reload() {
         let current = paths
         load(paths: current)
+    }
+
+    /// One more page per project; the rows already shown stay while it loads.
+    func loadMore() {
+        limit += Self.pageSize
+        reload()
+    }
+
+    /// Refreshes a list older than `age` seconds: the hub coming back to the PRs mode shows what it
+    /// has and asks the forge again.
+    func refreshIfStale(age: TimeInterval = 60) {
+        guard !loading, let lastLoad, Date().timeIntervalSince(lastLoad) > age else { return }
+        reload()
+    }
+
+    /// The sidebar filter as a forge search, after the typing pauses. The rows on screen filter at
+    /// once; this finds the PRs past the loaded pages (an older MR by its id or author).
+    func search(_ filter: String) {
+        let next = filter.trimmed
+        // Cancelled first: typing back to the applied query must also drop the search still waiting.
+        searchTask?.cancel()
+        guard next != query else { return }
+        searchTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 450_000_000)
+            guard let self, !Task.isCancelled else { return }
+            self.query = next
+            self.reload()
+        }
+    }
+
+    /// Shows `list`, animating rows in and out. `flash` marks new and updated rows once, only when
+    /// the list on screen is the same list refreshed (not another state or search).
+    private func apply(_ list: HubPRList, key: String, flash: Bool) {
+        let sameList = appliedKey == key
+        appliedKey = key
+        let sorted = list.prs.sorted { ($0.updatedAt ?? "") > ($1.updatedAt ?? "") }
+        let before = Dictionary(prs.map { ($0.id, $0.updatedAt ?? "") }, uniquingKeysWith: { first, _ in first })
+        let moved: Set<String> = flash && sameList
+            ? SWR.changed(before: before, after: sorted.map { ($0.id, $0.updatedAt ?? "") })
+            : []
+        withAnimation(SWR.animation) {
+            prs = sorted
+            canLoadMore = list.repos.contains { ($0.count ?? 0) >= limit }
+            changed = moved
+        }
+        errors = list.repos.compactMap { repo in repo.error.map { "\(repo.repo): \($0)" } }
+        SWR.fade(moved, current: { [weak self] in self?.changed }, clear: { [weak self] in self?.changed = [] })
     }
 
     /// The embedded review of `pr` at `path`: its worktree, or the main checkout with `fetch` naming the
@@ -482,25 +571,40 @@ final class PRsModel: ObservableObject {
         } else {
             clearReview()
         }
-        if let detail = details[pr.id] {
+        let key = pr.id
+        if details[key] == nil, let cached = PRListCache.readDetail(key),
+           let detail = try? JSONDecoder().decode(HubPRDetail.self, from: cached) {
+            // The last known detail at once; the fresh one below replaces it.
+            details[key] = detail
+        }
+        if let detail = details[key] {
             sessions.load(pr, detail: detail)
         }
-        guard details[pr.id] == nil, let root = pr.repoRoot else { return }
-        let key = pr.id
+        // Opening a PR always asks again (the description, commits and checks move), at most once
+        // per 15 s so a list refresh re-selecting it does not spawn another `tools hub pr show`.
+        guard let root = pr.repoRoot, !detailLoading.contains(key),
+              detailFetched[key].map({ Date().timeIntervalSince($0) > 15 }) ?? true else { return }
+        detailLoading.insert(key)
         Task {
             let span = HubPerf.begin("prs.show", key, awaits: true)
-            let detail = await Task.detached(priority: .userInitiated) { () -> HubPRDetail? in
-                guard let data = try? ToolsCLIRunner.run(["hub", "pr", "show", "\(root)#\(pr.number)"]) else { return nil }
-                return try? JSONDecoder().decode(HubPRDetail.self, from: data)
+            let fresh = await Task.detached(priority: .userInitiated) { () -> (HubPRDetail, Data)? in
+                guard let data = try? ToolsCLIRunner.run(["hub", "pr", "show", "\(root)#\(pr.number)"]),
+                      let detail = try? JSONDecoder().decode(HubPRDetail.self, from: data) else { return nil }
+                return (detail, data)
             }.value
-            span.end(detail == nil ? "failed" : "")
-            if let detail {
+            span.end(fresh == nil ? "failed" : "")
+            detailLoading.remove(key)
+            guard let (detail, data) = fresh else { return }
+            detailFetched[key] = Date()
+            PRListCache.writeDetail(data, id: key)
+            let previous = details[key]
+            if previous != detail {
                 details[key] = detail
-                if reviewPRID == key, detail.baseSha != nil {
-                    review?.setScope(Self.scope(pr, detail: detail, fetch: fetchedHead(pr)))
-                }
-                sessions.load(pr, detail: detail)
             }
+            if reviewPRID == key, detail.baseSha != nil, previous?.baseSha != detail.baseSha {
+                review?.setScope(Self.scope(pr, detail: detail, fetch: fetchedHead(pr)))
+            }
+            sessions.load(pr, detail: detail)
         }
     }
 
@@ -574,6 +678,7 @@ struct PRListView: View {
     private var reloadControls: some View {
         if prs.loading {
             ProgressView().controlSize(.small)
+                .instantTooltip(prs.showingCache ? "Showing the last known list; asking the forge for the current one" : "Loading the PR/MR list")
         }
         HubNotifyButton(prs: prs)
         IconButton(systemName: "arrow.clockwise", tooltip: "Reload the PR/MR list") { prs.reload() }
@@ -582,10 +687,9 @@ struct PRListView: View {
     /// One group per project (`HubPR.project`): two checkouts named `service` from different origins
     /// stay apart. The folder name is only the title.
     private var groups: [(project: String, repo: String, rows: [HubPR])] {
-        let needle = model.filter.trimmed.lowercased()
+        let query = PRQuery(model.filter)
         let rows = prs.prs.filter { pr in
-            (!prs.mineOnly || pr.isMine == true)
-                && (needle.isEmpty || "\(pr.repo) \(pr.label) \(pr.title) \(pr.author ?? "") \(pr.headBranch)".lowercased().contains(needle))
+            (!prs.mineOnly || pr.isMine == true) && (query.isEmpty || query.matches(pr))
         }
         let grouped = Dictionary(grouping: rows, by: \.project)
         let titles = grouped.mapValues { $0.first?.repo ?? "" }
@@ -626,6 +730,7 @@ struct PRListView: View {
                             if !prefs.collapsed.contains(group.project) {
                                 ForEach(group.rows) { pr in
                                     row(pr)
+                                        .transition(SWR.rowTransition)
                                 }
                             }
                         } header: {
@@ -639,10 +744,28 @@ struct PRListView: View {
                             )
                         }
                     }
+                    if prs.canLoadMore {
+                        GhostButton(
+                            prs.loading ? "Loading…" : "Load \(PRsModel.pageSize) more",
+                            symbol: "arrow.down.circle",
+                            tooltip: "Ask each project for \(PRsModel.pageSize) more PRs/MRs; the list is cached, so the next launch shows them at once",
+                            fullWidth: true
+                        ) {
+                            prs.loadMore()
+                        }
+                        .disabled(prs.loading)
+                        .padding(.horizontal, 10)
+                        .padding(.top, 6)
+                    }
                 }
                 .padding(.bottom, 12)
             }
         }
+        .onAppear {
+            prs.search(model.filter)
+            prs.refreshIfStale()
+        }
+        .onChange(of: model.filter) { _, filter in prs.search(filter) }
     }
 
     private func row(_ pr: HubPR) -> some View {
@@ -657,15 +780,9 @@ struct PRListView: View {
                     .foregroundColor(Color.white.opacity(0.92))
                     .lineLimit(2)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                HStack(spacing: 5) {
-                    Text(verbatim: pr.label).font(.system(size: 11, design: .monospaced)).fixedSize()
-                    Text(verbatim: pr.author ?? "").lineLimit(1).layoutPriority(-1)
-                    Text(verbatim: "·").fixedSize()
-                    // Whole, so the author truncates and the age never reads "4 hr. a…".
-                    LiveAgo(date: pr.updated, style: .brief).fixedSize()
-                    Spacer(minLength: 4)
-                    badges(pr)
-                }
+                // The author gives way first: whole, then truncated to at least a few letters, then
+                // gone. Squeezed by the badges it read "q" or "c" (video 2026-09-30 14:07).
+                metaLine(pr)
                 .font(.system(size: 11))
                 .foregroundColor(ReviewPalette.dim)
                 .lineLimit(1)
@@ -674,6 +791,8 @@ struct PRListView: View {
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
         .background(RoundedRectangle(cornerRadius: 8).fill(selected ? Color.white.opacity(0.08) : Color.clear))
+        // New and updated rows after a refresh flash once.
+        .swrFlash(prs.changed.contains(pr.id))
         .contentShape(Rectangle())
         .rowButton(cornerRadius: 8) { prs.select(pr) }
         .padding(.horizontal, 6)
@@ -681,6 +800,20 @@ struct PRListView: View {
         // The row stays one button (select); its labels' web pages live here, since a link inside
         // the row would turn a click meant to select into a browser tab.
         .contextMenu { linksMenu(pr) }
+    }
+
+    private func metaLine(_ pr: HubPR) -> some View {
+        PRMetaLineLayout {
+            Text(verbatim: pr.label).font(.system(size: 11, design: .monospaced))
+            // Flexible and clipped, so a zero width hides it instead of drawing an ellipsis.
+            Text(verbatim: pr.author ?? "").truncationMode(.tail)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .clipped()
+            Text(verbatim: "·").frame(maxWidth: .infinity).clipped()
+            // Whole, so the author truncates and the age never reads "4 hr. a…".
+            LiveAgo(date: pr.updated, style: .brief)
+            badges(pr)
+        }
     }
 
     @ViewBuilder
@@ -722,6 +855,63 @@ struct PRListView: View {
         Divider()
         Button("Copy \(kind) URL") { PathOpener.copy(pr.url) }
         Button("Copy branch \(pr.headBranch)") { PathOpener.copy(pr.headBranch) }
+    }
+}
+
+/// A PR row's meta line from five subviews: label, author, "·", age, badges (at the trailing edge).
+/// The author gives way first: whole, then truncated to at least `authorMinWidth`, then gone with its
+/// dot. One pass per width over the children's ideal sizes. A `ViewThatFits` of three whole lines
+/// measured every variant of every visible row on each step of a sidebar drag: busy p50 about 45 ms
+/// per step (`--bench`, 2026-09-30).
+struct PRMetaLineLayout: Layout {
+    static let spacing: CGFloat = 5
+    static let authorMinWidth: CGFloat = 48
+    /// The least room between the age and the badges.
+    static let badgeGap: CGFloat = 4
+
+    /// Width of the label, author, dot, age and badges; 0 hides the author and its dot.
+    static func widths(ideal: [CGFloat], width: CGFloat?) -> [CGFloat] {
+        guard ideal.count == 5 else { return ideal }
+        let (label, author, dot, age, badges) = (ideal[0], ideal[1], ideal[2], ideal[3], ideal[4])
+        let bare = label + spacing + age + badgeGap + badges
+        guard author > 0 else { return [label, 0, 0, age, badges] }
+        guard let width else { return ideal }
+        let room = width - bare - 2 * spacing - dot
+        if room >= author { return ideal }
+        if room >= min(authorMinWidth, author) { return [label, room, dot, age, badges] }
+        return [label, 0, 0, age, badges]
+    }
+
+    private func plan(_ proposal: ProposedViewSize, _ subviews: Subviews) -> [CGFloat] {
+        Self.widths(ideal: subviews.map { $0.sizeThatFits(.unspecified).width }, width: proposal.width)
+    }
+
+    private static func naturalWidth(_ widths: [CGFloat]) -> CGFloat {
+        let shown = widths.enumerated().filter { $0.offset == 4 || $0.element > 0 }
+        return shown.reduce(0) { $0 + $1.element } + CGFloat(max(0, shown.count - 2)) * spacing + badgeGap
+    }
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let widths = plan(proposal, subviews)
+        let height = zip(subviews, widths).map { $0.sizeThatFits(ProposedViewSize(width: $1, height: nil)).height }.max() ?? 0
+        return CGSize(width: proposal.width ?? Self.naturalWidth(widths), height: height)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        let widths = plan(ProposedViewSize(width: bounds.width, height: proposal.height), subviews)
+        var x = bounds.minX
+        for (index, subview) in subviews.enumerated() {
+            let width = index < widths.count ? widths[index] : 0
+            let size = ProposedViewSize(width: width, height: nil)
+            let height = subview.sizeThatFits(size).height
+            if index == subviews.count - 1 {
+                subview.place(at: CGPoint(x: bounds.maxX - width, y: bounds.midY - height / 2), proposal: size)
+                continue
+            }
+
+            subview.place(at: CGPoint(x: x, y: bounds.midY - height / 2), proposal: size)
+            if width > 0 { x += width + Self.spacing }
+        }
     }
 }
 
@@ -842,15 +1032,20 @@ struct PRDetailView: View {
             if showDiff, let review = prs.review {
                 let room = width * Self.overviewFraction
                 // The shared panel (glowing grip, drag past the minimum to fold, width saved on
-                // release) instead of NSSplitView's bare divider.
+                // release) instead of NSSplitView's bare divider. Both columns follow its drag at once
+                // (no gap) and keep their content's size until release, their surface filling the rest:
+                // reflowing them per step cost 13 to 15 ms of main thread per step, held 5 (`--bench`
+                // overview, 2026-09-30).
                 SideSplit(panelEdge: .leading, maxFraction: Self.overviewFraction) {
                     ResizableSidePanel(key: "prs.overview", edge: .leading, title: "PR", defaultWidth: 460,
                                        minWidth: Self.overviewMinWidth, maxWidth: max(Self.overviewMinWidth, room),
-                                       autoCollapse: width > 0 && room < Self.overviewMinWidth) {
-                        overview.hubSurface(.content)
+                                       autoCollapse: width > 0 && room < Self.overviewMinWidth,
+                                       holdsLayout: false) {
+                        overview.freezesWidthWhileResizing().hubSurface(.content)
                     }
                     ReviewRootView(model: review)
-                        .freezesWidthWhileResizing(heavy: false)
+                        .freezesWidthWhileResizing()
+                        .hubSurface(.content)
                 }
                 .onGeometryChange(for: CGFloat.self, of: \.size.width) { width = $0 }
             } else {
@@ -1056,6 +1251,14 @@ struct PRDetailView: View {
         }
     }
 
+    /// The description with its links, made once per body and link context (`PRDescriptionCache`).
+    private func linkedDescription(_ body: String) -> String {
+        let siblings = prs.prs.filter { $0.project == pr.project }.map { "\($0.number)\($0.isGitLab ? "!" : "#")\($0.headBranch)>\($0.baseBranch)" }
+        let key = [pr.id, body, (detail?.branchMentions ?? []).joined(separator: " "), siblings.sorted().joined(separator: " ")]
+            .joined(separator: "\u{1}")
+        return PRDescriptionCache.linked(key: key) { PRDescriptionLinker.linkify(body, context: linkContext) }
+    }
+
     private var overview: some View {
         // The find bar is its own row above the scroll view, not a top inset over it: selectable
         // description text drew through the inset's background.
@@ -1076,7 +1279,7 @@ struct PRDetailView: View {
                     .id(Self.sessionsID)
                 if let body = detail?.body?.trimmed, !body.isEmpty {
                     PRSection(title: "Description", folded: $foldDescription) {
-                        MarkdownContentView(markdown: PRDescriptionLinker.linkify(body, context: linkContext))
+                        MarkdownContentView(markdown: linkedDescription(body))
                             .findField("desc")
                             .findRow(Self.descriptionID)
                             .tint(Color(red: 0.62, green: 0.78, blue: 1))
@@ -1137,7 +1340,7 @@ struct PRDetailView: View {
             PanelFindRow(id: "session:\(row.id)", fields: [PanelFindField("title", row.session.displayTitle)], container: Self.sessionsID)
         }
         if let body = detail?.body?.trimmed, !body.isEmpty {
-            let markdown = PRDescriptionLinker.linkify(body, context: linkContext)
+            let markdown = linkedDescription(body)
             rows.append(PanelFindRow(id: Self.descriptionID, fields: [PanelFindField("desc", markdown, markdown: true)], container: Self.descriptionSectionID))
         }
         rows += (detail?.commits ?? []).reversed().map(PRCommitRow.searchable)
@@ -1158,6 +1361,21 @@ struct PRDetailView: View {
         } else {
             foldCommits = false
         }
+    }
+}
+
+/// Linked PR descriptions by PR, body and link context. The linker runs its regexes over every line,
+/// and the overview's body runs on every step of a sidebar drag (`sample`, 2026-09-30).
+@MainActor
+enum PRDescriptionCache {
+    private static var linked: [String: String] = [:]
+
+    static func linked(key: String, make: () -> String) -> String {
+        if let known = linked[key] { return known }
+        if linked.count >= 64 { linked.removeAll() }
+        let value = make()
+        linked[key] = value
+        return value
     }
 }
 

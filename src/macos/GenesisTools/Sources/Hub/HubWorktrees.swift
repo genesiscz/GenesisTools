@@ -6,7 +6,7 @@ import SwiftUI
 // (branch), with the sessions that touched it. From a worktree you see its changes (default scope:
 // the whole branch) and can resume one of its sessions or start a new one in cmux.
 
-struct HubWorktree: Identifiable, Hashable {
+struct HubWorktree: Identifiable, Hashable, Codable {
     var id: String { path }
     var path: String
     /// The folder name of the repository, for display. Two unrelated clones can share it.
@@ -20,6 +20,19 @@ struct HubWorktree: Identifiable, Hashable {
 }
 
 enum WorktreeDiscovery {
+    /// The last discovery (Hub/HubSWR.swift): the Worktrees mode paints it while `discover` runs again.
+    /// Blocking file reads and writes: off the main thread.
+    private static let cache = HubSWR.cache("worktrees")
+
+    static func cached() -> [HubWorktree]? {
+        // A worktree removed since then is not painted, even for the moment until the fresh list lands.
+        cache.read([HubWorktree].self, key: "all")?.filter { FileManager.default.fileExists(atPath: $0.path) }
+    }
+
+    static func save(_ worktrees: [HubWorktree]) {
+        cache.write(worktrees, key: "all")
+    }
+
     /// One `git worktree list` per repository, found from the distinct session folders.
     static func discover(sessions: [HubSession]) -> [HubWorktree] {
         var seenCommonDirs = Set<String>()
