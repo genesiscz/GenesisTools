@@ -1,3 +1,4 @@
+import { unsupportedCapabilityMessage } from "@app/ai-proxy/lib/account-model-ref";
 import type { ProxyProvider, RealtimeConnectTarget } from "@app/ai-proxy/lib/providers/types";
 import { guardProxyRoute, jsonError } from "@app/ai-proxy/lib/route-guards";
 import type { AiProxyConfig, ResolvedRoute } from "@app/ai-proxy/lib/types";
@@ -131,7 +132,7 @@ export async function handleRealtimeUpgrade(input: {
     const { client, route, provider } = guarded;
 
     if (typeof provider.realtimeConnect !== "function") {
-        return jsonError(400, `Provider "${route.account.provider}" does not support realtime`);
+        return jsonError(400, unsupportedCapabilityMessage(route, "realtime"));
     }
 
     const tags = readRequestTags(input.req.headers);
@@ -379,7 +380,7 @@ export async function handleRealtimeClientSecrets(input: {
     const { client, route, provider } = guarded;
 
     if (typeof provider.realtimeClientSecrets !== "function") {
-        return jsonError(400, `Provider "${route.account.provider}" does not support realtime client secrets`);
+        return jsonError(400, unsupportedCapabilityMessage(route, "realtime client secrets"));
     }
 
     if (!input.config.realtime?.allowClientSecrets) {

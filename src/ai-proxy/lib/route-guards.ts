@@ -1,8 +1,8 @@
+import { resolveProxyRoute } from "@app/ai-proxy/lib/account-model-ref";
 import type { ResolvedClient } from "@app/ai-proxy/lib/clients";
 import { clientProviderDenial, resolveClient } from "@app/ai-proxy/lib/clients";
 import { acquireProvider, providerUnavailableResponse } from "@app/ai-proxy/lib/providers/registry";
 import type { ProxyProvider } from "@app/ai-proxy/lib/providers/types";
-import { resolveModel } from "@app/ai-proxy/lib/resolve-model";
 import type { AiProxyConfig, ResolvedRoute } from "@app/ai-proxy/lib/types";
 import { checkClientQuota } from "@app/ai-proxy/lib/usage/client-ledger";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -24,7 +24,7 @@ export interface GuardedRoute {
 }
 
 /**
- * The shared auth → resolveModel → provider-denial → quota → acquireProvider
+ * The shared auth → resolveProxyRoute → provider-denial → quota → acquireProvider
  * sequence for endpoints that route a proxy model id to an upstream account.
  * Returns a Response on any rejection, else the guarded route.
  */
@@ -47,7 +47,7 @@ export async function guardProxyRoute(input: {
 
     let route: ResolvedRoute;
     try {
-        route = resolveModel(input.proxyModel, input.config.accounts);
+        route = await resolveProxyRoute(input.proxyModel, input.config.accounts);
     } catch (err) {
         return jsonError(400, err instanceof Error ? err.message : String(err));
     }

@@ -1,3 +1,4 @@
+import { resolveProxyRoute } from "@app/ai-proxy/lib/account-model-ref";
 import { anthropicMessagesPipeline, countAnthropicInputTokens } from "@app/ai-proxy/lib/anthropic-messages";
 import { handleAudioTranscriptions } from "@app/ai-proxy/lib/audio";
 import { buildProxyModelCatalog } from "@app/ai-proxy/lib/catalog";
@@ -7,7 +8,6 @@ import { stripBasePath } from "@app/ai-proxy/lib/path-prefix";
 import { acquireProvider, buildProviderMap, providerUnavailableResponse } from "@app/ai-proxy/lib/providers/registry";
 import type { ProxyProvider } from "@app/ai-proxy/lib/providers/types";
 import { handleRealtimeClientSecrets, handleRealtimeUpgrade, realtimeWebsocket } from "@app/ai-proxy/lib/realtime";
-import { resolveModel } from "@app/ai-proxy/lib/resolve-model";
 import { applyReasoningEffortToBody, findInvalidImageDataPayload } from "@app/ai-proxy/lib/rewrite-upstream-body";
 import { resolveThinkingMode } from "@app/ai-proxy/lib/thinking-config";
 import { resolveTranslationMode } from "@app/ai-proxy/lib/translation-config";
@@ -194,7 +194,7 @@ async function authorizeModelRoute({
     model: string;
     providers: Map<string, ProxyProvider>;
 }): Promise<{ route: ResolvedRoute; provider: ProxyProvider } | { error: Response }> {
-    const route = resolveModel(model, config.accounts);
+    const route = await resolveProxyRoute(model, config.accounts);
     const denial = clientProviderDenial(client, route.account.provider);
 
     if (denial) {

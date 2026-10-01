@@ -1,3 +1,4 @@
+import { unsupportedCapabilityMessage } from "@app/ai-proxy/lib/account-model-ref";
 import type { ProxyProvider } from "@app/ai-proxy/lib/providers/types";
 import { guardProxyRoute, jsonError } from "@app/ai-proxy/lib/route-guards";
 import type { AiProxyConfig } from "@app/ai-proxy/lib/types";
@@ -58,7 +59,7 @@ export async function handleAudioTranscriptions(input: {
     const { client, route, provider } = guarded;
 
     if (typeof provider.audioTranscriptions !== "function") {
-        return jsonError(400, `Provider "${route.account.provider}" does not support audio transcriptions`);
+        return jsonError(400, unsupportedCapabilityMessage(route, "audio transcriptions"));
     }
 
     const started = performance.now();
