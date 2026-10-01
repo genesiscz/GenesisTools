@@ -1,4 +1,5 @@
 import type { RenderResult } from "@app/dev-dashboard/lib/obsidian/markdown";
+import { codeLanguageFor } from "@app/dev-dashboard/lib/obsidian/share-assets";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { escapeHtml } from "@genesiscz/utils/string";
 
@@ -855,8 +856,11 @@ export function renderSharePage(options: ShareTemplateOptions): string {
         bodyExtras.push(buildMermaidScript());
     }
 
-    const baseName = sourcePath?.split("/").pop()?.replace(/\.md$/i, "") || title;
-    const downloadName = `${baseName.replace(/[\\/:*?"<>|]/g, "_")}.md`;
+    const fileName = sourcePath?.split("/").pop();
+    // A shared source file downloads under its own name; only a note gets the .md suffix.
+    const baseName =
+        fileName && codeLanguageFor(fileName) ? fileName : `${fileName?.replace(/\.md$/i, "") || title}.md`;
+    const downloadName = baseName.replace(/[\\/:*?"<>|]/g, "_");
 
     bodyExtras.push(buildViewToggleScript(downloadName));
     bodyExtras.push(buildAssetPanelScript());
