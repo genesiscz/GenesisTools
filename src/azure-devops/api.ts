@@ -16,6 +16,7 @@ import type {
     GitCommitsResponse,
     IterationClassificationNode,
     QueryNode,
+    SavedQueryApi,
     TeamIteration,
     TeamIterationsResponse,
     TeamMembersResponse,
@@ -26,6 +27,7 @@ import type {
     WikiRecursionLevel,
     WikiSearchResponse,
     WikiV2,
+    WiqlQueryResponse,
     WorkItemCommentApi,
     WorkItemCommentsApiResponse,
 } from "@app/azure-devops/api.types";
@@ -33,6 +35,7 @@ import { loadTeamMembersCache, saveTeamMembersCache } from "@app/azure-devops/ca
 import { AzAuthError, extractAzLoginSuggestion } from "@app/azure-devops/cli.utils";
 import { extractOrgName } from "@app/azure-devops/config";
 import { findTruncatedNodes, flattenIterationNodes } from "@app/azure-devops/lib/iterations";
+import { type SavedQueryDefinition, workItemIdsFromQueryResult } from "@app/azure-devops/lib/query-tree";
 import type {
     AzureConfig,
     AzWorkItemRaw,
@@ -414,24 +417,54 @@ export class Api {
     }
 
     /**
+     * Saved query definition, including the columns the query editor shows.
+     * `$expand=wiql` is what fills `columns` and `wiql`; without it the payload is only the name.
+     */
+    async getSavedQuery(queryId: string): Promise<SavedQueryDefinition> {
+        const url = Api.witUrl(this.config, ["queries", queryId], { $expand: "wiql" });
+        const data = await this.get<SavedQueryApi>(url, `saved query ${queryId.slice(0, 8)}`);
+        const columns = (data.columns ?? []).flatMap((column) => {
+            if (!column.name || !column.referenceName) {
+                return [];
+            }
+
+            return [{ name: column.name, referenceName: column.referenceName }];
+        });
+
+        return {
+            id: data.id,
+            name: data.name,
+            path: data.path ?? "",
+            queryType: data.queryType ?? "flat",
+            wiql: data.wiql ?? null,
+            columns,
+        };
+    }
+
+    /**
+     * Run a saved query and return the raw WIQL payload.
+     * Flat queries fill `workItems`. Tree and one-hop queries fill `workItemRelations`.
+     */
+    async getQueryResult(queryId: string): Promise<WiqlQueryResponse> {
+        const url = Api.witUrl(this.config, ["wiql", queryId]);
+
+        return this.get<WiqlQueryResponse>(url, `query ${queryId.slice(0, 8)}`);
+    }
+
+    /**
      * Run a saved query and return the work items with full field data
      * Uses REST API to get ChangedDate and other fields not returned by az boards query
      */
     async runQuery(queryId: string): Promise<WorkItem[]> {
-        // Step 1: Run the query to get work item IDs
-        const queryUrl = Api.witUrl(this.config, ["wiql", queryId]);
-        const queryResult = await this.get<{ workItems?: Array<{ id: number; url: string }> }>(
-            queryUrl,
-            `query ${queryId.slice(0, 8)}`
-        );
+        const queryResult = await this.getQueryResult(queryId);
+        const ids = workItemIdsFromQueryResult(queryResult);
 
-        if (!queryResult.workItems || queryResult.workItems.length === 0) {
+        if (ids.length === 0) {
             logger.debug(`[api] Query returned 0 work items`);
             return [];
         }
 
-        const ids = queryResult.workItems.map((wi) => wi.id);
-        logger.debug(`[api] Query returned ${ids.length} work item IDs`);
+        logger.debug(`[api] Query returned ${ids.length} work item IDs (${queryResult.queryType ?? "unknown"})`);
 
         // Step 2: Batch fetch work items with specific fields (max 200 per request)
         const fields = [
@@ -1176,7 +1209,12 @@ export class Api {
      * Batch-fetch a fixed field set for many work items (200 per request).
      * Cheaper than getWorkItems(), which always expands relations and comments.
      */
-    async getWorkItemFields(ids: number[], fields: string[]): Promise<Map<number, Record<string, unknown>>> {
+    /** `asOf` reads the fields as they were then, so a WIQL `ASOF` result is not mixed with today's values. */
+    async getWorkItemFields(
+        ids: number[],
+        fields: string[],
+        options: { asOf?: string } = {}
+    ): Promise<Map<number, Record<string, unknown>>> {
         const result = new Map<number, Record<string, unknown>>();
         const batchSize = 200;
 
@@ -1185,6 +1223,7 @@ export class Api {
             const url = Api.orgUrl(this.config, ["wit", "workitems"], {
                 ids: batchIds.join(","),
                 fields: fields.join(","),
+                ...(options.asOf ? { asOf: options.asOf } : {}),
             });
             const response = await this.get<{ value: Array<{ id: number; fields?: Record<string, unknown> }> }>(
                 url,

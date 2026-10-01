@@ -6,6 +6,14 @@
 
 import { Api } from "@app/azure-devops/api";
 import { CACHE_TTL, formatJSON, loadGlobalCache, saveGlobalCache, storage } from "@app/azure-devops/cache";
+import {
+    buildQueryTreeView,
+    FALLBACK_QUERY_COLUMNS,
+    formatQueryTreeMarkdown,
+    formatQueryTreeText,
+    relationsFromQueryResult,
+    workItemIdsFromQueryResult,
+} from "@app/azure-devops/lib/query-tree";
 import { looksLikeWiql } from "@app/azure-devops/lib/wiql-input";
 import type {
     AttachmentFilter,
@@ -236,6 +244,85 @@ interface QueryOptions {
     category?: string;
     taskFolders?: boolean;
     images?: boolean;
+    tree?: boolean;
+}
+
+/**
+ * Print a saved query the way the query editor does: parent/child indent and the query's own columns.
+ * State and severity filters stay on the flat path. Applying them here would hide a parent whose
+ * child is the row you still need, or the reverse.
+ */
+async function handleQueryTree(
+    input: string,
+    format: OutputFormat,
+    downloadWorkitems: boolean | undefined,
+    category: string | undefined,
+    taskFolders: boolean | undefined,
+    downloadImages: boolean | undefined,
+    filters: QueryFilters | undefined
+): Promise<void> {
+    if (filters?.states?.length || filters?.severities?.length || filters?.changesFrom || filters?.changesTo) {
+        logger.warn("[query] --tree prints the whole saved query; --state, --severity and --changes-* are not applied");
+    }
+
+    const config = requireConfig();
+    const api = new Api(config);
+    const queryId = await resolveQueryId(input, api, config);
+    const saved = await api.getSavedQuery(queryId);
+    const result = await api.getQueryResult(queryId);
+    const relations = relationsFromQueryResult(result);
+    const ids = workItemIdsFromQueryResult(result);
+    const columns = saved.columns.length > 0 ? saved.columns : FALLBACK_QUERY_COLUMNS;
+    const referenceNames = [...new Set(columns.map((column) => column.referenceName))];
+    const fieldsById =
+        ids.length === 0
+            ? new Map<number, Record<string, unknown>>()
+            : await api.getWorkItemFields(ids, referenceNames, { asOf: result.asOf ?? undefined });
+    const view = buildQueryTreeView({
+        id: saved.id,
+        name: saved.name,
+        path: saved.path,
+        queryType: result.queryType ?? saved.queryType,
+        wiql: saved.wiql,
+        asOf: result.asOf ?? null,
+        columns,
+        relations,
+        fieldsById,
+        urlFor: (id) => api.generateWorkItemUrl(id),
+    });
+
+    switch (format) {
+        case "json":
+            out.println(formatJSON(view));
+            break;
+        case "md":
+            out.println(formatQueryTreeMarkdown(view));
+            break;
+        case "ai":
+            out.println(formatQueryTreeText(view));
+            break;
+    }
+
+    if (!downloadWorkitems || ids.length === 0) {
+        return;
+    }
+
+    if (!workItemHandler) {
+        throw new Error("Work item handler not available. Cannot download work items.");
+    }
+
+    log(`\nDownloading ${ids.length} work items${category ? ` to category: ${category}` : ""}...\n`);
+    await workItemHandler(
+        ids.join(","),
+        format,
+        false,
+        category,
+        taskFolders ?? false,
+        undefined,
+        { comments: true },
+        undefined,
+        downloadImages
+    );
 }
 
 /**
@@ -249,9 +336,16 @@ export async function handleQuery(
     downloadWorkitems?: boolean,
     category?: string,
     taskFolders?: boolean,
-    downloadImages?: boolean
+    downloadImages?: boolean,
+    tree = false
 ): Promise<void> {
     silentMode = format === "json"; // Suppress progress messages for JSON output
+
+    if (tree) {
+        await handleQueryTree(input, format, downloadWorkitems, category, taskFolders, downloadImages, filters);
+        return;
+    }
+
     logger.debug(`[query] Starting with input: ${input}, force=${forceRefresh}`);
     if (filters) {
         logger.debug(
@@ -418,6 +512,7 @@ export function registerQueryCommand(program: Command): void {
         .option("--category <name>", "Save to tasks/<category>/")
         .option("--task-folders", "Save in tasks/<id>/ subfolder")
         .option("--images", "Download inline images from description and comments")
+        .option("--tree", "Print the saved query as a tree, including every column the query shows")
         .action(async (input: string, options: QueryOptions) => {
             // Parse filters from options
             const filters: QueryFilters = {};
@@ -455,7 +550,8 @@ export function registerQueryCommand(program: Command): void {
                 options.downloadWorkitems,
                 options.category,
                 options.taskFolders,
-                options.images
+                options.images,
+                options.tree ?? false
             );
         });
 }

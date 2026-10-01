@@ -14,6 +14,8 @@ Fetch, manage, and analyze Azure DevOps work items using `tools azure-devops`.
 ```bash
 tools azure-devops workitem <id|ids>             # Fetch work item(s)
 tools azure-devops query <id|url|name>           # Fetch query results (supports name matching)
+tools azure-devops query <id> --tree             # Hierarchy plus the query's own columns
+tools azure-devops query <id> --tree -f json     # Same tree as one JSON document
 tools azure-devops query <id> --download-workitems  # Download all to files
 tools azure-devops dashboard <id|url>            # Get dashboard queries
 tools azure-devops iterations                    # List the project's sprints (alias: sprints)
@@ -46,6 +48,7 @@ tools azure-devops timelog import <file>         # Bulk import time logs (with p
 | Option | Description |
 |--------|-------------|
 | `--format ai\|md\|json` | Output format (default: ai) |
+| `--tree` | Print the saved query as a tree, including every column it shows |
 | `--force`, `--refresh` | Bypass cache |
 | `--state <states>` | Filter by state (comma-separated) |
 | `--severity <sev>` | Filter by severity (comma-separated) |
@@ -180,7 +183,13 @@ tools azure-devops query "Open bugs"
 # With filters
 tools azure-devops query <id> --state Active,Development
 tools azure-devops query "Active Tasks" --download-workitems --category react19
+
+# The query editor's tree, including custom columns such as Merge proběhl
+tools azure-devops query "<id-or-url>" --tree
+tools azure-devops query "<id-or-url>" --tree -f json
 ```
+
+A release query is a tree. Without `--tree`, the result is a flat list and the query's own columns are dropped. `--tree` keeps the parent/child indent and every column. Text is one line per work item. JSON is one object: `name`, `path`, `queryType`, `wiql`, `asOf`, `columns`, `roots`. Each node has `id`, `url`, `values` (column name → string or null) and `children`. A missing value is null, not omitted. `--state`, `--severity` and `--changes-*` are not applied in this mode. A flat query is a single level of roots.
 
 **Query Name Matching:**
 - Exact matches are used immediately
@@ -270,6 +279,7 @@ When user says "analyze workitem/task X" or "analyze tasks from query Y":
 | "List the sprints" | `tools azure-devops iterations` |
 | "Show sprint 17 in backlog order" | `tools azure-devops sprint "Sprint 17" --mine --order` |
 | "Show query results for X" | `tools azure-devops query X` |
+| "Show the release query tree" | `tools azure-devops query <url> --tree -f json` |
 | "Show Open Bugs query" | `tools azure-devops query "Open Bugs"` |
 | "Fetch Open bugs" | `tools azure-devops query "Open bugs"` |
 | "Download React19 bugs" | `tools azure-devops query "React19 Bugs" --download-workitems --category react19` |

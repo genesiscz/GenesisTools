@@ -8,9 +8,40 @@
 
 import type { IdentityRef } from "@app/azure-devops/types";
 
-/** Raw response from WIQL query execution */
+export interface WiqlWorkItemRef {
+    id: number;
+    url?: string;
+}
+
+/**
+ * Raw response from running a saved query or an ad-hoc WIQL statement.
+ * Flat queries fill `workItems`. Tree and one-hop queries fill `workItemRelations`
+ * and leave `workItems` empty.
+ */
 export interface WiqlQueryResponse {
-    workItems?: Array<{ id: number; url: string }>;
+    queryType?: string;
+    queryResultType?: string;
+    asOf?: string;
+    workItems?: WiqlWorkItemRef[];
+    workItemRelations?: Array<{
+        rel?: string | null;
+        source?: WiqlWorkItemRef | null;
+        target?: WiqlWorkItemRef | null;
+    }>;
+}
+
+export interface SavedQueryColumnApi {
+    name?: string;
+    referenceName?: string;
+}
+
+export interface SavedQueryApi {
+    id: string;
+    name: string;
+    path?: string;
+    queryType?: string;
+    wiql?: string;
+    columns?: SavedQueryColumnApi[];
 }
 
 /** Raw response from work item comments endpoint */

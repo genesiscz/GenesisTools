@@ -121,6 +121,7 @@ Query Options:
   --download-workitems   Download all work items to tasks/
   --category <name>      Save to tasks/<category>/ (remembered per work item)
   --task-folders         Save in tasks/<id>/ subfolder
+  --tree                 Print the saved query as a tree with its own columns
 
 Workitem Options:
   --format <ai|md|json>  Output format (default: ai)
@@ -158,6 +159,10 @@ Examples:
 
   # Fetch query
   tools azure-devops query d6e14134-9d22-4cbb-b897-b1514f888667
+
+  # Saved tree, with the columns the query editor shows
+  tools azure-devops query <id-or-url> --tree
+  tools azure-devops query <id-or-url> --tree -f json
 
   # Fetch work items (supports comma-separated IDs)
   tools azure-devops workitem 12345
