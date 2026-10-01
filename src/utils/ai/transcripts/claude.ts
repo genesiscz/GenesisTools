@@ -4,6 +4,7 @@ import { getToolUseBlocks, humanTextOf } from "@genesiscz/utils/claude/session.u
 import { extractToolInputSummary, extractToolResultText } from "@genesiscz/utils/claude/session-helpers";
 import type {
     AssistantMessage,
+    AssistantMessageContent,
     ConversationMessage,
     ToolResultBlock,
     UserMessage,
@@ -17,7 +18,21 @@ import {
     type TranscriptEnvelope,
     type TranscriptTool,
     type TranscriptTurn,
+    type TranscriptUsage,
 } from "./types";
+
+/** Input is net of cache reads (shown apart as `cache`); cache writes are fresh input, so they count in it. */
+function assistantUsage(message: AssistantMessageContent): TranscriptUsage | undefined {
+    if (!message.usage || message.model === "<synthetic>") {
+        return undefined;
+    }
+
+    return {
+        inputTokens: message.usage.input_tokens + (message.usage.cache_creation_input_tokens ?? 0),
+        cacheReadTokens: message.usage.cache_read_input_tokens,
+        outputTokens: message.usage.output_tokens,
+    };
+}
 
 function toolResultsFromUser(msg: UserMessage): ToolResultBlock[] {
     const content = msg.message.content;
@@ -80,6 +95,10 @@ function userTurnText(input: { raw: string; parts: PromptPart[] | undefined; isM
 export function claudeMessagesToTurns(messages: ConversationMessage[]): TranscriptTurn[] {
     const turns: TranscriptTurn[] = [];
     let pendingTools: TranscriptTool[] = [];
+    // One API response is written as one row per content block, all sharing message.id: its usage
+    // counts once, on the response's first visible turn, with the last row's (final) figures.
+    const lastUsage = new Map<string, TranscriptUsage>();
+    const firstTurn = new Map<string, TranscriptTurn>();
 
     const flushPending = () => {
         pendingTools = [];
@@ -117,6 +136,13 @@ export function claudeMessagesToTurns(messages: ConversationMessage[]): Transcri
         if (msg.type === "assistant") {
             const assistant = msg as AssistantMessage;
             const content = assistant.message.content;
+            const messageId = assistant.message.id;
+            const usage = assistantUsage(assistant.message);
+
+            if (messageId && usage) {
+                lastUsage.set(messageId, usage);
+            }
+
             const text = content
                 .filter((b) => b.type === "text")
                 .map((b) => b.text)
@@ -132,14 +158,27 @@ export function claudeMessagesToTurns(messages: ConversationMessage[]): Transcri
             if (!text && tools.length === 0) {
                 continue;
             }
-            turns.push({
+            const turn: TranscriptTurn = {
                 id: assistant.uuid,
                 role: "assistant",
                 at: assistant.timestamp ?? null,
                 text,
                 tools,
-            });
+            };
+            turns.push(turn);
+
+            if (messageId && !firstTurn.has(messageId)) {
+                firstTurn.set(messageId, turn);
+            }
+
             pendingTools = tools;
+        }
+    }
+
+    for (const [messageId, turn] of firstTurn) {
+        const usage = lastUsage.get(messageId);
+        if (usage) {
+            turn.usage = usage;
         }
     }
 

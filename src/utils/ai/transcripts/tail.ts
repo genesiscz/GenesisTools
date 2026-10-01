@@ -99,8 +99,9 @@ export async function followTranscript(resolved: ResolvedTranscript, opts: Follo
     tailer.start();
 
     // A worker session is a sequence of turn files and the next steer writes a
-    // new one, which a tailer pinned to one path never sees (round 4, t2).
-    const rescan = setInterval(() => {
+    // new one, which a tailer pinned to one path never sees (round 4, t2). Only
+    // a worker has turn files: a session file never rotates, so it needs no wakeup.
+    const rescanTick = (): void => {
         if (stopped) {
             return;
         }
@@ -122,7 +123,8 @@ export async function followTranscript(resolved: ResolvedTranscript, opts: Follo
         });
         tailer.start();
         schedule();
-    }, WORKER_RESCAN_MS);
+    };
+    const rescan = resolved.source === "worker" ? setInterval(rescanTick, WORKER_RESCAN_MS) : undefined;
 
     await new Promise<void>((resolve) => {
         const stop = (): void => {

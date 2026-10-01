@@ -1,6 +1,37 @@
 import { expect, test } from "bun:test";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
 import { DEFAULT_SURFACES } from "@genesiscz/utils/worker/isolation";
 import { grokDriver, promptInput } from "./driver";
+import { turnLogPath } from "./paths";
+import type { GrokSessionMeta } from "./store";
+
+const sessionMeta = (name: string, turns: number): GrokSessionMeta => ({
+    name,
+    sessionId: "00000000-0000-4000-8000-000000000000",
+    cwd: "/tmp/fixture",
+    workerHome: "/tmp/fixture-home",
+    readOnly: false,
+    turns,
+    createdAt: "2026-10-01T00:00:00.000Z",
+});
+
+test("while the first turn runs, the latest turn is that running turn, not a turn 0 with no log", () => {
+    // `meta.turns` counts FINISHED turns, so it reads 0 during turn 1. `tools grok read` and `tail`
+    // asked for turn0.jsonl and threw "No log for turn 0" while turn1.jsonl was being written.
+    const running = sessionMeta("fixture-latest-running", 0);
+    const log = turnLogPath(running.name, 1);
+
+    mkdirSync(dirname(log), { recursive: true });
+    writeFileSync(log, "");
+
+    expect(grokDriver.latestTurn?.(running)).toBe(1);
+});
+
+test("NEGATIVE CONTROL: a finished session's latest turn is its last finished turn", () => {
+    expect(grokDriver.latestTurn?.(sessionMeta("fixture-latest-finished", 2))).toBe(2);
+    expect(grokDriver.latestTurn?.(sessionMeta("fixture-latest-empty", 0))).toBe(0);
+});
 
 const spawnInput = (account?: string) => ({
     name: "fixture",

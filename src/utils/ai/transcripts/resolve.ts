@@ -1,6 +1,6 @@
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, dirname, join } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { PROJECTS_DIR } from "@genesiscz/utils/claude/projects";
 import { workersDir as claudeWorkerDir } from "@genesiscz/utils/claude/worker-paths";
 import { sessionsDir as codexWorkerDir } from "@genesiscz/utils/codex/worker-paths";
@@ -140,7 +140,112 @@ function findClaude(query: string, projectsDir: string): RankedHit[] {
             }
         }
     }
+    return [...hits, ...findClaudeSubagent(query, projectsDir)];
+}
+
+/** `aE-sharedkit-47434100f6deeb1c`, `a0564229bc9945515`, or either with its `agent-` file prefix. */
+const SUBAGENT_ID = /^a[A-Za-z0-9][A-Za-z0-9_-]*$/;
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * A sub-agent transcript by its exact id: `<project>/<session>/subagents/agent-<id>.jsonl`.
+ * Exact only, since every session directory is probed with one `existsSync`.
+ */
+function findClaudeSubagent(query: string, projectsDir: string): RankedHit[] {
+    const agentId = query.replace(/^agent-/, "");
+    if (!SUBAGENT_ID.test(agentId) || UUID.test(agentId)) {
+        return [];
+    }
+
+    const hits: RankedHit[] = [];
+    for (const project of listDir(projectsDir)) {
+        const projectDir = join(projectsDir, project);
+        for (const session of listDir(projectDir)) {
+            if (session.endsWith(".jsonl")) {
+                continue;
+            }
+
+            const filePath = join(projectDir, session, "subagents", `agent-${agentId}.jsonl`);
+            if (existsSync(filePath)) {
+                hits.push({
+                    provider: "claude",
+                    source: "native",
+                    sessionId: agentId,
+                    filePath,
+                    mtime: mtimeOf(filePath),
+                });
+            }
+        }
+    }
+
     return hits;
+}
+
+/** The real path when it exists, so a symlinked home (or `~/.claude`) still contains its files. */
+function realOrResolved(path: string): string {
+    return existsSync(path) ? realpathSync(path) : resolve(path);
+}
+
+function isInside(root: string, path: string): boolean {
+    const rel = relative(realOrResolved(root), realOrResolved(path));
+    return rel.length > 0 && rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel);
+}
+
+/**
+ * An existing absolute transcript path, with its provider and source read off the root it lives
+ * under. Null when the path is under no known root and no provider was named.
+ */
+function resolvePath(
+    path: string,
+    roots: Required<TranscriptRoots>,
+    claudeRoots: string[],
+    provider?: TranscriptProvider
+): ResolvedTranscript | null {
+    const filePath = resolve(path);
+    const stem = basename(filePath).replace(/\.jsonl$/, "");
+    const located: Array<{ root: string; provider: TranscriptProvider; source: TranscriptSource }> = [
+        ...claudeRoots.map((root) => ({ root, provider: "claude" as const, source: "native" as const })),
+        { root: roots.claudeWorker, provider: "claude", source: "worker" },
+        { root: roots.grokWorker, provider: "grok", source: "worker" },
+        { root: roots.codexWorker, provider: "codex", source: "worker" },
+        ...splitCodexHomes(roots.codexHome).map((root) => ({
+            root,
+            provider: "codex" as const,
+            source: "native" as const,
+        })),
+        { root: roots.grokHome, provider: "grok", source: "native" },
+    ];
+    const hit = located.find((entry) => isInside(entry.root, filePath));
+
+    if (!hit && !provider) {
+        return null;
+    }
+
+    const resolvedProvider = provider ?? hit?.provider ?? "claude";
+    const source = hit?.source ?? "native";
+
+    if (source === "worker" && resolvedProvider !== "codex") {
+        // The turn chain, so a steer's next turn file is followed (`rescanWorkerTurns`).
+        const name = stem.replace(/\.turn\d+$/, "");
+        const self: ResolvedTranscript = { provider: resolvedProvider, source, sessionId: name, filePath };
+        return { ...self, ...(rescanWorkerTurns(self) ?? {}) };
+    }
+
+    if (resolvedProvider === "codex") {
+        return {
+            provider: "codex",
+            source,
+            sessionId: source === "native" ? codexNativeSessionId(filePath) : stem,
+            filePath,
+        };
+    }
+
+    if (resolvedProvider === "grok") {
+        // Native grok is `<cwd>/<sessionId>/updates.jsonl`: the id is the folder.
+        return { provider: "grok", source, sessionId: basename(dirname(filePath)), filePath };
+    }
+
+    return { provider: "claude", source, sessionId: stem.replace(/^agent-/, ""), filePath };
 }
 
 function findGrokNative(query: string, grokHome: string): RankedHit[] {
@@ -368,6 +473,18 @@ export async function resolveTranscript(
     // An explicitly injected root is the whole answer; only the default set
     // fans out across every Claude root that nativeSessionRoots knows.
     const claudeRoots = roots.claudeProjects ? [roots.claudeProjects] : resolved.claudeProjectsAll;
+
+    // An existing absolute path (a sub-agent's agent-<id>.jsonl, a worker turn file) is the answer
+    // as it is: its provider comes from the root it lives under.
+    if (isAbsolute(query) && existsSync(query)) {
+        const byPath = resolvePath(query, resolved, claudeRoots, provider);
+        if (!byPath) {
+            throw new Error(`"${query}" is under no known transcript root; pass --provider to read it`);
+        }
+
+        return byPath;
+    }
+
     const hits: RankedHit[] = [];
     if (!provider || provider === "claude") {
         for (const root of claudeRoots) {

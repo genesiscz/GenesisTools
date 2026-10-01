@@ -170,7 +170,8 @@ export const grokDriver: WorkerDriver<GrokSessionMeta> = {
         return { kind: "signalled", pids: signalled };
     },
 
-    latestTurn: (meta) => meta.turns,
+    // `turns` counts finished turns; a running turn already has its log, so it is the latest.
+    latestTurn: (meta) => (existsSync(turnLogPath(meta.name, meta.turns + 1)) ? meta.turns + 1 : meta.turns),
     turnFile: (meta, turn) => requireTurnLog(meta, turn),
 
     async readDefault(meta, turn) {

@@ -193,3 +193,86 @@ describe("rescanWorkerTurns", () => {
         ).toBeNull();
     });
 });
+
+describe("resolveTranscript: sub-agent ids and absolute paths", () => {
+    function roots(root: string) {
+        return {
+            claudeProjects: join(root, "claude"),
+            claudeWorker: join(root, "claude-w"),
+            grokHome: join(root, "grok"),
+            grokWorker: join(root, "grok-w"),
+            codexHome: join(root, "codex"),
+            codexWorker: join(root, "codex-w"),
+        };
+    }
+
+    function subagentFile(root: string, agentId: string): string {
+        const dir = join(root, "claude", "-tmp-proj", "11111111-2222-3333-4444-555555555555", "subagents");
+        mkdirSync(dir, { recursive: true });
+        const file = join(dir, `agent-${agentId}.jsonl`);
+        writeFileSync(file, "{}\n");
+        return file;
+    }
+
+    test("a teammate's sub-agent id finds its agent-<id>.jsonl, with or without the agent- prefix", async () => {
+        const root = fixtureRoot();
+        const file = subagentFile(root, "aworker-one-0123456789abcdef");
+
+        for (const query of ["aworker-one-0123456789abcdef", "agent-aworker-one-0123456789abcdef"]) {
+            const hit = await resolveTranscript(query, roots(root));
+            expect(hit).toEqual({
+                provider: "claude",
+                source: "native",
+                sessionId: "aworker-one-0123456789abcdef",
+                filePath: file,
+                extraFiles: undefined,
+            });
+        }
+    });
+
+    test("an absolute sub-agent path resolves as claude from its location", async () => {
+        const root = fixtureRoot();
+        const file = subagentFile(root, "a0123456789abcdef");
+
+        expect(await resolveTranscript(file, roots(root))).toEqual({
+            provider: "claude",
+            source: "native",
+            sessionId: "a0123456789abcdef",
+            filePath: file,
+        });
+    });
+
+    test("absolute worker paths take their provider from the worker directory", async () => {
+        const root = fixtureRoot();
+        mkdirSync(join(root, "grok-w"), { recursive: true });
+        mkdirSync(join(root, "codex-w"), { recursive: true });
+        writeFileSync(join(root, "grok-w", "probe.turn1.jsonl"), "{}\n");
+        writeFileSync(join(root, "grok-w", "probe.turn2.jsonl"), "{}\n");
+        writeFileSync(join(root, "codex-w", "probe.jsonl"), "{}\n");
+
+        const grok = await resolveTranscript(join(root, "grok-w", "probe.turn1.jsonl"), roots(root));
+        expect(grok).toEqual({
+            provider: "grok",
+            source: "worker",
+            sessionId: "probe",
+            filePath: join(root, "grok-w", "probe.turn2.jsonl"),
+            extraFiles: [join(root, "grok-w", "probe.turn1.jsonl")],
+        });
+
+        const codex = await resolveTranscript(join(root, "codex-w", "probe.jsonl"), roots(root));
+        expect(codex).toMatchObject({ provider: "codex", source: "worker", sessionId: "probe" });
+    });
+
+    test("an absolute path under no known root needs a provider", async () => {
+        const root = fixtureRoot();
+        const stray = join(root, "elsewhere.jsonl");
+        writeFileSync(stray, "{}\n");
+
+        await expect(resolveTranscript(stray, roots(root))).rejects.toThrow("no known transcript root");
+        expect(await resolveTranscript(stray, roots(root), "claude")).toMatchObject({
+            provider: "claude",
+            sessionId: "elsewhere",
+            filePath: stray,
+        });
+    });
+});

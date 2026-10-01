@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { AssistantMessage, ConversationMessage, UserMessage } from "@genesiscz/utils/claude/types";
 import { claudeMessagesToTurns } from "./claude";
-import { clipResult, sliceTurns } from "./types";
+import { clipResult, sliceTurns, totalsOf } from "./types";
 
 function user(partial: Partial<UserMessage> & Pick<UserMessage, "uuid" | "message">): UserMessage {
     return {
@@ -24,6 +24,54 @@ function assistant(partial: Partial<AssistantMessage> & Pick<AssistantMessage, "
         ...partial,
     };
 }
+
+describe("claudeMessagesToTurns: usage", () => {
+    const row = (uuid: string, id: string, content: AssistantMessage["message"]["content"], output: number) =>
+        assistant({
+            uuid,
+            message: {
+                role: "assistant",
+                id,
+                model: "claude-opus-5-5",
+                type: "message",
+                stop_reason: null,
+                stop_sequence: null,
+                content,
+                usage: {
+                    input_tokens: 10,
+                    cache_creation_input_tokens: 5,
+                    cache_read_input_tokens: 900,
+                    output_tokens: output,
+                },
+            },
+        });
+
+    test("one API response counts once, with its last row's usage, on its first visible turn", () => {
+        // Claude Code writes one row per content block, all sharing message.id and each carrying
+        // usage. Without this, `tools ai sessions tail` printed "0 model calls · in 0" for every
+        // Claude transcript; counting every row would multiply one call by its block count.
+        const turns = claudeMessagesToTurns([
+            row("r1", "msg-1", [{ type: "thinking", thinking: "plan", signature: "s" }], 3),
+            row("r2", "msg-1", [{ type: "text", text: "Reading it." }], 20),
+            row("r3", "msg-1", [{ type: "tool_use", id: "t1", name: "Read", input: { file_path: "/tmp/a" } }], 42),
+            row("r4", "msg-2", [{ type: "text", text: "Done." }], 7),
+        ]);
+
+        expect(turns.map((turn) => turn.usage)).toEqual([
+            { inputTokens: 15, cacheReadTokens: 900, outputTokens: 42 },
+            undefined,
+            { inputTokens: 15, cacheReadTokens: 900, outputTokens: 7 },
+        ]);
+        expect(totalsOf(turns).modelCalls).toBe(2);
+    });
+
+    test("a synthetic message (session limit, local error) is not a model call", () => {
+        const synthetic = row("r5", "msg-3", [{ type: "text", text: "limit reached" }], 0);
+        synthetic.message.model = "<synthetic>";
+
+        expect(claudeMessagesToTurns([synthetic])[0]?.usage).toBeUndefined();
+    });
+});
 
 describe("claudeMessagesToTurns", () => {
     test("pairs a Read tool_use with the following tool_result", () => {

@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { grokWorkerTextToTurns } from "../grok";
 import { type TranscriptEnvelope, type TranscriptTurn, terminatedOf, totalsOf } from "../types";
-import { defaultRenderContext, type RenderContext, rendererFor, TRANSCRIPT_FORMATS } from "./index";
+import { defaultRenderContext, formatTotals, type RenderContext, rendererFor, TRANSCRIPT_FORMATS } from "./index";
 
 const fixturePath = join(import.meta.dir, "..", "fixtures", "grok-worker-turn.jsonl");
 const fixture = readFileSync(fixturePath, "utf8");
@@ -298,5 +298,29 @@ describe("RawRenderer", () => {
         expect(lines).toHaveLength(1);
         renderer.close(ctx);
         expect(lines).toEqual(['{"type":"text","data":"héllo → wörld"}', '{"type":"end"}']);
+    });
+});
+
+describe("formatTotals", () => {
+    const envelope = (provider: TranscriptEnvelope["provider"]): TranscriptEnvelope => ({
+        provider,
+        sessionId: "s",
+        filePath: "/tmp/s.jsonl",
+        byteSize: 0,
+        truncated: false,
+        nextOffset: 0,
+        turns: [],
+        totals: { modelCalls: 1, inputTokens: 10, cacheReadTokens: 0, outputTokens: 5 },
+        terminated: null,
+    });
+
+    test("a Claude transcript has no terminal event, so the footer claims no end state", () => {
+        // A Claude session file never records one, so `ended: running` was printed for teammates
+        // that had finished hours earlier.
+        expect(formatTotals(envelope("claude"))).not.toContain("ended");
+    });
+
+    test("NEGATIVE CONTROL: a worker stream without its end event is still running", () => {
+        expect(formatTotals(envelope("grok"))).toContain("ended: running");
     });
 });

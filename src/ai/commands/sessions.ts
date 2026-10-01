@@ -1,3 +1,4 @@
+import { hoursArg, limitArg } from "@app/hub/commands/agents-args";
 import { ACCOUNT_PROVIDER_ALIASES, isAccountProviderAlias } from "@genesiscz/utils/ai/providers/alias-list";
 import { runTranscriptDoor } from "@genesiscz/utils/ai/transcripts/door";
 import { THOUGHT_MODES, TRANSCRIPT_FORMATS } from "@genesiscz/utils/ai/transcripts/render";
@@ -63,6 +64,10 @@ export function registerSessionsCommands(program: Command): void {
         .option("--offset <n>", "Start at this turn index (default: last --limit turns)")
         .option("--limit <n>", "Max turns to emit", String(DEFAULT_TURN_LIMIT))
         .option("--turns <list>", "Exactly these 0-based turns, e.g. 3,17,902 (each gets its `index`)")
+        .option(
+            "--live",
+            "follow for an app, from --offset: each turn as a JSON line with its `index`, again whenever it changes, then a totals line; runs until stdin closes"
+        )
         .action(
             async (
                 sessionId: string,
@@ -71,6 +76,7 @@ export function registerSessionsCommands(program: Command): void {
                     thoughts?: string | boolean;
                     json?: boolean;
                     follow?: boolean;
+                    live?: boolean;
                     provider?: string;
                     offset?: string;
                     limit?: string;
@@ -84,9 +90,17 @@ export function registerSessionsCommands(program: Command): void {
                     return;
                 }
 
-                if (turns && opts.follow) {
+                if (turns && (opts.follow || opts.live)) {
                     process.exitCode = 2;
-                    out.printlnErr("--turns cannot be combined with --follow");
+                    out.printlnErr("--turns cannot be combined with --follow or --live");
+                    return;
+                }
+
+                if (opts.live && opts.offset === undefined) {
+                    process.exitCode = 2;
+                    out.printlnErr(
+                        "--live needs --offset: the first turn to send (a whole long session is not a live window)"
+                    );
                     return;
                 }
 
@@ -123,6 +137,7 @@ export function registerSessionsCommands(program: Command): void {
                     json: opts.json,
                     slice: turns ? { turns } : { offset, limit },
                     follow: opts.follow === true,
+                    live: opts.live === true,
                 });
             }
         );
@@ -173,27 +188,66 @@ export function registerSessionsCommands(program: Command): void {
         );
 
     sessions
-        .command("subagents <session-id>")
-        .description("List a Claude session's sub-agents and teammates, and whether each still works")
+        .command("subagents [session-id]")
+        .description(
+            "List a Claude session's sub-agents and teammates, and whether each still works; --all lists every recent session's tree, codex/grok workers included"
+        )
         .option("--json", "print { sessionId, subagents: [{ id, name, description, state, startedAt, lastAt, … }] }")
         .option("--provider <name>", "claude | grok | codex (auto-detect if omitted)")
-        .action(async (sessionId: string, opts: { json?: boolean; provider?: string }) => {
-            try {
-                const resolved = await resolveTranscript(sessionId, {}, parseProvider(opts.provider));
-                const result = listSubagents(resolved);
-                if (opts.json) {
-                    out.result(result);
+        .option("--all", "every session in the window with its agents (same as `tools hub agents`)")
+        .option("--since <dur>", "with --all: window, 90m, 24h, 7d (default 24h)", hoursArg)
+        .option("--limit <n>", "with --all: at most this many sessions", limitArg)
+        .option("--session <id>", "with --all: one parent session (same as the positional id)")
+        .option("--agent <id>", "with --all: one agent (id or name) with its whole spawn prompt")
+        .action(
+            async (
+                sessionId: string | undefined,
+                opts: {
+                    json?: boolean;
+                    provider?: string;
+                    all?: boolean;
+                    since?: number;
+                    limit?: number;
+                    session?: string;
+                    agent?: string;
+                }
+            ) => {
+                if (opts.all || !sessionId) {
+                    if (!opts.all) {
+                        out.printlnErr("Name a session id, or pass --all for every recent session.");
+                        process.exitCode = 1;
+                        return;
+                    }
+
+                    // lazy: saves 92.5 ms and 273 modules on every `ai sessions` call (tools ts imports lazy, 2026-10-01)
+                    const { printAgentsTree } = await import("@app/hub/commands/agents");
+                    await printAgentsTree({
+                        since: opts.since,
+                        limit: opts.limit,
+                        session: sessionId ?? opts.session,
+                        agent: opts.agent,
+                        json: opts.json,
+                    });
                     return;
                 }
 
-                out.println(`${result.subagents.length} sub-agents in ${result.sessionId}`);
-                for (const agent of result.subagents) {
-                    const label = [agent.name, agent.description ?? agent.agentType].filter(Boolean).join(": ");
-                    out.println(`${agent.state.padEnd(8)} ${agent.lastAt}  ${label}`);
+                try {
+                    const resolved = await resolveTranscript(sessionId, {}, parseProvider(opts.provider));
+                    const result = listSubagents(resolved);
+                    if (opts.json) {
+                        out.result(result);
+                        return;
+                    }
+
+                    out.println(`${result.subagents.length} sub-agents in ${result.sessionId}`);
+                    for (const agent of result.subagents) {
+                        const label = [agent.name, agent.description ?? agent.agentType].filter(Boolean).join(": ");
+                        out.println(`${agent.state.padEnd(8)} ${agent.lastAt}  ${label}`);
+                    }
+                } catch (error) {
+                    process.exitCode = 1;
+                    out.printlnErr(error instanceof Error ? error.message : String(error));
                 }
-            } catch (error) {
-                process.exitCode = 1;
-                out.printlnErr(error instanceof Error ? error.message : String(error));
             }
-        });
+        );
 }

@@ -1,6 +1,7 @@
 import { isInteractive, suggestEnumFlag } from "@genesiscz/utils/cli";
-import { out } from "@genesiscz/utils/logger";
+import { logger, out } from "@genesiscz/utils/logger";
 import * as p from "@genesiscz/utils/prompts/p";
+import { followTranscriptLive } from "./live";
 import { transcriptEnvelope } from "./load";
 import {
     defaultRenderContext,
@@ -80,6 +81,12 @@ export interface TranscriptDoorOptions {
      * gone), polled every two seconds, or as soon as an envelope is terminated.
      */
     stillRunning?: () => Promise<boolean>;
+    /**
+     * Follow for a UI (`followTranscriptLive`): every turn from `slice.offset` on as a JSON line with
+     * its `index`, again each time it changes, then a totals line. It never stops by itself: it ends
+     * when stdin closes (the parent app quit or died) or on a signal. `format` is ignored.
+     */
+    live?: boolean;
 }
 
 const RUNNING_POLL_MS = 2000;
@@ -90,6 +97,11 @@ const RUNNING_POLL_MS = 2000;
  * itself.
  */
 export async function runTranscriptDoor(options: TranscriptDoorOptions): Promise<void> {
+    if (options.live) {
+        await runLiveDoor(options);
+        return;
+    }
+
     const format = await pickEnumFlag<TranscriptFormat>({
         tool: options.tool,
         subcommand: options.subcommand,
@@ -182,5 +194,36 @@ export async function runTranscriptDoor(options: TranscriptDoorOptions): Promise
     } catch (error) {
         process.exitCode = 1;
         out.printlnErr(error instanceof Error ? error.message : String(error));
+    }
+}
+
+async function runLiveDoor(options: TranscriptDoorOptions): Promise<void> {
+    const ac = new AbortController();
+    const stop = (): void => ac.abort();
+    process.once("SIGINT", stop);
+    process.once("SIGTERM", stop);
+    // macOS has no parent-death signal: a closed stdin is how a follow learns its app is gone.
+    process.stdin.once("end", stop);
+    process.stdin.once("close", stop);
+    process.stdin.resume();
+    try {
+        const resolved = await resolveTranscript(options.query, {}, options.provider);
+        logger.debug({ file: resolved.filePath, offset: options.slice?.offset }, "live transcript follow started");
+        await followTranscriptLive(resolved, {
+            offset: options.slice?.offset ?? 0,
+            signal: ac.signal,
+            write: (line) => out.println(line),
+        });
+        logger.debug({ file: resolved.filePath }, "live transcript follow stopped");
+    } catch (error) {
+        process.exitCode = 1;
+        out.printlnErr(error instanceof Error ? error.message : String(error));
+    } finally {
+        // A `once("SIGINT")` left behind would replace the default exit for the rest of the process.
+        process.off("SIGINT", stop);
+        process.off("SIGTERM", stop);
+        process.stdin.removeListener("end", stop);
+        process.stdin.removeListener("close", stop);
+        process.stdin.pause();
     }
 }

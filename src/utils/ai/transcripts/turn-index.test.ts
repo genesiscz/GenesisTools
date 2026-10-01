@@ -120,6 +120,32 @@ describe("indexedClaudeEnvelope", () => {
         expect(indexedClaudeEnvelope(resolved, {}, { minBytes: 0, dir })).toBeNull();
     });
 
+    test("a response split over several rows counts its usage once, as the full parse does", async () => {
+        const row = (content: unknown[], output: number) => {
+            serial += 1;
+            return line({
+                type: "assistant",
+                uuid: `a${serial}`,
+                timestamp: at(),
+                message: {
+                    id: "msg_split",
+                    role: "assistant",
+                    content,
+                    usage: { input_tokens: 100, cache_read_input_tokens: 50, output_tokens: output },
+                },
+            });
+        };
+        const { resolved, dir, file } = setup(user("split it") + row([{ type: "text", text: "part one" }], 5));
+        appendFileSync(
+            file,
+            row([{ type: "tool_use", id: "split-tool", name: "Bash", input: { command: "echo" } }], 9)
+        );
+
+        const indexed = indexedClaudeEnvelope(resolved, {}, { minBytes: 0, dir });
+        expect(indexed?.totals).toEqual((await transcriptEnvelope(resolved, {})).totals);
+        expect(indexed?.totals?.modelCalls).toBe(1);
+    });
+
     test("extends the index for appended lines instead of rebuilding it", async () => {
         const { resolved, dir, file } = setup(conversation(4));
         const first = turnIndexFor(file, { minBytes: 0, dir });

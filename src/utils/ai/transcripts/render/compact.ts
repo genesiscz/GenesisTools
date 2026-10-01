@@ -74,8 +74,9 @@ export function formatTotals(envelope: TranscriptEnvelope): string {
         `in ${formatTokens(totals.inputTokens ?? 0)} (cache ${formatTokens(totals.cacheReadTokens ?? 0)}) · ` +
         `out ${formatTokens(totals.outputTokens ?? 0)} (reasoning ${formatTokens(totals.reasoningTokens ?? 0)})`;
     const cost = totals.costUsd !== undefined ? ` · $${totals.costUsd.toFixed(4)}` : "";
-    const ended = envelope.terminated ?? "running";
-    return `${totals.modelCalls} model calls · ${tokens}${cost} · ended: ${ended}`;
+    // A Claude session file records no terminal event, so a missing one says nothing about its state.
+    const ended = envelope.terminated ?? (envelope.provider === "claude" ? null : "running");
+    return `${totals.modelCalls} model calls · ${tokens}${cost}${ended ? ` · ended: ${ended}` : ""}`;
 }
 
 /**

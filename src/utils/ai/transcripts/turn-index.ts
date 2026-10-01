@@ -39,13 +39,16 @@ import {
     type TranscriptEnvelope,
     type TranscriptTotals,
     type TranscriptTurn,
+    type TranscriptUsage,
     terminatedOf,
     totalsOf,
 } from "./types";
 
 export const INDEX_MIN_BYTES = 16 * 1024 * 1024;
 // 4: a task result and a message typed mid-turn became turns (prompt parts), which moves the offsets.
-const INDEX_VERSION = 4;
+// 5: usage counts once per assistant message id (`messageUsage`), as the full parser does.
+const INDEX_VERSION = 5;
+const USAGE_KEYS = ["inputTokens", "cacheReadTokens", "outputTokens", "reasoningTokens"] as const;
 const HEAD_BYTES = 4096;
 const TAIL_BYTES = 4096;
 const MAX_INDEX_FILES = 256;
@@ -72,6 +75,21 @@ export interface TurnIndex {
     turnOffsets: number[];
     totals: TranscriptTotals;
     terminated: "end" | "error" | null;
+    /**
+     * The usage counted so far for each assistant message id. One response can span several rows
+     * (one per content block), each carrying its usage; the full parser counts the last one once.
+     */
+    messageUsage?: Record<string, TranscriptUsage>;
+}
+
+/** The assistant message id of a raw line, when it has one. */
+function assistantMessageId(message: ConversationMessage): string | undefined {
+    if (message.type !== "assistant") {
+        return undefined;
+    }
+
+    const inner = (message as { message?: { id?: unknown } }).message;
+    return typeof inner?.id === "string" ? inner.id : undefined;
 }
 
 export interface TurnIndexOptions {
@@ -161,13 +179,34 @@ function extend(index: TurnIndex, path: string, size: number): void {
     }
     const buffer = readRange(path, index.indexedBytes, size);
     const added: TranscriptTurn[] = [];
+    const seen: Record<string, TranscriptUsage> = index.messageUsage ?? {};
+    index.messageUsage = seen;
     for (const { offset, line, end } of linesOf(buffer, index.indexedBytes)) {
         const message = messageOfLine(line);
         if (message) {
             // One message alone decides whether it is a turn (see the file header).
             const turns = claudeMessagesToTurns([message]);
+            const messageId = assistantMessageId(message);
             for (const turn of turns) {
                 index.turnOffsets.push(offset);
+
+                // A later row of the same response replaces that response's usage, never adds to it.
+                if (messageId && turn.usage) {
+                    const earlier = seen[messageId];
+
+                    if (earlier) {
+                        index.totals.modelCalls -= 1;
+
+                        for (const key of USAGE_KEYS) {
+                            if (earlier[key] !== undefined) {
+                                index.totals[key] = (index.totals[key] ?? 0) - earlier[key];
+                            }
+                        }
+                    }
+
+                    seen[messageId] = turn.usage;
+                }
+
                 added.push(turn);
             }
         }
