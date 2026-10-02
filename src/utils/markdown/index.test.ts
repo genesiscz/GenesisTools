@@ -111,11 +111,27 @@ describe("markdown includes", () => {
 
         const block = (await resolveIncludes('{{lines path="widget.ts" range="1-1"}}\n', { cwd: dir })).text;
         renameSync(source, `${source}.moved`);
-        const kept = await resolveIncludes(block, { cwd: dir });
 
-        expect(kept.text).toBe(block);
-        expect(kept.outcomes[0]?.action).toBe("failed");
-        renameSync(`${source}.moved`, source);
+        try {
+            const kept = await resolveIncludes(block, { cwd: dir });
+
+            expect(kept.text).toBe(block);
+            expect(kept.outcomes[0]?.action).toBe("failed");
+        } finally {
+            renameSync(`${source}.moved`, source);
+        }
+    });
+
+    it("an include block written inside a fenced example stays text, and so does a token after it in the fence", async () => {
+        writeFileSync(source, "const a = 1;\n");
+        const block = (await resolveIncludes('{{lines path="widget.ts" range="1-1"}}\n', { cwd: dir, now: fixed }))
+            .text;
+        writeFileSync(source, "const a = 2;\n");
+        const text = `Example:\n\n\`\`\`\`\n${block}{{lines path="widget.ts" range="1-1"}}\n\`\`\`\`\n`;
+        const result = await resolveIncludes(text, { cwd: dir, now: later });
+
+        expect(result.text).toBe(text);
+        expect(result.outcomes).toEqual([]);
     });
 
     it("a token inside a sentence gets its own paragraph and still collapses to the sentence", async () => {
@@ -135,6 +151,8 @@ describe("markdown includes", () => {
             "same paragraph",
             "",
             `[whole](file://${source})`,
+            "",
+            `\`[syntax](file://${source}#L12)\` is how a link is written`,
             "",
             "```",
             `[in code](file://${source}#L9)`,

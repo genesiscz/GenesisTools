@@ -1,13 +1,9 @@
-import { readFileSync, statSync } from "node:fs";
-import { dirname, resolve } from "node:path";
-import { backupAndWrite, runDirectory } from "@app/markdown/lib/backup";
+import { statSync } from "node:fs";
+import { resolve } from "node:path";
+import { runDirectory } from "@app/markdown/lib/backup";
+import { type ResolveFileResult, resolveMarkdownFile } from "@app/markdown/lib/resolve";
 import { logger, out } from "@genesiscz/utils/logger";
-import {
-    codeLinksToTokens,
-    collapseIncludes,
-    type IncludeOutcome,
-    resolveIncludes,
-} from "@genesiscz/utils/markdown/includes";
+import type { IncludeOutcome } from "@genesiscz/utils/markdown/includes";
 import type { Command } from "commander";
 import pc from "picocolors";
 
@@ -28,24 +24,22 @@ const ACTION_COLOR: Record<IncludeOutcome["action"], (text: string) => string> =
     skipped: pc.yellow,
 };
 
-function count(outcomes: IncludeOutcome[], action: IncludeOutcome["action"]): number {
-    return outcomes.filter((outcome) => outcome.action === action).length;
-}
-
 async function resolveFile(
     file: string,
     flags: ResolveFlags,
+    context: number,
     runDir: () => string
-): Promise<"written" | "unchanged" | "refused"> {
-    const before = readFileSync(file, "utf8");
-    const context = flags.context === undefined ? 12 : Number(flags.context);
-    const converted = flags.convertLinks ? codeLinksToTokens(before, { context }) : null;
-    const start = converted?.text ?? before;
-    const resolved = await resolveIncludes(start, {
-        cwd: flags.cwd ? resolve(flags.cwd) : dirname(file),
-        refresh: !flags.newOnly,
+): Promise<ResolveFileResult["status"]> {
+    const result = await resolveMarkdownFile({
+        file,
+        cwd: flags.cwd,
+        newOnly: flags.newOnly,
+        convertLinks: flags.convertLinks,
+        context,
+        dryRun: Boolean(flags.dryRun),
+        runDir,
     });
-    const after = resolved.text;
+    const { converted, record } = result;
 
     out.println(pc.bold(file));
 
@@ -57,55 +51,41 @@ async function resolveFile(
         out.println(`  ${pc.yellow("link kept")}  line ${skip.line} ${skip.label}: ${skip.reason}`);
     }
 
-    for (const outcome of resolved.outcomes) {
+    for (const outcome of result.outcomes) {
         const reason = outcome.error ? `: ${outcome.error}` : "";
         out.println(
             `  ${ACTION_COLOR[outcome.action](outcome.action.padEnd(10))} line ${outcome.line} ${outcome.raw}${reason}`
         );
     }
 
-    // The only change a run may make is tokens to blocks (and, with --convert-links, token lines added
-    // under paragraphs). Collapsing every block back to its token must give the text the run started from.
-    if (collapseIncludes(after) !== collapseIncludes(start)) {
-        logger.error(
-            { file },
-            "markdown: the result differs from the input outside the include blocks; nothing written"
-        );
-        out.log.error(`${file}: the result differs outside the include blocks. Nothing was written.`);
+    if (result.status === "refused") {
+        out.log.error(`${file}: ${result.reason ?? "refused"}. Nothing was written.`);
         return "refused";
     }
 
-    if (after === before) {
+    if (!record) {
         out.println(pc.dim("  no change"));
         return "unchanged";
     }
 
-    const record = await backupAndWrite({
-        file,
-        before,
-        after,
-        runDir: runDir(),
-        dryRun: Boolean(flags.dryRun),
-        detail: {
-            linksConverted: converted?.inserted.length ?? 0,
-            added: count(resolved.outcomes, "added"),
-            refreshed: count(resolved.outcomes, "refreshed"),
-            unchanged: count(resolved.outcomes, "unchanged"),
-            failed: count(resolved.outcomes, "failed"),
-            skipped: count(resolved.outcomes, "skipped"),
-        },
-    });
-
-    out.println(
-        `  ${flags.dryRun ? "proposal" : "backup"}  ${flags.dryRun ? record.backup.replace(/$/, ".proposed") : record.backup}`
-    );
+    out.println(`  ${record.proposal ? `proposal  ${record.proposal}` : `backup    ${record.backup}`}`);
     out.println(`  patch     ${record.patch}`);
 
-    if (!flags.dryRun) {
+    if (!record.dryRun) {
         out.println(`  restore   ${record.restore}`);
     }
 
     return "written";
+}
+
+/** `--context`: a positive whole number of lines, 12 when not given; null when the value is not one. */
+function contextLines(value: string | undefined): number | null {
+    if (value === undefined) {
+        return 12;
+    }
+
+    const lines = Number(value);
+    return Number.isInteger(lines) && lines > 0 ? lines : null;
 }
 
 export function registerResolveCommand(program: Command): void {
@@ -119,6 +99,13 @@ export function registerResolveCommand(program: Command): void {
         .option("--cwd <dir>", "resolve relative token paths from here (default: each file's folder)")
         .option("--dry-run", "write the proposal and its patch beside the backup; leave the files alone")
         .action(async (files: string[], flags: ResolveFlags) => {
+            const context = contextLines(flags.context);
+            if (context === null) {
+                out.log.error(`--context takes a positive whole number of lines, got '${flags.context}'.`);
+                process.exitCode = 1;
+                return;
+            }
+
             let dir: string | null = null;
             const runDir = () => {
                 dir ??= runDirectory();
@@ -142,7 +129,7 @@ export function registerResolveCommand(program: Command): void {
                     continue;
                 }
 
-                const outcome = await resolveFile(file, flags, runDir);
+                const outcome = await resolveFile(file, flags, context, runDir);
                 refused += outcome === "refused" ? 1 : 0;
             }
 

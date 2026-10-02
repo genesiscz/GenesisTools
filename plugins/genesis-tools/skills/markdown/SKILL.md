@@ -25,7 +25,7 @@ hand-written note behave the same way. For tables, lists and the three-file gene
 
 ## What a resolved token looks like
 
-```
+````
 <!-- md:include sig=1d09778b24a3 {{lines path="/abs/src/getLoaderStatus.ts" range="5-15"}} -->
 `src/getLoaderStatus.ts:5-15`
 ```ts
@@ -33,7 +33,7 @@ export const getLoaderStatus = …
 ```
 _↳ captured 2026-10-01 16:09 UTC · src/getLoaderStatus.ts@HEAD 3ab8ab0d7 · re-check: `{{lines …}}`_
 <!-- /md:include -->
-```
+````
 
 - The first comment KEEPS the token. That is what makes a second run possible: every run resolves
   the bare tokens AND every block again from its kept token. It is not "only the new tags": an

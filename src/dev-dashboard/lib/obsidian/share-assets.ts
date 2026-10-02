@@ -133,7 +133,7 @@ export function codeLanguageFor(path: string): string | null {
 /** `text` as one fenced block, with a fence longer than any backtick run inside it. */
 export function fencedCode(text: string, language: string): string {
     const body = text.replace(/\n$/, "");
-    const longestRun = Math.max(0, ...(body.match(/`+/g) ?? []).map((run) => run.length));
+    const longestRun = (body.match(/`+/g) ?? []).reduce((longest, run) => Math.max(longest, run.length), 0);
     const fence = "`".repeat(Math.max(3, longestRun + 1));
 
     return `${fence}${language}\n${body}\n${fence}\n`;

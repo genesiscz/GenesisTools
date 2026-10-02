@@ -218,9 +218,16 @@ export async function resolveIncludes(text: string, options: ResolveIncludesOpti
     const outcomes: IncludeOutcome[] = [];
     let out = "";
     let cursor = 0;
+    // A block written inside a fenced example is text: it is not refreshed, and the fence is not split.
+    const fences = fencedRanges(text);
 
     for (const match of text.matchAll(BLOCK_RE)) {
         const start = match.index ?? 0;
+
+        if (fences.some(([from, to]) => start >= from && start < to)) {
+            continue;
+        }
+
         out += await resolveText(text.slice(cursor, start), cursor, text, options, registry, outcomes);
         cursor = start + match[0].length;
 
@@ -331,6 +338,35 @@ export interface CodeLinksResult {
 
 const LINK_RE = /\[([^\]\n]*)\]\(<?((?:file:\/\/)?\/[^)\s>]+)>?\)/g;
 const FENCE_RE = /^ {0,3}(`{3,}|~{3,})/;
+const INLINE_CODE_RE = /(`+)[^`].*?\1/g;
+
+/** Offsets `[start, end)` of every fenced code block, fences included; an unclosed fence runs to the end. */
+function fencedRanges(text: string): Array<[number, number]> {
+    const ranges: Array<[number, number]> = [];
+    let fence: string | null = null;
+    let openedAt = 0;
+    let offset = 0;
+
+    for (const lineText of text.split("\n")) {
+        const marker = FENCE_RE.exec(lineText)?.[1];
+
+        if (marker && fence === null) {
+            fence = marker;
+            openedAt = offset;
+        } else if (marker && fence !== null && marker.startsWith(fence[0] ?? "`") && marker.length >= fence.length) {
+            ranges.push([openedAt, offset + lineText.length]);
+            fence = null;
+        }
+
+        offset += lineText.length + 1;
+    }
+
+    if (fence !== null) {
+        ranges.push([openedAt, text.length]);
+    }
+
+    return ranges;
+}
 
 function decodedPath(target: string): { path: string; start: number | null; end: number | null } | null {
     const [location, fragment = ""] = target.split("#", 2);
@@ -392,7 +428,10 @@ export function codeLinksToTokens(text: string, { context = 12 }: { context?: nu
             continue;
         }
 
-        for (const match of lineText.matchAll(LINK_RE)) {
+        // A link written inside `inline code` is an example of the syntax, not a link.
+        const prose = lineText.replace(INLINE_CODE_RE, (span) => " ".repeat(span.length));
+
+        for (const match of prose.matchAll(LINK_RE)) {
             const label = match[1] ?? "";
             const parsed = decodedPath(match[2] ?? "");
             const line = index + 1;
