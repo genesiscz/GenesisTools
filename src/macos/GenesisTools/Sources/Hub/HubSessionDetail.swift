@@ -622,9 +622,6 @@ struct HubSessionDetailHost: View {
         }
     }
 
-    /// Off the main thread: a long session is thousands of rows with regex work per prompt. Builds
-    /// overlap (a fetch, the native scan, an earlier page, the live tail), and only the latest may
-    /// land: an older one would drop turns added after it started.
     /// What a transcript.open line names: the session and the rows by kind, with the text a row lays out.
     static func shape(_ document: TranscriptDocument, session: String) -> String {
         var counts: [String: Int] = [:]
@@ -658,6 +655,9 @@ struct HubSessionDetailHost: View {
         return "\(session.prefix(8)) \(document.sections.count) turns \(rows) rows \(chars) chars [\(kinds)]"
     }
 
+    /// Off the main thread: a long session is thousands of rows with regex work per prompt. Builds
+    /// overlap (a fetch, the native scan, an earlier page, the live tail), and only the latest may
+    /// land: an older one would drop turns added after it started.
     private func rebuild() async {
         buildID += 1
         let id = buildID

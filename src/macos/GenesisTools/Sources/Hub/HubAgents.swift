@@ -887,12 +887,7 @@ final class HubAgentsModel: ObservableObject {
             }
             return
         }
-        let hit = index.first { key, value in
-            let parentMatches = wanted.parent.map { want in value.parent.map { $0.sessionId.hasPrefix(want) } ?? false } ?? true
-            let node = value.node
-            return parentMatches && (node.id == wanted.child || node.toolUseId == wanted.child || node.id.hasPrefix(wanted.child) || node.name == wanted.child || key.hasSuffix("|" + wanted.child))
-        }
-        if let hit {
+        if let hit = Self.requested(child: wanted.child, parent: wanted.parent, in: index) {
             pendingRequest = nil
             if let parent = hit.value.parent {
                 foldOverride[parent.sessionId] = true
@@ -903,6 +898,25 @@ final class HubAgentsModel: ObservableObject {
             pendingRequest = nil
             error = "No agent \(wanted.child)\(wanted.parent.map { " under session \($0.prefix(8))" } ?? "") in the list"
         }
+    }
+
+    /// The node `--agent <child>` names under a parent whose id starts with `parent` (any parent when nil):
+    /// by its id, then its Agent call's `toolUseId`, and only when neither names one, by its id's start,
+    /// its teammate name or its key's end. The index is a dictionary, walked in no fixed order, so one
+    /// pass over every rule could open a loose match while an exact one exists.
+    static func requested(
+        child: String,
+        parent: String?,
+        in index: [String: (parent: AgentParent?, node: AgentNode)]
+    ) -> (key: String, value: (parent: AgentParent?, node: AgentNode))? {
+        let candidates = index.filter { _, value in
+            parent.map { want in value.parent.map { $0.sessionId.hasPrefix(want) } ?? false } ?? true
+        }
+        return candidates.first { $0.value.node.id == child }
+            ?? candidates.first { $0.value.node.toolUseId == child }
+            ?? candidates.first { key, value in
+                value.node.id.hasPrefix(child) || value.node.name == child || key.hasSuffix("|" + child)
+            }
     }
 
     /// The child's transcript as a session row for the shared session screen.

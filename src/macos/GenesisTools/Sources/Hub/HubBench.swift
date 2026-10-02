@@ -374,8 +374,14 @@ enum HubBench {
         /// Then at the latest turn: `transcript.paneEnd.<phase>` is the viewport end's distance from the
         /// content's end. `GENESIS_HUB_BENCH_PANE` names the pane (default files).
         private func addPaneToggle() {
-            order.append("panes")
             let pane = ProcessInfo.processInfo.environment["GENESIS_HUB_BENCH_PANE"].flatMap(HubTab.init(rawValue:)) ?? .files
+            // The scenario measures the transcript beside the pane: toggling the transcript itself takes the
+            // measured list away, and as the only pane it does not close at all.
+            guard pane != .transcript else {
+                PerfLog.mark("hub.bench panes: skipped, GENESIS_HUB_BENCH_PANE=transcript toggles the list it measures")
+                return
+            }
+            order.append("panes")
             var reference: Int?
             let table = { [weak self] () -> (NSTableView, NSClipView)? in
                 guard let self, let table = HubBench.largestTable(in: self.window.contentView), table.numberOfRows > 0,
@@ -437,6 +443,8 @@ enum HubBench {
             order.append("settle")
             for (n, session) in sessions.enumerated() {
                 weak var reference: NSView?
+                // Once per session: a probe with fewer samples must read as a lost row view, not a settled list.
+                var lostMarked = false
                 steps.append(Step(scenario: "settle", action: { [weak self] in self?.model.select(session.id) }, delay: 0.8))
                 steps.append(Step(scenario: "settle", action: { [weak self] in
                     guard let self, let table = HubBench.largestTable(in: self.window.contentView), let clip = table.enclosingScrollView?.contentView,
@@ -454,8 +462,15 @@ enum HubBench {
                 }, delay: 0.05))
                 for _ in 0..<120 {
                     steps.append(Step(scenario: "settle", action: { [weak self] in
-                        guard let self, let view = reference, view.superview != nil,
-                              let table = HubBench.largestTable(in: self.window.contentView), let clip = table.enclosingScrollView?.contentView else { return }
+                        guard let self else { return }
+                        guard let view = reference, view.superview != nil else {
+                            if !lostMarked {
+                                lostMarked = true
+                                PerfLog.mark("hub.bench settle \(n): the reference row view is gone or detached, its later samples are skipped")
+                            }
+                            return
+                        }
+                        guard let table = HubBench.largestTable(in: self.window.contentView), let clip = table.enclosingScrollView?.contentView else { return }
                         HubBench.note("transcript.settle.\(n)", Int((view.frame.minY - clip.bounds.minY).rounded()))
                         HubBench.note("transcript.settleRow.\(n)", table.row(for: view))
                     }, delay: 0.05))

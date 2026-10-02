@@ -251,10 +251,15 @@ struct SkeletonShimmer: ViewModifier {
                     .allowsHitTesting(false)
                 }
             }
-            .onAppear {
-                guard !reduceMotion else { return }
-                withAnimation(.linear(duration: 1.4).repeatForever(autoreverses: false)) {
-                    phase = 1
+            // Follows Reduce Motion while shown: turned on, the sweep stops; turned off, it starts again.
+            .onChange(of: reduceMotion, initial: true) { _, reduced in
+                if reduced {
+                    withAnimation(.linear(duration: 0)) { phase = 0 }
+                } else {
+                    phase = 0
+                    withAnimation(.linear(duration: 1.4).repeatForever(autoreverses: false)) {
+                        phase = 1
+                    }
                 }
             }
     }

@@ -61,10 +61,12 @@ final class GenesisAppDelegate: NSObject, NSApplicationDelegate {
 
             if AppMainWindow.current == .hub {
                 logClick("no click within \(notificationClickGraceSeconds)s, opening the hub (main window setting)")
-                MainActor.assumeIsolated { AppDock.showHub(nil) }
-                // The hub runs in its own process; this one only had to start or wake it.
-                DispatchQueue.main.asyncAfter(deadline: .now() + 1) { NSApp.terminate(nil) }
-                return
+                if MainActor.assumeIsolated({ AppDock.showHub(nil) }) {
+                    // The hub runs in its own process; this one only had to start or wake it.
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1) { NSApp.terminate(nil) }
+                    return
+                }
+                logClick("the hub did not start, opening the settings window instead")
             }
 
             logClick("no click within \(notificationClickGraceSeconds)s, opening the settings window")
@@ -119,7 +121,7 @@ struct RootView: View {
             HStack {
                 Spacer()
                 Button {
-                    MainActor.assumeIsolated { AppDock.showHub(nil) }
+                    MainActor.assumeIsolated { _ = AppDock.showHub(nil) }
                 } label: {
                     Label("Open Hub", systemImage: "rectangle.3.group")
                 }

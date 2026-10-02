@@ -672,18 +672,20 @@ struct GroupHeader: View {
 /// group folder (`Projects/ReservineBack` → `Projects/Reservine/ReservineBack`, 2026-10-02) leaves the
 /// old path empty or with a broken `.git`, and the agent keeps that path as its folder: the Changes pane
 /// then had no repository. The checkout with the same name one level down under the parent is the
-/// move, when exactly one exists. Cached per folder; a folder that holds a repository is its own answer.
+/// move, when exactly one exists. Only a found checkout is cached, and only while it still is one: a miss
+/// is asked again, so a move still in progress is found once it lands. A folder that holds a repository
+/// is its own answer.
 enum MovedCheckout {
-    private static var cache: [String: String?] = [:]
+    private static var cache: [String: String] = [:]
     private static let lock = NSLock()
 
     static func resolve(_ folder: String) -> String? {
         lock.lock()
-        if let known = cache[folder] {
-            lock.unlock()
+        let known = cache[folder]
+        lock.unlock()
+        if let known, isRepository(known) {
             return known
         }
-        lock.unlock()
 
         let found = isRepository(projectRoot(of: folder)) ? nil : search(folder)
         lock.lock()
