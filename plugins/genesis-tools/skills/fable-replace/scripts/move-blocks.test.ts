@@ -1874,7 +1874,7 @@ describe("PR #443 review: project files, PHP qualified names, paste check", () =
             "lib/utils.ts": "export const keep = 1;\n\nexport const moved = 2;\n",
             "user.ts": 'import { moved } from "./lib/utils";\n\nexport const twice = moved * 2;\n',
         });
-        Bun.spawnSync(["git", "init", "-q"], { cwd: real });
+        Bun.spawnSync(["git", "init", "-q"], { cwd: real, env: process.env });
         const dir = `${real}-link`;
         symlinkSync(real, dir);
         const edits = parseSpec({
