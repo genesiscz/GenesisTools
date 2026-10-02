@@ -1,5 +1,15 @@
 import { afterAll, describe, expect, it } from "bun:test";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import {
+    chmodSync,
+    lstatSync,
+    mkdirSync,
+    mkdtempSync,
+    readFileSync,
+    rmSync,
+    statSync,
+    symlinkSync,
+    writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { backupAndWrite } from "@app/markdown/lib/backup";
@@ -21,6 +31,42 @@ describe("backupAndWrite", () => {
             backupAndWrite({ file, before: "read at start\n", after: "resolved\n", runDir, dryRun: false, detail: {} })
         ).rejects.toThrow("changed on disk");
         expect(readFileSync(file, "utf8")).toBe("saved by the editor\n");
+    });
+
+    it("replaces a symlinked note at its target, keeps the copies private, and gives Note.md.patch its own slot", async () => {
+        const target = join(dir, "real.md");
+        const link = join(dir, "link.md");
+        writeFileSync(target, "linked\n");
+        symlinkSync(target, link);
+        const own = join(dir, "own");
+        mkdirSync(own);
+
+        const record = await backupAndWrite({
+            file: link,
+            before: "linked\n",
+            after: "resolved\n",
+            runDir: own,
+            dryRun: false,
+            detail: {},
+        });
+
+        expect(lstatSync(link).isSymbolicLink()).toBe(true);
+        expect(readFileSync(target, "utf8")).toBe("resolved\n");
+        expect(statSync(record.backup).mode & 0o777).toBe(0o600);
+        expect(statSync(record.patch).mode & 0o777).toBe(0o600);
+
+        const patchNamed = join(dir, "link.md.patch");
+        writeFileSync(patchNamed, "a note\n");
+        const second = await backupAndWrite({
+            file: patchNamed,
+            before: "a note\n",
+            after: "b\n",
+            runDir: own,
+            dryRun: true,
+            detail: {},
+        });
+        expect(second.backup).not.toBe(record.patch);
+        expect(readFileSync(record.patch, "utf8")).toContain("+resolved");
     });
 
     it("writes a note that did not change, and a dry run names its proposal", async () => {

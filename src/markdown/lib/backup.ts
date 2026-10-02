@@ -5,6 +5,7 @@ import {
     existsSync,
     mkdirSync,
     readFileSync,
+    realpathSync,
     renameSync,
     statSync,
     writeFileSync,
@@ -36,6 +37,8 @@ export interface BackupRecord {
 }
 
 const DIFF_TIMEOUT_MS = 15_000;
+/** Backups, patches, proposals and the manifest copy a note's text: readable by its owner only. */
+const PRIVATE_FILE = 0o600;
 
 function stamp(now: Date): string {
     const pad = (n: number) => String(n).padStart(2, "0");
@@ -49,7 +52,8 @@ export function sha256(text: string): string {
 /** One folder per run: the process id keeps two runs started in the same second apart. */
 export function runDirectory(now = new Date()): string {
     const dir = join(BACKUP_ROOT, `${stamp(now)}-${process.pid}`);
-    mkdirSync(dir, { recursive: true });
+    mkdirSync(dir, { recursive: true, mode: 0o700 });
+    chmodSync(dir, 0o700);
     return dir;
 }
 
@@ -57,13 +61,18 @@ function shellQuote(text: string): string {
     return `'${text.replaceAll("'", "'\\''")}'`;
 }
 
-/** A unique name inside the run folder: two notes called Summary.md in one run do not collide. */
+/**
+ * A unique name inside the run folder: two notes called Summary.md in one run do not collide. A slot owns
+ * `<name>`, `<name>.patch` and `<name>.proposed`, so all three must be free (`Note.md.patch` is a note too).
+ */
 function slot(runDir: string, file: string): string {
     const name = basename(file);
     let candidate = name;
     let index = 2;
+    const taken = (stem: string) =>
+        ["", ".patch", ".proposed"].some((suffix) => existsSync(join(runDir, stem + suffix)));
 
-    while (existsSync(join(runDir, candidate))) {
+    while (taken(candidate)) {
         candidate = `${index}-${name}`;
         index++;
     }
@@ -118,28 +127,33 @@ export async function backupAndWrite(options: {
     const { file, before, after, runDir, dryRun } = options;
     const name = slot(runDir, file);
     const backup = join(runDir, name);
-    writeFileSync(backup, before);
+    // The copies hold the note's whole text: private to this user, whatever the umask says.
+    writeFileSync(backup, before, { mode: PRIVATE_FILE });
 
     let target = file;
 
     if (dryRun) {
         target = join(runDir, `${name}.proposed`);
-        writeFileSync(target, after);
+        writeFileSync(target, after, { mode: PRIVATE_FILE });
     } else {
         // The resolve awaited transclusion after reading `before`: an editor may have saved since then.
         if (readFileSync(file, "utf8") !== before) {
             throw new Error("the file changed on disk while its tokens were resolved");
         }
 
-        // The replacement takes the note's own mode: a private 0600 note must not come back 0644.
-        const temporary = `${file}.md-tmp-${process.pid}`;
+        // A symlinked note is replaced at its target, so the link stays a link. The replacement takes
+        // the note's own mode: a private 0600 note must not come back 0644.
+        const real = realpathSync(file);
+        const temporary = `${real}.md-tmp-${process.pid}`;
         writeFileSync(temporary, after);
-        chmodSync(temporary, statSync(file).mode & 0o7777);
-        renameSync(temporary, file);
+        chmodSync(temporary, statSync(real).mode & 0o7777);
+        renameSync(temporary, real);
+        // The patch compares the text, not the link: git diffs a symlink as its target path.
+        target = real;
     }
 
     const patch = join(runDir, `${name}.patch`);
-    writeFileSync(patch, await unifiedDiff(backup, target));
+    writeFileSync(patch, await unifiedDiff(backup, target), { mode: PRIVATE_FILE });
 
     const record: BackupRecord = {
         file,
@@ -153,7 +167,8 @@ export async function backupAndWrite(options: {
     };
     appendFileSync(
         join(runDir, "manifest.jsonl"),
-        `${SafeJSON.stringify({ ...record, ...options.detail, at: new Date().toISOString() })}\n`
+        `${SafeJSON.stringify({ ...record, ...options.detail, at: new Date().toISOString() })}\n`,
+        { mode: PRIVATE_FILE }
     );
     // Debug reaches the day log file always, and the console only with -v: the command prints its own summary.
     logger.debug(
