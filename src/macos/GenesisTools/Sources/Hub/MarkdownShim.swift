@@ -20,6 +20,10 @@ struct MarkdownStyle {
     var blockSpacing: CGFloat = 10
     var headingScale: CGFloat = 1
     var monoBody: Bool = false
+    /// Each text block selectable. Off in the transcript: its rows turn selection on while the pointer is
+    /// over them (GenesisKit `hoverTextSelection`), and a selectable block here is a selection overlay
+    /// view, a focus ring and a key-view entry per paragraph on every row whether or not it is pointed at.
+    var selectable: Bool = true
 }
 
 extension MarkdownStyle {
@@ -36,8 +40,20 @@ extension MarkdownStyle {
             taskDoneColor: style.taskDoneColor,
             lineSpacing: style.lineSpacing,
             blockSpacing: style.blockSpacing,
-            headingScale: style.headingScale
+            headingScale: style.headingScale,
+            selectable: ProcessInfo.processInfo.environment["GENESIS_SHIM_SELECT"] == "1"
         )
+    }
+}
+
+private extension View {
+    @ViewBuilder
+    func selectable(_ on: Bool) -> some View {
+        if on {
+            textSelection(.enabled)
+        } else {
+            self
+        }
     }
 }
 
@@ -261,7 +277,7 @@ struct MarkdownContentView: View {
                         .font(style.monoBody ? .system(size: style.bodySize, design: .monospaced) : .system(size: style.bodySize))
                         .foregroundColor(style.textColor)
                         .lineSpacing(style.lineSpacing)
-                        .textSelection(.enabled)
+                        .selectable(style.selectable)
                         .fixedSize(horizontal: false, vertical: true)
                         .panelFindAnchor(anchor(block: index))
                 case .heading(let text, let level):
@@ -276,7 +292,7 @@ struct MarkdownContentView: View {
                             .font(.system(size: style.bodySize))
                             .foregroundColor(style.secondaryColor)
                             .lineSpacing(style.lineSpacing)
-                            .textSelection(.enabled)
+                            .selectable(style.selectable)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     .fixedSize(horizontal: false, vertical: true)
@@ -285,7 +301,7 @@ struct MarkdownContentView: View {
                     Text(found(AttributedString(text), block: index))
                         .font(.system(size: style.bodySize - 1.5, design: .monospaced))
                         .foregroundColor(style.codeColor)
-                        .textSelection(.enabled)
+                        .selectable(style.selectable)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(8)
                         .background(RoundedRectangle(cornerRadius: 6).fill(style.codeBackground))
