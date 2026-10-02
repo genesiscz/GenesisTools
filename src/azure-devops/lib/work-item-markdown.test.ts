@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { Api } from "@app/azure-devops/api";
-import { extractInlineImageUrls } from "@app/azure-devops/inline-images";
+import { extractInlineImageUrls, rewriteImageSources } from "@app/azure-devops/inline-images";
 import { formatWorkItemMarkdown, tableCell } from "@app/azure-devops/lib/work-item-markdown";
 import type { WorkItemFull } from "@app/azure-devops/types";
 
@@ -108,6 +108,17 @@ describe("formatWorkItemMarkdown", () => {
         );
         // The same URL quoted in a code example is not an image destination.
         expect(md).toContain(`\`\`\`\n${angled}\n\`\`\``);
+    });
+});
+
+describe("rewriteImageSources", () => {
+    test("only the src value changes, and the local name goes in literally", () => {
+        const url = "https://dev.azure.com/example/proj/_apis/wit/attachments/46e8a5cc?fileName=a.png";
+        const tag = `<img alt="${url}" src="${url}">`;
+
+        expect(rewriteImageSources(tag, new Map([[url, "281785-46e8a5cc-$&.png"]]))).toBe(
+            `<img alt="${url}" src="281785-46e8a5cc-$&.png">`
+        );
     });
 });
 

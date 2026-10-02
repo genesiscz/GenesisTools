@@ -18,6 +18,8 @@ export interface InlineImageRef {
 
 const ATTACHMENT_URL_PATTERN = /\/_apis\/wit\/attachments\/([a-f0-9-]+)/i;
 const IMG_SRC_PATTERN = /<img[^>]+src=["']([^"']+)["'][^>]*>/gi;
+/** {@link IMG_SRC_PATTERN} with the text before and after the src value captured too. */
+const IMG_SRC_PARTS_PATTERN = /(<img[^>]+src=["'])([^"']+)(["'][^>]*>)/gi;
 /**
  * `![alt](url)`, `![alt](<url>)` or either with a `"title"`: comments written in ADO's markdown editor
  * carry images this way. An angle-bracket destination may hold `)` and spaces, so it has its own group;
@@ -163,9 +165,9 @@ export function rewriteImageSources(text: string, urlMap: Map<string, string>): 
         return text;
     }
 
-    return text.replace(IMG_SRC_PATTERN, (tag, src: string) => {
+    return text.replace(IMG_SRC_PARTS_PATTERN, (tag, before: string, src: string, after: string) => {
         const local = urlMap.get(src);
-        return local ? tag.replace(src, local) : tag;
+        return local ? `${before}${local}${after}` : tag;
     });
 }
 
