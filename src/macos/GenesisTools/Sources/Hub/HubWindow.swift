@@ -1310,12 +1310,17 @@ final class HubModel: ObservableObject {
         guard let session = selected else { return }
         decisions = []
         loadDecisions(for: session.sessionId)
-        let cwd = session.cwd
+        let moved = session.cwd.isEmpty ? nil : MovedCheckout.resolve(session.cwd)
+        let cwd = moved ?? session.cwd
         if !cwd.isEmpty, FileManager.default.fileExists(atPath: cwd) {
             // The session too: two agents in one checkout share the folder, and "Send to agent" targets `review.session`.
             if review?.repo.path != cwd || review?.session != session.sessionId {
                 let next = ReviewModel(repo: URL(fileURLWithPath: cwd), options: DiffViewOptions(), session: session.sessionId)
                 next.embedded = true
+                if moved != nil {
+                    let from = (session.cwd as NSString).abbreviatingWithTildeInPath
+                    next.notice = "\(from) holds no repository, so this shows \((cwd as NSString).abbreviatingWithTildeInPath), the checkout of the same name"
+                }
                 sessionReview = next
                 review = next
             } else {
