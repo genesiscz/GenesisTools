@@ -1642,7 +1642,8 @@ struct ReviewRootView: View {
                         .padding(8)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                if model.files.isEmpty && !model.loading {
+                // An error is the answer: "No changes against HEAD" under it contradicted it.
+                if model.files.isEmpty && !model.loading && model.error == nil {
                     VStack(spacing: 8) {
                         Image(systemName: "checkmark.circle")
                             .font(.system(size: 28))
