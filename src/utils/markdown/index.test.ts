@@ -134,6 +134,19 @@ describe("markdown includes", () => {
         expect(result.outcomes).toEqual([]);
     });
 
+    it("a marker line with an info string does not close a fence, so the block after the fence still refreshes", async () => {
+        writeFileSync(source, "const a = 1;\n");
+        const block = (await resolveIncludes('{{lines path="widget.ts" range="1-1"}}\n', { cwd: dir, now: fixed }))
+            .text;
+        writeFileSync(source, "const a = 2;\n");
+        const fenced = "```md\nexample\n```js\n```\n";
+        const result = await resolveIncludes(`${fenced}\nReal:\n\n${block}`, { cwd: dir, now: later });
+
+        expect(result.outcomes.map((o) => o.action)).toEqual(["refreshed"]);
+        expect(result.text.startsWith(fenced)).toBe(true);
+        expect(result.text).toContain("const a = 2;");
+    });
+
     it("a token inside a sentence gets its own paragraph and still collapses to the sentence", async () => {
         writeFileSync(source, "const a = 1;\nconst b = 2;\n");
         const text = 'See {{lines path="widget.ts" range="1-2"}} for the setup.\n';

@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, setSystemTime, test } from "bun:test";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -7,6 +7,7 @@ import { detectShape, jsonToBlocks } from "./auto";
 import { builtinConverters, MAX_BLOCK_DEPTH, renderBlocks } from "./blocks";
 import { joinSections, renderProvenance, renderToc, slugifyHeading } from "./document";
 import {
+    buildDocument,
     checkDocument,
     type DocumentDefinition,
     defineDocument,
@@ -699,6 +700,28 @@ describe("three-file pattern", () => {
 
         expect(second.outcome).toBe("unchanged");
         expect(await Bun.file(first.outPath).text()).toBe(text);
+    });
+
+    test("an unreadable generated stamp captures excerpts at a fixed time, so two builds match", async () => {
+        const dir = await scratch();
+        const modulePath = join(dir, "doc.ts");
+        await Bun.write(join(dir, "doc.json"), SafeJSONStringify({ items: [] }));
+        await Bun.write(join(dir, "source.ts"), "export const answer = 42;\n");
+        const definition = defineDocument({
+            data: "./doc.json",
+            render: () => [{ raw: '{{lines path="source.ts" range="1-1"}}' }],
+        });
+
+        try {
+            setSystemTime(new Date("2026-10-01T08:00:00Z"));
+            const first = await buildDocument(modulePath, definition, { generatedAt: "garbage" });
+            setSystemTime(new Date("2026-10-01T11:00:00Z"));
+            const second = await buildDocument(modulePath, definition, { generatedAt: "garbage" });
+
+            expect(second.markdown).toBe(first.markdown);
+        } finally {
+            setSystemTime();
+        }
     });
 
     test("a data change is stale and rewrites", async () => {

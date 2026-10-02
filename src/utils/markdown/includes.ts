@@ -338,6 +338,16 @@ export interface CodeLinksResult {
 
 const LINK_RE = /\[([^\]\n]*)\]\(<?((?:file:\/\/)?\/[^)\s>]+)>?\)/g;
 const FENCE_RE = /^ {0,3}(`{3,}|~{3,})/;
+
+/** CommonMark: a fence closes on its own marker character, at least as long, with nothing after it. */
+function closesFence(lineText: string, match: RegExpExecArray, fence: string): boolean {
+    const marker = match[1] ?? "";
+    return (
+        marker.startsWith(fence[0] ?? "`") &&
+        marker.length >= fence.length &&
+        lineText.slice(match[0].length).trim() === ""
+    );
+}
 const INLINE_CODE_RE = /(`+)[^`].*?\1/g;
 
 /** Offsets `[start, end)` of every fenced code block, fences included; an unclosed fence runs to the end. */
@@ -348,12 +358,13 @@ function fencedRanges(text: string): Array<[number, number]> {
     let offset = 0;
 
     for (const lineText of text.split("\n")) {
-        const marker = FENCE_RE.exec(lineText)?.[1];
+        const match = FENCE_RE.exec(lineText);
+        const marker = match?.[1];
 
         if (marker && fence === null) {
             fence = marker;
             openedAt = offset;
-        } else if (marker && fence !== null && marker.startsWith(fence[0] ?? "`") && marker.length >= fence.length) {
+        } else if (match && fence !== null && closesFence(lineText, match, fence)) {
             ranges.push([openedAt, offset + lineText.length]);
             fence = null;
         }
@@ -417,7 +428,7 @@ export function codeLinksToTokens(text: string, { context = 12 }: { context?: nu
 
             if (fence === null) {
                 fence = marker;
-            } else if (marker.startsWith(fence[0] ?? "`") && marker.length >= fence.length) {
+            } else if (closesFence(lineText, fenceMatch, fence)) {
                 fence = null;
             }
 

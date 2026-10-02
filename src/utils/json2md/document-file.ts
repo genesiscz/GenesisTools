@@ -164,10 +164,13 @@ export interface BuildOverrides {
  * @param modulePath absolute path of the `.ts` that declared the document, used to resolve
  *                   the data and output paths and to record the generator in the stamp.
  */
-/** `generated` is a local "YYYY-MM-DD HH:MM"; an unreadable one falls back to now. */
+/**
+ * `generated` is a local "YYYY-MM-DD HH:MM". An unreadable one falls back to the epoch, not to now:
+ * a time that moves would make every rebuild of the same stamp differ, so `check` never passes.
+ */
 function capturedAt(generated: string): Date {
     const parsed = new Date(generated.replace(" ", "T"));
-    return Number.isNaN(parsed.getTime()) ? new Date() : parsed;
+    return Number.isNaN(parsed.getTime()) ? new Date(0) : parsed;
 }
 
 export async function buildDocument<T>(
