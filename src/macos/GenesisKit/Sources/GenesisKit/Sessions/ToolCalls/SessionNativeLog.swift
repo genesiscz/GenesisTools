@@ -358,7 +358,7 @@ public final class SessionNativeLog: @unchecked Sendable {
 
         static func of(_ line: UnsafeRawBufferPointer) -> LineKind {
             if hasClaudeType(line) { return .claude }
-            if contains(line, #""response_item""#) { return .codex }
+            if contains(line, #""response_item""#) || contains(line, #""item_completed""#) { return .codex }
             return .other
         }
 
@@ -450,8 +450,21 @@ public final class SessionNativeLog: @unchecked Sendable {
         }
     }
 
+    /// The `item_completed` items the transcript shows as tool rows (src/utils/ai/transcripts/codex.ts `itemTool`).
+    private static let codexActionItems: Set<String> = ["CommandExecution", "McpToolCall", "FileChange"]
+
     private static func indexCodex(_ object: [String: Any], range: Range<Int>, toolUse: inout [String: Range<Int>], toolResult: inout [String: Range<Int>]) {
-        guard let payload = object["payload"] as? [String: Any], let id = payload["call_id"] as? String else { return }
+        guard let payload = object["payload"] as? [String: Any] else { return }
+        // A command, patch or MCP call an `exec` script made: one line holds its input and its output,
+        // keyed by the item id the transcript row carries.
+        if payload["type"] as? String == "item_completed" {
+            guard let item = payload["item"] as? [String: Any], let id = item["id"] as? String,
+                  codexActionItems.contains(item["type"] as? String ?? "") else { return }
+            toolUse[id] = range
+            toolResult[id] = range
+            return
+        }
+        guard let id = payload["call_id"] as? String else { return }
         switch payload["type"] as? String {
         case "function_call", "custom_tool_call": toolUse[id] = range
         case "function_call_output", "custom_tool_call_output": toolResult[id] = range
@@ -488,7 +501,7 @@ public final class SessionNativeLog: @unchecked Sendable {
     /// shows a marker for it (src/utils/ai/transcripts/codex.ts); the opened call says the same.
     static func withoutEncryptedToken(_ value: Any) -> Any {
         guard let text = value as? String, text.hasPrefix("gAAAAA"), text.count >= 46,
-              text.unicodeScalars.allSatisfy({ CharacterSet.alphanumerics.contains($0) || "_-=".unicodeScalars.contains($0) })
+              text.unicodeScalars.allSatisfy({ $0.isASCII && (CharacterSet.alphanumerics.contains($0) || "_-=".unicodeScalars.contains($0)) })
         else { return value }
         return "[encrypted by Codex, \(text.count) chars]"
     }
@@ -498,6 +511,13 @@ public final class SessionNativeLog: @unchecked Sendable {
         if let message = object["message"] as? [String: Any], let content = message["content"] as? [[String: Any]],
            let use = content.first(where: { $0["id"] as? String == toolId }) {
             input = use["input"] as? [String: Any] ?? [:]
+        } else if let payload = object["payload"] as? [String: Any], let item = payload["item"] as? [String: Any] {
+            switch item["type"] as? String {
+            case "CommandExecution": detail.command = codexShellCommand(item["command"])
+            case "McpToolCall": input = item["arguments"] as? [String: Any] ?? [:]
+            case "FileChange": detail.patch = codexPatchText(item["changes"])
+            default: break
+            }
         } else if let payload = object["payload"] as? [String: Any] {
             if let arguments = payload["arguments"] as? String,
                let parsed = try? JSONSerialization.jsonObject(with: Data(arguments.utf8)) as? [String: Any] {
@@ -517,7 +537,7 @@ public final class SessionNativeLog: @unchecked Sendable {
         // NotebookEdit writes one cell: its new source shows like a Write.
         detail.content = (input["content"] ?? input["new_source"]) as? String
         detail.command = (input["command"] as? String) ?? (input["cmd"] as? String)
-            ?? (input["command"] as? [String])?.joined(separator: " ")
+            ?? (input["command"] as? [String])?.joined(separator: " ") ?? detail.command
         if let old = input["old_string"] as? String, let new = input["new_string"] as? String {
             detail.edits = [ToolEditPair(old: old, new: new)]
         } else if let edits = input["edits"] as? [[String: Any]] {
@@ -540,6 +560,9 @@ public final class SessionNativeLog: @unchecked Sendable {
             }
             return nil
         }
+        if let payload = object["payload"] as? [String: Any], let item = payload["item"] as? [String: Any] {
+            return codexItemOutput(item)
+        }
         if let payload = object["payload"] as? [String: Any] {
             let output = payload["output"] as? String ?? payload["result"] as? String
             // Codex wraps shell output as `{"output": "...", "metadata": {...}}`.
@@ -551,5 +574,52 @@ public final class SessionNativeLog: @unchecked Sendable {
             return output
         }
         return nil
+    }
+
+    // MARK: Codex items (the same reading as src/utils/ai/transcripts/codex.ts)
+
+    /// `["/bin/zsh", "-lc", "<the command>"]` is the command the agent wrote.
+    private static func codexShellCommand(_ value: Any?) -> String? {
+        guard let parts = value as? [String] else { return value as? String }
+        if parts.count == 3, parts[1] == "-c" || parts[1] == "-lc" { return parts[2] }
+        return parts.joined(separator: " ")
+    }
+
+    /// A FileChange as apply_patch text, one section per file (sorted: the JSON object has no order here).
+    private static func codexPatchText(_ value: Any?) -> String? {
+        guard let changes = value as? [String: Any] else { return nil }
+        var sections = ["*** Begin Patch"]
+        for file in changes.keys.sorted() {
+            let change = changes[file] as? [String: Any] ?? [:]
+            switch change["type"] as? String {
+            case "add":
+                sections.append("*** Add File: \(file)")
+                sections += (change["content"] as? String ?? "").components(separatedBy: "\n").map { "+\($0)" }
+            case "delete":
+                sections.append("*** Delete File: \(file)")
+            default:
+                sections.append("*** Update File: \(file)")
+                if let moved = change["move_path"] as? String, !moved.isEmpty { sections.append("*** Move to: \(moved)") }
+                sections.append(change["unified_diff"] as? String ?? "")
+            }
+        }
+        sections.append("*** End Patch")
+        return sections.joined(separator: "\n")
+    }
+
+    private static func codexItemOutput(_ item: [String: Any]) -> String {
+        let streams = (item["stdout"] as? String ?? "") + (item["stderr"] as? String ?? "")
+        switch item["type"] as? String {
+        case "CommandExecution":
+            // A command's colours arrive as escape codes; the transcript strips them too.
+            let output = (item["aggregated_output"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? streams
+            return output.replacingOccurrences(of: "\u{1B}\\[[0-9;?]*[ -/]*[@-~]", with: "", options: .regularExpression)
+        case "McpToolCall":
+            let parts = ((item["result"] as? [String: Any])?["content"] as? [[String: Any]]) ?? []
+            let text = parts.compactMap { $0["text"] as? String }.filter { !$0.isEmpty }.joined(separator: "\n")
+            return text.isEmpty ? item["error"] as? String ?? "" : text
+        default:
+            return streams
+        }
     }
 }

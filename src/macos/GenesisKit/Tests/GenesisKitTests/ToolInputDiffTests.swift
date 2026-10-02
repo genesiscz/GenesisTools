@@ -47,6 +47,45 @@ final class ToolInputDiffTests: XCTestCase {
         XCTAssertTrue(shown.contains("pr589_astra"), shown)
     }
 
+    /// The TypeScript marker accepts `[A-Za-z0-9_=-]` only; a non-ASCII letter is not a Codex token.
+    func testANonASCIITokenLookalikeIsNotRedacted() {
+        let lookalike = "gAAAAAB" + String(repeating: "é", count: 45)
+        XCTAssertEqual(SessionNativeLog.withoutEncryptedToken(lookalike) as? String, lookalike)
+        let token = "gAAAAAB" + String(repeating: "Qx9_-", count: 9)
+        XCTAssertEqual(SessionNativeLog.withoutEncryptedToken(token) as? String, "[encrypted by Codex, \(token.count) chars]")
+    }
+
+    /// Codex records a script's commands, patches and MCP calls as `item_completed` events, keyed by
+    /// the item id. The transcript clips their output at 2,000 characters; opening one shows all of it.
+    func testACodexItemOpensWithItsFullInputAndOutput() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("tool-input-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let file = dir.appendingPathComponent("rollout-codex-items.jsonl")
+        let output = (1...400).map { "line \($0) of the build log" }.joined(separator: "\\n")
+        let expected = output.replacingOccurrences(of: "\\n", with: "\n")
+        XCTAssertGreaterThan(expected.count, 2000)
+        let lines = [
+            #"{"type":"event_msg","payload":{"type":"item_completed","item":{"type":"CommandExecution","id":"exec-1","command":["/bin/zsh","-lc","make build"],"aggregated_output":""# + output + #"","exit_code":0}}}"#,
+            #"{"type":"event_msg","payload":{"type":"item_completed","item":{"type":"FileChange","id":"patch-1","status":"completed","changes":{"/tmp/a.swift":{"type":"update","unified_diff":"@@ -1 +1 @@\n-let a = 1\n+let a = 2"}}}}}"#,
+            #"{"type":"event_msg","payload":{"type":"item_completed","item":{"type":"McpToolCall","id":"mcp-1","server":"docs","tool":"lookup","arguments":{"query":"swift","limit":3},"result":{"content":[{"type":"text","text":"found 3"}]}}}}"#,
+        ]
+        try (lines.joined(separator: "\n") + "\n").write(to: file, atomically: true, encoding: .utf8)
+        let log = try XCTUnwrap(SessionNativeLog.scan(path: file.path))
+
+        let command = try XCTUnwrap(log.detail(for: "exec-1"), "a command item has no detail")
+        XCTAssertEqual(command.command, "make build")
+        XCTAssertEqual(command.fullResult, expected)
+
+        let patch = try XCTUnwrap(log.detail(for: "patch-1")?.patch, "a file change item has no patch")
+        XCTAssertTrue(patch.contains("*** Update File: /tmp/a.swift"), patch)
+        XCTAssertTrue(patch.contains("+let a = 2"), patch)
+
+        let mcp = try XCTUnwrap(log.detail(for: "mcp-1"), "an MCP item has no detail")
+        XCTAssertTrue(mcp.arguments?.contains(#""query" : "swift""#) == true, mcp.arguments ?? "nil")
+        XCTAssertEqual(mcp.fullResult, "found 3")
+    }
+
     func testAnEditDrawsItsDiffFirstWithTheStatusUnder() {
         let detail = ToolCallDetail(filePath: "/tmp/x.swift", edits: [ToolEditPair(old: "let a = 1", new: "let a = 2")])
         let shown = ToolPresentation.make(

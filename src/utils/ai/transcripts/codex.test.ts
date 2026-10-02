@@ -267,6 +267,55 @@ describe("codexNativeLinesToTurns with exec scripts and their items", () => {
         ]);
     });
 
+    test("an item no script names stays in its own model call once the earlier script finished", () => {
+        const turns = codexNativeLinesToTurns([
+            row(1, { type: "custom_tool_call", name: "exec", call_id: "s1", input: 'tools.exec_command({cmd:"ls"})' }),
+            item(2, {
+                type: "CommandExecution",
+                id: "e1",
+                command: ["/bin/zsh", "-lc", "ls"],
+                aggregated_output: "a",
+                exit_code: 0,
+            }),
+            row(3, { type: "custom_tool_call_output", call_id: "s1", output: "Script completed" }),
+            row(4, { type: "reasoning", summary: [] }),
+            row(5, { type: "function_call", name: "js", call_id: "j1", arguments: "{}" }),
+            item(6, {
+                type: "CommandExecution",
+                id: "e2",
+                command: ["/bin/zsh", "-lc", "du -sh ."],
+                aggregated_output: "4K",
+                exit_code: 0,
+            }),
+        ]);
+        expect(turns.map((turn) => turn.tools.map((tool) => tool.id))).toEqual([["e1"], ["j1", "e2"]]);
+    });
+
+    test("an item no script names goes under the script still running", () => {
+        const turns = codexNativeLinesToTurns([
+            row(1, {
+                type: "custom_tool_call",
+                name: "exec",
+                call_id: "s1",
+                input: "for (const cmd of cmds) await tools.exec_command({cmd})",
+            }),
+            row(2, { type: "reasoning", summary: [] }),
+            row(3, { type: "message", role: "assistant", content: [{ type: "output_text", text: "Waiting." }] }),
+            item(4, {
+                type: "CommandExecution",
+                id: "e1",
+                command: ["/bin/zsh", "-lc", "git log -1"],
+                aggregated_output: "abc",
+                exit_code: 0,
+            }),
+            row(5, { type: "custom_tool_call_output", call_id: "s1", output: "Script completed" }),
+        ]);
+        expect(turns.map((turn) => [turn.text, turn.tools.map((tool) => tool.id)])).toEqual([
+            ["", ["e1"]],
+            ["Waiting.", []],
+        ]);
+    });
+
     test("a call answered with no output is finished, not waiting", () => {
         const turns = codexNativeLinesToTurns([
             row(1, {

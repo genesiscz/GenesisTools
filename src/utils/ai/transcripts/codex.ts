@@ -312,6 +312,14 @@ export function codexNativeLinesToTurns(lines: readonly (string | unknown)[]): T
         open(at).tools.push(tool);
         byCallId.set(tool.id, tool);
     };
+    /**
+     * Where an item no script names came from: the latest script, while it still runs or belongs to
+     * this model call. A finished script from an earlier call is not it; the item stays in its own call.
+     */
+    const runningScript = () => {
+        const latest = scripts.at(-1);
+        return latest && (latest.tool.result === null || assistant?.tools.includes(latest.tool)) ? latest : undefined;
+    };
 
     for (const line of lines) {
         const parsed = parseTranscriptLine(line);
@@ -353,7 +361,7 @@ export function codexNativeLinesToTurns(lines: readonly (string | unknown)[]): T
             const item = isRecord(payload.item) ? payload.item : {};
             const action = itemTool(item);
             if (action) {
-                const owner = scriptOf(scripts, item);
+                const owner = scriptOf(scripts, item) ?? runningScript();
                 if (owner) {
                     owner.items.push(action);
                 } else {
@@ -479,7 +487,7 @@ export function codexNativeLinesToTurns(lines: readonly (string | unknown)[]): T
 
 /**
  * The `exec` script an item came from: the latest one whose source names the command, the patched
- * file or the MCP tool; else the latest script, which is where Codex's items usually belong.
+ * file or the MCP tool. An item no script names is the caller's to place.
  */
 function scriptOf(
     scripts: { tool: TranscriptTool; script: string; items: TranscriptTool[] }[],
@@ -503,5 +511,5 @@ function scriptOf(
         }
     }
 
-    return scripts.at(-1);
+    return undefined;
 }
