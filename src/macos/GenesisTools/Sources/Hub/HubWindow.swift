@@ -202,6 +202,9 @@ func runHub(_ args: [String]) -> Never {
     let delegate = HubAppDelegate()
     app.delegate = delegate
     installBrowserURLForwarder()
+    if !request.isScripted {
+        installNotificationClicksForWindowFace()
+    }
 
     let model = HubModel(wantedSession: wantedSession, tab: tab)
     MainActor.assumeIsolated {

@@ -383,6 +383,11 @@ func logClick(_ message: String) {
     try? handle.write(contentsOf: Data(line.utf8))
 }
 
+private func clickHasRoute(userInfo: [AnyHashable: Any], actionIdentifier: String) -> Bool {
+    let route = (userInfo["routes"] as? [String: Any])?[actionIdentifier] as? [String: Any]
+    return [route?["open"], route?["execute"]].contains { ($0 as? String)?.isEmpty == false }
+}
+
 /// Run whatever the clicked element was carrying. Blocks until an `execute` command finishes, so
 /// the caller must not run this on the main queue.
 func performClickAction(userInfo: [AnyHashable: Any], actionIdentifier: String) {
@@ -475,12 +480,22 @@ final class NotificationDelegate: NSObject, UNUserNotificationCenterDelegate {
         // Every response leaves a reply file, not just a typed one, so a caller can await a plain
         // button press exactly as it awaits an answer.
         writeReply(notificationId: notificationId, actionId: actionIdentifier, text: typed, userInfo: userInfo)
+        // macOS brought the window face forward to deliver the click; a click that runs something
+        // is about that, not about the hub.
+        if clickInWindowFace, clickHasRoute(userInfo: userInfo, actionIdentifier: actionIdentifier) {
+            BrowserURLForwarder.shared.yieldActivation()
+        }
 
         DispatchQueue.global(qos: .userInitiated).async {
             performClickAction(userInfo: userInfo, actionIdentifier: actionIdentifier)
 
             DispatchQueue.main.async {
                 completionHandler()
+                // macOS activates the face again when the handler completes, which can be after a
+                // long `execute`: arm the hand-back once more from here.
+                if clickInWindowFace, clickHasRoute(userInfo: userInfo, actionIdentifier: actionIdentifier) {
+                    BrowserURLForwarder.shared.yieldActivation()
+                }
 
                 if quitAfterNotificationClick {
                     exit(0)
@@ -501,6 +516,19 @@ var notificationClickReceived = false
 /// action has run. The settings window clears this, so clicking a banner while the window is open
 /// does not close it.
 var quitAfterNotificationClick = true
+
+/// True in a window face (`--hub`, `--review`): a routed click gives the focus back to the app before.
+private var clickInWindowFace = false
+
+/// For a window face: macOS hands a banner click to the RUNNING instance of the bundle, so an open hub
+/// took every click, came to the front and ran nothing, because it had no delegate ("the notify
+/// banner opens the hub and never runs --execute", 2026-10-02). The face now runs the route itself
+/// and stays open. Set before the app finishes launching, like the settings window's delegate.
+func installNotificationClicksForWindowFace() {
+    quitAfterNotificationClick = false
+    clickInWindowFace = true
+    UNUserNotificationCenter.current().delegate = sharedNotificationDelegate
+}
 
 // MARK: - Methods
 

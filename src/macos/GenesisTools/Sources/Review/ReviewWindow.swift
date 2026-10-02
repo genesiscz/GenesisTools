@@ -63,6 +63,9 @@ func runReview(_ args: [String]) -> Never {
     let delegate = ReviewAppDelegate()
     app.delegate = delegate
     installBrowserURLForwarder()
+    if snapshotPath == nil {
+        installNotificationClicksForWindowFace()
+    }
     MainActor.assumeIsolated { AppMainMenu.install() }
 
     var proposal: ProposalDocument?
