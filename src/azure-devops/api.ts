@@ -399,13 +399,19 @@ export class Api {
         }
 
         const token = await this.getAccessToken();
+        // A redirect would carry the Authorization header to a host the check above never saw.
         const response = await fetch(url, {
             method: "GET",
             headers: { Authorization: `Bearer ${token}` },
+            redirect: "manual",
         });
 
         const elapsed = Date.now() - startTime;
         logger.debug(`[api] GET binary response: ${response.status} ${response.statusText} (${elapsed}ms)`);
+
+        if (response.status >= 300 && response.status < 400) {
+            throw new Error(`Refusing to follow a redirect for ${shortUrl} (HTTP ${response.status})`);
+        }
 
         if (!response.ok) {
             const errorText = await response.text();

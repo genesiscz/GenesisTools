@@ -8,6 +8,7 @@ import {
     realpathSync,
     renameSync,
     statSync,
+    unlinkSync,
     writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -144,9 +145,18 @@ export async function backupAndWrite(options: {
         // A symlinked note is replaced at its target, so the link stays a link. The replacement takes
         // the note's own mode: a private 0600 note must not come back 0644.
         const real = realpathSync(file);
+        const checked = statSync(real);
         const temporary = `${real}.md-tmp-${process.pid}`;
         writeFileSync(temporary, after);
-        chmodSync(temporary, statSync(real).mode & 0o7777);
+        chmodSync(temporary, checked.mode & 0o7777);
+        // A save between the check above and the rename would be overwritten: the stat must not move.
+        const current = statSync(real);
+
+        if (current.mtimeMs !== checked.mtimeMs || current.size !== checked.size) {
+            unlinkSync(temporary);
+            throw new Error("the file changed on disk while its replacement was written");
+        }
+
         renameSync(temporary, real);
         // The patch compares the text, not the link: git diffs a symlink as its target path.
         target = real;

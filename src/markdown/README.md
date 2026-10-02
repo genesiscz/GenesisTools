@@ -19,7 +19,7 @@ A resolved token:
 <!-- /md:include -->
 ```
 
-Every changed file is backed up to `/tmp/GenesisTools/transclude/<YYYY-MM-DD_HH-MM-SS>/` with a
+Every changed file is backed up to `/tmp/GenesisTools/transclude/<YYYY-MM-DD_HH-MM-SS>-<pid>/` with a
 `.patch` and a `manifest.jsonl` line; the command prints the restore command and the day log gets the
 same record. A run refuses to write when collapsing the blocks back to their tokens does not give the
 input back.

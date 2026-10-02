@@ -224,7 +224,7 @@ export async function resolveIncludes(text: string, options: ResolveIncludesOpti
     for (const match of text.matchAll(BLOCK_RE)) {
         const start = match.index ?? 0;
 
-        if (fences.some(([from, to]) => start >= from && start < to)) {
+        if (fences.some(([from, to]) => start >= from && start < to) || inInlineCode(text, start)) {
             continue;
         }
 
@@ -338,6 +338,18 @@ export interface CodeLinksResult {
 
 const LINK_RE = /\[([^\]\n]*)\]\(<?((?:file:\/\/)?\/[^)\s>]+)>?\)/g;
 const FENCE_RE = /^ {0,3}(`{3,}|~{3,})/;
+
+/** True when `offset` sits inside a backtick code span on its own line. */
+function inInlineCode(text: string, offset: number): boolean {
+    const lineStart = text.lastIndexOf("\n", offset - 1) + 1;
+    const lineEnd = text.indexOf("\n", offset);
+    const line = text.slice(lineStart, lineEnd === -1 ? text.length : lineEnd);
+    const column = offset - lineStart;
+
+    return [...line.matchAll(INLINE_CODE_RE)].some(
+        (span) => column > (span.index ?? 0) && column < (span.index ?? 0) + span[0].length
+    );
+}
 
 /** CommonMark: a fence closes on its own marker character, at least as long, with nothing after it. */
 function closesFence(lineText: string, match: RegExpExecArray, fence: string): boolean {

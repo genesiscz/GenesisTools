@@ -147,6 +147,16 @@ describe("markdown includes", () => {
         expect(result.text).toContain("const a = 2;");
     });
 
+    it("an include block written inside an inline code span stays text", async () => {
+        writeFileSync(source, "const a = 2;\n");
+        const text =
+            'Write `<!-- md:include sig=abc {{lines path="widget.ts" range="1-1"}} -->old<!-- /md:include -->` to keep it.\n';
+        const result = await resolveIncludes(text, { cwd: dir, now: later });
+
+        expect(result.text).toBe(text);
+        expect(result.outcomes).toEqual([]);
+    });
+
     it("a token inside a sentence gets its own paragraph and still collapses to the sentence", async () => {
         writeFileSync(source, "const a = 1;\nconst b = 2;\n");
         const text = 'See {{lines path="widget.ts" range="1-2"}} for the setup.\n';

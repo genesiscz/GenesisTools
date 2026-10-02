@@ -987,6 +987,11 @@ describe("files the command NAMES rather than works in", () => {
         expect(namedArguments(`cat "$OTHER/wrapup.md"`, [vault])).toEqual([]);
     });
 
+    it("never follows a variable whose value holds a space, which an unquoted use would split", () => {
+        expect(namedArguments(`V="${vault}/a b"; cat $V/wrapup.md`, [vault])).toEqual([]);
+        expect(namedArguments(`V="${vault}/a b"; cat "$V/wrapup.md"`, [vault])).toEqual([]);
+    });
+
     it("reads a variable as the shell had it at each use, not as the command last set it", () => {
         const other = join(vault, "other");
 
@@ -2387,6 +2392,41 @@ describe("mention extraction", () => {
 });
 
 describe("writerChanges: fable-replace's journal names the files a sweep wrote", () => {
+    it("a run whose manifest does not parse is skipped, and the runs after it still count", () => {
+        const root = mkdtempSync(join(tmpdir(), "writers-"));
+        const broken = join(root, "cli-1");
+        const good = join(root, "cli-2");
+        mkdirSync(broken);
+        mkdirSync(good);
+        const edited = join(root, "note.md");
+        writeFileSync(edited, "after\n");
+        writeFileSync(join(broken, "fable-replace-manifest.json"), "{torn");
+        writeFileSync(join(good, "note.md.orig"), "before\n");
+        writeFileSync(
+            join(good, "fable-replace-manifest.json"),
+            SafeJSON.stringify({ entries: [{ original: edited, stored: "note.md.orig" }] })
+        );
+        const now = Date.now();
+        const line = (offset: number, backupDir: string) =>
+            SafeJSON.stringify({
+                ts: new Date(now - offset).toISOString(),
+                kind: "run",
+                outcome: "ok",
+                session: "s1",
+                backupDir,
+            });
+        const journal = join(root, "journal.jsonl");
+        writeFileSync(journal, `${[line(500, broken), line(300, good)].join("\n")}\n`);
+
+        try {
+            expect(writerChanges({ since: now - 2000, now, sessionId: "s1", journal })).toEqual([
+                { path: edited, before: join(good, "note.md.orig"), deleted: false },
+            ]);
+        } finally {
+            rmSync(root, { recursive: true, force: true });
+        }
+    });
+
     it("returns this session's files from runs inside the call, with the backup copy as the before-state", () => {
         const root = mkdtempSync(join(tmpdir(), "writers-"));
         const backup = join(root, "cli-1");

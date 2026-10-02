@@ -117,9 +117,16 @@ export function writerChanges({
                 continue;
             }
 
-            const manifest = SafeJSON.parse(readFileSync(manifestPath, "utf8"), { strict: true }) as {
-                entries?: ManifestEntry[];
-            };
+            let manifest: { entries?: ManifestEntry[] };
+
+            try {
+                manifest = SafeJSON.parse(readFileSync(manifestPath, "utf8"), { strict: true }) as {
+                    entries?: ManifestEntry[];
+                };
+            } catch (err) {
+                hookDiag("Skipped an unreadable fable-replace manifest", { err, manifestPath });
+                continue;
+            }
 
             for (const item of manifest.entries ?? []) {
                 if (!item.original || changes.has(item.original)) {

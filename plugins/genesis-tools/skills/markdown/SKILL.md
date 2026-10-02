@@ -74,7 +74,7 @@ how to write about a token without resolving it.
 Every file a run changes is copied first. One folder per run:
 
 ```
-/tmp/GenesisTools/transclude/<YYYY-MM-DD_HH-MM-SS>/
+/tmp/GenesisTools/transclude/<YYYY-MM-DD_HH-MM-SS>-<pid>/
     Analysis.md            the file as it was
     Analysis.md.patch      git diff of before → after
     Analysis.md.proposed   (dry run only) the result

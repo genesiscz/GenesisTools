@@ -111,7 +111,7 @@ public final class FileTreeModel: ObservableObject {
         loading.removeAll()
         stale.removeAll()
         load(root.path)
-        for path in expanded where path.hasPrefix(root.path) {
+        for path in expanded where path.hasPrefix(root.path + "/") {
             load(path)
         }
     }
