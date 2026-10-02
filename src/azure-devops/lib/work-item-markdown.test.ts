@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { Api } from "@app/azure-devops/api";
-import { extractInlineImageUrls, rewriteImageSources } from "@app/azure-devops/inline-images";
+import { extractInlineImageUrls, rewriteImageSources, rewriteMarkdownImageUrls } from "@app/azure-devops/inline-images";
 import { formatWorkItemMarkdown, tableCell } from "@app/azure-devops/lib/work-item-markdown";
 import type { WorkItemFull } from "@app/azure-devops/types";
 
@@ -112,6 +112,32 @@ describe("formatWorkItemMarkdown", () => {
 });
 
 describe("rewriteImageSources", () => {
+    test("the src attribute is the one matched, not a data-src beside it", () => {
+        const url = "https://dev.azure.com/example/proj/_apis/wit/attachments/46e8a5cc?fileName=a.png";
+        const other = "https://dev.azure.com/example/proj/_apis/wit/attachments/57f9b6dd?fileName=b.png";
+
+        expect(rewriteImageSources(`<img src="${url}" data-src="${url}">`, new Map([[url, "local.png"]]))).toBe(
+            `<img src="local.png" data-src="${url}">`
+        );
+        expect(extractInlineImageUrls(`<img src="${url}" data-src="${other}">`, 1).map((i) => i.originalUrl)).toEqual([
+            url,
+        ]);
+    });
+
+    test("an image written inside a code span or a fenced block is an example, not an image", () => {
+        const base = "https://dev.azure.com/example/proj/_apis/wit/attachments";
+        const example = `${base}/46e8a5cc?fileName=example.png`;
+        const real = `${base}/57f9b6dd?fileName=real.png`;
+        const text = `Write \`![e](${example})\` like this:\n\n\`\`\`md\n![e](${example})\n\`\`\`\n\n![r](${real})\n`;
+        const map = new Map([
+            [example, "local-example.png"],
+            [real, "local-real.png"],
+        ]);
+
+        expect(extractInlineImageUrls(text, 1).map((i) => i.originalUrl)).toEqual([real]);
+        expect(rewriteMarkdownImageUrls(text, map)).toBe(text.replace(`![r](${real})`, "![r](local-real.png)"));
+    });
+
     test("only the src value changes, and the local name goes in literally", () => {
         const url = "https://dev.azure.com/example/proj/_apis/wit/attachments/46e8a5cc?fileName=a.png";
         const tag = `<img alt="${url}" src="${url}">`;

@@ -49,7 +49,7 @@ export function plainArgument(raw: string | null): string | null {
 const ASSIGNMENT = /^([A-Za-z_][A-Za-z0-9_]*)=/;
 const DECLARING = new Set(["export", "readonly", "declare", "typeset"]);
 /** A bare variable reference, with or without braces. */
-const VARIABLE = /^\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?$/;
+const VARIABLE = /^\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))$/;
 
 function scan(command: string, what: string): ShellScan | null {
     try {
@@ -128,7 +128,8 @@ function variableValue(raw: string | null, known: Map<string, string>): string |
         return null;
     }
 
-    const name = VARIABLE.exec(quoted?.[2] ?? raw)?.[1];
+    const match = VARIABLE.exec(quoted?.[2] ?? raw);
+    const name = match?.[1] ?? match?.[2];
 
     return name ? (known.get(name) ?? null) : null;
 }
@@ -155,7 +156,7 @@ function cdTargets(command: string): string[] {
 
                 if (token && commandWord(token.text) === "cd") {
                     const raw = nextRawArgument(command, token.start + token.text.length);
-                    const target = plainArgument(raw) ?? variableValue(raw, known);
+                    const target = plainArgument(raw) ?? variableValue(raw, known) ?? expandVariable(raw, known);
 
                     if (target) {
                         targets.push(target);
@@ -242,8 +243,8 @@ function pathShaped(value: string): boolean {
     return value.includes("/") && !value.includes("://") && !value.includes("\n");
 }
 
-/** `$NAME/rest` or `${NAME}/rest`: a variable reference, then a plain remainder. */
-const VARIABLE_PREFIX = /^\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?(\/[^"'\\$`]*)?$/;
+/** `$NAME/rest` or `${NAME}/rest`: a variable reference, then a plain remainder. `$V}` and `${V` are not. */
+const VARIABLE_PREFIX = /^\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))(\/[^"'\\$`]*)?$/;
 
 /**
  * A path that starts with a variable the command set to a plain value earlier (`V=/vault; cat "$V/a.md"`).
@@ -263,9 +264,10 @@ function expandVariable(raw: string | null, known: Map<string, string>): string 
     }
 
     const match = VARIABLE_PREFIX.exec(quoted?.[2] ?? raw);
-    const base = match?.[1] ? known.get(match[1]) : undefined;
+    const name = match?.[1] ?? match?.[2];
+    const base = name ? known.get(name) : undefined;
 
-    return base ? base + (match?.[2] ?? "") : null;
+    return base ? base + (match?.[3] ?? "") : null;
 }
 
 function add(into: string[], raw: string | null, bases: string[], known: Map<string, string> = new Map()): void {

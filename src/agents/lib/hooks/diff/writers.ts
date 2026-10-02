@@ -98,8 +98,9 @@ export function writerChanges({
 
             const at = entry.ts ? Date.parse(entry.ts) : Number.NaN;
 
-            // `ts` is when the run started, which for a run of this call lies inside its window.
-            if (Number.isNaN(at) || at < since - 1000 || at > now + 1000) {
+            // `ts` is when the run started, which for a run of this call lies inside its window. `since`
+            // is the millisecond the pre phase finished, so a run that started before it is an earlier call's.
+            if (Number.isNaN(at) || at < since || at > now + 1000) {
                 continue;
             }
 
@@ -107,7 +108,9 @@ export function writerChanges({
                 continue;
             }
 
-            if (entry.session && sessionId && entry.session !== sessionId) {
+            // A run that names no session (another harness, an older CLI copy, a script) cannot be shown
+            // to belong to this one, and concurrent sessions would each claim it.
+            if (sessionId && entry.session !== sessionId) {
                 continue;
             }
 

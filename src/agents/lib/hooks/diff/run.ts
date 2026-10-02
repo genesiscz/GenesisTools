@@ -560,7 +560,13 @@ export function runDiffPost(
     // carries an edit the command made before the writer ran.
     const named = namedChanges(dir);
     const namedPaths = new Set(named.map((change) => change.path));
-    const reported = writerChanges({ since, now: attribution.now, sessionId: payload.sessionId });
+    const startedPath = join(dir, "started-ms");
+    const started = existsSync(startedPath) ? Number(readFileSync(startedPath, "utf8").trim()) : Number.NaN;
+    const reported = writerChanges({
+        since: Number.isFinite(started) ? started : since,
+        now: attribution.now,
+        sessionId: payload.sessionId,
+    });
     const reportedPaths = new Set(reported.map((change) => change.path));
 
     for (const change of [...named, ...reported.filter((item) => !namedPaths.has(item.path))]) {

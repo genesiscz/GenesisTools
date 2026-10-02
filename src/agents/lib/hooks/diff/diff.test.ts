@@ -987,6 +987,11 @@ describe("files the command NAMES rather than works in", () => {
         expect(namedArguments(`cat "$OTHER/wrapup.md"`, [vault])).toEqual([]);
     });
 
+    it("refuses a reference whose braces do not match, which the shell reads as a different path", () => {
+        expect(namedArguments(`V=${vault}; cat "$V}/wrapup.md"`, [vault])).toEqual([]);
+        expect(namedArguments(`V=${vault}; cat "\${V/wrapup.md"`, [vault])).toEqual([]);
+    });
+
     it("never follows a variable whose value holds a space, which an unquoted use would split", () => {
         expect(namedArguments(`V="${vault}/a b"; cat $V/wrapup.md`, [vault])).toEqual([]);
         expect(namedArguments(`V="${vault}/a b"; cat "$V/wrapup.md"`, [vault])).toEqual([]);
@@ -1977,6 +1982,12 @@ describe("a `cd` through a variable the command set itself", () => {
         expect(commandDirs(`P=${other}\ncd "$P" && bun x`, repo)).toEqual([repo, other]);
     });
 
+    it("follows a reference with a path after it", () => {
+        mkdirSync(join(other, "sub"), { recursive: true });
+
+        expect(commandDirs(`P=${other}\ncd "$P/sub" && bun x`, repo)).toEqual([repo, join(other, "sub")]);
+    });
+
     it("follows a bare and a braced reference", () => {
         expect(commandDirs(`P=${other}\ncd $P && bun x`, repo)).toEqual([repo, other]);
         expect(commandDirs(`P=${other}\ncd \${P} && bun x`, repo)).toEqual([repo, other]);
@@ -2007,8 +2018,8 @@ describe("a `cd` through a variable the command set itself", () => {
         expect(commandDirs('cd "$NOT_SET_ANYWHERE" && bun x', repo)).toEqual([repo]);
     });
 
-    it("refuses a reference the command only partly builds", () => {
-        expect(commandDirs(`P=${other}\ncd "$P/sub" && bun x`, repo)).toEqual([repo]);
+    it("drops a variable-prefixed target that does not exist", () => {
+        expect(commandDirs(`P=${other}\ncd "$P/missing" && bun x`, repo)).toEqual([repo]);
     });
 
     it("does not read the assignment itself as a file the command named", () => {
@@ -2392,6 +2403,40 @@ describe("mention extraction", () => {
 });
 
 describe("writerChanges: fable-replace's journal names the files a sweep wrote", () => {
+    it("a run that started before the command, or that names no session, is not this call's", () => {
+        const root = mkdtempSync(join(tmpdir(), "writers-"));
+        const backup = join(root, "cli-1");
+        mkdirSync(backup);
+        const edited = join(root, "note.md");
+        writeFileSync(edited, "after\n");
+        writeFileSync(join(backup, "note.md.orig"), "before\n");
+        writeFileSync(
+            join(backup, "fable-replace-manifest.json"),
+            SafeJSON.stringify({ entries: [{ original: edited, stored: "note.md.orig" }] })
+        );
+        const now = Date.now();
+        const line = (offset: number, session?: string) =>
+            SafeJSON.stringify({
+                ts: new Date(now - offset).toISOString(),
+                kind: "run",
+                outcome: "ok",
+                ...(session ? { session } : {}),
+                backupDir: backup,
+            });
+        const journal = join(root, "journal.jsonl");
+
+        try {
+            writeFileSync(journal, `${line(2500, "s1")}\n`);
+            expect(writerChanges({ since: now - 2000, now, sessionId: "s1", journal })).toEqual([]);
+
+            writeFileSync(journal, `${line(500)}\n`);
+            expect(writerChanges({ since: now - 2000, now, sessionId: "s1", journal })).toEqual([]);
+            expect(writerChanges({ since: now - 2000, now, sessionId: undefined, journal })).toHaveLength(1);
+        } finally {
+            rmSync(root, { recursive: true, force: true });
+        }
+    });
+
     it("a run whose manifest does not parse is skipped, and the runs after it still count", () => {
         const root = mkdtempSync(join(tmpdir(), "writers-"));
         const broken = join(root, "cli-1");
