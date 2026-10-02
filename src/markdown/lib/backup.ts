@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
     appendFileSync,
     chmodSync,
@@ -146,8 +146,10 @@ export async function backupAndWrite(options: {
         // the note's own mode: a private 0600 note must not come back 0644.
         const real = realpathSync(file);
         const checked = statSync(real);
-        const temporary = `${real}.md-tmp-${process.pid}`;
-        writeFileSync(temporary, after);
+        // Created new (`wx`: no symlink or older file is followed) and private before any text lands in it;
+        // the note's own mode is applied once it is written.
+        const temporary = `${real}.md-tmp-${process.pid}-${randomUUID()}`;
+        writeFileSync(temporary, after, { flag: "wx", mode: PRIVATE_FILE });
         chmodSync(temporary, checked.mode & 0o7777);
         // A save between the check above and the rename would be overwritten: the stat must not move.
         const current = statSync(real);

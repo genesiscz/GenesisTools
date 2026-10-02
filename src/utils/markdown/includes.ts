@@ -166,13 +166,16 @@ async function resolveText(
     outcomes: IncludeOutcome[]
 ): Promise<string> {
     let out = "";
+    let cursor = 0;
 
     for (const segment of parseTranscludeText(part)) {
+        // The parser unescapes `\{{` in its text; a note keeps its own bytes, so text is copied by offset.
         if (segment.type === "text") {
-            out += segment.value;
             continue;
         }
 
+        out += part.slice(cursor, segment.start);
+        cursor = segment.end;
         const line = lineAt(whole, offset + segment.start);
         const unsupported = UNSUPPORTED_IN_NOTES[segment.kind];
 
@@ -200,7 +203,7 @@ async function resolveText(
         out += placeNew(segment.raw, resolved, segment);
     }
 
-    return out;
+    return out + part.slice(cursor);
 }
 
 function kindOf(raw: string): string {

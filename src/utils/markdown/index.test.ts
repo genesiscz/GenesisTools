@@ -147,6 +147,16 @@ describe("markdown includes", () => {
         expect(result.text).toContain("const a = 2;");
     });
 
+    it("an escaped token example stays escaped when a real token beside it resolves", async () => {
+        writeFileSync(source, "const a = 1;\n");
+        const text = 'Write \\{{lines path="x.ts"}} for an excerpt:\n\n{{lines path="widget.ts" range="1-1"}}\n';
+        const result = await resolveIncludes(text, { cwd: dir, now: fixed });
+
+        expect(result.outcomes.map((o) => o.action)).toEqual(["added"]);
+        expect(result.text.startsWith('Write \\{{lines path="x.ts"}} for an excerpt:\n\n')).toBe(true);
+        expect(collapseIncludes(result.text)).toBe(text);
+    });
+
     it("an include block written inside an inline code span stays text", async () => {
         writeFileSync(source, "const a = 2;\n");
         const text =
