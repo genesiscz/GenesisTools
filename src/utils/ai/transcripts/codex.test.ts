@@ -82,6 +82,7 @@ describe("codexNativeLinesToTurns", () => {
             name: "shell",
             inputPreview: "git status",
             result: "clean",
+            resultChars: 5,
             isError: false,
         });
     });
@@ -192,6 +193,91 @@ describe("codexNativeLinesToTurns with exec scripts and their items", () => {
             }),
         ]);
         expect(turns[0]?.tools[0]?.result).toBe("Starting");
+    });
+
+    test("each model call is its own turn, so text and tools stay in the order they happened", () => {
+        const turns = codexNativeLinesToTurns([
+            row(1, { type: "message", role: "assistant", content: [{ type: "output_text", text: "First I list." }] }),
+            row(2, { type: "custom_tool_call", name: "exec", call_id: "s1", input: 'tools.exec_command({cmd:"ls"})' }),
+            item(3, {
+                type: "CommandExecution",
+                id: "e1",
+                command: ["/bin/zsh", "-lc", "ls"],
+                aggregated_output: "a",
+                exit_code: 0,
+            }),
+            row(4, { type: "custom_tool_call_output", call_id: "s1", output: "Script completed" }),
+            row(5, { type: "reasoning", summary: [] }),
+            row(6, { type: "message", role: "assistant", content: [{ type: "output_text", text: "Then I test." }] }),
+            row(7, {
+                type: "custom_tool_call",
+                name: "exec",
+                call_id: "s2",
+                input: 'tools.exec_command({cmd:"make test"})',
+            }),
+            item(8, {
+                type: "CommandExecution",
+                id: "e2",
+                command: ["/bin/zsh", "-lc", "make test"],
+                aggregated_output: "ok",
+                exit_code: 0,
+            }),
+        ]);
+        expect(turns.map((turn) => [turn.text, turn.tools.map((tool) => tool.inputPreview)])).toEqual([
+            ["First I list.", ["ls"]],
+            ["Then I test.", ["make test"]],
+        ]);
+    });
+
+    test("a command that finishes after the next call began goes back under its own script", () => {
+        const turns = codexNativeLinesToTurns([
+            row(1, {
+                type: "custom_tool_call",
+                name: "exec",
+                call_id: "s1",
+                input: 'tools.exec_command({cmd:"bun install"})',
+            }),
+            row(2, { type: "custom_tool_call_output", call_id: "s1", output: "Script running" }),
+            row(3, { type: "reasoning", summary: [] }),
+            row(4, {
+                type: "custom_tool_call",
+                name: "exec",
+                call_id: "s2",
+                input: 'tools.exec_command({cmd:"git status"})',
+            }),
+            item(5, {
+                type: "CommandExecution",
+                id: "e2",
+                command: ["/bin/zsh", "-lc", "git status"],
+                aggregated_output: "",
+                exit_code: 0,
+            }),
+            item(6, {
+                type: "CommandExecution",
+                id: "e1",
+                command: ["/bin/zsh", "-lc", "bun install"],
+                aggregated_output: "done",
+                exit_code: 0,
+            }),
+            row(7, { type: "custom_tool_call_output", call_id: "s2", output: "Script completed" }),
+        ]);
+        expect(turns.map((turn) => turn.tools.map((tool) => tool.inputPreview))).toEqual([
+            ["bun install"],
+            ["git status"],
+        ]);
+    });
+
+    test("a call answered with no output is finished, not waiting", () => {
+        const turns = codexNativeLinesToTurns([
+            row(1, {
+                type: "function_call",
+                name: "send_message",
+                call_id: "m1",
+                arguments: '{"target":"a","message":"hi"}',
+            }),
+            row(2, { type: "function_call_output", call_id: "m1", output: "" }),
+        ]);
+        expect(turns[0]?.tools[0]?.result).toBe("");
     });
 
     test("a script whose tool leaves no item keeps its own row and output", () => {
