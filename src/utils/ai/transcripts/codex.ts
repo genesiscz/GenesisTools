@@ -289,7 +289,8 @@ export function codexNativeLinesToTurns(lines: readonly (string | unknown)[]): T
     /** Every tool by call id: an output can arrive after the next model call began. */
     const byCallId = new Map<string, TranscriptTool>();
     /** `exec` scripts whose work shows as items, with the items matched to each, in order. */
-    const scripts: { tool: TranscriptTool; script: string; items: TranscriptTool[] }[] = [];
+    const scripts: ExecScript[] = [];
+    const scriptByTool = new Map<TranscriptTool, ExecScript>();
 
     const flushAssistant = () => {
         if (assistant && (assistant.text || assistant.tools.length > 0 || assistant.usage || assistant.reasoning)) {
@@ -313,12 +314,18 @@ export function codexNativeLinesToTurns(lines: readonly (string | unknown)[]): T
         byCallId.set(tool.id, tool);
     };
     /**
-     * Where an item no script names came from: the latest script, while it still runs or belongs to
-     * this model call. A finished script from an earlier call is not it; the item stays in its own call.
+     * The script an action ran in. Codex stamps each item with the time it started, and the script
+     * running then ran it, also when the action finished after the script returned. Without the stamp,
+     * only a script that still runs or belongs to this model call qualifies. A script that finished in
+     * an earlier call never takes a later call's action because its text names the same command.
      */
-    const runningScript = () => {
-        const latest = scripts.at(-1);
-        return latest && (latest.tool.result === null || assistant?.tools.includes(latest.tool)) ? latest : undefined;
+    const ownerOf = (item: Record<string, unknown>, startedAt: unknown): ExecScript | undefined => {
+        const recent = scripts.slice(-40);
+        const candidates =
+            typeof startedAt === "number"
+                ? recent.filter((entry) => entry.startMs <= startedAt && startedAt <= entry.endMs)
+                : recent.filter((entry) => entry.tool.result === null || assistant?.tools.includes(entry.tool));
+        return scriptOf(candidates, item) ?? candidates.at(-1);
     };
 
     for (const line of lines) {
@@ -361,7 +368,7 @@ export function codexNativeLinesToTurns(lines: readonly (string | unknown)[]): T
             const item = isRecord(payload.item) ? payload.item : {};
             const action = itemTool(item);
             if (action) {
-                const owner = scriptOf(scripts, item) ?? runningScript();
+                const owner = ownerOf(item, payload.started_at_ms);
                 if (owner) {
                     owner.items.push(action);
                 } else {
@@ -436,7 +443,9 @@ export function codexNativeLinesToTurns(lines: readonly (string | unknown)[]): T
             };
             addTool(tool, at);
             if (tool.name === "exec" && scriptShownByItems(script)) {
-                scripts.push({ tool, script, items: [] });
+                const entry: ExecScript = { tool, script, items: [], startMs: Date.parse(at ?? ""), endMs: Infinity };
+                scripts.push(entry);
+                scriptByTool.set(tool, entry);
             }
             continue;
         }
@@ -452,6 +461,11 @@ export function codexNativeLinesToTurns(lines: readonly (string | unknown)[]): T
                 tool.result = text ? clipResult(text) : "";
                 if (text) {
                     tool.resultChars = text.length;
+                }
+
+                const entry = scriptByTool.get(tool);
+                if (entry && at) {
+                    entry.endMs = Date.parse(at);
                 }
             }
         }
@@ -485,14 +499,20 @@ export function codexNativeLinesToTurns(lines: readonly (string | unknown)[]): T
     );
 }
 
+/** An `exec` script whose work shows as items, and when it ran (`endMs` is Infinity until it returns). */
+interface ExecScript {
+    tool: TranscriptTool;
+    script: string;
+    items: TranscriptTool[];
+    startMs: number;
+    endMs: number;
+}
+
 /**
- * The `exec` script an item came from: the latest one whose source names the command, the patched
- * file or the MCP tool. An item no script names is the caller's to place.
+ * Of the given scripts, the latest one whose source names the item's command, patched file or MCP
+ * tool. An item no script names is the caller's to place.
  */
-function scriptOf(
-    scripts: { tool: TranscriptTool; script: string; items: TranscriptTool[] }[],
-    item: Record<string, unknown>
-): { tool: TranscriptTool; script: string; items: TranscriptTool[] } | undefined {
+function scriptOf(scripts: ExecScript[], item: Record<string, unknown>): ExecScript | undefined {
     const kind = asString(item.type);
     const needles: string[] = [];
     if (kind === "CommandExecution") {
