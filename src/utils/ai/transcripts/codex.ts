@@ -1,3 +1,4 @@
+import { SafeJSON } from "@genesiscz/utils/json";
 import { parseTranscriptLine } from "./parse-line";
 import { clipResult, type TranscriptTurn } from "./types";
 
@@ -58,6 +59,27 @@ export function codexGtEventsToTurns(lines: readonly (string | unknown)[]): Tran
     return turns;
 }
 
+/**
+ * Codex encrypts the text its collaboration tools pass between agents (`spawn_agent`, `send_message`,
+ * `followup_task`): the `message` argument is a Fernet token, `gAAAAA` and kilobytes of base64. Shown
+ * as is, one spawn filled a screen of the transcript with noise (2026-10-02).
+ */
+const ENCRYPTED_TOKEN = /^gAAAAA[A-Za-z0-9_=-]{40,}$/;
+
+function withoutEncryptedValues(parsed: Record<string, unknown>): { value: Record<string, unknown>; changed: boolean } {
+    let changed = false;
+    const value: Record<string, unknown> = {};
+    for (const [key, field] of Object.entries(parsed)) {
+        if (typeof field === "string" && ENCRYPTED_TOKEN.test(field)) {
+            value[key] = `[encrypted by Codex, ${field.length} chars]`;
+            changed = true;
+        } else {
+            value[key] = field;
+        }
+    }
+    return { value, changed };
+}
+
 function previewFromArguments(raw: string): string {
     if (!raw) {
         return "";
@@ -67,6 +89,11 @@ function previewFromArguments(raw: string): string {
         const candidate = parsed.command ?? parsed.cmd ?? parsed.path ?? parsed.file_path ?? parsed.target_file;
         if (typeof candidate === "string" && candidate) {
             return candidate;
+        }
+
+        const redacted = withoutEncryptedValues(parsed);
+        if (redacted.changed) {
+            return SafeJSON.stringify(redacted.value);
         }
     }
     return raw;

@@ -107,6 +107,40 @@ describe("codexNativeLinesToTurns", () => {
     });
 });
 
+describe("codexNativeLinesToTurns with encrypted collaboration messages", () => {
+    test("a spawn_agent message token shows as a marker, the other arguments stay", () => {
+        const token = `gAAAAAB${"Qx9_-".repeat(40)}==`;
+        const turns = codexNativeLinesToTurns([
+            SafeJSON.stringify({
+                type: "response_item",
+                timestamp: "2026-10-02T18:13:24.727Z",
+                payload: {
+                    type: "function_call",
+                    name: "spawn_agent",
+                    call_id: "c1",
+                    arguments: SafeJSON.stringify({ task_name: "pr589_astra", agent_type: "worker", message: token }),
+                },
+            }),
+        ]);
+        const preview = turns[0]?.tools[0]?.inputPreview ?? "";
+        expect(preview).not.toContain("gAAAAA");
+        expect(preview).toContain(`[encrypted by Codex, ${token.length} chars]`);
+        expect(preview).toContain("pr589_astra");
+    });
+
+    test("a plain message argument is kept", () => {
+        const args = SafeJSON.stringify({ target: "pr589_astra", message: "gAAAAA is how the tokens start" });
+        const turns = codexNativeLinesToTurns([
+            SafeJSON.stringify({
+                type: "response_item",
+                timestamp: "2026-10-02T18:13:24.727Z",
+                payload: { type: "function_call", name: "send_message", call_id: "c2", arguments: args },
+            }),
+        ]);
+        expect(turns[0]?.tools[0]?.inputPreview).toBe(args);
+    });
+});
+
 describe("codexNativeLinesToTurns on a current rollout", () => {
     // The record shapes of a 2026-09 `codex` CLI rollout: messages are `response_item` items with
     // content parts, the reasoning summary lives in `item_completed`, tokens in `token_usage_record`.
