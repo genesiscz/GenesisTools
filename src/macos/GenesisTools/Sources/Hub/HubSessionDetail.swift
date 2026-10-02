@@ -402,9 +402,10 @@ struct HubSessionDetailHost: View {
             guard id == loadID else { return }
             if offset == nil, limit == Self.firstPage {
                 // A session opened: every open is logged with what its rows hold, until the main thread
-                // settles, so the cost of the rows can be read per session from app-perf.log.
+                // settles, so the cost of the rows can be read per session from app-perf.log. Keyed by the
+                // session: a second session opened before the first settles gets its own line.
                 let shape = Self.shape(document, session: session.sessionId)
-                HubMainBusy.measureUntilSettled("transcript.open") { shape }
+                HubMainBusy.measureUntilSettled("transcript.open \(session.sessionId.prefix(8))") { shape }
             } else {
                 HubMainBusy.measure("transcript.page.render")
             }

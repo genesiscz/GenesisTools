@@ -63,6 +63,16 @@ final class BrowserURLForwarder: NSObject {
         }
         NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
             self?.activatedAt = Date()
+            // A mouse button held while this face activates is the user clicking into its window: they came
+            // back on purpose, so the pending hand-back ends. A link or banner delivery activates it after
+            // the click was released.
+            if NSEvent.pressedMouseButtons != 0 {
+                if self?.focusReturn != nil {
+                    HubPerf.log("link: a click into the hub keeps the focus here")
+                }
+                self?.focusReturn = nil
+                return
+            }
             self?.returnFocus()
         }
     }

@@ -41,4 +41,39 @@ final class HubMovedCheckoutTests: XCTestCase {
 
         XCTAssertNil(MovedCheckout.resolve(folder))
     }
+
+    func testARestoredOriginalCheckoutWinsOverTheCachedMove() throws {
+        let folder = (root as NSString).appendingPathComponent("Back")
+        let moved = (root as NSString).appendingPathComponent("Group/Back")
+        try makeRepository(moved)
+        XCTAssertEqual(MovedCheckout.resolve(folder), moved)
+
+        try makeRepository(folder)
+
+        XCTAssertNil(MovedCheckout.resolve(folder), "the recorded folder is a repository again: it is its own answer")
+    }
+
+    func testABrokenWorktreePointerIsNotARepository() throws {
+        let folder = (root as NSString).appendingPathComponent("Site")
+        try FileManager.default.createDirectory(atPath: folder, withIntermediateDirectories: true)
+        try "gitdir: \(root)/gone/.git/worktrees/site\n".write(toFile: (folder as NSString).appendingPathComponent(".git"), atomically: true, encoding: .utf8)
+        let moved = (root as NSString).appendingPathComponent("Group/Site")
+        try makeRepository(moved)
+
+        XCTAssertEqual(MovedCheckout.resolve(folder), moved)
+    }
+
+    func testALiveWorktreePointerIsARepository() throws {
+        let main = (root as NSString).appendingPathComponent("main")
+        try makeRepository(main)
+        let gitdir = (main as NSString).appendingPathComponent(".git/worktrees/feature")
+        try FileManager.default.createDirectory(atPath: gitdir, withIntermediateDirectories: true)
+        FileManager.default.createFile(atPath: (gitdir as NSString).appendingPathComponent("HEAD"), contents: Data("ref: refs/heads/feature\n".utf8))
+        let worktree = (root as NSString).appendingPathComponent("feature")
+        try FileManager.default.createDirectory(atPath: worktree, withIntermediateDirectories: true)
+        try "gitdir: ../main/.git/worktrees/feature\n".write(toFile: (worktree as NSString).appendingPathComponent(".git"), atomically: true, encoding: .utf8)
+
+        XCTAssertTrue(MovedCheckout.isRepository(worktree), "a relative gitdir resolves from the worktree")
+        XCTAssertNil(MovedCheckout.resolve(worktree))
+    }
 }

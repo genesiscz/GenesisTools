@@ -47,6 +47,8 @@ struct HubFileList: View {
     @ObservedObject var model: HubModel
     @ObservedObject var review: ReviewModel
     @AppStorage(HubFileListMode.key, store: HubDefaults.store) private var mode = HubFileListMode.changed.rawValue
+    // Here, not in `HubFolderTrees`: that view leaves while Changed shows, and its open folders with it.
+    @StateObject private var trees = HubFolderTreeStore()
 
     private var showsFolders: Bool { mode == HubFileListMode.folders.rawValue }
 
@@ -69,7 +71,7 @@ struct HubFileList: View {
             .padding(.horizontal, 10)
             .padding(.top, 8)
             if showsFolders {
-                HubFolderTrees(roots: [review.repo.path] + model.extraFolders, review: review, changesShown: model.panes.contains(.changes))
+                HubFolderTrees(roots: [review.repo.path] + model.extraFolders, review: review, trees: trees, changesShown: model.panes.contains(.changes))
             } else {
                 FileSidebar(model: review)
             }
@@ -97,8 +99,8 @@ struct HubFileList: View {
 struct HubFolderTrees: View {
     let roots: [String]
     @ObservedObject var review: ReviewModel
+    @ObservedObject var trees: HubFolderTreeStore
     let changesShown: Bool
-    @StateObject private var trees = HubFolderTreeStore()
     @State private var selected: String?
 
     var body: some View {

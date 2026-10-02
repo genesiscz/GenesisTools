@@ -674,12 +674,19 @@ struct GroupHeader: View {
 /// then had no repository. The checkout with the same name one level down under the parent is the
 /// move, when exactly one exists. Only a found checkout is cached, and only while it still is one: a miss
 /// is asked again, so a move still in progress is found once it lands. A folder that holds a repository
-/// is its own answer.
+/// is its own answer, also after a move was cached: a move undone wins over the cached one.
 enum MovedCheckout {
     private static var cache: [String: String] = [:]
     private static let lock = NSLock()
 
     static func resolve(_ folder: String) -> String? {
+        if isRepository(projectRoot(of: folder)) {
+            lock.lock()
+            cache[folder] = nil
+            lock.unlock()
+            return nil
+        }
+
         lock.lock()
         let known = cache[folder]
         lock.unlock()
@@ -687,7 +694,7 @@ enum MovedCheckout {
             return known
         }
 
-        let found = isRepository(projectRoot(of: folder)) ? nil : search(folder)
+        let found = search(folder)
         lock.lock()
         cache[folder] = found
         lock.unlock()
@@ -697,12 +704,23 @@ enum MovedCheckout {
         return found
     }
 
-    /// A real repository: `.git` is a worktree's pointer file, or a folder with `HEAD`.
+    /// A real repository: `.git` is a folder with `HEAD`, or a worktree's (or submodule's) pointer file
+    /// whose `gitdir:` still holds a `HEAD`. A pointer left behind by a deleted main checkout is not one.
     static func isRepository(_ root: String) -> Bool {
         let git = (root as NSString).appendingPathComponent(".git")
         var isDirectory: ObjCBool = false
         guard FileManager.default.fileExists(atPath: git, isDirectory: &isDirectory) else { return false }
-        return !isDirectory.boolValue || FileManager.default.fileExists(atPath: (git as NSString).appendingPathComponent("HEAD"))
+        if isDirectory.boolValue {
+            return FileManager.default.fileExists(atPath: (git as NSString).appendingPathComponent("HEAD"))
+        }
+        guard let text = try? String(contentsOfFile: git, encoding: .utf8),
+              let line = text.split(whereSeparator: \.isNewline).first, line.hasPrefix("gitdir:")
+        else { return false }
+        var target = line.dropFirst("gitdir:".count).trimmingCharacters(in: .whitespaces)
+        if !target.hasPrefix("/") {
+            target = (root as NSString).appendingPathComponent(target)
+        }
+        return FileManager.default.fileExists(atPath: (target as NSString).appendingPathComponent("HEAD"))
     }
 
     private static func search(_ folder: String) -> String? {

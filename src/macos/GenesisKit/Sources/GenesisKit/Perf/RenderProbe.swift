@@ -31,6 +31,22 @@ public enum RenderProbe {
         return " bodies[" + taken.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }.joined(separator: " ") + "]"
     }
 
+    /// The counts so far, left in place: the start of one measurement's window (`summary(since:)`).
+    /// Another measurement open at the same time keeps its own counts, where `take()` would zero them.
+    public static func snapshot() -> [String: Int] {
+        lock.lock()
+        defer { lock.unlock() }
+        return counts
+    }
+
+    /// ` bodies[row.body=3 codeBlock.body=1]`: what ran since `start` (a `snapshot()`); empty when off.
+    public static func summary(since start: [String: Int]) -> String {
+        guard enabled else { return "" }
+        let ran = snapshot().filter { $0.value > (start[$0.key] ?? 0) }
+        guard !ran.isEmpty else { return " bodies[none]" }
+        return " bodies[" + ran.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value - (start[$0.key] ?? 0))" }.joined(separator: " ") + "]"
+    }
+
     /// The counts so far, then zero.
     public static func take() -> [String: Int] {
         lock.lock()
