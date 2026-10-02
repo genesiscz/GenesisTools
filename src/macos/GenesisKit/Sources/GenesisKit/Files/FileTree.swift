@@ -65,6 +65,10 @@ public final class FileTreeModel: ObservableObject {
         loading.removeAll()
         rebuild()
         load(next.path)
+        // An open folder whose read the new generation dropped would stay open and empty: read it again.
+        for path in expanded where path.hasPrefix(next.path + "/") && children[path] == nil {
+            load(path)
+        }
     }
 
     /// A folder row's click: open it (reading it first when it is new), or close it.

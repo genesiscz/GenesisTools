@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// Text selection that exists only while the pointer is over the view.
@@ -8,15 +9,20 @@ import SwiftUI
 /// main-thread stall on each switch (app-perf.log, 2026-10-01 22:31). The pointer is over a message
 /// before any drag can select in it, so selecting works the same.
 ///
-/// `GENESIS_TRANSCRIPT_SELECT_ALWAYS=1` keeps selection on everywhere, for A/B measurements.
+/// `GENESIS_TRANSCRIPT_SELECT_ALWAYS=1` keeps selection on everywhere, for A/B measurements. VoiceOver
+/// and Full Keyboard Access keep it on too: those users reach the text without a pointer.
 public struct HoverTextSelection: ViewModifier {
     static let always = ProcessInfo.processInfo.environment["GENESIS_TRANSCRIPT_SELECT_ALWAYS"] == "1"
 
     @State private var hovered = false
 
+    @MainActor private static var withoutPointer: Bool {
+        NSWorkspace.shared.isVoiceOverEnabled || NSApplication.shared.isFullKeyboardAccessEnabled
+    }
+
     public func body(content: Content) -> some View {
         Group {
-            if hovered || Self.always {
+            if hovered || Self.always || Self.withoutPointer {
                 content.textSelection(.enabled)
             } else {
                 content

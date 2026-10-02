@@ -46,6 +46,19 @@ final class FileTreeTests: XCTestCase {
         XCTAssertEqual(model.rows.map(\.name), ["Alpha", "beta", "note 2.md", "note 10.md"], "closing a folder hides its subtree at once")
     }
 
+    func testReRootingReadsAnOpenFolderWhoseReadItDropped() async {
+        let model = FileTreeModel(root: root)
+        model.setRoot(root)
+        await settle(model) { model.rows.contains { $0.name == "beta" } }
+
+        // Both reads start, then the new root drops them before they land.
+        model.reveal(root.appendingPathComponent("beta/inner/deep.md"))
+        model.setRoot(root.appendingPathComponent("beta"))
+        await settle(model) { model.rows.contains { $0.name == "deep.md" } }
+
+        XCTAssertEqual(model.rows.map(\.name), ["inner", "deep.md"])
+    }
+
     func testDuplicateFollowsFinderNamingAndRenameRefusesBadNames() throws {
         let note = root.appendingPathComponent("note 2.md")
         let first = try FileOperations.duplicate(note)
@@ -57,6 +70,7 @@ final class FileTreeTests: XCTestCase {
         XCTAssertNotNil(FileOperations.problem(renaming: note, to: "  "))
         XCTAssertNotNil(FileOperations.problem(renaming: note, to: "note 10.md"), "an existing name is refused")
         XCTAssertNil(FileOperations.problem(renaming: note, to: "renamed.md"))
+        XCTAssertNil(FileOperations.problem(renaming: note, to: "Note 2.md"), "a case-only rename names the same file")
         let renamed = try FileOperations.rename(note, to: "renamed.md")
         XCTAssertTrue(FileManager.default.fileExists(atPath: renamed.path))
         XCTAssertFalse(FileManager.default.fileExists(atPath: note.path))

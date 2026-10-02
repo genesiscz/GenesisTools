@@ -29,10 +29,19 @@ public enum FileOperations {
             return "That name is reserved."
         }
         let target = url.deletingLastPathComponent().appendingPathComponent(trimmed)
-        if target.path != url.path, FileManager.default.fileExists(atPath: target.path) {
+        if target.path != url.path, FileManager.default.fileExists(atPath: target.path), !sameFile(url, target) {
             return "\"\(trimmed)\" already exists in this folder."
         }
         return nil
+    }
+
+    /// True when both URLs reach one file: `Note.md` and `note.md` on a case-insensitive volume.
+    static func sameFile(_ a: URL, _ b: URL) -> Bool {
+        let key: Set<URLResourceKey> = [.fileResourceIdentifierKey]
+        guard let first = try? a.resourceValues(forKeys: key).fileResourceIdentifier,
+              let second = try? b.resourceValues(forKeys: key).fileResourceIdentifier
+        else { return false }
+        return first.isEqual(second)
     }
 
     /// Finder's naming: `Note copy.md`, then `Note copy 2.md`, and so on.
@@ -161,12 +170,21 @@ public struct FileItemMenu: View {
         }
     }
 
+    /// The copy runs off the main thread: a large folder or package would freeze the app for its length.
     @MainActor
     private func duplicate() {
-        do {
-            changed(.duplicated(original: url, copy: try FileOperations.duplicate(url)))
-        } catch {
-            FileOperations.report("Could not duplicate: \(error.localizedDescription)")
+        let url = url
+        let changed = changed
+        Task.detached(priority: .userInitiated) {
+            let result = Result { try FileOperations.duplicate(url) }
+            await MainActor.run {
+                switch result {
+                case .success(let copy):
+                    changed(.duplicated(original: url, copy: copy))
+                case .failure(let error):
+                    FileOperations.report("Could not duplicate: \(error.localizedDescription)")
+                }
+            }
         }
     }
 
