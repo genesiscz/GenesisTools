@@ -1,5 +1,14 @@
 import { createHash } from "node:crypto";
-import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import {
+    appendFileSync,
+    chmodSync,
+    existsSync,
+    mkdirSync,
+    readFileSync,
+    renameSync,
+    statSync,
+    writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -122,8 +131,10 @@ export async function backupAndWrite(options: {
             throw new Error("the file changed on disk while its tokens were resolved");
         }
 
+        // The replacement takes the note's own mode: a private 0600 note must not come back 0644.
         const temporary = `${file}.md-tmp-${process.pid}`;
         writeFileSync(temporary, after);
+        chmodSync(temporary, statSync(file).mode & 0o7777);
         renameSync(temporary, file);
     }
 

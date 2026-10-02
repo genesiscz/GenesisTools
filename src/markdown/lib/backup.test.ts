@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, it } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { backupAndWrite } from "@app/markdown/lib/backup";
@@ -37,6 +37,12 @@ describe("backupAndWrite", () => {
         });
         expect(readFileSync(file, "utf8")).toBe("after\n");
         expect(record.proposal).toBeUndefined();
+
+        // A private note stays private through the atomic replace.
+        chmodSync(file, 0o600);
+        await backupAndWrite({ file, before: "after\n", after: "private\n", runDir, dryRun: false, detail: {} });
+        expect(statSync(file).mode & 0o777).toBe(0o600);
+        writeFileSync(file, "after\n");
 
         const dry = await backupAndWrite({
             file,
