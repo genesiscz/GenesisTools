@@ -48,37 +48,50 @@ const bindingNames = (ts: typeof TS, name: TS.BindingName): string[] =>
         ? [name.text]
         : name.elements.flatMap((element) => (ts.isOmittedExpression(element) ? [] : bindingNames(ts, element.name)));
 
-/** Names a statement list declares for its own scope. */
-const declaredBy = (ts: typeof TS, statements: readonly TS.Statement[]): string[] =>
-    statements.flatMap((statement) => {
-        if (ts.isVariableStatement(statement)) {
-            return statement.declarationList.declarations.flatMap((d) => bindingNames(ts, d.name));
-        }
+/**
+ * Names a scope declares, by meaning. A parameter or variable hides values only, so `Options:
+ * Options` still refers to the imported type; a type parameter or interface hides types only.
+ */
+interface Scope {
+    values: string[];
+    types: string[];
+}
 
-        if (
-            (ts.isFunctionDeclaration(statement) ||
-                ts.isClassDeclaration(statement) ||
-                ts.isEnumDeclaration(statement) ||
-                ts.isInterfaceDeclaration(statement) ||
-                ts.isTypeAliasDeclaration(statement)) &&
+/** Names a statement list declares for its own scope. */
+const declaredBy = (ts: typeof TS, statements: readonly TS.Statement[]): Scope => {
+    const scope: Scope = { values: [], types: [] };
+    for (const statement of statements) {
+        if (ts.isVariableStatement(statement)) {
+            scope.values.push(...statement.declarationList.declarations.flatMap((d) => bindingNames(ts, d.name)));
+        } else if (ts.isFunctionDeclaration(statement) && statement.name !== undefined) {
+            scope.values.push(statement.name.text);
+        } else if (
+            (ts.isClassDeclaration(statement) || ts.isEnumDeclaration(statement)) &&
             statement.name !== undefined
         ) {
-            return [statement.name.text];
+            scope.values.push(statement.name.text);
+            scope.types.push(statement.name.text);
+        } else if (ts.isInterfaceDeclaration(statement) || ts.isTypeAliasDeclaration(statement)) {
+            scope.types.push(statement.name.text);
         }
+    }
 
-        return [];
-    });
+    return scope;
+};
 
 const typeParameterNames = (node: { typeParameters?: TS.NodeArray<TS.TypeParameterDeclaration> }): string[] =>
     (node.typeParameters ?? []).map((parameter) => parameter.name.text);
 
 /** The names `node` declares for its descendants, or undefined when it opens no scope. */
-const scopeOf = (ts: typeof TS, node: TS.Node): string[] | undefined => {
+const scopeOf = (ts: typeof TS, node: TS.Node): Scope | undefined => {
     if (ts.isFunctionLike(node)) {
         // Body declarations belong to the body Block's own scope: a parameter default such as
         // `x = helper()` reads the OUTER `helper` even when the body declares one of its own.
-        const own = (ts.isFunctionExpression(node) || ts.isClassExpression(node)) && node.name ? [node.name.text] : [];
-        return [...own, ...node.parameters.flatMap((p) => bindingNames(ts, p.name)), ...typeParameterNames(node)];
+        const own = ts.isFunctionExpression(node) && node.name ? [node.name.text] : [];
+        return {
+            values: [...own, ...node.parameters.flatMap((p) => bindingNames(ts, p.name))],
+            types: typeParameterNames(node),
+        };
     }
 
     if (ts.isBlock(node) || ts.isModuleBlock(node)) {
@@ -86,34 +99,64 @@ const scopeOf = (ts: typeof TS, node: TS.Node): string[] | undefined => {
     }
 
     if (ts.isCaseBlock(node)) {
-        return node.clauses.flatMap((clause) => declaredBy(ts, clause.statements));
+        const clauses = node.clauses.map((clause) => declaredBy(ts, clause.statements));
+        return { values: clauses.flatMap((s) => s.values), types: clauses.flatMap((s) => s.types) };
     }
 
     if (ts.isForStatement(node) || ts.isForInStatement(node) || ts.isForOfStatement(node)) {
         const initializer = node.initializer;
-        return initializer !== undefined && ts.isVariableDeclarationList(initializer)
-            ? initializer.declarations.flatMap((d) => bindingNames(ts, d.name))
-            : [];
+        return {
+            values:
+                initializer !== undefined && ts.isVariableDeclarationList(initializer)
+                    ? initializer.declarations.flatMap((d) => bindingNames(ts, d.name))
+                    : [],
+            types: [],
+        };
     }
 
     if (ts.isCatchClause(node)) {
-        return node.variableDeclaration ? bindingNames(ts, node.variableDeclaration.name) : [];
+        return {
+            values: node.variableDeclaration ? bindingNames(ts, node.variableDeclaration.name) : [],
+            types: [],
+        };
     }
 
     if (ts.isClassLike(node) || ts.isInterfaceDeclaration(node) || ts.isTypeAliasDeclaration(node)) {
         const own = ts.isClassExpression(node) && node.name ? [node.name.text] : [];
-        return [...own, ...typeParameterNames(node)];
+        return { values: own, types: [...own, ...typeParameterNames(node)] };
     }
 
-    if (ts.isMappedTypeNode(node)) {
-        return [node.typeParameter.name.text];
-    }
-
-    if (ts.isInferTypeNode(node)) {
-        return [node.typeParameter.name.text];
+    if (ts.isMappedTypeNode(node) || ts.isInferTypeNode(node)) {
+        return { values: [], types: [node.typeParameter.name.text] };
     }
 
     return undefined;
+};
+
+/** Whether a reference names a type (`x: Foo`, `implements Foo`), which only a type-level name can hide. */
+const isTypePosition = (ts: typeof TS, id: TS.Identifier): boolean => {
+    let node: TS.Node = id;
+    while (
+        (ts.isQualifiedName(node.parent) && node.parent.left === node) ||
+        (ts.isPropertyAccessExpression(node.parent) && node.parent.expression === node)
+    ) {
+        node = node.parent;
+    }
+
+    const parent = node.parent;
+    if (ts.isTypeReferenceNode(parent)) {
+        return parent.typeName === node;
+    }
+
+    // `typeof x` is a value query, and a class `extends` clause names a value; `implements` and an
+    // interface's `extends` name types.
+    if (ts.isExpressionWithTypeArguments(parent) && ts.isHeritageClause(parent.parent)) {
+        return (
+            parent.parent.token === ts.SyntaxKind.ImplementsKeyword || ts.isInterfaceDeclaration(parent.parent.parent)
+        );
+    }
+
+    return false;
 };
 
 /** Whether this identifier refers to a binding, as opposed to naming a property, a member or a declaration. */
@@ -180,6 +223,7 @@ export const compilerReader = (ts: typeof TS): TsReader => {
             let namedNode: TS.NamedImports | TS.NamedExports | undefined;
             let star = false;
             let specifierNode: TS.Expression;
+            let attributesNode: TS.ImportAttributes | undefined;
             if (ts.isImportDeclaration(statement) && statement.importClause !== undefined) {
                 const clause = statement.importClause;
                 keyword = "import";
@@ -193,6 +237,7 @@ export const compilerReader = (ts: typeof TS): TsReader => {
                 }
 
                 specifierNode = statement.moduleSpecifier;
+                attributesNode = statement.attributes;
             } else if (ts.isExportDeclaration(statement) && statement.moduleSpecifier !== undefined) {
                 keyword = "export";
                 typeOnly = statement.isTypeOnly;
@@ -206,6 +251,7 @@ export const compilerReader = (ts: typeof TS): TsReader => {
                 }
 
                 specifierNode = statement.moduleSpecifier;
+                attributesNode = statement.attributes;
             } else {
                 continue;
             }
@@ -250,6 +296,9 @@ export const compilerReader = (ts: typeof TS): TsReader => {
                 multiline,
                 indent,
                 trailingComma,
+                ...(attributesNode === undefined
+                    ? {}
+                    : { attributes: text.slice(attributesNode.getStart(sourceFile), attributesNode.end) }),
             });
         }
 
@@ -325,7 +374,7 @@ export const compilerReader = (ts: typeof TS): TsReader => {
     const uses = (text: string, file: string): ((name: string) => boolean) => {
         const sourceFile = parse(text, file);
         const free = new Set<string>();
-        const scopes: Array<Set<string>> = [];
+        const scopes: Array<{ values: Set<string>; types: Set<string> }> = [];
         const visit = (node: TS.Node): void => {
             if (ts.isImportDeclaration(node) || (ts.isExportDeclaration(node) && node.moduleSpecifier !== undefined)) {
                 return;
@@ -333,11 +382,14 @@ export const compilerReader = (ts: typeof TS): TsReader => {
 
             const scope = node === sourceFile ? undefined : scopeOf(ts, node);
             if (scope !== undefined) {
-                scopes.push(new Set(scope));
+                scopes.push({ values: new Set(scope.values), types: new Set(scope.types) });
             }
 
-            if (ts.isIdentifier(node) && isReference(ts, node) && !scopes.some((names) => names.has(node.text))) {
-                free.add(node.text);
+            if (ts.isIdentifier(node) && isReference(ts, node)) {
+                const meaning = isTypePosition(ts, node) ? "types" : "values";
+                if (!scopes.some((names) => names[meaning].has(node.text))) {
+                    free.add(node.text);
+                }
             }
 
             ts.forEachChild(node, visit);

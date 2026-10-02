@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { FableReplaceError } from "./internal";
@@ -1780,5 +1780,244 @@ describe("PR #444 review rounds 4 and 5", () => {
         });
         await run({ cwd: dir, verbose: false, edits, syntaxCheck: false });
         expect(read(dir, "App/main.swift")).toContain("import Kit\n");
+    });
+});
+
+describe("PR #443 review: Swift", () => {
+    const write = (dir: string, files: Record<string, string>): void => {
+        for (const [file, content] of Object.entries(files)) {
+            mkdirSync(dirname(join(dir, file)), { recursive: true });
+            writeFileSync(join(dir, file), content);
+        }
+    };
+    const read = (dir: string, file: string): string => readFileSync(join(dir, file), "utf8");
+    const swiftPackage = (targets: string): string =>
+        `// swift-tools-version: 5.9\nimport PackageDescription\n\nlet package = Package(\n    name: "Demo",\n    targets: [\n${targets}\n    ]\n)\n`;
+    const oneModule = swiftPackage('        .executableTarget(name: "App", path: "App"),');
+
+    test("t12: a type that is already public still gets its members widened and the memberwise-init warning", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "fr-443-t12-"));
+        write(dir, {
+            "Package.swift": swiftPackage(
+                [
+                    '        .target(name: "Kit", path: "Kit"),',
+                    '        .executableTarget(name: "App", dependencies: ["Kit"], path: "App"),',
+                ].join("\n")
+            ),
+            "Kit/Kit.swift": "public let kitVersion = 1\n",
+            "App/Helpers.swift": "public struct Point {\n    let x: Int\n}\n",
+            "App/main.swift": "let p = Point(x: 1)\nprint(p.x)\n",
+        });
+        const warnings: string[] = [];
+        const edits = parseSpec({
+            text: "@@ App/Helpers.swift\n<<< move to=Kit/Point.swift symbol=Point imports=fix visibility=widen\n>>>\n",
+            cwd: dir,
+            onWarning: (warning) => warnings.push(warning),
+        });
+        const report = await run({ cwd: dir, verbose: false, edits, syntaxCheck: false });
+        expect(report.ok).toBe(true);
+        expect(read(dir, "App/main.swift")).toContain("import Kit\n");
+        expect(read(dir, "Kit/Point.swift")).toContain("public struct Point {\n    public let x: Int\n}");
+        expect(warnings.join("\n")).toContain("memberwise init");
+    });
+
+    test("t14: scoped imports of one module are each copied, not reduced to the module", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "fr-443-t14-"));
+        write(dir, {
+            "Package.swift": oneModule,
+            "App/Helpers.swift":
+                'import struct Foundation.URL\nimport struct Foundation.Date\n\nfunc stamp() -> Date { return Date() }\n\nlet home = URL(fileURLWithPath: "/")\n',
+        });
+        const edits = parseSpec({
+            text: "@@ App/Helpers.swift\n<<< move to=App/Stamp.swift symbol=stamp imports=fix\n>>>\n",
+            cwd: dir,
+            onWarning: () => {},
+        });
+        const report = await run({ cwd: dir, verbose: false, edits, syntaxCheck: false });
+        expect(report.ok).toBe(true);
+        expect(read(dir, "App/Stamp.swift")).toContain("import struct Foundation.Date\n");
+    });
+
+    test("t15: a private declaration used by code moving to another file is widened, or refused without widen", async () => {
+        const helpers =
+            "private func helper() -> Int {\n    1\n}\n\nfunc caller() -> Int {\n    return helper()\n}\n\nlet keep = 0\n";
+        const spec = (options: string): string =>
+            `@@ App/Helpers.swift\n<<< move to=App/Helper.swift symbol=helper imports=fix${options}\n>>>\n<<< move to=App/Other.swift symbol=caller imports=fix${options}\n>>>\n`;
+        const refused = mkdtempSync(join(tmpdir(), "fr-443-t15-refuse-"));
+        write(refused, { "Package.swift": oneModule, "App/Helpers.swift": helpers });
+        expect(() => parseSpec({ text: spec(""), cwd: refused, onWarning: () => {} })).toThrow("visibility=widen");
+
+        const dir = mkdtempSync(join(tmpdir(), "fr-443-t15-"));
+        write(dir, { "Package.swift": oneModule, "App/Helpers.swift": helpers });
+        const edits = parseSpec({ text: spec(" visibility=widen"), cwd: dir, onWarning: () => {} });
+        const report = await run({ cwd: dir, verbose: false, edits, syntaxCheck: false });
+        expect(report.ok).toBe(true);
+        expect(read(dir, "App/Helper.swift")).toContain("func helper() -> Int {");
+        expect(read(dir, "App/Helper.swift")).not.toContain("private");
+        expect(read(dir, "App/Other.swift")).toContain("return helper()");
+    });
+});
+
+describe("PR #443 review: project files, PHP qualified names, paste check", () => {
+    const write = (dir: string, files: Record<string, string>): void => {
+        for (const [file, content] of Object.entries(files)) {
+            mkdirSync(dirname(join(dir, file)), { recursive: true });
+            writeFileSync(join(dir, file), content);
+        }
+    };
+    const read = (dir: string, file: string): string => readFileSync(join(dir, file), "utf8");
+    const composer = '{ "autoload": { "psr-4": { "App\\\\": "app/" } } }\n';
+
+    test("t1: a cwd spelled through a symlink still finds the git-listed importers", async () => {
+        const real = mkdtempSync(join(tmpdir(), "fr-443-t1-"));
+        write(real, {
+            "lib/utils.ts": "export const keep = 1;\n\nexport const moved = 2;\n",
+            "user.ts": 'import { moved } from "./lib/utils";\n\nexport const twice = moved * 2;\n',
+        });
+        Bun.spawnSync(["git", "init", "-q"], { cwd: real });
+        const dir = `${real}-link`;
+        symlinkSync(real, dir);
+        const edits = parseSpec({
+            text: "@@ lib/utils.ts\n<<< move to=lib/moved.ts symbol=moved imports=fix\n>>>\n",
+            cwd: dir,
+        });
+        const report = await run({ cwd: dir, verbose: false, edits, syntaxCheck: false });
+        expect(report.ok).toBe(true);
+        expect(read(dir, "user.ts")).toContain('from "./lib/moved"');
+    });
+
+    test("t9: a `use \\Old\\Fqn;` line is re-pointed by its own op, not counted with the code's qualified names", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "fr-443-t9-"));
+        write(dir, {
+            "composer.json": composer,
+            "app/Support/Legacy.php":
+                "<?php\n\nnamespace App\\Support;\n\nfinal class Money\n{\n}\n\nclass Legacy\n{\n    public function price(): Money\n    {\n        return new Money();\n    }\n}\n",
+            "app/Http/Checkout.php":
+                "<?php\n\nnamespace App\\Http;\n\nuse \\App\\Support\\Money;\n\nclass Checkout\n{\n    public function pay(Money $m): string\n    {\n        return \\App\\Support\\Money::class;\n    }\n}\n",
+        });
+        const edits = parseSpec({
+            text: "@@ app/Support/Legacy.php\n<<< move to=app/Values/Money.php symbol=Money imports=fix\n>>>\n",
+            cwd: dir,
+            onWarning: () => {},
+        });
+        const report = await run({ cwd: dir, verbose: false, edits, syntaxCheck: false });
+        expect(report.ok).toBe(true);
+        expect(read(dir, "app/Http/Checkout.php")).toContain("return \\App\\Values\\Money::class;");
+        expect(read(dir, "app/Http/Checkout.php")).not.toContain("App\\Support\\Money");
+    });
+
+    test("t10: a qualified-name rewrite inside a pasted block keeps the paste check satisfied", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "fr-443-t10-"));
+        write(dir, {
+            "composer.json": composer,
+            "app/Support/Legacy.php":
+                "<?php\n\nnamespace App\\Support;\n\nfinal class Money\n{\n}\n\nclass Legacy\n{\n    public function make(): \\App\\Support\\Money\n    {\n        return new \\App\\Support\\Money();\n    }\n\n    public function keep(): int\n    {\n        return 1;\n    }\n}\n",
+            "app/Services/OrderService.php":
+                "<?php\n\nnamespace App\\Services;\n\nclass OrderService\n{\n    // methods\n}\n",
+        });
+        const edits = parseSpec({
+            text: "@@ app/Support/Legacy.php\n<<< move to=app/Values/Money.php symbol=Money imports=fix\n>>>\n<<< move to=app/Services/OrderService.php lines=11-14 at=after imports=fix\n    // methods\n>>>\n",
+            cwd: dir,
+            onWarning: () => {},
+        });
+        const report = await run({ cwd: dir, verbose: false, edits, syntaxCheck: false });
+        expect(report.ok).toBe(true);
+        expect(read(dir, "app/Services/OrderService.php")).toContain(
+            "    public function make(): \\App\\Values\\Money"
+        );
+    });
+});
+describe("PR #443 review: TypeScript", () => {
+    const write = (dir: string, files: Record<string, string>): void => {
+        for (const [file, content] of Object.entries(files)) {
+            mkdirSync(dirname(join(dir, file)), { recursive: true });
+            writeFileSync(join(dir, file), content);
+        }
+    };
+    const read = (dir: string, file: string): string => readFileSync(join(dir, file), "utf8");
+
+    test("t8: import attributes stay on the source statement and travel to the target", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "fr-443-attributes-"));
+        write(dir, {
+            "data.json": '{ "name": "demo", "version": 1 }\n',
+            "a.ts": 'import data, { version } from "./data.json" with { type: "json" };\n\nexport const name = data.name;\n\nexport function ver(): number {\n    return version;\n}\n',
+        });
+        const edits = parseSpec({ text: "@@ a.ts\n<<< move to=b.ts symbol=ver imports=fix\n>>>\n", cwd: dir });
+        const report = await run({ cwd: dir, verbose: false, edits, syntaxCheck: false });
+        expect(report.ok).toBe(true);
+        expect(read(dir, "a.ts")).toStartWith('import data from "./data.json" with { type: "json" };\n');
+        expect(read(dir, "b.ts")).toStartWith('import { version } from "./data.json" with { type: "json" };\n');
+    });
+
+    test("t11: a destructured declaration that two moved names reach is exported once", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "fr-443-destructured-"));
+        write(dir, {
+            "a.ts": "const helpers = { a: 1, b: 2 };\nconst { a, b } = helpers;\n\nexport function sum(): number {\n    return a + b;\n}\n",
+        });
+        const edits = parseSpec({
+            text: "@@ a.ts\n<<< move to=b.ts symbol=sum imports=fix visibility=widen\n>>>\n",
+            cwd: dir,
+        });
+        const report = await run({ cwd: dir, verbose: false, edits, syntaxCheck: false });
+        expect(report.ok).toBe(true);
+        expect(read(dir, "a.ts")).toContain("\nexport const { a, b } = helpers;\n");
+        expect(read(dir, "a.ts")).not.toContain("export export");
+        expect(read(dir, "b.ts")).toStartWith('import { a, b } from "./a";\n');
+    });
+
+    test("t13: a target that binds the same name to another module refuses the move", () => {
+        const dir = mkdtempSync(join(tmpdir(), "fr-443-shadow-"));
+        write(dir, {
+            "helper-a.ts": 'export const helper = (): string => "a";\n',
+            "helper-b.ts": 'export const helper = (): string => "b";\n',
+            "a.ts": 'import { helper } from "./helper-a";\n\nexport function run(): string {\n    return helper();\n}\n\nexport const keep = 1;\n',
+            "b.ts": 'import { helper } from "./helper-b";\n\nexport const other = helper();\n',
+        });
+        expect(() => parseSpec({ text: "@@ a.ts\n<<< move to=b.ts symbol=run imports=fix\n>>>\n", cwd: dir })).toThrow(
+            /helper-b[\s\S]*as helperFromHelperA/
+        );
+    });
+
+    test("t13: a target that already imports the same name from the same module needs no second import", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "fr-443-same-"));
+        write(dir, {
+            "helper-a.ts": 'export const helper = (): string => "a";\n',
+            "a.ts": 'import { helper } from "./helper-a";\n\nexport function run(): string {\n    return helper();\n}\n\nexport const keep = 1;\n',
+            "b.ts": 'import { helper } from "./helper-a";\n\nexport const other = helper();\n',
+        });
+        const edits = parseSpec({ text: "@@ a.ts\n<<< move to=b.ts symbol=run imports=fix\n>>>\n", cwd: dir });
+        const report = await run({ cwd: dir, verbose: false, edits, syntaxCheck: false });
+        expect(report.ok).toBe(true);
+        expect(read(dir, "b.ts").match(/import/g)?.length).toBe(1);
+    });
+
+    test("t16: a parameter named like a type does not hide the type reference", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "fr-443-param-type-"));
+        write(dir, {
+            "types.ts": "export interface Options {\n    a: number;\n}\n",
+            "a.ts": 'import type { Options } from "./types";\n\nexport function f(Options: Options): Options {\n    return Options;\n}\n\nexport const keep = 1;\n',
+        });
+        const edits = parseSpec({ text: "@@ a.ts\n<<< move to=b.ts symbol=f imports=fix\n>>>\n", cwd: dir });
+        const report = await run({ cwd: dir, verbose: false, edits, syntaxCheck: false });
+        expect(report.ok).toBe(true);
+        expect(read(dir, "b.ts")).toStartWith('import type { Options } from "./types";\n');
+    });
+
+    test("t16: a type parameter still hides a type of the same name, a local variable does not", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "fr-443-type-param-"));
+        write(dir, {
+            "types.ts": "export interface Item {\n    a: number;\n}\n\nexport interface Row {\n    b: number;\n}\n",
+            "a.ts": 'import type { Item, Row } from "./types";\n\nexport function g<Item>(value: Item): Item {\n    const Row = 1;\n    const row: Row = { b: Row };\n    return value ?? (row as unknown as Item);\n}\n\nexport const keep = 1;\n',
+        });
+        const edits = parseSpec({ text: "@@ a.ts\n<<< move to=b.ts symbol=g imports=fix\n>>>\n", cwd: dir });
+        const report = await run({ cwd: dir, verbose: false, edits, syntaxCheck: false });
+        expect(report.ok).toBe(true);
+        // The text reader sees no scopes, so it keeps a spare `Item`: a spare import is the safe side.
+        expect(read(dir, "b.ts")).toStartWith(
+            selectTsReader().reader.kind === "compiler"
+                ? 'import type { Row } from "./types";\n'
+                : 'import type { Item, Row } from "./types";\n'
+        );
+        expect(read(dir, "a.ts")).not.toContain("Row");
     });
 });

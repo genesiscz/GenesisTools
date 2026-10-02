@@ -447,6 +447,20 @@ export const planPhpImportFixes = (params: PlanImportFixesParams): FileEdit[] =>
 
         return text;
     };
+    const finalCodes = new Map<string, string>();
+    const finalCode = (abs: string): string => {
+        let code = finalCodes.get(abs);
+        if (code === undefined) {
+            const text = finalText(abs);
+            code = parseUses(text).reduce(
+                (out, statement) => out.replace(statement.text, " ".repeat(statement.text.length)),
+                text
+            );
+            finalCodes.set(abs, code);
+        }
+
+        return code;
+    };
     const touchedPhp = [...new Set([...phpFiles, ...moves.flatMap((move) => [move.fromAbs, move.toAbs])])].filter(
         (file) => file.endsWith(".php")
     );
@@ -658,8 +672,9 @@ export const planPhpImportFixes = (params: PlanImportFixesParams): FileEdit[] =>
                 });
                 // `\Old\Ns\Class` written out (in code, or in a double-quoted string of one backslash),
                 // counted on each file's final text: the code that stays, every moved block, every user.
+                // A `use \Old\Ns\Class;` line is not counted: its own op re-points it, and runs first.
                 for (const file of touchedPhp) {
-                    const written = [...finalText(file).matchAll(qualified)].length;
+                    const written = [...finalCode(file).matchAll(qualified)].length;
                     if (written > 0) {
                         planFor(file).ops.push(qualifiedOp(written));
                     }

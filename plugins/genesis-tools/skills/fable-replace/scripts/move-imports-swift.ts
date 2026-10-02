@@ -183,12 +183,16 @@ export interface SwiftImport {
     /** The line as written, the anchor an inserted import goes next to. */
     line: string;
     module: string;
+    /** The imported path as written: `Foundation`, or `Foundation.Date` for a scoped import. */
+    path: string;
+    /** What one import is deduped by: the module, or the kind and path of a scoped import. */
+    key: string;
     /** The whole outermost `#if … #endif` block when the import sits inside one. */
     ifBlock?: string;
 }
 
 const IMPORT_LINE =
-    /^[ \t]*(?:@\w+(?:\([^)\n]*\))?[ \t]+)*import[ \t]+(?:(?:typealias|struct|class|enum|protocol|let|var|func)[ \t]+)?([\w.]+)[ \t]*;?[ \t]*$/gm;
+    /^[ \t]*(?:@\w+(?:\([^)\n]*\))?[ \t]+)*import[ \t]+(?:(typealias|struct|class|enum|protocol|let|var|func)[ \t]+)?([\w.]+)[ \t]*;?[ \t]*$/gm;
 
 export const parseSwiftImports = (text: string, masked: string = maskSwift(text)): SwiftImport[] => {
     const lines = text.split("\n");
@@ -214,9 +218,13 @@ export const parseSwiftImports = (text: string, masked: string = maskSwift(text)
         const start = match.index ?? 0;
         const end = text.indexOf("\n", start);
         const block = blockOf[masked.slice(0, start).split("\n").length - 1];
+        const [, kind, importPath] = match;
+        const module = importPath.split(".")[0];
         return {
             line: text.slice(start, end === -1 ? undefined : end).trimEnd(),
-            module: match[1].split(".")[0],
+            module,
+            path: importPath,
+            key: kind === undefined ? module : `${kind} ${importPath}`,
             ...(block === undefined ? {} : { ifBlock: lines.slice(block[0], block[1] + 1).join("\n") }),
         };
     });
@@ -392,8 +400,8 @@ interface SwiftFilePlan {
     abs: string;
     text: string;
     imports: SwiftImport[];
-    /** Module → the line that imports it, as the source wrote it. */
-    newImports: Map<string, string>;
+    /** Import key → the import as the source wrote it. */
+    newImports: Map<string, SwiftImport>;
     ops: Op[];
 }
 
@@ -405,9 +413,13 @@ const compareModules = (a: string, b: string): number => {
 
 /** The import lines a file gains, each next to its alphabetical neighbour, or on top when it has none. */
 const importOps = (plan: SwiftFilePlan, label: string): Op[] => {
-    const wanted = [...plan.newImports]
-        .filter(([module]) => !plan.imports.some((existing) => existing.module === module))
-        .sort(([a], [b]) => compareModules(a, b));
+    // A plain import of the module already covers a scoped import from it.
+    const wanted = [...plan.newImports.values()]
+        .filter(
+            (imported) =>
+                !plan.imports.some((existing) => existing.key === imported.key || existing.key === imported.module)
+        )
+        .sort((a, b) => compareModules(a.path, b.path));
     if (wanted.length === 0) {
         return [];
     }
@@ -415,7 +427,7 @@ const importOps = (plan: SwiftFilePlan, label: string): Op[] => {
     // A new import never goes next to one under `#if`: it would land inside the condition.
     const anchors = plan.imports.filter((existing) => existing.ifBlock === undefined);
     if (anchors.length === 0) {
-        const block = wanted.map(([, line]) => line).join("\n");
+        const block = wanted.map((imported) => imported.line).join("\n");
         return [
             {
                 kind: "regex",
@@ -432,12 +444,12 @@ const importOps = (plan: SwiftFilePlan, label: string): Op[] => {
 
     const before = new Map<number, string[]>();
     const after: string[] = [];
-    for (const [module, line] of wanted) {
-        const at = anchors.findIndex((existing) => compareModules(existing.module, module) > 0);
+    for (const imported of wanted) {
+        const at = anchors.findIndex((existing) => compareModules(existing.path, imported.path) > 0);
         if (at === -1) {
-            after.push(line);
+            after.push(imported.line);
         } else {
-            before.set(at, [...(before.get(at) ?? []), line]);
+            before.set(at, [...(before.get(at) ?? []), imported.line]);
         }
     }
 
@@ -641,7 +653,7 @@ export const planSwiftImportFixes = (params: PlanImportFixesParams): FileEdit[] 
             const crossing = !sameModule(sourceModule, targetModule);
             const conditional = new Set<string>();
             for (const imported of source.imports) {
-                if (imported.module === targetModule?.name || target.newImports.has(imported.module)) {
+                if (imported.module === targetModule?.name || target.newImports.has(imported.key)) {
                     continue;
                 }
 
@@ -651,7 +663,7 @@ export const planSwiftImportFixes = (params: PlanImportFixesParams): FileEdit[] 
                 }
 
                 // As written: `@testable`, `@preconcurrency` and `import struct …` keep their meaning.
-                target.newImports.set(imported.module, imported.line.trim());
+                target.newImports.set(imported.key, { ...imported, line: imported.line.trim() });
             }
 
             for (const block of conditional) {
@@ -702,17 +714,33 @@ export const planSwiftImportFixes = (params: PlanImportFixesParams): FileEdit[] 
                     }
                 }
 
+                // Code this source sends to another file of the module is cut from `remaining` too,
+                // yet from that file it uses a moved declaration just the same.
+                const elsewhere = moves
+                    .filter(
+                        (m) =>
+                            m.fromAbs === sourceAbs &&
+                            m.toAbs !== targetAbs &&
+                            sameModule(swiftModuleOf(m.toAbs), targetModule)
+                    )
+                    .map((m) => ({ move: m, masked: maskSwift(m.blockText) }));
                 for (const [name, { decl, move }] of movedDecls) {
-                    if (isPrivate(decl.access) && usesName(remainingMasked, name)) {
+                    if (!isPrivate(decl.access)) {
+                        continue;
+                    }
+
+                    const staysUser = usesName(remainingMasked, name);
+                    const movingUser = elsewhere.find((other) => usesName(other.masked, name))?.move;
+                    if (staysUser || movingUser !== undefined) {
                         if (!move.widen) {
+                            const user = staysUser
+                                ? `${display(sourceAbs)} still uses`
+                                : `code moving to ${movingUser?.to} uses`;
                             throw new MoveError(
-                                withFix(
-                                    `move: ${display(sourceAbs)} still uses ${name}, which is ${decl.access} and moves out`,
-                                    {
-                                        why: "let the move make it internal, or move its users along:",
-                                        spec: markerWith(move, "visibility=widen"),
-                                    }
-                                ),
+                                withFix(`move: ${user} ${name}, which is ${decl.access} and moves out`, {
+                                    why: "let the move make it internal, or move its users along:",
+                                    spec: markerWith(move, "visibility=widen"),
+                                }),
                                 move.index
                             );
                         }
@@ -840,17 +868,19 @@ export const planSwiftImportFixes = (params: PlanImportFixesParams): FileEdit[] 
             for (const file of users) {
                 const plan = planFor(file);
                 if (!plan.newImports.has(targetModule.name)) {
-                    plan.newImports.set(targetModule.name, `import ${targetModule.name}`);
+                    const name = targetModule.name;
+                    plan.newImports.set(name, { line: `import ${name}`, module: name, path: name, key: name });
                 }
             }
 
             for (const name of usedOutside) {
                 const entry = movedDecls.get(name);
-                if (entry === undefined || isPublic(entry.decl.access)) {
+                if (entry === undefined) {
                     continue;
                 }
 
-                if (!entry.move.widen) {
+                const alreadyPublic = isPublic(entry.decl.access);
+                if (!alreadyPublic && !entry.move.widen) {
                     throw new MoveError(
                         withFix(
                             `move: ${name} moves into module ${targetModule.name} but is ${entry.decl.access}, and ${sourceModule.name} still uses it`,
@@ -863,13 +893,30 @@ export const planSwiftImportFixes = (params: PlanImportFixesParams): FileEdit[] 
                     );
                 }
 
-                const edited = blockEdits.get(entry.move) ?? new Map<number, string>();
-                blockEdits.set(entry.move, edited);
                 const lines = entry.move.blockText.split("\n");
                 const declIndex = lines.indexOf(entry.decl.line);
-                edited.set(declIndex, entry.decl.withAccess("public"));
-                if (TYPE_KINDS.has(entry.decl.kind)) {
-                    for (const [index, line] of publicMembers(lines, declIndex)) {
+                // A public type's members written without an access word are still internal.
+                const memberEdits = TYPE_KINDS.has(entry.decl.kind) ? publicMembers(lines, declIndex) : [];
+                if (!entry.move.widen) {
+                    if (memberEdits.length > 0) {
+                        warnWithFix(params, {
+                            abs: targetAbs,
+                            needles: [],
+                            message: `imports=fix: ${name} is public, but its members without an access word stay internal, out of reach for ${sourceModule.name}`,
+                            fix: {
+                                why: "let the move make them public:",
+                                spec: markerWith(entry.move, "visibility=widen"),
+                            },
+                        });
+                    }
+                } else if (!alreadyPublic || memberEdits.length > 0) {
+                    const edited = blockEdits.get(entry.move) ?? new Map<number, string>();
+                    blockEdits.set(entry.move, edited);
+                    if (!alreadyPublic) {
+                        edited.set(declIndex, entry.decl.withAccess("public"));
+                    }
+
+                    for (const [index, line] of memberEdits) {
                         edited.set(index, line);
                     }
                 }
