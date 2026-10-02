@@ -1,4 +1,5 @@
 import { SafeJSON } from "@genesiscz/utils/json";
+import { stripAnsi } from "@genesiscz/utils/string";
 import { parseTranscriptLine } from "./parse-line";
 import { clipResult, type TranscriptTool, type TranscriptTurn } from "./types";
 
@@ -198,7 +199,8 @@ function itemTool(item: Record<string, unknown>): TranscriptTool | null {
             isError: exitCode !== undefined && exitCode !== 0,
             exitCode,
         };
-        toolResult(tool, asString(item.aggregated_output) || asString(item.stdout) + asString(item.stderr));
+        // A command's colours arrive as escape codes, which the transcript printed as "[0;36m".
+        toolResult(tool, stripAnsi(asString(item.aggregated_output) || asString(item.stdout) + asString(item.stderr)));
         return tool;
     }
 

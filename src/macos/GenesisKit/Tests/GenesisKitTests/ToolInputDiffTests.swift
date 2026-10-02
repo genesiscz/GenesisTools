@@ -27,6 +27,26 @@ final class ToolInputDiffTests: XCTestCase {
         XCTAssertEqual(detail.edits, [ToolEditPair(old: "let a = 1", new: "let a = 2")])
     }
 
+    /// Codex encrypts a spawn_agent message; the opened call shows a marker, not the base64 (2026-10-02).
+    func testACodexEncryptedMessageOpensAsAMarker() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("tool-input-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let file = dir.appendingPathComponent("rollout-codex.jsonl")
+        let token = "gAAAAAB" + String(repeating: "Qx9_-", count: 40) + "=="
+        let arguments = #"{\"task_name\":\"pr589_astra\",\"message\":\""# + token + #"\"}"#
+        let lines = [
+            #"{"type":"response_item","payload":{"type":"function_call","name":"spawn_agent","call_id":"call_1","arguments":""# + arguments + #""}}"#,
+            #"{"type":"response_item","payload":{"type":"function_call_output","call_id":"call_1","output":"ok"}}"#,
+        ]
+        try (lines.joined(separator: "\n") + "\n").write(to: file, atomically: true, encoding: .utf8)
+        let log = try XCTUnwrap(SessionNativeLog.scan(path: file.path))
+        let shown = try XCTUnwrap(log.detail(for: "call_1")?.arguments)
+        XCTAssertFalse(shown.contains("gAAAAA"), shown)
+        XCTAssertTrue(shown.contains("[encrypted by Codex, \(token.count) chars]"), shown)
+        XCTAssertTrue(shown.contains("pr589_astra"), shown)
+    }
+
     func testAnEditDrawsItsDiffFirstWithTheStatusUnder() {
         let detail = ToolCallDetail(filePath: "/tmp/x.swift", edits: [ToolEditPair(old: "let a = 1", new: "let a = 2")])
         let shown = ToolPresentation.make(

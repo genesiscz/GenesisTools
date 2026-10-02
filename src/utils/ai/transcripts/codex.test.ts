@@ -181,6 +181,19 @@ describe("codexNativeLinesToTurns with exec scripts and their items", () => {
         ]);
     });
 
+    test("a command's colour codes are taken out of its output", () => {
+        const turns = codexNativeLinesToTurns([
+            item(1, {
+                type: "CommandExecution",
+                id: "exec-2",
+                command: ["/bin/zsh", "-lc", "bin/sail up"],
+                aggregated_output: "\u001b[0;36mStarting\u001b[0m",
+                exit_code: 0,
+            }),
+        ]);
+        expect(turns[0]?.tools[0]?.result).toBe("Starting");
+    });
+
     test("a script whose tool leaves no item keeps its own row and output", () => {
         const turns = codexNativeLinesToTurns([
             row(1, {

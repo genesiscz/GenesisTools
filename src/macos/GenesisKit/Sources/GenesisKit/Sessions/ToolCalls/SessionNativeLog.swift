@@ -483,6 +483,16 @@ public final class SessionNativeLog: @unchecked Sendable {
         }
     }
 
+    /// Codex encrypts what its collaboration tools pass between agents (`spawn_agent`, `send_message`): the
+    /// `message` argument is a Fernet token, `gAAAAA` and kilobytes of base64. The transcript envelope
+    /// shows a marker for it (src/utils/ai/transcripts/codex.ts); the opened call says the same.
+    static func withoutEncryptedToken(_ value: Any) -> Any {
+        guard let text = value as? String, text.hasPrefix("gAAAAA"), text.count >= 46,
+              text.unicodeScalars.allSatisfy({ CharacterSet.alphanumerics.contains($0) || "_-=".unicodeScalars.contains($0) })
+        else { return value }
+        return "[encrypted by Codex, \(text.count) chars]"
+    }
+
     private static func fillInput(_ detail: inout ToolCallDetail, from object: [String: Any], toolId: String) {
         var input: [String: Any] = [:]
         if let message = object["message"] as? [String: Any], let content = message["content"] as? [[String: Any]],
@@ -491,7 +501,7 @@ public final class SessionNativeLog: @unchecked Sendable {
         } else if let payload = object["payload"] as? [String: Any] {
             if let arguments = payload["arguments"] as? String,
                let parsed = try? JSONSerialization.jsonObject(with: Data(arguments.utf8)) as? [String: Any] {
-                input = parsed
+                input = parsed.mapValues(withoutEncryptedToken)
             } else if let raw = payload["input"] as? String {
                 detail.patch = raw
             }
