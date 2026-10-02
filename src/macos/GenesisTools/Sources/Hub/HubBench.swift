@@ -177,6 +177,7 @@ enum HubBench {
             if only.contains("scroll"), model.panes.contains(.transcript) { addTranscriptScroll() }
             if only.contains("open"), model.mode == .sessions, model.panes.contains(.transcript) { addTranscriptOpen() }
             if only.contains("panes"), model.mode == .sessions, model.panes.contains(.transcript) { addPaneToggle() }
+            if only.contains("settle"), model.mode == .sessions, model.panes.contains(.transcript) { addSettleWatch() }
             PerfLog.mark("hub.bench start: \(steps.count) steps, panes \(model.panes.map(\.rawValue).joined(separator: ","))")
             guard ProcessInfo.processInfo.environment["GENESIS_HUB_BENCH_AX"] == "1" else {
                 tick()
@@ -419,6 +420,44 @@ enum HubBench {
                     steps.append(Step(scenario: "panes", action: {
                         guard let (list, clip) = table() else { return }
                         HubBench.note("transcript.paneEnd.\(phase)", Int((list.frame.height - clip.bounds.maxY).rounded()))
+                    }, delay: 0.05))
+                }
+            }
+        }
+
+        /// `settle` (opt-in, sessions mode): what a reader who scrolled up sees while a session fills in. Each
+        /// session of `GENESIS_HUB_BENCH_OPEN` opens; 0.8 s later the list scrolls to 40% of its height and the
+        /// row view at the top becomes the reference. Every 50 ms for 6 s `transcript.settle.<n>` records where
+        /// that row view sits, in points from the viewport's top: each flip is the text under the reader moving
+        /// (earlier turns, the native scan's usage, tool changes arriving). A row view is followed by object,
+        /// so rows inserted above it do not change what is measured.
+        private func addSettleWatch() {
+            let wanted = (ProcessInfo.processInfo.environment["GENESIS_HUB_BENCH_OPEN"] ?? "").split(separator: ",").map(String.init)
+            let sessions = wanted.compactMap { prefix in model.sessions.first { $0.sessionId.hasPrefix(prefix) } }
+            order.append("settle")
+            for (n, session) in sessions.enumerated() {
+                weak var reference: NSView?
+                steps.append(Step(scenario: "settle", action: { [weak self] in self?.model.select(session.id) }, delay: 0.8))
+                steps.append(Step(scenario: "settle", action: { [weak self] in
+                    guard let self, let table = HubBench.largestTable(in: self.window.contentView), let clip = table.enclosingScrollView?.contentView,
+                          let scroll = table.enclosingScrollView else { return }
+                    // A reader's scroll: the anchor takes it as a wheel (it stops a glide to the end, as a real
+                    // wheel does), then the jump to 40% lands while that still counts as the reader's.
+                    NotificationCenter.default.post(name: TranscriptScrollAnchor.readerScrolled, object: nil)
+                    clip.scroll(to: NSPoint(x: 0, y: max(0, (table.frame.height - clip.bounds.height) * 0.4)))
+                    scroll.reflectScrolledClipView(clip)
+                    table.layoutSubtreeIfNeeded()
+                    let range = table.rows(in: clip.bounds)
+                    let row = (range.location..<range.location + range.length).first { table.rect(ofRow: $0).height > 2 }
+                    reference = row.flatMap { table.rowView(atRow: $0, makeIfNecessary: false) }
+                    PerfLog.mark("hub.bench settle \(n): reference row \(row.map(String.init) ?? "-") of \(table.numberOfRows)")
+                }, delay: 0.05))
+                for _ in 0..<120 {
+                    steps.append(Step(scenario: "settle", action: { [weak self] in
+                        guard let self, let view = reference, view.superview != nil,
+                              let table = HubBench.largestTable(in: self.window.contentView), let clip = table.enclosingScrollView?.contentView else { return }
+                        HubBench.note("transcript.settle.\(n)", Int((view.frame.minY - clip.bounds.minY).rounded()))
+                        HubBench.note("transcript.settleRow.\(n)", table.row(for: view))
                     }, delay: 0.05))
                 }
             }

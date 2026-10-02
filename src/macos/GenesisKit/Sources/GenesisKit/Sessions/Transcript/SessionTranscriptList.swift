@@ -683,6 +683,7 @@ public struct SessionTranscriptList: View {
             }
             .onChange(of: scrollTarget) { _, request in
                 guard let request else { return }
+                anchor.listMoves()
                 Self.scroll(proxy, to: request.id, anchor: request.anchor)
             }
             .onChange(of: document) {
@@ -702,6 +703,8 @@ public struct SessionTranscriptList: View {
             .onAppear {
                 guard !didInitialScroll, visible.last?.rows.last != nil else { return }
                 didInitialScroll = true
+                // The passes below are the list's own scroll: the anchor does not undo them.
+                anchor.listMoves(for: 0.6)
                 if let target = preset.scrollTo {
                     Self.scroll(proxy, to: target, anchor: .top)
                     return
@@ -728,6 +731,7 @@ public struct SessionTranscriptList: View {
     private func latestButton(_ proxy: ScrollViewProxy) -> some View {
         Button {
             atLatest = true
+            anchor.listMoves()
             if let last = visible.last {
                 Self.scroll(proxy, to: Self.endMarker(last.id), anchor: .bottom)
             }
