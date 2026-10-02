@@ -192,6 +192,20 @@ describe("buildTurnCosts", () => {
         expect(result.totals.modelCalls).toBe(2);
     });
 
+    test("an output-only call keeps the prompt size the measured call before it recorded", () => {
+        const result = buildTurnCosts({
+            turns: [
+                user("u1", "first", 0),
+                assistant("a1", 5, { usage: { inputTokens: 1_000, cacheReadTokens: 9_000, outputTokens: 50 } }),
+                assistant("a2", 9, { usage: { outputTokens: 20 } }),
+            ],
+            defaultModel: "gpt-x",
+            price: flatPricer,
+        });
+
+        expect(result.turns.map((turn) => turn.contextTokens)).toEqual([10_000]);
+    });
+
     test("an unpriced call leaves the turn without a cost and ranks by billable tokens instead", () => {
         const turns = [
             user("u1", "one", 0),

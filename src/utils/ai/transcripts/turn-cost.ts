@@ -200,8 +200,10 @@ export function buildTurnCosts(options: TurnCostOptions): TurnCostResult {
         addCall(slot.totals, call, cost);
         addCall(totals, call, cost);
 
-        if (usesTokens(call)) {
-            slot.context = call.input + call.cacheRead + call.cacheWrite;
+        // A call that records only output or reasoning has no prompt size; the last measured one stays.
+        const context = call.input + call.cacheRead + call.cacheWrite;
+        if (context > 0) {
+            slot.context = context;
         }
 
         if (call.model) {

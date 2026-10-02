@@ -512,8 +512,14 @@ export class TaskSessionStore {
         // traversal.
         const paths = sessionFilePaths(name);
         for (const path of [paths.jsonl, paths.uiJsonl, paths.stdout, paths.stderr, paths.meta]) {
-            if (existsSync(path)) {
+            // A file can be gone already (no sidecar written, or a parallel gc sweep removed it); the
+            // rest are still removed.
+            try {
                 unlinkSync(path);
+            } catch (err) {
+                if (!(err instanceof Error && "code" in err && err.code === "ENOENT")) {
+                    throw err;
+                }
             }
         }
     }
