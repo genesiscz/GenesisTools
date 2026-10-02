@@ -85,13 +85,15 @@ describe("formatWorkItemMarkdown", () => {
         const base = "https://dev.azure.com/example/proj/_apis/wit/attachments/46e8a5cc-7c33-4aab-92ba-d91fe3446a5a";
         const angled = `${base}?fileName=screen(1).png`;
         const spaced = `${base.replace("46e8a5cc", "57f9b6dd")}?fileName=screen%20shot.png`;
-        const text = `![a](<${angled}>)\n![b](${spaced})`;
+        const bare = `${base.replace("46e8a5cc", "68a0c7ee")}?fileName=shot(2).png`;
+        const text = `![a](<${angled}>)\n![b](${spaced})\n![c](${bare})\n\n\`\`\`\n${angled}\n\`\`\``;
         const images = extractInlineImageUrls(text, 281785);
 
-        expect(images.map((image) => image.originalUrl)).toEqual([angled, spaced]);
+        expect(images.map((image) => image.originalUrl)).toEqual([angled, spaced, bare]);
         expect(images.map((image) => image.localFileName)).toEqual([
             "281785-46e8a5cc-screen(1).png",
             "281785-57f9b6dd-screen shot.png",
+            "281785-68a0c7ee-shot(2).png",
         ]);
 
         const md = formatWorkItemMarkdown(
@@ -101,7 +103,11 @@ describe("formatWorkItemMarkdown", () => {
             new Map(images.map((image) => [image.originalUrl, image.localFileName]))
         );
 
-        expect(md).toContain("![a](<281785-46e8a5cc-screen(1).png>)\n![b](<281785-57f9b6dd-screen shot.png>)");
+        expect(md).toContain(
+            "![a](<281785-46e8a5cc-screen(1).png>)\n![b](<281785-57f9b6dd-screen shot.png>)\n![c](<281785-68a0c7ee-shot(2).png>)"
+        );
+        // The same URL quoted in a code example is not an image destination.
+        expect(md).toContain(`\`\`\`\n${angled}\n\`\`\``);
     });
 });
 

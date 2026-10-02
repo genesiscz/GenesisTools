@@ -20,9 +20,10 @@ const ATTACHMENT_URL_PATTERN = /\/_apis\/wit\/attachments\/([a-f0-9-]+)/i;
 const IMG_SRC_PATTERN = /<img[^>]+src=["']([^"']+)["'][^>]*>/gi;
 /**
  * `![alt](url)`, `![alt](<url>)` or either with a `"title"`: comments written in ADO's markdown editor
- * carry images this way. An angle-bracket destination may hold `)` and spaces, so it has its own group.
+ * carry images this way. An angle-bracket destination may hold `)` and spaces, so it has its own group;
+ * a bare one may hold balanced parentheses (`?fileName=screen(1).png`).
  */
-const MARKDOWN_IMAGE_PATTERN = /(!\[[^\]]*\]\(\s*)(?:<([^>\n]+)>|([^)\s]+))((?:\s+"[^"]*")?\s*\))/g;
+const MARKDOWN_IMAGE_PATTERN = /(!\[[^\]]*\]\(\s*)(?:<([^>\n]+)>|((?:[^()\s]|\([^()\s]*\))+))((?:\s+"[^"]*")?\s*\))/g;
 
 function markdownImageUrl(match: RegExpMatchArray): string {
     return match[2] ?? match[3] ?? "";
@@ -154,6 +155,18 @@ export function rewriteImageUrls(html: string, urlMap: Map<string, string>): str
     }
 
     return result;
+}
+
+/** Rewrite only the `src` of each `<img>`: the rest of the text (a code example quoting the URL) stays. */
+export function rewriteImageSources(text: string, urlMap: Map<string, string>): string {
+    if (!text || urlMap.size === 0) {
+        return text;
+    }
+
+    return text.replace(IMG_SRC_PATTERN, (tag, src: string) => {
+        const local = urlMap.get(src);
+        return local ? tag.replace(src, local) : tag;
+    });
 }
 
 /**

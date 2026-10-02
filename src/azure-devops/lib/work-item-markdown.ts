@@ -1,4 +1,4 @@
-import { rewriteImageUrls, rewriteMarkdownImageUrls } from "@app/azure-devops/inline-images";
+import { rewriteImageSources, rewriteImageUrls, rewriteMarkdownImageUrls } from "@app/azure-devops/inline-images";
 import { parseAttachments, parseRelations } from "@app/azure-devops/relations";
 import type { Comment, WorkItemFull } from "@app/azure-devops/types";
 import { formatBytes } from "@genesiscz/utils/format";
@@ -18,7 +18,10 @@ export function commentMarkdown(comment: Comment, imageMap?: Map<string, string>
         return htmlToMarkdown(imageMap ? rewriteImageUrls(comment.text, imageMap) : comment.text);
     }
 
-    const text = imageMap ? rewriteImageUrls(rewriteMarkdownImageUrls(comment.text, imageMap), imageMap) : comment.text;
+    // Only image destinations and `<img src>` change: the same URL in a code example stays as written.
+    const text = imageMap
+        ? rewriteImageSources(rewriteMarkdownImageUrls(comment.text, imageMap), imageMap)
+        : comment.text;
     return text.trim();
 }
 
