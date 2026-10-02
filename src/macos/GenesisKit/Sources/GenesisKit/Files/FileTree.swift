@@ -45,6 +45,8 @@ public final class FileTreeModel: ObservableObject {
     private var expanded = Set<String>()
     private var children: [String: [FileTreeEntry]] = [:]
     private var loading = Set<String>()
+    /// Folders refreshed while their read was running: that read may predate the change.
+    private var stale = Set<String>()
     /// Bumped by `reload` and `setRoot`: a listing that started before belongs to the old tree.
     private var generation = 0
 
@@ -63,6 +65,7 @@ public final class FileTreeModel: ObservableObject {
         root = next
         generation += 1
         loading.removeAll()
+        stale.removeAll()
         rebuild()
         load(next.path)
         // An open folder whose read the new generation dropped would stay open and empty: read it again.
@@ -106,6 +109,7 @@ public final class FileTreeModel: ObservableObject {
         children.removeAll()
         generation += 1
         loading.removeAll()
+        stale.removeAll()
         load(root.path)
         for path in expanded where path.hasPrefix(root.path) {
             load(path)
@@ -115,6 +119,9 @@ public final class FileTreeModel: ObservableObject {
     /// Reads one folder again (after a rename, duplicate or move to trash inside it).
     public func refresh(_ folder: String) {
         children[folder] = nil
+        if loading.contains(folder) {
+            stale.insert(folder)
+        }
         load(folder)
     }
 
@@ -127,6 +134,10 @@ public final class FileTreeModel: ObservableObject {
             let listed = await Task.detached(priority: .userInitiated) { FileTreeListing.entries(of: path) }.value
             guard let self, generation == self.generation else { return }
             self.loading.remove(path)
+            if self.stale.remove(path) != nil {
+                self.load(path)
+                return
+            }
             self.children[path] = listed
             self.rebuild()
         }

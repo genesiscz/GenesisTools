@@ -59,6 +59,20 @@ final class FileTreeTests: XCTestCase {
         XCTAssertEqual(model.rows.map(\.name), ["inner", "deep.md"])
     }
 
+    func testRefreshDuringAPendingReadReadsTheFolderAgain() async throws {
+        let model = FileTreeModel(root: root)
+        model.setRoot(root)
+        // The read starts, lists off the main actor while the main actor sleeps, and cannot publish yet:
+        // its listing has the old name.
+        await Task.yield()
+        Thread.sleep(forTimeInterval: 0.2)
+        _ = try FileOperations.rename(root.appendingPathComponent("note 2.md"), to: "renamed.md")
+        model.refresh(root.standardizedFileURL.path)
+        await settle(model) { model.rows.contains { $0.name == "renamed.md" } }
+
+        XCTAssertEqual(model.rows.map(\.name), ["Alpha", "beta", "note 10.md", "renamed.md"])
+    }
+
     func testDuplicateFollowsFinderNamingAndRenameRefusesBadNames() throws {
         let note = root.appendingPathComponent("note 2.md")
         let first = try FileOperations.duplicate(note)
