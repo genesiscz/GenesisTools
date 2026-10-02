@@ -106,6 +106,17 @@ const lastSegment = (fqn: string): string => fqn.slice(fqn.lastIndexOf("\\") + 1
 const namespaceOf = (fqn: string): string => (fqn.includes("\\") ? fqn.slice(0, fqn.lastIndexOf("\\")) : "");
 const same = (a: string, b: string): boolean =>
     a.replace(/^\\/, "").toLowerCase() === b.replace(/^\\/, "").toLowerCase();
+/** PHP folds the case of class and function names and of namespaces; a constant's own name keeps its case. */
+const nameKey = (kind: UseEntry["kind"], name: string): string => {
+    const bare = name.replace(/^\\/, "");
+    if (kind !== "const") {
+        return bare.toLowerCase();
+    }
+
+    return bare.includes("\\") ? `${namespaceOf(bare).toLowerCase()}\\${lastSegment(bare)}` : bare;
+};
+/** What an alias binds in a file. Classes, functions and constants are separate PHP namespaces. */
+const bindingKey = (entry: UseEntry): string => `${entry.kind}:${nameKey(entry.kind, entry.alias)}`;
 
 const parseEntry = (raw: string, kind: UseEntry["kind"], prefix = ""): UseEntry | null => {
     const match = /^(function\s+|const\s+)?\\?([\w\\]+)(?:\s+as\s+(\w+))?$/.exec(raw.trim());
@@ -343,10 +354,7 @@ const planUseOps = (plan: PhpFilePlan, label: string): Op[] => {
     const before = new Map<number, string[]>();
     const after: string[] = [];
     const fresh = plan.added.filter(
-        (entry, k) =>
-            plan.added.findIndex(
-                (other) => other.alias.toLowerCase() === entry.alias.toLowerCase() && other.kind === entry.kind
-            ) === k
+        (entry, k) => plan.added.findIndex((other) => bindingKey(other) === bindingKey(entry)) === k
     );
     for (const entry of [...fresh].sort(compareUse)) {
         const line = renderUse({ kind: entry.kind }, [entry]);
@@ -497,15 +505,13 @@ export const planPhpImportFixes = (params: PlanImportFixesParams): FileEdit[] =>
                 phpDeclarations(maskPhp(move.blockText)).map((d) => ({ ...d, move }))
             );
             const movedNames = new Set(moved.map((d) => d.name.toLowerCase()));
-            // What each alias already means in the target. Classes, functions and constants are
-            // separate PHP namespaces, so the kind is part of the key.
-            const bindingKey = (entry: UseEntry): string => `${entry.kind}:${entry.alias.toLowerCase()}`;
+            // What each alias already means in the target.
             const targetUses = new Map(
                 [...target.uses.flatMap((s) => s.entries), ...target.added].map((e) => [bindingKey(e), e.fqn])
             );
             const need = (entry: UseEntry): void => {
                 const bound = targetUses.get(bindingKey(entry));
-                if (bound !== undefined && !same(bound, entry.fqn)) {
+                if (bound !== undefined && nameKey(entry.kind, bound) !== nameKey(entry.kind, entry.fqn)) {
                     const alias = `${lastSegment(namespaceOf(entry.fqn))}${entry.alias}`;
                     throw new MoveError(
                         withFix(

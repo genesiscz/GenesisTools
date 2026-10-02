@@ -1590,7 +1590,7 @@ describe("PR #444 review round 3", () => {
         expect(() => parse(dir, "@@ b.swift\n<<< delete doc=Model\n>>>\n")).toThrow("has no doc comment");
     });
 });
-describe("PR #444 review round 4", () => {
+describe("PR #444 review rounds 4 and 5", () => {
     const write = (dir: string, files: Record<string, string>): void => {
         for (const [file, content] of Object.entries(files)) {
             mkdirSync(dirname(join(dir, file)), { recursive: true });
@@ -1721,5 +1721,64 @@ describe("PR #444 review round 4", () => {
         await run({ cwd: dir, verbose: false, edits, syntaxCheck: false });
         expect(read(dir, "app/Http/Ctl.php")).toContain("use App\\Support\\{Keep, function helper, const FLAG};");
         expect(read(dir, "app/Http/Two.php")).toContain("use function App\\Support\\helper;");
+    });
+
+    test("r5: PHP constant aliases differ by case, so FOO and foo do not conflict", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "fr-r5-const-"));
+        const ctl = [
+            "<?php",
+            "",
+            "namespace App\\Http;",
+            "",
+            "use const Other\\foo;",
+            "",
+            "class Ctl",
+            "{",
+            "    public function make(): int",
+            "    {",
+            "        return foo;",
+            "    }",
+            "}",
+            "",
+        ].join("\n");
+        write(dir, {
+            "composer.json": '{ "autoload": { "psr-4": { "App\\\\": "app/" } } }\n',
+            "app/Http/Ctl.php": ctl,
+            "app/Services/Store.php":
+                "<?php\n\nnamespace App\\Services;\n\nuse const Vendor\\FOO;\n\nclass Store\n{\n    // methods\n}\n",
+        });
+        const first = ctl.split("\n").findIndex((l) => l.includes("public function make")) + 1;
+        const edits = parseSpec({
+            text: `@@ app/Http/Ctl.php\n<<< move to=app/Services/Store.php lines=${first}-${first + 3} at=after imports=fix\n    // methods\n>>>\n`,
+            cwd: dir,
+            onWarning: () => {},
+        });
+        const report = await run({ cwd: dir, verbose: false, edits, syntaxCheck: false });
+        expect(report.ok).toBe(true);
+        expect(read(dir, "app/Services/Store.php")).toContain("use const Other\\foo;");
+        expect(read(dir, "app/Services/Store.php")).toContain("use const Vendor\\FOO;");
+    });
+
+    test("r5: a `)` in a comment inside a Swift interpolation does not end it", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "fr-r5-interp-"));
+        write(dir, {
+            "Package.swift": swiftPackage(
+                [
+                    '        .target(name: "Kit", path: "Kit"),',
+                    '        .executableTarget(name: "App", dependencies: ["Kit"], path: "App"),',
+                ].join("\n")
+            ),
+            "Kit/Kit.swift": "public let kitVersion = 1\n",
+            "App/Helpers.swift":
+                "import Foundation\n\npublic struct Point {\n    public let x: Int\n\n    public init(x: Int) {\n        self.x = x\n    }\n}\n",
+            "App/main.swift": 'import Foundation\n\nprint("point: \\( /* ) */ Point(x: 1))")\n',
+        });
+        const edits = parseSpec({
+            text: "@@ App/Helpers.swift\n<<< move to=Kit/Point.swift symbol=Point imports=fix visibility=widen\n>>>\n",
+            cwd: dir,
+            onWarning: () => {},
+        });
+        await run({ cwd: dir, verbose: false, edits, syntaxCheck: false });
+        expect(read(dir, "App/main.swift")).toContain("import Kit\n");
     });
 });

@@ -33,11 +33,30 @@ import {
 } from "./move-imports-shared";
 import type { FileEdit, Op } from "./types";
 
-/** The index of the `)` closing an interpolation whose body starts at `from`; nested strings skipped. */
+/** The index of the `)` closing an interpolation whose body starts at `from`; nested strings and comments skipped. */
 const interpolationEnd = (text: string, from: number): number => {
     let depth = 1;
     for (let k = from; k < text.length; k++) {
         const char = text[k];
+        if (text.startsWith("//", k)) {
+            const newline = text.indexOf("\n", k);
+            k = newline === -1 ? text.length : newline;
+            continue;
+        }
+
+        if (text.startsWith("/*", k)) {
+            let nesting = 1;
+            k += 2;
+            while (k < text.length && nesting > 0) {
+                const step = text.startsWith("/*", k) ? 1 : text.startsWith("*/", k) ? -1 : 0;
+                nesting += step;
+                k += step === 0 ? 1 : 2;
+            }
+
+            k--;
+            continue;
+        }
+
         if (char === '"') {
             k++;
             while (k < text.length && text[k] !== '"') {
