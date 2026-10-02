@@ -2,12 +2,14 @@ import { isAbsolute, relative, resolve } from "node:path";
 import { getConfig } from "@app/dev-dashboard/config";
 import { publishNote } from "@app/dev-dashboard/lib/obsidian/publish";
 import { readNote } from "@app/dev-dashboard/lib/obsidian/reader";
+import { codeLanguageFor } from "@app/dev-dashboard/lib/obsidian/share-assets";
 import { sharePageUrl } from "@app/dev-dashboard/lib/public-base";
 import { normalizeVaultPath } from "@genesiscz/utils/obsidian/paths";
 
 /**
  * Turn a CLI path (vault-relative or absolute) into the same vault-relative
- * `.md` string the UI publish button posts to `/api/obsidian/publish`.
+ * `.md` string the UI publish button posts to `/api/obsidian/publish`. A source
+ * file (`Report.ts` beside its report) keeps its own extension.
  */
 export function toVaultRelativePath(input: string, vaultRoot: string): string {
     const trimmed = input.trim();
@@ -29,7 +31,7 @@ export function toVaultRelativePath(input: string, vaultRoot: string): string {
         throw new Error("path required");
     }
 
-    if (!rel.endsWith(".md")) {
+    if (!rel.endsWith(".md") && !codeLanguageFor(rel)) {
         rel = `${rel}.md`;
     }
 

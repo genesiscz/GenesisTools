@@ -737,23 +737,55 @@ public struct SessionCommit: Identifiable, Equatable {
 }
 
 public struct SessionSubagent: Identifiable, Equatable {
-    public enum State: Equatable { case done, running, background, failed }
+    /// `idle`: its transcript stopped growing before it reported back (`tools ai sessions subagents` "stopped").
+    public enum State: Equatable { case done, running, background, idle, failed }
 
     public let id: String
     public let kind: String
     public let summary: String
     public let state: State
+    /// When its transcript began; nil for a row built from the loaded turns only.
+    public let startedAt: Date?
 
     public init(
         id: String,
         kind: String,
         summary: String,
-        state: State
+        state: State,
+        startedAt: Date? = nil
     ) {
         self.id = id
         self.kind = kind
         self.summary = summary
         self.state = state
+        self.startedAt = startedAt
+    }
+
+    /// The sidebar's order: working ones first, then idle, failed, and the ones that reported back.
+    public var rank: Int {
+        switch state {
+        case .running: return 0
+        case .background: return 1
+        case .idle: return 2
+        case .failed: return 3
+        case .done: return 4
+        }
+    }
+
+    /// By `rank`, and inside one rank the newest started first; rows without a start keep their order, last.
+    public static func ordered(_ agents: [SessionSubagent]) -> [SessionSubagent] {
+        agents.enumerated().sorted { left, right in
+            if left.element.rank != right.element.rank {
+                return left.element.rank < right.element.rank
+            }
+
+            switch (left.element.startedAt, right.element.startedAt) {
+            case let (l?, r?) where l != r: return l > r
+            case (_?, nil): return true
+            case (nil, _?): return false
+            default: return left.offset < right.offset
+            }
+        }.map(\.element)
     }
 }
 

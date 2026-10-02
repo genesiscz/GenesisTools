@@ -4,6 +4,8 @@ import { findPublishedBySlug, listPublished } from "@app/dev-dashboard/lib/obsid
 import { readNote } from "@app/dev-dashboard/lib/obsidian/reader";
 import {
     buildShareAssetIndex,
+    codeLanguageFor,
+    fencedCode,
     hashAsset,
     lineRangeOf,
     readShareAsset,
@@ -135,11 +137,15 @@ export function shareRoutes(): RouteDef[] {
 
                     // The page is public: the rendered note, its source view and its download all use the masked text.
                     const source = redactSecretsInText(await readNote(obsidianVault, note.vaultPath));
+                    // A shared source file is one highlighted block. Its comments are not markdown, so
+                    // nothing in them becomes a link or an asset the page would serve.
+                    const language = codeLanguageFor(note.vaultPath);
+                    const markdown = language ? fencedCode(source, language) : source;
                     const assets = await assetIndexFor({
                         slug,
                         vaultRoot: obsidianVault,
                         notePath: note.vaultPath,
-                        source,
+                        source: markdown,
                     });
                     let openAssetUrl: string | undefined;
 
@@ -194,7 +200,7 @@ export function shareRoutes(): RouteDef[] {
 
                     const published = await listPublished();
                     const publishedByPath = new Map(published.map((entry) => [entry.vaultPath, entry.slug]));
-                    const rendered = renderMarkdown(source, {
+                    const rendered = renderMarkdown(markdown, {
                         resolveWikilink: (name) => {
                             const match = published.find((publishedNote) => {
                                 const base = publishedNote.vaultPath.split("/").pop() ?? publishedNote.vaultPath;

@@ -181,6 +181,8 @@ describe("buildTurnCosts", () => {
             [4, "u2", 1],
         ]);
         expect(result.turns[1]?.cacheWriteTokens).toBe(2_000);
+        // The prompt size of each prompt's last call: it falls when the second prompt runs on a cache.
+        expect(result.turns.map((turn) => turn.contextTokens)).toEqual([100_000, 52_010]);
         expect(result.turns[0]?.costUsd).toBeCloseTo(0.11);
         expect(result.turns[0]?.rank).toBe(1);
         expect(result.turns[1]?.rank).toBe(2);
@@ -188,6 +190,20 @@ describe("buildTurnCosts", () => {
         expect(result.turns[0]?.models).toEqual(["sonnet"]);
         expect(result.priced).toBe(true);
         expect(result.totals.modelCalls).toBe(2);
+    });
+
+    test("an output-only call keeps the prompt size the measured call before it recorded", () => {
+        const result = buildTurnCosts({
+            turns: [
+                user("u1", "first", 0),
+                assistant("a1", 5, { usage: { inputTokens: 1_000, cacheReadTokens: 9_000, outputTokens: 50 } }),
+                assistant("a2", 9, { usage: { outputTokens: 20 } }),
+            ],
+            defaultModel: "gpt-x",
+            price: flatPricer,
+        });
+
+        expect(result.turns.map((turn) => turn.contextTokens)).toEqual([10_000]);
     });
 
     test("an unpriced call leaves the turn without a cost and ranks by billable tokens instead", () => {

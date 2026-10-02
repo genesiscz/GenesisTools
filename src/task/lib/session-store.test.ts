@@ -2,7 +2,8 @@ import { setupStorageSandbox } from "@genesiscz/utils/storage/test-sandbox";
 
 setupStorageSandbox();
 
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it, spyOn } from "bun:test";
+import * as fs from "node:fs";
 import { existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { jsonlPath, sessionFilePaths } from "@app/task/lib/paths";
@@ -324,5 +325,34 @@ describe("TaskSessionStore session reuse helpers", () => {
         expect(names).toContain(name);
         expect(names).not.toContain(`${name}.ui`);
         expect(names).not.toContain("orphan.ui");
+    });
+});
+
+describe("TaskSessionStore.deleteSession", () => {
+    it("removes every sidecar when another process deleted one between the check and the unlink", async () => {
+        const store = new TaskSessionStore();
+        await store.getSessionsDir();
+        const paths = sessionFilePaths("raced");
+        for (const path of [paths.jsonl, paths.uiJsonl, paths.stdout, paths.stderr, paths.meta]) {
+            writeFileSync(path, "x");
+        }
+
+        const unlink = fs.unlinkSync;
+        const spy = spyOn(fs, "unlinkSync").mockImplementation((path) => {
+            unlink(path);
+            if (path === paths.jsonl) {
+                throw Object.assign(new Error(`ENOENT: no such file or directory, unlink '${path}'`), {
+                    code: "ENOENT",
+                });
+            }
+        });
+
+        try {
+            await store.deleteSession("raced");
+        } finally {
+            spy.mockRestore();
+        }
+
+        expect([paths.jsonl, paths.uiJsonl, paths.stdout, paths.stderr, paths.meta].filter(existsSync)).toEqual([]);
     });
 });

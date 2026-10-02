@@ -545,6 +545,33 @@ export function expandMoves(moves: MoveSpec[], options: ExpandMovesOptions = {})
         }
     }
 
+    // A rewrite inside pasted code (a qualified name re-pointed) changes what the paste left behind.
+    // An insertion (an empty match, as the `^` that adds an import line) leaves the landmark whole.
+    for (const importEdit of importEdits) {
+        for (const op of importEdit.ops ?? []) {
+            if (op.kind !== "regex") {
+                continue;
+            }
+
+            const every = new RegExp(op.find.source, op.find.flags.includes("g") ? op.find.flags : `${op.find.flags}g`);
+            const replace = op.replace;
+            const rewrite = (text: string): string =>
+                typeof replace === "string" ? text.replace(op.find, replace) : text.replace(op.find, replace);
+            for (const edit of edits) {
+                if (
+                    path.resolve(cwd, edit.file) !== path.resolve(cwd, importEdit.file) ||
+                    edit.expectAfter === undefined
+                ) {
+                    continue;
+                }
+
+                edit.expectAfter = edit.expectAfter.map((text) =>
+                    [...text.matchAll(every)].some((match) => match[0] !== "") ? rewrite(text) : text
+                );
+            }
+        }
+    }
+
     edits.push(...importEdits);
     return edits;
 }

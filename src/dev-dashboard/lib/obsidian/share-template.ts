@@ -1,4 +1,5 @@
 import type { RenderResult } from "@app/dev-dashboard/lib/obsidian/markdown";
+import { codeLanguageFor } from "@app/dev-dashboard/lib/obsidian/share-assets";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { escapeHtml } from "@genesiscz/utils/string";
 
@@ -603,7 +604,7 @@ function embedSourceJson(source: string): string {
     return SafeJSON.stringify(source).replace(/</g, "\\u003c");
 }
 
-function buildViewToggleScript(downloadName: string): string {
+function buildViewToggleScript(downloadName: string, contentType: string): string {
     return `<script>
 (function () {
     var btn = document.getElementById("dd-share-view-btn");
@@ -618,7 +619,7 @@ function buildViewToggleScript(downloadName: string): string {
     var downloadBtn = document.getElementById("dd-share-download-btn");
     if (downloadBtn) {
         downloadBtn.addEventListener("click", function () {
-            var blob = new Blob([panel.textContent], { type: "text/markdown;charset=utf-8" });
+            var blob = new Blob([panel.textContent], { type: ${SafeJSON.stringify(contentType)} });
             var url = URL.createObjectURL(blob);
             var a = document.createElement("a");
             a.href = url;
@@ -855,10 +856,14 @@ export function renderSharePage(options: ShareTemplateOptions): string {
         bodyExtras.push(buildMermaidScript());
     }
 
-    const baseName = sourcePath?.split("/").pop()?.replace(/\.md$/i, "") || title;
-    const downloadName = `${baseName.replace(/[\\/:*?"<>|]/g, "_")}.md`;
+    const fileName = sourcePath?.split("/").pop();
+    // A shared source file downloads under its own name; only a note gets the .md suffix.
+    const isSourceFile = Boolean(fileName && codeLanguageFor(fileName));
+    const baseName = isSourceFile && fileName ? fileName : `${fileName?.replace(/\.md$/i, "") || title}.md`;
+    const downloadName = baseName.replace(/[\\/:*?"<>|]/g, "_");
+    const contentType = isSourceFile ? "text/plain;charset=utf-8" : "text/markdown;charset=utf-8";
 
-    bodyExtras.push(buildViewToggleScript(downloadName));
+    bodyExtras.push(buildViewToggleScript(downloadName, contentType));
     bodyExtras.push(buildAssetPanelScript());
 
     const sourceLine = sourcePath ? `<span class="dd-share-source">${escapeHtml(sourcePath)}</span>` : "";

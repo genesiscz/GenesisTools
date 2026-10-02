@@ -319,7 +319,12 @@ function foldChevron(path: string): HTMLElement {
     return chevron;
 }
 
-function toggleFold(path: string): void {
+/**
+ * Folding a file read from its middle keeps its header at the top of the pane; without it the rows
+ * below moved up under the reader, who landed in a different file ("it should scroll to the top of the
+ * folded file", 2026-10-02). `itemTop` is the file's top edge relative to the pane, before the fold.
+ */
+function toggleFold(path: string, itemTop?: number): void {
     if (folded.has(path)) {
         folded.delete(path);
     } else {
@@ -331,11 +336,15 @@ function toggleFold(path: string): void {
 
     if (file && item && item.type === "diff") {
         viewer.updateItem({ ...item, collapsed: folded.has(path), version: nextVersion(file.id) });
+
+        if (folded.has(path) && itemTop !== undefined && itemTop < 0) {
+            viewer.scrollTo({ type: "item", id: file.id, align: "start", behavior: "instant" });
+        }
     }
 }
 
 /** The header row a pointer event landed on: the file's path, and whether it landed on the path text. */
-function headerHitOf(event: Event): { path: string; onName: boolean } | null {
+function headerHitOf(event: Event): { path: string; onName: boolean; item: Element } | null {
     let onName = false;
 
     for (const node of event.composedPath()) {
@@ -356,7 +365,7 @@ function headerHitOf(event: Event): { path: string; onName: boolean } | null {
             const root = node.getRootNode();
             const itemHost = root instanceof ShadowRoot ? root.host : node;
             const path = itemHost.querySelector("[data-gt-fold]")?.getAttribute("data-gt-fold");
-            return path ? { path, onName } : null;
+            return path ? { path, onName, item: itemHost } : null;
         }
     }
 
@@ -386,9 +395,10 @@ function viewOptions(): CodeViewOptions<AnnotationMeta, undefined> {
         overflow: options.wrap ? "wrap" : "scroll",
         stickyHeaders: true,
         // A click on a file's name selects the whole name and nothing else, so ⌘C copies exactly the
-        // path (a triple-click took the line break after it too).
+        // path (a triple-click took the line break after it too). The rest of the row folds the file,
+        // so it shows the pointing hand.
         unsafeCSS:
-            "[data-diffs-header] [data-title], [data-diffs-header] [data-prev-name] { -webkit-user-select: all; user-select: all; cursor: text; }",
+            "[data-diffs-header] { cursor: pointer; } [data-diffs-header] [data-title], [data-diffs-header] [data-prev-name] { -webkit-user-select: all; user-select: all; cursor: text; }",
         lineDiffType: "word-alt",
         hunkSeparators: "line-info",
         lineHoverHighlight: "both",
@@ -497,7 +507,7 @@ host.addEventListener("click", (event) => {
     }
 
     event.preventDefault();
-    toggleFold(hit.path);
+    toggleFold(hit.path, hit.item.getBoundingClientRect().top - host.getBoundingClientRect().top);
     post({ type: "log", message: `diff.fold ${folded.has(hit.path) ? "folded" : "unfolded"} ${hit.path}` });
 });
 

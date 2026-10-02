@@ -125,6 +125,20 @@ export function collectAssetTargets(source: string): string[] {
     return [...targets];
 }
 
+/** The highlight.js language of a source file, or null when the path is not one. */
+export function codeLanguageFor(path: string): string | null {
+    return CODE_LANGUAGES[posix.extname(path).toLowerCase()] ?? null;
+}
+
+/** `text` as one fenced block, with a fence longer than any backtick run inside it. */
+export function fencedCode(text: string, language: string): string {
+    const body = text.replace(/\n$/, "");
+    const longestRun = (body.match(/`+/g) ?? []).reduce((longest, run) => Math.max(longest, run.length), 0);
+    const fence = "`".repeat(Math.max(3, longestRun + 1));
+
+    return `${fence}${language}\n${body}\n${fence}\n`;
+}
+
 function assetTypeFor(path: string): AssetType | null {
     return ASSET_TYPES[posix.extname(path).toLowerCase()] ?? null;
 }
@@ -470,10 +484,7 @@ export function renderJsonAssetHtml(text: string): string {
         log.debug({ err }, "json asset does not parse, showing it verbatim");
     }
 
-    const longestRun = Math.max(0, ...(body.match(/`+/g) ?? []).map((run) => run.length));
-    const fence = "`".repeat(Math.max(3, longestRun + 1));
-
-    return renderMarkdown(`${fence}json\n${body}\n${fence}\n`, { resolveWikilink: () => null }).html;
+    return renderMarkdown(fencedCode(body, "json"), { resolveWikilink: () => null }).html;
 }
 
 /**

@@ -317,11 +317,10 @@ struct TimelineDetailView: View {
                     Button("Retry") { timeline.loadDetail(event, fresh: true) }.buttonStyle(.genHoverPlain()).font(.system(size: 11.5))
                 }
             } else {
-                HStack(spacing: 8) {
-                    ProgressView().controlSize(.small)
-                    Text("Reading the details…").font(.system(size: 11.5)).foregroundColor(ReviewPalette.dim)
-                }
-                .frame(height: 24)
+                SkeletonLines(count: 3)
+                    .skeletonShimmer()
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel("Reading the details")
             }
         }
         .padding(10)

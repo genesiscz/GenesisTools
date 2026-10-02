@@ -180,7 +180,7 @@ function billableTokens(turn: TokenTotals): number {
 /** Per-prompt tokens and cost, with the `EXPENSIVE_TURNS` most expensive ranked 1.. */
 export function buildTurnCosts(options: TurnCostOptions): TurnCostResult {
     const sections = sectionsOf(options.turns);
-    const perSection = sections.map(() => ({ totals: emptyTotals(), models: new Set<string>() }));
+    const perSection = sections.map(() => ({ totals: emptyTotals(), models: new Set<string>(), context: 0 }));
     const totals = emptyTotals();
     let priced = true;
 
@@ -200,6 +200,12 @@ export function buildTurnCosts(options: TurnCostOptions): TurnCostResult {
         addCall(slot.totals, call, cost);
         addCall(totals, call, cost);
 
+        // A call that records only output or reasoning has no prompt size; the last measured one stays.
+        const context = call.input + call.cacheRead + call.cacheWrite;
+        if (context > 0) {
+            slot.context = context;
+        }
+
         if (call.model) {
             slot.models.add(shortModel(call.model));
         }
@@ -209,7 +215,7 @@ export function buildTurnCosts(options: TurnCostOptions): TurnCostResult {
         const tools = section.turns.flatMap((turn) => turn.tools);
         const first = millis(section.turns[0]?.at);
         const last = millis(section.turns.findLast((turn) => turn.at)?.at);
-        const slot = perSection[i] ?? { totals: emptyTotals(), models: new Set<string>() };
+        const slot = perSection[i] ?? { totals: emptyTotals(), models: new Set<string>(), context: 0 };
         return {
             ...slot.totals,
             number: section.number,
@@ -221,6 +227,7 @@ export function buildTurnCosts(options: TurnCostOptions): TurnCostResult {
             models: [...slot.models],
             toolCount: tools.length,
             errorCount: tools.filter(isFailedTool).length,
+            contextTokens: slot.context,
             rank: null,
         };
     });

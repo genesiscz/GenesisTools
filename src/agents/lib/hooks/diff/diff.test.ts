@@ -38,6 +38,7 @@ import {
     runDiffPost,
     silentReason,
 } from "./run";
+import { writerChanges } from "./writers";
 
 let repo: string;
 let calls = 0;
@@ -974,6 +975,41 @@ describe("files the command NAMES rather than works in", () => {
         ["a variable", 'bun x "$HOME/note.md"'],
     ])("refuses %s", (_label, command) => {
         expect(namedArguments(command, [vault])).toEqual([]);
+    });
+
+    it("follows a variable the command set itself, as the start of a path", () => {
+        const note = join(vault, "wrapup.md");
+
+        expect(namedArguments(`V=${vault}; cat "$V/wrapup.md"`, [vault])).toContain(note);
+        expect(namedArguments(`V=${vault}; cat \${V}/wrapup.md`, [vault])).toContain(note);
+        // Single quotes do not expand, and a variable the command never set is the environment's.
+        expect(namedArguments(`V=${vault}; cat '$V/wrapup.md'`, [vault])).toEqual([]);
+        expect(namedArguments(`cat "$OTHER/wrapup.md"`, [vault])).toEqual([]);
+    });
+
+    it("refuses a reference whose braces do not match, which the shell reads as a different path", () => {
+        expect(namedArguments(`V=${vault}; cat "$V}/wrapup.md"`, [vault])).toEqual([]);
+        expect(namedArguments(`V=${vault}; cat "\${V/wrapup.md"`, [vault])).toEqual([]);
+    });
+
+    it("never follows a variable whose value holds a space, which an unquoted use would split", () => {
+        expect(namedArguments(`V="${vault}/a b"; cat $V/wrapup.md`, [vault])).toEqual([]);
+        expect(namedArguments(`V="${vault}/a b"; cat "$V/wrapup.md"`, [vault])).toEqual([]);
+    });
+
+    it("reads a variable as the shell had it at each use, not as the command last set it", () => {
+        const other = join(vault, "other");
+
+        expect(namedArguments(`V=${vault}; cat "$V/a.md"; V=${other}; cat "$V/b.md"`, [vault])).toEqual([
+            join(vault, "a.md"),
+            join(other, "b.md"),
+        ]);
+        // A use before the assignment, and a reassignment the hook cannot read, name nothing.
+        expect(namedArguments(`cat "$V/a.md"; V=${vault}`, [vault])).toEqual([]);
+        expect(namedArguments(`V=${vault}; V=$(pwd); cat "$V/a.md"`, [vault])).toEqual([]);
+        // `export` sets it for the rest of the command; a pipeline stage's assignment ends with the stage.
+        expect(namedArguments(`export V=${vault}; cat "$V/a.md"`, [vault])).toEqual([join(vault, "a.md")]);
+        expect(namedArguments(`V=${vault} | cat "$V/a.md"`, [vault])).toEqual([]);
     });
 
     it("never turns a command substitution into a path that exists", () => {
@@ -1946,6 +1982,12 @@ describe("a `cd` through a variable the command set itself", () => {
         expect(commandDirs(`P=${other}\ncd "$P" && bun x`, repo)).toEqual([repo, other]);
     });
 
+    it("follows a reference with a path after it", () => {
+        mkdirSync(join(other, "sub"), { recursive: true });
+
+        expect(commandDirs(`P=${other}\ncd "$P/sub" && bun x`, repo)).toEqual([repo, join(other, "sub")]);
+    });
+
     it("follows a bare and a braced reference", () => {
         expect(commandDirs(`P=${other}\ncd $P && bun x`, repo)).toEqual([repo, other]);
         expect(commandDirs(`P=${other}\ncd \${P} && bun x`, repo)).toEqual([repo, other]);
@@ -1976,8 +2018,8 @@ describe("a `cd` through a variable the command set itself", () => {
         expect(commandDirs('cd "$NOT_SET_ANYWHERE" && bun x', repo)).toEqual([repo]);
     });
 
-    it("refuses a reference the command only partly builds", () => {
-        expect(commandDirs(`P=${other}\ncd "$P/sub" && bun x`, repo)).toEqual([repo]);
+    it("drops a variable-prefixed target that does not exist", () => {
+        expect(commandDirs(`P=${other}\ncd "$P/missing" && bun x`, repo)).toEqual([repo]);
     });
 
     it("does not read the assignment itself as a file the command named", () => {
@@ -2357,5 +2399,126 @@ describe("mention extraction", () => {
         expect(readOnlyCommand("sed 's/a/b/w out.txt' f")).toBe(false);
         expect(readOnlyCommand("rg -n foo | sort | uniq -c")).toBe(true);
         expect(readOnlyCommand("awk '{print $1}' f")).toBe(true);
+    });
+});
+
+describe("writerChanges: fable-replace's journal names the files a sweep wrote", () => {
+    it("a run that started before the command, or that names no session, is not this call's", () => {
+        const root = mkdtempSync(join(tmpdir(), "writers-"));
+        const backup = join(root, "cli-1");
+        mkdirSync(backup);
+        const edited = join(root, "note.md");
+        writeFileSync(edited, "after\n");
+        writeFileSync(join(backup, "note.md.orig"), "before\n");
+        writeFileSync(
+            join(backup, "fable-replace-manifest.json"),
+            SafeJSON.stringify({ entries: [{ original: edited, stored: "note.md.orig" }] })
+        );
+        const now = Date.now();
+        const line = (offset: number, session?: string) =>
+            SafeJSON.stringify({
+                ts: new Date(now - offset).toISOString(),
+                kind: "run",
+                outcome: "ok",
+                ...(session ? { session } : {}),
+                backupDir: backup,
+            });
+        const journal = join(root, "journal.jsonl");
+
+        try {
+            writeFileSync(journal, `${line(2500, "s1")}\n`);
+            expect(writerChanges({ since: now - 2000, now, sessionId: "s1", journal })).toEqual([]);
+
+            writeFileSync(journal, `${line(500)}\n`);
+            expect(writerChanges({ since: now - 2000, now, sessionId: "s1", journal })).toEqual([]);
+            expect(writerChanges({ since: now - 2000, now, sessionId: undefined, journal })).toHaveLength(1);
+        } finally {
+            rmSync(root, { recursive: true, force: true });
+        }
+    });
+
+    it("a run whose manifest does not parse is skipped, and the runs after it still count", () => {
+        const root = mkdtempSync(join(tmpdir(), "writers-"));
+        const broken = join(root, "cli-1");
+        const good = join(root, "cli-2");
+        mkdirSync(broken);
+        mkdirSync(good);
+        const edited = join(root, "note.md");
+        writeFileSync(edited, "after\n");
+        writeFileSync(join(broken, "fable-replace-manifest.json"), "{torn");
+        writeFileSync(join(good, "note.md.orig"), "before\n");
+        writeFileSync(
+            join(good, "fable-replace-manifest.json"),
+            SafeJSON.stringify({ entries: [{ original: edited, stored: "note.md.orig" }] })
+        );
+        const now = Date.now();
+        const line = (offset: number, backupDir: string) =>
+            SafeJSON.stringify({
+                ts: new Date(now - offset).toISOString(),
+                kind: "run",
+                outcome: "ok",
+                session: "s1",
+                backupDir,
+            });
+        const journal = join(root, "journal.jsonl");
+        writeFileSync(journal, `${[line(500, broken), line(300, good)].join("\n")}\n`);
+
+        try {
+            expect(writerChanges({ since: now - 2000, now, sessionId: "s1", journal })).toEqual([
+                { path: edited, before: join(good, "note.md.orig"), deleted: false },
+            ]);
+        } finally {
+            rmSync(root, { recursive: true, force: true });
+        }
+    });
+
+    it("returns this session's files from runs inside the call, with the backup copy as the before-state", () => {
+        const root = mkdtempSync(join(tmpdir(), "writers-"));
+        const backup = join(root, "cli-1");
+        mkdirSync(backup);
+        const edited = join(root, "note.md");
+        const created = join(root, "new.md");
+        writeFileSync(edited, "after\n");
+        writeFileSync(created, "fresh\n");
+        writeFileSync(join(backup, "note.md.orig"), "before\n");
+        writeFileSync(
+            join(backup, "fable-replace-manifest.json"),
+            SafeJSON.stringify({
+                entries: [
+                    { original: edited, stored: "note.md.orig" },
+                    { original: created, stored: null },
+                ],
+            })
+        );
+        const now = Date.now();
+        const line = (offset: number, outcome: string, session: string) =>
+            SafeJSON.stringify({
+                ts: new Date(now - offset).toISOString(),
+                kind: "run",
+                outcome,
+                session,
+                backupDir: backup,
+            });
+        const journal = join(root, "journal.jsonl");
+        writeFileSync(
+            journal,
+            [
+                line(60_000, "ok", "s1"),
+                line(500, "ok", "other"),
+                line(400, "miss", "s1"),
+                "{torn",
+                line(300, "ok", "s1"),
+            ].join("\n") + "\n"
+        );
+
+        try {
+            expect(writerChanges({ since: now - 2000, now, sessionId: "s1", journal })).toEqual([
+                { path: edited, before: join(backup, "note.md.orig"), deleted: false },
+                { path: created, before: null, deleted: false },
+            ]);
+            expect(writerChanges({ since: now - 2000, now, sessionId: "nobody", journal })).toEqual([]);
+        } finally {
+            rmSync(root, { recursive: true, force: true });
+        }
     });
 });

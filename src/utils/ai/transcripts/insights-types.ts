@@ -64,6 +64,11 @@ export interface TurnCost extends TokenTotals {
     models: string[];
     toolCount: number;
     errorCount: number;
+    /**
+     * The context window after this prompt: the prompt size (input + cache read + cache write) of its last
+     * model call. It grows through a session and drops at a compaction. 0 when no call recorded usage.
+     */
+    contextTokens: number;
     /** 1 = the most expensive turn of the session, up to `EXPENSIVE_TURNS`; null otherwise. */
     rank: number | null;
 }

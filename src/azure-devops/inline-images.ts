@@ -17,10 +17,66 @@ export interface InlineImageRef {
 }
 
 const ATTACHMENT_URL_PATTERN = /\/_apis\/wit\/attachments\/([a-f0-9-]+)/i;
-const IMG_SRC_PATTERN = /<img[^>]+src=["']([^"']+)["'][^>]*>/gi;
+/** The first attribute named exactly `src` (a space before it, so `data-src` is not it). */
+const IMG_SRC_PATTERN = /<img\b[^>]*?\ssrc=["']([^"']+)["'][^>]*>/gi;
+/** {@link IMG_SRC_PATTERN} with the text before and after the src value captured too. */
+const IMG_SRC_PARTS_PATTERN = /(<img\b[^>]*?\ssrc=["'])([^"']+)(["'][^>]*>)/gi;
+/**
+ * `![alt](url)`, `![alt](<url>)` or either with a `"title"`: comments written in ADO's markdown editor
+ * carry images this way. An angle-bracket destination may hold `)` and spaces, so it has its own group;
+ * a bare one may hold balanced parentheses (`?fileName=screen(1).png`).
+ */
+const MARKDOWN_IMAGE_PATTERN = /(!\[[^\]]*\]\(\s*)(?:<([^>\n]+)>|((?:[^()\s]|\([^()\s]*\))+))((?:\s+"[^"]*")?\s*\))/g;
+
+function markdownImageUrl(match: RegExpMatchArray): string {
+    return match[2] ?? match[3] ?? "";
+}
 
 /**
- * Extract Azure DevOps attachment image URLs from HTML content.
+ * Where a markdown text holds code: fenced blocks (a fence closes on its own character, at least as long,
+ * with nothing after it) and backtick spans. An image written there is an example, not an image.
+ */
+function codeRanges(text: string): Array<[number, number]> {
+    const ranges: Array<[number, number]> = [];
+    let fence: { char: string; length: number; start: number } | null = null;
+    let offset = 0;
+
+    for (const line of text.split("\n")) {
+        const marker = /^ {0,3}(`{3,}|~{3,})/.exec(line);
+
+        if (fence === null && marker) {
+            fence = { char: marker[1][0], length: marker[1].length, start: offset };
+        } else if (
+            fence !== null &&
+            marker &&
+            marker[1][0] === fence.char &&
+            marker[1].length >= fence.length &&
+            line.slice(marker[0].length).trim() === ""
+        ) {
+            ranges.push([fence.start, offset + line.length]);
+            fence = null;
+        } else if (fence === null) {
+            for (const span of line.matchAll(/(`+)[^`][\s\S]*?\1/g)) {
+                ranges.push([offset + (span.index ?? 0), offset + (span.index ?? 0) + span[0].length]);
+            }
+        }
+
+        offset += line.length + 1;
+    }
+
+    if (fence !== null) {
+        ranges.push([fence.start, text.length]);
+    }
+
+    return ranges;
+}
+
+function inCode(ranges: Array<[number, number]>, at: number): boolean {
+    return ranges.some(([from, to]) => at >= from && at < to);
+}
+
+/**
+ * Extract Azure DevOps attachment image URLs from HTML or markdown content.
  * Returns deduplicated list of image references.
  */
 export function extractInlineImageUrls(html: string, workItemId: number): InlineImageRef[] {
@@ -30,10 +86,14 @@ export function extractInlineImageUrls(html: string, workItemId: number): Inline
 
     const seen = new Set<string>();
     const images: InlineImageRef[] = [];
+    const urls = [
+        ...[...html.matchAll(IMG_SRC_PATTERN)].map((m) => m[1]),
+        ...[...html.matchAll(MARKDOWN_IMAGE_PATTERN)]
+            .filter((match) => !inCode(codeRanges(html), match.index ?? 0))
+            .map(markdownImageUrl),
+    ];
 
-    for (const match of html.matchAll(IMG_SRC_PATTERN)) {
-        const url = match[1];
-
+    for (const url of urls) {
         if (seen.has(url)) {
             continue;
         }
@@ -143,4 +203,40 @@ export function rewriteImageUrls(html: string, urlMap: Map<string, string>): str
     }
 
     return result;
+}
+
+/** Rewrite only the `src` of each `<img>`: the rest of the text (a code example quoting the URL) stays. */
+export function rewriteImageSources(text: string, urlMap: Map<string, string>): string {
+    if (!text || urlMap.size === 0) {
+        return text;
+    }
+
+    return text.replace(IMG_SRC_PARTS_PATTERN, (tag, before: string, src: string, after: string) => {
+        const local = urlMap.get(src);
+        return local ? `${before}${local}${after}` : tag;
+    });
+}
+
+/**
+ * Rewrite the image destinations of a markdown text to the downloaded files. A local name with a space
+ * or a parenthesis is written as `<name>`, because a bare destination ends at the first space or `)`.
+ */
+export function rewriteMarkdownImageUrls(text: string, urlMap: Map<string, string>): string {
+    if (!text || urlMap.size === 0) {
+        return text;
+    }
+
+    const code = codeRanges(text);
+    return text.replace(
+        MARKDOWN_IMAGE_PATTERN,
+        (whole, open: string, angled: string | undefined, bare: string | undefined, close: string, at: number) => {
+            const local = urlMap.get(angled ?? bare ?? "");
+            if (!local || inCode(code, at)) {
+                return whole;
+            }
+
+            const destination = angled !== undefined || /[\s()]/.test(local) ? `<${local}>` : local;
+            return `${open}${destination}${close ?? ""}`;
+        }
+    );
 }

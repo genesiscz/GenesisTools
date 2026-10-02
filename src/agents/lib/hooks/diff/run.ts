@@ -36,6 +36,7 @@ import { type ChangedFile, changedFiles } from "./collect";
 import { appendMentions, loadMentions, type Mentions, mentionsFrom, mentionsOf } from "./mentions";
 import { namedChanges } from "./named";
 import { assembleMessage, type DiffBlock, highlightRange, hunkRange, renderBlock, renderPatch } from "./render";
+import { writerChanges } from "./writers";
 
 export interface DiffDecision {
     /** `noted`: no diff block, only the one-line summaries of files it could not show. */
@@ -553,7 +554,22 @@ export function runDiffPost(
 
     // Files the command NAMED rather than worked in. They are read from a copy, so this adds
     // no git process unless one of them actually changed.
-    for (const change of namedChanges(dir)) {
+    // Files a writer that keeps its own before-copies reported (fable-replace's journal), whatever
+    // the command looked like: the paths of a sweep sit in a heredoc spec or behind variables.
+    // A path both sources hold keeps the named copy: it was taken at command start, so it also
+    // carries an edit the command made before the writer ran.
+    const named = namedChanges(dir);
+    const namedPaths = new Set(named.map((change) => change.path));
+    const startedPath = join(dir, "started-ms");
+    const started = existsSync(startedPath) ? Number(readFileSync(startedPath, "utf8").trim()) : Number.NaN;
+    const reported = writerChanges({
+        since: Number.isFinite(started) ? started : since,
+        now: attribution.now,
+        sessionId: payload.sessionId,
+    });
+    const reportedPaths = new Set(reported.map((change) => change.path));
+
+    for (const change of [...named, ...reported.filter((item) => !namedPaths.has(item.path))]) {
         if (full() && !logsEdits) {
             break;
         }
@@ -589,7 +605,12 @@ export function runDiffPost(
             continue;
         }
 
-        if (change.before === null && !change.deleted && !diff.namedPathsShowCreated) {
+        if (
+            change.before === null &&
+            !change.deleted &&
+            !diff.namedPathsShowCreated &&
+            !reportedPaths.has(change.path)
+        ) {
             // A file this command created, known only because the command named it. That is
             // a scratch file far more often than not, and the command's own output already
             // says what it wrote. An edit to a file that ALREADY existed still renders.

@@ -58,6 +58,9 @@ a title bar gets, through GenesisKit Window/WindowTitlebar.swift:
 - `.titlebarRow()` for controls moved up into the strip: the strip's height, clear of the traffic lights and title.
 
 Never put a view over the title bar without these. A window with a standard (not full-size) title bar needs nothing.
+🛑 No `.instantTooltip`, `.help`, `.onHover`, gesture or context menu on a NON-control in the strip: it takes the
+pointer, and a flexible-width one (a path `Text` with `.lineLimit(1)`) kills the double-click along the whole row (Genesis
+Markdown, 2026-10-01). Full rules and the check: `.claude/docs/swift-headers.md` (local-only here, tracked in GenesisPlayground).
 Check it: the `--hub` and `--review` snapshots print `titlebar …; ok` or the problem (`WindowTitlebar.audit`), and
 `swift test --filter WindowTitlebarTests` covers the behaviour.
 

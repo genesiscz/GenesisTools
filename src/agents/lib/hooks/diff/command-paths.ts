@@ -7,6 +7,7 @@ import {
     nextRawArgument,
     rawToken,
     type ShellScan,
+    type Span,
     scanShell,
     splitPipeline,
     tokenize,
@@ -46,8 +47,9 @@ export function plainArgument(raw: string | null): string | null {
 
 /** `NAME=` at the head of a token: a shell assignment, never a path. */
 const ASSIGNMENT = /^([A-Za-z_][A-Za-z0-9_]*)=/;
+const DECLARING = new Set(["export", "readonly", "declare", "typeset"]);
 /** A bare variable reference, with or without braces. */
-const VARIABLE = /^\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?$/;
+const VARIABLE = /^\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))$/;
 
 function scan(command: string, what: string): ShellScan | null {
     try {
@@ -70,36 +72,42 @@ function scan(command: string, what: string): ShellScan | null {
  * the hook watching the session cwd, which was a DIFFERENT checkout, so two edited files
  * produced no diff at all. Assignments are the common shape for a long path.
  *
- * Only a value `plainArgument` already accepts is recorded, and an assignment stops the scan
- * of its own element: in shell, assignments prefix a command, so the first token that is not
- * one begins the arguments.
+ * The callers walk the statements in order and apply each element's assignments AFTER reading
+ * its arguments, so a `$V` means the value the shell had at that point: `V=/one; cat "$V/a";
+ * V=/two; cat "$V/b"` names `/one/a` and `/two/b`. Only an element made of assignments alone
+ * keeps them (`V=/x cat "$V"` sets V for that one command), and a value `plainArgument` does not
+ * accept (`V=$(pwd)`) forgets the earlier one rather than keep a value the shell no longer has.
  */
-function assignments(command: string, scanned: ShellScan): Map<string, string> {
-    const known = new Map<string, string>();
+function applyAssignments(command: string, tokens: Span[], known: Map<string, string>): void {
+    const assigned: Array<[string, string | null]> = [];
+    // `export P=/x` (and `readonly`, `declare`) sets P for the rest of the command as a bare assignment does.
+    const declares = tokens.length > 0 && DECLARING.has(rawToken(command, tokens[0] as Span));
 
-    for (const unit of scanned.units) {
-        for (const statement of unit) {
-            for (const element of splitPipeline(statement)) {
-                for (const token of tokenize(element)) {
-                    const raw = rawToken(command, token);
-                    const head = ASSIGNMENT.exec(raw);
-                    const name = head?.[1];
+    for (const token of declares ? tokens.slice(1) : tokens) {
+        const raw = rawToken(command, token);
+        const head = ASSIGNMENT.exec(raw);
+        const name = head?.[1];
 
-                    if (!head || !name) {
-                        break;
-                    }
-
-                    const value = plainArgument(raw.slice(head[0].length));
-
-                    if (value) {
-                        known.set(name, value);
-                    }
-                }
-            }
+        if (declares && !head) {
+            // `export P` or a flag (`declare -x`): no value here.
+            continue;
         }
+
+        if (!head || !name) {
+            return;
+        }
+
+        // `V=/x; cat "$V/a"`: the statement's `;` comes with the token and is not part of the value.
+        assigned.push([name, plainArgument(raw.slice(head[0].length).replace(/;+$/, ""))]);
     }
 
-    return known;
+    for (const [name, value] of assigned) {
+        if (value) {
+            known.set(name, value);
+        } else {
+            known.delete(name);
+        }
+    }
 }
 
 /**
@@ -120,7 +128,8 @@ function variableValue(raw: string | null, known: Map<string, string>): string |
         return null;
     }
 
-    const name = VARIABLE.exec(quoted?.[2] ?? raw)?.[1];
+    const match = VARIABLE.exec(quoted?.[2] ?? raw);
+    const name = match?.[1] ?? match?.[2];
 
     return name ? (known.get(name) ?? null) : null;
 }
@@ -134,24 +143,29 @@ function cdTargets(command: string): string[] {
         return targets;
     }
 
-    const known = assignments(command, scanned);
+    const known = new Map<string, string>();
 
     for (const unit of scanned.units) {
         for (const statement of unit) {
-            for (const element of splitPipeline(statement)) {
+            const elements = splitPipeline(statement);
+
+            for (const element of elements) {
                 const tokens = tokenize(element);
                 const index = commandTokenIndex(tokens);
                 const token = index === -1 ? undefined : tokens[index];
 
-                if (!token || commandWord(token.text) !== "cd") {
-                    continue;
+                if (token && commandWord(token.text) === "cd") {
+                    const raw = nextRawArgument(command, token.start + token.text.length);
+                    const target = plainArgument(raw) ?? variableValue(raw, known) ?? expandVariable(raw, known);
+
+                    if (target) {
+                        targets.push(target);
+                    }
                 }
 
-                const raw = nextRawArgument(command, token.start + token.text.length);
-                const target = plainArgument(raw) ?? variableValue(raw, known);
-
-                if (target) {
-                    targets.push(target);
+                // A pipeline stage runs in a subshell: its assignments end with it.
+                if (elements.length === 1) {
+                    applyAssignments(command, tokens, known);
                 }
             }
         }
@@ -229,8 +243,35 @@ function pathShaped(value: string): boolean {
     return value.includes("/") && !value.includes("://") && !value.includes("\n");
 }
 
-function add(into: string[], raw: string | null, bases: string[]): void {
-    const plain = plainArgument(raw);
+/** `$NAME/rest` or `${NAME}/rest`: a variable reference, then a plain remainder. `$V}` and `${V` are not. */
+const VARIABLE_PREFIX = /^\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))(\/[^"'\\$`]*)?$/;
+
+/**
+ * A path that starts with a variable the command set to a plain value earlier (`V=/vault; cat "$V/a.md"`).
+ * The same rule as `variableValue`: only the command's own assignments, never the environment, and only
+ * a plain remainder, so the result is what the shell saw. Long vault paths are written this way, and
+ * refusing them left a sweep's files with no diff (2026-10-01).
+ */
+function expandVariable(raw: string | null, known: Map<string, string>): string | null {
+    if (!raw || known.size === 0) {
+        return null;
+    }
+
+    const quoted = /^(['"])(.*)\1$/.exec(raw);
+
+    if (quoted?.[1] === "'") {
+        return null;
+    }
+
+    const match = VARIABLE_PREFIX.exec(quoted?.[2] ?? raw);
+    const name = match?.[1] ?? match?.[2];
+    const base = name ? known.get(name) : undefined;
+
+    return base ? base + (match?.[3] ?? "") : null;
+}
+
+function add(into: string[], raw: string | null, bases: string[], known: Map<string, string> = new Map()): void {
+    const plain = plainArgument(raw) ?? expandVariable(raw, known);
 
     if (plain === null) {
         return;
@@ -238,10 +279,7 @@ function add(into: string[], raw: string | null, bases: string[]): void {
 
     // `P=/some/dir` is an assignment, not an argument. Reading it as a path joined the whole
     // token onto the cwd and produced `<cwd>/P=/some/dir`, which can never exist and cost one
-    // of the few named slots. The assignment itself is followed by `assignments` instead.
-    // `P=/some/dir` is an assignment, not an argument. Reading it as a path joined the whole
-    // token onto the cwd and produced `<cwd>/P=/some/dir`, which can never exist and cost one
-    // of the few named slots. The assignment itself is followed by `assignments` instead.
+    // of the few named slots. The assignment itself is followed by `applyAssignments` instead.
     if (ASSIGNMENT.test(plain)) {
         return;
     }
@@ -287,12 +325,23 @@ export function namedArguments(command: string, bases: string[]): string[] {
         return found;
     }
 
+    const known = new Map<string, string>();
+
     for (const unit of scanned.units) {
         for (const statement of unit) {
-            for (const element of splitPipeline(statement)) {
-                for (const token of tokenize(element)) {
-                    add(found, rawToken(command, token), bases);
-                    add(found, nextRawArgument(command, token.start + token.text.length), bases);
+            const elements = splitPipeline(statement);
+
+            for (const element of elements) {
+                const tokens = tokenize(element);
+
+                for (const token of tokens) {
+                    add(found, rawToken(command, token), bases, known);
+                    add(found, nextRawArgument(command, token.start + token.text.length), bases, known);
+                }
+
+                // A pipeline stage runs in a subshell: its assignments end with it.
+                if (elements.length === 1) {
+                    applyAssignments(command, tokens, known);
                 }
             }
         }

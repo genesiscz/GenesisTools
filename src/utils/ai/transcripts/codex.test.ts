@@ -82,6 +82,7 @@ describe("codexNativeLinesToTurns", () => {
             name: "shell",
             inputPreview: "git status",
             result: "clean",
+            resultChars: 5,
             isError: false,
         });
     });
@@ -104,6 +105,343 @@ describe("codexNativeLinesToTurns", () => {
         const turns = codexNativeLinesToTurns(lines);
         expect(turns[0]?.text).toBe("run status");
         expect(turns[1]?.text).toBe("checking");
+    });
+});
+
+describe("codexNativeLinesToTurns with encrypted collaboration messages", () => {
+    test("a spawn_agent message token shows as a marker, the other arguments stay", () => {
+        const token = `gAAAAAB${"Qx9_-".repeat(40)}==`;
+        const turns = codexNativeLinesToTurns([
+            SafeJSON.stringify({
+                type: "response_item",
+                timestamp: "2026-10-02T18:13:24.727Z",
+                payload: {
+                    type: "function_call",
+                    name: "spawn_agent",
+                    call_id: "c1",
+                    arguments: SafeJSON.stringify({ task_name: "pr589_astra", agent_type: "worker", message: token }),
+                },
+            }),
+        ]);
+        const preview = turns[0]?.tools[0]?.inputPreview ?? "";
+        expect(preview).not.toContain("gAAAAA");
+        expect(preview).toContain(`[encrypted by Codex, ${token.length} chars]`);
+        expect(preview).toContain("pr589_astra");
+    });
+
+    test("a plain message argument is kept", () => {
+        const args = SafeJSON.stringify({ target: "pr589_astra", message: "gAAAAA is how the tokens start" });
+        const turns = codexNativeLinesToTurns([
+            SafeJSON.stringify({
+                type: "response_item",
+                timestamp: "2026-10-02T18:13:24.727Z",
+                payload: { type: "function_call", name: "send_message", call_id: "c2", arguments: args },
+            }),
+        ]);
+        expect(turns[0]?.tools[0]?.inputPreview).toBe(args);
+    });
+});
+
+describe("codexNativeLinesToTurns with exec scripts and their items", () => {
+    const row = (ordinal: number, payload: Record<string, unknown>, type = "response_item") =>
+        SafeJSON.stringify({ timestamp: `2026-10-02T15:30:${String(ordinal).padStart(2, "0")}.000Z`, type, payload });
+    const item = (ordinal: number, value: Record<string, unknown>, startedAt?: number) =>
+        row(
+            ordinal,
+            {
+                type: "item_completed",
+                item: value,
+                ...(startedAt === undefined
+                    ? {}
+                    : { started_at_ms: Date.parse(`2026-10-02T15:30:${String(startedAt).padStart(2, "0")}.000Z`) }),
+            },
+            "event_msg"
+        );
+
+    test("a script that only ran commands shows the commands, with output and exit code", () => {
+        const turns = codexNativeLinesToTurns([
+            row(1, {
+                type: "custom_tool_call",
+                name: "exec",
+                call_id: "s1",
+                input: 'text(await tools.exec_command({cmd:"git status"}))',
+            }),
+            item(2, {
+                type: "CommandExecution",
+                id: "exec-1",
+                command: ["/bin/zsh", "-lc", "git status"],
+                aggregated_output: "fatal: not a git repository",
+                exit_code: 128,
+            }),
+            row(3, {
+                type: "custom_tool_call_output",
+                call_id: "s1",
+                output: [{ type: "input_text", text: "Script completed" }],
+            }),
+        ]);
+        expect(turns[0]?.tools).toEqual([
+            {
+                id: "exec-1",
+                name: "exec_command",
+                inputPreview: "git status",
+                result: "fatal: not a git repository",
+                resultChars: 27,
+                isError: true,
+                exitCode: 128,
+            },
+        ]);
+    });
+
+    test("a command's colour codes are taken out of its output", () => {
+        const turns = codexNativeLinesToTurns([
+            item(1, {
+                type: "CommandExecution",
+                id: "exec-2",
+                command: ["/bin/zsh", "-lc", "bin/sail up"],
+                aggregated_output: "\u001b[0;36mStarting\u001b[0m",
+                exit_code: 0,
+            }),
+        ]);
+        expect(turns[0]?.tools[0]?.result).toBe("Starting");
+    });
+
+    test("each model call is its own turn, so text and tools stay in the order they happened", () => {
+        const turns = codexNativeLinesToTurns([
+            row(1, { type: "message", role: "assistant", content: [{ type: "output_text", text: "First I list." }] }),
+            row(2, { type: "custom_tool_call", name: "exec", call_id: "s1", input: 'tools.exec_command({cmd:"ls"})' }),
+            item(3, {
+                type: "CommandExecution",
+                id: "e1",
+                command: ["/bin/zsh", "-lc", "ls"],
+                aggregated_output: "a",
+                exit_code: 0,
+            }),
+            row(4, { type: "custom_tool_call_output", call_id: "s1", output: "Script completed" }),
+            row(5, { type: "reasoning", summary: [] }),
+            row(6, { type: "message", role: "assistant", content: [{ type: "output_text", text: "Then I test." }] }),
+            row(7, {
+                type: "custom_tool_call",
+                name: "exec",
+                call_id: "s2",
+                input: 'tools.exec_command({cmd:"make test"})',
+            }),
+            item(8, {
+                type: "CommandExecution",
+                id: "e2",
+                command: ["/bin/zsh", "-lc", "make test"],
+                aggregated_output: "ok",
+                exit_code: 0,
+            }),
+        ]);
+        expect(turns.map((turn) => [turn.text, turn.tools.map((tool) => tool.inputPreview)])).toEqual([
+            ["First I list.", ["ls"]],
+            ["Then I test.", ["make test"]],
+        ]);
+    });
+
+    test("a command that finishes after the next call began goes back under its own script", () => {
+        const turns = codexNativeLinesToTurns([
+            row(1, {
+                type: "custom_tool_call",
+                name: "exec",
+                call_id: "s1",
+                input: 'tools.exec_command({cmd:"bun install"})',
+            }),
+            row(2, { type: "custom_tool_call_output", call_id: "s1", output: "Script running" }),
+            row(3, { type: "reasoning", summary: [] }),
+            row(4, {
+                type: "custom_tool_call",
+                name: "exec",
+                call_id: "s2",
+                input: 'tools.exec_command({cmd:"git status"})',
+            }),
+            item(5, {
+                type: "CommandExecution",
+                id: "e2",
+                command: ["/bin/zsh", "-lc", "git status"],
+                aggregated_output: "",
+                exit_code: 0,
+            }),
+            item(
+                6,
+                {
+                    type: "CommandExecution",
+                    id: "e1",
+                    command: ["/bin/zsh", "-lc", "bun install"],
+                    aggregated_output: "done",
+                    exit_code: 0,
+                },
+                1
+            ),
+            row(7, { type: "custom_tool_call_output", call_id: "s2", output: "Script completed" }),
+        ]);
+        expect(turns.map((turn) => turn.tools.map((tool) => tool.inputPreview))).toEqual([
+            ["bun install"],
+            ["git status"],
+        ]);
+    });
+
+    test("an item no script names stays in its own model call once the earlier script finished", () => {
+        const turns = codexNativeLinesToTurns([
+            row(1, { type: "custom_tool_call", name: "exec", call_id: "s1", input: 'tools.exec_command({cmd:"ls"})' }),
+            item(2, {
+                type: "CommandExecution",
+                id: "e1",
+                command: ["/bin/zsh", "-lc", "ls"],
+                aggregated_output: "a",
+                exit_code: 0,
+            }),
+            row(3, { type: "custom_tool_call_output", call_id: "s1", output: "Script completed" }),
+            row(4, { type: "reasoning", summary: [] }),
+            row(5, { type: "function_call", name: "js", call_id: "j1", arguments: "{}" }),
+            item(6, {
+                type: "CommandExecution",
+                id: "e2",
+                command: ["/bin/zsh", "-lc", "du -sh ."],
+                aggregated_output: "4K",
+                exit_code: 0,
+            }),
+        ]);
+        expect(turns.map((turn) => turn.tools.map((tool) => tool.id))).toEqual([["e1"], ["j1", "e2"]]);
+    });
+
+    test("an item no script names goes under the script still running", () => {
+        const turns = codexNativeLinesToTurns([
+            row(1, {
+                type: "custom_tool_call",
+                name: "exec",
+                call_id: "s1",
+                input: "for (const cmd of cmds) await tools.exec_command({cmd})",
+            }),
+            row(2, { type: "reasoning", summary: [] }),
+            row(3, { type: "message", role: "assistant", content: [{ type: "output_text", text: "Waiting." }] }),
+            item(4, {
+                type: "CommandExecution",
+                id: "e1",
+                command: ["/bin/zsh", "-lc", "git log -1"],
+                aggregated_output: "abc",
+                exit_code: 0,
+            }),
+            row(5, { type: "custom_tool_call_output", call_id: "s1", output: "Script completed" }),
+        ]);
+        expect(turns.map((turn) => [turn.text, turn.tools.map((tool) => tool.id)])).toEqual([
+            ["", ["e1"]],
+            ["Waiting.", []],
+        ]);
+    });
+
+    test("a command run again in a later call stays there, though an earlier finished script names it", () => {
+        const turns = codexNativeLinesToTurns([
+            row(1, {
+                type: "custom_tool_call",
+                name: "exec",
+                call_id: "s1",
+                input: 'tools.exec_command({cmd:"make test"})',
+            }),
+            item(
+                2,
+                {
+                    type: "CommandExecution",
+                    id: "e1",
+                    command: ["/bin/zsh", "-lc", "make test"],
+                    aggregated_output: "ok",
+                    exit_code: 0,
+                },
+                1
+            ),
+            row(3, { type: "custom_tool_call_output", call_id: "s1", output: "Script completed" }),
+            row(4, { type: "reasoning", summary: [] }),
+            row(5, { type: "function_call", name: "js", call_id: "j1", arguments: "{}" }),
+            item(
+                7,
+                {
+                    type: "CommandExecution",
+                    id: "e2",
+                    command: ["/bin/zsh", "-lc", "make test"],
+                    aggregated_output: "ok",
+                    exit_code: 0,
+                },
+                6
+            ),
+        ]);
+        expect(turns.map((turn) => turn.tools.map((tool) => tool.id))).toEqual([["e1"], ["j1", "e2"]]);
+    });
+
+    test("an MCP call repeated in a later call stays there when the item has no start time", () => {
+        const turns = codexNativeLinesToTurns([
+            row(1, {
+                type: "custom_tool_call",
+                name: "exec",
+                call_id: "s1",
+                input: 'await tools.mcp__docs__lookup({query:"swift"})',
+            }),
+            item(2, { type: "McpToolCall", id: "m1", server: "docs", tool: "lookup", arguments: { query: "swift" } }),
+            row(3, { type: "custom_tool_call_output", call_id: "s1", output: "Script completed" }),
+            row(4, { type: "reasoning", summary: [] }),
+            row(5, { type: "function_call", name: "js", call_id: "j1", arguments: "{}" }),
+            item(6, { type: "McpToolCall", id: "m2", server: "docs", tool: "lookup", arguments: { query: "bun" } }),
+        ]);
+        expect(turns.map((turn) => turn.tools.map((tool) => tool.id))).toEqual([["m1"], ["j1", "m2"]]);
+    });
+
+    test("a call answered with no output is finished, not waiting", () => {
+        const turns = codexNativeLinesToTurns([
+            row(1, {
+                type: "function_call",
+                name: "send_message",
+                call_id: "m1",
+                arguments: '{"target":"a","message":"hi"}',
+            }),
+            row(2, { type: "function_call_output", call_id: "m1", output: "" }),
+        ]);
+        expect(turns[0]?.tools[0]?.result).toBe("");
+    });
+
+    test("a script whose tool leaves no item keeps its own row and output", () => {
+        const turns = codexNativeLinesToTurns([
+            row(1, {
+                type: "custom_tool_call",
+                name: "exec",
+                call_id: "s2",
+                input: 'await tools.view_image({path:"/tmp/a.png"})',
+            }),
+            row(2, {
+                type: "custom_tool_call_output",
+                call_id: "s2",
+                output: [{ type: "input_text", text: "Script completed" }],
+            }),
+        ]);
+        expect(turns[0]?.tools.map((tool) => [tool.name, tool.result])).toEqual([["exec", "Script completed"]]);
+    });
+
+    test("an MCP call and a file change become rows", () => {
+        const turns = codexNativeLinesToTurns([
+            item(1, {
+                type: "McpToolCall",
+                id: "m1",
+                server: "codex_app",
+                tool: "attach_artifact",
+                arguments: { url: "https://example.com/pull/1" },
+                result: { content: [{ type: "text", text: "attached" }], isError: false },
+            }),
+            item(2, {
+                type: "FileChange",
+                id: "f1",
+                changes: {
+                    "/tmp/a.txt": { type: "add", content: "one\ntwo" },
+                    "/tmp/b.txt": { type: "update", unified_diff: "@@ -1 +1 @@\n-old\n+new" },
+                },
+                status: "completed",
+                stdout: "Success.",
+            }),
+        ]);
+        const [mcp, patch] = turns[0]?.tools ?? [];
+        expect(mcp?.name).toBe("mcp__codex_app__attach_artifact");
+        expect(mcp?.result).toBe("attached");
+        expect(patch?.name).toBe("apply_patch");
+        expect(patch?.inputPreview).toBe(
+            "*** Begin Patch\n*** Add File: /tmp/a.txt\n+one\n+two\n*** Update File: /tmp/b.txt\n@@ -1 +1 @@\n-old\n+new\n*** End Patch"
+        );
     });
 });
 

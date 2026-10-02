@@ -668,6 +668,71 @@ struct GroupHeader: View {
     }
 }
 
+/// Where a session's checkout lives when its recorded folder no longer holds one. A project moved into a
+/// group folder (`Projects/ReservineBack` → `Projects/Reservine/ReservineBack`, 2026-10-02) leaves the
+/// old path empty or with a broken `.git`, and the agent keeps that path as its folder: the Changes pane
+/// then had no repository. The checkout with the same name one level down under the parent is the
+/// move, when exactly one exists. Only a found checkout is cached, and only while it still is one: a miss
+/// is asked again, so a move still in progress is found once it lands. A folder that holds a repository
+/// is its own answer, also after a move was cached: a move undone wins over the cached one.
+enum MovedCheckout {
+    private static var cache: [String: String] = [:]
+    private static let lock = NSLock()
+
+    static func resolve(_ folder: String) -> String? {
+        if isRepository(projectRoot(of: folder)) {
+            lock.lock()
+            cache[folder] = nil
+            lock.unlock()
+            return nil
+        }
+
+        lock.lock()
+        let known = cache[folder]
+        lock.unlock()
+        if let known, isRepository(known) {
+            return known
+        }
+
+        let found = search(folder)
+        lock.lock()
+        cache[folder] = found
+        lock.unlock()
+        if let found {
+            HubPerf.log("moved checkout: \(folder) -> \(found)")
+        }
+        return found
+    }
+
+    /// A real repository: `.git` is a folder with `HEAD`, or a worktree's (or submodule's) pointer file
+    /// whose `gitdir:` still holds a `HEAD`. A pointer left behind by a deleted main checkout is not one.
+    static func isRepository(_ root: String) -> Bool {
+        let git = (root as NSString).appendingPathComponent(".git")
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: git, isDirectory: &isDirectory) else { return false }
+        if isDirectory.boolValue {
+            return FileManager.default.fileExists(atPath: (git as NSString).appendingPathComponent("HEAD"))
+        }
+        guard let text = try? String(contentsOfFile: git, encoding: .utf8),
+              let line = text.split(whereSeparator: \.isNewline).first, line.hasPrefix("gitdir:")
+        else { return false }
+        var target = line.dropFirst("gitdir:".count).trimmingCharacters(in: .whitespaces)
+        if !target.hasPrefix("/") {
+            target = (root as NSString).appendingPathComponent(target)
+        }
+        return FileManager.default.fileExists(atPath: (target as NSString).appendingPathComponent("HEAD"))
+    }
+
+    private static func search(_ folder: String) -> String? {
+        let name = (folder as NSString).lastPathComponent
+        let parent = (folder as NSString).deletingLastPathComponent
+        guard !name.isEmpty, let groups = try? FileManager.default.contentsOfDirectory(atPath: parent) else { return nil }
+        let matches = groups.filter { !$0.hasPrefix(".") }.map { (parent as NSString).appendingPathComponent($0 + "/" + name) }
+            .filter { $0 != folder && isRepository($0) }
+        return matches.count == 1 ? matches[0] : nil
+    }
+}
+
 /// The repository root above a folder (the directory holding `.git`), else the folder itself.
 func projectRoot(of cwd: String) -> String {
     var dir = URL(fileURLWithPath: cwd)

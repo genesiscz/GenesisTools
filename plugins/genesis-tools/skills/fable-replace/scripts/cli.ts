@@ -149,6 +149,7 @@ const entry: JournalEntry = {
     runId: `${startedAt.toString(36)}-${process.pid}`,
     pid: process.pid,
     cwd: process.cwd(),
+    session: process.env.CLAUDE_CODE_SESSION_ID || process.env.CODEX_THREAD_ID || undefined,
     kind: "run",
     outcome: "error",
 };

@@ -120,7 +120,17 @@ struct GitWorkingTreeSource {
     }
 
     func load(scope: DiffScope = .uncommitted, session: String? = nil) throws -> Snapshot {
-        let branch = (try? git(["rev-parse", "--abbrev-ref", "HEAD"]).trimmed) ?? "(no HEAD)"
+        let branch: String
+        do {
+            branch = try git(["rev-parse", "--abbrev-ref", "HEAD"]).trimmed
+        } catch {
+            // A folder with a broken or empty .git: each later git call printed its usage text into the
+            // pane ("Not a git repository. Use --no-index …", a codex session's folder, 2026-10-02).
+            if "\(error)".lowercased().contains("not a git repository") {
+                throw ReviewError.notRepository(repo.path)
+            }
+            branch = "(no HEAD)"
+        }
         if case .lastTurns(let count) = scope {
             guard let session else {
                 throw ReviewError.git("Last turns needs a session: open this diff from a session in the hub")
@@ -472,10 +482,13 @@ struct GitWorkingTreeSource {
 
 enum ReviewError: Error, CustomStringConvertible {
     case git(String)
+    case notRepository(String)
 
     var description: String {
         switch self {
         case .git(let message): return message
+        case .notRepository(let path):
+            return "\((path as NSString).abbreviatingWithTildeInPath) is not a git repository, so it has no changes to show."
         }
     }
 }

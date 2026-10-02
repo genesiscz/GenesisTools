@@ -149,7 +149,7 @@ public enum HangWatch {
         lock.unlock()
 
         if shouldSample { captureStack(stallSoFar: gap) }
-        if shouldLog { PerfLog.mark(String(format: "main-stall ongoing %.1fs load=%.1f", gap, PerfLog.loadAverage())) }
+        if shouldLog { PerfLog.mark(String(format: "main-stall ongoing %.1fs load=%.1f", gap, PerfLog.loadAverage()) + PerfContext.describe()) }
         if shouldAlert { reportWedge(stallSoFar: gap) }
     }
 
@@ -173,7 +173,7 @@ public enum HangWatch {
                 let sinceWake = woke > 0 && ran - woke < wakeWindow ? ran - woke : nil
                 // On the main queue here, so AppKit may be asked. No app object (a test) counts as seen.
                 let hidden = MainActor.assumeIsolated { NSApp.map { !$0.occlusionState.contains(.visible) } ?? false }
-                PerfLog.mark(stallMark(ms: ms, load: PerfLog.loadAverage(), sinceWake: sinceWake, hidden: hidden))
+                PerfLog.mark(stallMark(ms: ms, load: PerfLog.loadAverage(), sinceWake: sinceWake, hidden: hidden) + PerfContext.describe(now: ran))
             }
         }
     }
@@ -218,7 +218,7 @@ public enum HangWatch {
         let file = hangsDirectory.appendingPathComponent("hang-\(stamp).txt")
         lastCaptureFile = file
         try? FileManager.default.createDirectory(at: hangsDirectory, withIntermediateDirectories: true)
-        PerfLog.mark(String(format: "main-stall %.1fs so far — sampling to %@", stallSoFar, file.lastPathComponent))
+        PerfLog.mark(String(format: "main-stall %.1fs so far — sampling to %@", stallSoFar, file.lastPathComponent) + PerfContext.describe())
         // The ping this stall belongs to. `sample` attaches ~1 s after the
         // stall was noticed and then samples for 2 s, so a 1.2 s stall is over
         // before the first sample lands and the capture shows an idle main

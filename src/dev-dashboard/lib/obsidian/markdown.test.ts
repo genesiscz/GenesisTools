@@ -153,6 +153,26 @@ describe("renderMarkdown", () => {
         expect(html).not.toContain("hljs-");
     });
 
+    test("hides comment-only HTML (include markers, stamps) and still escapes any other raw HTML", () => {
+        const md = [
+            '<!-- md:include sig=1a2b3c4d5e6f {{lines path="/x/a.ts" range="1-2"}} -->',
+            "```ts",
+            "const a = 1;",
+            "```",
+            "<!-- /md:include -->",
+            "",
+            "<!-- updated 2026-10-01 18:00: note -->",
+            "",
+            "<b>bold</b> <!-- inline comment -->",
+        ].join("\n");
+        const { html } = renderMarkdown(md, noop);
+
+        expect(html).not.toContain("md:include");
+        expect(html).not.toContain("updated 2026");
+        expect(html).toContain('<code class="hljs language-ts">');
+        expect(html).toContain("&lt;b&gt;bold&lt;/b&gt;");
+    });
+
     test("passes mermaid blocks through and sets hasMermaid", () => {
         const md = "```mermaid\ngraph TD; A-->B;\n```";
         const result = renderMarkdown(md, noop);
