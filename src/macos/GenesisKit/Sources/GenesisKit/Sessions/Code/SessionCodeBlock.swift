@@ -594,7 +594,12 @@ public struct CodeBlockText: View {
         Group {
             if wrap {
                 // The plain first draw is bounded (see `CodeBlockRenderer.firstDrawLimit`).
-                wrapped(colored ?? CodeBlockRenderer.attributed(block, limit: limit, highlight: false, drawn: CodeBlockRenderer.firstDrawLimit))
+                let rendered = colored ?? CodeBlockRenderer.attributed(block, limit: limit, highlight: false, drawn: CodeBlockRenderer.firstDrawLimit)
+                if WrappedCodeTextView.usesSwiftUI {
+                    wrapped(rendered)
+                } else {
+                    appKitWrapped(rendered, contentKey: colored == nil ? key + "#plain" : key)
+                }
             } else if let colored {
                 sidewaysScrolling(colored, contentKey: key)
             } else {
@@ -659,6 +664,23 @@ public struct CodeBlockText: View {
             }
         }
         .hoverTextSelection()
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(rendered.spoken.map { Text(verbatim: $0) } ?? Text(rendered.body))
+    }
+
+    /// Wrap mode in AppKit (`WrappedCodeTextView`): one wrapping text view and a drawn gutter.
+    private func appKitWrapped(_ rendered: CodeBlockAttributed, contentKey: String) -> some View {
+        WrappedCodeTextView(
+            key: contentKey,
+            gutter: { rendered.hasGutter ? CodeTextConversion.appKit(rendered.gutter) : nil },
+            body: { CodeTextConversion.appKit(rendered.body, wrapping: true) },
+            gutterWidth: CodeBlockMetrics.size(lines: rendered.lineCount, columns: rendered.gutterColumns).width,
+            ideal: {
+                let code = CodeBlockMetrics.size(lines: rendered.lineCount, columns: rendered.columns)
+                let gutter = rendered.hasGutter ? CodeBlockMetrics.size(lines: rendered.lineCount, columns: rendered.gutterColumns).width + 7 : 0
+                return CGSize(width: code.width + gutter, height: code.height)
+            }()
+        )
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(rendered.spoken.map { Text(verbatim: $0) } ?? Text(rendered.body))
     }
