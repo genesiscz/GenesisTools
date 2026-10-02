@@ -45,6 +45,12 @@ public final class FrameWatch: NSObject {
             center.addObserver(forName: NSApplication.didResignActiveNotification, object: nil, queue: .main) { _ in
                 MainActor.assumeIsolated { FrameWatch.shared.pause() }
             },
+            center.addObserver(forName: NSWindow.didChangeScreenNotification, object: nil, queue: .main) { _ in
+                MainActor.assumeIsolated { FrameWatch.shared.relink() }
+            },
+            center.addObserver(forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main) { _ in
+                MainActor.assumeIsolated { FrameWatch.shared.relink() }
+            },
         ]
         if NSApp?.isActive == true {
             resume()
@@ -59,6 +65,14 @@ public final class FrameWatch: NSObject {
         last = 0
         windowStart = 0
         reset()
+    }
+
+    /// A display link keeps the refresh rate of the screen it was made for. A window moved to another
+    /// screen, or a changed rate, needs a new link, or the frames lost are counted against the old rate.
+    private func relink() {
+        guard link != nil else { return }
+        pause()
+        resume()
     }
 
     private func pause() {
