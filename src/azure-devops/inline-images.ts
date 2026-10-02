@@ -18,8 +18,15 @@ export interface InlineImageRef {
 
 const ATTACHMENT_URL_PATTERN = /\/_apis\/wit\/attachments\/([a-f0-9-]+)/i;
 const IMG_SRC_PATTERN = /<img[^>]+src=["']([^"']+)["'][^>]*>/gi;
-/** `![alt](url)` or `![alt](url "title")`: comments written in ADO's markdown editor carry images this way. */
-const MARKDOWN_IMAGE_PATTERN = /!\[[^\]]*\]\(\s*<?([^)\s>]+)>?(?:\s+"[^"]*")?\s*\)/g;
+/**
+ * `![alt](url)`, `![alt](<url>)` or either with a `"title"`: comments written in ADO's markdown editor
+ * carry images this way. An angle-bracket destination may hold `)` and spaces, so it has its own group.
+ */
+const MARKDOWN_IMAGE_PATTERN = /(!\[[^\]]*\]\(\s*)(?:<([^>\n]+)>|([^)\s]+))((?:\s+"[^"]*")?\s*\))/g;
+
+function markdownImageUrl(match: RegExpMatchArray): string {
+    return match[2] ?? match[3] ?? "";
+}
 
 /**
  * Extract Azure DevOps attachment image URLs from HTML or markdown content.
@@ -32,7 +39,10 @@ export function extractInlineImageUrls(html: string, workItemId: number): Inline
 
     const seen = new Set<string>();
     const images: InlineImageRef[] = [];
-    const urls = [...html.matchAll(IMG_SRC_PATTERN), ...html.matchAll(MARKDOWN_IMAGE_PATTERN)].map((m) => m[1]);
+    const urls = [
+        ...[...html.matchAll(IMG_SRC_PATTERN)].map((m) => m[1]),
+        ...[...html.matchAll(MARKDOWN_IMAGE_PATTERN)].map(markdownImageUrl),
+    ];
 
     for (const url of urls) {
         if (seen.has(url)) {
@@ -144,4 +154,27 @@ export function rewriteImageUrls(html: string, urlMap: Map<string, string>): str
     }
 
     return result;
+}
+
+/**
+ * Rewrite the image destinations of a markdown text to the downloaded files. A local name with a space
+ * or a parenthesis is written as `<name>`, because a bare destination ends at the first space or `)`.
+ */
+export function rewriteMarkdownImageUrls(text: string, urlMap: Map<string, string>): string {
+    if (!text || urlMap.size === 0) {
+        return text;
+    }
+
+    return text.replace(
+        MARKDOWN_IMAGE_PATTERN,
+        (whole, open: string, angled?: string, bare?: string, close?: string) => {
+            const local = urlMap.get(angled ?? bare ?? "");
+            if (!local) {
+                return whole;
+            }
+
+            const destination = angled !== undefined || /[\s()]/.test(local) ? `<${local}>` : local;
+            return `${open}${destination}${close ?? ""}`;
+        }
+    );
 }

@@ -34,6 +34,7 @@ import type {
 import { loadTeamMembersCache, saveTeamMembersCache } from "@app/azure-devops/cache";
 import { AzAuthError, extractAzLoginSuggestion } from "@app/azure-devops/cli.utils";
 import { extractOrgName } from "@app/azure-devops/config";
+import { adoOrganizationOf } from "@app/azure-devops/lib/comments";
 import { findTruncatedNodes, flattenIterationNodes } from "@app/azure-devops/lib/iterations";
 import { type SavedQueryDefinition, workItemIdsFromQueryResult } from "@app/azure-devops/lib/query-tree";
 import type {
@@ -391,6 +392,11 @@ export class Api {
         const shortUrl = url.replace(this.config.org, "").slice(0, 80);
         logger.debug(`[api] GET binary ${shortUrl}${description ? ` (${description})` : ""}`);
         const startTime = Date.now();
+
+        // The URL can come from a comment's markdown; only the configured organization gets the token.
+        if (!Api.isOrganizationUrl(url, this.config.org)) {
+            throw new Error(`Refusing to send the Azure DevOps token to ${url}: not the configured organization`);
+        }
 
         const token = await this.getAccessToken();
         const response = await fetch(url, {
@@ -973,6 +979,20 @@ export class Api {
         const data = await this.get<GitCommitsResponse>(url, `commits of ${itemPath}`);
 
         return data.value;
+    }
+
+    /** True when `url` has the protocol of `org` and names the same organization (`dev.azure.com/<org>` or `<org>.visualstudio.com`). */
+    static isOrganizationUrl(url: string, org: string): boolean {
+        if (!URL.canParse(url) || !URL.canParse(org)) {
+            return false;
+        }
+
+        if (new URL(url).protocol !== new URL(org).protocol) {
+            return false;
+        }
+
+        const target = adoOrganizationOf(url);
+        return target !== null && target === adoOrganizationOf(org);
     }
 
     /** Raw-bytes URL of one file in a git repository, for `fetchBinary`. `version` is a branch unless `versionType` says commit. */

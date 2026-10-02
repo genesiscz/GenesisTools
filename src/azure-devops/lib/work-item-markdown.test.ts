@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { Api } from "@app/azure-devops/api";
 import { extractInlineImageUrls } from "@app/azure-devops/inline-images";
 import { formatWorkItemMarkdown, tableCell } from "@app/azure-devops/lib/work-item-markdown";
 import type { WorkItemFull } from "@app/azure-devops/types";
@@ -78,6 +79,42 @@ describe("formatWorkItemMarkdown", () => {
         expect(md).toContain("**Steps**\nopen the card\n![image.png](281785-46e8a5cc-image.png)");
         expect(md).toContain('![second](281785-46e8a5cc-image.png "title")');
         expect(md).not.toContain("\\*\\*");
+    });
+
+    test("an angle-bracket destination keeps its parentheses, and a local name with a space stays one link", () => {
+        const base = "https://dev.azure.com/example/proj/_apis/wit/attachments/46e8a5cc-7c33-4aab-92ba-d91fe3446a5a";
+        const angled = `${base}?fileName=screen(1).png`;
+        const spaced = `${base.replace("46e8a5cc", "57f9b6dd")}?fileName=screen%20shot.png`;
+        const text = `![a](<${angled}>)\n![b](${spaced})`;
+        const images = extractInlineImageUrls(text, 281785);
+
+        expect(images.map((image) => image.originalUrl)).toEqual([angled, spaced]);
+        expect(images.map((image) => image.localFileName)).toEqual([
+            "281785-46e8a5cc-screen(1).png",
+            "281785-57f9b6dd-screen shot.png",
+        ]);
+
+        const md = formatWorkItemMarkdown(
+            item({
+                comments: [{ id: 1, author: "Alice Example", date: "2026-09-01T10:00:00Z", text, format: "markdown" }],
+            }),
+            new Map(images.map((image) => [image.originalUrl, image.localFileName]))
+        );
+
+        expect(md).toContain("![a](<281785-46e8a5cc-screen(1).png>)\n![b](<281785-57f9b6dd-screen shot.png>)");
+    });
+});
+
+describe("Api.isOrganizationUrl", () => {
+    test("only the configured organization gets the token, under either host form", () => {
+        const org = "https://dev.azure.com/example";
+        const attachment = "_apis/wit/attachments/46e8a5cc-7c33-4aab-92ba-d91fe3446a5a";
+
+        expect(Api.isOrganizationUrl(`https://dev.azure.com/example/proj/${attachment}`, org)).toBe(true);
+        expect(Api.isOrganizationUrl(`https://example.visualstudio.com/proj/${attachment}`, org)).toBe(true);
+        expect(Api.isOrganizationUrl(`https://attacker.example/${attachment}`, org)).toBe(false);
+        expect(Api.isOrganizationUrl(`https://dev.azure.com/other/proj/${attachment}`, org)).toBe(false);
+        expect(Api.isOrganizationUrl(`http://dev.azure.com/example/proj/${attachment}`, org)).toBe(false);
     });
 });
 

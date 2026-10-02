@@ -1,4 +1,4 @@
-import { rewriteImageUrls } from "@app/azure-devops/inline-images";
+import { rewriteImageUrls, rewriteMarkdownImageUrls } from "@app/azure-devops/inline-images";
 import { parseAttachments, parseRelations } from "@app/azure-devops/relations";
 import type { Comment, WorkItemFull } from "@app/azure-devops/types";
 import { formatBytes } from "@genesiscz/utils/format";
@@ -14,8 +14,12 @@ export function tableCell(value: string): string {
  * A markdown comment is used as is: the HTML converter would escape its `![` and `**` and join its lines.
  */
 export function commentMarkdown(comment: Comment, imageMap?: Map<string, string>): string {
-    const text = imageMap ? rewriteImageUrls(comment.text, imageMap) : comment.text;
-    return comment.format === "markdown" ? text.trim() : htmlToMarkdown(text);
+    if (comment.format !== "markdown") {
+        return htmlToMarkdown(imageMap ? rewriteImageUrls(comment.text, imageMap) : comment.text);
+    }
+
+    const text = imageMap ? rewriteImageUrls(rewriteMarkdownImageUrls(comment.text, imageMap), imageMap) : comment.text;
+    return text.trim();
 }
 
 /**
