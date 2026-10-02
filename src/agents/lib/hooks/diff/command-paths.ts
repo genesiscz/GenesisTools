@@ -7,6 +7,7 @@ import {
     nextRawArgument,
     rawToken,
     type ShellScan,
+    type Span,
     scanShell,
     splitPipeline,
     tokenize,
@@ -70,37 +71,35 @@ function scan(command: string, what: string): ShellScan | null {
  * the hook watching the session cwd, which was a DIFFERENT checkout, so two edited files
  * produced no diff at all. Assignments are the common shape for a long path.
  *
- * Only a value `plainArgument` already accepts is recorded, and an assignment stops the scan
- * of its own element: in shell, assignments prefix a command, so the first token that is not
- * one begins the arguments.
+ * The callers walk the statements in order and apply each element's assignments AFTER reading
+ * its arguments, so a `$V` means the value the shell had at that point: `V=/one; cat "$V/a";
+ * V=/two; cat "$V/b"` names `/one/a` and `/two/b`. Only an element made of assignments alone
+ * keeps them (`V=/x cat "$V"` sets V for that one command), and a value `plainArgument` does not
+ * accept (`V=$(pwd)`) forgets the earlier one rather than keep a value the shell no longer has.
  */
-function assignments(command: string, scanned: ShellScan): Map<string, string> {
-    const known = new Map<string, string>();
+function applyAssignments(command: string, tokens: Span[], known: Map<string, string>): void {
+    const assigned: Array<[string, string | null]> = [];
 
-    for (const unit of scanned.units) {
-        for (const statement of unit) {
-            for (const element of splitPipeline(statement)) {
-                for (const token of tokenize(element)) {
-                    const raw = rawToken(command, token);
-                    const head = ASSIGNMENT.exec(raw);
-                    const name = head?.[1];
+    for (const token of tokens) {
+        const raw = rawToken(command, token);
+        const head = ASSIGNMENT.exec(raw);
+        const name = head?.[1];
 
-                    if (!head || !name) {
-                        break;
-                    }
-
-                    // `V=/x; cat "$V/a"`: the statement's `;` comes with the token and is not part of the value.
-                    const value = plainArgument(raw.slice(head[0].length).replace(/;+$/, ""));
-
-                    if (value) {
-                        known.set(name, value);
-                    }
-                }
-            }
+        if (!head || !name) {
+            return;
         }
+
+        // `V=/x; cat "$V/a"`: the statement's `;` comes with the token and is not part of the value.
+        assigned.push([name, plainArgument(raw.slice(head[0].length).replace(/;+$/, ""))]);
     }
 
-    return known;
+    for (const [name, value] of assigned) {
+        if (value) {
+            known.set(name, value);
+        } else {
+            known.delete(name);
+        }
+    }
 }
 
 /**
@@ -135,7 +134,7 @@ function cdTargets(command: string): string[] {
         return targets;
     }
 
-    const known = assignments(command, scanned);
+    const known = new Map<string, string>();
 
     for (const unit of scanned.units) {
         for (const statement of unit) {
@@ -144,16 +143,16 @@ function cdTargets(command: string): string[] {
                 const index = commandTokenIndex(tokens);
                 const token = index === -1 ? undefined : tokens[index];
 
-                if (!token || commandWord(token.text) !== "cd") {
-                    continue;
+                if (token && commandWord(token.text) === "cd") {
+                    const raw = nextRawArgument(command, token.start + token.text.length);
+                    const target = plainArgument(raw) ?? variableValue(raw, known);
+
+                    if (target) {
+                        targets.push(target);
+                    }
                 }
 
-                const raw = nextRawArgument(command, token.start + token.text.length);
-                const target = plainArgument(raw) ?? variableValue(raw, known);
-
-                if (target) {
-                    targets.push(target);
-                }
+                applyAssignments(command, tokens, known);
             }
         }
     }
@@ -265,10 +264,7 @@ function add(into: string[], raw: string | null, bases: string[], known: Map<str
 
     // `P=/some/dir` is an assignment, not an argument. Reading it as a path joined the whole
     // token onto the cwd and produced `<cwd>/P=/some/dir`, which can never exist and cost one
-    // of the few named slots. The assignment itself is followed by `assignments` instead.
-    // `P=/some/dir` is an assignment, not an argument. Reading it as a path joined the whole
-    // token onto the cwd and produced `<cwd>/P=/some/dir`, which can never exist and cost one
-    // of the few named slots. The assignment itself is followed by `assignments` instead.
+    // of the few named slots. The assignment itself is followed by `applyAssignments` instead.
     if (ASSIGNMENT.test(plain)) {
         return;
     }
@@ -314,15 +310,19 @@ export function namedArguments(command: string, bases: string[]): string[] {
         return found;
     }
 
-    const known = assignments(command, scanned);
+    const known = new Map<string, string>();
 
     for (const unit of scanned.units) {
         for (const statement of unit) {
             for (const element of splitPipeline(statement)) {
-                for (const token of tokenize(element)) {
+                const tokens = tokenize(element);
+
+                for (const token of tokens) {
                     add(found, rawToken(command, token), bases, known);
                     add(found, nextRawArgument(command, token.start + token.text.length), bases, known);
                 }
+
+                applyAssignments(command, tokens, known);
             }
         }
     }

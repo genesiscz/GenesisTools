@@ -1,8 +1,8 @@
 import { closeSync, existsSync, openSync, readFileSync, readSync, statSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { toolDataDir } from "@genesiscz/utils/storage/root";
 import { hookDiag } from "../log";
 import type { NamedChange } from "./named";
 
@@ -39,8 +39,12 @@ interface ManifestEntry {
 
 /** As fable-replace's `journalHome()`: its override, else the tools home, else the user's home. */
 export function fableReplaceJournal(): string {
-    const home = env.tools.getFableReplaceHome() ?? (env.tools.hasExplicitHome() ? env.tools.getHome() : homedir());
-    return join(home, ".genesis-tools", "fable-replace", "journal.jsonl");
+    const override = env.tools.getFableReplaceHome();
+    if (override) {
+        return join(override, ".genesis-tools", "fable-replace", "journal.jsonl");
+    }
+
+    return toolDataDir("fable-replace", "journal.jsonl");
 }
 
 function tail(path: string): string {

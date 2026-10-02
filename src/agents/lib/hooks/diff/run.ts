@@ -556,10 +556,14 @@ export function runDiffPost(
     // no git process unless one of them actually changed.
     // Files a writer that keeps its own before-copies reported (fable-replace's journal), whatever
     // the command looked like: the paths of a sweep sit in a heredoc spec or behind variables.
+    // A path both sources hold keeps the named copy: it was taken at command start, so it also
+    // carries an edit the command made before the writer ran.
+    const named = namedChanges(dir);
+    const namedPaths = new Set(named.map((change) => change.path));
     const reported = writerChanges({ since, now: attribution.now, sessionId: payload.sessionId });
     const reportedPaths = new Set(reported.map((change) => change.path));
 
-    for (const change of [...namedChanges(dir).filter((item) => !reportedPaths.has(item.path)), ...reported]) {
+    for (const change of [...named, ...reported.filter((item) => !namedPaths.has(item.path))]) {
         if (full() && !logsEdits) {
             break;
         }

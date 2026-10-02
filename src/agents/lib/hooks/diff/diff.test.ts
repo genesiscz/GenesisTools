@@ -987,6 +987,18 @@ describe("files the command NAMES rather than works in", () => {
         expect(namedArguments(`cat "$OTHER/wrapup.md"`, [vault])).toEqual([]);
     });
 
+    it("reads a variable as the shell had it at each use, not as the command last set it", () => {
+        const other = join(vault, "other");
+
+        expect(namedArguments(`V=${vault}; cat "$V/a.md"; V=${other}; cat "$V/b.md"`, [vault])).toEqual([
+            join(vault, "a.md"),
+            join(other, "b.md"),
+        ]);
+        // A use before the assignment, and a reassignment the hook cannot read, name nothing.
+        expect(namedArguments(`cat "$V/a.md"; V=${vault}`, [vault])).toEqual([]);
+        expect(namedArguments(`V=${vault}; V=$(pwd); cat "$V/a.md"`, [vault])).toEqual([]);
+    });
+
     it("never turns a command substitution into a path that exists", () => {
         // The scanner lifts `$( … )` into its own unit, so what is left of the token can
         // still look like a path. It must never resolve onto a real file.
