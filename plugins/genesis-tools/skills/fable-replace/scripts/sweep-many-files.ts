@@ -16,6 +16,7 @@
  * costs a full-context round trip per turn. The files stay; the undo command is printed.
  */
 
+import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -221,7 +222,68 @@ const loaderFor = (file: string): "ts" | "tsx" | "js" | "jsx" | null => {
  * Returns the parser message, or null when the file is fine (or was already broken,
  * or is not a script, or Bun's transpiler is unavailable).
  */
+/** Bun cannot parse PHP or Swift; their own tools can, through stdin, when they are installed. */
+const EXTERNAL_PARSERS: Record<string, string[]> = {
+    ".php": ["php", "-l"],
+    ".swift": ["swiftc", "-parse", "-"],
+};
+
+export interface ExternalParseError {
+    message: string;
+    /** False when the parser did not finish (a timeout, an output overflow): nothing was checked. */
+    ran: boolean;
+}
+
+/**
+ * The parser's first error line, or null when the content parses or the tool is not installed.
+ * A parser that starts but does not finish is an error too: a check that never ran is no pass.
+ */
+export const externalParseError = (
+    command: string[],
+    content: string,
+    timeoutMs = 30_000
+): ExternalParseError | null => {
+    const tool = path.basename(command[0]);
+    const result = spawnSync(command[0], command.slice(1), { input: content, encoding: "utf8", timeout: timeoutMs });
+    if (result.error !== undefined) {
+        const code = (result.error as NodeJS.ErrnoException).code;
+        if (code === "ENOENT") {
+            return null;
+        }
+
+        return { message: `${tool}: the syntax check did not finish (${code ?? result.error.message})`, ran: false };
+    }
+
+    if (result.status === 0) {
+        return null;
+    }
+
+    const output = `${result.stderr ?? ""}\n${result.stdout ?? ""}`;
+    const line = output.split("\n").find((candidate) => /error/i.test(candidate)) ?? "does not parse";
+    return { message: `${tool}: ${line.trim().slice(0, 160)}`, ran: true };
+};
+
 const brokeSyntax = (file: string, before: string, after: string): string | null => {
+    const external = EXTERNAL_PARSERS[path.extname(file)];
+    if (external !== undefined) {
+        if (before === after) {
+            return null;
+        }
+
+        // One spawn for a file that parses; the old text is parsed only to excuse a file that
+        // was already broken before the sweep, and only a finished parse can excuse it.
+        const error = externalParseError(external, after);
+        if (error === null) {
+            return null;
+        }
+
+        if (error.ran && before !== "" && externalParseError(external, before)?.ran === true) {
+            return null;
+        }
+
+        return error.message;
+    }
+
     const loader = loaderFor(file);
     if (loader === null || before === after) {
         return null;
@@ -323,7 +385,16 @@ export const run = async ({ edits, moves, ...opts }: RunParams): Promise<RunRepo
     let allEdits: FileEdit[] = edits ?? [];
     if (moves?.length) {
         try {
-            allEdits = mergeFileEdits([...expandMoves(moves, { cwd: opts.cwd }), ...allEdits]);
+            allEdits = mergeFileEdits(
+                [
+                    ...expandMoves(moves, {
+                        ...(opts.cwd === undefined ? {} : { cwd: opts.cwd }),
+                        onWarning: (message) => console.error(`WARNING: ${message}`),
+                    }),
+                    ...allEdits,
+                ],
+                { ...(opts.cwd === undefined ? {} : { cwd: opts.cwd }) }
+            );
         } catch (err) {
             moveErrors.push(err instanceof Error ? err.message : String(err));
         }
@@ -921,14 +992,17 @@ export const run = async ({ edits, moves, ...opts }: RunParams): Promise<RunRepo
  * Without this, a file appearing in both lists is two FileEdits and pre-flight
  * refuses the batch. Ops are concatenated in order and post-conditions are unioned.
  * Anything that cannot be merged unambiguously (two different `renameTo`, a delete
- * beside ops) throws rather than guessing. Merging is by the exact `file` string.
+ * beside ops) throws rather than guessing. Merging is by the resolved path, so `./a.ts`
+ * and `a.ts` are one file; the first spelling is kept.
  */
-export const mergeFileEdits = (edits: FileEdit[]): FileEdit[] => {
+export const mergeFileEdits = (edits: FileEdit[], options: { cwd?: string } = {}): FileEdit[] => {
+    const cwd = options.cwd ?? process.cwd();
     const byFile = new Map<string, FileEdit>();
     for (const edit of edits) {
-        const existing = byFile.get(edit.file);
+        const key = path.resolve(cwd, edit.file);
+        const existing = byFile.get(key);
         if (existing === undefined) {
-            byFile.set(edit.file, { ...edit, ops: [...(edit.ops ?? [])] });
+            byFile.set(key, { ...edit, ops: [...(edit.ops ?? [])] });
             continue;
         }
         for (const field of ["delete", "renameTo", "createWith"] as const) {
@@ -943,9 +1017,10 @@ export const mergeFileEdits = (edits: FileEdit[]): FileEdit[] => {
         if ((existing.delete === true && edit.ops?.length) || (edit.delete === true && existing.ops?.length)) {
             throw new Error(`mergeFileEdits: ${edit.file} is both deleted and edited in the same batch`);
         }
-        byFile.set(edit.file, {
+        byFile.set(key, {
             ...existing,
             ...Object.fromEntries(Object.entries(edit).filter(([, v]) => v !== undefined)),
+            file: existing.file,
             ops: [...(existing.ops ?? []), ...(edit.ops ?? [])],
             expectAfter: [...(existing.expectAfter ?? []), ...(edit.expectAfter ?? [])],
             absentAfter: [...(existing.absentAfter ?? []), ...(edit.absentAfter ?? [])],

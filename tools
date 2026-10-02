@@ -8,6 +8,7 @@ import { takeDetachedMarker } from "@genesiscz/utils/cli/detached";
 import { planToolExec } from "@genesiscz/utils/cli/tool-exec";
 import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
+import { refreshInstallRecord } from "@genesiscz/utils/install-record";
 import { genesisAppLauncher } from "@genesiscz/utils/macos/genesis-app";
 import { diagnose } from "./scripts/test-deps";
 
@@ -418,6 +419,9 @@ function signalToNumber(signal: NodeJS.Signals): number | undefined {
 async function main() {
     const args = process.argv.slice(2);
     const workspaceRoot = resolveWorkspaceRoot();
+    // Plugin copies (Claude and Codex caches) find the full checkout through this record; every
+    // run keeps it current, so `tools update` and a moved checkout need no separate step.
+    refreshInstallRecord(workspaceRoot);
     const srcDir = join(workspaceRoot, SRC_DIR_NAME);
 
     if (args.length === 0) {

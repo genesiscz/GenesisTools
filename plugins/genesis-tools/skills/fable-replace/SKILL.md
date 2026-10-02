@@ -72,11 +72,14 @@ skill loaded. Keep the quotes: an install path can contain spaces.
 | `<<< before` (anchor `===` lines) | same, before it |
 | `<<< append` (lines) | append at end of file |
 | `<<< delete` (lines) | remove these lines, newline included |
+| `<<< delete symbol=<name>` / `doc=<name>` (empty body) | remove a declaration with its doc comment and attributes, or only the doc comment above it |
 | `<<< block` (from `===` to `===` replacement) | replace the region between two anchors; empty replacement deletes it |
 | `<<< create` (content) | create a new file; refuses to overwrite an existing one |
 | `<<< move to=<path> symbol=<name>` | cut that declaration (doc comment included) out of this file and paste it into `<path>`; body empty |
 | `<<< move to=<path> lines=<first>-<last>` | same, for a block that is not one declaration |
 | `<<< move … at=after` / `at=before` (body is the anchor) | place it against an anchor in the target instead of appending |
+| `<<< move … imports=fix` | also carry the imports (TS/JS, Swift, PHP): the target gains what the block uses, the source drops what only the block used, every importer of a moved export is re-pointed |
+| `<<< move … imports=fix visibility=widen` | also export (TS) or widen access (Swift) of what must cross the cut |
 
 Per-file post-conditions go between `@@` and the first op: `expect: text` (must be present
 afterwards), `absent: text` (must be gone). Both repeatable. `# comments` and blank lines are
@@ -283,7 +286,8 @@ recon never found. A 50-file rename once reported zero MISS and was still broken
 - **`expectAfter` / `expect:` and `absentAfter` / `absent:` are plain substring checks**, not
   word-boundary matches. They cannot see structure; a dropped brace passes them. That is what
   the built-in syntax check is for: every edited `.ts/.tsx/.js/.jsx` is parsed after the ops,
-  and a file that stopped parsing fails the batch with the line number.
+  and a file that stopped parsing fails the batch with the line number. `.php` goes through
+  `php -l` and `.swift` through `swiftc -parse` when those tools are installed.
 - **A rename is not finished when the code is green.** Sweep README, CLAUDE.md, docs and plans
   that name the symbol. `leftoversCheck` (script) fails the run when the old name survives in
   prose while leaving the verified code written; `leftovers({ names, dirs })` is the manual form.
@@ -313,7 +317,7 @@ await run({
     moves: [
         // A whole declaration, doc comment included, appended to the target.
         { from: "src/jev/commands/listen.ts", to: "src/jev/lib/listen/dispatch.ts", symbol: "actOnSurface" },
-        // A target that does not exist yet gets its imports from createWith, then the block.
+        // A target that does not exist yet is created by its first move; createWith gives it a header.
         {
             from: "src/jev/commands/listen.ts",
             to: "src/jev/lib/listen/target.ts",
@@ -331,8 +335,11 @@ await run({
 
 What it does for you:
 
-- `symbol` takes the **whole declaration plus the doc comment directly above it**, and nothing
-  after it. Works on TypeScript and on Swift.
+- `symbol` takes the **whole declaration plus the doc comment and the attributes or decorators
+  directly above it** (`#[Attr]`, `@MainActor`, `@Component(...)`, multi-line ones included), and
+  nothing after it. Works on TypeScript, Swift and PHP.
+- `at=before` lands above the anchor's own doc comment and attributes, never between them and the
+  line they document.
 - The block is located by a scanner that **skips braces inside strings, template literals, line
   comments and block comments**. A naive depth count reads the `{` in `"a { b"` as an opening
   brace and swallows the rest of the file; that is the failure that makes an automated move
@@ -347,9 +354,82 @@ It refuses rather than guesses: an unknown symbol, a symbol declared more than o
 line range outside the file, a marker that never appears, or `from` equal to `to` all fail
 pre-flight with the reason.
 
-⚠️ A move does not fix imports. The block arrives without whatever it used to reach for, so pair
-it with ordinary `edits` for the import lines, and let the syntax check plus your typechecker tell
-you what is still missing.
+### Splitting a file: `imports=fix`
+
+Without it, a move carries text only: the block arrives without what it used to reach for, the
+source keeps imports nothing uses, and every importer of a moved export still points at the old
+module. With `imports=fix` (script: `imports: "fix"`) one spec does the whole split:
+
+```
+@@ src/api/utils.ts
+<<< move to=src/api/utils-complex.ts symbol=defineQuery imports=fix
+>>>
+<<< move to=src/api/utils-complex.ts lines=109-467 imports=fix
+>>>
+```
+
+- **The target** gains the imports its new code uses. A relative path is recomputed from the
+  target's folder; a package or alias path is kept. A declaration that stays behind and is exported
+  is imported back from the source.
+- **The source** drops each import binding that only the moved code used. A binding that was
+  already unused stays, so the diff holds only what the move caused. A moved export the remaining
+  code still uses is imported from the target.
+- **Every importer** in the repository (`git ls-files`) follows its moved names. A statement whose
+  every name moved keeps its line and changes only the module path. A mixed statement splits, and
+  the new line goes into its import group in alphabetical order by module path. `export * from`
+  the source gains `export * from` the target.
+- Module paths follow each file's own style: relative, a tsconfig `paths` alias, or a `baseUrl`
+  path, read from the nearest `tsconfig.json` (its `extends` chain included).
+- An import list wraps when it is wider than the formatter's `lineWidth` (biome or prettier JSON
+  config). Without an active formatter, a statement keeps its own layout.
+- A target that does not exist is created, so `create` (for a header) plus the moves into the same
+  file is one spec, however the two paths are spelled.
+
+**Every refusal and every warning carries its fix**: the spec text to paste (a marker with one
+more modifier, a second move, or an ordinary op). Paste it and run again; a warning whose op is in
+the spec is no longer printed, so a clean run means every case was handled.
+
+- Refused, with the fix: a block that holds an import statement (fix: the `lines=` range without
+  them) or an `export default`; a declaration that must cross the cut but is not exported (fix:
+  `visibility=widen`, or move it along); `imports=fix` on some moves out of a file but not all.
+- Warned, with the op: a name reached through a namespace import (`U.moved`: a second namespace
+  import plus a `regex` op), a string path in a call (`import("…")`, `jest.mock("…")`), two files
+  that now import each other (moves into a third file).
+
+`visibility=widen` lets the move change visibility instead of refusing: in TypeScript it adds
+`export`; in Swift it drops `private`/`fileprivate` inside a module, and across modules makes the
+moved type and its members `public`.
+
+**Swift.** Swift imports modules, not names. Inside one module the target gets the source's
+module imports as written (`@testable import App` stays `@testable`) and nothing else changes. An
+import under `#if` is not copied: it is a warning whose op copies the whole `#if` block. Across
+modules (read from `Package.swift`, custom `path:` included) every user of a moved declaration
+gains `import <Module>`, the moved API needs `public`, a struct built from outside gets a proposed
+`public init`, and every module that gains the import without depending on the target module is a
+warning with the `Package.swift` op. Moved code that names a declaration of a module the target
+cannot see is a WARNING, not a refusal, with the moves that would fix it: an implicit `self`
+member reads the same as a top-level name, so only the compiler can tell. Run the build in
+`--verify`. Source imports stay: Swift does not fail on an unused import.
+
+**PHP.** A method moved between classes carries the `use` lines it needs and the source drops the
+ones it no longer needs. A class that changes namespace (PSR-4 from `composer.json`) is followed
+everywhere: `use` lines re-pointed, group `use A\{B, C}` split, same-namespace users given a `use`
+line, `\Old\Ns\Class` in code rewritten, and a class name in a string (a config) warned with its
+op. A new file starts with `<?php`, the source's `declare(strict_types=1)` and its PSR-4
+namespace; a class in a file of another name is warned (PSR-4 would not load it).
+
+**How it reads the code.** TypeScript and JavaScript go through the TypeScript compiler's parser
+when a GenesisTools checkout is found: exact import spans in any formatting, exact declarations,
+and scope-aware use (a parameter or local that shadows an import no longer keeps it). The plugin
+copy finds the checkout through `GENESIS_TOOLS_PATH`, then `~/.genesis-tools/install.json` (every
+`tools` run keeps it current, `tools update` included), then its own folder, then Claude's
+directory marketplace, then `tools` on PATH (`plugins/genesis-tools/lib/locate-genesis-tools.ts`).
+Without a checkout it reads with patterns and prints one warning with the install command.
+`FABLE_REPLACE_PARSER=text` forces the pattern reader. Swift and PHP are read with patterns.
+
+It is not a type checker: Swift's implicit `self`, for one, stays a compiler question. Every doubt
+keeps an import, because a spare import fails a lint and a missing one fails the build. Run the
+typechecker or the build in `--verify`.
 
 ## Renames: the two forks
 

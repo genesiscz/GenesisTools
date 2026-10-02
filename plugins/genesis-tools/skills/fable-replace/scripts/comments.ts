@@ -20,7 +20,11 @@
 import { FableReplaceError, stateless } from "./internal";
 import type { CommentSpan, DeleteLinesOp, DropCommentsOp, DropCommentsOptions, OpResult } from "./types";
 
-export const scanComments = (src: string): CommentSpan[] => {
+/**
+ * Comment spans of `src`. When `literals` is given it also receives the CONTENT spans of
+ * string, template-text and regex literals, so a caller can mask everything that is not code.
+ */
+export const scanComments = (src: string, literals?: Array<{ start: number; end: number }>): CommentSpan[] => {
     const spans: CommentSpan[] = [];
     let i = 0;
     let line = 1;
@@ -86,6 +90,7 @@ export const scanComments = (src: string): CommentSpan[] => {
     /** Consume a regex literal so its slashes and quotes never reach the comment checks. */
     const skipRegexLiteral = (): void => {
         i += 1;
+        const from = i;
         let inClass = false;
         while (i < n) {
             const ch = src[i];
@@ -94,6 +99,7 @@ export const scanComments = (src: string): CommentSpan[] => {
                 continue;
             }
             if (ch === "\n") {
+                literals?.push({ start: from, end: i });
                 return;
             }
             if (ch === "[") {
@@ -101,6 +107,7 @@ export const scanComments = (src: string): CommentSpan[] => {
             } else if (ch === "]") {
                 inClass = false;
             } else if (ch === "/" && !inClass) {
+                literals?.push({ start: from, end: i });
                 i += 1;
                 while (i < n && /[a-z]/.test(src[i] ?? "")) {
                     i += 1;
@@ -114,6 +121,7 @@ export const scanComments = (src: string): CommentSpan[] => {
 
     const skipString = (quote: string): void => {
         i += 1; // past the opening quote
+        const from = i;
         while (i < n) {
             const c = src[i];
             if (c === "\\") {
@@ -124,11 +132,13 @@ export const scanComments = (src: string): CommentSpan[] => {
                 line += 1;
             }
             if (c === quote) {
+                literals?.push({ start: from, end: i });
                 i += 1;
                 return;
             }
             i += 1;
         }
+        literals?.push({ start: from, end: n });
     };
 
     while (i < n) {
@@ -143,6 +153,9 @@ export const scanComments = (src: string): CommentSpan[] => {
 
         // inside a template literal body?
         if (templateStack.length > 0 && templateStack[templateStack.length - 1] === 0) {
+            if (c !== "`" && !(c === "$" && next === "{")) {
+                literals?.push({ start: i, end: Math.min(n, i + (c === "\\" ? 2 : 1)) });
+            }
             if (c === "\\") {
                 i += 2;
                 continue;
