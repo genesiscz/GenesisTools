@@ -512,8 +512,8 @@ public struct SessionTranscriptList: View {
             Text(verbatim: promptPosition)
                 .font(SessionPalette.mono(11))
                 .foregroundStyle(SessionPalette.dim)
-                .fixedSize()
-                .frame(minWidth: 44)
+                .lineLimit(1)
+                .frame(width: 84)
 
             Button { jump(1) } label: {
                 Image(systemName: "chevron.down")
