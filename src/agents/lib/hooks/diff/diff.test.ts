@@ -997,6 +997,9 @@ describe("files the command NAMES rather than works in", () => {
         // A use before the assignment, and a reassignment the hook cannot read, name nothing.
         expect(namedArguments(`cat "$V/a.md"; V=${vault}`, [vault])).toEqual([]);
         expect(namedArguments(`V=${vault}; V=$(pwd); cat "$V/a.md"`, [vault])).toEqual([]);
+        // `export` sets it for the rest of the command; a pipeline stage's assignment ends with the stage.
+        expect(namedArguments(`export V=${vault}; cat "$V/a.md"`, [vault])).toEqual([join(vault, "a.md")]);
+        expect(namedArguments(`V=${vault} | cat "$V/a.md"`, [vault])).toEqual([]);
     });
 
     it("never turns a command substitution into a path that exists", () => {

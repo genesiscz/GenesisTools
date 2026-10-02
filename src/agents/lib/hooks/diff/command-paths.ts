@@ -47,6 +47,7 @@ export function plainArgument(raw: string | null): string | null {
 
 /** `NAME=` at the head of a token: a shell assignment, never a path. */
 const ASSIGNMENT = /^([A-Za-z_][A-Za-z0-9_]*)=/;
+const DECLARING = new Set(["export", "readonly", "declare", "typeset"]);
 /** A bare variable reference, with or without braces. */
 const VARIABLE = /^\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?$/;
 
@@ -79,11 +80,18 @@ function scan(command: string, what: string): ShellScan | null {
  */
 function applyAssignments(command: string, tokens: Span[], known: Map<string, string>): void {
     const assigned: Array<[string, string | null]> = [];
+    // `export P=/x` (and `readonly`, `declare`) sets P for the rest of the command as a bare assignment does.
+    const declares = tokens.length > 0 && DECLARING.has(rawToken(command, tokens[0] as Span));
 
-    for (const token of tokens) {
+    for (const token of declares ? tokens.slice(1) : tokens) {
         const raw = rawToken(command, token);
         const head = ASSIGNMENT.exec(raw);
         const name = head?.[1];
+
+        if (declares && !head) {
+            // `export P` or a flag (`declare -x`): no value here.
+            continue;
+        }
 
         if (!head || !name) {
             return;
@@ -138,7 +146,9 @@ function cdTargets(command: string): string[] {
 
     for (const unit of scanned.units) {
         for (const statement of unit) {
-            for (const element of splitPipeline(statement)) {
+            const elements = splitPipeline(statement);
+
+            for (const element of elements) {
                 const tokens = tokenize(element);
                 const index = commandTokenIndex(tokens);
                 const token = index === -1 ? undefined : tokens[index];
@@ -152,7 +162,10 @@ function cdTargets(command: string): string[] {
                     }
                 }
 
-                applyAssignments(command, tokens, known);
+                // A pipeline stage runs in a subshell: its assignments end with it.
+                if (elements.length === 1) {
+                    applyAssignments(command, tokens, known);
+                }
             }
         }
     }
@@ -314,7 +327,9 @@ export function namedArguments(command: string, bases: string[]): string[] {
 
     for (const unit of scanned.units) {
         for (const statement of unit) {
-            for (const element of splitPipeline(statement)) {
+            const elements = splitPipeline(statement);
+
+            for (const element of elements) {
                 const tokens = tokenize(element);
 
                 for (const token of tokens) {
@@ -322,7 +337,10 @@ export function namedArguments(command: string, bases: string[]): string[] {
                     add(found, nextRawArgument(command, token.start + token.text.length), bases, known);
                 }
 
-                applyAssignments(command, tokens, known);
+                // A pipeline stage runs in a subshell: its assignments end with it.
+                if (elements.length === 1) {
+                    applyAssignments(command, tokens, known);
+                }
             }
         }
     }
