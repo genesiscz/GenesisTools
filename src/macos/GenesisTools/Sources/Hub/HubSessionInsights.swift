@@ -300,8 +300,8 @@ struct InsightBar {
     let context: Int
     /// The prompt `context` comes from: what the context chart's hover names and its click opens.
     let contextTurn: InsightTurn?
-    /// The context fell by a third or more between two prompts inside the bar (a compaction the
-    /// bar's last value alone would hide).
+    /// The context fell by a third or more at one of the bar's prompts, measured from the prompt before
+    /// it, in this bar or the last measured one before it (a compaction the bar's last value would hide).
     let compactedInside: Bool
 
     var billable: Int { input + cacheWrite + output }
@@ -315,15 +315,17 @@ struct InsightBar {
     static func bucket(_ turns: [InsightTurn], maxBars: Int, priced: Bool) -> [InsightBar] {
         guard !turns.isEmpty, maxBars > 0 else { return [] }
         let size = Int((Double(turns.count) / Double(maxBars)).rounded(.up))
+        // The last measurement before each bar: a fall into a bar's first prompt is its compaction too.
+        var carried: Int?
         return stride(from: 0, to: turns.count, by: size).map { start in
             let slice = turns[start..<min(start + size, turns.count)]
             let lead = slice.max { a, b in
                 priced ? (a.costUsd ?? 0) < (b.costUsd ?? 0) : a.billableTokens < b.billableTokens
             } ?? slice[slice.startIndex]
             let measured = slice.compactMap { turn in (turn.contextTokens ?? 0) > 0 ? turn : nil }
-            let compactedInside = zip(measured, measured.dropFirst()).contains { pair in
-                isCompaction(from: pair.0.contextTokens ?? 0, to: pair.1.contextTokens ?? 0)
-            }
+            let chain = (carried.map { [$0] } ?? []) + measured.map { $0.contextTokens ?? 0 }
+            let compactedInside = zip(chain, chain.dropFirst()).contains { isCompaction(from: $0.0, to: $0.1) }
+            carried = measured.last?.contextTokens ?? carried
             return InsightBar(
                 turns: slice,
                 cost: slice.reduce(0) { $0 + ($1.costUsd ?? 0) },

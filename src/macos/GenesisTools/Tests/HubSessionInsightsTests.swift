@@ -72,6 +72,12 @@ final class HubSessionInsightsTests: XCTestCase {
         XCTAssertNil(bars[1].contextTurn, "no recorded context is a missing measurement")
         XCTAssertFalse(bars[1].compactedInside)
         XCTAssertFalse(InsightBar.isCompaction(from: 100_000, to: 0), "a missing measurement is no compaction")
+
+        // 100k ends one bar, the next falls to 20k and climbs to 90k: the fall is at the boundary.
+        let across = [50_000, 100_000, 20_000, 90_000].enumerated().map { turn($0.offset + 1, cost: 0.1, context: $0.element) }
+        let split = InsightBar.bucket(across, maxBars: 2, priced: true)
+        XCTAssertEqual(split.map(\.context), [100_000, 90_000])
+        XCTAssertEqual(split.map(\.compactedInside), [false, true], "a fall across a bar boundary is ticked")
     }
 
     func testBucketsSumConsecutivePromptsAndKeepTheCostliestAsLead() {
