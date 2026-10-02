@@ -358,11 +358,14 @@ public struct SessionTranscriptList: View {
             .frame(minWidth: 8, maxWidth: .infinity, maxHeight: 20)
             .overlay(alignment: .trailing) {
                 if let windowNote {
-                    Text(verbatim: windowNote)
-                        .font(.system(size: 11))
-                        .foregroundStyle(SessionPalette.dim)
-                        .lineLimit(1)
-                        .truncationMode(.head)
+                    // Whole or not at all: cut to the slot it read "Tı".
+                    ViewThatFits(in: .horizontal) {
+                        Text(verbatim: windowNote)
+                            .font(.system(size: 11))
+                            .foregroundStyle(SessionPalette.dim)
+                            .fixedSize()
+                        Color.clear.frame(width: 0, height: 0)
+                    }
                 }
             }
             .clipped()
