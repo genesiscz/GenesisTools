@@ -38,6 +38,13 @@ private final class BrowserURLForwarder: NSObject {
     /// was clicked in. `deactivate()` alone is not enough: when the router's toast process quits,
     /// macOS brings back the most recently active app, which is this face again.
     private var lastOtherApp: NSRunningApplication?
+    /// The app to give the focus back to, until the deadline. macOS activates this face to deliver a
+    /// link, and that activation can land after the event handler returned: a focus hand-back made
+    /// only in the handler ran first, and the hub then came to the front anyway ("the rohlik link
+    /// opens the hub", 2026-10-02).
+    private var focusReturn: (app: NSRunningApplication, until: Date)?
+    /// When this face last became active: an activation just before a link arrives is the delivery's.
+    private var activatedAt = Date.distantPast
 
     func trackOtherApps() {
         let own = ProcessInfo.processInfo.processIdentifier
@@ -50,6 +57,21 @@ private final class BrowserURLForwarder: NSObject {
             else { return }
             self?.lastOtherApp = app
         }
+        NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
+            self?.activatedAt = Date()
+            self?.returnFocus()
+        }
+    }
+
+    private func returnFocus() {
+        guard let target = focusReturn else { return }
+        guard Date() < target.until, !target.app.isTerminated else {
+            focusReturn = nil
+            return
+        }
+        focusReturn = nil
+        HubPerf.log("link: focus back to \(target.app.localizedName ?? "the previous app")")
+        target.app.activate()
     }
 
     @objc func handle(_ event: NSAppleEventDescriptor, reply: NSAppleEventDescriptor) {
@@ -70,14 +92,21 @@ private final class BrowserURLForwarder: NSObject {
             }
         }
         HubPerf.log("link forwarded to a new router instance: \(raw.prefix(80))")
-        // macOS activated this window face to deliver the link; give the focus back to the app the
-        // link was clicked in, so the hub does not jump in front of it.
-        let previous = lastOtherApp
-        DispatchQueue.main.async {
-            if let previous, !previous.isTerminated {
-                previous.activate()
-            } else {
-                NSApp.deactivate()
+        // A link clicked in this face itself keeps the focus here.
+        if NSApp.isActive && Date().timeIntervalSince(activatedAt) > 0.5 {
+            return
+        }
+        // macOS activates this window face to deliver the link; give the focus back to the app the
+        // link was clicked in, so the hub does not jump in front of it. The activation may come now
+        // or after this handler, so it is undone on each one inside the window as well.
+        guard let previous = lastOtherApp, !previous.isTerminated else {
+            DispatchQueue.main.async { NSApp.deactivate() }
+            return
+        }
+        focusReturn = (previous, Date().addingTimeInterval(2))
+        DispatchQueue.main.async { [weak self] in
+            if NSApp.isActive {
+                self?.returnFocus()
             }
         }
     }
