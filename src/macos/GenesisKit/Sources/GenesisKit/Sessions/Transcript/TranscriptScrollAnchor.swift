@@ -346,14 +346,15 @@ public final class TranscriptScrollAnchor: ObservableObject {
         }
         updateAtEnd(scrolled: true)
         guard Self.rowAnchoring, !animatingToEnd else { return }
-        if readerMoving || listMoving || rowAnchor?.view == nil {
+        // Only the reader or the list itself picks the row. A move from the table on its own while content
+        // grows at the latest turn once made a mid-growth row the anchor, and the reader stayed there
+        // instead of following the end (hub bench `open`: 2903 pt from the end, 2026-10-02).
+        if readerMoving || listMoving {
             recordRow()
         } else if let anchor = rowAnchor {
             // Not the reader's move and not the list's (the table restoring an old offset between two
             // resizes): undone, so the row under the reader stays.
-            if !keepRow(anchor) {
-                recordRow()
-            }
+            keepRow(anchor)
         }
     }
 
