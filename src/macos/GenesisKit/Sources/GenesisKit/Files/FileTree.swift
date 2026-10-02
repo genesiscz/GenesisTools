@@ -210,17 +210,22 @@ public struct FileTreeActions {
     public var changed: (FileChange) -> Void
     /// A reason to refuse a rename or a move to the Trash (a tab with unsaved edits), or nil.
     public var guardChange: ((URL) -> String?)?
+    /// Bump it whenever the closures would act differently (the hub: whether Changes is open). A row's
+    /// equality cannot compare closures, so without it an unchanged row keeps the old ones.
+    public var revision: Int
 
     public init(
         open: @escaping (URL) -> Void,
         setRoot: @escaping (URL) -> Void,
         changed: @escaping (FileChange) -> Void,
-        guardChange: ((URL) -> String?)? = nil
+        guardChange: ((URL) -> String?)? = nil,
+        revision: Int = 0
     ) {
         self.open = open
         self.setRoot = setRoot
         self.changed = changed
         self.guardChange = guardChange
+        self.revision = revision
     }
 }
 
@@ -269,7 +274,7 @@ public struct FileTreeView: View {
     }
 }
 
-/// One row. Equal while its row value, selection and icon are: nothing else re-renders it.
+/// One row. Equal while its row value, selection, icon and actions' revision are: nothing else re-renders it.
 struct FileTreeRowView: View, Equatable {
     let row: FileTreeRow
     let selected: Bool
@@ -280,6 +285,7 @@ struct FileTreeRowView: View, Equatable {
 
     static func == (left: FileTreeRowView, right: FileTreeRowView) -> Bool {
         left.row == right.row && left.selected == right.selected && left.icon == right.icon
+            && left.actions.revision == right.actions.revision
     }
 
     var body: some View {

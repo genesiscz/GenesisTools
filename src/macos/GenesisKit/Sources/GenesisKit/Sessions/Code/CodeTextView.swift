@@ -206,6 +206,10 @@ final class WrappedCodeContainer: NSView {
         }
         let height = layOut(width)
         heights[key] = height
+        // A probe at another width re-wrapped the live container: lay it out again at the real width.
+        if abs(width - bounds.width) > 0.5 {
+            needsLayout = true
+        }
         return height
     }
 

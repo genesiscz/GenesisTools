@@ -133,7 +133,8 @@ struct HubFolderTrees: View {
                 }
             },
             setRoot: { url in tree.setRoot(url) },
-            changed: { _ in tree.reload() }
+            changed: { _ in tree.reload() },
+            revision: changesShown ? 1 : 0
         )
     }
 

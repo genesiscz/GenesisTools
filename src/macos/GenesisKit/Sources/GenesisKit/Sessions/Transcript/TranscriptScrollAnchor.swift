@@ -48,6 +48,8 @@ public final class TranscriptScrollAnchor: ObservableObject {
     /// The reader's last click in the list, and how long the growth after it stays theirs (the row
     /// opens on the next layout, its detail lands a few milliseconds later).
     private var readerClickAt: Date?
+    /// The last left press began inside the list.
+    private var pressInList = false
     private static let readerGrowth: TimeInterval = 1.5
     private var remeasureScheduled = false
     /// The distance from the end a reader at the latest turn keeps, while the follow waits for the pass.
@@ -130,9 +132,10 @@ public final class TranscriptScrollAnchor: ObservableObject {
 
     private var listMoving: Bool { CFAbsoluteTimeGetCurrent() < listMovesUntil }
 
-    /// A wheel or key in the last 0.3 s, or the mouse held down (the scroller's knob, a drag).
+    /// A wheel or key in the last 0.3 s, or the mouse held down after a press in the list (the scroller's
+    /// knob, a drag). A press elsewhere (the split divider) is not the reader moving the list.
     private var readerMoving: Bool {
-        CFAbsoluteTimeGetCurrent() - readerScrollAt < 0.3 || (NSEvent.pressedMouseButtons & 1) != 0
+        CFAbsoluteTimeGetCurrent() - readerScrollAt < 0.3 || (pressInList && (NSEvent.pressedMouseButtons & 1) != 0)
     }
 
     /// Finds the list once it is on screen, so a reader at the latest turn is kept there from the start.
@@ -196,10 +199,13 @@ public final class TranscriptScrollAnchor: ObservableObject {
         // counts while the list has focus (Page Up, the arrows, Home, End, space).
         inputMonitor = NSEvent.addLocalMonitorForEvents(matching: [.scrollWheel, .leftMouseDown, .keyDown]) { [weak self] event in
             MainActor.assumeIsolated {
-                guard let self, let scroll = self.scrollView, event.window === scroll.window else { return }
-                let reader = event.type == .keyDown
+                guard let self, let scroll = self.scrollView else { return }
+                let reader = event.window === scroll.window && (event.type == .keyDown
                     ? (scroll.window?.firstResponder as? NSView)?.isDescendant(of: scroll) == true
-                    : scroll.bounds.contains(scroll.convert(event.locationInWindow, from: nil))
+                    : scroll.bounds.contains(scroll.convert(event.locationInWindow, from: nil)))
+                if event.type == .leftMouseDown {
+                    self.pressInList = reader
+                }
                 if reader {
                     self.releaseHold()
                     // A key moves the viewport as a wheel does (Page Up, Home, the arrows): a glide in flight stops too.
