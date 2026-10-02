@@ -141,6 +141,94 @@ describe("codexNativeLinesToTurns with encrypted collaboration messages", () => 
     });
 });
 
+describe("codexNativeLinesToTurns with exec scripts and their items", () => {
+    const row = (ordinal: number, payload: Record<string, unknown>, type = "response_item") =>
+        SafeJSON.stringify({ timestamp: `2026-10-02T15:30:${String(ordinal).padStart(2, "0")}.000Z`, type, payload });
+    const item = (ordinal: number, value: Record<string, unknown>) =>
+        row(ordinal, { type: "item_completed", item: value }, "event_msg");
+
+    test("a script that only ran commands shows the commands, with output and exit code", () => {
+        const turns = codexNativeLinesToTurns([
+            row(1, {
+                type: "custom_tool_call",
+                name: "exec",
+                call_id: "s1",
+                input: 'text(await tools.exec_command({cmd:"git status"}))',
+            }),
+            item(2, {
+                type: "CommandExecution",
+                id: "exec-1",
+                command: ["/bin/zsh", "-lc", "git status"],
+                aggregated_output: "fatal: not a git repository",
+                exit_code: 128,
+            }),
+            row(3, {
+                type: "custom_tool_call_output",
+                call_id: "s1",
+                output: [{ type: "input_text", text: "Script completed" }],
+            }),
+        ]);
+        expect(turns[0]?.tools).toEqual([
+            {
+                id: "exec-1",
+                name: "exec_command",
+                inputPreview: "git status",
+                result: "fatal: not a git repository",
+                resultChars: 27,
+                isError: true,
+                exitCode: 128,
+            },
+        ]);
+    });
+
+    test("a script whose tool leaves no item keeps its own row and output", () => {
+        const turns = codexNativeLinesToTurns([
+            row(1, {
+                type: "custom_tool_call",
+                name: "exec",
+                call_id: "s2",
+                input: 'await tools.view_image({path:"/tmp/a.png"})',
+            }),
+            row(2, {
+                type: "custom_tool_call_output",
+                call_id: "s2",
+                output: [{ type: "input_text", text: "Script completed" }],
+            }),
+        ]);
+        expect(turns[0]?.tools.map((tool) => [tool.name, tool.result])).toEqual([["exec", "Script completed"]]);
+    });
+
+    test("an MCP call and a file change become rows", () => {
+        const turns = codexNativeLinesToTurns([
+            item(1, {
+                type: "McpToolCall",
+                id: "m1",
+                server: "codex_app",
+                tool: "attach_artifact",
+                arguments: { url: "https://example.com/pull/1" },
+                result: { content: [{ type: "text", text: "attached" }], isError: false },
+            }),
+            item(2, {
+                type: "FileChange",
+                id: "f1",
+                changes: {
+                    "/tmp/a.txt": { type: "add", content: "one\ntwo" },
+                    "/tmp/b.txt": { type: "update", unified_diff: "@@ -1 +1 @@\n-old\n+new" },
+                },
+                status: "completed",
+                stdout: "Success.",
+            }),
+        ]);
+        const [mcp, patch] = turns[0]?.tools ?? [];
+        expect(mcp?.name).toBe("mcp__codex_app__attach_artifact");
+        expect(mcp?.result).toBe("attached");
+        expect(patch?.name).toBe("apply_patch");
+        expect(patch?.inputPreview).toBe(
+            "*** Begin Patch\n*** Add File: /tmp/a.txt\n+one\n+two\n*** Update File: /tmp/b.txt\n@@ -1 +1 @@\n-old\n+new\n*** End Patch"
+        );
+    });
+});
+
 describe("codexNativeLinesToTurns on a current rollout", () => {
     // The record shapes of a 2026-09 `codex` CLI rollout: messages are `response_item` items with
     // content parts, the reasoning summary lives in `item_completed`, tokens in `token_usage_record`.

@@ -1,6 +1,6 @@
 import { SafeJSON } from "@genesiscz/utils/json";
 import { parseTranscriptLine } from "./parse-line";
-import { clipResult, type TranscriptTurn } from "./types";
+import { clipResult, type TranscriptTool, type TranscriptTurn } from "./types";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -99,6 +99,137 @@ function previewFromArguments(raw: string): string {
     return raw;
 }
 
+/**
+ * Current Codex runs its work as `custom_tool_call` scripts named `exec` (JavaScript calling
+ * `tools.exec_command(...)`, `tools.apply_patch(...)`, MCP tools), and records each command, patch and
+ * MCP call it made as an `item_completed` event. The items are the actions, with their output and exit
+ * code; a script that only called these tools adds nothing beside them. Reading neither left a
+ * session that ran 126 commands with no tool rows at all (2026-10-02).
+ */
+const TOOLS_WITH_ITEMS = /^(exec_command|write_stdin|apply_patch|mcp__\w+|clock__\w+)$/;
+
+/** Whether an `exec` script's work shows as items, so the script itself needs no row. */
+function scriptShownByItems(script: string): boolean {
+    const used = [...script.matchAll(/tools\.([A-Za-z0-9_]+)\s*\(/g)].map((match) => match[1] ?? "");
+    return used.length > 0 && used.every((name) => TOOLS_WITH_ITEMS.test(name));
+}
+
+/** A tool output: a string, or a list of `input_text` / `output_text` parts. */
+function outputText(value: unknown): string {
+    if (typeof value === "string") {
+        return value;
+    }
+
+    if (!Array.isArray(value)) {
+        return "";
+    }
+
+    return value
+        .map((part) => (isRecord(part) ? asString(part.text) : ""))
+        .filter(Boolean)
+        .join("\n");
+}
+
+function shellCommand(command: unknown): string {
+    if (!Array.isArray(command)) {
+        return asString(command);
+    }
+
+    const parts = command.map(asString);
+    // `["/bin/zsh", "-lc", "<the command>"]`: the command is what the agent wrote.
+    if (parts.length === 3 && /^-l?c$/.test(parts[1] ?? "")) {
+        return parts[2] ?? "";
+    }
+
+    return parts.join(" ");
+}
+
+/** A FileChange as the apply_patch text the transcript renders: one section per file. */
+function patchText(changes: unknown): string {
+    if (!isRecord(changes)) {
+        return "";
+    }
+
+    const sections: string[] = ["*** Begin Patch"];
+    for (const [file, raw] of Object.entries(changes)) {
+        const change = isRecord(raw) ? raw : {};
+        const kind = asString(change.type);
+        if (kind === "add") {
+            sections.push(
+                `*** Add File: ${file}`,
+                ...asString(change.content)
+                    .split("\n")
+                    .map((line) => `+${line}`)
+            );
+        } else if (kind === "delete") {
+            sections.push(`*** Delete File: ${file}`);
+        } else {
+            sections.push(`*** Update File: ${file}`);
+            const moved = asString(change.move_path);
+            if (moved) {
+                sections.push(`*** Move to: ${moved}`);
+            }
+
+            sections.push(asString(change.unified_diff));
+        }
+    }
+    sections.push("*** End Patch");
+    return sections.join("\n");
+}
+
+function toolResult(tool: TranscriptTool, text: string): void {
+    if (text) {
+        tool.result = clipResult(text);
+        tool.resultChars = text.length;
+    }
+}
+
+/** The tool row an `item_completed` item stands for; null for items that are not actions. */
+function itemTool(item: Record<string, unknown>): TranscriptTool | null {
+    const id = asString(item.id);
+    const kind = asString(item.type);
+    if (kind === "CommandExecution") {
+        const exitCode = typeof item.exit_code === "number" ? item.exit_code : undefined;
+        const tool: TranscriptTool = {
+            id,
+            name: "exec_command",
+            inputPreview: shellCommand(item.command),
+            result: null,
+            isError: exitCode !== undefined && exitCode !== 0,
+            exitCode,
+        };
+        toolResult(tool, asString(item.aggregated_output) || asString(item.stdout) + asString(item.stderr));
+        return tool;
+    }
+
+    if (kind === "McpToolCall") {
+        const result = isRecord(item.result) ? item.result : {};
+        const tool: TranscriptTool = {
+            id,
+            name: `mcp__${asString(item.server)}__${asString(item.tool)}`,
+            inputPreview: isRecord(item.arguments) ? SafeJSON.stringify(item.arguments) : asString(item.arguments),
+            result: null,
+            isError: result.isError === true || asString(item.status) === "failed",
+        };
+        toolResult(tool, outputText(result.content) || asString(item.error));
+        return tool;
+    }
+
+    if (kind === "FileChange") {
+        const tool: TranscriptTool = {
+            id,
+            name: "apply_patch",
+            inputPreview: patchText(item.changes),
+            result: null,
+            isError: asString(item.status) === "failed",
+        };
+        toolResult(tool, asString(item.stdout) + asString(item.stderr));
+        return tool;
+    }
+
+    return null;
+}
+
 /** The text of a `response_item` message: its `input_text` / `output_text` parts, in order. */
 function contentText(content: unknown): string {
     if (!Array.isArray(content)) {
@@ -191,6 +322,13 @@ export function codexNativeLinesToTurns(lines: readonly (string | unknown)[]): T
         }
         if (type === "event_msg" && payloadType === "item_completed") {
             const item = isRecord(payload.item) ? payload.item : {};
+            const action = itemTool(item);
+            if (action) {
+                assistant ??= { id: `codex-${turns.length + 1}`, role: "assistant", at, text: "", tools: [] };
+                assistant.tools.push(action);
+                continue;
+            }
+
             const summary = asString(item.type) === "Reasoning" ? reasoningText(item.summary_text) : "";
             if (summary && !(assistant?.reasoning ?? "").includes(summary)) {
                 assistant ??= { id: `codex-${turns.length + 1}`, role: "assistant", at, text: "", tools: [] };
@@ -240,6 +378,30 @@ export function codexNativeLinesToTurns(lines: readonly (string | unknown)[]): T
                 result: null,
                 isError: false,
             });
+            continue;
+        }
+        if (type === "response_item" && payloadType === "custom_tool_call") {
+            const script = asString(payload.input);
+            const name = asString(payload.name) || "tool";
+            if (name === "exec" && scriptShownByItems(script)) {
+                continue;
+            }
+
+            assistant ??= { id: `codex-${turns.length + 1}`, role: "assistant", at, text: "", tools: [] };
+            assistant.tools.push({
+                id: asString(payload.call_id) || `codex-tool-${assistant.tools.length}`,
+                name,
+                inputPreview: script,
+                result: null,
+                isError: false,
+            });
+            continue;
+        }
+        if (type === "response_item" && payloadType === "custom_tool_call_output" && assistant) {
+            const tool = assistant.tools.find((t) => t.id === asString(payload.call_id));
+            if (tool) {
+                toolResult(tool, outputText(payload.output));
+            }
             continue;
         }
         if (type === "response_item" && payloadType === "function_call_output" && assistant) {
