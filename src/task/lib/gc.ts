@@ -39,6 +39,12 @@ export async function runSessionGc(opts: { retentionDays: number }): Promise<{ r
             removed++;
             logger.debug({ session, age: Date.now() - st.mtimeMs }, "gc: removed session");
         } catch (err) {
+            // Two `tools` processes can sweep at once: the other one removed this session first.
+            if (err instanceof Error && "code" in err && err.code === "ENOENT") {
+                logger.debug({ session }, "gc: session already removed");
+                continue;
+            }
+
             logger.warn({ err, session }, "gc: failed to evaluate session");
         }
     }
