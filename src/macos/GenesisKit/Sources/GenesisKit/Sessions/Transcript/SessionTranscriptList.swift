@@ -271,20 +271,15 @@ public struct SessionTranscriptList: View {
             }
             .padding(.horizontal, 16)
             .frame(height: 40)
-            VStack(alignment: .leading, spacing: 6) {
-                searchField
-                HStack(spacing: 10) {
-                    toolbarControls
-                }
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 6)
-            // A third layout for a hub pane of about 440 pt, where the row
-            // above was still wider than the column and clipped at both edges (audit 2026-09-24).
+            // Two rows when one does not fit (a hub pane of about 440 pt clipped the single row at both
+            // edges, audit 2026-09-24). The prompt navigator stays on the top row in every layout: a
+            // second two-row layout that put it at the end of the lower row was picked or not by the
+            // session's prompt count and turn range, so on a session switch it jumped down and back
+            // (Martin, 2026-10-02).
             VStack(alignment: .leading, spacing: 6) {
                 HStack(spacing: 8) {
                     searchField
-                    Spacer(minLength: 4)
+                    windowNoteSlot
                     promptNavigator
                 }
                 HStack(spacing: 8) {
@@ -351,20 +346,26 @@ public struct SessionTranscriptList: View {
 
         wrapMenu
 
-        Spacer(minLength: 8)
-
-        if let windowNote {
-            // Dropped, not truncated, when the window is too narrow for it.
-            ViewThatFits(in: .horizontal) {
-                Text(verbatim: windowNote)
-                    .font(.system(size: 11))
-                    .foregroundStyle(SessionPalette.dim)
-                    .fixedSize()
-                Color.clear.frame(width: 0, height: 0)
-            }
-        }
+        windowNoteSlot
 
         promptNavigator
+    }
+
+    /// The room before the prompt navigator, with the window note ("Turns 12834–12845") drawn in it.
+    /// An overlay, so the note never decides which toolbar layout fits: it changes per session.
+    private var windowNoteSlot: some View {
+        Color.clear
+            .frame(minWidth: 8, maxWidth: .infinity, maxHeight: 20)
+            .overlay(alignment: .trailing) {
+                if let windowNote {
+                    Text(verbatim: windowNote)
+                        .font(.system(size: 11))
+                        .foregroundStyle(SessionPalette.dim)
+                        .lineLimit(1)
+                        .truncationMode(.head)
+                }
+            }
+            .clipped()
     }
 
     /// "All" plus one toggle chip per filter. Several chips can be on (Chat + Errors); turning the
@@ -503,6 +504,8 @@ public struct SessionTranscriptList: View {
             .instantTooltip("Previous prompt (⌘[)")
             .accessibilityIdentifier("session-transcript-prev-prompt")
 
+            // One width for "0 prompts" up to "999 / 999": a count that changes per session must not
+            // change which toolbar layout fits.
             Text(verbatim: promptPosition)
                 .font(SessionPalette.mono(11))
                 .foregroundStyle(SessionPalette.dim)
