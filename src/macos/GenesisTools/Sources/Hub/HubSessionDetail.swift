@@ -724,7 +724,8 @@ enum HubSubagents {
             kind: agent.agentType ?? "Agent",
             summary: summary,
             state: state,
-            startedAt: HubFormat.date(agent.startedAt ?? agent.lastAt)
+            // No start is no start: the last write would sort an old agent as a new one.
+            startedAt: HubFormat.date(agent.startedAt)
         )
     }
 }

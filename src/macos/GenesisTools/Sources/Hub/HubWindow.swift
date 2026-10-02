@@ -761,9 +761,8 @@ final class HubModel: ObservableObject {
     /// The Agents mode's detail: its lead session becomes the selected one, so the Changes, Files and
     /// Decisions panes (and "Open diff") work on it exactly as in Sessions mode.
     func selectLead(_ session: HubSession) {
-        if !sessions.contains(where: { $0.id == session.id }) {
-            leadOutsideList = session
-        }
+        // Replaced on every pick, so no stale snapshot of an earlier lead outlives the next one.
+        leadOutsideList = sessions.contains(where: { $0.id == session.id }) ? nil : session
         select(session.id)
     }
 

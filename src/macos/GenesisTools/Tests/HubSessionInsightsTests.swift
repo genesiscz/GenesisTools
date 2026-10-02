@@ -51,12 +51,27 @@ final class HubSessionInsightsTests: XCTestCase {
         XCTAssertEqual(InsightFormat.usd(nil), "—")
     }
 
-    private func turn(_ n: Int, cost: Double, rank: Int? = nil) -> InsightTurn {
+    private func turn(_ n: Int, cost: Double, rank: Int? = nil, context: Int? = nil) -> InsightTurn {
         InsightTurn(
             number: n, index: n - 1, turnId: "t\(n)", label: "p\(n)", at: nil, durationMs: nil,
             inputTokens: n, outputTokens: 1, cacheReadTokens: 100, cacheWriteTokens: 0, reasoningTokens: 0,
-            modelCalls: 1, costUsd: cost, models: [], toolCount: 0, errorCount: 0, contextTokens: nil, rank: rank
+            modelCalls: 1, costUsd: cost, models: [], toolCount: 0, errorCount: 0, contextTokens: context, rank: rank
         )
+    }
+
+    func testAContextBarKeepsItsPromptAndACompactionInsideIt() {
+        // Three prompts per bar: 100k, 20k (a compaction), 40k; then a bar with no recorded context.
+        let contexts: [Int?] = [100_000, 20_000, 40_000, nil, 0, nil]
+        let turns = contexts.enumerated().map { turn($0.offset + 1, cost: $0.offset == 0 ? 5 : 0.1, context: $0.element) }
+        let bars = InsightBar.bucket(turns, maxBars: 2, priced: true)
+
+        XCTAssertEqual(bars.map(\.context), [40_000, 0])
+        XCTAssertEqual(bars[0].contextTurn?.number, 3, "the context prompt, not the costliest")
+        XCTAssertEqual(bars[0].lead.number, 1)
+        XCTAssertTrue(bars[0].compactedInside)
+        XCTAssertNil(bars[1].contextTurn, "no recorded context is a missing measurement")
+        XCTAssertFalse(bars[1].compactedInside)
+        XCTAssertFalse(InsightBar.isCompaction(from: 100_000, to: 0), "a missing measurement is no compaction")
     }
 
     func testBucketsSumConsecutivePromptsAndKeepTheCostliestAsLead() {

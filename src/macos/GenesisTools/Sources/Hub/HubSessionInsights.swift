@@ -296,10 +296,20 @@ struct InsightBar {
     let lead: InsightTurn
     /// The best rank inside the bar, for its marker.
     let rank: Int?
-    /// The context window at the bar's last prompt that recorded one.
+    /// The context window at the bar's last prompt that recorded one; 0 when none did (not measured).
     let context: Int
+    /// The prompt `context` comes from: what the context chart's hover names and its click opens.
+    let contextTurn: InsightTurn?
+    /// The context fell by a third or more between two prompts inside the bar (a compaction the
+    /// bar's last value alone would hide).
+    let compactedInside: Bool
 
     var billable: Int { input + cacheWrite + output }
+
+    /// A fall of a third or more from `previous` to `next`.
+    static func isCompaction(from previous: Int, to next: Int) -> Bool {
+        previous > 0 && next > 0 && Double(next) < Double(previous) * 0.67
+    }
 
     /// At most `maxBars` bars, consecutive prompts summed when there are more. Empty for no turns.
     static func bucket(_ turns: [InsightTurn], maxBars: Int, priced: Bool) -> [InsightBar] {
@@ -310,6 +320,10 @@ struct InsightBar {
             let lead = slice.max { a, b in
                 priced ? (a.costUsd ?? 0) < (b.costUsd ?? 0) : a.billableTokens < b.billableTokens
             } ?? slice[slice.startIndex]
+            let measured = slice.compactMap { turn in (turn.contextTokens ?? 0) > 0 ? turn : nil }
+            let compactedInside = zip(measured, measured.dropFirst()).contains { pair in
+                isCompaction(from: pair.0.contextTokens ?? 0, to: pair.1.contextTokens ?? 0)
+            }
             return InsightBar(
                 turns: slice,
                 cost: slice.reduce(0) { $0 + ($1.costUsd ?? 0) },
@@ -319,7 +333,9 @@ struct InsightBar {
                 cacheRead: slice.reduce(0) { $0 + $1.cacheReadTokens },
                 lead: lead,
                 rank: slice.compactMap(\.rank).min(),
-                context: slice.last { ($0.contextTokens ?? 0) > 0 }?.contextTokens ?? 0
+                context: measured.last?.contextTokens ?? 0,
+                contextTurn: measured.last,
+                compactedInside: compactedInside
             )
         }
     }
@@ -523,7 +539,8 @@ struct TurnCostTimelineSection: View {
         }
         .gesture(SpatialTapGesture().onEnded { tap in
             guard let index = InsightBar.index(at: tap.location.x, width: chartWidth, count: bars.count) else { return }
-            onJump(bars[index].lead)
+            // The context chart opens the prompt its hover names; cost and tokens open the costliest.
+            onJump(showsContext ? (bars[index].contextTurn ?? bars[index].lead) : bars[index].lead)
         })
         .instantTooltip("Click a bar to open its prompt in the transcript")
         .accessibilityIdentifier("session-details-cost-chart")
@@ -531,29 +548,35 @@ struct TurnCostTimelineSection: View {
 
 
     /// The context window as a filled line through the bars' centres; a fall of a third or more (a
-    /// compaction, or a fresh start) gets a red tick at the top.
+    /// compaction, or a fresh start) gets a red tick at the top, also when it happened inside one bar.
+    /// A bar with no recorded context is a missing measurement, not a zero: the line passes over it.
     private static func drawContext(_ bars: [InsightBar], in context: GraphicsContext, size: CGSize, top: CGFloat, max: Double, focus: Int?) {
         let slot = size.width / CGFloat(bars.count)
         let height = size.height - top
         func point(_ i: Int) -> CGPoint {
             CGPoint(x: (CGFloat(i) + 0.5) * slot, y: size.height - CGFloat(Double(bars[i].context) / max) * height)
         }
+        let measured = bars.indices.filter { bars[$0].context > 0 }
+        guard let first = measured.first, let last = measured.last else { return }
         var line = Path()
         var area = Path()
-        area.move(to: CGPoint(x: point(0).x, y: size.height))
-        for i in bars.indices {
+        area.move(to: CGPoint(x: point(first).x, y: size.height))
+        var previous: Int?
+        for i in measured {
             let p = point(i)
-            if i == 0 { line.move(to: p) } else { line.addLine(to: p) }
+            if previous == nil { line.move(to: p) } else { line.addLine(to: p) }
             area.addLine(to: p)
-            if i > 0, bars[i - 1].context > 0, Double(bars[i].context) < Double(bars[i - 1].context) * 0.67 {
+            let dropped = previous.map { InsightBar.isCompaction(from: bars[$0].context, to: bars[i].context) } ?? false
+            if dropped || bars[i].compactedInside {
                 context.fill(Path(CGRect(x: p.x - 0.75, y: 2, width: 1.5, height: 7)), with: .color(SessionPalette.red))
             }
+            previous = i
         }
-        area.addLine(to: CGPoint(x: point(bars.count - 1).x, y: size.height))
+        area.addLine(to: CGPoint(x: point(last).x, y: size.height))
         area.closeSubpath()
         context.fill(area, with: .color(SessionPalette.blue.opacity(0.18)))
         context.stroke(line, with: .color(SessionPalette.blue), lineWidth: 1.5)
-        if let focus, bars.indices.contains(focus) {
+        if let focus, bars.indices.contains(focus), bars[focus].context > 0 {
             let p = point(focus)
             context.fill(Path(ellipseIn: CGRect(x: p.x - 3, y: p.y - 3, width: 6, height: 6)), with: .color(.white))
         }
@@ -573,7 +596,7 @@ struct TurnCostTimelineSection: View {
 
         let bar = bars[hovered]
         if showsContext {
-            let last = bar.turns.last { ($0.contextTokens ?? 0) > 0 } ?? bar.lead
+            guard let last = bar.contextTurn else { return "no context recorded for these prompts" }
             return "context \(SessionFormat.tokens(bar.context)) after \(last.title)"
         }
         let prefix = bar.turns.count > 1 ? "\(bar.turns.count) prompts, the costliest: " : ""

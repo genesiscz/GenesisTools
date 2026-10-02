@@ -99,6 +99,9 @@ final class HubSessionSeamsTests: XCTestCase {
         // "stopped": its transcript stopped growing before it reported back, so it reads as idle.
         XCTAssertEqual(rows.map(\.state), [.done, .idle, .running])
         XCTAssertEqual(rows[1].summary, "fixer: a2")
+        // No start stays no start: its last write would sort it as a newly started agent.
+        XCTAssertNil(rows[1].startedAt)
+        XCTAssertNotNil(rows[0].startedAt)
         XCTAssertEqual(try HubSubagents.decode(Data(#"{"sessionId":"s-9","subagents":[]}"#.utf8)), [])
     }
 
