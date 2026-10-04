@@ -7,6 +7,7 @@ import {
     type CommandIndex,
     checkRef,
     checkTree,
+    exemptFromHardcodedScan,
     findHardcodedToolCommands,
     findToolCommandRefs,
 } from "./check-tool-commands";
@@ -36,6 +37,15 @@ describe("findToolCommandRefs", () => {
 
     test("skips a path built at runtime", () => {
         expect(findToolCommandRefs("x.ts", "toolCommand(`${tool} status`)")).toEqual([]);
+    });
+
+    test("reads the literal head of a suggestCommand template up to the first value", () => {
+        const text = "suggestCommand(`tools notify status ${name} --yes`);\nsuggestCommand(`tools notify sta${x}`);";
+
+        expect(findToolCommandRefs("x.ts", text)).toEqual([
+            { file: "x.ts", line: 1, command: "notify status", via: "suggestCommand" },
+            { file: "x.ts", line: 2, command: "notify", via: "suggestCommand" },
+        ]);
     });
 
     // A renamed subcommand inside replaceCommand went unnoticed: only the tool name was read.
@@ -121,6 +131,20 @@ describe("checkTree", () => {
         });
 
         expect(checkTree(root, ["src/foo/index.ts", "src/other/index.ts"])).toEqual([]);
+    });
+
+    // `tools cc` has no commander program: it routes argv by hand against a SUBCOMMANDS set.
+    test("accepts a subcommand a hand-routed tool lists in its SUBCOMMANDS set, and still rejects others", () => {
+        const root = tree({
+            tools: "const TOOL_ALIASES = new Map([]);",
+            "src/foo/index.ts": 'const SUBCOMMANDS = new Set([\n    "run",\n    "resume",\n]);',
+            "src/other/index.ts": 'toolCommand("foo run");\ntoolCommand("foo gone");',
+        });
+
+        const errors = checkTree(root, ["src/foo/index.ts", "src/other/index.ts"]);
+
+        expect(errors).toHaveLength(1);
+        expect(errors[0]).toContain("src/other/index.ts:2");
     });
 
     test("accepts a command registered in a @genesiscz/utils module the tool imports", () => {
@@ -227,10 +251,26 @@ describe("findHardcodedToolCommands", () => {
         expect(lines("a.ts", 'suggestCommand("tools notify", { add: ["--json"] });')).toEqual([]);
     });
 
+    test("leaves a suggestCommand template argument alone, value parts included", () => {
+        expect(lines("a.ts", "suggestCommand(`tools notify status ${name} --yes ${more} tools notify`);")).toEqual([]);
+    });
+
     test("leaves prose where the next word is not a tool, comments, and a -tools suffix alone", () => {
         expect(
             lines("a.ts", '// tools notify\nconst a = "dev tools are fine";\nconst b = "genesis-tools notify";')
         ).toEqual([]);
+    });
+});
+
+describe("exemptFromHardcodedScan", () => {
+    test.each([
+        ["src/artifact/runtime/starters/dashboard.tsx", true],
+        ["src/utils/shell/fix/test.data.ts", true],
+        ["src/jev/lib/grep/evaluations/budget/cases.ts", true],
+        ["src/notify/index.ts", false],
+        ["src/artifact/index.ts", false],
+    ])("%s -> %p", (path, exempt) => {
+        expect(exemptFromHardcodedScan(path)).toBe(exempt);
     });
 });
 

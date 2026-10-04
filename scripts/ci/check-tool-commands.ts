@@ -12,7 +12,8 @@
  *   does), or an alias in the root `tools` dispatcher;
  * - each following command word is registered under that tool: `.command("<word>")`,
  *   `.alias(…)`, `.aliases([…])`, `new Command("<word>")`, `buildGroup("<word>")`, a
- *   `commandName: "<word>"` registry entry, or a lazy registrar key (`clones: async () => import(…)`),
+ *   `commandName: "<word>"` registry entry, a lazy registrar key (`clones: async () => import(…)`),
+ *   or an entry of a hand-routed tool's `SUBCOMMANDS` list,
  *   in `src/<tool>/**` or in a module the tool imports (`@app/<other>/…`, `@genesiscz/utils/…`).
  *
  * It stops at the first word that is not a command word (`--flag`, `<value>`) and after a command
@@ -101,6 +102,16 @@ function replaceCommandWords(options: ts.Expression | undefined): string[] {
 }
 
 /**
+ * The whole words before a template's first value: `tools cmux rescue ${name}` reads `tools cmux rescue`,
+ * and a word the value finishes (`tools notify sta${x}`) is dropped.
+ */
+function templateHeadWords(template: ts.TemplateExpression): string {
+    const head = template.head.text;
+
+    return /\s$/.test(head) ? head.trim() : head.replace(/\S*$/, "").trim();
+}
+
+/**
  * Every literal command path in `text`, with its 1-based line: `toolCommand("…")`, and
  * `suggestCommand("tools …")` (or a same-file `const X = "tools …"`) followed by the leading
  * string literals of its `replaceCommand`.
@@ -132,8 +143,8 @@ export function findToolCommandRefs(file: string, text: string): ToolCommandRef[
             return;
         }
 
-        const literal = stringValue(first);
         const target = unwrap(first);
+        const literal = stringValue(first) ?? (ts.isTemplateExpression(target) ? templateHeadWords(target) : undefined);
         const base = literal?.startsWith("tools ")
             ? literal.slice("tools ".length).trim()
             : ts.isIdentifier(target)
@@ -158,6 +169,18 @@ export interface HardcodedCommand {
 const HARDCODED = /(?:^|[^\w-])tools ([a-z][a-z0-9-]*)/g;
 const HELPER_CALLS = new Set(["toolCommand", "suggestCommand", "suggestEnumFlag"]);
 const TOOL_NAME_CONSTANT = /^tools [a-z][a-z0-9-]*(?: [a-z][a-z0-9-]*)*$/;
+
+/** A helper's first argument, or a part of the template that is one. */
+function isHelperArgument(node: ts.Node): boolean {
+    const literal = ts.isTemplateHead(node)
+        ? node.parent
+        : ts.isTemplateMiddle(node) || ts.isTemplateTail(node)
+          ? node.parent.parent
+          : node;
+    const call = literal.parent;
+
+    return ts.isCallExpression(call) && HELPER_CALLS.has(calleeName(call) ?? "") && call.arguments[0] === literal;
+}
 
 /** The literal text a node carries: a string, a template part, or JSX text. */
 function literalText(node: ts.Node): string | undefined {
@@ -198,7 +221,7 @@ export function findHardcodedToolCommands(
 
         const parent = node.parent;
 
-        if (ts.isCallExpression(parent) && HELPER_CALLS.has(calleeName(parent) ?? "") && parent.arguments[0] === node) {
+        if (isHelperArgument(node)) {
             return;
         }
 
@@ -366,6 +389,20 @@ function scanSourceFile(path: string, into: Registrations): string[] {
 
         if (ts.isNewExpression(node) && calleeName(node) === "Command") {
             add(stringValue(node.arguments?.[0]));
+            return;
+        }
+
+        // A tool with no commander program routes argv by hand against a `SUBCOMMANDS` list (`tools cc`).
+        if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && /(^|_)SUBCOMMANDS$/.test(node.name.text)) {
+            const value = node.initializer && unwrap(node.initializer);
+            const list = value && ts.isNewExpression(value) ? value.arguments?.[0] : value;
+
+            if (list && ts.isArrayLiteralExpression(list)) {
+                for (const element of list.elements) {
+                    add(stringValue(element));
+                }
+            }
+
             return;
         }
 
@@ -577,13 +614,30 @@ function trackedSourceFiles(root: string): string[] {
         .filter((path) => path && !/\.test\.tsx?$/.test(path));
 }
 
+/**
+ * Files whose `tools …` text is data or ships outside this checkout, so a helper call is wrong there:
+ * test fixture data (`*.data.ts`), the jev grep evaluation questions, and the artifact starters, which
+ * are copied into a user's folder where no repository module resolves.
+ */
+const HARDCODED_SCAN_EXEMPT = [
+    /\.data\.tsx?$/,
+    /^src\/jev\/lib\/grep\/evaluations\//,
+    /^src\/artifact\/runtime\/starters\//,
+];
+
+export function exemptFromHardcodedScan(path: string): boolean {
+    return HARDCODED_SCAN_EXEMPT.some((pattern) => pattern.test(path));
+}
+
 /** `--list-hardcoded [paths…]` prints the work list; `--strict` also fails on any hardcoded command. */
 function hardcodedIn(root: string, files: string[]): HardcodedCommand[] {
     const index = buildCommandIndex(root);
 
-    return files.flatMap((file) =>
-        findHardcodedToolCommands(file, readFileSync(join(root, file), "utf8"), (name) => index.hasTool(name))
-    );
+    return files
+        .filter((file) => !exemptFromHardcodedScan(file))
+        .flatMap((file) =>
+            findHardcodedToolCommands(file, readFileSync(join(root, file), "utf8"), (name) => index.hasTool(name))
+        );
 }
 
 if (import.meta.main) {
