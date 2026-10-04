@@ -1,4 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { calleeName, declarationsIn, importsIn, parseSource, unwrap, walk } from "@genesiscz/utils/ts/source/parse";
 import { resolveSpecifier } from "@genesiscz/utils/ts/source/resolve";
 import ts from "typescript";
@@ -175,5 +178,21 @@ describe("resolveSpecifier", () => {
 
     test("returns null for a relative specifier when the importing file is unknown", () => {
         expect(resolveSpecifier({ exists: files(["x.ts"]), specifier: "./x" })).toBeNull();
+    });
+});
+
+describe("package surface", () => {
+    test("`@genesiscz/utils/ts/source` is a package export, and its barrel serves everything parse and resolve export", async () => {
+        const manifest: unknown = SafeJSON.parse(
+            readFileSync(join(import.meta.dir, "..", "..", "package.json"), "utf8")
+        );
+        const entry = "./ts/source/index.ts";
+
+        expect(manifest).toMatchObject({ exports: { "./ts/source": { bun: entry, types: entry, default: entry } } });
+
+        const barrel = Object.keys(await import("./index"));
+        const parts = [...Object.keys(await import("./parse")), ...Object.keys(await import("./resolve"))];
+
+        expect(barrel.sort()).toEqual(parts.sort());
     });
 });

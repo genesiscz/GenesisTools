@@ -451,6 +451,11 @@
             "types": "./ts/ast/index.ts",
             "default": "./ts/ast/index.ts"
         },
+        "./ts/source": {
+            "bun": "./ts/source/index.ts",
+            "types": "./ts/source/index.ts",
+            "default": "./ts/source/index.ts"
+        },
         "./tsconfig.consumer.json": "./tsconfig.consumer.json",
         "./ui": {
             "bun": "./ui/index.ts",
