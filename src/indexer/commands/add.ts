@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import { basename, resolve } from "node:path";
 import * as p from "@clack/prompts";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { parseVariadic } from "@genesiscz/utils/cli/variadic";
 import type { Command } from "commander";
 import pc from "picocolors";
@@ -220,7 +221,7 @@ export function registerAddCommand(program: Command): void {
         .option("--name <name>", "Index name (default: directory basename)")
         .option("--type <type>", "Index type: code, files, mail, chat (default: auto-detect)")
         .option("--chunking <mode>", "Chunking strategy: ast, line, auto (default: auto)")
-        .option("--model <id>", "Embedding model ID (see: tools indexer models)")
+        .option("--model <id>", `Embedding model ID (see: ${toolCommand("indexer models")})`)
         .option("--no-embed", "Disable embeddings (fulltext-only search)")
         .option("--storage <driver>", "Storage driver: sqlite, orama, turbopuffer (default: sqlite)")
         .option("--watch", "Enable watch mode after indexing")
@@ -239,8 +240,8 @@ export function registerAddCommand(program: Command): void {
                 config = result;
             } else if (!path) {
                 p.log.error("Path is required in non-interactive mode");
-                p.log.info("Usage: tools indexer add <path> --model <model-id>");
-                p.log.info("Run 'tools indexer models' to see available models");
+                p.log.info(`Usage: ${toolCommand("indexer add", "<path>", "--model", "<model-id>")}`);
+                p.log.info(`Run '${toolCommand("indexer models")}' to see available models`);
                 process.exit(1);
             } else {
                 const absPath = resolve(path);

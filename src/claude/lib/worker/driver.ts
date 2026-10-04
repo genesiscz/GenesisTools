@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { launchGateForVerdict } from "@app/claude/commands/exec";
 import { AIConfig } from "@genesiscz/utils/ai/AIConfig";
 import { LONG_TOKEN_MIN_LENGTH, probeLongLivedToken } from "@genesiscz/utils/claude/token-verify";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import type { AIAccountEntry } from "@genesiscz/utils/config/ai.types";
 import { logger, out } from "@genesiscz/utils/logger";
 import { truncateDisplay } from "@genesiscz/utils/table";
@@ -44,7 +45,7 @@ async function resolvePinnedAccount(name: string | undefined): Promise<PinnedAcc
         // A truncated token 401s and Claude Code silently falls back to the
         // keychain login, billing the wrong account rather than failing.
         throw new Error(
-            `The stored token for "${match.name}" is truncated (${token.length} chars, expect ~108). Recapture it with: tools claude login-long ${match.name}`
+            `The stored token for "${match.name}" is truncated (${token.length} chars, expect ~108). Recapture it with: ${toolCommand("claude login-long")} ${match.name}`
         );
     }
 
@@ -71,7 +72,7 @@ function turnReport(result: ClaudeTurnResult): WorkerTurnReport {
         // No git snapshot is taken around a claude turn; the brief plus a git status check hold policy.
         worktree: null,
         logPath: result.logPath,
-        transcriptHint: `tools claude worker read --name ${result.meta.name} --turn ${result.turn} --format compact`,
+        transcriptHint: `${toolCommand("claude worker read")} --name ${result.meta.name} --turn ${result.turn} --format compact`,
     };
 }
 

@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
@@ -59,7 +60,7 @@ async function runMessageImpl(opts: MessageOpts): Promise<void> {
         const records = await sessionRegistryQuietly(opts.session);
         throw new FriendlyError(
             "--body is required (or --reply <msg-id> with no --body for a pure ack)",
-            `Examples:\n  tools agents message --from ${exampleSenderName(records)} --to peer --body 'hi'\n  tools agents message --from ${exampleSenderName(records)} --reply 0001 --body 'thanks'\n  tools agents message --from ${exampleSenderName(records)} --reply 0001                # ack`
+            `Examples:\n  ${toolCommand("agents message")} --from ${exampleSenderName(records)} --to peer --body 'hi'\n  ${toolCommand("agents message")} --from ${exampleSenderName(records)} --reply 0001 --body 'thanks'\n  ${toolCommand("agents message")} --from ${exampleSenderName(records)} --reply 0001                # ack`
         );
     }
 
@@ -76,7 +77,7 @@ async function runMessageImpl(opts: MessageOpts): Promise<void> {
         if (!opts.from) {
             throw new FriendlyError(
                 "--from is required",
-                `Registered: ${listAvailableNames(registry)}\nExample:\n  tools agents message --from <one of above> --body 'hi'`
+                `Registered: ${listAvailableNames(registry)}\nExample:\n  ${toolCommand("agents message")} --from <one of above> --body 'hi'`
             );
         }
 

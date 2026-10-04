@@ -8,6 +8,7 @@ import { Api } from "@app/azure-devops/api";
 import { formatJSON, saveGlobalCache } from "@app/azure-devops/cache";
 import type { OutputFormat } from "@app/azure-devops/types";
 import { extractDashboardId, requireConfig } from "@app/azure-devops/utils";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger, out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
 
@@ -43,7 +44,7 @@ async function handleDashboard(input: string, format: OutputFormat): Promise<voi
     lines.push("");
     lines.push("To fetch a query, run:");
     for (const q of dashboard.queries) {
-        lines.push(`  tools azure-devops query ${q.queryId}`);
+        lines.push(`  ${toolCommand("azure-devops query")} ${q.queryId}`);
     }
 
     switch (format) {

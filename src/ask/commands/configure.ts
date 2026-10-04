@@ -6,6 +6,7 @@ import { providerManager } from "@ask/providers/ProviderManager";
 import type { AskConfig } from "@ask/types/config";
 import * as p from "@clack/prompts";
 import { AIConfig } from "@genesiscz/utils/ai/AIConfig";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import type { AIAccountEntry, AIProvider } from "@genesiscz/utils/config/ai.types";
 import { out } from "@genesiscz/utils/logger";
 import pc from "picocolors";
@@ -187,7 +188,7 @@ async function addAnthropicAccount(): Promise<void> {
         options: [
             {
                 value: "from-claude",
-                label: "Add from tools claude account",
+                label: `Add from ${toolCommand("claude account")}`,
                 hint: "pick from existing claude accounts",
             },
             {
@@ -234,8 +235,8 @@ async function addFromClaudeAccount(): Promise<void> {
     const accounts = await listAvailableAccounts();
 
     if (accounts.length === 0) {
-        p.log.warn("No accounts configured in tools claude.");
-        p.log.info(pc.dim("Run `tools claude login` to add an account first."));
+        p.log.warn(`No accounts configured in ${toolCommand("claude")}.`);
+        p.log.info(pc.dim(`Run \`${toolCommand("claude login")}\` to add an account first.`));
         return;
     }
 
@@ -288,7 +289,7 @@ async function addFromClaudeAccount(): Promise<void> {
     }
 
     await saveAskConfig(askConfig);
-    p.log.success(`Account "${entry.name}" added from tools claude.`);
+    p.log.success(`Account "${entry.name}" added from ${toolCommand("claude")}.`);
 }
 
 /** The shared accounts core, injected so the delegation is testable without a browser. */
@@ -307,7 +308,7 @@ export type SubscriptionLogin = (opts: RunLoginOptions) => Promise<RunLoginResul
 export async function addViaOAuthFlow(login: SubscriptionLogin = runLogin): Promise<void> {
     const result = await login({
         provider: "anthropic-sub",
-        tool: "tools ask",
+        tool: `${toolCommand("ask")}`,
         subcommand: ["configure"],
         // This wizard always asked what to call the account before the flows moved
         // to the shared lib, and the top-level `login` commands do not.

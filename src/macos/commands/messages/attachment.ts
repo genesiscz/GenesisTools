@@ -1,5 +1,6 @@
 import { copyFileSync, existsSync } from "node:fs";
 import { basename, resolve } from "node:path";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { formatBytes } from "@genesiscz/utils/format";
 import { out } from "@genesiscz/utils/logger";
 import { iMessagesDatabase } from "@genesiscz/utils/macos/iMessagesDatabase";
@@ -49,7 +50,7 @@ export function registerMessagesAttachmentCommand(program: Command): void {
                 out.println(`  Path:  ${att.resolvedPath}`);
                 out.println(`  ID:    #${att.rowid}`);
                 out.println();
-                const base = `tools macos messages attachment ${rowid}`;
+                const base = toolCommand("macos messages attachment", String(rowid));
                 out.println(chalk.dim(`  ${base} --download [dest]`));
                 out.println(chalk.dim(`  ${base} --open`));
             }

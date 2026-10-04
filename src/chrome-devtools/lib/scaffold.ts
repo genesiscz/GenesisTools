@@ -5,6 +5,7 @@
  * tsconfig mapping that the store scaffold writes (see src/scripts/lib/store.ts).
  */
 import { chmod, mkdir } from "node:fs/promises";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { inferProject, SCRIPT_NAME_RE, type ScriptEntry, scriptPaths, upsertEntry } from "../../scripts/lib/journal.ts";
 import { commitStore, ensureStoreScaffold } from "../../scripts/lib/store.ts";
 
@@ -17,8 +18,8 @@ export interface Recipe {
 const HEADER = (what: string, imports = "attach") => `#!/usr/bin/env bun
 /**
  * ${what}
- * Run: tools scripts run <name> -- --port 9222 [--match <url-substr>]
- * 9222 is a placeholder — \`tools chrome-devtools attach\` lists the live ports.
+ * Run: ${toolCommand("scripts run", "<name>", "--", "--port", "9222")} [--match <url-substr>]
+ * 9222 is a placeholder — \`${toolCommand("chrome-devtools attach")}\` lists the live ports.
  * The cdp lib resolves via the store tsconfig's @gt/chrome-devtools/* mapping.
  */
 import { ${imports} } from "@gt/chrome-devtools/cdp";
@@ -203,5 +204,5 @@ export async function scaffoldRecipeScript(opts: { name: string; recipe: Recipe 
     await upsertEntry(entry);
     await commitStore(`feat: scaffold chrome-devtools ${opts.recipe.name} script ${opts.name}`);
 
-    return { file, runHint: `tools scripts run ${opts.name} -- --port 9222` };
+    return { file, runHint: toolCommand("scripts run", opts.name, "--", "--port", "9222") };
 }

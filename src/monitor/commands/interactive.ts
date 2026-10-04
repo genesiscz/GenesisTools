@@ -8,6 +8,7 @@ import { DEFAULT_INTERVAL_SEC, WATCHER_KINDS, type WatcherInput, type WatcherKin
 import { normalizeTarget, parseWatcherInput, WatcherValidationError } from "@app/monitor/lib/validate";
 import * as p from "@clack/prompts";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger, out } from "@genesiscz/utils/logger";
 import pc from "picocolors";
 
@@ -55,7 +56,7 @@ function cancelled(value: unknown): boolean {
  * with the same create + first check the non-interactive `add` runs.
  */
 export async function runAddWizard(monitor: Monitor, initialTarget?: string): Promise<boolean> {
-    p.intro(pc.bgCyan(pc.black(" tools monitor add ")));
+    p.intro(pc.bgCyan(pc.black(` ${toolCommand("monitor add")} `)));
 
     const preset = await p.select({
         message: "Start from a preset?",
@@ -265,7 +266,7 @@ export async function runInteractiveMenu(): Promise<void> {
         return;
     }
 
-    p.intro(pc.bgCyan(pc.black(" tools monitor ")));
+    p.intro(pc.bgCyan(pc.black(` ${toolCommand("monitor")} `)));
 
     while (true) {
         const action = await p.select({

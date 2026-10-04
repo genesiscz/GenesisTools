@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { AIConfig } from "@genesiscz/utils/ai/AIConfig";
 import { findClaudeCommand } from "@genesiscz/utils/claude";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
 import { capture } from "@genesiscz/utils/process/ps";
@@ -98,7 +99,7 @@ export function buildToolsCcTeammateCommand(account: string, team: TeamView, tea
     const args = buildTeammateClaudeArgs(team, teammate);
     const quoted = args.map(shellQuote).join(" ");
     const cwd = teammate.member.cwd || team.cwd || process.cwd();
-    return `cd ${shellQuote(cwd)} && tools cc run ${shellQuote(account)} -- ${quoted}`;
+    return `cd ${shellQuote(cwd)} && ${toolCommand("cc run")} ${shellQuote(account)} -- ${quoted}`;
 }
 
 async function resolveAccount(preferred?: string): Promise<string> {
@@ -109,7 +110,7 @@ async function resolveAccount(preferred?: string): Promise<string> {
     const ai = await AIConfig.load();
     const withToken = ai.getAccountsByProvider("anthropic-sub").filter((a) => Boolean(a.tokens.longLivedToken));
     if (withToken.length === 0) {
-        throw new Error("No accounts with a long-lived token. Run: tools claude login-long");
+        throw new Error(`No accounts with a long-lived token. Run: ${toolCommand("claude login-long")}`);
     }
 
     // Last resort only: preferring an account already live on the team happens one
@@ -302,9 +303,9 @@ export async function launchTeammate(opts: LaunchTeammateOptions): Promise<Launc
             detail:
                 `in-process teammate still live (transcript updated ${ageSec}s ago). ` +
                 `Not spawning a second process — that re-invokes the assignment as a new session. ` +
-                `Tail: tools claude tail -a ${opts.teammate.member.name}` +
+                `Tail: ${toolCommand("claude tail", "-a")} ${opts.teammate.member.name}` +
                 (opts.teammate.transcript!.sessionId
-                    ? `  Resume lead: tools cc run ${account} -- --resume ${opts.teammate.transcript!.sessionId}`
+                    ? `  Resume lead: ${toolCommand("cc run")} ${account} -- --resume ${opts.teammate.transcript!.sessionId}`
                     : ""),
             command,
         };
@@ -353,8 +354,8 @@ export async function launchTeammate(opts: LaunchTeammateOptions): Promise<Launc
             action: "noop",
             detail:
                 `in-process teammate still live (transcript updated ${ageSec}s ago) with no tmux pane to focus. ` +
-                `Tail: tools claude tail -a ${opts.teammate.member.name}` +
-                (leadSession ? `  Focus the lead: tools claude cmux focus ${leadSession}` : ""),
+                `Tail: ${toolCommand("claude tail", "-a")} ${opts.teammate.member.name}` +
+                (leadSession ? `  Focus the lead: ${toolCommand("claude cmux focus")} ${leadSession}` : ""),
             command,
         };
     }

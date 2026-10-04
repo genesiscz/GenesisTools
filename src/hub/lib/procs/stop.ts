@@ -1,3 +1,4 @@
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger } from "@genesiscz/utils/logger";
 import { batchPsInfo } from "@genesiscz/utils/process/ps";
 import { isProcessAlive } from "@genesiscz/utils/process-alive";
@@ -99,7 +100,7 @@ export function refusal(report: ProcsReport, pid: number, own: Set<number>): str
     const found = locate(report, pid);
 
     if (!found) {
-        return `${pid} is not an agent process, MCP server, tool shell or agent wrapper (tools hub procs lists them)`;
+        return `${pid} is not an agent process, MCP server, tool shell or agent wrapper (${toolCommand("hub procs")} lists them)`;
     }
 
     const mine = found.pids.find((member) => own.has(member));

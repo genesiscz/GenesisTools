@@ -1,3 +1,4 @@
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger } from "@genesiscz/utils/logger";
 import { getLocalMeeting, localAvailable, localMeetingIdForShareSlug } from "./local";
 import { getMcpMeeting, McpUnavailableError, resolveMcpShareLink } from "./mcp";
@@ -104,7 +105,7 @@ export async function loadMeeting(
         return { source: "mcp", data: remote, notes };
     } catch (err) {
         if (err instanceof McpUnavailableError) {
-            throw new Error(`${err.message}. Check 'tools mcp-manager gateway status'.`);
+            throw new Error(`${err.message}. Check '${toolCommand("mcp-manager gateway status")}'.`);
         }
 
         throw err;

@@ -4,6 +4,7 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, extname, join, resolve } from "node:path";
 import { runTool } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { env } from "@genesiscz/utils/env";
 import { formatBytes } from "@genesiscz/utils/format";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -54,11 +55,11 @@ program
             return;
         }
 
-        renderCliHeader("Artifact Folders", "registered with tools artifact");
+        renderCliHeader("Artifact Folders", `registered with ${toolCommand("artifact")}`);
         const unregistered = runningOutsideRegistry(listRunning(), entries);
 
         if (entries.length === 0) {
-            out.log.info("No folders registered. `tools artifact serve <dir>` registers automatically.");
+            out.log.info(`No folders registered. \`${toolCommand("artifact serve")} <dir>\` registers automatically.`);
         } else {
             const table = createBoxTable(["NAME", "DIRECTORY", "ENTRY", "CREATED"]);
 
@@ -77,7 +78,7 @@ program
         if (unregistered.length > 0) {
             const folders = unregistered.map((server) => `${server.dir} (port ${server.port})`).join(", ");
             out.log.info(
-                `Also serving ${unregistered.length} unregistered folder(s): ${folders}. See: tools artifact ps`
+                `Also serving ${unregistered.length} unregistered folder(s): ${folders}. See: ${toolCommand("artifact ps")}`
             );
         }
     });
@@ -102,7 +103,7 @@ program
         const removed = removeEntry(name);
 
         if (!removed) {
-            out.log.error(`No registered folder named "${name}". See: tools artifact list`);
+            out.log.error(`No registered folder named "${name}". See: ${toolCommand("artifact list")}`);
             process.exitCode = 1;
 
             return;
@@ -145,7 +146,9 @@ program
                 });
                 child.unref();
                 out.log.success(`Detached server pid ${child.pid} (requested port ${opts.port}).`);
-                out.log.info(`Log: ${logPath} · status: tools artifact ps · stop: tools artifact stop ${opts.port}`);
+                out.log.info(
+                    `Log: ${logPath} · status: ${toolCommand("artifact ps")} · stop: ${toolCommand("artifact stop")} ${opts.port}`
+                );
 
                 return;
             }
@@ -172,7 +175,7 @@ program
             const openUrl = resolved.entry ? url.replace(/\/$/, "") + entryUrlPath(resolved.entry) : url;
             out.log.success(`Serving ${pc.bold(resolved.entry ? join(resolved.dir, resolved.entry) : resolved.dir)}`);
             out.log.info(
-                `${pc.cyan(openUrl)} ${pc.dim(`(catalog at / or /__catalog; Ctrl-C stops, or: tools artifact stop ${actualPort})`)}`
+                `${pc.cyan(openUrl)} ${pc.dim(`(catalog at / or /__catalog; Ctrl-C stops, or: ${toolCommand("artifact stop")} ${actualPort})`)}`
             );
 
             const cleanUrls = readdirSync(resolved.dir)
@@ -207,7 +210,7 @@ program
             return;
         }
 
-        renderCliHeader("Running Artifact Servers", "tools artifact serve processes");
+        renderCliHeader("Running Artifact Servers", `${toolCommand("artifact serve")} processes`);
 
         if (servers.length === 0) {
             out.log.info("None running.");
@@ -248,7 +251,7 @@ program
         const match = findRunning(target);
 
         if (!match) {
-            out.log.error(`No running server matches "${target}". See: tools artifact ps`);
+            out.log.error(`No running server matches "${target}". See: ${toolCommand("artifact ps")}`);
             process.exitCode = 1;
 
             return;
@@ -323,7 +326,7 @@ program
             out.log.info(`Created ${pc.bold(dataPath)} (the starter fetches it — put your numbers there).`);
         }
 
-        out.log.info(`Serve it: tools artifact serve ${pc.dim(resolve(target, ".."))}`);
+        out.log.info(`Serve it: ${toolCommand("artifact serve")} ${pc.dim(resolve(target, ".."))}`);
     });
 
 const library = program.command("library").description("The artifact library — every registered folder on ONE server");

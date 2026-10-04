@@ -3,6 +3,7 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { runTool } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { copyToClipboard } from "@genesiscz/utils/clipboard";
 import { logger } from "@genesiscz/utils/logger";
 import * as p from "@genesiscz/utils/prompts/p";
@@ -26,7 +27,7 @@ interface ToolUseBlock {
 
 function showHelp() {
     logger.info(`
-Usage: tools cursor-context [options] [file]
+Usage: ${toolCommand("cursor-context")} [options] [file]
 
 Description:
   Parse a SpecStory file and remove selected tool-use inputs/outputs interactively.
@@ -42,9 +43,9 @@ Options:
   -?, --help-full     Show this help message
 
 Examples:
-  tools cursor-context
-  tools cursor-context logs/story.log
-  tools cursor-context logs/story.log -o cleaned.log
+  ${toolCommand("cursor-context")}
+  ${toolCommand("cursor-context")} logs/story.log
+  ${toolCommand("cursor-context")} logs/story.log -o cleaned.log
 `);
 }
 

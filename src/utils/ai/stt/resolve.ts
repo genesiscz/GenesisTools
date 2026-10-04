@@ -3,6 +3,7 @@ import type { AccountEntry } from "@genesiscz/utils/ai/config/schema";
 import { resolveCredential } from "@genesiscz/utils/ai/providers/credentials";
 import { registerBuiltInPlugins } from "@genesiscz/utils/ai/providers/plugins";
 import { providerPlugin } from "@genesiscz/utils/ai/providers/registry";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger } from "@genesiscz/utils/logger";
 import { createFixtureStt } from "./fixture";
 import { openDeepgramStt } from "./providers/deepgram";
@@ -54,7 +55,9 @@ export async function resolveSttAccount(options: { provider: CloudProvider; acco
     if (options.account) {
         const account = store.account(options.account);
         if (!account) {
-            throw new Error(`No AI account '${options.account}'. List them with: tools ai config account list`);
+            throw new Error(
+                `No AI account '${options.account}'. List them with: ${toolCommand("ai config account list")}`
+            );
         }
 
         if (account.provider !== options.provider) {
@@ -69,7 +72,7 @@ export async function resolveSttAccount(options: { provider: CloudProvider; acco
     if (!account) {
         throw new Error(
             `Live STT provider '${options.provider}' has no enabled account. Add one with: ` +
-                `tools ai config account add --provider ${options.provider} --name ${options.provider} ` +
+                `${toolCommand("ai config account add")} --provider ${options.provider} --name ${options.provider} ` +
                 `--use-env ${providerPlugin(options.provider).credential.envKeys[0] ?? "<KEY_VAR>"}`
         );
     }

@@ -1,3 +1,4 @@
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { runCmuxJSON } from "@genesiscz/utils/cmux/lib/cli";
 import { formatDuration, parseDuration } from "@genesiscz/utils/format";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -266,7 +267,7 @@ function renderCallDetail(record: SayCallRecord, names: Map<string, string>, now
     );
 
     if (c.sessionId) {
-        renderCliKeyRow("jump", pc.dim(`tools claude cmux focus ${c.sessionId.slice(0, 8)}`));
+        renderCliKeyRow("jump", pc.dim(`${toolCommand("claude cmux focus")} ${c.sessionId.slice(0, 8)}`));
     }
 
     if (record.error) {
@@ -357,11 +358,11 @@ export async function showCallLogs(opts: LogsOptions): Promise<void> {
     out.println(`  ${counts.join(pc.dim(" · "))}`);
     out.println();
     renderCliSection("Next");
-    renderCliKeyRow("Detail", pc.dim("tools say logs -n 5 --full"));
-    renderCliKeyRow("Attention", pc.dim("tools say logs --attention"));
-    renderCliKeyRow("Search", pc.dim('tools say logs --grep "deploy" --since 7d'));
-    renderCliKeyRow("Jump", pc.dim("tools claude cmux focus <session>"));
-    renderCliKeyRow("Stats", pc.dim("tools say stats"));
+    renderCliKeyRow("Detail", pc.dim(toolCommand("say logs", "-n", "5", "--full")));
+    renderCliKeyRow("Attention", pc.dim(toolCommand("say logs", "--attention")));
+    renderCliKeyRow("Search", pc.dim(toolCommand("say logs", "--grep", '"deploy"', "--since", "7d")));
+    renderCliKeyRow("Jump", pc.dim(toolCommand("claude cmux focus", "<session>")));
+    renderCliKeyRow("Stats", pc.dim(toolCommand("say stats")));
     out.println();
 }
 

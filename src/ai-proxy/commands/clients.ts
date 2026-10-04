@@ -3,6 +3,7 @@ import { validateClients } from "@app/ai-proxy/lib/clients";
 import { loadConfigFresh, saveConfig } from "@app/ai-proxy/lib/config";
 import type { AiProxyClientConfig, AiProxyProviderType } from "@app/ai-proxy/lib/types";
 import { readClientLedger } from "@app/ai-proxy/lib/usage/client-ledger";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
 import { isSecureRef, type SecretStore, secrets } from "@genesiscz/utils/security";
@@ -18,7 +19,7 @@ function describeKey(key: AiProxyClientConfig["key"]): string {
         return `vault:${key.path}`;
     }
 
-    return `${key.slice(0, 4)}…${key.slice(-4)} (plaintext — run: tools ai-proxy clients secure)`;
+    return `${key.slice(0, 4)}…${key.slice(-4)} (plaintext — run: ${toolCommand("ai-proxy clients secure")})`;
 }
 
 export async function clientsList(): Promise<void> {

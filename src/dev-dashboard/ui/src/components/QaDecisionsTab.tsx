@@ -2,6 +2,7 @@ import { deliveryLabel } from "@app/dev-dashboard/lib/qa-decision-delivery";
 import { renderQaQuestionHtml } from "@app/dev-dashboard/lib/qa-render";
 import type { InboxAnswerResult } from "@app/question/lib/inbox/answer";
 import type { InboxDecision, InboxSession } from "@app/question/lib/inbox/build";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@ui/components/button";
 import { Textarea } from "@ui/components/textarea";
@@ -62,7 +63,7 @@ function deliveryLine(result: InboxAnswerResult): string {
     }
 
     if (result.channel === "codex" && result.delivered) {
-        return `Delivered: steered into the tools codex worker${result.detail ? ` ${result.detail}` : ""}.`;
+        return `Delivered: steered into the ${toolCommand("codex")} worker${result.detail ? ` ${result.detail}` : ""}.`;
     }
 
     return `Queued: ${result.detail ?? "no live route"}. The session's next prompt picks the answers up.`;

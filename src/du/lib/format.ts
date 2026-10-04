@@ -1,3 +1,4 @@
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import pc from "picocolors";
 import type { ClonesizeResult, Engine, NodeResult, PartnersResult, VolumeInfo } from "./types";
 
@@ -85,7 +86,7 @@ export function renderDenied(r: { denied_dirs?: number; denied_files?: number; d
     if (paths.length > 0) {
         L.push("");
         L.push(pc.dim("  Re-run as root to resolve them:"));
-        L.push(`     sudo tools du clonesize ${shellQuote(paths[0]!)}`);
+        L.push(`     sudo ${toolCommand("du clonesize")} ${shellQuote(paths[0]!)}`);
     }
     return L;
 }
@@ -377,7 +378,7 @@ export function renderVolume(vol: VolumeInfo, scan: ClonesizeResult, elapsedMs?:
         }
         L.push("");
         L.push(pc.dim("  Resolve it with:"));
-        L.push(`     sudo tools du volume ${shellQuote(vol.mount)}`);
+        L.push(`     sudo ${toolCommand("du volume")} ${shellQuote(vol.mount)}`);
     } else if (unaccounted > 0) {
         L.push("");
         L.push(

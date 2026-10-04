@@ -16,6 +16,7 @@ import {
     GrokSubscriptionClient,
     getTokenPrefix,
 } from "@genesiscz/utils/ai/grok";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger } from "@genesiscz/utils/logger";
 
 export interface IntrospectOptions {
@@ -51,7 +52,7 @@ export async function buildIntrospectText(config: AiProxyConfig, options?: Intro
             lines.push(`Tunnel:       ${resolveTunnelName(config.public) ?? "—"}`);
         } else {
             lines.push(`Local only:   http://${config.listen.host}:${config.listen.port}/v1`);
-            lines.push(`Setup tunnel: tools ai-proxy config setup-tunnel`);
+            lines.push(`Setup tunnel: ${toolCommand("ai-proxy config setup-tunnel")}`);
         }
         lines.push(`API Key:      ${formatProxyApiKey(config.proxyApiKey, options?.showSecrets)}`);
         lines.push(`Translation:  cursorAgent=${config.translation.cursorAgent}`);
@@ -159,7 +160,7 @@ export async function buildIntrospectText(config: AiProxyConfig, options?: Intro
         lines.push(`API Key: ${formatProxyApiKey(config.proxyApiKey, options?.showSecrets)}`);
         lines.push(`Add model: ${firstModel}`);
         lines.push("Translation: start with auto; if Agent breaks, run: ai-proxy serve --no-translate");
-        lines.push("Copilot login: tools ai-proxy accounts login github-copilot");
+        lines.push(`Copilot login: ${toolCommand("ai-proxy accounts login")} github-copilot`);
     }
 
     return lines.join("\n");

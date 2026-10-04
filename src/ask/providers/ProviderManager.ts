@@ -9,6 +9,7 @@ import { registerBuiltInPlugins } from "@genesiscz/utils/ai/providers/plugins";
 import { tryProviderPlugin } from "@genesiscz/utils/ai/providers/registry";
 import { getProviderConfigs } from "@genesiscz/utils/ask/providers/compat";
 import { modelsForProvider, providerNameFor, toDetectedProvider } from "@genesiscz/utils/ask/providers/detected";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
 
@@ -112,7 +113,7 @@ export class ProviderManager {
 
         if (detected.length === 0) {
             logger.warn("No AI providers detected.");
-            logger.info("Add one with: tools ai config account add --provider <provider>");
+            logger.info(`Add one with: ${toolCommand("ai config account add")} --provider <provider>`);
         }
 
         return detected;

@@ -1,3 +1,4 @@
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { formatBytes } from "@genesiscz/utils/format";
 import { out } from "@genesiscz/utils/logger";
 import { createBoxTable, renderCliHeader, truncateDisplay } from "@genesiscz/utils/table";
@@ -69,5 +70,5 @@ export async function listCommand(config: FableConfig, options: ListOptions): Pr
     });
 
     out.println(table.toString());
-    out.log.info(`Pipe into mining: tools learn-from-fable select --limit ${options.limit}`);
+    out.log.info(`Pipe into mining: ${toolCommand("learn-from-fable select", "--limit", String(options.limit))}`);
 }

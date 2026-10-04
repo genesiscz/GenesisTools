@@ -1,4 +1,5 @@
 import * as p from "@clack/prompts";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import pc from "picocolors";
 import type { IndexerManager } from "./manager";
 
@@ -41,7 +42,7 @@ export async function removeWorkflow({ manager, name, force }: RemoveWorkflowOpt
         if (!process.stdout.isTTY || !process.stdin.isTTY) {
             p.log.error("Specify an index name in non-interactive mode:");
             p.log.info(`  Available: ${displayNames.join(", ")}`);
-            p.log.info("  Usage: tools indexer remove <name> [--force]");
+            p.log.info(`  Usage: ${toolCommand("indexer remove", "<name>", "[--force]")}`);
             process.exit(1);
         }
 

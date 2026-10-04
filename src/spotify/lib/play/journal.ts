@@ -11,6 +11,7 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { playDir } from "@app/spotify/lib/paths";
 import { formatWindows, type PlayWindow } from "@app/spotify/lib/play/plan";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/storage";
@@ -117,7 +118,7 @@ export function writeState(state: Omit<RunState, "updatedAt" | "resumeCommand">)
         ...state,
         updatedAt: new Date().toISOString(),
         resumeCommand:
-            `tools spotify play run --tracks ${state.tracksFile}` +
+            `${toolCommand("spotify play run", "--tracks", state.tracksFile)}` +
             ` --windows ${formatWindows(state.windows)}${state.queue ? "" : " --no-queue"} --resume`,
     };
     mkdirSync(playDir(), { recursive: true });

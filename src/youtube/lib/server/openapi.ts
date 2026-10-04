@@ -1,3 +1,5 @@
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
+
 export interface OpenApiInfo {
     title: string;
     version: string;
@@ -1755,8 +1757,7 @@ export function buildOpenApiDocument(): OpenApiDocument {
         info: {
             title: "GenesisTools YouTube API",
             version: API_VERSION,
-            description:
-                "HTTP API for the `tools youtube` server: channel tracking, video/transcript/summary/QA access, the ingest pipeline, cache management, and config. A realtime job-event stream is served separately over a websocket at `GET /api/v1/events` (not expressible in OpenAPI).",
+            description: `HTTP API for the \`${toolCommand("youtube")}\` server: channel tracking, video/transcript/summary/QA access, the ingest pipeline, cache management, and config. A realtime job-event stream is served separately over a websocket at \`GET /api/v1/events\` (not expressible in OpenAPI).`,
         },
         servers: [{ url: "/", description: "Relative to the server origin." }],
         tags: [

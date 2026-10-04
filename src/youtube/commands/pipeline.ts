@@ -5,6 +5,7 @@ import { statusIcon } from "@app/youtube/commands/_shared/status-icon";
 import { splitTargets, toJobStages } from "@app/youtube/commands/_shared/utils";
 import { withConsoleContext } from "@app/youtube/lib/service-user";
 import type { PipelineJob } from "@app/youtube/lib/types";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import type { Command } from "commander";
 
 interface PipelineOpts {
@@ -120,5 +121,5 @@ function renderPipelineRows(rows: PipelineJob[]): string {
 }
 
 function buildPipelineExamples(): string {
-    return "\nExamples:\n  $ tools youtube pipeline @mkbhd --stages discover,metadata,captions\n  $ tools youtube pipeline dQw4w9WgXcQ --stages metadata,captions,summarize --concurrency 4 --watch\n";
+    return `\nExamples:\n  $ ${toolCommand("youtube pipeline", "@mkbhd", "--stages", "discover,metadata,captions")}\n  $ ${toolCommand("youtube pipeline", "dQw4w9WgXcQ", "--stages", "metadata,captions,summarize", "--concurrency", "4", "--watch")}\n`;
 }

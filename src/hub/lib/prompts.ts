@@ -3,6 +3,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { readCachedSessionCwd } from "@genesiscz/utils/agent-sessions/cached-title";
 import { execTool } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { repoFacts } from "@genesiscz/utils/git/repo-facts";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
@@ -200,7 +201,7 @@ export function findPrompt(prompts: SavedPrompt[], name: string): SavedPrompt {
         );
     }
 
-    throw new HubPromptError("not-found", `no saved prompt is named "${name}" (tools hub prompts list)`);
+    throw new HubPromptError("not-found", `no saved prompt is named "${name}" (${toolCommand("hub prompts list")})`);
 }
 
 export async function addPrompt({

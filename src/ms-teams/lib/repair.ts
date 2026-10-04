@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, readdirSync, renameSync, statSync } from "node:fs";
 import { basename, join } from "node:path";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger } from "@genesiscz/utils/logger";
 import { liveEbWebView, liveMsTeamsRoot, liveWorkProfile } from "./paths";
 import { teamsAppIsUp } from "./process";
@@ -190,7 +191,7 @@ export function runRepairMove(opts: {
 
     if (!dryRun && teamsAppIsUp()) {
         throw new Error(
-            "ABORT: New Teams is still running (MacOS/MSTeams or WebView or respawn). Run tools ms-teams repair quit. The Core Audio driver MSTeamsAudioDevice.driver is not the app."
+            `ABORT: New Teams is still running (MacOS/MSTeams or WebView or respawn). Run ${toolCommand("ms-teams repair quit")}. The Core Audio driver MSTeamsAudioDevice.driver is not the app.`
         );
     }
 

@@ -1,6 +1,7 @@
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Browser } from "@genesiscz/utils/browser";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
 import { withFileLock } from "@genesiscz/utils/storage";
@@ -109,7 +110,7 @@ async function sleepUntil({ deps, target, deadline, timeoutMs }: Deadline): Prom
 
     if (remaining <= 0) {
         throw new Error(
-            `artifact "${target}" did not answer within ${Math.round(timeoutMs / 1000)} s (see tools artifact ps and ${serveLog(target)})`
+            `artifact "${target}" did not answer within ${Math.round(timeoutMs / 1000)} s (see ${toolCommand("artifact ps")} and ${serveLog(target)})`
         );
     }
 

@@ -9,6 +9,7 @@ import {
     type OpenAIModelCategory,
     resolveModel as resolveModelByName,
 } from "@genesiscz/utils/ask/providers/ModelResolver";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { formatTokens } from "@genesiscz/utils/format";
 import { logger } from "@genesiscz/utils/logger";
 import { estimateTokens } from "@genesiscz/utils/tokens";
@@ -60,7 +61,7 @@ export class ChatEngine {
             const found = providers.find((p) => p.name === "anthropic");
 
             if (!found) {
-                throw new Error("No Claude subscription configured. Run `tools ask config` first.");
+                throw new Error(`No Claude subscription configured. Run \`${toolCommand("ask config")}\` first.`);
             }
 
             provider = found;

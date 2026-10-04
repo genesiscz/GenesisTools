@@ -8,6 +8,7 @@ import { buildSyncReport, type SyncReport, type SyncTarget, syncTodo } from "@ap
 import type { OutputFormat, TodoPriority } from "@app/todo/lib/types";
 import * as p from "@clack/prompts";
 import { isInteractive, parseVariadic, suggestCommand } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { out } from "@genesiscz/utils/logger";
 import { Command, Option } from "commander";
 import pc from "picocolors";
@@ -32,7 +33,7 @@ Timing and sync:
                         command for this todo.
 
 Times accept '30m', '24h', '3d', '1w', '2026-04-02 10:00' (local) or a full ISO string.
-Verify with: tools todo show <id> -f json  and  tools macos calendar search "<title>"
+Verify with: ${toolCommand("todo show")} <id> -f json  and  ${toolCommand("macos calendar search")} "<title>"
 `;
 
 function resolveFormat(format: string | undefined): OutputFormat {

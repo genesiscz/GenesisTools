@@ -1,5 +1,6 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import { runTool } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
 import * as p from "@genesiscz/utils/prompts/p";
@@ -737,7 +738,7 @@ ${chalk.bold("macOS ESLogger Monitor")}
 Monitor macOS Endpoint Security events in real-time using eslogger.
 
 ${chalk.bold("USAGE:")}
-  tools macos-eslogger [options]
+  ${toolCommand("macos-eslogger")} [options]
 
 ${chalk.bold("ARGUMENTS:")}
   -e, --events <list>     Comma-separated list of event types to monitor
@@ -758,11 +759,11 @@ ${chalk.bold("POPULAR EVENTS:")}
   exec, fork, exit, open, write, authentication, sudo
 
 ${chalk.bold("EXAMPLES:")}
-  tools macos-eslogger                          # Interactive mode
-  tools macos-eslogger -c process               # Monitor process events
-  tools macos-eslogger -e exec,fork,open        # Monitor specific events
-  tools macos-eslogger -o events.log            # Save to file
-  tools macos-eslogger -e exec --filter-event '.event.target.path == ".*Cursor.*"'  # Filter Cursor exec events
+  ${toolCommand("macos-eslogger")}                          # Interactive mode
+  ${toolCommand("macos-eslogger")} -c process               # Monitor process events
+  ${toolCommand("macos-eslogger")} -e exec,fork,open        # Monitor specific events
+  ${toolCommand("macos-eslogger")} -o events.log            # Save to file
+  ${toolCommand("macos-eslogger")} -e exec --filter-event '.event.target.path == ".*Cursor.*"'  # Filter Cursor exec events
 
 ${chalk.bold("NOTE:")}
   This tool requires sudo privileges to run eslogger.

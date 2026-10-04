@@ -5,6 +5,7 @@
  * using configurable regex patterns stored in Storage("git").
  */
 
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import type { DetailedCommitInfo } from "@genesiscz/utils/git";
 import { logger } from "@genesiscz/utils/logger";
 import { Storage } from "@genesiscz/utils/storage";
@@ -169,7 +170,9 @@ export function extractWorkitemIds(
     }
 
     if (result.size === 0 && (!patterns || patterns === DEFAULT_PATTERNS)) {
-        logger.debug("No workitem patterns configured. Run: tools git configure-workitem-patterns --suggest");
+        logger.debug(
+            `No workitem patterns configured. Run: ${toolCommand("git configure-workitem-patterns")} --suggest`
+        );
     }
 
     return result;

@@ -2,6 +2,7 @@ import { getServerNames } from "@app/mcp-manager/utils/command.utils.js";
 import { readUnifiedConfig, writeUnifiedConfig } from "@app/mcp-manager/utils/config.utils.js";
 import type { MCPProvider, UnifiedMCPServerConfig } from "@app/mcp-manager/utils/providers/types.js";
 import { WriteResult } from "@app/mcp-manager/utils/providers/types.js";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger } from "@genesiscz/utils/logger";
 import chalk from "chalk";
 
@@ -28,7 +29,7 @@ export async function removeServers(
     const config = await readUnifiedConfig();
 
     if (Object.keys(config.mcpServers).length === 0) {
-        logger.warn("No servers found in unified config. Run 'tools mcp-manager config' to add servers.");
+        logger.warn(`No servers found in unified config. Run '${toolCommand("mcp-manager config")}' to add servers.`);
         return;
     }
 
@@ -41,7 +42,7 @@ export async function removeServers(
     logger.info(
         chalk.yellow(
             `Removing ${serverNames.length} server(s) PERMANENTLY: ${serverNames.join(", ")}\n` +
-                `  (hint: 'tools mcp-manager disable' is the reversible alternative — it keeps the config in the unified config)`
+                `  (hint: '${toolCommand("mcp-manager disable")}' is the reversible alternative — it keeps the config in the unified config)`
         )
     );
 

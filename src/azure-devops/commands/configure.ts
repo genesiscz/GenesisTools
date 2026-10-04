@@ -8,6 +8,7 @@
 import { exitWithAuthGuide } from "@app/azure-devops/cli.utils";
 import { buildAdoConfig, saveAdoConfig } from "@app/azure-devops/lib/ado-configure";
 import { getLocalConfigDir } from "@app/azure-devops/utils";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
 import { $ } from "bun";
@@ -109,9 +110,9 @@ async function handleConfigure(url: string): Promise<void> {
     out.println(`
 🎉 Done! You can now use the tool:
 
-  tools azure-devops query <id>
-  tools azure-devops workitem <id>
-  tools azure-devops dashboard <id>
+  ${toolCommand("azure-devops query")} <id>
+  ${toolCommand("azure-devops workitem")} <id>
+  ${toolCommand("azure-devops dashboard")} <id>
 `);
 }
 

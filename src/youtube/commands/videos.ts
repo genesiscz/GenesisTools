@@ -3,6 +3,7 @@ import { getYoutube } from "@app/youtube/commands/_shared/ensure-pipeline";
 import { renderOrEmit } from "@app/youtube/commands/_shared/render";
 import { normaliseHandle, wrap } from "@app/youtube/commands/_shared/utils";
 import type { ChannelHandle, VideoId, VideoSearchField } from "@app/youtube/lib/types";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { formatDuration } from "@genesiscz/utils/format";
 import { out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
@@ -36,7 +37,7 @@ export function registerVideosCommand(program: Command): void {
         .option("--include-shorts", "Include Shorts")
         .addHelpText(
             "after",
-            "\nExamples:\n  $ tools youtube videos list --channel @mkbhd\n  $ tools youtube --json videos list --limit 100\n"
+            `\nExamples:\n  $ ${toolCommand("youtube videos list", "--channel", "@mkbhd")}\n  $ ${toolCommand("youtube")} --json videos list --limit 100\n`
         )
         .action(async (opts: ListOpts) => {
             const yt = await getYoutube();
@@ -48,7 +49,7 @@ export function registerVideosCommand(program: Command): void {
             });
             const text = renderColumns({
                 rows,
-                emptyMessage: "No cached videos — try `tools youtube channels sync --all`.",
+                emptyMessage: `No cached videos — try \`${toolCommand("youtube channels sync", "--all")}\`.`,
                 schema: [
                     { header: "Uploaded", get: (video) => video.uploadDate ?? "—", minWidth: 11 },
                     { header: "Channel", get: (video) => video.channelHandle, maxWidth: 18 },
@@ -71,7 +72,7 @@ export function registerVideosCommand(program: Command): void {
         .description("Show full metadata + transcript availability for a video")
         .addHelpText(
             "after",
-            "\nExamples:\n  $ tools youtube videos show dQw4w9WgXcQ\n  $ tools youtube --json videos show dQw4w9WgXcQ\n"
+            `\nExamples:\n  $ ${toolCommand("youtube videos show", "dQw4w9WgXcQ")}\n  $ ${toolCommand("youtube")} --json videos show dQw4w9WgXcQ\n`
         )
         .action(async (id: string) => {
             const yt = await getYoutube();
@@ -118,7 +119,7 @@ export function registerVideosCommand(program: Command): void {
         .option("--limit <n>", "Max hits", (value) => Number.parseInt(value, 10), 50)
         .addHelpText(
             "after",
-            "\nExamples:\n  $ tools youtube videos search iphone\n  $ tools youtube videos search iphone --in title,description --channel @mkbhd\n  $ tools youtube videos search agentic --in tags\n"
+            `\nExamples:\n  $ ${toolCommand("youtube videos search", "iphone")}\n  $ ${toolCommand("youtube videos search", "iphone", "--in", "title,description", "--channel", "@mkbhd")}\n  $ ${toolCommand("youtube videos search", "agentic", "--in", "tags")}\n`
         )
         .action(async (query: string, opts: { in: string[]; channel?: string; limit: number }) => {
             const yt = await getYoutube();
@@ -168,7 +169,7 @@ export function registerVideosCommand(program: Command): void {
         .option("--concurrency <n>", "Parallel yt-dlp lookups (default 4)", (value) => Number.parseInt(value, 10), 4)
         .addHelpText(
             "after",
-            "\nExamples:\n  $ tools youtube videos sync-dates --channel @mkbhd --limit 50\n  $ tools youtube videos sync-dates --concurrency 6\n"
+            `\nExamples:\n  $ ${toolCommand("youtube videos sync-dates", "--channel", "@mkbhd", "--limit", "50")}\n  $ ${toolCommand("youtube videos sync-dates", "--concurrency", "6")}\n`
         )
         .action(async (opts: { channel?: string; limit: number; concurrency: number }) => {
             const yt = await getYoutube();

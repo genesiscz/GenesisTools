@@ -1,3 +1,4 @@
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { toast } from "sonner";
 
 const TOAST_ID = "monitor-backend-down";
@@ -15,7 +16,7 @@ export function reportBackendUnreachable(detail: string): void {
     down = true;
     toast.error("Monitor server unreachable", {
         id: TOAST_ID,
-        description: `${detail}. Start it with: tools monitor server up`,
+        description: `${detail}. Start it with: ${toolCommand("monitor server up")}`,
         duration: Number.POSITIVE_INFINITY,
     });
 }

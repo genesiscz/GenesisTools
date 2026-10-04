@@ -1,5 +1,6 @@
 import type { NotifyChannel } from "@app/monitor/lib/types";
 import { useSayVoices } from "@app/monitor/ui/api.hooks";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { Input } from "@genesiscz/utils/ui/components/input";
 import { Label } from "@genesiscz/utils/ui/components/label";
 import {
@@ -36,7 +37,7 @@ export const CHANNEL_SPECS: Record<
 > = {
     system: {
         title: "macOS notification",
-        blurb: "Notification Center banner via terminal-notifier. Same channel `tools notify` uses.",
+        blurb: `Notification Center banner via terminal-notifier. Same channel \`${toolCommand("notify")}\` uses.`,
         icon: MonitorSmartphone,
         fields: [
             { key: "title", label: "Title", placeholder: "GenesisTools" },
@@ -45,8 +46,8 @@ export const CHANNEL_SPECS: Record<
         booleans: [{ key: "ignoreDnD", label: "Bypass Do Not Disturb" }],
     },
     say: {
-        title: "Spoken (tools say)",
-        blurb: "Reads the message aloud through `tools say`. Pick any voice a configured provider offers.",
+        title: `Spoken (${toolCommand("say")})`,
+        blurb: `Reads the message aloud through \`${toolCommand("say")}\`. Pick any voice a configured provider offers.`,
         icon: Volume2,
         fields: [{ key: "voice", label: "Voice" }],
         booleans: [],
@@ -153,7 +154,7 @@ export function SayVoicePicker({
             <p className="text-[0.7rem] text-muted-foreground/80">
                 {providers.length > 0
                     ? `Providers available now: ${providers.map((group) => group.label).join(", ")}. Add an xAI or OpenAI account to unlock more.`
-                    : "Voices come from `tools say voices`."}
+                    : `Voices come from \`${toolCommand("say voices")}\`.`}
             </p>
         </div>
     );

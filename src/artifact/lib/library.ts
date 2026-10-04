@@ -1,6 +1,7 @@
 import { existsSync, statSync } from "node:fs";
 import { createServer as createHttpServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger } from "@genesiscz/utils/logger";
 import { createServer as createViteServer, type ViteDevServer } from "vite";
 import { artifactServePlugin, cachedScan } from "./catalog";
@@ -64,7 +65,7 @@ function renderLibraryHtml(entries: DashboardEntry[], templateDir: string): stri
         .join("\n");
 
     const sections = `<section><h2>Registered artifacts</h2>\n<ul>${
-        rows || `<li class="empty">nothing registered — tools artifact add &lt;dir&gt;</li>`
+        rows || `<li class="empty">nothing registered — ${toolCommand("artifact add")} &lt;dir&gt;</li>`
     }</ul></section>`;
 
     return renderTemplate(loadTemplate(templateDir, "catalog.html"), {

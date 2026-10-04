@@ -1,6 +1,7 @@
 import { INPUT_FORMATS, type InputFormat, readInput } from "@app/json2md/lib/input";
 import { parseColumns, parsePairs, resolveEnumFlag } from "@app/json2md/lib/options";
 import { deliver } from "@app/json2md/lib/output";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import {
     type ConvertOptions,
     type FrontmatterFormat,
@@ -305,7 +306,9 @@ export function registerConvertCommand(program: Command): void {
                     ? json2md(selected as Parameters<typeof json2md>[0], options)
                     : jsonToMarkdown(selected, options);
 
-            const markdown = flags.stamp ? stampMarkdown(rendered, { command: `tools json2md ${source}` }) : rendered;
+            const markdown = flags.stamp
+                ? stampMarkdown(rendered, { command: toolCommand("json2md", source) })
+                : rendered;
 
             await deliver({ markdown, file: flags.output, clipboard: flags.clipboard, ask: flags.ask });
         });

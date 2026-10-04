@@ -1,4 +1,5 @@
 import { suggestCommand, suggestEnumFlag } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
 import {
@@ -114,7 +115,7 @@ export function registerSimulatorCommands(program: Command): void {
     addFormatOption(sim.command("devices"))
         .description("List available simulators and which are booted")
         .action(async (options: FormatOptions & { json?: boolean }) => {
-            const format = resolveFormat(options, "tools control sim");
+            const format = resolveFormat(options, toolCommand("control sim"));
             if (!format) {
                 return;
             }
@@ -150,7 +151,7 @@ export function registerSimulatorCommands(program: Command): void {
         .requiredOption("--bundle-id <id>", "e.g. com.apple.mobilecal")
         .option("--udid <udid>", "device udid or name; only needed when several are booted")
         .action(async (options: FormatOptions & { bundleId: string; udid?: string; json?: boolean }) => {
-            const format = resolveFormat(options, "tools control sim");
+            const format = resolveFormat(options, toolCommand("control sim"));
             if (!format) {
                 return;
             }
@@ -174,7 +175,7 @@ export function registerSimulatorCommands(program: Command): void {
         .requiredOption("--path <file>", "output PNG path")
         .option("--udid <udid>", "device udid or name")
         .action(async (options: FormatOptions & { path: string; udid?: string }) => {
-            const format = resolveFormat(options, "tools control sim");
+            const format = resolveFormat(options, toolCommand("control sim"));
             if (!format) {
                 return;
             }
@@ -196,7 +197,7 @@ export function registerSimulatorCommands(program: Command): void {
         .option("--max-points <n>", "hard cap on probe points (default 400)")
         .option("--out <file>", "also write the observation JSON here, for `sim act --snapshot-file`")
         .action(async (options: FormatOptions & SharedOptions & { out?: string }) => {
-            const format = resolveFormat(options, "tools control sim see");
+            const format = resolveFormat(options, toolCommand("control sim see"));
             if (!format) {
                 return;
             }
@@ -256,7 +257,7 @@ export function registerSimulatorCommands(program: Command): void {
                         pixels?: string;
                     }
             ) => {
-                const format = resolveFormat(options, "tools control sim act");
+                const format = resolveFormat(options, toolCommand("control sim act"));
                 if (!format) {
                     return;
                 }

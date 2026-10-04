@@ -1,3 +1,4 @@
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
@@ -67,7 +68,7 @@ export async function rawRequest<T>(base: string, path: string, init?: RequestIn
         const msg = err instanceof Error ? err.message : String(err);
         throw new Error(
             `boards: cannot reach dev-dashboard at ${base} (${init?.method ?? "GET"} ${path}: ${msg}). ` +
-                "Is it running? Start it with `tools dev-dashboard`, or point at another instance " +
+                `Is it running? Start it with \`${toolCommand("dev-dashboard")}\`, or point at another instance ` +
                 "via --base / BOARDS_BASE_URL."
         );
     }

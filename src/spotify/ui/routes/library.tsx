@@ -4,6 +4,7 @@ import { BarCell, DataTable } from "@app/spotify/ui/components/DataTable";
 import { PageHeader, ReportState, Section, StatTile } from "@app/spotify/ui/components/PageShell";
 import { useReport } from "@app/spotify/ui/lib/api";
 import { useFilters } from "@app/spotify/ui/lib/filters";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { createFileRoute } from "@tanstack/react-router";
 import { Card } from "@ui/components/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@ui/components/tabs";
@@ -286,7 +287,7 @@ function LibraryPage() {
                         query={saves}
                         isEmpty={(r) => r.empty}
                         emptyTitle="No harvested library for this profile"
-                        emptyDescription="Run `tools spotify harvest`, then `tools spotify build`."
+                        emptyDescription={`Run \`${toolCommand("spotify harvest")}\`, then \`${toolCommand("spotify build")}\`.`}
                         rows={5}
                     >
                         {(r) => (

@@ -1,4 +1,5 @@
 import { isInteractive, runTool, suggestCommand } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { decodeJwt, describeClaimTime, type JwtObject, type TimeClaim } from "@genesiscz/utils/jwt";
 import { logger, out } from "@genesiscz/utils/logger";
@@ -90,7 +91,7 @@ async function main(): Promise<void> {
     if (!token) {
         out.error("Error: no token provided.");
         out.error(suggestCommand("tools jwt", { add: ["<token>"] }));
-        out.error('Or pipe one:  echo "<token>" | tools jwt');
+        out.error(`Or pipe one:  echo "<token>" | ${toolCommand("jwt")}`);
         await out.flush();
         process.exit(1);
     }

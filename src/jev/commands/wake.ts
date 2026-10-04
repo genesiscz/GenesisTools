@@ -6,6 +6,7 @@ import {
     STT_PROVIDER_IDS,
 } from "@genesiscz/utils/ai/stt";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { ui } from "@genesiscz/utils/cli/ui";
 import { logger } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
@@ -57,7 +58,7 @@ export function registerWake(program: Command): void {
         .option("--word <phrases>", "Comma-separated wake phrases", DEFAULT_WAKE_GATE.word)
         .option("--mode [mode]", "contains or jev", "contains")
         .option("--stt [provider]", `STT used after the trigger: ${STT_PROVIDER_IDS.join("|")}`, "fixture")
-        .option("--account <id>", "tools ai account for the STT provider")
+        .option("--account <id>", `${toolCommand("ai account")} for the STT provider`)
         .option("--language <codes>", "Comma-separated ISO 639-1 codes in priority order, e.g. cs,en")
         .option("--yes", "Allow non-TTY enable when a marker already exists")
         .action(
@@ -119,7 +120,7 @@ function enable(options: {
         return;
     }
 
-    const mode = parseEnum(options.mode, WAKE_MODES, "--mode", "tools jev wake enable");
+    const mode = parseEnum(options.mode, WAKE_MODES, "--mode", `${toolCommand("jev wake enable")}`);
     if (!mode) {
         return;
     }
@@ -151,7 +152,7 @@ function enable(options: {
 }
 
 function listenCommandFor(gate: WakeGate): string {
-    const parts = ["tools jev listen", "--wake-mode", gate.mode ?? "contains", "--stt", gate.stt];
+    const parts = [`${toolCommand("jev listen")}`, "--wake-mode", gate.mode ?? "contains", "--stt", gate.stt];
     if (gate.account) {
         parts.push("--account", gate.account);
     }

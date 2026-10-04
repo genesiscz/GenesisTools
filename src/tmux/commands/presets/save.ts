@@ -1,4 +1,5 @@
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger, out } from "@genesiscz/utils/logger";
 import { captureTmuxSnapshot, SNAPSHOT_VERSION, type TmuxPreset } from "@genesiscz/utils/tmux/snapshot";
 import { PresetExistsError, TmuxPresetStore } from "@genesiscz/utils/tmux/snapshot-store";
@@ -83,7 +84,7 @@ export async function runSavePreset(rawName: string | undefined, flags: SaveFlag
             out.println(`  ${pc.dim("note:")} ${preset.note}`);
         }
 
-        out.println(`\nRestore with ${pc.cyan(`tools tmux presets restore ${name}`)}`);
+        out.println(`\nRestore with ${pc.cyan(`${toolCommand("tmux presets restore")} ${name}`)}`);
     } catch (error) {
         if (error instanceof PresetExistsError) {
             out.error(error.message);

@@ -1,3 +1,4 @@
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
 import pc from "picocolors";
@@ -48,7 +49,7 @@ async function resolveMeta(spec: string, cookie: string | undefined): Promise<St
     const hit = resolveAlias(spec, list);
     if (!hit) {
         throw new Error(
-            `Unknown indicator "${spec}". Try a STD;/PUB; id, a script URL, or 'tools tradingview indicators ${spec}' to search.`
+            `Unknown indicator "${spec}". Try a STD;/PUB; id, a script URL, or '${toolCommand("tradingview indicators")} ${spec}' to search.`
         );
     }
 

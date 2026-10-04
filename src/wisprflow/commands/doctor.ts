@@ -1,3 +1,4 @@
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { ui } from "@genesiscz/utils/cli/ui";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
@@ -44,7 +45,7 @@ async function doctor(opts: { json?: boolean }): Promise<void> {
         (report.mcp.ok ? ui.ok : ui.err)(`mcp: ${report.mcp.ok ? "reachable" : report.mcp.error}`);
 
         if (!report.mcp.ok) {
-            ui.info("Check: tools mcp-manager gateway status");
+            ui.info(`Check: ${toolCommand("mcp-manager gateway status")}`);
         }
 
         for (const meeting of report.local.pendingRenames) {

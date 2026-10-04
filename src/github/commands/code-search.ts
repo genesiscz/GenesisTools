@@ -1,5 +1,6 @@
 // Code search command implementation
 
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { getOctokit } from "@genesiscz/utils/github/octokit";
 import { withRetry } from "@genesiscz/utils/github/rate-limit";
 import { setGlobalVerbose, verbose } from "@genesiscz/utils/github/utils";
@@ -141,7 +142,7 @@ export function createCodeSearchCommand(): Command {
                 if (errorMessage.includes("at least one search term")) {
                     out.error(chalk.yellow("\n📝 GitHub Code Search Tips:"));
                     out.error(chalk.dim("  • Provide a search term in your query"));
-                    out.error(chalk.dim('  • Example: tools github code "useState" --repo facebook/react'));
+                    out.error(chalk.dim(`  • Example: ${toolCommand("github code")} "useState" --repo facebook/react`));
                     out.error(chalk.dim("  • Qualifiers alone (like path:) are not sufficient"));
                     out.error("");
                 }

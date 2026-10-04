@@ -1,6 +1,7 @@
 // Get file content command implementation
 
 import { resolve } from "node:path";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { copyToClipboard } from "@genesiscz/utils/clipboard";
 import { getOctokit } from "@genesiscz/utils/github/octokit";
 import { withRetry } from "@genesiscz/utils/github/rate-limit";
@@ -398,34 +399,34 @@ export function createGetCommand(): Command {
             `
 Examples:
   # Get file from blob URL
-  tools github get https://github.com/owner/repo/blob/main/package.json
+  ${toolCommand("github get")} https://github.com/owner/repo/blob/main/package.json
 
   # Get specific lines
-  tools github get https://github.com/owner/repo/blob/main/src/index.ts --lines 10-50
+  ${toolCommand("github get")} https://github.com/owner/repo/blob/main/src/index.ts --lines 10-50
 
   # Get from blame URL (same content, different source)
-  tools github get https://github.com/owner/repo/blame/v1.0.0/README.md
+  ${toolCommand("github get")} https://github.com/owner/repo/blame/v1.0.0/README.md
 
   # Get from raw URL
-  tools github get https://raw.githubusercontent.com/owner/repo/main/data.json
+  ${toolCommand("github get")} https://raw.githubusercontent.com/owner/repo/main/data.json
 
   # Override ref to get different version
-  tools github get https://github.com/owner/repo/blob/main/file.ts --ref v2.0.0
+  ${toolCommand("github get")} https://github.com/owner/repo/blob/main/file.ts --ref v2.0.0
 
   # Copy to clipboard
-  tools github get https://github.com/owner/repo/blob/main/file.ts -c
+  ${toolCommand("github get")} https://github.com/owner/repo/blob/main/file.ts -c
 
   # Use URL with line references
-  tools github get "https://github.com/owner/repo/blob/main/file.ts#L10-L20"
+  ${toolCommand("github get")} "https://github.com/owner/repo/blob/main/file.ts#L10-L20"
 
   # Get all files in a directory
-  tools github get https://github.com/owner/repo/tree/main/src/utils
+  ${toolCommand("github get")} https://github.com/owner/repo/tree/main/src/utils
 
   # Get commit diff
-  tools github get https://github.com/owner/repo/commit/abc1234
+  ${toolCommand("github get")} https://github.com/owner/repo/commit/abc1234
 
   # Get commit as JSON
-  tools github get https://github.com/owner/repo/commit/abc1234 --format json
+  ${toolCommand("github get")} https://github.com/owner/repo/commit/abc1234 --format json
 `
         )
         .action(async (url, opts) => {

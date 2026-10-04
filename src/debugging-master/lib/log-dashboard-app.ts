@@ -1,4 +1,5 @@
 import { resolve } from "node:path";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { defineDashboardApp } from "@genesiscz/utils/DashboardApp";
 import { PROJECT_ROOT } from "@genesiscz/utils/paths";
 import { DASHBOARDS } from "@genesiscz/utils/ui/dashboards";
@@ -28,7 +29,7 @@ export const logDashboardApp = defineDashboardApp({
             await ensureDashboardBuilt();
         },
         serveHint: {
-            tool: "tools debugging-master",
+            tool: toolCommand("debugging-master"),
             replaceCommand: ["dashboard", "serve"],
         },
     },

@@ -1,3 +1,4 @@
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger } from "@genesiscz/utils/logger";
 import { WorkerMetaStore } from "@genesiscz/utils/worker/meta-store";
 import { workerMetaPath, workersDir } from "./paths";
@@ -61,7 +62,7 @@ export class ClaudeWorkerStore extends WorkerMetaStore<ClaudeWorkerMeta> {
             label: "claude worker",
             title: "Claude worker",
             existsMessage: (name) =>
-                `Claude worker '${name}' already exists. Use 'tools claude worker steer --name ${name}' or pick a new name.`,
+                `Claude worker '${name}' already exists. Use '${toolCommand("claude worker steer")} --name ${name}' or pick a new name.`,
             log,
             // Worker metadata names the account and cwd, and the transcripts next
             // to it carry prompts and tool output. Nothing here is for other users.

@@ -2,6 +2,7 @@ import { readUnifiedConfig, writeUnifiedConfig } from "@app/mcp-manager/utils/co
 import type { MCPProvider } from "@app/mcp-manager/utils/providers/types.js";
 import { WriteResult } from "@app/mcp-manager/utils/providers/types.js";
 import { isInteractive } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { DiffUtil } from "@genesiscz/utils/diff";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
@@ -27,7 +28,7 @@ export async function renameServer(
     let finalOldName = oldName;
     if (!finalOldName && !isInteractive()) {
         logger.error("Old name and new name required in non-interactive mode.");
-        logger.info("Usage: tools mcp-manager rename <oldName> <newName>");
+        logger.info(`Usage: ${toolCommand("mcp-manager rename", "<oldName>", "<newName>")}`);
         process.exit(1);
     }
 
@@ -57,7 +58,7 @@ export async function renameServer(
     let finalNewName = newName;
     if (!finalNewName && !isInteractive()) {
         logger.error("New name required in non-interactive mode.");
-        logger.info(`Usage: tools mcp-manager rename ${finalOldName} <newName>`);
+        logger.info(`Usage: ${toolCommand("mcp-manager rename", finalOldName, "<newName>")}`);
         process.exit(1);
     }
 

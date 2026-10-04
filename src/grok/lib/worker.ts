@@ -2,6 +2,7 @@ import { closeSync, existsSync, openSync, readFileSync, statSync } from "node:fs
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { assignedSessionId, resolveAgentHost } from "@genesiscz/utils/agent/host";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { env } from "@genesiscz/utils/env";
 import { defaultWorkerHomeFor, managedHomeSkillsPolicy } from "@genesiscz/utils/grok/worker-paths";
 import { logger } from "@genesiscz/utils/logger";
@@ -249,7 +250,7 @@ function openTurnLog(logPath: string, name: string, turn: number): number {
     } catch (err) {
         if ((err as NodeJS.ErrnoException).code === "EEXIST") {
             throw new Error(
-                `Turn ${turn} of grok session '${name}' already has a transcript — another turn is running or died uncleanly. Read it with 'tools grok read --name ${name} --turn ${turn}'.`
+                `Turn ${turn} of grok session '${name}' already has a transcript — another turn is running or died uncleanly. Read it with '${toolCommand("grok read")} --name ${name} --turn ${turn}'.`
             );
         }
 
@@ -441,7 +442,7 @@ export async function steerSession(options: SteerSessionOptions): Promise<TurnRe
     const store = new GrokSessionStore();
     const meta = store.readMeta(options.name);
     if (!meta) {
-        throw new Error(`Grok session not found: ${options.name}. Start one with 'tools grok run'.`);
+        throw new Error(`Grok session not found: ${options.name}. Start one with '${toolCommand("grok run")}'.`);
     }
 
     const readOnly = options.readOnly ?? meta.readOnly;
@@ -473,7 +474,7 @@ export function grokTurnReport(result: TurnResult): WorkerTurnReport {
         worktree:
             result.worktree !== null && !result.meta.readOnly ? { cwd: result.meta.cwd, ...result.worktree } : null,
         logPath: result.logPath,
-        transcriptHint: `tools grok read --name ${result.meta.name} --turn ${result.turn} --format compact`,
+        transcriptHint: `${toolCommand("grok read")} --name ${result.meta.name} --turn ${result.turn} --format compact`,
     };
 }
 

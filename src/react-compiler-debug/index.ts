@@ -26,6 +26,7 @@ handleReadmeFlag(import.meta.url);
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { isVerbose, runTool } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { copyToClipboard } from "@genesiscz/utils/clipboard";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
@@ -390,9 +391,9 @@ async function main(fileArg: string | undefined, options: ProgramOptions) {
     } else {
         out.error(chalk.red("No input provided."));
         out.println("\nUsage:");
-        out.println("  tools react-compiler-debug <file.tsx>");
-        out.println('  tools react-compiler-debug --code "const Foo = () => <div />"');
-        out.println("  cat file.tsx | tools react-compiler-debug --stdin");
+        out.println(`  ${toolCommand("react-compiler-debug")} <file.tsx>`);
+        out.println(`  ${toolCommand("react-compiler-debug")} --code "const Foo = () => <div />"`);
+        out.println(`  cat file.tsx | ${toolCommand("react-compiler-debug")} --stdin`);
         process.exit(1);
     }
 

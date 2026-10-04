@@ -3,6 +3,7 @@
 // src/timely/index.ts
 
 import { enhanceHelp, runTool } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { out } from "@genesiscz/utils/logger";
 import * as p from "@genesiscz/utils/prompts/p";
 import { inquirerBackend } from "@genesiscz/utils/prompts/p/inquirer-backend";
@@ -40,7 +41,7 @@ function showHelpFull(): void {
 ${chalk.bold("Timely CLI")} - Interact with Timely time tracking
 
 ${chalk.cyan("Usage:")}
-  tools timely <command> [options]
+  ${toolCommand("timely")} <command> [options]
 
 ${chalk.cyan("Commands:")}
   login                   Authenticate with Timely via OAuth2
@@ -68,16 +69,16 @@ ${chalk.cyan("Date Options (for events/memories commands):")}
   --day <YYYY-MM-DD>      Single day
 
 ${chalk.cyan("Examples:")}
-  tools timely login
-  tools timely accounts --select
-  tools timely projects
-  tools timely events --from 2025-11-01 --to 2025-11-30
-  tools timely export-month 2025-11
-  tools timely export-month 2025-11 --format csv > time.csv
-  tools timely export-month 2025-11 --format raw  # Detailed table with all info
-  tools timely export-month 2025-11 --format summary  # Generate summary markdown
-  tools timely export-month 2025-11 --format detailed-summary --silent  # Detailed summary, only show path
-  tools timely cache clear
+  ${toolCommand("timely login")}
+  ${toolCommand("timely accounts")} --select
+  ${toolCommand("timely projects")}
+  ${toolCommand("timely events")} --from 2025-11-01 --to 2025-11-30
+  ${toolCommand("timely export-month")} 2025-11
+  ${toolCommand("timely export-month")} 2025-11 --format csv > time.csv
+  ${toolCommand("timely export-month")} 2025-11 --format raw  # Detailed table with all info
+  ${toolCommand("timely export-month")} 2025-11 --format summary  # Generate summary markdown
+  ${toolCommand("timely export-month")} 2025-11 --format detailed-summary --silent  # Detailed summary, only show path
+  ${toolCommand("timely cache clear")}
 `);
 }
 

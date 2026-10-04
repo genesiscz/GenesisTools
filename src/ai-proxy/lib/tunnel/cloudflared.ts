@@ -3,11 +3,12 @@ import { AI_PROXY_PUBLIC_SEGMENTS, normalizeBasePath } from "@app/ai-proxy/lib/p
 import { resolveCloudflaredConfigPath } from "@app/ai-proxy/lib/public-url";
 import type { AiProxyConfig } from "@app/ai-proxy/lib/types";
 import { detectCloudflared, installCloudflared } from "@app/dev-dashboard/lib/tunnel/cloudflared";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger } from "@genesiscz/utils/logger";
 
 export { detectCloudflared, installCloudflared };
 
-export const AI_PROXY_INGRESS_MARKER = "# ai-proxy (managed by tools ai-proxy)";
+export const AI_PROXY_INGRESS_MARKER = `# ai-proxy (managed by ${toolCommand("ai-proxy")})`;
 
 export interface AiProxyIngressRule {
     hostname: string;

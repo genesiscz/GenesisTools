@@ -1,4 +1,5 @@
 import * as p from "@clack/prompts";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import type { Command } from "commander";
 import pc from "picocolors";
 import { getDaemonPid, startDaemon } from "../daemon";
@@ -20,7 +21,7 @@ export function registerStartCommand(program: Command): void {
 
             if (status.running) {
                 p.log.warn(
-                    `Daemon is already running via launchd (PID ${status.pid}). Use ${pc.cyan("tools daemon uninstall")} first to avoid duplicate execution.`
+                    `Daemon is already running via launchd (PID ${status.pid}). Use ${pc.cyan(toolCommand("daemon uninstall"))} first to avoid duplicate execution.`
                 );
                 return;
             }

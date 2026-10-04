@@ -1,3 +1,4 @@
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger } from "@genesiscz/utils/logger";
 import { byId, byProvider, catalogKeysFor, providerNameFor } from "../catalog";
 import { AiConfigStore } from "../config/AiConfigStore";
@@ -120,7 +121,7 @@ export async function resolveModelTarget(
         throw new ModelResolutionError(
             `Account "${account.name}" uses provider "${plugin.id}", which cannot ${capability} ` +
                 `(it provides ${[...plugin.capabilities].join(", ") || "nothing"}). ` +
-                `Point the task at another account with: tools ai config default set ${task} <@account/...>`
+                `Point the task at another account with: ${toolCommand("ai config default set")} ${task} <@account/...>`
         );
     }
 
@@ -131,7 +132,7 @@ export async function resolveModelTarget(
         throw new ModelResolutionError(
             `No model resolved for task "${task}"${opts.app ? ` in app "${opts.app}"` : ""} ` +
                 `(account "${account.name}", provider "${account.provider}") and the catalog lists no default for it. ` +
-                `Set one with: tools ai config default set ${task} <model>`
+                `Set one with: ${toolCommand("ai config default set")} ${task} <model>`
         );
     }
 
@@ -220,14 +221,14 @@ function pickAccount(store: AiConfigStore, cfg: AiConfigData, request: ModelRequ
         if (!account) {
             throw new ModelResolutionError(
                 `No account "${request.accountId}" in the AI config (from ${request.via}). ` +
-                    `List them with: tools ai config account list`
+                    `List them with: ${toolCommand("ai config account list")}`
             );
         }
 
         if (!account.enabled) {
             throw new ModelResolutionError(
                 `Account "${account.name}" is disabled (from ${request.via}). ` +
-                    `Enable it with: tools ai config account enable ${account.id}`
+                    `Enable it with: ${toolCommand("ai config account enable")} ${account.id}`
             );
         }
 
@@ -243,7 +244,7 @@ function pickAccount(store: AiConfigStore, cfg: AiConfigData, request: ModelRequ
     if (!ref) {
         throw new ModelResolutionError(
             `No default account for task "${task}" and none for "chat" either. ` +
-                `Set one with: tools ai config default set ${task} <@account/...>`
+                `Set one with: ${toolCommand("ai config default set")} ${task} <@account/...>`
         );
     }
 
@@ -252,14 +253,14 @@ function pickAccount(store: AiConfigStore, cfg: AiConfigData, request: ModelRequ
     if (!account) {
         throw new ModelResolutionError(
             `${ref.via} points at "${ref.id}", which no longer exists. ` +
-                `Repoint it with: tools ai config default set ${task} <@account/...>`
+                `Repoint it with: ${toolCommand("ai config default set")} ${task} <@account/...>`
         );
     }
 
     if (!account.enabled) {
         throw new ModelResolutionError(
             `${ref.via} points at account "${account.name}", which is disabled. ` +
-                `Enable it, or repoint with: tools ai config default set ${task} <@account/...>`
+                `Enable it, or repoint with: ${toolCommand("ai config default set")} ${task} <@account/...>`
         );
     }
 
@@ -343,7 +344,7 @@ function accountForProvider(
 
     throw new ModelResolutionError(
         `No enabled account for provider "${providerId}" (from ${request.via}). ` +
-            `Add one with: tools ai config account add --provider ${providerId}`
+            `Add one with: ${toolCommand("ai config account add")} --provider ${providerId}`
     );
 }
 

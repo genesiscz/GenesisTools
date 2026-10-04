@@ -11,6 +11,7 @@ import { AIConfig } from "@genesiscz/utils/ai/AIConfig";
 import { fetchOAuthProfile, getClaudeJsonAccount } from "@genesiscz/utils/claude/auth";
 import { LONG_TOKEN_MIN_LENGTH } from "@genesiscz/utils/claude/token-verify";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { formatLocalDate } from "@genesiscz/utils/date";
 import { out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
@@ -84,7 +85,7 @@ async function manageAccounts(aiConfig: AIConfig): Promise<void> {
         // `promptName`: this menu asked what to call the account before the flows
         // moved into the shared lib, and losing that left the interactive path
         // unable to name an account at all (gap/cli).
-        await runLogin({ provider: "anthropic-sub", tool: "tools claude login", promptName: true });
+        await runLogin({ provider: "anthropic-sub", tool: toolCommand("claude login"), promptName: true });
         // The shared lib writes through the v4 store, which this menu's in-memory
         // v3 view cannot see; re-read before the next screen renders a stale list.
         AIConfig.invalidate();
@@ -259,7 +260,7 @@ async function manageWarmup(config: ClaudeConfig, aiConfig: AIConfig): Promise<v
     const accounts = aiConfig.getAccountsByProvider("anthropic-sub");
 
     if (accounts.length === 0) {
-        p.log.error("No accounts configured. Run: tools claude login");
+        p.log.error(`No accounts configured. Run: ${toolCommand("claude login")}`);
         return;
     }
 
@@ -513,11 +514,11 @@ async function showConfig(config: ClaudeConfig, aiConfig: AIConfig): Promise<voi
 
             if (!longLived) {
                 lines.push(
-                    `    ${pc.dim("Launch:")} ${pc.yellow("no long-lived token")} ${pc.dim(`— fix: tools claude login-long ${acc.name}`)}`
+                    `    ${pc.dim("Launch:")} ${pc.yellow("no long-lived token")} ${pc.dim(`— fix: ${toolCommand("claude login-long", acc.name)}`)}`
                 );
             } else if (longLived.length < LONG_TOKEN_MIN_LENGTH) {
                 lines.push(
-                    `    ${pc.dim("Launch:")} ${pc.red(`token truncated (${longLived.length} chars)`)} ${pc.dim(`— fix: tools claude login-long ${acc.name}`)}`
+                    `    ${pc.dim("Launch:")} ${pc.red(`token truncated (${longLived.length} chars)`)} ${pc.dim(`— fix: ${toolCommand("claude login-long", acc.name)}`)}`
                 );
             }
 
@@ -597,7 +598,7 @@ export function registerConfigCommand(program: Command): void {
 
     configCmd
         .command("add <name>")
-        .description("Add an account with a manual token (use `tools claude login` for OAuth)")
+        .description(`Add an account with a manual token (use \`${toolCommand("claude login")}\` for OAuth)`)
         .option("--token <token>", "OAuth access token")
         .action(async (name: string, opts: { token?: string }) => {
             const aiConfig = await AIConfig.load();
@@ -608,7 +609,7 @@ export function registerConfigCommand(program: Command): void {
             }
 
             if (!opts.token) {
-                p.log.error("--token is required. Use `tools claude login` for OAuth with auto-refresh.");
+                p.log.error(`--token is required. Use \`${toolCommand("claude login")}\` for OAuth with auto-refresh.`);
                 process.exit(1);
             }
 
@@ -777,7 +778,7 @@ export function registerConfigCommand(program: Command): void {
     // bind, so the shared registration offers it none of the file flags.
     registerAccountLoginCommand(program, {
         provider: "anthropic-sub",
-        tool: "tools claude login",
+        tool: toolCommand("claude login"),
         subcommand: ["login"],
         description: "Login with OAuth to add an account (with auto-refresh)",
     });

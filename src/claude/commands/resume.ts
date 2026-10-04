@@ -15,6 +15,7 @@ import {
 import type { AgentSessionAdapter } from "@genesiscz/utils/agent-sessions/types";
 import { findClaudeCommand } from "@genesiscz/utils/claude";
 import { isInteractive } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { env } from "@genesiscz/utils/env";
 import { out } from "@genesiscz/utils/logger";
 import { canonicalPath } from "@genesiscz/utils/paths";
@@ -250,7 +251,9 @@ function noSessionsError({ query, allProjects, cwd }: { query?: string; allProje
     }
 
     const folder = cwd.replace(homedir(), "~");
-    return new Error(`No Claude sessions for ${folder} (current folder). Search all projects: tools cc -a`);
+    return new Error(
+        `No Claude sessions for ${folder} (current folder). Search all projects: ${toolCommand("cc", "-a")}`
+    );
 }
 
 export async function selectClaudeResumeSession({
@@ -513,7 +516,7 @@ export function assertClaudeResumeHome({
     if (canonicalPath(session.sourceHome) === canonicalPath(effectiveHome)) {
         return;
     }
-    const command = `CLAUDE_CONFIG_DIR=${escapeShellArg(session.sourceHome)} tools claude resume ${escapeShellArg(session.filePath ?? session.sessionId)} --all-projects`;
+    const command = `CLAUDE_CONFIG_DIR=${escapeShellArg(session.sourceHome)} ${toolCommand("claude resume")} ${escapeShellArg(session.filePath ?? session.sessionId)} --all-projects`;
     throw new Error(
         `This session belongs to ${session.sourceHome}, not the selected Claude home. No migration was performed. Resume explicitly with:\n${command}`
     );

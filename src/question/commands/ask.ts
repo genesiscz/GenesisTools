@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
 import { createBoxTable, renderCliHeader, truncateDisplay } from "@genesiscz/utils/table";
@@ -79,7 +80,7 @@ export function collect(value: string, previous: string[] = []): string[] {
     return [...previous, value];
 }
 
-const ASK_HELP_HINT = "Run tools question ask --help for the item shape.";
+const ASK_HELP_HINT = `Run ${toolCommand("question ask")} --help for the item shape.`;
 
 /** `ask --help`: the `--json` item fields and one example, so an agent never guesses the names. */
 const ASK_JSON_HELP = `
@@ -97,15 +98,15 @@ const ASK_JSON_HELP = `
   reevaluateWhen   decision/todo: a condition that reopens it, e.g. "after the PR merges"
   refs             decision: [{ path, line?, endLine?, sha? }]; the first ref's lines become the excerpt
   supersedes       decision/todo: id of an open or drafted item this one replaces (it keeps its id and
-                   number; the old text stays as a version: tools question show <id> --versions)
+                   number; the old text stays as a version: ${toolCommand("question show", "<id>", "--versions")})
   id, allowMultiple, allowFreeText, allowFileTags, allowImagePaste, required   question items only
 
 Example:
   echo '[{"type":"decision","title":"Cache","promptMarkdown":"Keep the cache?","choices":["Keep it","Drop it"],"recommended":"a","blocking":true}]' \\
-    | tools question ask --json -
+    | ${toolCommand("question ask", "--json", "-")}
 
 Inline tokens in promptMarkdown, reasoning, proposal and choices are resolved when the item is saved
-(--no-transclude skips; tools question tokens lists them, tools question tokens resolve "<text>" previews):
+(--no-transclude skips; ${toolCommand("question tokens")} lists them, ${toolCommand("question tokens resolve")} "<text>" previews):
 `;
 
 /** The question_post fields `ask --json -` honours besides `items`; a CLI flag still wins. */

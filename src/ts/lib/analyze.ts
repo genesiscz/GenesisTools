@@ -1,3 +1,4 @@
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { profiler } from "@genesiscz/utils/profile";
 import { attribute } from "./attribute";
 import { findCycles } from "./cycles";
@@ -169,7 +170,7 @@ export async function analyzeEntry(options: AnalyzeOptions): Promise<AnalysisSes
         }
     }
 
-    prof.summary("tools ts imports");
+    prof.summary(`${toolCommand("ts imports")}`);
     return {
         graph,
         self: measured.self,

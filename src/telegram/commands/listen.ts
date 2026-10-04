@@ -1,4 +1,5 @@
 import * as p from "@clack/prompts";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
 import pc from "picocolors";
@@ -71,12 +72,12 @@ export function registerListenCommand(program: Command): void {
             const data = await config.load();
 
             if (!data?.session) {
-                p.log.error("Not configured. Run: tools telegram configure");
+                p.log.error(`Not configured. Run: ${toolCommand("telegram configure")}`);
                 process.exit(1);
             }
 
             if (data.contacts.length === 0) {
-                p.log.warn("No contacts configured. Run: tools telegram configure");
+                p.log.warn(`No contacts configured. Run: ${toolCommand("telegram configure")}`);
                 process.exit(1);
             }
 
@@ -88,7 +89,7 @@ export function registerListenCommand(program: Command): void {
 
             if (!authorized) {
                 spinner.stop("Session expired");
-                p.log.error("Session expired. Run: tools telegram configure");
+                p.log.error(`Session expired. Run: ${toolCommand("telegram configure")}`);
                 process.exit(1);
             }
 

@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { withTimeout } from "@genesiscz/utils/async";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { env } from "@genesiscz/utils/env";
 import { watchFileFeed } from "@genesiscz/utils/fs/file-feed-watcher";
 import { logger } from "@genesiscz/utils/logger";
@@ -396,7 +397,7 @@ async function sendViaGenesisApp(opts: NotificationOptions): Promise<string | nu
         logger.warn(
             { error: outcome.error },
             outcome.error.code === "not_determined"
-                ? "GenesisTools.app has never been granted notifications; run tools notify authorize. Falling back to terminal-notifier."
+                ? `GenesisTools.app has never been granted notifications; run ${toolCommand("notify authorize")}. Falling back to terminal-notifier.`
                 : "GenesisTools.app may not post notifications; grant it in System Settings > Notifications. Falling back to terminal-notifier."
         );
     }
@@ -617,7 +618,7 @@ export async function sendNotification(opts: NotificationOptions): Promise<Poste
                 stderr: "ignore",
             });
         } catch {
-            logger.debug("tools say failed for notification TTS");
+            logger.debug(`${toolCommand("say")} failed for notification TTS`);
         }
     }
 

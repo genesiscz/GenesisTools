@@ -1,4 +1,5 @@
 import { join } from "node:path";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { loadAnnotationPlanValue } from "@genesiscz/utils/image";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
@@ -28,7 +29,7 @@ export function registerCaptureCommands(program: Command): void {
     const capture = program
         .command("capture")
         .description(
-            "Screen recording with timed UI actions (peekaboo capture live) + crop compositing and vitrinka publish.\nSubcommands: run <plan.json> (default — `capture <plan.json>` works too), preflight, clickmap, recrop.\nFull plan contract: `tools control capture --help`."
+            `Screen recording with timed UI actions (peekaboo capture live) + crop compositing and vitrinka publish.\nSubcommands: run <plan.json> (default — \`capture <plan.json>\` works too), preflight, clickmap, recrop.\nFull plan contract: \`${toolCommand("control capture")} --help\`.`
         )
         .addHelpText("after", `\n${CAPTURE_HELP}`);
 

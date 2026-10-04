@@ -1,14 +1,16 @@
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
+
 /** The `tools macos clones` landing text. Explains the model the flags assume;
  *  `--help` lists the flags themselves. */
 export function clonesGuide(): string {
     return [
-        "tools macos clones — clone-aware disk usage and safe dedupe (macOS/APFS)",
+        `${toolCommand("macos clones")} — clone-aware disk usage and safe dedupe (macOS/APFS)`,
         "",
         "THE NUMBERS",
         "  du -sh counts every clone copy in full. real counts the bytes that would",
         "  actually be freed if you deleted the tree now. A bun-installed",
         "  node_modules is mostly clones of the install cache, so du overstates it,",
-        "  often several times over. Start with: tools macos clones measure <dir>",
+        `  often several times over. Start with: ${toolCommand("macos clones measure", "<dir>")}`,
         "",
         "WHY WORKTREES LOOK HUGE",
         "  bun install clonefiles from its cache, so the first checkout is nearly",
@@ -26,11 +28,11 @@ export function clonesGuide(): string {
         "  daemon      background report-only scans",
         "",
         "RECLAIM",
-        "  tools macos clones reclaim plan --dir ~/Projects/Acme",
-        "  tools macos clones reclaim plan --dir ~/Projects/Acme --worktrees-of app",
-        "  tools macos clones reclaim apply --dir ~/Projects/Acme --yes",
-        "  tools macos clones reclaim presets save acme --dir ~/Projects/Acme",
-        "  tools macos clones reclaim presets run acme --apply",
+        `  ${toolCommand("macos clones reclaim plan", "--dir", "~/Projects/Acme")}`,
+        `  ${toolCommand("macos clones reclaim plan", "--dir", "~/Projects/Acme", "--worktrees-of", "app")}`,
+        `  ${toolCommand("macos clones reclaim apply", "--dir", "~/Projects/Acme", "--yes")}`,
+        `  ${toolCommand("macos clones reclaim presets save", "acme", "--dir", "~/Projects/Acme")}`,
+        `  ${toolCommand("macos clones reclaim presets run", "acme", "--apply")}`,
         "",
         "  --dir           where to look (a repo, or a parent of many checkouts)",
         "  --worktrees-of  resolve that repo's git worktrees, including siblings",
@@ -63,7 +65,7 @@ export function clonesGuide(): string {
         "  Dry-run is the default; apply is a separate verb and asks for a typed",
         "  confirmation. Every clone is byte-compared first, swapped atomically, and",
         "  re-hashed after. Undo a run with:",
-        "    tools macos clones optimize --rollback --process <id>",
+        `    ${toolCommand("macos clones optimize", "--rollback", "--process", "<id>")}`,
         "",
         "WHERE THE LOGS ARE",
         "  ~/.genesis-tools/logs/<date>.log                  everything, pino JSON",

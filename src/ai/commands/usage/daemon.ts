@@ -3,6 +3,7 @@ import { parseInterval } from "@app/daemon/lib/interval";
 import { getDaemonStatus } from "@app/daemon/lib/launchd";
 import { isTaskRegistered, registerTask, unregisterTask } from "@app/daemon/lib/register";
 import * as p from "@clack/prompts";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { shellCommandLine } from "@genesiscz/utils/shell/quote";
 import type { Command } from "commander";
 import pc from "picocolors";
@@ -158,7 +159,7 @@ export function registerUsageDaemonCommands(program: Command): void {
 
             if (!status.running) {
                 p.log.warn(
-                    `Daemon is not running. Start it with: ${pc.cyan("tools daemon start")} or ${pc.cyan("tools daemon install")}`
+                    `Daemon is not running. Start it with: ${pc.cyan(`${toolCommand("daemon start")}`)} or ${pc.cyan(`${toolCommand("daemon install")}`)}`
                 );
             }
         });
@@ -187,13 +188,13 @@ export function registerUsageDaemonCommands(program: Command): void {
                 p.log.success(`Task ${pc.cyan(USAGE_TASK_NAME)} is registered`);
             } else {
                 p.log.warn(
-                    `Task ${pc.cyan(USAGE_TASK_NAME)} is not registered. Run: ${pc.cyan("tools ai usage daemon register")}`
+                    `Task ${pc.cyan(USAGE_TASK_NAME)} is not registered. Run: ${pc.cyan(`${toolCommand("ai usage daemon register")}`)}`
                 );
             }
 
             if (await isTaskRegistered(LEGACY_USAGE_TASK_NAME)) {
                 p.log.warn(
-                    `The old task ${pc.cyan(LEGACY_USAGE_TASK_NAME)} is still registered. Run: ${pc.cyan("tools ai usage daemon register")}`
+                    `The old task ${pc.cyan(LEGACY_USAGE_TASK_NAME)} is still registered. Run: ${pc.cyan(`${toolCommand("ai usage daemon register")}`)}`
                 );
             }
 
@@ -202,7 +203,7 @@ export function registerUsageDaemonCommands(program: Command): void {
             } else if (daemonStatus.installed) {
                 p.log.warn("Daemon installed but not running");
             } else {
-                p.log.info(`Daemon not installed. Run: ${pc.cyan("tools daemon install")}`);
+                p.log.info(`Daemon not installed. Run: ${pc.cyan(`${toolCommand("daemon install")}`)}`);
             }
         });
 }

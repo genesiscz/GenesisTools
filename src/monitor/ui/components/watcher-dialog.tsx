@@ -19,6 +19,7 @@ import {
 import { CHANNEL_SPECS } from "@app/monitor/ui/components/channel-fields";
 import { StatusBadge } from "@app/monitor/ui/components/status-badge";
 import { KIND_LABEL } from "@app/monitor/ui/lib/format";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { Button } from "@genesiscz/utils/ui/components/button";
 import {
     Dialog,
@@ -536,7 +537,7 @@ export function WatcherDialog({
                         </Field>
 
                         {form.kind === "ai-provider" ? (
-                            <Field label="Account" hint="Accounts from tools ai config account list">
+                            <Field label="Account" hint={`Accounts from ${toolCommand("ai config account list")}`}>
                                 <Select value={form.target} onValueChange={(value) => patch({ target: value })}>
                                     <SelectTrigger>
                                         <SelectValue

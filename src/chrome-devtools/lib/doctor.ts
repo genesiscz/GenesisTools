@@ -4,6 +4,7 @@
  * mutate — see CLAUDE.md "Side Effects".)
  */
 
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { artifactPath } from "./platform.ts";
 import { browsersWithEmptyDebugFlag } from "./resolve-attach.ts";
 import { CAPTURE_CAP_BYTES } from "./segments.ts";
@@ -27,7 +28,7 @@ export function findingsFromStatus(report: StatusReport, emptyDebugFlag: string[
                 id: `stale-pidfile-${p.port}`,
                 title: `port ${p.port}: stale recorder pidfile`,
                 detail: `pid ${p.pidState.pid} is gone; the pidfile survived a crash or a reboot.`,
-                fix: `tools chrome-devtools cleanup --stale ${p.port}`,
+                fix: toolCommand("chrome-devtools cleanup", "--stale", String(p.port)),
             });
         }
 
@@ -37,7 +38,7 @@ export function findingsFromStatus(report: StatusReport, emptyDebugFlag: string[
                 id: `recycled-pid-${p.port}`,
                 title: `port ${p.port}: pidfile points at a DIFFERENT program`,
                 detail: `pid ${p.pidState.pid} now runs "${p.pidState.command}". Never kill it; clear the pidfile.`,
-                fix: `tools chrome-devtools cleanup --stale ${p.port}`,
+                fix: toolCommand("chrome-devtools cleanup", "--stale", String(p.port)),
             });
         }
 
@@ -47,7 +48,7 @@ export function findingsFromStatus(report: StatusReport, emptyDebugFlag: string[
                 id: `hot-recorder-${p.port}`,
                 title: `port ${p.port}: recorder is hot (${p.sample.cpuPercent}% CPU)`,
                 detail: `Scope it down with --match, or stop it. Channels: ${p.meta?.channels.join(",") ?? "?"}.`,
-                fix: `tools chrome-devtools record --port ${p.port} --stop`,
+                fix: `${toolCommand("chrome-devtools")} record --port ${p.port} --stop`,
             });
         }
 
@@ -57,7 +58,7 @@ export function findingsFromStatus(report: StatusReport, emptyDebugFlag: string[
                 id: `leftover-buffer-${p.port}`,
                 title: `port ${p.port}: leftover capture buffer (${p.segments.count} segment(s))`,
                 detail: "No recorder is running; the buffer is still dumpable.",
-                fix: `tools chrome-devtools har --port ${p.port} --from-buffer -o ${artifactPath(`cdp-${p.port}.har`)}   # or: cleanup --dir ${p.port}`,
+                fix: `${toolCommand("chrome-devtools har", "--port", String(p.port), "--from-buffer", "-o", artifactPath(`cdp-${p.port}.har`))}   # or: cleanup --dir ${p.port}`,
             });
         }
 
@@ -78,7 +79,7 @@ export function findingsFromStatus(report: StatusReport, emptyDebugFlag: string[
             id: `orphan-${orphan.pid}`,
             title: `orphan ${old ? "OLD-skill arm" : "recorder-shaped"} process (pid ${orphan.pid})`,
             detail: `${orphan.sample?.cpuPercent != null ? `${orphan.sample.cpuPercent}% CPU, up ${orphan.sample.elapsed}. ` : ""}No pidfile owns it: ${orphan.command.slice(0, 120)}`,
-            fix: `tools chrome-devtools cleanup --kill ${orphan.pid}`,
+            fix: toolCommand("chrome-devtools cleanup", "--kill", String(orphan.pid)),
         });
     }
 
@@ -88,7 +89,7 @@ export function findingsFromStatus(report: StatusReport, emptyDebugFlag: string[
             id: "legacy-arm-files",
             title: `${report.legacyFiles.length} legacy /tmp/cdp-arm-* file(s) from the old skill`,
             detail: report.legacyFiles.join(", "),
-            fix: "tools chrome-devtools cleanup --legacy",
+            fix: toolCommand("chrome-devtools cleanup", "--legacy"),
         });
     }
 
@@ -98,7 +99,7 @@ export function findingsFromStatus(report: StatusReport, emptyDebugFlag: string[
             id: `empty-debug-flag-${id}`,
             title: `${id}: running with an EMPTY --remote-debugging-port= flag`,
             detail: "The flag has no value, so nothing listens. Restart the browser with a real port.",
-            fix: `tools chrome-devtools restart --browser ${id} --port 9222`,
+            fix: toolCommand("chrome-devtools restart", "--browser", id, "--port", "9222"),
         });
     }
 

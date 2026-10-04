@@ -1,3 +1,4 @@
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
@@ -12,7 +13,7 @@ import { ensureBinary } from "../lib/runner";
  */
 export function registerComputerUseCommands(program: Command, options: { primary?: boolean } = {}) {
     const alias = (text: string, name: string) =>
-        options.primary ? text : `${text} (alias of \`tools computer-use ${name}\`)`;
+        options.primary ? text : `${text} (alias of \`${toolCommand("computer-use")} ${name}\`)`;
     program
         .command("prepare")
         .description(alias("Compile the native backend before latency-sensitive UI calls", "prepare"))

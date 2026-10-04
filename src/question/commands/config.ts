@@ -1,6 +1,7 @@
 import * as p from "@clack/prompts";
 import { formatAudioLibrary, parseSoundSpec } from "@genesiscz/utils/audio/library";
 import { isInteractive, suggestEnumFlag } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { setVaultRoot } from "@genesiscz/utils/obsidian/config";
 import type { Command } from "commander";
@@ -27,7 +28,7 @@ async function promptAskViaQuestionTool(current: boolean): Promise<boolean | nul
         message: ASK_VIA_QUESTION_TOOL_LABEL,
         initialValue: current ? "on" : "off",
         options: [
-            { value: "on", label: "On", hint: "agents post every ❓ DECISION through tools question" },
+            { value: "on", label: "On", hint: `agents post every ❓ DECISION through ${toolCommand("question")}` },
             { value: "off", label: "Off", hint: "agents ask with their native tools (default)" },
         ],
     });
@@ -99,7 +100,7 @@ export function registerConfigCommand(program: Command): void {
     program
         .command("config")
         .description(
-            "Read/update question config: sinks (sound, notify, obsidian) and whether agents are asked to use tools question"
+            `Read/update question config: sinks (sound, notify, obsidian) and whether agents are asked to use ${toolCommand("question")}`
         )
         .option("--sound [spec]", "synth:<preset> | bundled:<file> | custom:<path> | off")
         .option("--sound-volume <n>", "0..1", (v) => Number.parseFloat(v))

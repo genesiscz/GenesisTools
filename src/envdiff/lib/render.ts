@@ -1,3 +1,4 @@
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import chalk from "chalk";
 import { driftCount, type EnvDiff } from "./diff";
 import { maskValue } from "./mask";
@@ -72,7 +73,7 @@ export function renderDiff({ diff, actualLabel, exampleLabel, showValues, color 
     lines.push(`  ${c.dim(`In sync (${diff.inSyncCount} keys)`)}`);
     lines.push("");
     lines.push(
-        `Drift: ${total} differences.${diff.missing.length > 0 ? " Run `tools envdiff --sync` to add the missing keys." : ""}`
+        `Drift: ${total} differences.${diff.missing.length > 0 ? ` Run \`${toolCommand("envdiff", "--sync")}\` to add the missing keys.` : ""}`
     );
     return lines.join("\n");
 }

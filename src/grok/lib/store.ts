@@ -1,3 +1,4 @@
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger } from "@genesiscz/utils/logger";
 import type { WorkerSurfaces } from "@genesiscz/utils/worker/isolation";
 import { WorkerMetaStore } from "@genesiscz/utils/worker/meta-store";
@@ -81,7 +82,7 @@ export class GrokSessionStore extends WorkerMetaStore<GrokSessionMeta> {
             label: "grok session",
             title: "Grok session",
             existsMessage: (name) =>
-                `Grok session '${name}' already exists. Use 'tools grok steer --name ${name}' or pick a new name.`,
+                `Grok session '${name}' already exists. Use '${toolCommand("grok steer")} --name ${name}' or pick a new name.`,
             log,
         });
     }

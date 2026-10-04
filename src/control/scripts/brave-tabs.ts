@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { resolve } from "node:path";
 import { runTool } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
@@ -205,8 +206,7 @@ async function verifyAll(options: Options): Promise<void> {
         visited,
         restoredOriginalTab: restoration !== null,
         restoration,
-        evidence:
-            "Every tab was clicked through tools control cursor and selected state was re-inspected; no page controls were clicked.",
+        evidence: `Every tab was clicked through ${toolCommand("control cursor")} and selected state was re-inspected; no page controls were clicked.`,
     };
     if (options.proof) {
         await Bun.write(options.proof, SafeJSON.stringify(proof, { strict: true }, 2));
@@ -220,7 +220,7 @@ const program = new Command()
         "Click every visible tab in an existing Brave window using the independent software cursor, verify selection, and restore the initial tab. Does not submit page forms or click page controls."
     )
     .option("--app <bundle>", "browser app", "com.brave.Browser")
-    .requiredOption("--window-id <id>", "exact CG window ID from tools control see")
+    .requiredOption("--window-id <id>", `exact CG window ID from ${toolCommand("control see")}`)
     .option("--cursor <name>", "independent cursor name", "brave-verification")
     .option("--proof <path>", "write counts and verification results without page titles or URLs")
     .action(verifyAll);

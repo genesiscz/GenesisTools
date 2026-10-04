@@ -13,6 +13,7 @@ import type { RestoreCandidate } from "@app/claude/lib/cmux/types";
 import * as p from "@clack/prompts";
 import { loadPins } from "@genesiscz/utils/agent-sessions/pins";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import { cancelSymbol, searchMultiselect } from "@genesiscz/utils/prompts/clack/search-multiselect";
@@ -79,7 +80,7 @@ export async function snapshotCommand(name: string | undefined, opts: SnapshotOp
 
     out.printlnErr(`${pc.green("✔")} Saved ${pc.bold(snapshotName)} — ${picked.length} sessions`);
     out.printlnErr(pc.dim(`  ${path}`));
-    out.printlnErr(pc.dim(`  Restore with: ${pc.cyan(`tools claude cmux restore ${snapshotName}`)}`));
+    out.printlnErr(pc.dim(`  Restore with: ${pc.cyan(toolCommand("claude cmux restore", snapshotName))}`));
 }
 
 async function pick(candidates: RestoreCandidate[], opts: SnapshotOptions): Promise<RestoreCandidate[]> {
@@ -128,7 +129,7 @@ export async function listCommand(opts: ListOptions = {}): Promise<void> {
 
     if (snapshots.length === 0) {
         out.printlnErr(pc.yellow("No snapshots saved yet."));
-        out.printlnErr(pc.dim(`  Capture one with: ${pc.cyan("tools claude cmux snapshot")}`));
+        out.printlnErr(pc.dim(`  Capture one with: ${pc.cyan(toolCommand("claude cmux snapshot"))}`));
         return;
     }
 
@@ -146,7 +147,7 @@ export async function listCommand(opts: ListOptions = {}): Promise<void> {
     }
 
     out.println(table.toString());
-    out.printlnErr(pc.dim(`Restore: ${pc.cyan("tools claude cmux restore <name>")}`));
+    out.printlnErr(pc.dim(`Restore: ${pc.cyan(toolCommand("claude cmux restore", "<name>"))}`));
 }
 
 export async function forgetCommand(name: string): Promise<void> {

@@ -6,6 +6,7 @@ import { resolveTranscript } from "@genesiscz/utils/ai/transcripts/resolve";
 import { DEFAULT_SEARCH_LIMIT, searchTranscript } from "@genesiscz/utils/ai/transcripts/search";
 import { listSubagents } from "@genesiscz/utils/ai/transcripts/subagents";
 import { DEFAULT_TURN_LIMIT, type TranscriptProvider } from "@genesiscz/utils/ai/transcripts/types";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
 
@@ -128,7 +129,7 @@ export function registerSessionsCommands(program: Command): void {
                 }
 
                 await runTranscriptDoor({
-                    tool: "tools ai sessions tail",
+                    tool: `${toolCommand("ai sessions tail")}`,
                     subcommand: ["sessions", "tail"],
                     provider,
                     query: sessionId,
@@ -194,7 +195,7 @@ export function registerSessionsCommands(program: Command): void {
         )
         .option("--json", "print { sessionId, subagents: [{ id, name, description, state, startedAt, lastAt, … }] }")
         .option("--provider <name>", "claude | grok | codex (auto-detect if omitted)")
-        .option("--all", "every session in the window with its agents (same as `tools hub agents`)")
+        .option("--all", `every session in the window with its agents (same as \`${toolCommand("hub agents")}\`)`)
         .option("--since <dur>", "with --all: window, 90m, 24h, 7d (default 24h)", hoursArg)
         .option("--limit <n>", "with --all: at most this many sessions", limitArg)
         .option("--session <id>", "with --all: one parent session (same as the positional id)")

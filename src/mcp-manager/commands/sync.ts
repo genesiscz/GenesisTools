@@ -3,6 +3,7 @@ import type { MCPProvider, UnifiedMCPConfig } from "@app/mcp-manager/utils/provi
 import { WriteResult } from "@app/mcp-manager/utils/providers/types.js";
 import type { MCPProviderName } from "@app/mcp-manager/utils/types.js";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger } from "@genesiscz/utils/logger";
 import * as p from "@genesiscz/utils/prompts/p";
 import { GATEWAY_CLIENT_TOKEN_PATH } from "../lib/auth/paths.ts";
@@ -28,7 +29,7 @@ export async function syncServers(providers: MCPProvider[], options: SyncOptions
     }
 
     if (Object.keys(config.mcpServers).length === 0) {
-        logger.warn("No servers found in unified config. Run 'tools mcp-manager config' to add servers.");
+        logger.warn(`No servers found in unified config. Run '${toolCommand("mcp-manager config")}' to add servers.`);
         return;
     }
 

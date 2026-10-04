@@ -1,6 +1,7 @@
 import type { AccountEntry } from "@genesiscz/utils/ai/config/schema";
 import { isGateOnly } from "@genesiscz/utils/ai/config/selectors";
 import { resolveProviderApiKey } from "@genesiscz/utils/ai/providers/resolve";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger } from "@genesiscz/utils/logger";
 import type { SayProvider } from "@genesiscz/utils/macos/SayConfigManager";
 
@@ -136,7 +137,7 @@ async function gateKey(entry: AccountEntry): Promise<string> {
     if (!result.success || !result.stdout) {
         const reason = result.stderr.split("\n").filter(Boolean).at(-1) ?? `exit ${result.exitCode}`;
         logger.debug({ account: entry.name, exitCode: result.exitCode }, "[say] gate refused the account key");
-        throw new SayAccountError(`tools ai gate did not hand out the key of "${entry.name}": ${reason}`);
+        throw new SayAccountError(`${toolCommand("ai gate")} did not hand out the key of "${entry.name}": ${reason}`);
     }
 
     return result.stdout;
@@ -150,7 +151,7 @@ export async function findSayAccount(selector: string, deps: SayAccountDeps = {}
     const entry = await (deps.lookup ?? lookupAccount)(selector);
 
     if (!entry) {
-        throw new SayAccountError(`no AI account "${selector}" (tools ai config account list)`);
+        throw new SayAccountError(`no AI account "${selector}" (${toolCommand("ai config account list")})`);
     }
 
     if (!entry.enabled) {
@@ -159,7 +160,7 @@ export async function findSayAccount(selector: string, deps: SayAccountDeps = {}
 
     if (!isAccountProvider(entry.provider)) {
         throw new SayAccountError(
-            `AI account "${entry.name}" is ${entry.provider}; tools say speaks through ${ACCOUNT_PROVIDERS.join(", ")} accounts`
+            `AI account "${entry.name}" is ${entry.provider}; ${toolCommand("say")} speaks through ${ACCOUNT_PROVIDERS.join(", ")} accounts`
         );
     }
 

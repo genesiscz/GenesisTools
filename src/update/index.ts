@@ -6,6 +6,7 @@ import { discoverTools } from "@app/tools/lib/discovery";
 import * as p from "@clack/prompts";
 import { getAgentRuntimeContext } from "@genesiscz/utils/agent/runtime";
 import { execTool, execToolInteractive, isInteractive, isVerbose, runTool, suggestCommand } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
@@ -311,7 +312,7 @@ async function offerServiceRestarts(): Promise<void> {
             ? rows.filter((row) => Array.isArray(row?.stale) && row.stale.length > 0).length
             : 0;
     } catch (error) {
-        logger.warn({ error }, "update: tools services printed no JSON");
+        logger.warn({ error }, `update: ${toolCommand("services")} printed no JSON`);
         return;
     }
 

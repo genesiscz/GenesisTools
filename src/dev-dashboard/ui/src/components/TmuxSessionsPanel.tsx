@@ -1,3 +1,4 @@
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { BezelCard } from "@ui/components/bezel-card";
 import { Button } from "@ui/components/button";
@@ -105,8 +106,9 @@ export function TmuxSessionsPanel({ open, onOpenChange, onFocusTtydTab }: Props)
                                 </p>
                             ) : sessions.length === 0 ? (
                                 <p className="py-6 text-center font-mono text-sm text-[var(--dd-text-muted)]">
-                                    No tmux sessions. Run <code className="text-emerald-400">tools tmux create</code> or
-                                    start a ttyd terminal.
+                                    No tmux sessions. Run{" "}
+                                    <code className="text-emerald-400">{toolCommand("tmux create")}</code> or start a
+                                    ttyd terminal.
                                 </p>
                             ) : (
                                 sessions.map((session: TmuxHubSession, index) => (

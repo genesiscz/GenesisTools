@@ -20,6 +20,7 @@
 import { homedir } from "node:os";
 import { dirname, isAbsolute, resolve } from "node:path";
 import { runTool, suggestCommand } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger, out } from "@genesiscz/utils/logger";
 import {
     linkStatusFor,
@@ -101,7 +102,7 @@ program
         out.println(`  ${pc.dim("MAPPING")}   whether this root's tsconfig.json maps the package`);
         out.println(`  ${pc.dim("RESOLVES")}  whether a bare import actually works from that root`);
         out.println("");
-        out.println(`  ${pc.dim("Install with")}  tools link install`);
+        out.println(`  ${pc.dim("Install with")}  ${toolCommand("link install")}`);
     });
 
 program

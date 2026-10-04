@@ -2,6 +2,7 @@
 
 import { ensureStorage, listPresets } from "@app/automate/lib/storage.ts";
 import * as p from "@clack/prompts";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { formatRelativeTime } from "@genesiscz/utils/format.ts";
 import type { Command } from "commander";
 import pc from "picocolors";
@@ -19,7 +20,7 @@ export function registerListCommand(program: Command): void {
 
             if (presets.length === 0) {
                 p.log.warn("No presets found.");
-                p.log.info(`Create one with: ${pc.cyan("tools automate preset create")}`);
+                p.log.info(`Create one with: ${pc.cyan(toolCommand("automate preset create"))}`);
                 p.log.info(`Or save a JSON file to: ${pc.dim("~/.genesis-tools/automate/presets/")}`);
                 p.outro("");
                 return;

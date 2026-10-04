@@ -1,5 +1,6 @@
 import type { RecommendReport } from "@app/spotify/lib/reports/recommend";
 import { c, heading, keyValue, line } from "@app/spotify/render/text";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 
 const artistLink = (uri: string | null) =>
     uri?.startsWith("spotify:artist:")
@@ -62,7 +63,7 @@ export function renderRecommend(r: RecommendReport, limit: number): void {
     if (r.catalog.covered < Math.min(shown, r.limit)) {
         line("");
         line(
-            `  ${c.grey(`Songs to try: ${r.catalog.covered} of ${shown} picks have them. Fetch the rest: tools spotify harvest --artists --auto`)}`
+            `  ${c.grey(`Songs to try: ${r.catalog.covered} of ${shown} picks have them. Fetch the rest: ${toolCommand("spotify harvest")} --artists --auto`)}`
         );
     }
 

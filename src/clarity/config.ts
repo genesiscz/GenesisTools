@@ -1,4 +1,5 @@
 import { chmod } from "node:fs/promises";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { Storage } from "@genesiscz/utils/storage/storage";
 import { z } from "zod";
 
@@ -52,7 +53,7 @@ export async function requireConfig(): Promise<ClarityConfig> {
     const config = await getConfig();
 
     if (!config) {
-        throw new Error("Clarity not configured. Run: tools clarity configure");
+        throw new Error(`Clarity not configured. Run: ${toolCommand("clarity configure")}`);
     }
 
     return config;

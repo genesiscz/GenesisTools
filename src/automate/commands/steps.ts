@@ -1,5 +1,6 @@
 import { getStepCatalog } from "@app/automate/lib/registry";
 import * as p from "@clack/prompts";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import type { Command } from "commander";
 import pc from "picocolors";
 import "@app/automate/lib/steps";
@@ -18,7 +19,9 @@ export function registerStepCommands(parent: Command): void {
                 p.log.info(`  ${pc.cyan(pc.bold(entry.prefix))} — ${entry.description}\n    ${actions}`);
             }
 
-            p.log.step(`\nRun ${pc.cyan("tools automate step show <action>")} for details on a specific step type.`);
+            p.log.step(
+                `\nRun ${pc.cyan(toolCommand("automate step show", "<action>"))} for details on a specific step type.`
+            );
             p.outro("");
         });
 

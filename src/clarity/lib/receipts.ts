@@ -1,6 +1,7 @@
 import type { ClarityMapping } from "@app/clarity/config";
 import type { AddRowsResult, DesiredTask, RemoveRowsResult } from "@app/clarity/lib/timesheet-rows";
 import { suggestCommand } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { out } from "@genesiscz/utils/logger";
 import pc from "picocolors";
 
@@ -14,7 +15,7 @@ export interface Receipt {
 }
 
 /** Render a receipt: the counted summary, then the exact command that reverses it. */
-export function renderReceipt(receipt: Receipt, toolName = "tools clarity"): void {
+export function renderReceipt(receipt: Receipt, toolName = toolCommand("clarity")): void {
     if (receipt.summary.length === 0) {
         out.println(pc.dim("  Nothing changed."));
         return;

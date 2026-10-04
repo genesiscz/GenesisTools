@@ -1,6 +1,7 @@
 import { AiConfigStore } from "@genesiscz/utils/ai/config/AiConfigStore";
 import { accountRefIn, refToId } from "@genesiscz/utils/ai/config/refs";
 import { type AiConfigData, accountRefSchema, isTaskName, TASK_NAMES } from "@genesiscz/utils/ai/config/schema";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { out } from "@genesiscz/utils/logger";
 import { createBoxTable, renderCliHeader, truncateDisplay } from "@genesiscz/utils/table";
 import type { Command } from "commander";
@@ -119,7 +120,9 @@ export async function cmdDefaultList(flags: { json?: boolean }): Promise<void> {
     }
 
     if (rows.length === 0) {
-        out.log.info("No defaults configured. Set one with: tools ai config default set chat @account/<id>");
+        out.log.info(
+            `No defaults configured. Set one with: ${toolCommand("ai config default set")} chat @account/<id>`
+        );
         return;
     }
 

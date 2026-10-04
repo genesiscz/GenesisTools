@@ -1,5 +1,6 @@
 import { runList } from "@app/tmux/commands/sessions";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { out } from "@genesiscz/utils/logger";
 import * as p from "@genesiscz/utils/prompts/p";
 import { resolveSessionQuery } from "@genesiscz/utils/tmux/match";
@@ -78,8 +79,8 @@ export async function runReset(sessionId: string | undefined, flags: ResetCliFla
     if (!flags.yes) {
         if (!isInteractive()) {
             const cmd = targets.single
-                ? `tools tmux session reset ${sessionId} --yes`
-                : `tools tmux session reset --matching ${flags.matching} --yes`;
+                ? `${toolCommand("tmux session reset")} ${sessionId} --yes`
+                : `${toolCommand("tmux session reset")} --matching ${flags.matching} --yes`;
             out.error(`Pass --yes to skip the confirmation in non-interactive mode. ${suggestCommand(cmd)}`);
             process.exitCode = 1;
             return;
@@ -139,7 +140,9 @@ export async function runReset(sessionId: string | undefined, flags: ResetCliFla
 
     if (!flags.skipBackup) {
         out.println(
-            pc.dim(`\nIf anything's wrong, restore the backup: tools tmux presets restore ${result.presetName}`)
+            pc.dim(
+                `\nIf anything's wrong, restore the backup: ${toolCommand("tmux presets restore")} ${result.presetName}`
+            )
         );
     }
 

@@ -1,3 +1,4 @@
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { z } from "zod";
 
 /**
@@ -62,7 +63,7 @@ export const postedDecisionSchema = z.object({
         .optional()
         .describe(
             "Id of an open or drafted item of the same kind this post replaces. It keeps its id and number; " +
-                "the earlier text is kept as a prior version (tools question show <id> --versions)."
+                `the earlier text is kept as a prior version (${toolCommand("question show", "<id>", "--versions")}).`
         ),
     source: sourceSchema
         .optional()

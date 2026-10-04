@@ -1,5 +1,6 @@
 import * as p from "@clack/prompts";
 import { isVerbose, runTool } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import type { DetailedCommitInfo } from "@genesiscz/utils/git";
 import { createGit } from "@genesiscz/utils/git";
 import { logger, out } from "@genesiscz/utils/logger";
@@ -21,7 +22,7 @@ interface Options {
 
 function showHelpFull() {
     out.println(`
-Usage: tools git-rebranch [options]
+Usage: ${toolCommand("git-rebranch")} [options]
 
 Description:
   Split a messy branch with mixed commits into multiple clean branches.
@@ -43,9 +44,9 @@ Workflow:
   6. Cherry-picks commits onto new branches from fork point
 
 Examples:
-  tools git-rebranch              # Interactive mode
-  tools git-rebranch --dry-run    # Preview without creating branches
-  tools git-rebranch --verbose    # Show all git commands
+  ${toolCommand("git-rebranch")}              # Interactive mode
+  ${toolCommand("git-rebranch")} --dry-run    # Preview without creating branches
+  ${toolCommand("git-rebranch")} --verbose    # Show all git commands
 `);
 }
 

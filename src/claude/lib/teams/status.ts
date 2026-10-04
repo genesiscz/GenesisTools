@@ -1,4 +1,5 @@
 import { psEnvValue } from "@genesiscz/utils/ai/account-env";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger } from "@genesiscz/utils/logger";
 import { profiler } from "@genesiscz/utils/profile";
 import { resolveTmuxBin } from "@genesiscz/utils/tmux/bin";
@@ -240,12 +241,12 @@ export function listLiveTeammateProcesses(): LiveProcessScan {
 
             if (agentId && agentName && teamName) {
                 // Prefer real binary rows over bun wrappers
-                if (cmd.includes("tools cc run") || cmd.includes("bun run") || cmd.includes("index.ts")) {
+                if (cmd.includes(`${toolCommand("cc run")}`) || cmd.includes("bun run") || cmd.includes("index.ts")) {
                     continue;
                 }
 
                 if (!/claude(?:-code)?(?:\s|$)/.test(cmd) && !cmd.includes("claude-code-darwin")) {
-                    if (!cmd.includes("tools cc run") && !cmd.includes("claude/index.ts")) {
+                    if (!cmd.includes(`${toolCommand("cc run")}`) && !cmd.includes("claude/index.ts")) {
                         continue;
                     }
                 }
@@ -272,7 +273,7 @@ export function listLiveTeammateProcesses(): LiveProcessScan {
             const isLeadClaude =
                 !cmd.includes("--agent-id") &&
                 !cmd.includes("claude mcp") &&
-                !cmd.includes("tools claude") &&
+                !cmd.includes(toolCommand("claude")) &&
                 !cmd.includes("index.ts") &&
                 !cmd.includes("bun run") &&
                 (cmd.includes("claude-code-darwin") ||

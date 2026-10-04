@@ -1,5 +1,6 @@
 import { basename, resolve } from "node:path";
 import * as p from "@clack/prompts";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { formatDuration } from "@genesiscz/utils/format";
 import type { Command } from "commander";
 import pc from "picocolors";
@@ -67,7 +68,7 @@ export function registerSyncCommand(program: Command): void {
                 }
 
                 if (names.length === 0) {
-                    p.log.info("No indexes configured. Run: tools indexer add <path>");
+                    p.log.info(`No indexes configured. Run: ${toolCommand("indexer add", "<path>")}`);
                     return;
                 }
 

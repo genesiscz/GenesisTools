@@ -7,6 +7,7 @@ import { createClaudeAdapter } from "@genesiscz/utils/agent-sessions/native-adap
 import type { AgentSearchHit } from "@genesiscz/utils/agent-sessions/types";
 import { resolveProjectFilter } from "@genesiscz/utils/claude";
 import { isInteractive } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { buildViteDevCmd, defineDashboardApp } from "@genesiscz/utils/DashboardApp";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
@@ -238,7 +239,7 @@ export function registerHistoryCommand(program: Command): void {
 
                 const md = renderShellQuirksMarkdown(result, {
                     generatedAt: new Date().toISOString(),
-                    command: "tools claude history extract-shell-quirks",
+                    command: toolCommand("claude history extract-shell-quirks"),
                     claudeMdNote:
                         "Source rules: `~/.claude/CLAUDE.md` section **zsh quirks** (shell is zsh 5.9, not bash).",
                 });

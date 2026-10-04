@@ -1,6 +1,7 @@
 import { chmodSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { env } from "@genesiscz/utils/env";
 import { out } from "@genesiscz/utils/logger";
 import * as p from "@genesiscz/utils/prompts/p";
@@ -68,7 +69,7 @@ async function readPassphrase(options: {
 export async function cmdSecretSet(path: string, value: string | undefined, flags: { stdin?: boolean }): Promise<void> {
     if (value !== undefined) {
         out.log.error("Refusing a secret passed as an argument: argv is visible in shell history and in `ps`.");
-        out.log.info(`Pipe it instead: echo -n '<value>' | tools ai config secret set ${path} --stdin`);
+        out.log.info(`Pipe it instead: echo -n '<value>' | ${toolCommand("ai config secret set")} ${path} --stdin`);
         process.exitCode = 1;
         return;
     }

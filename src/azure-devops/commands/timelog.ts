@@ -1,3 +1,4 @@
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
 import { registerAddSubcommand } from "./timelog/add";
@@ -11,7 +12,7 @@ import { registerTypesSubcommand } from "./timelog/types";
 
 function showHelpFull(): void {
     out.println(`
-Usage: tools azure-devops timelog <command> [options]
+Usage: ${toolCommand("azure-devops timelog")} <command> [options]
 
 Commands:
   add      Add a time log entry to a work item
@@ -21,19 +22,19 @@ Commands:
   import   Import time logs from JSON file
 
 Examples:
-  tools azure-devops timelog add --workitem 12345 --hours 2 --type "Development"
-  tools azure-devops timelog add --workitem 12345 --hours 1 --minutes 30 --type "Code Review" --comment "PR review"
-  tools azure-devops timelog add --workitem 12345 --interactive
-  tools azure-devops timelog list --workitem 12345
-  tools azure-devops timelog list --day 2026-01-30
-  tools azure-devops timelog list --since 2026-01-01 --upto 2026-01-31 --user "Martin"
-  tools azure-devops timelog list --day 2026-01-30 --format table
-  tools azure-devops timelog delete <timeLogId> --yes
-  tools azure-devops timelog delete <timeLogId> --dry-run
-  tools azure-devops timelog delete --workitem 12345   (interactive picker)
-  tools azure-devops timelog delete <timeLogId> --no-effort --yes
-  tools azure-devops timelog types
-  tools azure-devops timelog import entries.json
+  ${toolCommand("azure-devops timelog add")} --workitem 12345 --hours 2 --type "Development"
+  ${toolCommand("azure-devops timelog add")} --workitem 12345 --hours 1 --minutes 30 --type "Code Review" --comment "PR review"
+  ${toolCommand("azure-devops timelog add")} --workitem 12345 --interactive
+  ${toolCommand("azure-devops timelog list")} --workitem 12345
+  ${toolCommand("azure-devops timelog list")} --day 2026-01-30
+  ${toolCommand("azure-devops timelog list")} --since 2026-01-01 --upto 2026-01-31 --user "Martin"
+  ${toolCommand("azure-devops timelog list")} --day 2026-01-30 --format table
+  ${toolCommand("azure-devops timelog delete")} <timeLogId> --yes
+  ${toolCommand("azure-devops timelog delete")} <timeLogId> --dry-run
+  ${toolCommand("azure-devops timelog delete")} --workitem 12345   (interactive picker)
+  ${toolCommand("azure-devops timelog delete")} <timeLogId> --no-effort --yes
+  ${toolCommand("azure-devops timelog types")}
+  ${toolCommand("azure-devops timelog import")} entries.json
 
 Available Time Types (run 'timelog types' for full list):
   Development, Code Review, Business Anal\u00fdza, IT Anal\u00fdza, Test,

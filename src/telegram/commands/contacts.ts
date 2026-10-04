@@ -1,4 +1,5 @@
 import * as p from "@clack/prompts";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import type { Command } from "commander";
 import pc from "picocolors";
 import { TelegramToolConfig } from "../lib/TelegramToolConfig";
@@ -12,12 +13,12 @@ export function registerContactsCommand(program: Command): void {
             const data = await config.load();
 
             if (!data) {
-                p.log.error("Not configured. Run: tools telegram configure");
+                p.log.error(`Not configured. Run: ${toolCommand("telegram configure")}`);
                 return;
             }
 
             if (data.contacts.length === 0) {
-                p.log.info("No contacts configured. Run: tools telegram configure");
+                p.log.info(`No contacts configured. Run: ${toolCommand("telegram configure")}`);
                 return;
             }
 

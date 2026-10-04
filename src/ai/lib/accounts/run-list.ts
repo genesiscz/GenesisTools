@@ -4,6 +4,7 @@ import { providerAliasOf } from "@genesiscz/utils/ai/providers/aliases";
 import { registerBuiltInPlugins } from "@genesiscz/utils/ai/providers/plugins";
 import { pluginsWithAccounts } from "@genesiscz/utils/ai/providers/registry";
 import { suggestCommand } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger, out } from "@genesiscz/utils/logger";
 import {
     createBoxTable,
@@ -132,7 +133,7 @@ export async function runList(opts: RunListOptions): Promise<void> {
     out.println(
         pc.dim(
             `  ${rows.length} account${rows.length === 1 ? "" : "s"} · full inventory (every provider): ` +
-                `${pc.cyan("tools ai config account list")}`
+                `${pc.cyan(`${toolCommand("ai config account list")}`)}`
         )
     );
 }

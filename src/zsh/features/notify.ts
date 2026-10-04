@@ -1,3 +1,4 @@
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import type { ZshFeature } from "./types.ts";
 
 export const notifyFeature: ZshFeature = {
@@ -72,8 +73,8 @@ __genesis_notify_precmd() {
         # Only notify if user switched away from the terminal
         if [[ "$active_app" != "$term_app" ]]; then
             local msg="\${icon} \${cmd} — \${duration}"
-            # Fire notification via tools notify in background
-            tools notify "\${msg}" --title "Command Finished" --sound Ping & disown 2>/dev/null
+            # Fire notification via ${toolCommand("notify")} in background
+            ${toolCommand("notify")} "\${msg}" --title "Command Finished" --sound Ping & disown 2>/dev/null
         fi
     fi
 

@@ -9,6 +9,7 @@
  */
 
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import TOML from "@iarna/toml";
 import { Json2mdError } from "./errors";
@@ -189,7 +190,7 @@ export async function buildDocument<T>(
     // A path inside the current directory stays short; anything outside it goes in absolute.
     const fromCwd = relative(process.cwd(), modulePath);
     const portable = fromCwd !== "" && !fromCwd.startsWith("..") && !isAbsolute(fromCwd) ? fromCwd : modulePath;
-    const command = definition.command ?? `tools json2md build ${portable}`;
+    const command = definition.command ?? `${toolCommand("json2md build")} ${portable}`;
     const markdown = stampMarkdown(body, {
         source: sourceHash,
         generator: relative(dirname(outPath), modulePath) || modulePath,

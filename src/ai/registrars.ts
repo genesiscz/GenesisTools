@@ -1,4 +1,5 @@
 import type { LazyRegistrar } from "@genesiscz/utils/cli/lazy-registrars";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import type { Command } from "commander";
 
 /**
@@ -51,7 +52,7 @@ export const AI_REGISTRARS: LazyRegistrar[] = [
         load: async () => {
             const register = (await import("./commands/warmup")).registerWarmupCommand;
 
-            return (program: Command) => register(program, { tool: "tools ai warmup" });
+            return (program: Command) => register(program, { tool: `${toolCommand("ai warmup")}` });
         },
     },
 ];

@@ -1,3 +1,4 @@
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { formatDuration, formatTokens } from "@genesiscz/utils/format";
 import { out } from "@genesiscz/utils/logger";
 import { maxCacheAgeOption, resolveMaxCacheAge } from "@genesiscz/utils/storage/cache-flag";
@@ -159,7 +160,11 @@ function printStuck(results: SessionStuck[], thresholds: StuckThresholds): void 
         out.println(formatDotStatus("err", `${result.sessionId.slice(0, 8)}: ${result.error}`));
     }
 
-    out.println(pc.dim(`Thresholds: ${stuckConfigPath()} · change with tools hub stuck config --tool-minutes 15`));
+    out.println(
+        pc.dim(
+            `Thresholds: ${stuckConfigPath()} · change with ${toolCommand("hub stuck config", "--tool-minutes", "15")}`
+        )
+    );
 }
 
 interface StuckFlags {

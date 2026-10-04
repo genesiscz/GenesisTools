@@ -7,6 +7,7 @@ import {
 import { setDaemonEnabled } from "@app/macos/lib/clones/store";
 import { Executor } from "@genesiscz/utils/cli";
 import { printLn } from "@genesiscz/utils/cli/stdout";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger } from "@genesiscz/utils/logger";
 import { Command } from "commander";
 
@@ -19,7 +20,9 @@ export function createDaemonCommand(): Command {
 
     daemon
         .command("enable")
-        .description("Register the daily clone-scan task with `tools daemon` (a finished reclaim plan does this too)")
+        .description(
+            `Register the daily clone-scan task with \`${toolCommand("daemon")}\` (a finished reclaim plan does this too)`
+        )
         .option("--overwrite", "Overwrite an existing registration", true)
         .action(async (opts: { overwrite?: boolean }) => {
             await setDaemonEnabled(true);
@@ -42,12 +45,14 @@ export function createDaemonCommand(): Command {
             const removed = await removeClonesDaemonTasks();
             await printLn(removed.scan ? `unregistered ${SCAN_TASK_NAME}` : `${SCAN_TASK_NAME} was not registered`);
             await printLn(removed.prune ? `unregistered ${PRUNE_TASK_NAME}` : `${PRUNE_TASK_NAME} was not registered`);
-            await printLn("a finished reclaim plan will not re-register them (tools macos clones daemon enable does)");
+            await printLn(
+                `a finished reclaim plan will not re-register them (${toolCommand("macos clones daemon enable")} does)`
+            );
         });
 
     daemon
         .command("status")
-        .description("Show the clone-scan task via `tools daemon status`")
+        .description(`Show the clone-scan task via \`${toolCommand("daemon status")}\``)
         .action(async () => {
             const result = await new Executor().exec(["tools", "daemon", "status"]);
             const filtered = result.stdout
@@ -60,7 +65,9 @@ export function createDaemonCommand(): Command {
                         line.trim() === ""
                 )
                 .join("\n");
-            await printLn(filtered || `${SCAN_TASK_NAME}: no status (is the daemon running? \`tools daemon start\`)`);
+            await printLn(
+                filtered || `${SCAN_TASK_NAME}: no status (is the daemon running? \`${toolCommand("daemon start")}\`)`
+            );
             if (result.exitCode !== 0) {
                 log.warn({ exitCode: result.exitCode }, "daemon status returned non-zero");
             }

@@ -3,6 +3,7 @@ import { confirmDestructive } from "@app/youtube/commands/_shared/confirm";
 import { getYoutube } from "@app/youtube/commands/_shared/ensure-pipeline";
 import { renderOrEmit } from "@app/youtube/commands/_shared/render";
 import { buildCacheStatsBase, clearVideoBinaries, listCacheVideos, ttlDays } from "@app/youtube/lib/cache-ops";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { formatBytes } from "@genesiscz/utils/format";
 import { out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
@@ -31,7 +32,10 @@ export function registerCacheCommand(program: Command): void {
 
     cmd.command("stats")
         .description("Show row counts and binary cache footprint")
-        .addHelpText("after", "\nExamples:\n  $ tools youtube cache stats\n  $ tools youtube --json cache stats\n")
+        .addHelpText(
+            "after",
+            `\nExamples:\n  $ ${toolCommand("youtube cache stats")}\n  $ ${toolCommand("youtube")} --json cache stats\n`
+        )
         .action(async () => {
             const yt = await getYoutube();
             const stats = cacheStats(yt);
@@ -60,7 +64,10 @@ export function registerCacheCommand(program: Command): void {
     cmd.command("prune")
         .description("Delete expired binary caches based on configured TTLs")
         .option("--dry-run", "Show what would be deleted without deleting")
-        .addHelpText("after", "\nExamples:\n  $ tools youtube cache prune\n  $ tools youtube cache prune --dry-run\n")
+        .addHelpText(
+            "after",
+            `\nExamples:\n  $ ${toolCommand("youtube cache prune")}\n  $ ${toolCommand("youtube cache prune", "--dry-run")}\n`
+        )
         .action(async (opts: { dryRun?: boolean }) => {
             const yt = await getYoutube();
             const ttlConfig = await yt.config.get("ttls");
@@ -88,7 +95,7 @@ export function registerCacheCommand(program: Command): void {
         .option("--yes", "Skip confirmation")
         .addHelpText(
             "after",
-            "\nExamples:\n  $ tools youtube cache clear --thumbs --yes\n  $ tools youtube cache clear --all --yes\n"
+            `\nExamples:\n  $ ${toolCommand("youtube cache clear", "--thumbs", "--yes")}\n  $ ${toolCommand("youtube cache clear", "--all", "--yes")}\n`
         )
         .action(async (opts: ClearOpts) => {
             const flags = opts.all ? { audio: true, video: true, thumbs: true } : opts;
@@ -103,7 +110,7 @@ export function registerCacheCommand(program: Command): void {
                 opts.yes ||
                 (await confirmDestructive({
                     message: `clear cached binaries (${selectedKinds(flags).join(", ")})`,
-                    toolName: "tools youtube cache clear",
+                    toolName: toolCommand("youtube cache clear"),
                     assumeYesFlag: "--yes",
                 }));
 

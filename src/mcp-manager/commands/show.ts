@@ -1,6 +1,7 @@
 import { readUnifiedConfigReadOnly } from "@app/mcp-manager/utils/config.utils.js";
 import type { MCPProvider, UnifiedMCPServerConfig } from "@app/mcp-manager/utils/providers/types.js";
 import { isInteractive } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
 import * as p from "@genesiscz/utils/prompts/p";
@@ -18,7 +19,7 @@ export async function showServerConfig(serverName: string | undefined, providers
     if (!finalServerName) {
         if (!isInteractive()) {
             logger.error("Server name required.");
-            logger.info("Usage: tools mcp-manager show <server>");
+            logger.info(`Usage: ${toolCommand("mcp-manager show", "<server>")}`);
             process.exitCode = 1;
             return;
         }

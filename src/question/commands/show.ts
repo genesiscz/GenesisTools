@@ -1,5 +1,6 @@
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import { formatRecheck, recheck, type TransclusionToken } from "@genesiscz/utils/transclude";
@@ -82,7 +83,7 @@ export function registerShowCommand(program: Command): void {
             if (!isDecisionId(id)) {
                 out.printlnErr(
                     pc.red(
-                        `show reads decisions and todos (d_<n>_<session>, t_<n>_<session>); for a form use tools question poll ${id}`
+                        `show reads decisions and todos (d_<n>_<session>, t_<n>_<session>); for a form use ${toolCommand("question poll")} ${id}`
                     )
                 );
                 process.exitCode = 1;
@@ -140,7 +141,9 @@ export function registerShowCommand(program: Command): void {
             if (!opts.versions) {
                 if (versions.length > 0) {
                     out.println(
-                        pc.dim(`\n${versions.length} earlier version(s): tools question show ${row.id} --versions`)
+                        pc.dim(
+                            `\n${versions.length} earlier version(s): ${toolCommand("question show")} ${row.id} --versions`
+                        )
                     );
                 }
 

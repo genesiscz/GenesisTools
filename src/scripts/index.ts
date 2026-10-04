@@ -15,6 +15,7 @@
  *   tools scripts run colTriage
  */
 import { runTool } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { Command } from "commander";
 import { registerCall } from "./commands/call.ts";
 import { registerCreate } from "./commands/create.ts";
@@ -32,7 +33,7 @@ import { registerTag } from "./commands/tag.ts";
 import { registerTools } from "./commands/tools.ts";
 
 const program = new Command();
-program.name("tools scripts").description("Script MCP tool calls directly. No agent loop.").version("0.1.0");
+program.name(toolCommand("scripts")).description("Script MCP tool calls directly. No agent loop.").version("0.1.0");
 
 registerServers(program);
 registerTools(program);

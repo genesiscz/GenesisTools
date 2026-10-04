@@ -5,6 +5,7 @@ import { fetchTimeLogFunctionsKey } from "@app/azure-devops/lib/timelog-configur
 import type { AzureConfigWithTimeLog, IdentityRef, TimeLogConfig } from "@app/azure-devops/types";
 import { findConfigPath, loadConfig } from "@app/azure-devops/utils";
 import * as p from "@clack/prompts";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
@@ -37,7 +38,7 @@ function loadExistingConfig(): { config: AzureConfigWithTimeLog; configPath: str
     const config = loadConfig() as AzureConfigWithTimeLog | null;
 
     if (!config?.org) {
-        out.error("Run 'tools azure-devops configure <url>' first");
+        out.error(`Run '${toolCommand("azure-devops configure")} <url>' first`);
         process.exit(1);
     }
 
@@ -113,7 +114,7 @@ async function handleInteractive(config: AzureConfigWithTimeLog, configPath: str
 
     p.note(formatCurrentConfig(config.timelog), "Current Configuration");
 
-    p.log.info(pc.dim("For non-interactive use, run: tools azure-devops timelog configure --help"));
+    p.log.info(pc.dim(`For non-interactive use, run: ${toolCommand("azure-devops timelog configure")} --help`));
 
     config.timelog = config.timelog || ({} as TimeLogConfig);
 

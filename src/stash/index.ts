@@ -1,5 +1,6 @@
 #!/usr/bin/env bun
 import { runTool } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { Command } from "commander";
 import { applyCommand } from "./commands/apply";
 import { diffCommand } from "./commands/diff";
@@ -25,7 +26,7 @@ function parseSaveMode(value: string): SaveMode {
 }
 
 const program = new Command();
-program.name("tools stash").description("Global cross-project code-overlay manager").version("0.1.0");
+program.name(toolCommand("stash")).description("Global cross-project code-overlay manager").version("0.1.0");
 
 const saveCmd = program
     .command("save [name]")
@@ -134,7 +135,7 @@ program
 
 program
     .command("show [name]")
-    .description("Show stash details (or, with no <name>, behave like `tools stash list`)")
+    .description(`Show stash details (or, with no <name>, behave like \`${toolCommand("stash list")}\`)`)
     .option("--at <version>", "specific version", parsePositiveInt)
     .option("--diff", "show patch content")
     .option("--meta", "show only metadata")

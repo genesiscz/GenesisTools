@@ -1,3 +1,4 @@
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { toast } from "sonner";
 
 const TOAST_ID = "youtube-backend-down";
@@ -16,7 +17,7 @@ export function reportBackendUnreachable(detail: string): void {
     down = true;
     toast.error("YouTube API server unreachable", {
         id: TOAST_ID,
-        description: `${detail} — start it with: tools youtube server up`,
+        description: `${detail} — start it with: ${toolCommand("youtube server up")}`,
         duration: Number.POSITIVE_INFINITY,
     });
 }

@@ -1,4 +1,5 @@
 import { runTool } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { Command } from "commander";
 import { runAlerts } from "./commands/alerts";
 import { type ChartsOpts, runCharts } from "./commands/charts";
@@ -43,7 +44,7 @@ program
     .option("--once", "Print the history snapshot and exit")
     .option("--signals-only", "Suppress numeric rows; print only signal marks")
     .option("--json", "NDJSON to stdout (points + signals)")
-    .option("--notify", "Voice notification on live signals (tools say)")
+    .option("--notify", `Voice notification on live signals (${toolCommand("say")})`)
     .option("--exec <cmd>", "Run shell command on live signals (signal JSON in $TV_SIGNAL)")
     .option("--cookie <cookie>", "TradingView session cookie string")
     .action((spec: string | undefined, symbol: string | undefined, opts: IndicatorOpts) => {

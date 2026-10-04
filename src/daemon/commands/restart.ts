@@ -1,6 +1,7 @@
 import { getDaemonStatus, installLaunchd } from "@app/daemon/lib/launchd";
 import { stopWithEscalation, waitForDaemonRestart } from "@app/daemon/lib/wait-for-restart";
 import * as p from "@clack/prompts";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import type { Command } from "commander";
 import pc from "picocolors";
 
@@ -12,7 +13,9 @@ export function registerRestartCommand(program: Command): void {
             const status = await getDaemonStatus();
 
             if (!status.installed) {
-                p.log.error(`Daemon is not installed via launchd. Run ${pc.cyan("tools daemon install")} first.`);
+                p.log.error(
+                    `Daemon is not installed via launchd. Run ${pc.cyan(toolCommand("daemon install"))} first.`
+                );
                 return;
             }
 
@@ -50,7 +53,7 @@ export function registerRestartCommand(program: Command): void {
                     s.stop(`Daemon started (PID ${result.pid})`);
                 } else {
                     s.stop("Daemon did not start within 10s");
-                    p.log.warn(`Check logs: ${pc.cyan("tools daemon logs")}`);
+                    p.log.warn(`Check logs: ${pc.cyan(toolCommand("daemon logs"))}`);
                 }
 
                 return;
@@ -77,7 +80,7 @@ export function registerRestartCommand(program: Command): void {
             } else {
                 s.stop("Restart timed out");
                 p.log.warn(
-                    `Daemon did not restart within 10s. Check: ${pc.cyan("tools daemon status")} or ${pc.cyan("tools daemon logs")}`
+                    `Daemon did not restart within 10s. Check: ${pc.cyan(toolCommand("daemon status"))} or ${pc.cyan(toolCommand("daemon logs"))}`
                 );
             }
         });

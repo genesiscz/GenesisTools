@@ -1,5 +1,6 @@
 import { getYoutube } from "@app/youtube/commands/_shared/ensure-pipeline";
 import { startMcpServer } from "@app/youtube/lib/mcp/server";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import type { Command } from "commander";
 
 export function registerMcpCommand(program: Command): void {
@@ -8,7 +9,7 @@ export function registerMcpCommand(program: Command): void {
         .description("Serve the curated youtube tool set over MCP (stdio)")
         .addHelpText(
             "after",
-            "\nRegister with an MCP client as: tools youtube mcp\n" +
+            `\nRegister with an MCP client as: ${toolCommand("youtube mcp")}\n` +
                 "Exposes list_videos, get_video, search_transcripts, transcript_window, ask, queue_add, queue_status.\n" +
                 "Admin, billing, cache and config writes are deliberately not exposed.\n"
         )

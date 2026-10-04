@@ -1,4 +1,5 @@
 import type { AiProxyAccountConfig } from "@app/ai-proxy/lib/types";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
 
@@ -93,7 +94,7 @@ export function assertApiKeySourceAllowed(input: {
     throw new Error(
         `Refusing to spend the ambient ${input.envName} for billed account "${input.account.name}": ` +
             "an environment key is never used implicitly. Store the key on the account with " +
-            `\`tools ai-proxy accounts set-key ${input.account.name}\`, or opt in explicitly with ` +
-            `\`tools ai-proxy accounts allow-env ${input.account.name}\`.`
+            `\`${toolCommand("ai-proxy accounts set-key")} ${input.account.name}\`, or opt in explicitly with ` +
+            `\`${toolCommand("ai-proxy accounts allow-env")} ${input.account.name}\`.`
     );
 }

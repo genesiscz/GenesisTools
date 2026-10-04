@@ -3,6 +3,7 @@ import { AIConfig } from "@genesiscz/utils/ai/AIConfig";
 import { AiConfigStore } from "@genesiscz/utils/ai/config/AiConfigStore";
 import { calendarDay } from "@genesiscz/utils/ai/providers/plugins/anthropic-sub/subscription";
 import { stampSnapshotsRenewal } from "@genesiscz/utils/ai/usage-poll/legacy-cache";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import type { AIAccountEntry } from "@genesiscz/utils/config/ai.types";
 import { logger, out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
@@ -73,9 +74,11 @@ function listAnchors(accounts: AIAccountEntry[], now: Date): void {
     out.println(pc.dim("  reactivation = a canceled→active flip a poll watched"));
     out.println(pc.dim("  manual       = set here; wins over both"));
     out.println("");
-    out.println(pc.dim("  tools claude anchor <name> 2026-07-07    set"));
+    out.println(pc.dim(`  ${toolCommand("claude anchor", "<name>", "2026-07-07")}    set`));
     out.println(
-        pc.dim("  tools claude anchor <name> --clear       back to the reactivation stamp, else the profile stamp")
+        pc.dim(
+            `  ${toolCommand("claude anchor", "<name>", "--clear")}       back to the reactivation stamp, else the profile stamp`
+        )
     );
 }
 
@@ -178,7 +181,10 @@ export function planAnchor(
     { date, clear, now }: { date?: string; clear: boolean; now: Date }
 ): AnchorPlan {
     if (!clear && !date) {
-        return { ok: false, error: "Give a date (`tools claude anchor <name> 2026-07-07`) or --clear." };
+        return {
+            ok: false,
+            error: `Give a date (\`${toolCommand("claude anchor", "<name>", "2026-07-07")}\`) or --clear.`,
+        };
     }
 
     const override = clear ? undefined : (parseAnchor(date ?? "") ?? undefined);

@@ -1,3 +1,5 @@
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
+
 /**
  * The exact command Genesis' MonitorModel.resumeCommand builds, so both UIs copy one string.
  *
@@ -8,5 +10,5 @@
  * module-evaluation time, so the whole dashboard stopped mounting.
  */
 export function resumeCommandFor(sessionId: string): string {
-    return `tools claude run --resume ${sessionId}`;
+    return toolCommand("claude run", "--resume", sessionId);
 }

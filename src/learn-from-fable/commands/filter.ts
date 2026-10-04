@@ -1,3 +1,4 @@
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { out } from "@genesiscz/utils/logger";
 import { type FableConfig, requireStageModel } from "../lib/config";
 import { runStage } from "../lib/manifest";
@@ -57,7 +58,7 @@ export async function filterCommand(config: FableConfig, options: FilterOptions)
             // an ok stage run is a false green (it happened 2026-07-25).
             if (counts.infraFail === counts.total && counts.total > 0) {
                 throw new Error(
-                    `every episode failed on infrastructure (${counts.total}/${counts.total}) — check the ai-proxy is up: tools ai-proxy up`
+                    `every episode failed on infrastructure (${counts.total}/${counts.total}) — check the ai-proxy is up: ${toolCommand("ai-proxy up")}`
                 );
             }
 

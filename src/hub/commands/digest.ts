@@ -1,3 +1,4 @@
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
 import pc from "picocolors";
@@ -19,7 +20,7 @@ export function registerDigestCommand(program: Command): void {
         )
         .option("--date <day>", "today (default), yesterday or YYYY-MM-DD")
         .option("--markdown", "print the markdown note instead of the summary")
-        .option("--export", "write the note to the configured folder (tools hub digest config --folder)")
+        .option("--export", `write the note to the configured folder (${toolCommand("hub digest config", "--folder")})`)
         .option("--folder <path>", "with --export: write here instead of the configured folder")
         .option("--no-prs", "skip the PR list (the one network call)")
         .option("--json", "machine-readable output (the hub's Today panel reads this)")
@@ -44,7 +45,7 @@ export function registerDigestCommand(program: Command): void {
 
                 if (opts.export && !folder) {
                     out.log.error(
-                        "No export folder yet. Set one: tools hub digest config --folder <vault folder>, or pass --folder <path>"
+                        `No export folder yet. Set one: ${toolCommand("hub digest config", "--folder", "<vault", "folder>")}, or pass --folder <path>`
                     );
                     process.exitCode = 1;
                     return;

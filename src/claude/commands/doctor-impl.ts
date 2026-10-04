@@ -24,6 +24,7 @@ import {
     resolveKeychainAccountUuid,
 } from "@genesiscz/utils/claude/keychain";
 import { probeLongLivedToken, type TokenVerdict } from "@genesiscz/utils/claude/token-verify";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import type { AIAccountEntry } from "@genesiscz/utils/config/ai.types";
 import { logger, out } from "@genesiscz/utils/logger";
 import pc from "picocolors";
@@ -125,7 +126,7 @@ async function reportIdentities(accounts: AIAccountEntry[]): Promise<number> {
         out.printlnErr(
             pc.dim(
                 `    A login-long capture completed in a browser signed into the other account. ` +
-                    `Recapture with: tools claude login-long <name>`
+                    `Recapture with: ${toolCommand("claude login-long", "<name>")}`
             )
         );
     }
@@ -216,8 +217,8 @@ export async function doctorCommand(opts: { identity?: boolean } = {}): Promise<
     } else {
         out.printlnErr(
             pc.dim(
-                "\nFix: expired/stale token → relaunch with `tools cc run <name>`. " +
-                    "Fable bucket dead → relaunch via `tools cc fable` (or `/model claude-opus-5-5` in the session — " +
+                `\nFix: expired/stale token → relaunch with \`${toolCommand("cc run")} <name>\`. ` +
+                    `Fable bucket dead → relaunch via \`${toolCommand("cc")} fable\` (or \`/model claude-opus-5-5\` in the session — ` +
                     "note doctor reads the LAUNCH model, so the flag clears only on relaunch)."
             )
         );
@@ -231,7 +232,7 @@ export async function doctorCommand(opts: { identity?: boolean } = {}): Promise<
         out.printlnErr(
             pc.dim(
                 "\nNote: this checked the pin, not which account each token really bills. " +
-                    "Verify that with `tools claude doctor --identity` (spends 1 token per account)."
+                    `Verify that with \`${toolCommand("claude doctor", "--identity")}\` (spends 1 token per account).`
             )
         );
     }

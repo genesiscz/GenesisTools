@@ -1,3 +1,4 @@
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import pc from "picocolors";
 import type { QaEntry } from "./types";
 import { worktreeLabel } from "./worktree-label";
@@ -29,6 +30,6 @@ export function formatQaEntry(e: FormattableEntry): string {
     const head = `${pc.dim(when)}  ${pc.bold(pc.cyan(e.project))} ${pc.dim("·")} ${where}  ${tint(`[${e.tag}]`)}`;
     const preview = pc.yellow(e.answerMd.split("\n").slice(0, 3).join("\n"));
     const sid = e.sessionId && e.sessionId !== "unknown" ? e.sessionId.slice(0, 8) : null;
-    const resume = sid ? pc.dim(`  ↩ ${sid} · tools claude resume ${sid}\n`) : "";
+    const resume = sid ? pc.dim(`  ↩ ${sid} · ${toolCommand("claude resume")} ${sid}\n`) : "";
     return `${head}\n${pc.green("❯")} ${pc.bold(e.question)}\n${preview}\n${resume}`;
 }

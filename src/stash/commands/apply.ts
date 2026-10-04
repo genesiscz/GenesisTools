@@ -2,6 +2,7 @@ import { Database } from "bun:sqlite";
 import { createHash } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger } from "@genesiscz/utils/logger";
 import { ApplySession } from "../lib/apply-session";
 import { newStashId, shortId } from "../lib/ids";
@@ -225,8 +226,8 @@ export async function applyCommand(opts: ApplyOptions): Promise<void> {
                     ui.warn(`  conflict: ${f}`);
                 }
                 ui.info("resolve conflicts manually, then:");
-                ui.info(`  tools stash apply ${opts.name} --resume`);
-                ui.info(`  tools stash apply ${opts.name} --abort    (to reverse the partial apply)`);
+                ui.info(`  ${toolCommand("stash apply", opts.name, "--resume")}`);
+                ui.info(`  ${toolCommand("stash apply", opts.name, "--abort")}    (to reverse the partial apply)`);
 
                 process.exitCode = 1;
                 return;

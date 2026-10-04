@@ -8,6 +8,7 @@ import {
     type TimelogWorkItemGroup,
     type TimelogWorkItemsResult,
 } from "@app/clarity/lib/timelog-workitems";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 
 export type { TimelogWorkItemGroup, TimelogWorkItemsResult };
 
@@ -15,15 +16,15 @@ function requireAdoConfig(): AzureConfigWithTimeLog {
     const adoConfig = loadAdoConfig() as AzureConfigWithTimeLog | null;
 
     if (!adoConfig) {
-        throw new Error("Azure DevOps not configured. Run: tools azure-devops configure <url>");
+        throw new Error(`Azure DevOps not configured. Run: ${toolCommand("azure-devops configure")} <url>`);
     }
 
     if (!adoConfig.timelog?.functionsKey) {
-        throw new Error("TimeLog not configured. Run: tools azure-devops timelog configure");
+        throw new Error(`TimeLog not configured. Run: ${toolCommand("azure-devops timelog configure")}`);
     }
 
     if (!adoConfig.timelog.defaultUser) {
-        throw new Error("TimeLog user not configured. Run: tools azure-devops timelog configure");
+        throw new Error(`TimeLog user not configured. Run: ${toolCommand("azure-devops timelog configure")}`);
     }
 
     return adoConfig;
@@ -31,7 +32,7 @@ function requireAdoConfig(): AzureConfigWithTimeLog {
 
 function createTimeLogApi(adoConfig: AzureConfigWithTimeLog): TimeLogApi {
     if (!adoConfig.orgId) {
-        throw new Error("Organization ID missing from config. Re-run: tools azure-devops configure <url>");
+        throw new Error(`Organization ID missing from config. Re-run: ${toolCommand("azure-devops configure")} <url>`);
     }
 
     const user = adoConfig.timelog!.defaultUser!;

@@ -27,6 +27,7 @@ import type {
 } from "@app/youtube/lib/types";
 import type { UserSettings } from "@app/youtube/lib/user-settings";
 import { fetchUiConfig } from "@app/yt/config.client";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { reportBackendReachable, reportBackendUnreachable } from "./backend-status";
 
@@ -139,9 +140,12 @@ async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
         // Network-level failure (ERR_CONNECTION_REFUSED etc.) — the backend is down,
         // not "the database is empty". Surface it instead of failing silently.
         reportBackendUnreachable(`${base} is not responding`);
-        throw new Error(`YouTube API server unreachable at ${base}. Start it with: tools youtube server up`, {
-            cause: err,
-        });
+        throw new Error(
+            `YouTube API server unreachable at ${base}. Start it with: ${toolCommand("youtube server up")}`,
+            {
+                cause: err,
+            }
+        );
     }
 
     reportBackendReachable();

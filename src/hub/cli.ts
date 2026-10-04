@@ -4,6 +4,7 @@ import { spawn } from "node:child_process";
 import { join, resolve } from "node:path";
 import * as p from "@clack/prompts";
 import { isInteractive, runTool, suggestEnumFlag } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { parseSince, parseUntil } from "@genesiscz/utils/date";
 import { PR_LIST_STATES, type PrListState, parsePrRef } from "@genesiscz/utils/git/origins";
 import { fetchPrHead, PR_FETCH_PROVIDERS, PrFetchError } from "@genesiscz/utils/git/origins/pr-fetch";
@@ -83,7 +84,7 @@ function isTimelineKind(value: string): value is TimelineKind {
 const program = new Command()
     .name("hub")
     .description(
-        "The GenesisTools.app agent hub: `tools hub` opens it (building the app when needed); the subcommands are its data doors"
+        `The GenesisTools.app agent hub: \`${toolCommand("hub")}\` opens it (building the app when needed); the subcommands are its data doors`
     );
 
 /**
@@ -292,7 +293,7 @@ proposal
         const found = listProposals().find((item) => proposalKey(item) === key);
 
         if (!found) {
-            out.log.error(`No proposal ${key}. See tools hub proposal list.`);
+            out.log.error(`No proposal ${key}. See ${toolCommand("hub proposal list")}.`);
             process.exitCode = 1;
             return;
         }
@@ -326,7 +327,7 @@ program
     .description("Checkout, branch, origin web pages and (with --pr) the PR/MR of each folder, as JSON")
     .argument("<paths...>", "folders inside git checkouts")
     .option("--pr", "also look up the PR/MR whose head is the branch (gh / glab; slower)")
-    .addOption(maxCacheAgeOption("PR lookup, never older than its TTL (tools hub config),"))
+    .addOption(maxCacheAgeOption(`PR lookup, never older than its TTL (${toolCommand("hub config")}),`))
     .option("--fresh", "the default; kept for old callers (same as --max-cache-age 0)")
     .action(async (paths: string[], opts: { pr?: boolean; fresh?: boolean; maxCacheAge?: number }) => {
         out.result(

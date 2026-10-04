@@ -1,5 +1,6 @@
 import { resolve } from "node:path";
 import { isTaskRegistered, registerTask, unregisterTask } from "@app/daemon/lib/register";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { out } from "@genesiscz/utils/logger";
 import { dispatchNotification } from "@genesiscz/utils/notifications";
 import { shellCommandLine } from "@genesiscz/utils/shell/quote";
@@ -87,7 +88,7 @@ async function registerDaemonTask(intervalMinutes: number): Promise<void> {
         every: daemonEvery(intervalMinutes),
         retries: 0,
         timeoutMs: 120_000,
-        description: "Poll the hub's watched PRs/MRs and post notifications (tools hub notify)",
+        description: `Poll the hub's watched PRs/MRs and post notifications (${toolCommand("hub notify")})`,
         overwrite: true,
         notify: false,
     });
@@ -136,7 +137,7 @@ export function registerNotifyCommands(program: Command): void {
                     `Events: ${NOTIFY_EVENTS.map((e) => `${e}=${status.config.events[e] ? "on" : "off"}`).join(" ")}`,
                     `Only my PRs: ${status.config.onlyMine ? "yes" : "no"} · every ${status.config.intervalMinutes} min`,
                     `Last poll: ${status.lastPollAt ?? "never"} · ${status.pollsLastHour} polls and ${status.requestsLastHour} host requests in the last hour`,
-                    `Daemon task ${NOTIFY_TASK_NAME}: ${status.daemonTask === null ? "unknown" : status.daemonTask ? "registered" : "not registered (tools hub notify install)"}`,
+                    `Daemon task ${NOTIFY_TASK_NAME}: ${status.daemonTask === null ? "unknown" : status.daemonTask ? "registered" : `not registered (${toolCommand("hub notify install")})`}`,
                     ...status.recent
                         .slice(0, 5)
                         .map((event) => `  ${event.at} ${event.type} ${hubPrRef(event)} ${event.message}`),
@@ -250,12 +251,14 @@ export function registerNotifyCommands(program: Command): void {
 
     notify
         .command("install")
-        .description(`Register the daemon task ${NOTIFY_TASK_NAME} (one poll per interval, under tools daemon)`)
+        .description(
+            `Register the daemon task ${NOTIFY_TASK_NAME} (one poll per interval, under ${toolCommand("daemon")})`
+        )
         .action(async () => {
             const config = readNotifyConfig();
             await registerDaemonTask(config.intervalMinutes);
             out.log.success(`Registered ${NOTIFY_TASK_NAME}: every ${config.intervalMinutes} min`);
-            out.log.info("The daemon picks it up on its next config read; tools daemon status lists it.");
+            out.log.info(`The daemon picks it up on its next config read; ${toolCommand("daemon status")} lists it.`);
         });
 
     notify

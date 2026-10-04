@@ -2,6 +2,7 @@ import { AiConfigStore } from "@genesiscz/utils/ai/config/AiConfigStore";
 import type { AccountEntry } from "@genesiscz/utils/ai/config/schema";
 import { registerBuiltInPlugins } from "@genesiscz/utils/ai/providers/plugins";
 import { tryProviderPlugin } from "@genesiscz/utils/ai/providers/registry";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger } from "@genesiscz/utils/logger";
 import type { AiAccountOption, CheckResult, Watcher } from "../types";
 
@@ -60,7 +61,7 @@ export async function checkAiProvider(watcher: Pick<Watcher, "target" | "config"
             status: "unknown",
             latencyMs: null,
             httpStatus: null,
-            detail: `no AI account with id ${watcher.target}; run: tools ai config account list`,
+            detail: `no AI account with id ${watcher.target}; run: ${toolCommand("ai config account list")}`,
         };
     }
 

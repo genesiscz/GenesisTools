@@ -36,6 +36,7 @@ import {
     requireConfig,
 } from "@app/azure-devops/utils";
 import { suggestCommand } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
@@ -167,7 +168,7 @@ function formatWorkItemAI(
                 lines.push(`- ${att.filename} (${formatBytes(att.size)}${date ? `, ${date}` : ""})`);
             }
             lines.push("");
-            lines.push(`Download: tools azure-devops workitem ${item.id} --attachments-suffix .har`);
+            lines.push(`Download: ${toolCommand("azure-devops workitem")} ${item.id} --attachments-suffix .har`);
         }
     }
 

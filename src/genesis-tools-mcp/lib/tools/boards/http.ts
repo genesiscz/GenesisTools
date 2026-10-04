@@ -1,4 +1,5 @@
 import { getConfig } from "@app/dev-dashboard/config";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 
@@ -43,8 +44,8 @@ export async function boardsFetch<T>(path: string, init?: RequestInit & { rawTex
         cachedBase = null;
         const msg = err instanceof Error ? err.message : String(err);
         throw new Error(
-            `dev-dashboard unreachable at ${base} (${msg}). Start it with \`tools dev-dashboard\` ` +
-                `(or \`tools dev-dashboard agent\`), or set BOARDS_BASE_URL.`
+            `dev-dashboard unreachable at ${base} (${msg}). Start it with \`${toolCommand("dev-dashboard")}\` ` +
+                `(or \`${toolCommand("dev-dashboard agent")}\`), or set BOARDS_BASE_URL.`
         );
     }
     const text = await res.text();

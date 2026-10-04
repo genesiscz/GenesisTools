@@ -1,3 +1,4 @@
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { Storage } from "@genesiscz/utils/storage/storage";
 import type { BenchmarkSuite } from "./types";
 
@@ -9,8 +10,8 @@ export const BUILTIN_SUITES: BenchmarkSuite[] = [
         builtIn: true,
         commands: [
             { label: "tools --help", cmd: "tools --help" },
-            { label: "tools port 99999", cmd: "tools port 99999" },
-            { label: "tools notify test", cmd: "tools notify test --sound default" },
+            { label: `${toolCommand("port")} 99999`, cmd: `${toolCommand("port")} 99999` },
+            { label: `${toolCommand("notify")} test`, cmd: `${toolCommand("notify")} test --sound default` },
         ],
     },
     {

@@ -1,6 +1,7 @@
 import { mkdtemp, readdir, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger } from "@genesiscz/utils/logger";
 import type { AccountEntry } from "../../../config/schema";
 import { CodexAccountBinding } from "../../../openai/account-binding";
@@ -473,7 +474,7 @@ export async function pollCodexAccount(
 
         return {
             ...base,
-            error: "no Codex home bound to this account — run: tools codex login --home <dir>",
+            error: `no Codex home bound to this account — run: ${toolCommand("codex login")} --home <dir>`,
             auth: { reason: "no codex home bound" },
         };
     }
@@ -493,7 +494,7 @@ export async function pollCodexAccount(
             // the message rather than the intended "this account carries its own grant".
             `Could not start "codex app-server" for ${home ?? `account ${account.name}`}: ` +
                 `${err instanceof Error ? err.message : err}. ` +
-                "Check the Codex CLI is installed and re-login with: tools codex login <account>",
+                `Check the Codex CLI is installed and re-login with: ${toolCommand("codex login")} <account>`,
             { cause: err }
         );
     }

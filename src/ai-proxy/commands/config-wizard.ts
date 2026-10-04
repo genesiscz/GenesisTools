@@ -16,6 +16,7 @@ import {
 import type { AiProxyConfig } from "@app/ai-proxy/lib/types";
 import { cancel, confirm, intro, isCancel, log, note, outro, select, spinner, text } from "@clack/prompts";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { out } from "@genesiscz/utils/logger";
 
 async function ensureConfigInitialized(): Promise<AiProxyConfig> {
@@ -293,7 +294,7 @@ export async function runSetupCloudflaredTunnel(): Promise<void> {
                 "",
                 `Start it in another terminal:`,
                 `  cd ${process.cwd().includes("ai-proxy") ? process.cwd() : "<worktree>/ai-proxy"}`,
-                `  tools ai-proxy up`,
+                `  ${toolCommand("ai-proxy up")}`,
             ].join("\n"),
             "Start proxy"
         );
@@ -304,7 +305,7 @@ export async function runSetupCloudflaredTunnel(): Promise<void> {
     const activeTunnelName = config.public.cloudflared?.tunnelName;
     const tunnelRunning = activeTunnelName ? isTunnelProcessRunning(activeTunnelName) : false;
     if (!tunnelRunning && activeTunnelName) {
-        note(`tools ai-proxy up  (starts proxy + tunnel if needed)`, "Start stack");
+        note(`${toolCommand("ai-proxy up")}  (starts proxy + tunnel if needed)`, "Start stack");
     } else if (activeTunnelName) {
         log.success(`Tunnel process detected (${activeTunnelName})`);
     }
@@ -342,13 +343,13 @@ export async function runSetupCloudflaredTunnel(): Promise<void> {
                 : "  Model:    (add a grok-subscription account first)",
             "",
             "Keep running:",
-            `  tools ai-proxy up`,
+            `  ${toolCommand("ai-proxy up")}`,
         ].join("\n"),
         "Cursor settings"
     );
 
     out.log.success(`Cursor Base URL: ${cursorBaseUrl}`);
-    outro("Setup complete. Run: tools ai-proxy up");
+    outro(`Setup complete. Run: ${toolCommand("ai-proxy up")}`);
 }
 
 async function runSetupTailscaleExposure(config: AiProxyConfig): Promise<void> {
@@ -397,7 +398,7 @@ async function runSetupTailscaleExposure(config: AiProxyConfig): Promise<void> {
         [
             "Tailscale mode saves hostname only — route traffic yourself (Serve/Funnel/subnet).",
             `Cursor URL: ${resolveCursorBaseUrl(config)}`,
-            "Start proxy: tools ai-proxy up",
+            `Start proxy: ${toolCommand("ai-proxy up")}`,
         ].join("\n"),
         "Saved"
     );
@@ -430,6 +431,6 @@ async function runSetupCustomExposure(config: AiProxyConfig): Promise<void> {
     };
 
     await saveConfig(config);
-    note(`Cursor URL: ${resolveCursorBaseUrl(config)}\nStart proxy: tools ai-proxy up`, "Saved");
+    note(`Cursor URL: ${resolveCursorBaseUrl(config)}\nStart proxy: ${toolCommand("ai-proxy up")}`, "Saved");
     outro("Custom exposure configured.");
 }

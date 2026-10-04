@@ -1,4 +1,5 @@
 import * as p from "@clack/prompts";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { out } from "@genesiscz/utils/logger";
 import { closeDarwinKit } from "@genesiscz/utils/macos";
 import { handleCancel, isCancelled, withCancel } from "@genesiscz/utils/prompts/clack/helpers";
@@ -202,7 +203,7 @@ async function promptForParam(param: ParamDef): Promise<unknown> {
 function buildUsageLine(cmd: CommandDef): string {
     const positionals = cmd.params.filter((pm) => pm.positional);
     const flags = cmd.params.filter((pm) => !pm.positional);
-    let line = `Usage: tools darwinkit ${cmd.name}`;
+    let line = `Usage: ${toolCommand("darwinkit")} ${cmd.name}`;
 
     for (const param of positionals) {
         line += param.required ? ` <${param.name}>` : ` [${param.name}]`;

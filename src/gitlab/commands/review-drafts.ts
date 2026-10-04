@@ -31,6 +31,7 @@ import {
     writeDraftReply,
     writeTopLevelDraft,
 } from "@app/gitlab/lib/review-drafts";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
@@ -261,7 +262,7 @@ async function resolveDiscussionId(api: ProjectApi, iid: string, provided: strin
     }
 
     if (matches.length === 0) {
-        throw new Error(`No thread on !${iid} matches "${provided}". Run: tools gitlab discussions ${iid}`);
+        throw new Error(`No thread on !${iid} matches "${provided}". Run: ${toolCommand("gitlab discussions")} ${iid}`);
     }
 
     throw new Error(
@@ -329,5 +330,5 @@ async function runDrafts(iid: string, opts: DraftsOptions): Promise<void> {
         }
     }
 
-    out.println(`\nPublish with: tools gitlab drafts ${iid} --publish`);
+    out.println(`\nPublish with: ${toolCommand("gitlab drafts")} ${iid} --publish`);
 }

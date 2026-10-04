@@ -3,6 +3,7 @@ import { getYoutube } from "@app/youtube/commands/_shared/ensure-pipeline";
 import { renderOrEmit } from "@app/youtube/commands/_shared/render";
 import { withConsoleContext } from "@app/youtube/lib/service-user";
 import type { JobStage, PipelineJob, VideoId } from "@app/youtube/lib/types";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import type { Command } from "commander";
 import pc from "picocolors";
 
@@ -24,7 +25,7 @@ export function registerDownloadCommand(program: Command): void {
         .option("--keep", "Override the default video TTL — keeps file beyond auto-prune")
         .addHelpText(
             "after",
-            "\nExamples:\n  $ tools youtube download dQw4w9WgXcQ --audio\n  $ tools youtube download dQw4w9WgXcQ --video --quality 1080p\n"
+            `\nExamples:\n  $ ${toolCommand("youtube download", "dQw4w9WgXcQ", "--audio")}\n  $ ${toolCommand("youtube download", "dQw4w9WgXcQ", "--video", "--quality", "1080p")}\n`
         )
         .action(async (target: string, opts: DownloadOpts) => {
             const yt = await getYoutube();

@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 import * as p from "@clack/prompts";
 import { AIConfig } from "@genesiscz/utils/ai/AIConfig";
 import { isInteractive, suggestEnumFlag } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { focusedPlace, launchTarget, openCommandAt } from "@genesiscz/utils/cmux/open-command";
 import { logger, out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
@@ -49,7 +50,7 @@ export function registerLaunchCommand(program: Command): void {
         .option("--agent [name]", "Which launcher to use: claude (the only one so far)")
         .option(
             "--run-arg <arg>",
-            "Extra argument for `tools claude run`, before --. Repeatable.",
+            `Extra argument for \`${toolCommand("claude run")}\`, before --. Repeatable.`,
             collect,
             [] as string[]
         )

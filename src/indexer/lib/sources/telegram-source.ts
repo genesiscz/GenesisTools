@@ -1,6 +1,7 @@
 import { Database } from "bun:sqlite";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { env } from "@genesiscz/utils/env";
 import {
     type DetectChangesOptions,
@@ -46,7 +47,9 @@ export class TelegramSource implements IndexerSource {
         const dbPath = opts?.dbPath ?? DEFAULT_DB_PATH;
 
         if (!existsSync(dbPath)) {
-            throw new Error(`Telegram history database not found at ${dbPath}. Run 'tools telegram sync' first.`);
+            throw new Error(
+                `Telegram history database not found at ${dbPath}. Run '${toolCommand("telegram history download")}' first.`
+            );
         }
 
         let db: Database;

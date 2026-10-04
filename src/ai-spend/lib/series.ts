@@ -15,6 +15,7 @@ import {
     systemTimeZone,
     UNBOUND_ACCOUNT_ID,
 } from "@genesiscz/utils/ai/usage";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger } from "@genesiscz/utils/logger";
 import { Storage } from "@genesiscz/utils/storage/storage";
 import { loadPricing } from "./config";
@@ -172,7 +173,7 @@ export async function buildSpendSeries(
     if (from < retentionCutoff) {
         logger.warn(
             { from: query.from, cutoff: new Date(retentionCutoff).toISOString() },
-            `ai-spend series: the transcript cache keeps ${AI_SPEND_SERIES_RETENTION_DAYS} days, so nothing before ${new Date(retentionCutoff).toISOString()} appears in this series. Use "tools ai-spend daily", which re-reads the transcripts, for older windows.`
+            `ai-spend series: the transcript cache keeps ${AI_SPEND_SERIES_RETENTION_DAYS} days, so nothing before ${new Date(retentionCutoff).toISOString()} appears in this series. Use "${toolCommand("ai-spend")} daily", which re-reads the transcripts, for older windows.`
         );
     }
 

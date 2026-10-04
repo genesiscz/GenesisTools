@@ -3,6 +3,7 @@ import type { Recommendation, RecommendMethod } from "@app/spotify/lib/reports/r
 import { EmptyBlock, PageHeader, ReportState, Section } from "@app/spotify/ui/components/PageShell";
 import { useReport } from "@app/spotify/ui/lib/api";
 import { useFilters } from "@app/spotify/ui/lib/filters";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { createFileRoute } from "@tanstack/react-router";
 import { Badge } from "@ui/components/badge";
 import { Card } from "@ui/components/card";
@@ -94,7 +95,8 @@ function DiscoverPage() {
                                             </div>
                                             <p className="text-xs text-muted-foreground">
                                                 {r.catalog.covered} of {picks.length} picks have it. Fetch the rest from
-                                                your signed-in browser: tools spotify harvest --artists --auto
+                                                your signed-in browser: {toolCommand("spotify harvest")} --artists
+                                                --auto
                                             </p>
                                         </Card>
                                     )}

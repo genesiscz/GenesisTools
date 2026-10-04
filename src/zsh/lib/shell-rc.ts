@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 
 const MARKER_START = "# GenesisTools shell hook";
 const MARKER_END = "# /GenesisTools shell hook";
@@ -31,7 +32,7 @@ export async function installHook(rcPath: string, hookMode: "static" | "dynamic"
     const sourceLine =
         hookMode === "static"
             ? "[ -f ~/.genesis-tools/zsh/hook.sh ] && source ~/.genesis-tools/zsh/hook.sh"
-            : 'eval "$(tools zsh hook 2>/dev/null)"';
+            : `eval "$(${toolCommand("zsh hook")} 2>/dev/null)"`;
 
     const block = `\n${MARKER_START}\n${sourceLine}\n${MARKER_END}\n`;
     await Bun.write(rcPath, updated + block);

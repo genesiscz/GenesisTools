@@ -1,4 +1,5 @@
 import { selectedProvider } from "@genesiscz/utils/ai/evaluation/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
@@ -18,7 +19,7 @@ export function registerReplayCommand(program: Command) {
                 return;
             }
             if (!name) {
-                throw new Error("Choose a case with tools control replay --list, or supply a JSON file.");
+                throw new Error(`Choose a case with ${toolCommand("control replay")} --list, or supply a JSON file.`);
             }
             const fixture = replayCases.find((item) => item.id === name) ?? SafeJSON.parse(await Bun.file(name).text());
             out.result(

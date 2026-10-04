@@ -1,4 +1,5 @@
 import { extractJsonValue } from "@genesiscz/utils/ai/proxy/AiProxyClient";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import type { Runner, RunnerCall, RunnerResult } from "./types";
@@ -16,7 +17,7 @@ export class ClaudeCodeRunner implements Runner {
         private readonly model: string
     ) {
         if (!profile) {
-            throw new Error("ClaudeCodeRunner requires an explicit cc profile (tools cc run <profile>)");
+            throw new Error(`ClaudeCodeRunner requires an explicit cc profile (${toolCommand("cc")} run <profile>)`);
         }
 
         this.id = `claude-code:${profile}:${model}`;

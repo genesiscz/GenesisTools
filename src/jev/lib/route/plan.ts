@@ -1,4 +1,5 @@
 import type { Evaluator } from "@genesiscz/utils/ai/evaluation/service";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger } from "@genesiscz/utils/logger";
 import type { ToolCatalogue } from "./catalogue";
 import { type RouteDecision, routeUtterance } from "./router";
@@ -74,10 +75,10 @@ export function zshRouteWidget(): string {
     return `#compdef -z jev-route
 jev-route() {
   local suggestion
-  suggestion=$(tools jev route --suggest -- "$LBUFFER" 2>/dev/null) || return
+  suggestion=$(${toolCommand("jev route")} --suggest -- "$LBUFFER" 2>/dev/null) || return
   [[ -n $suggestion ]] && LBUFFER=$suggestion
 }
 zle -N jev-route
-# bindkey not installed by jev; add in tools zsh if wanted
+# bindkey not installed by jev; add in ${toolCommand("zsh")} if wanted
 `;
 }

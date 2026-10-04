@@ -1,3 +1,4 @@
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import type { TransclusionRegistry } from "./registry";
 import type { TransclusionDefinition, TransclusionParam } from "./types";
 
@@ -9,7 +10,7 @@ export const TRANSCLUSION_GRAMMAR = [
     "Tokens inside `code` or a fenced block stay literal. mdBook aliases: {{#include path}}, {{#include path:10:20}}, {{#include path:anchor}}.",
     "A token that fails is replaced by ⚠️ unresolved `{{…}}`: <reason>, never dropped.",
     "Each block ends with a footer: capture time, source, what is shown, and the token that re-checks it.",
-    "[verify] kinds stay live: tools question show <id> --recheck reports whether they changed since capture.",
+    `[verify] kinds stay live: ${toolCommand("question show")} <id> --recheck reports whether they changed since capture.`,
 ];
 
 export interface TransclusionDescription {

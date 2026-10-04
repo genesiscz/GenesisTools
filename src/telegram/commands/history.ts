@@ -1,5 +1,6 @@
 import { resolve } from "node:path";
 import * as p from "@clack/prompts";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { parseDate } from "@genesiscz/utils/date";
 import { formatNumber } from "@genesiscz/utils/format";
 import { out } from "@genesiscz/utils/logger";
@@ -23,7 +24,7 @@ import { EMBEDDING_LANGUAGES } from "../lib/types";
 
 async function ensureClient(config: TelegramToolConfig): Promise<TGClient | null> {
     if (!config.hasValidSession()) {
-        p.log.error("Not configured. Run: tools telegram configure");
+        p.log.error(`Not configured. Run: ${toolCommand("telegram configure")}`);
         return null;
     }
 
@@ -31,7 +32,7 @@ async function ensureClient(config: TelegramToolConfig): Promise<TGClient | null
     const authorized = await client.connect();
 
     if (!authorized) {
-        p.log.error("Session expired. Run: tools telegram configure");
+        p.log.error(`Session expired. Run: ${toolCommand("telegram configure")}`);
         return null;
     }
 
@@ -76,14 +77,14 @@ function registerDownloadCommand(history: Command): void {
                 const data = await config.load();
 
                 if (!data) {
-                    p.log.error("Not configured. Run: tools telegram configure");
+                    p.log.error(`Not configured. Run: ${toolCommand("telegram configure")}`);
                     return;
                 }
 
                 const contacts = data.contacts;
 
                 if (contacts.length === 0) {
-                    p.log.warn("No contacts configured. Run: tools telegram configure");
+                    p.log.warn(`No contacts configured. Run: ${toolCommand("telegram configure")}`);
                     return;
                 }
 
@@ -207,7 +208,7 @@ function registerEmbedCommand(history: Command): void {
             const data = await config.load();
 
             if (!data) {
-                p.log.error("Not configured. Run: tools telegram configure");
+                p.log.error(`Not configured. Run: ${toolCommand("telegram configure")}`);
                 return;
             }
 
@@ -326,7 +327,7 @@ function registerSearchCommand(history: Command): void {
                 const data = await config.load();
 
                 if (!data) {
-                    p.log.error("Not configured. Run: tools telegram configure");
+                    p.log.error(`Not configured. Run: ${toolCommand("telegram configure")}`);
                     return;
                 }
 
@@ -430,7 +431,7 @@ function registerExportCommand(history: Command): void {
                 const data = await config.load();
 
                 if (!data) {
-                    p.log.error("Not configured. Run: tools telegram configure");
+                    p.log.error(`Not configured. Run: ${toolCommand("telegram configure")}`);
                     return;
                 }
 
@@ -483,7 +484,7 @@ function registerStatsCommand(history: Command): void {
             const data = await config.load();
 
             if (!data) {
-                p.log.error("Not configured. Run: tools telegram configure");
+                p.log.error(`Not configured. Run: ${toolCommand("telegram configure")}`);
                 return;
             }
 
@@ -505,7 +506,7 @@ function registerStatsCommand(history: Command): void {
 
                     if (stats.length === 0) {
                         p.log.warn(
-                            `No messages downloaded for ${contact.displayName}. Run: tools telegram history download`
+                            `No messages downloaded for ${contact.displayName}. Run: ${toolCommand("telegram history download")}`
                         );
                         return;
                     }
@@ -524,7 +525,7 @@ function registerStatsCommand(history: Command): void {
                     const allStats = store.getStats();
 
                     if (allStats.length === 0) {
-                        p.log.warn("No messages downloaded yet. Run: tools telegram history download");
+                        p.log.warn(`No messages downloaded yet. Run: ${toolCommand("telegram history download")}`);
                         return;
                     }
 
@@ -595,7 +596,7 @@ function registerQueryCommand(history: Command): void {
                 const data = await config.load();
 
                 if (!data) {
-                    p.log.error("Not configured. Run: tools telegram configure");
+                    p.log.error(`Not configured. Run: ${toolCommand("telegram configure")}`);
                     return;
                 }
 
@@ -697,7 +698,7 @@ function registerAttachmentsCommand(history: Command): void {
             const data = await config.load();
 
             if (!data) {
-                p.log.error("Not configured. Run: tools telegram configure");
+                p.log.error(`Not configured. Run: ${toolCommand("telegram configure")}`);
                 return;
             }
 
@@ -754,7 +755,7 @@ function registerAttachmentsCommand(history: Command): void {
             const data = await config.load();
 
             if (!data) {
-                p.log.error("Not configured. Run: tools telegram configure");
+                p.log.error(`Not configured. Run: ${toolCommand("telegram configure")}`);
                 return;
             }
 

@@ -1,4 +1,5 @@
 import { Executor, runTool } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { Command } from "commander";
@@ -6,7 +7,7 @@ import { Command } from "commander";
 function showHelp() {
     // Write help to stderr to avoid polluting stdout
     process.stderr.write(`
-Usage: tools mcp-debug [<command> [args...]]
+Usage: ${toolCommand("mcp-debug")} [<command> [args...]]
 
 Debug tool for MCP server configurations. Executes a command and outputs both:
 - Debug information to stderr (visible in Cursor's debug console)
@@ -28,11 +29,11 @@ Environment Variables:
             Example: "env;which playwright;echo test"
 
 Examples:
-  tools mcp-debug which playwright
-  tools mcp-debug --env
-  tools mcp-debug --env which playwright
-  COMMANDS="env;which playwright" tools mcp-debug echo "test"
-  COMMANDS="env;which playwright" tools mcp-debug
+  ${toolCommand("mcp-debug")} which playwright
+  ${toolCommand("mcp-debug")} --env
+  ${toolCommand("mcp-debug")} --env which playwright
+  COMMANDS="env;which playwright" ${toolCommand("mcp-debug")} echo "test"
+  COMMANDS="env;which playwright" ${toolCommand("mcp-debug")}
 `);
 }
 

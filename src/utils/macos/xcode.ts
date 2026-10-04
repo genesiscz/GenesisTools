@@ -1,3 +1,4 @@
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger } from "@genesiscz/utils/logger";
 
 /**
@@ -88,8 +89,8 @@ export function detectXcodeToolchain(options?: DetectXcodeToolchainOptions): Xco
  */
 export function genesisAppBuildHint(toolchain: XcodeToolchain = detectXcodeToolchain()): string {
     if (toolchain.kind === "xcode") {
-        return "Run `tools macos permissions build`.";
+        return `Run \`${toolCommand("macos permissions build")}\`.`;
     }
 
-    return "GenesisTools.app needs the full Xcode (SwiftUI macros are not in the Command Line Tools): install Xcode, select it with `sudo xcode-select -s <path to your Xcode.app>` (for example /Applications/Xcode.app), then `tools macos permissions build`.";
+    return `GenesisTools.app needs the full Xcode (SwiftUI macros are not in the Command Line Tools): install Xcode, select it with \`sudo xcode-select -s <path to your Xcode.app>\` (for example /Applications/Xcode.app), then \`${toolCommand("macos permissions build")}\`.`;
 }

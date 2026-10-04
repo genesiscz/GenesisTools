@@ -2,6 +2,7 @@ import type { AiProxyConfig } from "@app/ai-proxy/lib/types";
 import { AiConfigStore } from "@genesiscz/utils/ai/config/AiConfigStore";
 import { accountRef } from "@genesiscz/utils/ai/config/refs";
 import type { AccountEntry } from "@genesiscz/utils/ai/config/schema";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger } from "@genesiscz/utils/logger";
 import { isSecureRef, type SecureRef, secrets } from "@genesiscz/utils/security";
 
@@ -67,7 +68,7 @@ export async function gatewayAccountStatus(): Promise<GatewayAccountStatus> {
         secured,
         detail: account.enabled
             ? `linked to ${account.endpoint ?? "the default endpoint"}${secured ? "" : " (key is NOT in the vault)"}`
-            : "linked but disabled — tools ai config account enable acc_ai_proxy",
+            : `linked but disabled — ${toolCommand("ai config account enable")} acc_ai_proxy`,
     };
 }
 
@@ -87,7 +88,7 @@ export interface GatewayLinkResult {
  */
 export async function linkGatewayAccount(config: AiProxyConfig): Promise<GatewayLinkResult> {
     if (!config.proxyApiKey) {
-        throw new Error("This proxy has no proxyApiKey yet. Run: tools ai-proxy config init");
+        throw new Error(`This proxy has no proxyApiKey yet. Run: ${toolCommand("ai-proxy config init")}`);
     }
 
     const store = await AiConfigStore.load();

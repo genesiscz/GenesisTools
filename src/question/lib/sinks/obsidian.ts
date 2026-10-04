@@ -1,5 +1,6 @@
 import { appendFile, mkdir } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { resolveVaultRoot } from "@genesiscz/utils/obsidian/config";
 import type { QuestionConfig } from "../config";
 import type { QaEntry } from "../types";
@@ -41,7 +42,7 @@ export async function emitObsidian(
     if (!vault) {
         throw new SinkError(
             "Obsidian vault not found",
-            "run: tools question config --obsidian-vault <path>  (or open your vault in Obsidian once)"
+            `run: ${toolCommand("question config", "--obsidian-vault", "<path>")}  (or open your vault in Obsidian once)`
         );
     }
 

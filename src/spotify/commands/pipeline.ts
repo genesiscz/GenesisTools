@@ -23,6 +23,7 @@ import { getProfile } from "@app/spotify/lib/profiles";
 import { doctorReport, exportReport, parseExportKind } from "@app/spotify/lib/reports/pipeline";
 import { renderDoctor, renderExportPreview, renderHarvestGuide } from "@app/spotify/render/pipeline";
 import { int } from "@app/spotify/render/text";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
@@ -81,7 +82,7 @@ function requireData(name?: string): { name: string; dataDir: string } {
     const p = getProfile(name);
     if (!p.dataDir) {
         throw new Error(
-            `profile "${p.name}" has no data directory.\n  tools spotify profile add ${p.name} --data <dir>`
+            `profile "${p.name}" has no data directory.\n  ${toolCommand("spotify profile add", p.name, "--data", "<dir>")}`
         );
     }
 
@@ -121,7 +122,7 @@ async function harvestArtists(o: HarvestFlags): Promise<void> {
     if (result.status === "no-candidates") {
         // Every artist URI comes from Liked Songs, so without a harvested library there is nothing
         // to look up. Same payload keys as the other paths, plus the command that fixes it.
-        const fix = `tools spotify harvest --auto --profile ${getProfile(o.profile).name}`;
+        const fix = `${toolCommand("spotify harvest")} --auto --profile ${getProfile(o.profile).name}`;
         const nothing = { requested: 0, fetched: 0, errors: [], cached: 0, out: result.out, hint: fix };
         emit(o.json, nothing, () => {
             out.println("nothing to fetch: no Discover pick has a Spotify artist URI yet.");
@@ -152,7 +153,7 @@ async function harvestArtists(o: HarvestFlags): Promise<void> {
             out.println(pc.yellow(`  ${r.errors.length} artist(s) failed; rerun to fill the gaps`));
         }
 
-        out.println(pc.gray("  next: open the Discover tab, or run tools spotify analytics recommend"));
+        out.println(pc.gray(`  next: open the Discover tab, or run ${toolCommand("spotify analytics recommend")}`));
     });
 }
 
@@ -199,7 +200,7 @@ export function registerPipeline(program: Command): void {
                     out.println(pc.yellow(`  ${r.errors.length} page(s) failed; rerun to fill the gaps`));
                 }
 
-                out.println(pc.gray(`  next: tools spotify build --profile ${o.profile ?? "me"}`));
+                out.println(pc.gray(`  next: ${toolCommand("spotify build", "--profile", o.profile ?? "me")}`));
             });
         });
 

@@ -1,6 +1,7 @@
 import { createCipheriv, createDecipheriv, hkdfSync, randomBytes } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
@@ -76,7 +77,7 @@ function describeDecryptFailure(path: string, err: unknown): Error {
     return new Error(
         `Vault entry "${path}" will not decrypt with the current master key, and ${escrow} exists. ` +
             "That file holds the key a rotation was replacing when it was interrupted, so the vault on disk still needs it. " +
-            `Recover with: export ${variable}=$(cat ${escrow})  then re-run 'tools ai config secret rotate' and delete the file once it succeeds.`,
+            `Recover with: export ${variable}=$(cat ${escrow})  then re-run '${toolCommand("ai config secret rotate")}' and delete the file once it succeeds.`,
         { cause: err }
     );
 }

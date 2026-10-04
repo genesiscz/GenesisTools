@@ -5,6 +5,7 @@ import { registerServingProcess } from "@app/ai-proxy/lib/runtime";
 import { createRuntime, startAiProxyServer } from "@app/ai-proxy/lib/server";
 import { resolveTranslationMode } from "@app/ai-proxy/lib/translation-config";
 import type { CursorTranslationMode, ThinkingPresentationMode } from "@app/ai-proxy/lib/types";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger, out } from "@genesiscz/utils/logger";
 
 /**
@@ -69,7 +70,7 @@ export async function runServeCommand(options: {
 
     if (!registered) {
         out.log.warn(
-            `Serving on ${servingPort}, not the configured ${managedPort} — this instance is not registered, so 'tools ai-proxy status/down' still act on the configured proxy.`
+            `Serving on ${servingPort}, not the configured ${managedPort} — this instance is not registered, so '${toolCommand("ai-proxy status")}/down' still act on the configured proxy.`
         );
     }
 
@@ -81,7 +82,7 @@ export async function runServeCommand(options: {
         out.log.info(`Public Cursor URL: ${publicUrl}`);
         out.log.info(`Public health: ${buildPublicHealthUrl(config)}`);
     } else {
-        out.log.info("No public URL configured — run: tools ai-proxy config setup-tunnel");
+        out.log.info(`No public URL configured — run: ${toolCommand("ai-proxy config setup-tunnel")}`);
     }
     const translationMode = resolveTranslationMode({
         configMode: config.translation.cursorAgent,

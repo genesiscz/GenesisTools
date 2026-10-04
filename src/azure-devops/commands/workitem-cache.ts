@@ -8,6 +8,7 @@
 import { CACHE_TTL, storage } from "@app/azure-devops/cache";
 import type { WorkItemCache } from "@app/azure-devops/types";
 import { findTaskFile, getRelativeTime } from "@app/azure-devops/utils";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger, out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
 
@@ -79,7 +80,7 @@ async function handleList(): Promise<void> {
 
     lines.push("");
     lines.push("To refresh a work item:");
-    lines.push("  tools azure-devops workitem <id> --force");
+    lines.push(`  ${toolCommand("azure-devops workitem")} <id> --force`);
 
     out.println(lines.join("\n"));
 }

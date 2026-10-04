@@ -1,3 +1,4 @@
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { blobUrl } from "./blobs";
 import { containingSection, type SectionCard, sectionFrames, sectionTitle } from "./sections";
 import type { AnnotationDto, CardDto } from "./types";
@@ -51,7 +52,7 @@ export function buildCapsule(
             ? `**Protocol (reshoot):** NO code changes — the shot caught a bad state (loading/broken). ` +
                   `boards_set_status working → re-capture this screen (route/surface in the set manifest for ` +
                   `\`${card.filePath || card.kind}\`), wait for the app to settle → push the new set ` +
-                  `(\`tools boards push\`) → boards_attach_after → boards_reply (1 line) → boards_set_status ` +
+                  `(\`${toolCommand("boards push")}\`) → boards_attach_after → boards_reply (1 line) → boards_set_status ` +
                   `in_review. A 409 "cancelled" from ANY tool means the user withdrew №${a.id}: reply once, move on.`
             : "**Protocol:** boards_set_status working → fix → push a new set version → boards_attach_after → " +
                   "boards_reply (1-3 lines) → boards_set_status in_review. Never set resolved (user-only). " +

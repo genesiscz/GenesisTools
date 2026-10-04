@@ -2,6 +2,7 @@ import type { TimelyApiClient } from "@app/timely/api/client";
 import type { TimelyConfig } from "@app/timely/types";
 import { readStoredCookie } from "@app/timely/utils/cookie";
 import { describeTokenLifetime } from "@app/timely/utils/token-status";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import type { Storage } from "@genesiscz/utils/storage";
@@ -70,7 +71,7 @@ export function registerStatusCommand(program: Command, storage: Storage, client
                 out.println(`Memories cookie: ${chalk.green("stored")} (updated ${updated})`);
             } else {
                 out.println(
-                    `Memories cookie: ${chalk.red("not stored")} - run 'tools timely login cookies' for memories`
+                    `Memories cookie: ${chalk.red("not stored")} - run '${toolCommand("timely login cookies")}' for memories`
                 );
             }
 

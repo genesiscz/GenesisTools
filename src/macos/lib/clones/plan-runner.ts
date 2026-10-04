@@ -1,3 +1,4 @@
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import type { WalkProgress } from "@genesiscz/utils/fs/disk-usage";
 import { logger } from "@genesiscz/utils/logger";
 import { CloneUnsupportedError } from "@genesiscz/utils/macos/apfs";
@@ -94,7 +95,7 @@ export async function registerDaemonAfterPlan(): Promise<string | null> {
     try {
         const done = await ensureClonesDaemonTasks({ overwrite: false });
         if (done.scan || done.prune) {
-            return "daemon tasks: scan daily at 03:00, cache reconciliation at 04:00 (tools macos clones daemon status)";
+            return `daemon tasks: scan daily at 03:00, cache reconciliation at 04:00 (${toolCommand("macos clones daemon status")})`;
         }
     } catch (err) {
         log.warn({ err }, "daemon registration after plan failed");

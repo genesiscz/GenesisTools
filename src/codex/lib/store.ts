@@ -1,4 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { parseJsonl } from "@genesiscz/utils/jsonl";
 import { JsonlWriter } from "@genesiscz/utils/log-session/jsonl-writer";
 import { logger } from "@genesiscz/utils/logger";
@@ -130,7 +131,7 @@ export class CodexSessionStore extends WorkerMetaStore<CodexSessionMeta> {
             label: "codex session",
             title: "Codex session",
             existsMessage: (name) =>
-                `Codex session '${name}' already exists. Use 'tools codex steer --name ${name}' or pick a new name.`,
+                `Codex session '${name}' already exists. Use '${toolCommand("codex steer", "--name", name)}' or pick a new name.`,
             log,
         });
     }

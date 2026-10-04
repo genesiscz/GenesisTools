@@ -6,6 +6,7 @@ import type { LogoutTarget } from "@genesiscz/utils/ai/providers/account-feature
 import { providerAliasOf } from "@genesiscz/utils/ai/providers/aliases";
 import { registerBuiltInPlugins } from "@genesiscz/utils/ai/providers/plugins";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger, out } from "@genesiscz/utils/logger";
 import pc from "picocolors";
 import { resolveAccountName } from "./select-account";
@@ -39,7 +40,7 @@ const LABEL_OF: Record<LogoutTarget, { label: string; hint: string }> = {
     },
     longLived: {
         label: "Long-lived token",
-        hint: "tools claude start/run stops working; usage polling keeps working",
+        hint: `${toolCommand("claude start")}/run stops working; usage polling keeps working`,
     },
     secondary: { label: "Secondary login", hint: "used only by start --keychain" },
     authFile: { label: "Auth file reference", hint: "the vendor CLI's file is left on disk, only the link is removed" },
@@ -198,7 +199,7 @@ export async function runLogout(opts: RunLogoutOptions): Promise<void> {
     p.log.info(
         pc.dim(
             `Re-login: ${pc.cyan(`${siblingCommandOf(opts.tool, "login")} ${account.name}`)} · ` +
-                `full removal: ${pc.cyan(`tools ai config account rm ${account.name}`)}`
+                `full removal: ${pc.cyan(`${toolCommand("ai config account rm")} ${account.name}`)}`
         )
     );
 }

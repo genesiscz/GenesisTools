@@ -1,4 +1,5 @@
 import type { Database } from "bun:sqlite";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { out } from "@genesiscz/utils/logger";
 import { cosineDistance } from "@genesiscz/utils/math";
 import type { VectorSearchHit, VectorStore } from "./vector-store";
@@ -45,7 +46,7 @@ export class SqliteVectorStore implements VectorStore {
         if (!this.warnedLargeScan && rows.length > 10_000) {
             out.warn(
                 `[indexer] Brute-force vector scan (${rows.length} vectors). ` +
-                    `Run "tools indexer migrate-vec" to convert to sqlite-vec for faster search.`
+                    `Run "${toolCommand("indexer migrate-vec")}" to convert to sqlite-vec for faster search.`
             );
             this.warnedLargeScan = true;
         }

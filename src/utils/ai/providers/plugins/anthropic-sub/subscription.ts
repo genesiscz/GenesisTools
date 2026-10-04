@@ -2,6 +2,7 @@ import type { AIConfig } from "@genesiscz/utils/ai/AIConfig";
 import { probeTokenOrg } from "@genesiscz/utils/claude/account-fingerprint";
 import { fetchOAuthProfile } from "@genesiscz/utils/claude/auth";
 import { resolveAccountToken } from "@genesiscz/utils/claude/subscription-auth";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import type { AIAccountEntry } from "@genesiscz/utils/config/ai.types";
 import { logger } from "@genesiscz/utils/logger";
 
@@ -224,7 +225,7 @@ export async function revalidateStalePlan(
     logger.info(
         `[subscription:${account.name}] org ${print.organizationUuid ?? "unknown"} is ALIVE — the stored ` +
             `"${account.subscriptionPlan ?? "unknown"} (${account.subscriptionStatus ?? "unknown"})" reading is ` +
-            `contradicted; re-login to read the real plan (tools claude login ${account.name})`
+            `contradicted; re-login to read the real plan (${toolCommand("claude login")} ${account.name})`
     );
     return "alive";
 }

@@ -14,6 +14,7 @@
  *               every second opens a browser tab every second
  */
 import type { UnifiedMCPServerConfig } from "@app/mcp-manager/utils/providers/types.js";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger } from "@genesiscz/utils/logger";
 import { serverAuth } from "../auth/policy.ts";
 import { oauthClientPresetFor } from "../auth/presets.ts";
@@ -75,7 +76,7 @@ export function autoLoginRefusal(
         return undefined;
     }
 
-    return `${name} needs an interactive client_name. Run tools mcp-manager auth login ${name}`;
+    return `${name} needs an interactive client_name. Run ${toolCommand("mcp-manager auth login", name)}`;
 }
 
 export function createLoginLauncher(deps: LoginLauncherDeps): LoginLauncher {

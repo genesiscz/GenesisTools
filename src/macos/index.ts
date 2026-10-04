@@ -46,6 +46,7 @@
  */
 
 import { runTool } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger, out } from "@genesiscz/utils/logger";
 import { Command } from "commander";
 
@@ -109,7 +110,7 @@ async function main(): Promise<void> {
         // to contradict them by naming the terminal, which stopped being the grant holder when
         // GenesisTools.app became the responsible process.
         if (message.includes("not authorized") || message.includes("permission")) {
-            out.println("\nRun `tools macos permissions` to see which grants GenesisTools holds.");
+            out.println(`\nRun \`${toolCommand("macos permissions")}\` to see which grants GenesisTools holds.`);
         }
 
         process.exit(1);

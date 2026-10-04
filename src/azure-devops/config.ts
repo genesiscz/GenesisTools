@@ -5,6 +5,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import type { AzureConfig, AzureConfigWithTimeLog, TimeLogUser } from "@app/azure-devops/types";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { env } from "@genesiscz/utils/env";
 import { formatRelativeTime } from "@genesiscz/utils/format";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -96,8 +97,8 @@ export function requireConfig(): AzureConfig {
 
 Run configure with any Azure DevOps URL from your project:
 
-  tools azure-devops configure "https://dev.azure.com/MyOrg/MyProject/_workitems"
-  tools azure-devops configure "https://myorg.visualstudio.com/MyProject/_queries/query/..."
+  ${toolCommand("azure-devops configure")} "https://dev.azure.com/MyOrg/MyProject/_workitems"
+  ${toolCommand("azure-devops configure")} "https://myorg.visualstudio.com/MyProject/_queries/query/..."
 
 This will create .claude/azure/config.json in the current directory.
 `);
@@ -119,7 +120,7 @@ export function requireTimeLogConfig(): AzureConfigWithTimeLog {
 
 Run configure with any Azure DevOps URL from your project:
 
-  tools azure-devops configure "https://dev.azure.com/MyOrg/MyProject/_workitems"
+  ${toolCommand("azure-devops configure")} "https://dev.azure.com/MyOrg/MyProject/_workitems"
 `);
         process.exit(1);
     }
@@ -130,7 +131,7 @@ Run configure with any Azure DevOps URL from your project:
 
 Re-run configure to fetch the org ID:
 
-  tools azure-devops configure "https://dev.azure.com/MyOrg/MyProject/_workitems"
+  ${toolCommand("azure-devops configure")} "https://dev.azure.com/MyOrg/MyProject/_workitems"
 `);
         process.exit(1);
     }
@@ -141,7 +142,7 @@ Re-run configure to fetch the org ID:
 
 Run the auto-configure command to fetch TimeLog settings:
 
-  tools azure-devops timelog configure
+  ${toolCommand("azure-devops timelog configure")}
 
 This will automatically fetch the API key from Azure DevOps Extension Data API.
 `);

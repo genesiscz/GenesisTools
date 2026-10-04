@@ -14,6 +14,7 @@ import {
     summarizePlan,
 } from "@app/claude/lib/migrate-to-codex";
 import * as p from "@clack/prompts";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { DiffUtil } from "@genesiscz/utils/diff";
 import type { Command } from "commander";
 import pc from "picocolors";
@@ -66,10 +67,10 @@ export function registerMigrateCommand(program: Command): void {
             "after",
             `
 Examples:
-  tools claude migrate-to codex
-  tools claude migrate-to codex --list
-  tools claude migrate-to codex --source global --target global --components skills,commands --mode symlink -y
-  tools claude migrate-to codex --source project --target project --components instructions --mode copy --dry-run
+  ${toolCommand("claude migrate-to codex")}
+  ${toolCommand("claude migrate-to codex", "--list")}
+  ${toolCommand("claude migrate-to codex", "--source", "global", "--target", "global", "--components", "skills,commands", "--mode", "symlink", "-y")}
+  ${toolCommand("claude migrate-to codex", "--source", "project", "--target", "project", "--components", "instructions", "--mode", "copy", "--dry-run")}
 `
         )
         .action(async (options: MigrateCodexOptions) => {

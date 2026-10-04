@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 
 export type CorpusExample = {
@@ -44,16 +45,16 @@ host-language evaluation or external tools. Every run is limited to 12 model eff
 Programs live under \`~/.genesis-tools/jev/probably/programs/<name>.prob\`.
 
 \`\`\`sh
-tools jev evaluation create                 # this guide + corpus
-tools jev evaluation create --name hello --from path/to/hello.prob
-tools jev evaluation list
-tools jev evaluation show hello
-tools jev evaluation run hello --input "…"
-tools jev evaluation run hello --input @./message.txt
-tools jev evaluation run hello --replay recording.json
+${toolCommand("jev evaluation create")}                 # this guide + corpus
+${toolCommand("jev evaluation create")} --name hello --from path/to/hello.prob
+${toolCommand("jev evaluation list")}
+${toolCommand("jev evaluation show")} hello
+${toolCommand("jev evaluation run")} hello --input "…"
+${toolCommand("jev evaluation run")} hello --input @./message.txt
+${toolCommand("jev evaluation run")} hello --replay recording.json
 \`\`\`
 
-This is a fun lab under \`tools jev\`, not a production runtime.
+This is a fun lab under \`${toolCommand("jev")}\`, not a production runtime.
 `;
 
 export function languageGuide(): string {

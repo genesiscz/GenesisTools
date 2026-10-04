@@ -1,4 +1,5 @@
 import * as p from "@clack/prompts";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { formatDuration } from "@genesiscz/utils/format";
 import type { Command } from "commander";
 import pc from "picocolors";
@@ -9,7 +10,9 @@ export async function cmdShow(name: string): Promise<void> {
     const suite = await findSuite(name);
 
     if (!suite) {
-        p.log.error(`Suite "${name}" not found. Use ${pc.bold("tools benchmark list")} to see available suites.`);
+        p.log.error(
+            `Suite "${name}" not found. Use ${pc.bold(`${toolCommand("benchmark list")}`)} to see available suites.`
+        );
         process.exit(1);
     }
 

@@ -2,6 +2,7 @@ import { createBot } from "@app/telegram-bot/lib/bot";
 import { loadTelegramConfig } from "@app/telegram-bot/lib/config";
 import { COMMANDS } from "@app/telegram-bot/lib/handlers/help";
 import * as p from "@clack/prompts";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import type { Command } from "commander";
 
 export function registerStartCommand(program: Command): void {
@@ -11,7 +12,7 @@ export function registerStartCommand(program: Command): void {
         .action(async () => {
             const config = await loadTelegramConfig();
             if (!config) {
-                p.log.error("Telegram not configured. Run: tools telegram-bot configure");
+                p.log.error(`Telegram not configured. Run: ${toolCommand("telegram-bot configure")}`);
                 process.exit(1);
             }
 

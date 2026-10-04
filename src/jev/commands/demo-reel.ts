@@ -1,3 +1,4 @@
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { ui } from "@genesiscz/utils/cli/ui";
 import type { Command } from "commander";
 import { failPlain, printResult, withSigint } from "../lib/cli-output";
@@ -113,7 +114,7 @@ function demoOptions(command: Command): Command {
     return command
         .option("--app <name>", "Rejected unless the AppKit fixture or --i-mean-it")
         .option("--i-mean-it", "Break-glass to name a real app")
-        .option("--record", "Record the run with tools control capture when macOS allows it")
+        .option("--record", `Record the run with ${toolCommand("control capture")} when macOS allows it`)
         .option("--dir <dir>", "Write one JSON artifact per chapter into this directory")
         .option("--json", "Keep the full evaluation payloads in the result");
 }

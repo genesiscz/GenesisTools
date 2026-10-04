@@ -16,6 +16,7 @@ import {
 import { parseEntityId, parseWatcherInput, parseWatcherPatch, WatcherValidationError } from "@app/monitor/lib/validate";
 import { concurrentMap } from "@genesiscz/utils/async";
 import { isInteractive, suggestCommand, suggestEnumFlag } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { formatRelativeTime } from "@genesiscz/utils/format";
 import { out } from "@genesiscz/utils/logger";
 import { parseSqliteOrIsoDate } from "@genesiscz/utils/sql-time";
@@ -161,7 +162,7 @@ function buildInput(target: string, opts: AddOptions): WatcherInput {
     const preset = opts.preset ? findPreset(opts.preset) : undefined;
 
     if (opts.preset && !preset) {
-        throw new WatcherValidationError(`unknown preset "${opts.preset}"; run: tools monitor presets`);
+        throw new WatcherValidationError(`unknown preset "${opts.preset}"; run: ${toolCommand("monitor presets")}`);
     }
 
     const rawKind = typeof opts.kind === "string" ? opts.kind : (preset?.kind ?? guessKind(target));
@@ -261,7 +262,7 @@ async function requireWatcher(monitor: Monitor, raw: string): Promise<Watcher> {
     const watcher = await monitor.getWatcher(parseEntityId(raw));
 
     if (!watcher) {
-        throw new WatcherValidationError(`no watcher with id ${raw}; run: tools monitor list`);
+        throw new WatcherValidationError(`no watcher with id ${raw}; run: ${toolCommand("monitor list")}`);
     }
 
     return watcher;
@@ -296,7 +297,7 @@ export function registerWatcherCommands(program: Command): void {
             .argument("[target]", "URL, status page, feed URL, host:port, hostname, shell command or acc_… account id")
             .option("-n, --name <name>", "Display name (default: host or preset name)")
             .option("-k, --kind [kind]", `One of ${WATCHER_KINDS.join(", ")} (default: guessed from the target)`)
-            .option("-p, --preset <id>", "Start from a preset (see: tools monitor presets)")
+            .option("-p, --preset <id>", `Start from a preset (see: ${toolCommand("monitor presets")})`)
             .option("--no-deliver", "rss: record new items without delivering them")
             .option("--no-notify", "Do not send notifications on state changes or new items")
             .option("--paused", "Create the watcher disabled")
@@ -595,7 +596,7 @@ export function registerWatcherCommands(program: Command): void {
                 return;
             }
 
-            renderCliHeader("Watcher presets", "tools monitor add --preset <id> <target>");
+            renderCliHeader("Watcher presets", toolCommand("monitor add", "--preset", "<id>", "<target>"));
             const table = createBoxTable(["ID", "KIND", "TARGET", "DESCRIPTION"]);
 
             for (const preset of WATCHER_PRESETS) {

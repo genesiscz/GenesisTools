@@ -1,3 +1,4 @@
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
 import type { AccountEntry } from "../config/schema";
@@ -63,7 +64,7 @@ export async function resolveProviderApiKey(providerId: string): Promise<Resolve
         if (value) {
             logger.warn(
                 { provider: providerId, envKey: name },
-                `using ${name} for ${providerId} with no configured account — run \`tools ai config account add --provider ${providerId}\` to make this explicit`
+                `using ${name} for ${providerId} with no configured account — run \`${toolCommand("ai config account add")} --provider ${providerId}\` to make this explicit`
             );
             return { apiKey: value, source: "env", envKey: name };
         }

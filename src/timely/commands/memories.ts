@@ -1,6 +1,7 @@
 import type { TimelyService } from "@app/timely/api/service";
 import type { OAuth2Tokens, TimelyEntry } from "@app/timely/types";
 import { fetchMemoriesForDates } from "@app/timely/utils/memories";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
 import type { Storage } from "@genesiscz/utils/storage";
@@ -40,13 +41,13 @@ async function memoriesAction(storage: Storage, service: TimelyService, options:
         ? parseInt(options.account, 10)
         : await storage.getConfigValue<number>("selectedAccountId");
     if (!accountId) {
-        logger.error("No account selected. Run 'tools timely accounts --select' first.");
+        logger.error(`No account selected. Run '${toolCommand("timely accounts")} --select' first.`);
         process.exit(1);
     }
 
     const tokens = await storage.getConfigValue<OAuth2Tokens>("tokens");
     if (!tokens?.access_token) {
-        logger.error("Not authenticated. Run 'tools timely login' first.");
+        logger.error(`Not authenticated. Run '${toolCommand("timely login")}' first.`);
         process.exit(1);
     }
 
@@ -74,7 +75,7 @@ async function memoriesAction(storage: Storage, service: TimelyService, options:
         }
     } else {
         logger.error("Please provide at least one date filter: --from, --to, or --day");
-        logger.info("Example: tools timely memories --day 2026-01-30");
+        logger.info(`Example: ${toolCommand("timely memories")} --day 2026-01-30`);
         process.exit(1);
     }
 

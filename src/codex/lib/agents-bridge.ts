@@ -1,6 +1,7 @@
 import { deriveRegistry } from "@app/agents/lib/derived-registry";
 import { readFeed } from "@app/agents/lib/feed";
 import { sessionPaths } from "@app/agents/lib/paths";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { env } from "@genesiscz/utils/env";
 import { watchFileFeed } from "@genesiscz/utils/fs/file-feed-watcher";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -263,7 +264,9 @@ async function runAgentsCommand(args: string[]): Promise<string> {
         proc.exited,
     ]);
     if (exitCode !== 0) {
-        throw new Error(`tools agents ${args[0] ?? "command"} failed: ${stderr.trim() || `exit ${exitCode}`}`);
+        throw new Error(
+            `${toolCommand("agents")} ${args[0] ?? "command"} failed: ${stderr.trim() || `exit ${exitCode}`}`
+        );
     }
 
     return stdout;
@@ -327,7 +330,7 @@ export class CliAgentsTransport implements AgentsTransport {
         }
 
         if (!found) {
-            throw new Error(`tools agents did not register ${agentName} within 5 seconds`);
+            throw new Error(`${toolCommand("agents")} did not register ${agentName} within 5 seconds`);
         }
 
         return found.agent_id;

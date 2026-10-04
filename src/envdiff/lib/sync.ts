@@ -1,3 +1,4 @@
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import type { EnvDiff } from "./diff";
 
 export interface BuildSyncedContentArgs {
@@ -21,7 +22,7 @@ export function buildSyncedContent({ actualContent, diff, now }: BuildSyncedCont
 
     const base = actualContent.endsWith("\n") || actualContent.length === 0 ? actualContent : `${actualContent}\n`;
     const prefix = actualContent.length === 0 ? "" : "\n";
-    const header = `${prefix}# --- synced by tools envdiff @ ${now.toISOString()} ---\n`;
+    const header = `${prefix}# --- synced by ${toolCommand("envdiff")} @ ${now.toISOString()} ---\n`;
     const lines = diff.missing.map((entry) => `${entry.key}=${formatValue(entry.exampleValue)}`).join("\n");
     return `${base}${header}${lines}\n`;
 }

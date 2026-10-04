@@ -18,6 +18,7 @@ import {
 import { renderStatusline } from "@genesiscz/utils/ai/statusline/render";
 import type { StatuslineConfig, StatuslineFeature } from "@genesiscz/utils/ai/statusline/types";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
@@ -306,7 +307,10 @@ async function configureInteractively(host: StatuslineHost): Promise<void> {
             }
 
             config = await installStatusline(host, false, config);
-            p.note(`Installed. Run "tools ai statusline uninstall" to put the previous command back.`, "installed");
+            p.note(
+                `Installed. Run "${toolCommand("ai statusline uninstall")}" to put the previous command back.`,
+                "installed"
+            );
         }
     }
 }
@@ -448,7 +452,10 @@ export function registerStatuslineCommands(program: Command): void {
         statusline
             .command("install")
             .description("Make the host run this statusline; the previous command is kept for uninstall")
-            .option("--via-tools", "install the `tools ai statusline run` form instead of the direct entry")
+            .option(
+                "--via-tools",
+                `install the \`${toolCommand("ai statusline run")}\` form instead of the direct entry`
+            )
     ).action(async (opts: HostFlags & { viaTools?: boolean }) => {
         await installStatusline(hostFrom(opts), opts.viaTools === true);
     });

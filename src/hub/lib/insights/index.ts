@@ -23,6 +23,7 @@ import type { NativeScan } from "@genesiscz/utils/ai/transcripts/insights-types"
 import { codexModelOf, readTail, scanClaudeNative, toolInputKeys } from "@genesiscz/utils/ai/transcripts/native-scan";
 import { buildToolStats, buildTurnCosts, type CallPricer } from "@genesiscz/utils/ai/transcripts/turn-cost";
 import { concurrentMap } from "@genesiscz/utils/async";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger } from "@genesiscz/utils/logger";
 import { Storage } from "@genesiscz/utils/storage";
 import { cached } from "@genesiscz/utils/storage/cache-flag";
@@ -58,8 +59,7 @@ const TAIL_BYTES = 2 * 1024 * 1024;
 const STUCK_TURNS = 120;
 
 // The header's cost (tools ai-spend session) adds the sub-agents: for one session it read $1862 beside $548 here.
-export const INSIGHTS_PRICING_NOTE =
-    "List prices from the model catalog (the rates tools ai-spend uses), per model call of this transcript; sub-agent transcripts are not included (the header's cost includes them); an estimate, not a bill";
+export const INSIGHTS_PRICING_NOTE = `List prices from the model catalog (the rates ${toolCommand("ai-spend")} uses), per model call of this transcript; sub-agent transcripts are not included (the header's cost includes them); an estimate, not a bill`;
 
 /** List price per call from the catalog, with its dated and context-banded rules applied. */
 export function catalogPricer(): CallPricer {

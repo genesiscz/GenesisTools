@@ -22,6 +22,7 @@ import {
 } from "@app/git/lib/rebase-classifier";
 import { extractFromMessage, loadWorkitemPatternsAsync } from "@app/git/workitem-patterns";
 import { Executor } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { copyToClipboard } from "@genesiscz/utils/clipboard";
 import { formatDateTime } from "@genesiscz/utils/date";
 import type { DetailedCommitInfo } from "@genesiscz/utils/git";
@@ -617,7 +618,7 @@ async function handleCommits(options: CommitsOptions): Promise<void> {
 
     if (authors.length === 0 && options.format !== "json" && !options.markdown) {
         out.println(chalk.dim("Note: No authors configured. Showing all commits."));
-        out.println(chalk.dim('To pre-configure: tools git configure-authors --add "Your Name"'));
+        out.println(chalk.dim(`To pre-configure: ${toolCommand("git configure-authors")} --add "Your Name"`));
         out.println();
     }
 

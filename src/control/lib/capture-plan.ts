@@ -4,6 +4,7 @@
  * capture-runner.ts).
  */
 
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { type Annotation, type PresetName, parseRect } from "@genesiscz/utils/image";
 import { SafeJSON } from "@genesiscz/utils/json";
 
@@ -19,18 +20,18 @@ NATIVE DEFAULT
   Native preflight reads app/window/screen geometry; it does not query browser URLs.
 
 USAGE
-  tools control capture preflight [--app "<Name>"]   # RUN THIS FIRST when writing a plan:
+  ${toolCommand("control capture preflight")} [--app "<Name>"]   # RUN THIS FIRST when writing a plan:
       # prints JSON with screens (index/points/scaleFactor/framePixels/originCG),
       # frontmost app + window bounds in BOTH points and frame px, active browser
       # tab (url/title) when the app is a known browser, and a suggested plan
       # skeleton. Kills the #1 footgun (guessing units/coords).
-  tools control capture clickmap --app "<Name>" [--window-title <t>] [--grid <pts=100>] [--out <png>]
+  ${toolCommand("control capture clickmap")} --app "<Name>" [--window-title <t>] [--grid <pts=100>] [--out <png>]
       # coordinate-finder for clicking INSIDE WEB PAGES (peekaboo see/find puts
       # zero boxes on web content): screenshots the app's window and overlays a
       # grid labeled in GLOBAL SCREEN POINTS -> Read the PNG, pick the target's
       # coords off the gridlines, use them directly in click actions.
-  tools control capture run <plan.json>       # (or: tools control capture <plan.json>)
-  tools control capture recrop <prior-result.json> <plan.json>   # reuse a finished run's frames:
+  ${toolCommand("control capture run")} <plan.json>       # (or: ${toolCommand("control capture")} <plan.json>)
+  ${toolCommand("control capture recrop")} <prior-result.json> <plan.json>   # reuse a finished run's frames:
       # applies the new plan's crops (and optional vitrinka publish) WITHOUT re-recording.
       # This is the "reframing" flow: recorded fine but cropped wrong -> fix offline.
 
@@ -62,7 +63,7 @@ PLAN CONTRACT (TypeScript)
       actions: Action[];          // fired at atMs offsets from RECORDING START; ignored in recrop mode
       vitrinka?: VitrinkaSpec;    // optional: publish results to a vitrinka set/board directly
       annotate?: { annotations: Annotation[]; preset?: string };
-          // one-shot capture+draw: render these annotations (tools control draw
+          // one-shot capture+draw: render these annotations (${toolCommand("control draw")}
           // contract — highlight/box/ellipse/arrow/label/blur/crop/grid) onto
           // EVERY kept frame -> <sessionDir>/annotated/<frame>.png, listed in
           // result.annotated. Coordinates are FRAME pixels (crop-region space).

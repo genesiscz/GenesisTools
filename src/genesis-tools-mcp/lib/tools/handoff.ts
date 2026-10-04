@@ -10,6 +10,7 @@ import type { HandoffActionInput, HandoffTarget, HandoffTaskInput } from "@app/h
 import { linkFor, type PlannedLink, planMintedLink } from "@genesiscz/utils/browser-router/links";
 import { cmuxLaunchUrl } from "@genesiscz/utils/browser-router/presets";
 import { routerStatus } from "@genesiscz/utils/browser-router/status";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { isTestProcess } from "@genesiscz/utils/test-process";
 
@@ -366,8 +367,7 @@ export const HANDOFF_ACTION_INPUT_SCHEMA = {
                                     screenshots: {
                                         type: "array",
                                         items: { type: "string" },
-                                        description:
-                                            "absolute paths of screenshots proving it (e.g. the annotated PNG from tools control draw) — auto-ingested as attachments",
+                                        description: `absolute paths of screenshots proving it (e.g. the annotated PNG from ${toolCommand("control draw")}) — auto-ingested as attachments`,
                                     },
                                     attachmentIds: {
                                         type: "array",

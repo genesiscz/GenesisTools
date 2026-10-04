@@ -21,6 +21,7 @@
  */
 
 import { runTool } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger, out } from "@genesiscz/utils/logger";
 import { Command } from "commander";
 import { type CommitInfo, isGitRepo } from "./lib/git";
@@ -49,8 +50,8 @@ async function main(): Promise<void> {
 
     const commandArgs = command.args;
     if (commandArgs.length === 0) {
-        out.log.error("No command given. Usage: tools time-machine -- <cmd...>");
-        out.log.info("Example: tools time-machine --depth 50 -- npm test");
+        out.log.error(`No command given. Usage: ${toolCommand("time-machine")} -- <cmd...>`);
+        out.log.info(`Example: ${toolCommand("time-machine")} --depth 50 -- npm test`);
         process.exit(1);
     }
 

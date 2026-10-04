@@ -1,4 +1,5 @@
 import { type JevSpendTotal, jevSpend } from "@genesiscz/utils/ai/evaluation/spend";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { formatCost, formatNumber, formatTokens } from "@genesiscz/utils/format";
 import { out } from "@genesiscz/utils/logger";
 import { createBoxTable, renderCliHeader } from "@genesiscz/utils/table";
@@ -46,7 +47,7 @@ export function registerSpend(program: Command): void {
         .option("--json", "Print the summary as JSON")
         .addHelpText(
             "after",
-            "\nCosts are list price: $0.042 per million input tokens, output free. The same rows appear in\n`tools ai-spend jev daily|monthly|session` and in the dev-dashboard spend block."
+            `\nCosts are list price: $0.042 per million input tokens, output free. The same rows appear in\n\`${toolCommand("ai-spend")} jev daily|monthly|session\` and in the dev-dashboard spend block.`
         )
         .action((options: SpendCliOptions) => {
             try {

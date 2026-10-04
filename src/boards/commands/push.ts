@@ -5,6 +5,7 @@ import { paths } from "@app/dev-dashboard/contract/endpoints";
 import { tarGz } from "@app/dev-dashboard/lib/boards/tar";
 import { concurrentMap } from "@genesiscz/utils/async";
 import { printLn } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
 import { putRaw, resolveBaseUrl } from "../lib/client";
@@ -62,7 +63,7 @@ export function registerPushCommand(program: Command): void {
             const root = captureRoot(cwd, opts.dir);
             const cfg = await readSetConfig(root);
             if (!cfg) {
-                process.stderr.write("no set config found — run `tools boards init` first\n");
+                process.stderr.write(`no set config found — run \`${toolCommand("boards init")}\` first\n`);
                 process.exitCode = 1;
                 return;
             }

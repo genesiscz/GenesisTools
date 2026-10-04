@@ -1,6 +1,7 @@
 import { SETTINGS_PANES, settingsUrl } from "@app/macos/lib/permissions/report";
 import { abortableSleep } from "@genesiscz/utils/async";
 import { withInterrupt } from "@genesiscz/utils/cli/interrupt";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { ui } from "@genesiscz/utils/cli/ui";
 import { logger, out } from "@genesiscz/utils/logger";
 import {
@@ -136,7 +137,7 @@ function printVerdict(report: ControlDoctorReport | ControlAuditReport): void {
 
 function printDoctor(report: ControlDoctorReport): void {
     renderCliHeader(
-        "tools control doctor",
+        toolCommand("control doctor"),
         "Accessibility, Screen Recording and Automation, each with the identity that holds it"
     );
     printResponsible(report);
@@ -213,7 +214,7 @@ function printFlaggedApps(report: ControlAuditReport): void {
         `  ${pc.dim(`${report.apps.length} apps read live; ${report.manualAccessibilityOn.length} with AXManualAccessibility on, ${report.enhancedUserInterfaceOn.length} with AXEnhancedUserInterface on, ${report.unreachable} not answering AX, ${report.unsupported} attribute reads unsupported`)}`
     );
     out.println(
-        `  ${pc.dim("AXManualAccessibility: tools control writes it into every --app target and nothing clears it (native/ax-tool/Sources/main.swift resolveApp). AXEnhancedUserInterface: tools control never writes it.")}`
+        `  ${pc.dim(`AXManualAccessibility: ${toolCommand("control")} writes it into every --app target and nothing clears it (native/ax-tool/Sources/main.swift resolveApp). AXEnhancedUserInterface: ${toolCommand("control")} never writes it.`)}`
     );
     out.println();
 }
@@ -222,11 +223,11 @@ function setBy(app: AuditedApp): string {
     const parts: string[] = [];
 
     if (app.manualAccessibility === "on") {
-        parts.push("an assistive client; tools control does this on every --app call");
+        parts.push(`an assistive client; ${toolCommand("control")} does this on every --app call`);
     }
 
     if (app.enhancedUserInterface === "on") {
-        parts.push("NOT tools control (a VoiceOver-style client)");
+        parts.push(`NOT ${toolCommand("control")} (a VoiceOver-style client)`);
     }
 
     return truncateDisplay(parts.join("; "), 60);
@@ -248,7 +249,7 @@ function printPeekaboo(report: ControlAuditReport): void {
         const line = pk.local
             .map((g) => `${g.name}: ${g.granted ? pc.green("granted") : pc.red("not granted")}`)
             .join(", ");
-        out.println(`  ${pc.dim("local".padEnd(12))} ${line} (spawned the way tools control spawns it)`);
+        out.println(`  ${pc.dim("local".padEnd(12))} ${line} (spawned the way ${toolCommand("control")} spawns it)`);
     } else {
         out.println(`  ${pc.dim("local".padEnd(12))} ${pc.red(pk.localError ?? "probe failed")}`);
     }
@@ -267,7 +268,7 @@ function printPeekaboo(report: ControlAuditReport): void {
 
 function printAudit(report: ControlAuditReport): void {
     renderCliHeader(
-        "tools control audit",
+        toolCommand("control audit"),
         "where control changed app metadata, and which identity holds each grant it uses"
     );
     printResponsible(report);
@@ -286,10 +287,10 @@ function printAudit(report: ControlAuditReport): void {
 export function registerPermissionsCommands(program: Command): void {
     addFormatOption(program.command("doctor"))
         .description(
-            "Accessibility, Screen Recording and Automation for tools control, each as granted/denied/not determined with the identity that needs it. Read-only, never prompts; exits 1 while something is missing."
+            `Accessibility, Screen Recording and Automation for ${toolCommand("control")}, each as granted/denied/not determined with the identity that needs it. Read-only, never prompts; exits 1 while something is missing.`
         )
         .action((opts: FormatOptions) => {
-            const format = resolveFormat(opts, "tools control doctor");
+            const format = resolveFormat(opts, toolCommand("control doctor"));
             if (!format) {
                 return;
             }
@@ -309,11 +310,11 @@ export function registerPermissionsCommands(program: Command): void {
 
     addFormatOption(program.command("audit"))
         .description(
-            "Everything tools control changed or depends on: running apps with AXManualAccessibility / AXEnhancedUserInterface set (read live, without touching them), the grants and the identity holding each, and which binary every capability runs through. Read-only."
+            `Everything ${toolCommand("control")} changed or depends on: running apps with AXManualAccessibility / AXEnhancedUserInterface set (read live, without touching them), the grants and the identity holding each, and which binary every capability runs through. Read-only.`
         )
         .option("--all", "include background-only processes (default: apps with a UI)")
         .action((opts: FormatOptions & { all?: boolean }) => {
-            const format = resolveFormat(opts, "tools control audit");
+            const format = resolveFormat(opts, toolCommand("control audit"));
             if (!format) {
                 return;
             }
@@ -347,7 +348,7 @@ function liveRequestBoundary(): PermissionRequestBoundary {
 
             if (opened.exitCode !== 0) {
                 ui.warn(
-                    `could not open ${url} (exit ${opened.exitCode}); open it with \`tools macos permissions open --pane ${grant}\``
+                    `could not open ${url} (exit ${opened.exitCode}); open it with \`${toolCommand("macos permissions open", "--pane", grant)}\``
                 );
             }
         },
@@ -359,7 +360,7 @@ function liveRequestBoundary(): PermissionRequestBoundary {
 export function registerPermissionsRequestCommand(program: Command): void {
     program
         .command("permissions")
-        .description("Ask macOS for the grants tools control needs")
+        .description(`Ask macOS for the grants ${toolCommand("control")} needs`)
         .command("request")
         .description(
             "Ask macOS for Accessibility and Screen Recording for the identity every ax-tool spawn uses, open each pane, and wait up to 120 s for each grant until it is live. A denied grant is never prompted again by macOS: this says so and prints the tccutil reset. Exits 1 while a grant is missing."

@@ -1,3 +1,4 @@
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { out } from "@genesiscz/utils/logger";
 import { isPlaceholderCalendarList, MacCalendar } from "@genesiscz/utils/macos/apple-calendar";
 import { formatTable } from "@genesiscz/utils/table";
@@ -23,7 +24,7 @@ export function registerListCalendarsCommand(program: Command): void {
 
                 if (isPlaceholderCalendarList(calendars)) {
                     out.log.warn(
-                        "This is the EventKit placeholder calendar, not your data: the process lacks Full Access. Run `tools macos calendar doctor`."
+                        `This is the EventKit placeholder calendar, not your data: the process lacks Full Access. Run \`${toolCommand("macos calendar doctor")}\`.`
                     );
                 }
 

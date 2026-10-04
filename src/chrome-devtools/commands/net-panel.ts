@@ -1,4 +1,5 @@
 /** net-panel — dump the DevTools Network panel's own NetworkLog (the log Preserve log filled). */
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
@@ -253,7 +254,7 @@ never collected at all.`
                 out.log.info(
                     "no headers, cookies or POST bodies are in this file — net-panel never collects them from the frontend."
                 );
-                out.log.info(`  analyze: tools har-analyzer load ${opts.out}`);
+                out.log.info(`  analyze: ${toolCommand("har-analyzer load", opts.out)}`);
             }
 
             process.exit(0);

@@ -1,5 +1,6 @@
 import type { CalendarAuthorizedResult, CalendarEventInfo, CalendarInfo, SourceInfo } from "@genesiscz/darwinkit";
 import { isInteractive } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger } from "@genesiscz/utils/logger";
 import { getDarwinKit, shouldAnnounceAccessPrompt, translateDarwinKitAccessError } from "./darwinkit";
 import { describeResponsibleIdentity } from "./genesis-app";
@@ -30,7 +31,7 @@ export interface EnsureAccessOptions {
 export function calendarPermissionMessage(status: string, need: "read" | "write"): string {
     const target = need === "read" ? "Full Access" : "Add Only or Full Access";
     const host = describeResponsibleIdentity();
-    const fix = `Fix: System Settings > Privacy & Security > Calendars, set ${host} to ${target}, then re-run. macOS grants Calendar access to the responsible app, not to \`tools\`. Run \`tools macos calendar doctor\` to see what macOS granted.`;
+    const fix = `Fix: System Settings > Privacy & Security > Calendars, set ${host} to ${target}, then re-run. macOS grants Calendar access to the responsible app, not to \`tools\`. Run \`${toolCommand("macos calendar doctor")}\` to see what macOS granted.`;
 
     switch (status) {
         case "writeOnly":

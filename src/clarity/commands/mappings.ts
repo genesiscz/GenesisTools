@@ -17,6 +17,7 @@ import { assignReceipt, renderReceipt, unlinkReceipt } from "@app/clarity/lib/re
 import { findTaskByName } from "@app/clarity/lib/tasks";
 import * as p from "@clack/prompts";
 import { isInteractive } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { formatLocalDate } from "@genesiscz/utils/date";
 import { out } from "@genesiscz/utils/logger";
 import { createBoxTable, renderCliHeader, truncateDisplay } from "@genesiscz/utils/table";
@@ -57,13 +58,13 @@ export function registerMappingsCommand(parent: Command): void {
             [
                 "",
                 "Examples:",
-                "  tools clarity mappings                            the wizard, or --list when not a terminal",
-                "  tools clarity mappings --date 2026-08 --unassigned  work items still missing a mapping",
-                "  tools clarity mappings --date 2026-08 --assigned    mappings, with drift against the tree",
-                "  tools clarity mappings --date 2026-08 --apply-recommended",
-                "  tools clarity mappings --date 2026-08 --assign 302920:8898018",
-                '  tools clarity mappings --work-item 302920 --clarity-task "Incidenty_Opex"',
-                "  tools clarity mappings --unlink 298326 --yes",
+                `  ${toolCommand("clarity mappings")}                            the wizard, or --list when not a terminal`,
+                `  ${toolCommand("clarity mappings")} --date 2026-08 --unassigned  work items still missing a mapping`,
+                `  ${toolCommand("clarity mappings")} --date 2026-08 --assigned    mappings, with drift against the tree`,
+                `  ${toolCommand("clarity mappings")} --date 2026-08 --apply-recommended`,
+                `  ${toolCommand("clarity mappings")} --date 2026-08 --assign 302920:8898018`,
+                `  ${toolCommand("clarity mappings")} --work-item 302920 --clarity-task "Incidenty_Opex"`,
+                `  ${toolCommand("clarity mappings")} --unlink 298326 --yes`,
                 "",
             ].join("\n")
         )

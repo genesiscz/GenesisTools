@@ -1,5 +1,6 @@
 import { existsSync } from "node:fs";
 import { type CollectContext, collectRefReport, type RefReport } from "@app/git/lib/merged/collect";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import type { DetectedBase, WorktreeInfo } from "@genesiscz/utils/git";
 import { createGit, getCurrentBranch } from "@genesiscz/utils/git";
 import { logger } from "@genesiscz/utils/logger";
@@ -261,7 +262,7 @@ export function planLines(plan: CascadePlan): string[] {
         lines.push(
             `parent: ${plan.parent} is already on ${plan.target}; it is not rebased, children go straight onto ${plan.target}`
         );
-        lines.push(`        (removable later: tools git merged --prune ${plan.parent})`);
+        lines.push(`        (removable later: ${toolCommand("git merged")} --prune ${plan.parent})`);
     } else {
         const e = plan.parentEvidence;
         const numbers = e
@@ -653,7 +654,7 @@ export async function abortCascade(run: CascadeRun): Promise<void> {
 
     await returnToOriginalBranch(run);
     clearState(run.commonDir);
-    run.report("plan cleared; backup tags kept (tools git rebase-cascade --cleanup removes them)");
+    run.report(`plan cleared; backup tags kept (${toolCommand("git rebase-cascade")} --cleanup removes them)`);
 }
 
 export async function cleanupBackups({

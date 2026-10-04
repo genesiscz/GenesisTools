@@ -1,6 +1,7 @@
 import { NativeControlDriver, parseSeeDepth } from "@app/control/lib/decision/native";
 import { selectedProvider } from "@genesiscz/utils/ai/evaluation/cli";
 import { createEvaluator } from "@genesiscz/utils/ai/evaluation/service";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { ui } from "@genesiscz/utils/cli/ui";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
@@ -94,7 +95,7 @@ function resolveSurface(options: LoopOptions): Surface | undefined {
         return undefined;
     }
 
-    return parseEnum(kind, SURFACES, "--surface", "tools jev loop");
+    return parseEnum(kind, SURFACES, "--surface", toolCommand("jev loop"));
 }
 
 async function runLoop(program: Command, options: LoopOptions): Promise<void> {
@@ -178,7 +179,7 @@ async function runLoop(program: Command, options: LoopOptions): Promise<void> {
 
             ui.info(callsLine(result.calls));
             if (result.runDir) {
-                ui.dim(`run folder ${result.runDir} (replay: tools jev replay ${result.runDir})`);
+                ui.dim(`run folder ${result.runDir} (replay: ${toolCommand("jev replay")} ${result.runDir})`);
             }
 
             printResult(compactResult(result, { verbose: options.json === true }));

@@ -1,6 +1,7 @@
 // Search command implementation
 
 import { formatRepoResults, formatSearchResults } from "@app/github/lib/output";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { batchFetchCommentReactions } from "@genesiscz/utils/github/graphql";
 import { getOctokit } from "@genesiscz/utils/github/octokit";
 import { withRetry } from "@genesiscz/utils/github/rate-limit";
@@ -330,7 +331,7 @@ export async function searchCommand(query: string, options: SearchCommandOptions
         out.println(chalk.dim(`  Tip: To check specific issues instead:`));
         out.println(
             chalk.cyan(
-                `    tools github issue <number>,<number> --repo ${results[0]?.repo || "owner/repo"} --min-comment-reactions ${options.minCommentReactions}`
+                `    ${toolCommand("github issue")} <number>,<number> --repo ${results[0]?.repo || "owner/repo"} --min-comment-reactions ${options.minCommentReactions}`
             )
         );
         out.println("");
@@ -436,9 +437,9 @@ export function createSearchCommand(): Command {
 
                 if (errorMessage.includes("is:issue") || errorMessage.includes("is:pull-request")) {
                     out.error(chalk.yellow("\n📝 GitHub Search Syntax Tips:"));
-                    out.error(chalk.dim('  • For issues: tools github search "query" --type issue'));
-                    out.error(chalk.dim('  • For PRs: tools github search "query" --type pr'));
-                    out.error(chalk.dim('  • For code: tools github code "query" --repo owner/repo'));
+                    out.error(chalk.dim(`  • For issues: ${toolCommand("github search")} "query" --type issue`));
+                    out.error(chalk.dim(`  • For PRs: ${toolCommand("github search")} "query" --type pr`));
+                    out.error(chalk.dim(`  • For code: ${toolCommand("github code")} "query" --repo owner/repo`));
                     out.error(chalk.dim("  • Add repo filter: --repo owner/repo"));
                     out.error(chalk.dim("  • Filter by state: --state open|closed"));
                     out.error("");

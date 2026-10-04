@@ -1,3 +1,4 @@
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
@@ -383,7 +384,7 @@ export function registerDiscoveryCommands(program: Command): void {
                 if (result.note) {
                     out.println(pc.yellow(`  ${result.note}`));
                 }
-                out.println(`\n${pc.dim("  Plan contract: tools control run --help")}`);
+                out.println(`\n${pc.dim(`  Plan contract: ${toolCommand("control run")} --help`)}`);
                 out.println(
                     pc.dim(
                         "  Step fields: do, q, id, role, title, desc, subrole, window, value, text, path, keys, action"

@@ -8,6 +8,7 @@ import {
     WatcherValidationError,
 } from "@app/monitor/lib/validate";
 import { suggestCommand, suggestEnumFlag } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { out } from "@genesiscz/utils/logger";
 import {
     createBoxTable,
@@ -75,7 +76,9 @@ async function requireTarget(monitor: Monitor, raw: string): Promise<NotifyTarge
     const target = await monitor.getTarget(parseEntityId(raw, "target"));
 
     if (!target) {
-        throw new WatcherValidationError(`no notification target with id ${raw}; run: tools monitor targets`);
+        throw new WatcherValidationError(
+            `no notification target with id ${raw}; run: ${toolCommand("monitor targets")}`
+        );
     }
 
     return target;
@@ -112,7 +115,7 @@ function channelFlags(command: Command): Command {
         .option("--title <text>", "system: notification title")
         .option("--ignore-dnd", "system: bypass Do Not Disturb")
         .option("--no-ignore-dnd", "system: respect Do Not Disturb")
-        .option("--voice <id>", "say: voice id (see: tools monitor notify voices)")
+        .option("--voice <id>", `say: voice id (see: ${toolCommand("monitor notify voices")})`)
         .option("--provider <name>", "say: macos, xai, openai")
         .option("--bot-token <token>", "telegram: bot token")
         .option("--chat-id <id>", "telegram: chat id")

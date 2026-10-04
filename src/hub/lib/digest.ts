@@ -4,6 +4,7 @@ import { basename, join, resolve } from "node:path";
 import { decisionFiles } from "@app/question/lib/decisions/read";
 import { type DecisionRecord, readDecisions } from "@app/question/lib/decisions/store";
 import { concurrentMap } from "@genesiscz/utils/async";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { startOfDay } from "@genesiscz/utils/date";
 import { logger } from "@genesiscz/utils/logger";
 import { Storage } from "@genesiscz/utils/storage";
@@ -561,7 +562,7 @@ export function digestMarkdown(digest: Digest): string {
         lines.push("", "> [!warning] Incomplete", ...digest.warnings.map((warning) => `> ${warning}`));
     }
 
-    lines.push("", `_Generated ${digest.generatedAt} by tools hub digest._`, "");
+    lines.push("", `_Generated ${digest.generatedAt} by ${toolCommand("hub digest")}._`, "");
     return lines.join("\n");
 }
 

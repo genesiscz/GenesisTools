@@ -2,6 +2,7 @@ import { newProcessId, writeMeta } from "@app/macos/lib/clones/audit";
 import { cachePlan, planCacheParams, stampRoots } from "@app/macos/lib/clones/cache";
 import { collapseDuplicates } from "@app/macos/lib/clones/collapse";
 import { loadClonesConfig } from "@app/macos/lib/clones/store";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { formatBytes } from "@genesiscz/utils/format";
 import { logger } from "@genesiscz/utils/logger";
 import { sendNotification } from "@genesiscz/utils/macos/notifications";
@@ -60,7 +61,7 @@ export async function runDaemonScan(args: DaemonScanArgs = {}): Promise<DaemonSc
         try {
             await sendNotification({
                 title: "macos clones",
-                message: `${formatBytes(reclaimable)} reclaimable across ${roots.length} dir(s) — run \`tools macos clones optimize --apply\``,
+                message: `${formatBytes(reclaimable)} reclaimable across ${roots.length} dir(s) — run \`${toolCommand("macos clones optimize", "--apply")}\``,
             });
         } catch (err) {
             log.warn({ err }, "scan-daemon: notification delivery failed (scan results still recorded)");

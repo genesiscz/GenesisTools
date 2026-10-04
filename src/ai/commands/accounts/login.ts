@@ -1,6 +1,7 @@
 import { ACCOUNT_PROVIDER_ALIASES } from "@genesiscz/utils/ai/providers/aliases";
 import { registerBuiltInPlugins } from "@genesiscz/utils/ai/providers/plugins";
 import { providerPlugin } from "@genesiscz/utils/ai/providers/registry";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import type { Command } from "commander";
 import { runLogin } from "../../lib/accounts/run-login";
 
@@ -84,7 +85,7 @@ export function registerAiProviderLoginCommands(program: Command): void {
     const codex = program.command("codex").description("Codex subscription account commands");
     registerAccountLoginCommand(codex, {
         provider: "openai-sub",
-        tool: "tools ai codex login",
+        tool: `${toolCommand("ai codex login")}`,
         subcommand: ["codex", "login"],
     });
 }

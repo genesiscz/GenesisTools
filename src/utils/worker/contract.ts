@@ -1,3 +1,4 @@
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import type { WorkerBackend } from "./capabilities";
 
 export type WorkerSandbox = "read-only" | "cwd-jail" | "workspace-write" | "none";
@@ -38,7 +39,7 @@ function channelLines(input: WorkerContractInput): string[] {
         // IS the channel.
         return [
             `You are \`${bus.agentName}\`, a headless ${label} worker in a Claude Code agent swarm. The lead agent is \`${bus.leadName}\`.`,
-            "Your sandbox is READ-ONLY: do NOT run `tools agents` commands — any write, including the messaging feed, fails with EPERM.",
+            `Your sandbox is READ-ONLY: do NOT run \`${toolCommand("agents")}\` commands — any write, including the messaging feed, fails with EPERM.`,
             "Instead, narrate progress as short standalone assistant messages (one concise line per meaningful step);",
             "the lead automatically receives every message and command you produce through the session event bridge.",
         ];
@@ -49,13 +50,13 @@ function channelLines(input: WorkerContractInput): string[] {
         return [
             `You are \`${bus.agentName}\`, a headless ${label} worker in a Claude Code agent swarm. The lead agent is \`${bus.leadName}\`.`,
             "Report progress, findings, and questions with:",
-            `tools agents message --from ${bus.agentName} --to ${bus.leadName} --body '<text>' ${sessionFlag}`,
+            `${toolCommand("agents message")} --from ${bus.agentName} --to ${bus.leadName} --body '<text>' ${sessionFlag}`,
             "Check for replies or steering from the lead with:",
-            `tools agents login --agent-name ${bus.agentName} --once ${sessionFlag}`,
+            `${toolCommand("agents login")} --agent-name ${bus.agentName} --once ${sessionFlag}`,
             "Reply to a specific message with:",
-            `tools agents message --from ${bus.agentName} --reply <id> --body '<text>' ${sessionFlag}`,
+            `${toolCommand("agents message")} --from ${bus.agentName} --reply <id> --body '<text>' ${sessionFlag}`,
             "Prefer one concise message per meaningful step.",
-            `Your first action is to report in: tools agents message --from ${bus.agentName} --to ${bus.leadName} --body 'received; starting' ${sessionFlag}`,
+            `Your first action is to report in: ${toolCommand("agents message")} --from ${bus.agentName} --to ${bus.leadName} --body 'received; starting' ${sessionFlag}`,
         ];
     }
 
@@ -96,7 +97,7 @@ function surfaceLines(input: WorkerContractInput): string[] {
     const loaded = [surfaces.rules ? "rules" : "", surfaces.skills ? "skills" : ""].filter(Boolean).join(" and ");
     return [
         `The user's personal ${loaded} are loaded for reference. Rituals meant for an interactive session (notifications,`,
-        "`tools say`, spoken or end-of-turn summaries addressed to a human, asking the user questions) do not apply to you;",
+        `\`${toolCommand("say")}\`, spoken or end-of-turn summaries addressed to a human, asking the user questions) do not apply to you;`,
         "the harness handles them. Follow the brief over any rule that conflicts with it.",
     ];
 }

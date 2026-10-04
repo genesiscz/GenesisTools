@@ -8,6 +8,7 @@ import { withConsoleContext } from "@app/youtube/lib/service-user";
 import type { ChannelHandle } from "@app/youtube/lib/types";
 import * as p from "@clack/prompts";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli/executor";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
 import pc from "picocolors";
@@ -29,7 +30,7 @@ export function registerChannelsCommand(program: Command): void {
         .option("--from-file <path>", "Read newline-delimited handles from a file")
         .addHelpText(
             "after",
-            "\nExamples:\n  $ tools youtube channels add @mkbhd @veritasium\n  $ tools youtube channels add --from-file my-subs.txt\n"
+            `\nExamples:\n  $ ${toolCommand("youtube channels add", "@mkbhd", "@veritasium")}\n  $ ${toolCommand("youtube channels add", "--from-file", "my-subs.txt")}\n`
         )
         .action(async (handles: string[], opts: { fromFile?: string }) => {
             const yt = await getYoutube();
@@ -77,13 +78,16 @@ export function registerChannelsCommand(program: Command): void {
 
     cmd.command("list")
         .description("List saved channels")
-        .addHelpText("after", "\nExamples:\n  $ tools youtube channels list\n  $ tools youtube --json channels list\n")
+        .addHelpText(
+            "after",
+            `\nExamples:\n  $ ${toolCommand("youtube channels list")}\n  $ ${toolCommand("youtube")} --json channels list\n`
+        )
         .action(async () => {
             const yt = await getYoutube();
             const channels = yt.channels.list();
             const text = renderColumns({
                 rows: channels,
-                emptyMessage: "No saved channels — try `tools youtube channels add @mkbhd`.",
+                emptyMessage: `No saved channels — try \`${toolCommand("youtube channels add", "@mkbhd")}\`.`,
                 schema: [
                     { header: "Handle", get: (channel) => channel.handle, minWidth: 16 },
                     { header: "Title", get: (channel) => channel.title ?? pc.dim("—"), maxWidth: 40 },
@@ -109,7 +113,7 @@ export function registerChannelsCommand(program: Command): void {
         .option("--yes", "Skip confirmation")
         .addHelpText(
             "after",
-            "\nExamples:\n  $ tools youtube channels remove @mkbhd\n  $ tools youtube channels remove @mkbhd --yes\n"
+            `\nExamples:\n  $ ${toolCommand("youtube channels remove", "@mkbhd")}\n  $ ${toolCommand("youtube channels remove", "@mkbhd", "--yes")}\n`
         )
         .action(async (rawHandle: string, opts: { yes?: boolean }) => {
             const handle = normaliseHandle(rawHandle);
@@ -139,7 +143,7 @@ export function registerChannelsCommand(program: Command): void {
         .option("--sync", "Run synchronously and print the channel results table")
         .addHelpText(
             "after",
-            "\nExamples:\n  $ tools youtube channels sync @mkbhd\n  $ tools youtube channels sync --all\n  $ tools youtube channels sync @mkbhd --sync --limit 100\n"
+            `\nExamples:\n  $ ${toolCommand("youtube channels sync", "@mkbhd")}\n  $ ${toolCommand("youtube channels sync", "--all")}\n  $ ${toolCommand("youtube channels sync", "@mkbhd", "--sync", "--limit", "100")}\n`
         )
         .action(async (handleArg: string | undefined, opts: SyncOpts) => {
             const yt = await getYoutube();

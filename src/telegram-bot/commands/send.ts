@@ -1,5 +1,6 @@
 import { loadTelegramConfig } from "@app/telegram-bot/lib/config";
 import * as p from "@clack/prompts";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import type { ParseMode } from "@genesiscz/utils/telegram-bot/lib/types";
 import type { Command } from "commander";
 import { Api } from "grammy";
@@ -13,7 +14,7 @@ export function registerSendCommand(program: Command): void {
         .action(async (message: string, opts: { parseMode?: string; stdin?: boolean }) => {
             const config = await loadTelegramConfig();
             if (!config) {
-                p.log.error("Telegram not configured. Run: tools telegram-bot configure");
+                p.log.error(`Telegram not configured. Run: ${toolCommand("telegram-bot configure")}`);
                 process.exit(1);
             }
 

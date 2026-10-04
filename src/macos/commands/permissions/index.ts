@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { isInteractive, suggestEnumFlag } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { ui } from "@genesiscz/utils/cli/ui";
 import { out } from "@genesiscz/utils/logger";
 import { requestFullDiskAccess } from "@genesiscz/utils/macos/full-disk-access";
@@ -95,7 +96,9 @@ function printReport(report: PermissionsReport): void {
         }
     }
 
-    ui.raw("  Open a pane: tools macos permissions open --pane <name>   (also reveals the .app for drag-and-drop)");
+    ui.raw(
+        `  Open a pane: ${toolCommand("macos permissions open", "--pane", "<name>")}   (also reveals the .app for drag-and-drop)`
+    );
 }
 
 export function registerPermissionsCommand(program: Command): void {
@@ -135,7 +138,7 @@ export function registerPermissionsCommand(program: Command): void {
                 );
             }
 
-            ui.raw("  Next: tools macos permissions   (then grant the panes it lists)");
+            ui.raw(`  Next: ${toolCommand("macos permissions")}   (then grant the panes it lists)`);
         });
 
     permissions
@@ -176,9 +179,9 @@ export function registerPermissionsCommand(program: Command): void {
         .action(() => {
             const marker = genesisAppDisabledMarkerPath();
             mkdirSync(dirname(marker), { recursive: true });
-            writeFileSync(marker, "disabled from tools macos permissions disable\n");
+            writeFileSync(marker, `disabled from ${toolCommand("macos permissions disable")}\n`);
             ui.warn(
-                `launcher disabled (${marker}); grants follow the terminal until \`tools macos permissions enable\``
+                `launcher disabled (${marker}); grants follow the terminal until \`${toolCommand("macos permissions enable")}\``
             );
         });
 

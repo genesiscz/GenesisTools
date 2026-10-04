@@ -2,6 +2,7 @@
 
 import "@genesiscz/utils/ink/react-production";
 import { parseArgs } from "node:util";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { requireInteractiveTty } from "@genesiscz/utils/ink/lib/tty-guard";
 import { logger, out } from "@genesiscz/utils/logger";
 import { sendNotification } from "@genesiscz/utils/macos/notifications";
@@ -39,7 +40,7 @@ const MAX_FILES_LISTED = 30;
 const HELP = `
 macOS Resource Analyzer
 
-Usage: tools macos-resources [options]
+Usage: ${toolCommand("macos-resources")} [options]
 
 Options:
   -p, --process <name>     Filter processes by name or PID
@@ -59,9 +60,9 @@ Controls:
   q  Quit
 
 Examples:
-  tools macos-resources --cpulimit 80 --memorylimit 1000
-  tools macos-resources --process chrome --notify
-  tools macos-resources --fileslimit 100 --say
+  ${toolCommand("macos-resources")} --cpulimit 80 --memorylimit 1000
+  ${toolCommand("macos-resources")} --process chrome --notify
+  ${toolCommand("macos-resources")} --fileslimit 100 --say
 `;
 
 export interface AppOptions {

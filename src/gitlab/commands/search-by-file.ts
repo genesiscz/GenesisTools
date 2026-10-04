@@ -10,6 +10,7 @@
 import { collect, progress, type TargetOptions, withProject } from "@app/gitlab/commands/shared";
 import { getProject, resolveProjectApi } from "@app/gitlab/lib/client";
 import { formatSearchJson, formatSearchText, searchMrsByFiles } from "@app/gitlab/lib/search-by-file";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
 
@@ -31,7 +32,7 @@ export function registerSearchByFile(parent: Command): Command {
 async function runSearchByFile(opts: Options): Promise<void> {
     const files = opts.file;
     if (!files.length) {
-        throw new Error('Usage: tools gitlab search-by-file --file "bun.lock" [--json]');
+        throw new Error(`Usage: ${toolCommand("gitlab search-by-file")} --file "bun.lock" [--json]`);
     }
 
     const api = await resolveProjectApi({ host: opts.host, project: opts.project });

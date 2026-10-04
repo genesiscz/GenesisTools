@@ -1,6 +1,7 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { execTool } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { fetchCmuxLiveSnapshot } from "@genesiscz/utils/cmux/lib/live-snapshot";
 import { lookupSessionCmuxRefs } from "@genesiscz/utils/cmux/session-refs";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -365,7 +366,7 @@ async function liveSessions(sessionIds: string[]): Promise<Set<string>> {
  * print tables for an ambiguous match, which must not end this command or reach its JSON on stdout.
  */
 async function cmuxVerb(args: string[]): Promise<string | null> {
-    log.debug({ args: args.slice(0, 3) }, "fix threads: tools claude cmux");
+    log.debug({ args: args.slice(0, 3) }, `fix threads: ${toolCommand("claude cmux")}`);
     const run = await execTool(["claude", "cmux", ...args, "--first", "--json"], { timeout: 30_000 });
 
     if (run.success) {

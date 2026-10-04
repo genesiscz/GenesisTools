@@ -5,6 +5,7 @@ import { existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { runTool } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { defineDashboardApp } from "@genesiscz/utils/DashboardApp";
 import { logger } from "@genesiscz/utils/logger";
 import { Command } from "commander";
@@ -116,7 +117,7 @@ const cloudApp = defineDashboardApp({
                     {
                         service: "dev-dashboard-cloud",
                         error: "DevDashboard/cloud/web/node_modules is missing.",
-                        fix: `Run ${pc.bold("bun install")} in DevDashboard/cloud/web, or use bare \`tools dev-dashboard-cloud\` to auto-install.`,
+                        fix: `Run ${pc.bold("bun install")} in DevDashboard/cloud/web, or use bare \`${toolCommand("dev-dashboard-cloud")}\` to auto-install.`,
                     },
                 ],
             };
@@ -136,7 +137,7 @@ const cloudApp = defineDashboardApp({
 const program = new Command();
 
 program
-    .name("tools dev-dashboard-cloud")
+    .name(toolCommand("dev-dashboard-cloud"))
     .description("Start DevDashboard Cloud (managed-tier landing + signup + customer dashboard) and open it")
     .option("--no-open", "do not auto-open the browser")
     .option("--no-install", "do not auto-install when node_modules is missing")

@@ -1,5 +1,6 @@
 import { ModelSelector } from "@app/ask/index.lib";
 import * as p from "@clack/prompts";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import type { Command } from "commander";
 import pc from "picocolors";
 import type { Api } from "telegram";
@@ -313,7 +314,7 @@ async function configureContactActions(
         message: `Actions for ${opt.label}:`,
         options: [
             { value: "say" as const, label: "Say aloud", hint: "macOS TTS with language detection" },
-            { value: "ask" as const, label: "Auto-reply", hint: "LLM generates reply via tools ask" },
+            { value: "ask" as const, label: "Auto-reply", hint: `LLM generates reply via ${toolCommand("ask")}` },
             { value: "notify" as const, label: "Notification", hint: "macOS notification" },
         ],
         initialValues: existing?.actions ?? ["notify"],
@@ -539,6 +540,6 @@ export function registerConfigureCommand(program: Command): void {
             await client.disconnect();
 
             p.log.success(`Saved ${contacts.length} contact(s)`);
-            p.outro("Run: tools telegram listen");
+            p.outro(`Run: ${toolCommand("telegram listen")}`);
         });
 }

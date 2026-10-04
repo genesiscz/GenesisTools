@@ -1,4 +1,5 @@
 import type { Args, CLIOptions, OutputFormat } from "@ask/types";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { env } from "@genesiscz/utils/env";
 import { formatDuration as _formatDuration } from "@genesiscz/utils/format";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -84,8 +85,8 @@ export function showHelp(): void {
 ASK Tool - Multi-Router LLM Chat Application
 
 Usage:
-  tools ask [options] [message]
-  tools ask models [options]
+  ${toolCommand("ask")} [options] [message]
+  ${toolCommand("ask models")} [options]
 
 Arguments:
   <message>               Message to send (for non-interactive mode)
@@ -116,34 +117,34 @@ Options:
 
 Examples:
   # Interactive chat mode
-  tools ask
+  ${toolCommand("ask")}
 
   # Single question
-  tools ask "What is the capital of France?"
+  ${toolCommand("ask")} "What is the capital of France?"
 
   # With specific model
-  tools ask --model gpt-4-turbo "Explain quantum computing"
+  ${toolCommand("ask")} --model gpt-4-turbo "Explain quantum computing"
 
   # Show pricing and model information
-  tools ask models
-  tools ask models --provider openai
-  tools ask models --format json
-  tools ask models --sort price_input
-  tools ask models --sort output --filter-capabilities="vision|functions"
+  ${toolCommand("ask models")}
+  ${toolCommand("ask models")} --provider openai
+  ${toolCommand("ask models")} --format json
+  ${toolCommand("ask models")} --sort price_input
+  ${toolCommand("ask models")} --sort output --filter-capabilities="vision|functions"
 
   # Use --format for chat output
-  tools ask --format json "What is 2+2?"
-  tools ask --format markdown "Explain quantum computing"
+  ${toolCommand("ask")} --format json "What is 2+2?"
+  ${toolCommand("ask")} --format markdown "Explain quantum computing"
 
   # Transcribe audio
-  tools ask --sst recording.mp3
+  ${toolCommand("ask")} --sst recording.mp3
 
   # Save output to file
-  tools ask -o response.txt "Generate a story"
-  tools ask --format markdown -o out.md "Explain quantum computing"
+  ${toolCommand("ask")} -o response.txt "Generate a story"
+  ${toolCommand("ask")} --format markdown -o out.md "Explain quantum computing"
 
   # Copy to clipboard
-  tools ask --format clipboard "Summarize this topic"
+  ${toolCommand("ask")} --format clipboard "Summarize this topic"
 
 Interactive Chat Commands:
   /model                  Switch AI model

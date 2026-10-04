@@ -1,4 +1,5 @@
 import { runTool } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { out } from "@genesiscz/utils/logger";
 import { Command } from "commander";
 import { isGitRepo, readStagedDiff, readWorkingDiff, repoToplevel } from "./lib/git";
@@ -80,7 +81,7 @@ async function runCheck(options: CheckOptions): Promise<void> {
 
     const index = await ensureIndex(repo);
     if (!index) {
-        out.log.warn("No regret-grep index found (or it is empty). Run `tools regret-grep index` first.");
+        out.log.warn(`No regret-grep index found (or it is empty). Run \`${toolCommand("regret-grep index")}\` first.`);
         out.result({ repo, matches: [] });
         return;
     }

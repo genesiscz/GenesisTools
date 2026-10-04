@@ -8,6 +8,7 @@ import { registerAiProxyRefScanner } from "@app/ai-proxy/lib/account-refs";
 import * as p from "@clack/prompts";
 import { runTool } from "@genesiscz/utils/cli";
 import { registerRequestedTrees, requestedCommandFromArgv } from "@genesiscz/utils/cli/lazy-registrars";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { copyToClipboard, readFromClipboard } from "@genesiscz/utils/clipboard.ts";
 import { env } from "@genesiscz/utils/env";
 import { formatBytes } from "@genesiscz/utils/format.ts";
@@ -197,7 +198,7 @@ async function cmdImage(prompt: string, opts: ImageFlags): Promise<void> {
 
     if (!token) {
         out.error(pc.red("Hugging Face token required."));
-        out.error(pc.dim("Set HUGGINGFACE_TOKEN env var or run: tools ai config"));
+        out.error(pc.dim(`Set HUGGINGFACE_TOKEN env var or run: ${toolCommand("ai config")}`));
         process.exit(1);
     }
 
@@ -369,7 +370,7 @@ async function cmdModelsClean(opts: { older?: string }): Promise<void> {
 // ============================================
 
 async function interactiveMode(): Promise<void> {
-    p.intro(pc.bgCyan(pc.black(" tools ai ")));
+    p.intro(pc.bgCyan(pc.black(` ${toolCommand("ai")} `)));
 
     const action = await withCancel(
         p.select({

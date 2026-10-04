@@ -7,6 +7,7 @@ import { RefStoreManager } from "@app/har-analyzer/core/ref-store";
 import { SessionManager } from "@app/har-analyzer/core/session-manager";
 import type { EntryFilter, HarFile, HarSession } from "@app/har-analyzer/types";
 import { isInterestingMimeType } from "@app/har-analyzer/types";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { formatBytes, formatDuration } from "@genesiscz/utils/format";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
@@ -471,7 +472,7 @@ export async function startMcpServer(): Promise<void> {
                         content: [
                             {
                                 type: "text" as const,
-                                text: `Would export ${filtered.length} entries. Use CLI: tools har-analyzer export [--domain X] [--sanitize] [-o file]`,
+                                text: `Would export ${filtered.length} entries. Use CLI: ${toolCommand("har-analyzer export")} [--domain X] [--sanitize] [-o file]`,
                             },
                         ],
                     };

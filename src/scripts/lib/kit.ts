@@ -19,6 +19,7 @@
 import { gatewayBaseUrl, gatewayListen } from "@app/mcp-manager/lib/auth/project.ts";
 import { ensureGatewayUp } from "@app/mcp-manager/lib/gateway/ensure.ts";
 import { readUnifiedConfig } from "@app/mcp-manager/utils/config.utils.js";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { ui } from "@genesiscz/utils/cli/ui";
 import { logger } from "@genesiscz/utils/logger";
 import {
@@ -108,8 +109,8 @@ export async function createKit(options: KitOptions = {}): Promise<Kit> {
         const asked = options.servers?.join(", ");
         throw new Error(
             asked
-                ? `No enabled MCP server matched: ${asked}. Run 'tools scripts servers' to see what exists.`
-                : "No enabled MCP servers found. Run 'tools scripts servers --refresh'."
+                ? `No enabled MCP server matched: ${asked}. Run '${toolCommand("scripts servers")}' to see what exists.`
+                : `No enabled MCP servers found. Run '${toolCommand("scripts servers", "--refresh")}'.`
         );
     }
 

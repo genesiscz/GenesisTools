@@ -1,6 +1,7 @@
 import { selectedProvider } from "@genesiscz/utils/ai/evaluation/cli";
 import { Browser } from "@genesiscz/utils/browser";
 import { isInteractive } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger, out } from "@genesiscz/utils/logger";
 import * as p from "@genesiscz/utils/prompts/p";
 import type { Command } from "commander";
@@ -17,14 +18,16 @@ export function registerLogin(program: Command): void {
             let apiKey: string;
             if (options.stdin) {
                 if (process.stdin.isTTY) {
-                    throw new Error("--stdin expects a piped key. Run tools jev login for a masked prompt.");
+                    throw new Error(
+                        `--stdin expects a piped key. Run ${toolCommand("jev login")} for a masked prompt.`
+                    );
                 }
 
                 apiKey = (await Bun.stdin.text()).trim();
             } else {
                 if (!isInteractive()) {
                     throw new Error(
-                        "Run tools jev login --provider vercel|typesafe in a terminal or pipe a key with --stdin."
+                        `Run ${toolCommand("jev login", "--provider", "vercel|typesafe")} in a terminal or pipe a key with --stdin.`
                     );
                 }
 
@@ -42,6 +45,8 @@ export function registerLogin(program: Command): void {
             }
 
             const file = await saveProviderKey({ apiKey, provider });
-            out.log.success(`Key saved to ${file} with mode 0600. Try: tools jev demo --provider ${provider}`);
+            out.log.success(
+                `Key saved to ${file} with mode 0600. Try: ${toolCommand("jev demo", "--provider", provider)}`
+            );
         });
 }

@@ -1,4 +1,5 @@
 import * as p from "@clack/prompts";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import type { Command } from "commander";
 import { collectKeyValue, parseKeyValuePairs } from "../lib/helpers";
 import { BUILTIN_SUITES, getCustomSuites, saveCustomSuites } from "../lib/suites";
@@ -149,7 +150,7 @@ export async function cmdAdd(name: string, commandPairs: string[], opts: AddOpti
 export function registerAddCommand(program: Command): void {
     program
         .command("add")
-        .description('Add a custom benchmark suite: tools benchmark add "name" "label:cmd" "label2:cmd2"')
+        .description(`Add a custom benchmark suite: ${toolCommand("benchmark add")} "name" "label:cmd" "label2:cmd2"`)
         .argument("<name>", "Suite name")
         .argument("<commands...>", 'Commands in "label:command" format')
         .option("--runs <n>", "Default number of timing runs for this suite", (v) => parseInt(v, 10))

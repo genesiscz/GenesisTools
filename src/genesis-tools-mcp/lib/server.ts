@@ -1,4 +1,5 @@
 import { loadConfig as loadQuestionConfig } from "@app/question/lib/config";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { env } from "@genesiscz/utils/env/envVariables";
 import { logger } from "@genesiscz/utils/logger";
 import {
@@ -145,7 +146,7 @@ export function serverInstructions(askViaQuestionTool: boolean): string {
         "`question_respond` submits an answer — the USER normally does that on the dashboard, so use it only " +
         "for automation or to relay an answer they gave you elsewhere; never invent one. Pass `wait: true` on " +
         "question_post only when you genuinely cannot proceed, because a blocking-by-default ask hangs agent " +
-        "loops. Same surface from the CLI: `tools question ask|wait|poll|answer|cancel` (the CLI `answer` verb " +
+        `loops. Same surface from the CLI: \`${toolCommand("question")} ask|wait|poll|answer|cancel\` (the CLI \`answer\` verb ` +
         "is `question_respond` here). Answering a form ALSO writes it into the Q→A history below, so /qa stays " +
         "one list.\n" +
         'DECISIONS AND TODOS: a `question_post` item with `type: "decision"` or `type: "todo"` is not a form. ' +
@@ -154,8 +155,8 @@ export function serverInstructions(askViaQuestionTool: boolean): string {
         decisionNudge(askViaQuestionTool) +
         "Record " +
         "progress (acknowledged, implemented, commit refs, verdict, comments, a copy of a chat answer) with " +
-        "`question_update`, several items per call. CLI: `tools question ask --json -`, " +
-        "`tools question list|update|answers|answer|draft|send`.\n" +
+        `\`question_update\`, several items per call. CLI: \`${toolCommand("question ask", "--json", "-")}\`, ` +
+        `\`${toolCommand("question")} list|update|answers|answer|draft|send\`.\n` +
         'INLINE TOKENS: item text may carry {{kind key="value"}} tokens (lines, file, symbol, diff, tail, json, ' +
         "cmd, url, image, pr-thread), resolved into real content when the item is saved; `question_tokens` lists " +
         "them and previews a text. To correct an unanswered item, post it again with `supersedes: <id>`.\n\n" +
@@ -169,7 +170,7 @@ export function serverInstructions(askViaQuestionTool: boolean): string {
         "- Whenever the user invokes the /question skill directly.\n\n" +
         "Call it with the user's question, your COMPLETE answer (markdown ok), a tag (question | directive | " +
         "action), and optional refs. It persists to the local question store, browsable later with " +
-        "`tools question log` / `tools question tail`.\n\n" +
+        `\`${toolCommand("question log")}\` / \`${toolCommand("question tail")}\`.\n\n` +
         "DO NOT use for: routine task instructions you simply execute, pure acknowledgements " +
         '("ok", "thanks", "continue"), or trivial lookups not worth preserving.\n\n' +
         "HANDOFFS (cross-agent task handoff): `handoff_post` creates. `handoff_get` reads. `handoff_list` lists. " +
@@ -201,12 +202,12 @@ export function serverInstructions(askViaQuestionTool: boolean): string {
         "`url`; relay that.\n" +
         "- The user annotates screenshots on /boards/<slug>; each dispatched annotation is a work item for you.\n" +
         "- Work loop: boards_wait_for_work({board} or {project,branch}) → for each capsule: boards_set_status " +
-        "working → fix the app → push a new set version (tools boards push) → boards_attach_after → boards_reply " +
+        `working → fix the app → push a new set version (${toolCommand("boards push")}) → boards_attach_after → boards_reply ` +
         "(1-3 lines) → boards_set_status in_review. NEVER set resolved — that verdict belongs to the user.\n" +
         "- ALWAYS scope wait/list calls to YOUR board or repo+branch; items on other boards belong to other " +
         "sessions.\n" +
         '- A 409 "cancelled" on any write means the user withdrew the item: revert its changes, no reply, move on.\n' +
-        "- Prefer the `tools boards watch` CLI via a background Monitor for idle listening (zero token cost); use " +
+        `- Prefer the \`${toolCommand("boards watch")}\` CLI via a background Monitor for idle listening (zero token cost); use ` +
         "boards_wait_for_work to DRAIN after a wake, with timeoutSec 1.\n\n" +
         "BOARD VOCABULARY (AI expression layer): you can PRESENT on boards, not just answer. boards_compose_board " +
         "places a whole thought in ONE call — markdown text cards (roles: heading/idea/pro/con/risk), data-only viz " +
@@ -226,7 +227,7 @@ export function serverInstructions(askViaQuestionTool: boolean): string {
         "canvas? boards_create_board births a new board (compose never auto-creates). Call " +
         "boards_get_templates once before structuring a new board and start from a matching skeleton instead of " +
         "inventing structure.\n\n" +
-        "JEV (capability `jev`, read-only, the same tools `tools jev mcp` serves alone): `jev_route` maps a plain " +
+        `JEV (capability \`jev\`, read-only, the same tools \`${toolCommand("jev mcp")}\` serves alone): \`jev_route\` maps a plain ` +
         "request to one GenesisTools command line without running it; `jev_compact` shrinks a transcript, log or " +
         "diff with Jev-judged drops; `jev_verify` judges claims against a document per template " +
         "(`jev_verify_templates` lists them). Every result is JSON text. None of them acts on the machine."

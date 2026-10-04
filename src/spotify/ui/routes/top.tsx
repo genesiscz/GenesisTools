@@ -6,6 +6,7 @@ import { PageHeader, ReportState, Section } from "@app/spotify/ui/components/Pag
 import { Sparkline } from "@app/spotify/ui/components/Sparkline";
 import { useReport } from "@app/spotify/ui/lib/api";
 import { useFilters } from "@app/spotify/ui/lib/filters";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { createFileRoute } from "@tanstack/react-router";
 import { Badge } from "@ui/components/badge";
 import { Tabs, TabsList, TabsTrigger } from "@ui/components/tabs";
@@ -177,7 +178,9 @@ function GenreView({ report }: { report: TopReport }) {
             <Section title="No genre data for this profile">
                 <p className="text-sm text-muted-foreground">
                     Genres come from MusicBrainz and Last.fm, not from Spotify. Run{" "}
-                    <code className="font-mono text-primary">tools spotify enrich --profile {report.head.profile}</code>{" "}
+                    <code className="font-mono text-primary">
+                        {toolCommand("spotify enrich", "--profile")} {report.head.profile}
+                    </code>{" "}
                     to fetch them.
                 </p>
             </Section>

@@ -1,3 +1,4 @@
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { isObject } from "@genesiscz/utils/object";
@@ -50,8 +51,7 @@ export function mapWhamError({
     if (status === 401) {
         return {
             error: {
-                message:
-                    "Codex auth expired or invalid — run `tools ai-proxy accounts login codex` (or `codex login` when using the CLI cache).",
+                message: `Codex auth expired or invalid — run \`${toolCommand("ai-proxy accounts login")} codex\` (or \`codex login\` when using the CLI cache).`,
                 type: "authentication_error",
                 code: upstream.code ?? "codex_auth_expired",
             },

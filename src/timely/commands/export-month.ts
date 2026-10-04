@@ -5,6 +5,7 @@ import type { TimelyEvent } from "@app/timely/types";
 import { readStoredCookie } from "@app/timely/utils/cookie";
 import { formatDuration, getDatesInMonth, getMonthDateRange } from "@app/timely/utils/date";
 import { generateReportMarkdown } from "@app/timely/utils/entry-processor";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
 import type { Storage } from "@genesiscz/utils/storage";
@@ -42,7 +43,7 @@ async function exportMonthAction(
     // Parse month argument (YYYY-MM)
     if (!monthArg || !/^\d{4}-\d{2}$/.test(monthArg)) {
         logger.error("Please provide a month in YYYY-MM format.");
-        logger.info("Example: tools timely export-month 2025-11");
+        logger.info(`Example: ${toolCommand("timely export-month")} 2025-11`);
         process.exit(1);
     }
 
@@ -51,14 +52,14 @@ async function exportMonthAction(
         ? parseInt(options.account, 10)
         : await storage.getConfigValue<number>("selectedAccountId");
     if (!accountId) {
-        logger.error("No account selected. Run 'tools timely accounts --select' first.");
+        logger.error(`No account selected. Run '${toolCommand("timely accounts")} --select' first.`);
         process.exit(1);
     }
 
     // Download suggested_entries.json for all dates in the month
     const tokens = await storage.getConfigValue<{ access_token: string }>("tokens");
     if (!tokens?.access_token) {
-        logger.error("No access token found. Run 'tools timely login' first.");
+        logger.error(`No access token found. Run '${toolCommand("timely login")}' first.`);
         process.exit(1);
     }
 

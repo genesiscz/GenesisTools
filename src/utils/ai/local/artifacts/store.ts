@@ -142,7 +142,7 @@ let legacyRootNoticeShown = false;
 
 /**
  * Tell the user once per process that weights are sitting outside the store's
- * root. Purely informational — nothing moves until they run the migration.
+ * root. Purely informational: nothing moves them.
  */
 export function noticeLegacyRoots(roots: string[] = [LEGACY_SHERPA_ROOT]): void {
     if (legacyRootNoticeShown) {
@@ -157,10 +157,7 @@ export function noticeLegacyRoots(roots: string[] = [LEGACY_SHERPA_ROOT]): void 
 
     legacyRootNoticeShown = true;
     logger.debug({ roots: populated }, "[artifacts] legacy model roots in use");
-    out.log.info(
-        `On-device model weights are still cached at ${populated.join(", ")}. ` +
-            `Run \`tools ai models migrate-cache\` to move them under the artifact store.`
-    );
+    out.log.info(`On-device model weights are still cached at ${populated.join(", ")}, outside the artifact store.`);
 }
 
 /** Test seam: the notice is once-per-process, which a second test would never see. */

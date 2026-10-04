@@ -4,6 +4,7 @@ import type { OAuthApplication } from "@app/timely/types";
 import { describeCookie, extractCookie } from "@app/timely/utils/cookie";
 import { Browser } from "@genesiscz/utils/browser";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { readFromClipboard } from "@genesiscz/utils/clipboard";
 import { logger } from "@genesiscz/utils/logger";
 import { multilineText } from "@genesiscz/utils/prompts/clack/multiline";
@@ -147,7 +148,7 @@ async function apiKeyLogin(storage: Storage, client: TimelyApiClient): Promise<v
 async function cookieLogin(storage: Storage, options: { fromClipboard: boolean }): Promise<void> {
     const accountId = await storage.getConfigValue<number>("selectedAccountId");
     if (!accountId) {
-        logger.error("No account selected. Run 'tools timely accounts --select' first.");
+        logger.error(`No account selected. Run '${toolCommand("timely accounts")} --select' first.`);
         process.exit(1);
     }
 
@@ -177,7 +178,7 @@ async function cookieLogin(storage: Storage, options: { fromClipboard: boolean }
         logger.warn(`${saved.path} is not owner-only. Anyone able to read that path can reuse your Timely session.`);
     }
 
-    logger.info("Memories work again: tools timely memories --day <YYYY-MM-DD>");
+    logger.info(`Memories work again: ${toolCommand("timely memories")} --day <YYYY-MM-DD>`);
 }
 
 /**
@@ -234,7 +235,7 @@ async function cookieFromClipboardOnly(): Promise<string> {
 /** Interactive path: offer the clipboard first, fall back to a paste. */
 async function cookieFromClipboardOrPaste(storage: Storage): Promise<string> {
     if (!isInteractive()) {
-        logger.error("Pasting a cookie needs a TTY. Run 'tools timely login cookies' in a terminal.");
+        logger.error(`Pasting a cookie needs a TTY. Run '${toolCommand("timely login cookies")}' in a terminal.`);
         logger.info(
             `Without a TTY, copy the request as cURL and run: ${suggestCommand("tools timely", { replaceCommand: ["login", "cookies"], add: ["--from-clipboard"] })}`
         );

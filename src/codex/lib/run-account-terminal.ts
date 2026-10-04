@@ -11,6 +11,7 @@ import { resolveNativeCodexModel } from "@genesiscz/utils/ai/openai/resolve-nati
 import { registerBuiltInPlugins } from "@genesiscz/utils/ai/providers/plugins";
 import { providerPlugin } from "@genesiscz/utils/ai/providers/registry";
 import { withTimeout } from "@genesiscz/utils/async";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { env } from "@genesiscz/utils/env";
 import { logger, out } from "@genesiscz/utils/logger";
 import { profiler } from "@genesiscz/utils/profile";
@@ -61,7 +62,9 @@ export async function runAccountTerminal(input: {
     }
 
     if (!process.stdin.isTTY || !process.stdout.isTTY) {
-        throw new Error("tools codex run needs an interactive terminal; use tools codex spawn --account for workers");
+        throw new Error(
+            `${toolCommand("codex run")} needs an interactive terminal; use ${toolCommand("codex spawn")} --account for workers`
+        );
     }
 
     // Startup latency here is user-visible, and the phases hide behind one wait: a version spawn,
@@ -278,7 +281,7 @@ export async function runAccountTerminal(input: {
         if (refused && resumedId) {
             const report = inspectActiveWriter({ home, threadId: resumedId, rolloutPath: resumedPath });
 
-            for (const line of formatActiveWriter(report, `tools codex run ${account.name}`)) {
+            for (const line of formatActiveWriter(report, `${toolCommand("codex run")} ${account.name}`)) {
                 out.println(line);
             }
         }

@@ -8,6 +8,7 @@ import {
     extractAccountId,
     readCodexAuthJson,
 } from "@genesiscz/utils/ai/openai/codex-auth";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { profiler } from "@genesiscz/utils/profile";
 import { masterKey, resolveSecret, secrets } from "@genesiscz/utils/security";
 import { NETWORKED_LOCK_WAIT_MS } from "@genesiscz/utils/storage/file-lock";
@@ -57,7 +58,7 @@ export class CodexAccountBinding {
         if (!matched) {
             const names = store.accounts({ provider: "openai-sub", enabled: true }).map((entry) => entry.name);
             throw new Error(
-                `No Codex account matches "${selector}". Enabled OpenAI subscription accounts: ${names.join(", ") || "none"} (tools ai accounts list).`
+                `No Codex account matches "${selector}". Enabled OpenAI subscription accounts: ${names.join(", ") || "none"} (${toolCommand("ai accounts list")}).`
             );
         }
 
@@ -122,7 +123,9 @@ export class CodexAccountBinding {
                 }
 
                 if (!latest.refreshToken) {
-                    throw new Error("No refresh token; use tools codex login <account> for a new managed grant");
+                    throw new Error(
+                        `No refresh token; use ${toolCommand("codex login")} <account> for a new managed grant`
+                    );
                 }
 
                 // Legacy plaintext grants must not be spent before vault encryption is available.
@@ -136,7 +139,9 @@ export class CodexAccountBinding {
                         .measureAsync("network-refresh", () => codexOAuth.refresh(latest.refreshToken));
                 } catch {
                     // Provider errors can contain credentials. Never send their text to clients or logs.
-                    throw new Error("Codex token refresh failed; re-login with tools codex login <account>");
+                    throw new Error(
+                        `Codex token refresh failed; re-login with ${toolCommand("codex login")} <account>`
+                    );
                 }
 
                 this.checkIdentity(current, rotated);
@@ -156,7 +161,7 @@ export class CodexAccountBinding {
 
         if (force && (!this.lastAccessToken || tokens?.accessToken === this.lastAccessToken)) {
             throw new Error(
-                "The CLI-owned token has not changed. Use tools codex login <account> for a separate managed grant"
+                `The CLI-owned token has not changed. Use ${toolCommand("codex login")} <account> for a separate managed grant`
             );
         }
 
@@ -191,7 +196,9 @@ export class CodexAccountBinding {
     private accept(account: AccountEntry, tokens: CodexTokens | null): CodexAccountTokens {
         const workspaceId = this.checkIdentity(account, tokens);
         if (!tokens?.expiresAt || tokens.expiresAt <= Date.now()) {
-            throw new Error("Codex credentials expired. Re-login with tools codex login <account> for managed refresh");
+            throw new Error(
+                `Codex credentials expired. Re-login with ${toolCommand("codex login")} <account> for managed refresh`
+            );
         }
 
         this.workspaceId = workspaceId;

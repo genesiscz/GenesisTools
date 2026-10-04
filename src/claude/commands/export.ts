@@ -5,6 +5,7 @@ import { IncludeSpec } from "@genesiscz/utils/claude/cli/dsl";
 import { parseJsonlTranscript } from "@genesiscz/utils/claude/index";
 import { PROJECTS_DIR } from "@genesiscz/utils/claude/projects";
 import type { ConversationMessage } from "@genesiscz/utils/claude/types";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
 import pc from "picocolors";
@@ -90,7 +91,7 @@ export function registerExportCommand(program: Command): void {
 
             if (!filePath) {
                 out.error(pc.red(`Session not found: ${sessionId}`));
-                out.error(pc.dim("Tip: use an 8-char prefix or full UUID from `tools claude history`"));
+                out.error(pc.dim(`Tip: use an 8-char prefix or full UUID from \`${toolCommand("claude history")}\``));
                 process.exit(1);
             }
 

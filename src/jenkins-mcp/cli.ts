@@ -1,4 +1,5 @@
 import { enhanceHelp } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { parseDuration as parseDurationUtil } from "@genesiscz/utils/format";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
@@ -39,7 +40,7 @@ function parseDuration(s: string): number {
 
 export async function runCli(argv: string[]): Promise<void> {
     const program = new Command()
-        .name("tools jenkins-mcp")
+        .name(toolCommand("jenkins-mcp"))
         .description("Jenkins CLI — paste a job path or full Jenkins URL");
 
     program

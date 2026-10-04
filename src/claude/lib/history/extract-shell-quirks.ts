@@ -13,6 +13,7 @@ import { createReadStream } from "node:fs";
 import { basename, dirname } from "node:path";
 import { createInterface } from "node:readline";
 import { extractProjectName, PROJECTS_DIR, resolveProjectDir } from "@genesiscz/utils/claude/projects";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { profiler } from "@genesiscz/utils/profile";
@@ -1018,7 +1019,7 @@ export function renderShellQuirksMarkdown(
     result: ExtractShellQuirksResult,
     meta: { generatedAt: string; command: string; claudeMdNote?: string } = {
         generatedAt: new Date().toISOString(),
-        command: "tools claude history extract-shell-quirks",
+        command: toolCommand("claude history extract-shell-quirks"),
     }
 ): string {
     const { findings } = result;

@@ -1,3 +1,4 @@
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import {
     EXTENSION_PAGE_COMMANDS,
     type HostRequest,
@@ -64,7 +65,7 @@ function callNative(request: HostRequest): Promise<HostResponse> {
             settle({
                 ok: false,
                 code: "unavailable",
-                error: `${reason}. Run: tools browser-extension install-host`,
+                error: `${reason}. Run: ${toolCommand("browser-extension install-host")}`,
             });
         });
         port.postMessage(request);

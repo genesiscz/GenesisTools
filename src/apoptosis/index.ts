@@ -2,6 +2,7 @@
 
 import { resolve } from "node:path";
 import { enhanceHelp, runTool } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import { Command } from "commander";
@@ -77,7 +78,7 @@ program
 
         if (report.counts.ready > 0 && !options.json) {
             out.log.step(
-                `Run \`tools apoptosis kill\` to emit a deletion script for the ${report.counts.ready} ready-to-die file(s).`
+                `Run \`${toolCommand("apoptosis kill")}\` to emit a deletion script for the ${report.counts.ready} ready-to-die file(s).`
             );
         }
     });

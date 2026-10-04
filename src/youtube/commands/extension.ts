@@ -8,6 +8,7 @@ import * as p from "@clack/prompts";
 import { missingManifestFiles, newBuildId, writeBuildInfo } from "@genesiscz/utils/browser-extension/build-info";
 import { type DevReloadTarget, startDevReloadServer } from "@genesiscz/utils/browser-extension/dev-reload/server";
 import { extensionByKey } from "@genesiscz/utils/browser-extension/registry";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { createWatcher } from "@genesiscz/utils/fs/watcher";
 import { logger } from "@genesiscz/utils/logger";
 import { BROWSER_DEVTOOLS_PORT, EXTENSION_TEST_BROWSER_PORT } from "@genesiscz/utils/net/ports";
@@ -38,9 +39,9 @@ function cdpPortFrom(cdpUrl: string | undefined): number {
 /** `list-tools` and `call` drove chrome-devtools-mcp; the same work now goes through our own CDP verbs. */
 function mcpTombstone(verb: string): void {
     const port = String(cdpPortFrom(undefined));
-    const cdp = (args: string[]) => `tools chrome-devtools ${[...args, "--port", port].join(" ")}`;
+    const cdp = (args: string[]) => `${toolCommand("chrome-devtools")} ${[...args, "--port", port].join(" ")}`;
     p.log.error(`'extension devtools ${verb}' drove chrome-devtools-mcp, which this repo no longer relies on.
-Drive the extension browser with tools chrome-devtools on its port instead:
+Drive the extension browser with ${toolCommand("chrome-devtools")} on its port instead:
   ${cdp(["snapshot", "--match", "youtube.com"])}
   ${cdp(["click", '"Summarize"', "--match", "youtube.com"])}
   ${cdp(["fill", '"<label>"', '"<text>"', "--match", "youtube.com"])}
@@ -94,7 +95,7 @@ export function registerExtensionCommand(program: Command): void {
     const devtools = cmd
         .command("devtools")
         .description(
-            `Launch a real, extension-loaded browser with a CDP port; drive it with tools chrome-devtools <verb> --port ${EXTENSION_TEST_BROWSER_PORT}`
+            `Launch a real, extension-loaded browser with a CDP port; drive it with ${toolCommand("chrome-devtools")} <verb> --port ${EXTENSION_TEST_BROWSER_PORT}`
         );
 
     devtools
@@ -124,7 +125,7 @@ export function registerExtensionCommand(program: Command): void {
             .allowUnknownOption(true)
             .allowExcessArguments(true)
             .description(
-                `removed: drive the browser with tools chrome-devtools <verb> --port ${EXTENSION_TEST_BROWSER_PORT}`
+                `removed: drive the browser with ${toolCommand("chrome-devtools")} <verb> --port ${EXTENSION_TEST_BROWSER_PORT}`
             )
             .action(() => {
                 logger.debug({ verb }, "extension devtools: removed MCP verb called");

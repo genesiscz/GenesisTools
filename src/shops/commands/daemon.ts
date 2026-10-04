@@ -1,5 +1,6 @@
 import { type RegisterTaskOptions, registerTask, unregisterTask } from "@app/daemon/lib/register";
 import { Executor } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger, out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
 
@@ -8,7 +9,7 @@ const log = logger.child({ component: "shops:daemon-cmd" });
 export const SHOPS_DAEMON_TASKS: RegisterTaskOptions[] = [
     {
         name: "shops:watchlist-check",
-        command: "tools shops watch tick",
+        command: toolCommand("shops watch tick"),
         every: "every 1 hour",
         retries: 3,
         notify: false,
@@ -16,7 +17,7 @@ export const SHOPS_DAEMON_TASKS: RegisterTaskOptions[] = [
     },
     {
         name: "shops:prune-http-requests",
-        command: "tools shops db prune-http",
+        command: toolCommand("shops db prune-http"),
         every: "every 1 day",
         retries: 1,
         description: "Delete http_requests rows older than 30 days",
@@ -28,7 +29,7 @@ export function registerDaemonCommand(program: Command): void {
 
     daemon
         .command("enable")
-        .description("Register Plan 02's watchlist + prune tasks with `tools daemon`")
+        .description(`Register Plan 02's watchlist + prune tasks with \`${toolCommand("daemon")}\``)
         .option("--overwrite", "Overwrite existing task registrations", false)
         .action(async (opts: { overwrite?: boolean }) => {
             for (const t of SHOPS_DAEMON_TASKS) {
@@ -49,7 +50,7 @@ export function registerDaemonCommand(program: Command): void {
 
     daemon
         .command("status")
-        .description("Show shops:* tasks via `tools daemon status`")
+        .description(`Show shops:* tasks via \`${toolCommand("daemon status")}\``)
         .action(async () => {
             const result = await new Executor().exec(["tools", "daemon", "status"]);
             const filtered = result.stdout

@@ -1,5 +1,6 @@
 import { readUnifiedConfig } from "@app/mcp-manager/utils/config.utils.js";
 import type { UnifiedMCPConfig } from "@app/mcp-manager/utils/providers/types.js";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger } from "@genesiscz/utils/logger";
 import { gatewayListen } from "../auth/project.ts";
 import { gatewayHealth } from "./health.ts";
@@ -43,7 +44,9 @@ async function startOnce(config: UnifiedMCPConfig, listen: { host: string; port:
     }
 
     if (health === "stranger") {
-        throw new Error(`port ${listen.port} is in use by another process. Run tools mcp-manager gateway status`);
+        throw new Error(
+            `port ${listen.port} is in use by another process. Run ${toolCommand("mcp-manager gateway status")}`
+        );
     }
 
     // A launchd agent outlives this process; the in-process listener below does not.

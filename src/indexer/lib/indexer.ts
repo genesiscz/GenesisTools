@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { findDescriptor } from "@genesiscz/utils/ai/local/descriptors";
 import type { Embedder } from "@genesiscz/utils/ai/tasks/Embedder";
 import { startWakefulInterval, type WakefulInterval } from "@genesiscz/utils/async";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import type { WatcherSubscription } from "@genesiscz/utils/fs/watcher";
 import { logger } from "@genesiscz/utils/logger";
 import { Stopwatch } from "@genesiscz/utils/Stopwatch";
@@ -45,7 +46,7 @@ export class EmbeddingSetupError extends Error {
             lines.push(formatModelTable(recommendedModels));
             lines.push("");
             lines.push("Fix with:");
-            lines.push(`  tools indexer add <path> --model <model-id>`);
+            lines.push(`  ${toolCommand("indexer add", "<path>", "--model", "<model-id>")}`);
         } else {
             const providers = [
                 "darwinkit  — macOS on-device NaturalLanguage.framework (512-dim, free)",
@@ -57,14 +58,14 @@ export class EmbeddingSetupError extends Error {
             lines.push(...providers.map((p) => `  ${p}`));
             lines.push("");
             lines.push("Fix with one of:");
-            lines.push(`  tools indexer add <path> --provider darwinkit`);
-            lines.push(`  tools indexer add <path> --provider local-hf`);
-            lines.push(`  tools indexer add <path> --provider cloud`);
+            lines.push(`  ${toolCommand("indexer add", "<path>", "--provider", "darwinkit")}`);
+            lines.push(`  ${toolCommand("indexer add", "<path>", "--provider", "local-hf")}`);
+            lines.push(`  ${toolCommand("indexer add", "<path>", "--provider", "cloud")}`);
         }
 
         lines.push("");
         lines.push("Or disable embeddings (fulltext-only search, no semantic):");
-        lines.push(`  tools indexer add <path> --no-embed`);
+        lines.push(`  ${toolCommand("indexer add", "<path>", "--no-embed")}`);
 
         super(lines.join("\n"));
         this.name = "EmbeddingSetupError";
@@ -273,7 +274,7 @@ export class Indexer extends IndexerEventEmitter {
                 throw new Error(
                     `Index "${this.name}" was built with ${meta.indexEmbedding.model} (${meta.indexEmbedding.dimensions}-dim).\n` +
                         `Current model has ${this.embedder.dimensions} dimensions — incompatible.\n` +
-                        `Run: tools indexer rebuild ${this.name} --model ${meta.indexEmbedding.model}`
+                        `Run: ${toolCommand("indexer rebuild", this.name, "--model", meta.indexEmbedding.model)}`
                 );
             }
         }

@@ -10,6 +10,7 @@ import { type CommonOpts, type Ctx, context, minMsOf } from "@app/spotify/lib/co
 import { bySong, counted, type Play, sortedAggs } from "@app/spotify/lib/history";
 import { globalPlaycounts, loadLibrary } from "@app/spotify/lib/library";
 import type { PlayTrack } from "@app/spotify/lib/play/plan";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 
 export const SEED_SOURCES = ["top", "gems", "forgotten", "unplayed", "recent"] as const;
 export type SeedSource = (typeof SEED_SOURCES)[number];
@@ -89,7 +90,7 @@ export function seedTracks({ source, limit, options, given, quietMonths = 12 }: 
     if (!library.length) {
         throw new Error(
             `--from ${source} needs the harvested library, and profile "${ctx.profile.name}" has none.\n` +
-                `  tools spotify harvest   # then: tools spotify build --profile ${ctx.profile.name}\n` +
+                `  ${toolCommand("spotify harvest")}   # then: ${toolCommand("spotify build", "--profile", ctx.profile.name)}\n` +
                 "  Or seed from listening history instead: --from top | forgotten"
         );
     }

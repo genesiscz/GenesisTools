@@ -5,6 +5,7 @@ import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { runTool } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { defineDashboardApp } from "@genesiscz/utils/DashboardApp";
 import { logger } from "@genesiscz/utils/logger";
 import { Command } from "commander";
@@ -184,7 +185,7 @@ const dashboardApp = defineDashboardApp({
                     {
                         service: "dashboard",
                         error: "src/dashboard/node_modules is missing.",
-                        fix: `Run ${pc.bold("bun install")} in src/dashboard, or use bare \`tools dashboard\` to auto-install.`,
+                        fix: `Run ${pc.bold("bun install")} in src/dashboard, or use bare \`${toolCommand("dashboard")}\` to auto-install.`,
                     },
                 ],
             };
@@ -204,7 +205,7 @@ const dashboardApp = defineDashboardApp({
 const program = new Command();
 
 program
-    .name("tools dashboard")
+    .name(toolCommand("dashboard"))
     .description("Start the personal productivity dashboard (auto-installs deps) and open it")
     .option("--prod", "production build + PM2 (ecosystem.config.cjs) instead of the dev server", false)
     .option("--no-open", "do not auto-open the browser")

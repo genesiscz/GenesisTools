@@ -1,5 +1,6 @@
 import { join } from "node:path";
 import { gatherHarnessPoster } from "@genesiscz/utils/agent/runtime";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { env } from "@genesiscz/utils/env";
 import { json2md } from "@genesiscz/utils/json2md";
 import { isTestProcess } from "@genesiscz/utils/test-process";
@@ -149,7 +150,7 @@ export function decisionsMarkdown(rows: DecisionRecord[]): string {
                 row.blocking ? "blocking" : null,
                 row.reevaluateWhen ? `reevaluate when: ${row.reevaluateWhen}` : null,
                 (row.revision ?? 1) > 1
-                    ? `revision ${row.revision} (earlier text: tools question show ${row.id} --versions)`
+                    ? `revision ${row.revision} (earlier text: ${toolCommand("question show")} ${row.id} --versions)`
                     : null,
             ].filter((part): part is string => part !== null);
 

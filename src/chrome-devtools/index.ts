@@ -17,6 +17,7 @@
  *   scaffold, cheatsheet, mcp — scripting doors
  */
 import { runTool } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { Command } from "commander";
 import { registerAttach } from "./commands/attach.ts";
 import { registerBrowse } from "./commands/browse.ts";
@@ -33,7 +34,7 @@ import { registerStatus } from "./commands/status.ts";
 
 const program = new Command();
 program
-    .name("tools chrome-devtools")
+    .name(toolCommand("chrome-devtools"))
     .description("drive a real running browser over CDP — attach, record, follow, HAR, cookies, doctor")
     .showHelpAfterError()
     .addHelpText(
@@ -45,7 +46,7 @@ exactly what to restart when nothing listens — ask the user before quitting
 their browser.
 
 Start here, every time:
-  tools chrome-devtools attach
+  ${toolCommand("chrome-devtools attach")}
 
 Do NOT pipe 'record', 'follow' or 'trace' to head/tail — they are long-running
 and print their pid + output paths first. The capture segments under

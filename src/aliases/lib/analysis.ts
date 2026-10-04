@@ -11,6 +11,7 @@ import {
     suggestAlias,
     updateLevel,
 } from "@app/aliases/lib/core";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
@@ -292,11 +293,11 @@ export function renderHuman(report: AnalyzeReport, minLevel: number): string {
 
         lines.push("");
         lines.push(
-            `Run \`tools aliases apply\` to write ${suggested.length} alias${suggested.length === 1 ? "" : "es"} to your rc.`
+            `Run \`${toolCommand("aliases apply")}\` to write ${suggested.length} alias${suggested.length === 1 ? "" : "es"} to your rc.`
         );
     } else if (worth.length > 0) {
         lines.push(
-            `No aliases at level ≥ ${minLevel} yet — re-run \`tools aliases\` after using these more to raise levels.`
+            `No aliases at level ≥ ${minLevel} yet — re-run \`${toolCommand("aliases")}\` after using these more to raise levels.`
         );
     }
 

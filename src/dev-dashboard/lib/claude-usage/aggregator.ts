@@ -4,6 +4,7 @@ import { getSharedAccountsUsage } from "@app/claude/lib/usage/shared-cache";
 import { AiConfigStore } from "@genesiscz/utils/ai/config/AiConfigStore";
 import { showsInUsageDashboard } from "@genesiscz/utils/ai/config/selectors";
 import { queryUsage } from "@genesiscz/utils/ai/usage";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger } from "@genesiscz/utils/logger";
 import type { AccountTotals, MultiBucketHistoryResult, UsageHistoryResult, UsageTotalsResult } from "./types";
 
@@ -106,7 +107,7 @@ export function getUsageHistory(
     const snapshots = historyDb.getSnapshots(opts.account, opts.bucket, opts.minutes, DEFAULT_LIMITS_PROVIDER);
 
     if (snapshots.length === 0) {
-        return { snapshots: [], hint: "Run 'tools claude daemon install' to start polling." };
+        return { snapshots: [], hint: `Run '${toolCommand("claude daemon register")}' to start polling.` };
     }
 
     return { snapshots };
@@ -128,7 +129,7 @@ export function getUsageHistoryMulti(
     }));
 
     if (series.every((s) => s.snapshots.length === 0)) {
-        return { series, hint: "Run 'tools claude daemon install' to start polling." };
+        return { series, hint: `Run '${toolCommand("claude daemon register")}' to start polling.` };
     }
 
     return { series };

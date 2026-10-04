@@ -3,6 +3,7 @@ import { resolveRangeFlag } from "@app/ai/lib/usage/range-flag";
 import { PROVIDER_ALIASES, resolveProviderAlias } from "@genesiscz/utils/ai/providers/aliases";
 import { pollAccounts, usagePlugins } from "@genesiscz/utils/ai/usage-poll/poll";
 import { suggestEnumFlag } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { RANGE_VALUES } from "@genesiscz/utils/ink/usage-dashboard/types";
 import { logger, out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
@@ -37,10 +38,10 @@ export function registerAiUsageCommand(usage: Command): void {
         .option("--json", "Output the snapshots as JSON instead of opening the TUI")
         .option("--no-tui", "Print a plain-text summary instead of opening the TUI")
         .option("--fresh", "Force a live poll, bypassing the shared per-provider cache")
-        .option("--scored", "Anthropic-only urgency sort; use tools claude usage --json --scored")
+        .option("--scored", `Anthropic-only urgency sort; use ${toolCommand("claude usage")} --json --scored`)
         .action(async (opts: AiUsageOptions) => {
             if (opts.scored) {
-                logger.error("--scored is anthropic-only. Run: tools claude usage --json --scored");
+                logger.error(`--scored is anthropic-only. Run: ${toolCommand("claude usage")} --json --scored`);
                 process.exitCode = 1;
                 return;
             }

@@ -23,6 +23,7 @@ import {
 import { loadState, saveState } from "@app/git/lib/cascade/state";
 import * as p from "@clack/prompts";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import {
     BaseNotFoundError,
     createGit,
@@ -178,7 +179,7 @@ async function run(parentArg: string | undefined, opts: Options): Promise<number
     }
 
     if (!parentArg) {
-        out.log.error("Which parent? tools git rebase-cascade <parent> [--onto <target>]");
+        out.log.error(`Which parent? ${toolCommand("git rebase-cascade")} <parent> [--onto <target>]`);
         return 2;
     }
 
@@ -290,7 +291,7 @@ async function run(parentArg: string | undefined, opts: Options): Promise<number
                 .map((l) => `  ${l}`)
                 .join("\n")
         );
-        out.println(pc.dim("backups stay until: tools git rebase-cascade --cleanup"));
+        out.println(pc.dim(`backups stay until: ${toolCommand("git rebase-cascade")} --cleanup`));
     }
 
     return code;

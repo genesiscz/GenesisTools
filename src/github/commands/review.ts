@@ -19,6 +19,7 @@ import {
     fetchPRReviewThreads,
     parseThreads,
 } from "@app/github/lib/review-threads";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { formatRelativeTime } from "@genesiscz/utils/format";
 import type { ReviewCommandOptions, ReviewData, ReviewSessionData } from "@genesiscz/utils/github/types";
 import { detectRepoFromGit, parseGitHubUrl } from "@genesiscz/utils/github/url-parser";
@@ -51,8 +52,8 @@ export async function reviewCommand(input: string, options: ReviewCommandOptions
     if ((options.respond || resolveThreadOpt) && !options.threadId) {
         throw new Error(
             "--thread-id is required when using --respond or --resolve-thread\n" +
-                'Usage: tools github review <pr> --respond "message" -t <thread-id>\n' +
-                "       tools github review <pr> --resolve-thread -t <thread-id>"
+                `Usage: ${toolCommand("github review")} <pr> --respond "message" -t <thread-id>\n` +
+                `       ${toolCommand("github review")} <pr> --resolve-thread -t <thread-id>`
         );
     }
 
@@ -203,7 +204,7 @@ export async function reviewCommand(input: string, options: ReviewCommandOptions
             if (isFirstFetch) {
                 output += `\n${formatPrCommentsLLM(prComments, sessionId)}`;
             } else {
-                output += `\nSummary: tools github review summary -s ${sessionId}\n`;
+                output += `\nSummary: ${toolCommand("github review summary")} -s ${sessionId}\n`;
             }
         }
 
@@ -228,7 +229,7 @@ export async function reviewCommand(input: string, options: ReviewCommandOptions
             originalCwd: process.cwd(),
         });
         out.println(filePath);
-        out.error(`  View: tools markdown-cli ${filePath}`);
+        out.error(`  View: ${toolCommand("markdown-cli")} ${filePath}`);
         return;
     }
 
@@ -412,28 +413,28 @@ export function createReviewCommand(): Command {
             `Fetch and display GitHub PR review threads
 
 Examples:
-  $ tools github review 137                                              # Show review threads for PR #137
-  $ tools github review https://github.com/owner/repo/pull/137           # Show review threads from URL
-  $ tools github review 137 -u                                           # Show only unresolved threads
-  $ tools github review 137 --json                                       # Output as JSON
-  $ tools github review 137 --md -g                                      # Save as grouped markdown file
-  $ tools github review 137 --respond "ok" -t <thread-id>                # Reply to a thread
-  $ tools github review 137 --resolve-thread -t <thread-id>              # Mark a thread as resolved
-  $ tools github review 137 --respond "fixed" --resolve-thread -t <thread-id>  # Reply AND resolve
+  $ ${toolCommand("github review")} 137                                              # Show review threads for PR #137
+  $ ${toolCommand("github review")} https://github.com/owner/repo/pull/137           # Show review threads from URL
+  $ ${toolCommand("github review")} 137 -u                                           # Show only unresolved threads
+  $ ${toolCommand("github review")} 137 --json                                       # Output as JSON
+  $ ${toolCommand("github review")} 137 --md -g                                      # Save as grouped markdown file
+  $ ${toolCommand("github review")} 137 --respond "ok" -t <thread-id>                # Reply to a thread
+  $ ${toolCommand("github review")} 137 --resolve-thread -t <thread-id>              # Mark a thread as resolved
+  $ ${toolCommand("github review")} 137 --respond "fixed" --resolve-thread -t <thread-id>  # Reply AND resolve
 
   Batch operations (comma-separated thread IDs):
-  $ tools github review 137 --resolve-thread -t id1,id2,id3              # Resolve multiple threads
-  $ tools github review 137 --respond "Fixed" -t id1,id2                 # Reply to multiple threads
-  $ tools github review 137 --respond "Fixed" --resolve-thread -t id1,id2,id3  # Reply+resolve batch
+  $ ${toolCommand("github review")} 137 --resolve-thread -t id1,id2,id3              # Resolve multiple threads
+  $ ${toolCommand("github review")} 137 --respond "Fixed" -t id1,id2                 # Reply to multiple threads
+  $ ${toolCommand("github review")} 137 --respond "Fixed" --resolve-thread -t id1,id2,id3  # Reply+resolve batch
 
   LLM mode (session-based with refs):
-  $ tools github review 137 --llm                                            # Compact L1 summary with refs
-  $ tools github review 137 --llm -u -s pr137-session                        # Unresolved only, named session
-  $ tools github review expand t1,t3 -s pr137-20260308-143025                # Expand threads to full detail
-  $ tools github review respond t1 "Fixed in abc123" --resolve -s pr137-...  # Reply + resolve
-  $ tools github review resolve t1,t2,t3 -s pr137-...                        # Resolve threads
-  $ tools github review sessions                                              # List review sessions
-  $ tools github review summary -s pr137-...                                  # Show PR-level review summaries`
+  $ ${toolCommand("github review")} 137 --llm                                            # Compact L1 summary with refs
+  $ ${toolCommand("github review")} 137 --llm -u -s pr137-session                        # Unresolved only, named session
+  $ ${toolCommand("github review expand")} t1,t3 -s pr137-20260308-143025                # Expand threads to full detail
+  $ ${toolCommand("github review respond")} t1 "Fixed in abc123" --resolve -s pr137-...  # Reply + resolve
+  $ ${toolCommand("github review resolve")} t1,t2,t3 -s pr137-...                        # Resolve threads
+  $ ${toolCommand("github review sessions")}                                              # List review sessions
+  $ ${toolCommand("github review summary")} -s pr137-...                                  # Show PR-level review summaries`
         )
         .argument("<pr>", "PR number or full GitHub URL")
         .option("--repo <owner/repo>", "Repository (auto-detected from URL or git)")

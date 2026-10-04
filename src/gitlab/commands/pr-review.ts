@@ -26,6 +26,7 @@ import {
     renderPrReviewMarkdown,
 } from "@app/gitlab/lib/pr-review-output";
 import { isInteractive, suggestEnumFlag } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
 import * as p from "@genesiscz/utils/prompts/p";
@@ -235,7 +236,7 @@ async function runPrReview(mrIid: string, opts: Options): Promise<void> {
     const target = [opts.host ? `--host ${opts.host}` : "", opts.project ? `--project ${opts.project}` : ""]
         .filter(Boolean)
         .join(" ");
-    const command = `tools gitlab pr review ${iid}${target ? ` ${target}` : ""}`;
+    const command = `${toolCommand("gitlab pr review")} ${iid}${target ? ` ${target}` : ""}`;
 
     if (opts.expand) {
         out.print(expandRefs(facts, opts.expand.split(",").filter(Boolean)));

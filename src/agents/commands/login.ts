@@ -1,6 +1,7 @@
 import { isInteractive } from "@genesiscz/utils/cli";
 import { asResult } from "@genesiscz/utils/cli/result";
 import { writeStdout } from "@genesiscz/utils/cli/stdout";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { watchFileFeed } from "@genesiscz/utils/fs/file-feed-watcher";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
@@ -124,8 +125,8 @@ async function findOrRegisterAgent(paths: SessionPaths, opts: LoginOpts): Promis
                 ? `no agents in session "${paths.session}"; log in with --agent-name <name>`
                 : "--agent-id or --agent-name is required (multiple agents in session; could not auto-pick)",
             registry.length === 0
-                ? `Example:\n  tools agents login --agent-name lead --agent-main\n  tools agents login --agent-name researcher`
-                : `Available agents in "${paths.session}":\n  ${registry.map((r) => `tools agents login --agent-name ${r.agent_name}`).join("\n  ")}`
+                ? `Example:\n  ${toolCommand("agents login", "--agent-name", "lead", "--agent-main")}\n  ${toolCommand("agents login", "--agent-name", "researcher")}`
+                : `Available agents in "${paths.session}":\n  ${registry.map((r) => toolCommand("agents login", "--agent-name", r.agent_name)).join("\n  ")}`
         );
     }
 
@@ -208,7 +209,7 @@ async function findOrRegisterAgent(paths: SessionPaths, opts: LoginOpts): Promis
         // always set by the time we reach here.
         throw new FriendlyError(
             "--agent-id or --agent-name is required",
-            `Example:\n  tools agents login --agent-name lead --agent-main\n  tools agents login --agent-name researcher`
+            `Example:\n  ${toolCommand("agents login", "--agent-name", "lead", "--agent-main")}\n  ${toolCommand("agents login", "--agent-name", "researcher")}`
         );
     });
 }
