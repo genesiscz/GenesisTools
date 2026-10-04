@@ -537,7 +537,7 @@ function SettingsPage() {
                 <CardContent>
                     <div className="space-y-2 font-mono text-xs">
                         <div className="flex items-center gap-2">
-                            <code className="text-primary">{toolCommand("clarity configure")} auth</code>
+                            <code className="text-primary">{toolCommand("clarity configure auth")}</code>
                             <span className="text-gray-500">Initial setup with base URL and auth</span>
                         </div>
                         <div className="flex items-center gap-2">

@@ -221,10 +221,10 @@ Comment Commands:
   ${toolCommand("azure-devops comment delete")} <id> <commentId>       Delete a comment
 
 History Commands:
-  ${toolCommand("azure-devops history")} show <id>          Show history for a work item
-  ${toolCommand("azure-devops history")} search --wiql      Search via WIQL EVER query (server-side)
-  ${toolCommand("azure-devops history")} search             Search local cached history
-  ${toolCommand("azure-devops history")} sync               Bulk sync history for cached items
+  ${toolCommand("azure-devops history show")} <id>          Show history for a work item
+  ${toolCommand("azure-devops history search")} --wiql      Search via WIQL EVER query (server-side)
+  ${toolCommand("azure-devops history search")}             Search local cached history
+  ${toolCommand("azure-devops history sync")}               Bulk sync history for cached items
 
 Storage:
   Config:  .claude/azure/config.json (per-project, searched up to 3 levels)

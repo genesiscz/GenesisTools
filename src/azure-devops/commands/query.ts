@@ -138,8 +138,8 @@ async function resolveQueryId(input: string, api: Api, config: AzureConfig): Pro
                 "`query` resolves a SAVED query by name, id or URL; passing WIQL would fuzzy-match it",
                 "against query names and return an unrelated query's rows.",
                 "",
-                `  Search history server-side:  ${toolCommand("azure-devops history")} search --wiql --assigned-to <name>`,
-                `  Where you were mentioned:    ${toolCommand("azure-devops history")} mentions --user "<name>" --from <date>`,
+                `  Search history server-side:  ${toolCommand("azure-devops history search")} --wiql --assigned-to <name>`,
+                `  Where you were mentioned:    ${toolCommand("azure-devops history mentions")} --user "<name>" --from <date>`,
             ].join("\n")
         );
     }
