@@ -260,7 +260,7 @@ program
     .action(async (server) => {
         const opts = program.opts();
         const providers = parseProviderArg(opts.provider, getProviders());
-        await showServerConfig(server || "", providers);
+        await showServerConfig(server, providers);
     });
 
 // backup-all command

@@ -1,6 +1,8 @@
+import "@genesiscz/utils/ink/react-production";
 import { logger, setConsoleLevel } from "@genesiscz/utils/logger";
 import { type RenderOptions, render } from "ink";
 import type { ReactNode } from "react";
+import { requireInteractiveTty } from "./tty-guard";
 
 const ENTER_ALT_SCREEN = "\x1b[?1049h\x1b[H";
 const LEAVE_ALT_SCREEN = "\x1b[?1049l";
@@ -19,6 +21,10 @@ const LEAVE_ALT_SCREEN = "\x1b[?1049l";
  * Falls back to a plain render when stdout is not a TTY.
  */
 export async function renderFullScreen(node: ReactNode, options?: RenderOptions): Promise<void> {
+    if (!requireInteractiveTty({ stdin: options?.stdin })) {
+        return;
+    }
+
     const stdout = options?.stdout ?? process.stdout;
 
     if (!stdout.isTTY) {

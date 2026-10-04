@@ -47,6 +47,25 @@ describe("openConfig", () => {
         expect(logger.info).toHaveBeenCalledWith(expect.stringContaining("Created default config"));
     });
 
+    // Regression test: #447 section F — `tools mcp-manager config --path` is
+    // documented as a pure path query but created the default config file (and
+    // its directory) on a fresh machine.
+    it("should not create the config file or its directory when --path is passed", async () => {
+        const mockConfigPath = "/mock/config-path-only.json";
+
+        const ensureDirsSpy = spyOn(Storage.prototype, "ensureDirs").mockResolvedValue(undefined);
+        const setConfigSpy = spyOn(Storage.prototype, "setConfig").mockResolvedValue(undefined);
+        spyOn(configUtils, "getUnifiedConfigPath").mockReturnValue(mockConfigPath);
+        spyOn(logger, "info");
+
+        await openConfig({ path: true });
+
+        expect(ensureDirsSpy).not.toHaveBeenCalled();
+        expect(setConfigSpy).not.toHaveBeenCalled();
+        expect(logger.info).toHaveBeenCalledWith(expect.stringContaining("Config file:"));
+        expect(logger.info).not.toHaveBeenCalledWith(expect.stringContaining("Created default config"));
+    });
+
     it("should open existing config in editor", async () => {
         const mockConfigPath = "/mock/config.json";
         const mockConfig = { mcpServers: { test: {} } };

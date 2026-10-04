@@ -1,3 +1,4 @@
+import "@genesiscz/utils/ink/react-production";
 import { SessionsView } from "@app/claude/commands/usage/components/sessions/sessions-view";
 import { anthropicPresenters } from "@app/claude/commands/usage/presenter";
 import { refreshAccountLabels } from "@app/claude/lib/config";

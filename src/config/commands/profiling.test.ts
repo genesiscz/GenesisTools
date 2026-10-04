@@ -1,15 +1,18 @@
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
 import { existsSync } from "node:fs";
+import * as p from "@clack/prompts";
 import { env } from "@genesiscz/utils/env";
 import { getGenesisToolsConfigPath, getProfilingConfig } from "@genesiscz/utils/GenesisTools";
+import * as facade from "@genesiscz/utils/prompts/p";
 import { isInside, realGenesisToolsRoot, rmTestPath } from "@genesiscz/utils/storage/real-home-guard";
+import { Storage } from "@genesiscz/utils/storage/storage";
 import { stripAnsi } from "@genesiscz/utils/string";
 import { Command } from "commander";
-import { buildConfigProgram } from "../index";
+import { buildConfigProgram, configAreaStatuses, printConfigOverview, runConfigAreaPicker } from "../index";
 import { applyProfilingFlags, printProfilingStatus, registerProfilingCommand, runProfilingCommand } from "./profiling";
 
 /** Everything the call printed to stdout, with colour removed (pattern: codex/migrate-home.test.ts). */
-async function captureStdout(run: () => void): Promise<string> {
+async function captureStdout(run: () => void | Promise<void>): Promise<string> {
     const chunks: string[] = [];
     const original = process.stdout.write.bind(process.stdout);
     process.stdout.write = (chunk: string) => {
@@ -18,7 +21,7 @@ async function captureStdout(run: () => void): Promise<string> {
     };
 
     try {
-        run();
+        await run();
         await Bun.sleep(10);
     } finally {
         process.stdout.write = original;
@@ -253,5 +256,130 @@ describe("buildConfigProgram", () => {
 
         expect(help).toContain("re-enable");
         expect(help).toContain("clear");
+    });
+
+    // Regression test: #453 — `tools config packages` showed its p.select prompt even when stdin
+    // was not a terminal, so a script or an agent running it waited forever.
+    it("packages lists rejected packages and does not prompt when stdin is not a terminal", async () => {
+        const store = new Storage("packages");
+        await store.setConfigValue("rejected", ["example-optional-pkg"]);
+        const select = spyOn(p, "select").mockImplementation(() => {
+            throw new Error("prompted without a terminal");
+        });
+        // The runner's own stdin may be a terminal (`script -q`, an interactive shell): pin "not a terminal".
+        const stdinWasTty = process.stdin.isTTY;
+        Object.defineProperty(process.stdin, "isTTY", { value: false, configurable: true, writable: true });
+
+        try {
+            await buildConfigProgram().parseAsync(["node", "config", "packages"]);
+
+            expect(select).not.toHaveBeenCalled();
+        } finally {
+            Object.defineProperty(process.stdin, "isTTY", { value: stdinWasTty, configurable: true, writable: true });
+            select.mockRestore();
+            await store.setConfigValue("rejected", []);
+        }
+    });
+});
+
+describe("configAreaStatuses", () => {
+    afterEach(() => {
+        rmTestPath(getGenesisToolsConfigPath());
+    });
+
+    // "Any other area the tool registers" (DECISION 5): a third subcommand added to
+    // `buildConfigProgram` with no matching entry here would silently vanish from both the
+    // picker and the non-TTY overview.
+    it("stays in sync with every subcommand buildConfigProgram registers", async () => {
+        const registered = buildConfigProgram()
+            .commands.map((c) => c.name())
+            .filter((name) => name !== "help") // commander's own auto-added help command, not an area
+            .sort();
+        const covered = (await configAreaStatuses()).map((area) => area.id).sort();
+
+        expect(covered).toEqual(registered);
+    });
+});
+
+describe("printConfigOverview", () => {
+    afterEach(async () => {
+        rmTestPath(getGenesisToolsConfigPath());
+        await new Storage("packages").setConfigValue("rejected", []);
+    });
+
+    // Regression test: DECISION 5 — bare `tools config` without a TTY must show the current
+    // state of every area and how to run it directly, never a bare "pick a subcommand" help.
+    it("prints one overview line per area, then one suggestCommand line per area, without prompting", async () => {
+        await applyProfilingFlags({ enable: true, scopes: "claude-history" });
+        const store = new Storage("packages");
+        await store.setConfigValue("rejected", ["example-optional-pkg"]);
+        const select = spyOn(facade, "select");
+
+        try {
+            const text = await captureStdout(() => printConfigOverview());
+
+            expect(select).not.toHaveBeenCalled();
+
+            const profilingLine = text.indexOf("profiling:");
+            const packagesLine = text.indexOf("packages:");
+            const profilingCmd = text.indexOf("tools config profiling");
+            const packagesCmd = text.indexOf("tools config packages");
+
+            expect(profilingLine).toBeGreaterThanOrEqual(0);
+            expect(packagesLine).toBeGreaterThanOrEqual(0);
+            // Both overview lines come before either suggestCommand line (two separate blocks).
+            expect(profilingCmd).toBeGreaterThan(packagesLine);
+            expect(packagesCmd).toBeGreaterThan(packagesLine);
+            expect(text).toContain("1 rejected");
+        } finally {
+            select.mockRestore();
+        }
+    });
+});
+
+describe("runConfigAreaPicker", () => {
+    afterEach(async () => {
+        rmTestPath(getGenesisToolsConfigPath());
+    });
+
+    // Regression test: DECISION 5 — bare `tools config` in a terminal shows a TUI select of the
+    // registered areas (profiling, packages, …), each carrying a one-line state summary, and
+    // picking one runs that area's OWN existing command rather than reimplementing it.
+    it("offers every registered area with a state hint, and running the picked one dispatches to its command", async () => {
+        const select = spyOn(facade, "select").mockImplementation(async () => "profiling");
+        // The picked `profiling` command prompts when stdin is a terminal; pin "not a terminal" so it only reports.
+        const stdinWasTty = process.stdin.isTTY;
+        Object.defineProperty(process.stdin, "isTTY", { value: false, configurable: true, writable: true });
+
+        try {
+            const text = await captureStdout(() => runConfigAreaPicker(buildConfigProgram()));
+
+            expect(select).toHaveBeenCalledTimes(1);
+            expect(select).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    options: expect.arrayContaining([
+                        expect.objectContaining({ value: "profiling" }),
+                        expect.objectContaining({ value: "packages" }),
+                    ]),
+                })
+            );
+            // Picking "profiling" ran the real `profiling` command (its own status table).
+            expect(text).toContain("Profiling");
+        } finally {
+            Object.defineProperty(process.stdin, "isTTY", { value: stdinWasTty, configurable: true, writable: true });
+            select.mockRestore();
+        }
+    });
+
+    it("does nothing when the picker is cancelled", async () => {
+        const select = spyOn(facade, "select").mockImplementation(async () => "cancelled-sentinel");
+        const isCancel = spyOn(facade, "isCancel").mockReturnValue(true);
+
+        try {
+            await expect(runConfigAreaPicker(buildConfigProgram())).resolves.toBeUndefined();
+        } finally {
+            select.mockRestore();
+            isCancel.mockRestore();
+        }
     });
 });

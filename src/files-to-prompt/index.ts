@@ -918,7 +918,7 @@ async function main(): Promise<void> {
                 if (!existsSync(outputFile)) {
                     await mkdir(outputFile, { recursive: true });
                 } else if (!statSync(outputFile).isDirectory()) {
-                    logger.error(`Error: Output path ${outputFile} exists but is not a directory.`);
+                    logger.error(`Output path ${outputFile} exists but is not a directory.`);
                     process.exit(1);
                 }
             } catch (error) {

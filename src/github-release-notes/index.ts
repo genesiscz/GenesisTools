@@ -105,7 +105,7 @@ async function fetchReleaseNotes(options: ScriptOptions): Promise<void> {
             } else if (error.response?.status === 404) {
                 logger.error(`Repository ${owner}/${repo} not found or no releases available.`);
             } else {
-                logger.error(`Error: ${error.message}`);
+                logger.error(error.message);
             }
         } else {
             logger.error(`An unknown error occurred: ${String(error)}`);

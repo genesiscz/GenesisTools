@@ -91,7 +91,9 @@ export function runMigrations(
                 ms,
             ]);
             db.run("COMMIT");
-            logger.info(`[migrate] applied ${m.id} on ${ctx.tableName} in ${ms}ms`);
+            // Console-silent by default (file log + --verbose only): #446 item 7, every
+            // first run of a migrated store printed this on a fresh install.
+            logger.debug(`[migrate] applied ${m.id} on ${ctx.tableName} in ${ms}ms`);
             applied.push(m.id);
         } catch (err) {
             try {

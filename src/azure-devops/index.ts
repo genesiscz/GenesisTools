@@ -248,7 +248,7 @@ async function main(): Promise<void> {
             exitWithAuthGuide(error);
         }
 
-        logger.error(`Error: ${message}`);
+        logger.error(message);
 
         if (error instanceof Error && error.stack) {
             logger.debug(error.stack);

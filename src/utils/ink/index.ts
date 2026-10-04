@@ -24,6 +24,6 @@ export { useTerminalSize } from "./hooks/use-terminal-size.js";
 
 // Lib
 export { renderFullScreen } from "./lib/fullscreen.js";
-
 // Theme
 export { colors, symbols } from "./lib/theme.js";
+export { requireInteractiveTty } from "./lib/tty-guard.js";

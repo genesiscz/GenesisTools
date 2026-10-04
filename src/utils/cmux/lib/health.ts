@@ -1,3 +1,4 @@
+import { isCmuxAccessDenied } from "@genesiscz/utils/cmux/lib/access-denied";
 import { runCmux } from "@genesiscz/utils/cmux/lib/cli";
 import { logger } from "@genesiscz/utils/logger";
 
@@ -6,8 +7,12 @@ import { logger } from "@genesiscz/utils/logger";
  * UI thread, while state commands (`identify`, `list-panes`, …) require it — so a
  * livelocked UI thread (2026-08-27 Task Manager incident) leaves ping healthy and
  * every state command starving forever. Probing both sides tells the states apart.
+ *
+ * `access-denied` is a THIRD distinct signature (#446 item 2): cmux is answering
+ * fine, it is just refusing a caller that was not started inside a cmux pane. That
+ * must never read as `socket-dead` — the fix is a different shell, not a restart.
  */
-export type CmuxHealthState = "healthy" | "not-running" | "socket-dead" | "ui-starved";
+export type CmuxHealthState = "healthy" | "not-running" | "socket-dead" | "ui-starved" | "access-denied";
 
 export interface CmuxProbeResult {
     ok: boolean;
@@ -37,7 +42,13 @@ export function classifyCmuxHealth(input: {
     appRunning: boolean;
     pingOk: boolean;
     identifyOk: boolean;
+    /** cmux answered, but with "Access denied - only processes started inside cmux can connect". */
+    accessDenied?: boolean;
 }): CmuxHealthState {
+    if (input.accessDenied) {
+        return "access-denied";
+    }
+
     if (input.pingOk && input.identifyOk) {
         return "healthy";
     }
@@ -114,8 +125,15 @@ export async function probeCmuxHealth(opts: ProbeCmuxHealthOptions = {}): Promis
         ? await timedProbe(["identify"], identifyTimeoutMs)
         : { ok: false, ms: 0, detail: "skipped (ping failed)" };
 
+    const accessDenied = isCmuxAccessDenied(ping.detail) || isCmuxAccessDenied(identify.detail);
+
     return {
-        state: classifyCmuxHealth({ appRunning: app !== undefined, pingOk: ping.ok, identifyOk: identify.ok }),
+        state: classifyCmuxHealth({
+            appRunning: app !== undefined,
+            pingOk: ping.ok,
+            identifyOk: identify.ok,
+            accessDenied,
+        }),
         appPid: app?.pid,
         appCpu: app?.cpu,
         probes: { ping, capabilities, identify },
@@ -143,6 +161,11 @@ function describeUnresponsive(context: string, health: CmuxHealth): string {
                 `${context}: cmux's UI thread is not responding (ping answers in ${health.probes.ping.ms} ms but ` +
                 `identify starved${health.appCpu !== undefined ? `, app CPU ${health.appCpu}%` : ""}) — likely a UI livelock. ` +
                 "Run `tools cmux doctor` for triage and the rescue recipe."
+            );
+        case "access-denied":
+            return (
+                `${context}: cmux refused the connection (only processes started inside cmux can connect) — ` +
+                "run this from a cmux pane, or change cmux's socket access setting."
             );
         default:
             return `${context}: cmux unhealthy`;

@@ -18,7 +18,7 @@ export function registerDoctorCommand(parent: Command): void {
         });
 }
 
-async function runDoctor(flags: DoctorFlags): Promise<void> {
+export async function runDoctor(flags: DoctorFlags): Promise<void> {
     const health = await probeCmuxHealth({ full: true, identifyTimeoutMs: 5000 });
     // A green socket says nothing about whether THIS shell can type into its own
     // prompt: send-self failed for weeks while every line below it read ok.
@@ -51,6 +51,12 @@ async function runDoctor(flags: DoctorFlags): Promise<void> {
             break;
         case "socket-dead":
             ui.err("the app is running but the socket does not answer. A restart of cmux is likely required.");
+            break;
+        case "access-denied":
+            ui.err(
+                "cmux is running and answering, but refuses this connection (only processes started inside " +
+                    "cmux can connect) — run this from a cmux pane, or change cmux's socket access setting."
+            );
             break;
         case "ui-starved":
             ui.err(

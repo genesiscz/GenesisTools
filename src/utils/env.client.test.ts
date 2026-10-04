@@ -30,7 +30,13 @@ describe("env.client", () => {
     it("full env re-exposes the client domains from the same source", () => {
         expect(env.dashboard).toBe(clientEnv.dashboard);
         expect(env.db).toBe(clientEnv.db);
-        expect(env.node).toBe(clientEnv.node);
+        // env.node extends the client domain with a server-only setter (setDefaultEnv), so
+        // assert the client getters are re-exposed rather than object identity — same
+        // reasoning as env.youtube below.
+        expect(env.node.getEnv).toBe(clientEnv.node.getEnv);
+        expect(env.node.isProduction).toBe(clientEnv.node.isProduction);
+        expect(env.node.getPort).toBe(clientEnv.node.getPort);
+        expect(env.node.isVitest).toBe(clientEnv.node.isVitest);
         // env.youtube extends the client domain with server-only getters, so
         // assert the client getters are re-exposed rather than object identity.
         expect(env.youtube.getGitSha).toBe(clientEnv.youtube.getGitSha);

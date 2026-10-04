@@ -77,7 +77,16 @@ async function runCompute(algo: HashAlgo, patterns: string[]): Promise<number> {
         } catch (error) {
             failures++;
             out.error(`hash: ${file}: could not read`);
-            logger.warn({ file, error }, "hash: failed to read file");
+
+            // A missing file is common and already fully explained by the line above;
+            // only an unusual read failure (permissions, I/O error) earns the console
+            // WARN with its full detail (#446 item 8).
+            const notFound = error instanceof Error && "code" in error && error.code === "ENOENT";
+            if (notFound) {
+                logger.debug({ file, error }, "hash: failed to read file (not found)");
+            } else {
+                logger.warn({ file, error }, "hash: failed to read file");
+            }
         }
     }
 

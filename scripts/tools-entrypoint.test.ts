@@ -62,3 +62,16 @@ describe("tools dispatcher", () => {
         expect(output).toContain("macos");
     });
 });
+
+// Regression test: D1 wiring — `tools` loads the build-offer check for a gated tool before it
+// dispatches, so a broken import path would fail every `tools control` call. The offer itself
+// needs a terminal, which a test never has; its decisions are tested in
+// src/macos/lib/permissions/app.test.ts.
+describe("gated-tool dispatch", () => {
+    it("loads the build-offer check and still runs the tool", () => {
+        const { status, output } = runTools("control", "--help");
+
+        expect(status).toBe(0);
+        expect(output).toContain("Usage: control");
+    });
+});

@@ -1,7 +1,22 @@
 import { formatDuration } from "@genesiscz/utils/format";
 import { formatTable } from "@genesiscz/utils/table";
 import { detectDuplicateTools, type ServerTools } from "./duplicates";
-import type { DoctorReport, NormalizedServer, ProbeResult, Status } from "./types";
+import type { ConfigSource, DoctorReport, NormalizedServer, ProbeResult, Status } from "./types";
+
+/** Every config file `discover()` reads, in the order `mergeServers` layers them. */
+export const CONFIG_SOURCES: readonly ConfigSource[] = ["~/.claude.json", ".mcp.json", ".cursor/mcp.json"];
+
+/**
+ * The "no servers" empty state (#446 item 10): name the sources that were
+ * actually read, and say plainly what this listing does NOT cover — a
+ * claude.ai connector or a plugin-provided server never appears here.
+ */
+export function formatEmptyServersMessage(): string {
+    return (
+        `No MCP servers configured in ${CONFIG_SOURCES.join(", ")}. ` +
+        "claude.ai connectors and plugin-provided servers are not included."
+    );
+}
 
 export interface ClassifyInput {
     startedAt: number;

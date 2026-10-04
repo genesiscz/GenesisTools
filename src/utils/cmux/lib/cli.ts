@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { isCmuxAccessDenied } from "@genesiscz/utils/cmux/lib/access-denied";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
@@ -149,11 +150,26 @@ export async function runCmux(args: string[], opts: { json?: boolean } & CmuxTim
     return { code: exitCode, stdout, stderr };
 }
 
+/**
+ * "Access denied - only processes started inside cmux can connect" is a recognized,
+ * explained condition (#446 item 2), not an unexpected failure — logging it at
+ * `error` level dumped a raw ERROR block with the full args/stderr before the
+ * caller's own friendly report ever printed.
+ */
+function logCmuxFailure(args: string[], code: number, stderr: string): void {
+    if (isCmuxAccessDenied(stderr)) {
+        logger.debug({ args, code, stderr }, "[cmux] access denied (not started inside a cmux pane)");
+        return;
+    }
+
+    logger.error({ args, code, stderr }, "[cmux] command failed");
+}
+
 export async function runCmuxJSON<T = unknown>(args: string[], opts: CmuxTimeoutOpt = {}): Promise<T> {
     const result = await runCmux(args, { json: true, ...opts });
     if (result.code !== 0) {
         const message = `cmux ${args.join(" ")} failed (${result.code}): ${result.stderr.trim()}`;
-        logger.error({ args, code: result.code, stderr: result.stderr }, "[cmux] command failed");
+        logCmuxFailure(args, result.code, result.stderr);
         throw new Error(message);
     }
     try {
@@ -167,7 +183,7 @@ export async function runCmuxJSON<T = unknown>(args: string[], opts: CmuxTimeout
 export async function runCmuxOk(args: string[], opts: CmuxTimeoutOpt = {}): Promise<CmuxRunResult> {
     const result = await runCmux(args, opts);
     if (result.code !== 0) {
-        logger.error({ args, code: result.code, stderr: result.stderr }, "[cmux] command failed");
+        logCmuxFailure(args, result.code, result.stderr);
         throw new Error(`cmux ${args.join(" ")} failed (${result.code}): ${result.stderr.trim()}`);
     }
     return result;

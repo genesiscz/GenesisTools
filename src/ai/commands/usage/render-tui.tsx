@@ -1,3 +1,4 @@
+import "@genesiscz/utils/ink/react-production";
 import { anthropicPresenters } from "@app/claude/commands/usage/presenter";
 import type { UsagePresenters } from "@genesiscz/utils/ai/providers/account-features";
 import { renderFullScreen } from "@genesiscz/utils/ink";

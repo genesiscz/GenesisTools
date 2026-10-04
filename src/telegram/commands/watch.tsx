@@ -1,5 +1,7 @@
+import "@genesiscz/utils/ink/react-production";
 import { ReadStream } from "node:tty";
 import * as p from "@clack/prompts";
+import { requireInteractiveTty } from "@genesiscz/utils/ink/lib/tty-guard";
 import type { Command } from "commander";
 import { render } from "ink";
 import type { NewMessageEvent } from "telegram/events";
@@ -17,6 +19,10 @@ export function registerWatchCommand(program: Command): void {
         .description("Watch a conversation in real-time with AI assistant features")
         .option("--context-length <n>", "Number of recent messages to show", Number.parseInt)
         .action(async (contactArg: string | undefined, opts: { contextLength?: number }) => {
+            if (!requireInteractiveTty()) {
+                process.exit(1);
+            }
+
             const config = new TelegramToolConfig();
             const data = await config.load();
 

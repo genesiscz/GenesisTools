@@ -17,7 +17,6 @@ export class ConversationManager {
 
     constructor(conversationsDir = DEFAULT_CONVERSATIONS_DIR) {
         this.conversationsDir = resolve(conversationsDir);
-        this.ensureDirectoryExists();
     }
 
     private ensureDirectoryExists(): void {
@@ -33,6 +32,7 @@ export class ConversationManager {
 
     async saveConversation(session: ChatSession): Promise<void> {
         try {
+            this.ensureDirectoryExists();
             const filePath = this.getFilePath(session.id);
             const sessionData = {
                 ...session,
@@ -83,6 +83,12 @@ export class ConversationManager {
     }
 
     async listConversations(): Promise<ConversationMetadata[]> {
+        // The directory is created by the first save, so a missing one is the normal empty state.
+        if (!existsSync(this.conversationsDir)) {
+            logger.debug(`No conversations directory yet: ${this.conversationsDir}`);
+            return [];
+        }
+
         try {
             const files = await readdir(this.conversationsDir);
             const jsonFiles = files.filter((file) => file.endsWith(".json"));

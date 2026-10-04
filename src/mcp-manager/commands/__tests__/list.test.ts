@@ -96,7 +96,7 @@ describe("listServers", () => {
 
         await listServers([mockProvider]);
 
-        expect(logger.info).toHaveBeenCalledWith("No MCP servers found.");
+        expect(logger.info).toHaveBeenCalledWith(expect.stringContaining("No MCP servers found"));
     });
 
     it("should skip providers without config files", async () => {
@@ -106,7 +106,21 @@ describe("listServers", () => {
 
         await listServers([mockProvider]);
 
-        expect(logger.info).toHaveBeenCalledWith("No MCP servers found.");
+        expect(logger.info).toHaveBeenCalledWith(expect.stringContaining("No MCP servers found"));
+    });
+
+    // Regression test: #446 item 10 — the empty state said "No MCP servers
+    // found." with no hint about which files were read or what is excluded.
+    it("names the providers it scanned and excludes claude.ai connectors and plugins in the empty state", async () => {
+        mockProvider.listServersResult = [];
+
+        spyOn(logger, "info");
+
+        await listServers([mockProvider]);
+
+        expect(logger.info).toHaveBeenCalledWith(expect.stringContaining("claude"));
+        expect(logger.info).toHaveBeenCalledWith(expect.stringContaining("claude.ai connectors"));
+        expect(logger.info).toHaveBeenCalledWith(expect.stringContaining("plugin-provided servers"));
     });
 
     it("should handle errors when reading provider configs", async () => {
@@ -118,6 +132,22 @@ describe("listServers", () => {
         await listServers([mockProvider]);
 
         expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining("Failed to read claude config"));
+    });
+
+    // Regression test: PR #456 review — a provider whose config read threw vanished from the empty
+    // state, which then claimed there were no provider config files at all
+    it("names a provider whose read failed in the empty state", async () => {
+        mockProvider.errors.set("listServers", new Error("Read failed"));
+
+        spyOn(logger, "warn");
+        const info = spyOn(logger, "info");
+        info.mockClear();
+
+        await listServers([mockProvider]);
+
+        const lines = info.mock.calls.map((call) => String(call[0])).join("\n");
+        expect(lines).toContain("claude (read failed)");
+        expect(lines).not.toContain("no provider config files");
     });
 
     it("should display status correctly for all enabled", async () => {

@@ -20,8 +20,16 @@ export interface ConfigOptions {
  * @param options.path - If true, only prints the path without opening
  */
 export async function openConfig(options: ConfigOptions = {}): Promise<void> {
-    await mcpStorage().ensureDirs();
     const configPath = getUnifiedConfigPath();
+
+    // A pure path query must not write: creating the file (or even its directory)
+    // on a fresh machine is what `--path` is supposed to avoid (#447 section F).
+    if (options.path) {
+        logger.info(`Config file: ${configPath}`);
+        return;
+    }
+
+    await mcpStorage().ensureDirs();
 
     // Only create default config if file doesn't exist on disk.
     // Don't rely on getConfig() returning null — that also happens on parse errors,
@@ -48,8 +56,8 @@ export async function openConfig(options: ConfigOptions = {}): Promise<void> {
     // Always show the path first
     logger.info(`Config file: ${configPath}`);
 
-    // If --path flag or non-interactive, just show the path and exit
-    if (options.path || !isInteractive()) {
+    // If non-interactive, just show the path and exit
+    if (!isInteractive()) {
         return;
     }
 

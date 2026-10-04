@@ -28,7 +28,7 @@ async function main(): Promise<void> {
         await runTool(program, { tool: "json" });
     } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        logger.error(`Error: ${message}`);
+        logger.error(message);
 
         if (error instanceof Error && error.stack) {
             logger.debug(error.stack);

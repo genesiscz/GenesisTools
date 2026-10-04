@@ -1,5 +1,6 @@
 import { resolveRangeFlag } from "@app/ai/lib/usage/range-flag";
 import { suggestCommand, suggestEnumFlag } from "@genesiscz/utils/cli";
+import { requireInteractiveTty } from "@genesiscz/utils/ink/lib/tty-guard";
 import { RANGE_VALUES } from "@genesiscz/utils/ink/usage-dashboard/types";
 import { logger, out } from "@genesiscz/utils/logger";
 import { profiler } from "@genesiscz/utils/profile";
@@ -174,6 +175,10 @@ export function registerUsageCommand(program: Command): void {
                 out.print(renderAllAccounts(results));
             }
 
+            return;
+        }
+
+        if (!requireInteractiveTty({ hint: "use --json or --no-tui for a non-interactive terminal" })) {
             return;
         }
 

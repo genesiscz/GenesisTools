@@ -1,8 +1,9 @@
 import { Database } from "bun:sqlite";
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it, spyOn } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { logger } from "@genesiscz/utils/logger";
 import { getPendingMigrations, type Migration, runMigrations } from "./migrations";
 
 /** Two handles on ONE file, configured the way `BaseDatabase` configures them. */
@@ -187,6 +188,22 @@ describe("runMigrations", () => {
         expect(other.query("SELECT id FROM _migrations WHERE id = 'usage_limits:add-z'").get()).not.toBeNull();
         mine.close();
         other.close();
+    });
+
+    // Regression test: #446 item 7 — `tools stash list` printed "[migrate] applied …"
+    // on every first run because this fired at the console-visible "info" level.
+    it("logs the applied migration at debug level, not info, so it stays silent without --verbose", () => {
+        const db = new Database(":memory:");
+        const infoSpy = spyOn(logger, "info");
+        const debugSpy = spyOn(logger, "debug");
+
+        runMigrations(db, [noopMigration], { tableName: "t" });
+
+        expect(infoSpy).not.toHaveBeenCalled();
+        expect(debugSpy).toHaveBeenCalledWith(expect.stringContaining("[migrate] applied noop on t"));
+        infoSpy.mockRestore();
+        debugSpy.mockRestore();
+        db.close();
     });
 
     it("rolls back migration DDL when apply throws", () => {

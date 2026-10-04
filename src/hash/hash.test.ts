@@ -143,6 +143,31 @@ async function verifyEntries(dir: string, algo: HashAlgo, entries: ChecksumEntry
     return results;
 }
 
+describe("hash CLI: missing file", () => {
+    // Regression test: #446 item 8 — a missing file printed the clear "could not
+    // read" line, then a structured WARN dump with the full ENOENT stack trace.
+    it("prints one clear line for ENOENT, with no structured WARN or stack dump", async () => {
+        const home = mkdtempSync(join(tmpdir(), "gt-hash-home-"));
+        try {
+            const proc = Bun.spawn({
+                cmd: ["bun", "run", join(import.meta.dir, "index.ts"), "definitely-missing-file.bin"],
+                cwd: import.meta.dir,
+                env: { ...process.env, GENESIS_TOOLS_HOME: home, NO_COLOR: "1" },
+                stdout: "pipe",
+                stderr: "pipe",
+            });
+            const [stderr, exitCode] = await Promise.all([new Response(proc.stderr).text(), proc.exited]);
+
+            expect(exitCode).toBe(1);
+            expect(stderr).toContain("hash: definitely-missing-file.bin: could not read");
+            expect(stderr).not.toContain("WARN");
+            expect(stderr).not.toContain("ENOENT");
+        } finally {
+            rmSync(home, { recursive: true, force: true });
+        }
+    });
+});
+
 describe("end-to-end verify against tmp files", () => {
     it("reports OK for matching files and FAILED for tampered/missing ones", async () => {
         const dir = mkdtempSync(join(tmpdir(), "gt-hash-"));

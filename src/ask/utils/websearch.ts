@@ -9,9 +9,6 @@ export class WebSearchTool {
 
     constructor() {
         this.apiKey = env.brave.getKey();
-        if (!this.apiKey) {
-            logger.warn("BRAVE_API_KEY not found. Web search functionality will be disabled.");
-        }
     }
 
     isAvailable(): boolean {
@@ -154,6 +151,10 @@ export class WebSearchTool {
 
     createSearchTool() {
         if (!this.isAvailable()) {
+            // Warn here, not in the constructor: this fires only when something actually
+            // tries to equip a chat with web search, not on every `tools ask` invocation
+            // including `--help` (#446 item 6).
+            logger.warn("BRAVE_API_KEY not found. Web search functionality will be disabled.");
             return null;
         }
 

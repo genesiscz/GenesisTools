@@ -29,7 +29,7 @@ async function main(): Promise<void> {
         await runTool(program, { tool: "genesis-tools-mcp" });
     } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        logger.error(`Error: ${message}`);
+        logger.error(message);
         process.exit(1);
     }
 }

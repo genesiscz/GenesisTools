@@ -2,7 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { mergeServers } from "./lib/discovery";
 import { detectDuplicateTools } from "./lib/duplicates";
 import { probeServer } from "./lib/probe";
-import { buildReport, classifyResult, formatHealthTable } from "./lib/report";
+import { buildReport, classifyResult, formatEmptyServersMessage, formatHealthTable } from "./lib/report";
 import { isInvalidServer, type NormalizedServer, type ProbeResult } from "./lib/types";
 
 describe("mergeServers", () => {
@@ -92,6 +92,20 @@ describe("mergeServers", () => {
         });
 
         expect(servers.map((s) => s.name)).toEqual(["alpha", "zebra"]);
+    });
+});
+
+describe("formatEmptyServersMessage", () => {
+    // Regression test: #446 item 10 — the empty state said "No MCP servers
+    // configured" with no hint about which files were read or what is excluded.
+    it("names every config source it reads and excludes claude.ai connectors and plugins", () => {
+        const message = formatEmptyServersMessage();
+
+        expect(message).toContain("~/.claude.json");
+        expect(message).toContain(".mcp.json");
+        expect(message).toContain(".cursor/mcp.json");
+        expect(message).toContain("claude.ai connectors");
+        expect(message).toContain("plugin-provided servers");
     });
 });
 

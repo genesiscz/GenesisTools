@@ -1,6 +1,8 @@
 #!/usr/bin/env bun
 
+import "@genesiscz/utils/ink/react-production";
 import { parseArgs } from "node:util";
+import { requireInteractiveTty } from "@genesiscz/utils/ink/lib/tty-guard";
 import { logger, out } from "@genesiscz/utils/logger";
 import { sendNotification } from "@genesiscz/utils/macos/notifications";
 import { speak } from "@genesiscz/utils/macos/tts";
@@ -612,6 +614,10 @@ if (import.meta.main) {
     if (options === "help") {
         out.print(HELP);
         process.exit(0);
+    }
+
+    if (!requireInteractiveTty()) {
+        process.exit(1);
     }
 
     render(<App options={options} />, {

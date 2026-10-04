@@ -18,6 +18,8 @@
  *
  *   tools macos permissions [status|build|ui|enable|disable|open --pane <name>]
  *
+ *   tools macos doctor [--json]    (every read-only check below, in one pass)
+ *
  *   tools macos calendar doctor
  *   tools macos calendar list-calendars
  *   tools macos calendar list [name] [--from/--to]
@@ -26,6 +28,7 @@
  *   tools macos calendar update <event-id> [options]
  *   tools macos calendar delete <event-id>
  *
+ *   tools macos reminders doctor
  *   tools macos reminders list-lists
  *   tools macos reminders list [name] [--include-completed]
  *   tools macos reminders search <query> [--list <name>]
@@ -69,6 +72,7 @@ const REGISTRARS: Record<string, () => Promise<(program: Command) => void>> = {
     // `permissions` sat third and a diff of `tools macos --help` caught it moving.
     calendar: async () => (await import("@app/macos/commands/calendar/index")).registerCalendarCommand,
     clones: async () => (await import("@app/macos/commands/clones/index")).registerClonesCommand,
+    doctor: async () => (await import("@app/macos/commands/doctor/index")).registerDoctorCommand,
     permissions: async () => (await import("@app/macos/commands/permissions/index")).registerPermissionsCommand,
     control: async () => (await import("@app/macos/commands/control/index")).registerControlCommand,
     mail: async () => (await import("@app/macos/commands/mail/index")).registerMailCommand,
@@ -98,7 +102,7 @@ async function main(): Promise<void> {
         await runTool(program, { tool: "macos" });
     } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        logger.error(`Error: ${message}`);
+        logger.error(message);
 
         // Every permission-aware path (MacDatabase, Voice Memos, Calendar) already prints the
         // grant it needs, who holds it and how to switch it on. A second generic block here used

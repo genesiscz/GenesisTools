@@ -272,10 +272,18 @@ export async function listServers(providers: MCPProvider[], options: ListOptions
         return;
     }
 
-    const { byName } = await collect(providers);
+    const { byName, scanned, failed } = await collect(providers);
 
     if (byName.size === 0) {
-        logger.info("No MCP servers found.");
+        // Name the sources that were actually read (#446 item 10): an empty
+        // result here says nothing about a claude.ai connector or a
+        // plugin-provided server, which this listing never sees. A provider
+        // whose read threw was tried too, so it is named, not dropped.
+        const tried = [...scanned, ...failed.map(({ provider }) => `${provider} (read failed)`)];
+        const sources = tried.length > 0 ? tried.join(", ") : "no provider config files";
+        logger.info(
+            `No MCP servers found (checked ${sources}). claude.ai connectors and plugin-provided servers are not included.`
+        );
         return;
     }
 

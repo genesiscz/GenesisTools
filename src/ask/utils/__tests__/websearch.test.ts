@@ -1,8 +1,29 @@
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it, spyOn } from "bun:test";
 import { env } from "@genesiscz/utils/env";
+import { logger } from "@genesiscz/utils/logger";
 import { WebSearchTool } from "../websearch";
 
 describe("WebSearchTool", () => {
+    // Regression test: #446 item 6 — `tools ask --help` warned about a missing
+    // BRAVE_API_KEY before the tool was ever asked to do anything.
+    it("does not warn about a missing key on construction", () => {
+        const saved = env.brave.getKey();
+        env.testing.unset("BRAVE_API_KEY");
+        const warnSpy = spyOn(logger, "warn");
+        const callsBefore = warnSpy.mock.calls.length;
+
+        new WebSearchTool();
+
+        expect(warnSpy.mock.calls.length).toBe(callsBefore);
+        warnSpy.mockRestore();
+
+        if (saved) {
+            env.testing.set("BRAVE_API_KEY", saved);
+        } else {
+            env.testing.unset("BRAVE_API_KEY");
+        }
+    });
+
     describe("createSearchTool()", () => {
         it("returns null when BRAVE_API_KEY is not set", () => {
             // Save and clear
@@ -14,6 +35,28 @@ describe("WebSearchTool", () => {
             expect(result).toBeNull();
 
             // Restore
+            if (saved) {
+                env.testing.set("BRAVE_API_KEY", saved);
+            } else {
+                env.testing.unset("BRAVE_API_KEY");
+            }
+        });
+
+        it("warns about the missing key only once web search is actually requested", () => {
+            const saved = env.brave.getKey();
+            env.testing.unset("BRAVE_API_KEY");
+            const warnSpy = spyOn(logger, "warn");
+            const callsBeforeConstruct = warnSpy.mock.calls.length;
+
+            const tool = new WebSearchTool();
+            const callsAfterConstruct = warnSpy.mock.calls.length;
+            expect(callsAfterConstruct).toBe(callsBeforeConstruct);
+
+            tool.createSearchTool();
+            expect(warnSpy.mock.calls.length).toBeGreaterThan(callsAfterConstruct);
+            expect(warnSpy.mock.calls.at(-1)?.[0]).toEqual(expect.stringContaining("BRAVE_API_KEY not found"));
+            warnSpy.mockRestore();
+
             if (saved) {
                 env.testing.set("BRAVE_API_KEY", saved);
             } else {

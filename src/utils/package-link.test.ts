@@ -5,11 +5,13 @@ import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import {
     configPathFor,
+    importsPackage,
     linkIsSound,
     linkStatusFor,
     linkUtilsPackage,
     nearestConfigFor,
     PACKAGE_NAME,
+    packageImporterDirs,
     shadowedByFor,
     unlinkUtilsPackage,
     utilsPackageDir,
@@ -43,6 +45,83 @@ afterEach(() => {
     for (const root of roots.splice(0)) {
         rmSync(root, { recursive: true, force: true });
     }
+});
+
+// Regression test: PR #456 review — json2md only looked for the package name in the document's own
+// source, so a document reaching it through a local helper skipped the link check
+describe("importsPackage", () => {
+    test("a direct import of the package counts", async () => {
+        const dir = scratch();
+        writeFileSync(join(dir, "doc.ts"), `import { defineDocument } from "${PACKAGE_NAME}/json2md/document-file";\n`);
+
+        expect(await importsPackage(join(dir, "doc.ts"))).toBe(true);
+    });
+
+    test("an import through a local helper counts, extension omitted", async () => {
+        const dir = scratch();
+        mkdirSync(join(dir, "lib"));
+        writeFileSync(
+            join(dir, "lib", "helper.ts"),
+            `export { defineDocument } from "${PACKAGE_NAME}/json2md/document-file";\n`
+        );
+        writeFileSync(
+            join(dir, "doc.ts"),
+            'import { defineDocument } from "./lib/helper";\nexport default defineDocument;\n'
+        );
+
+        expect(await importsPackage(join(dir, "doc.ts"))).toBe(true);
+    });
+
+    test("local modules that never import it do not count, and an import cycle ends", async () => {
+        const dir = scratch();
+        writeFileSync(
+            join(dir, "a.ts"),
+            'import { b } from "./b";\nimport { useState } from "react";\nexport const a = b;\n'
+        );
+        writeFileSync(join(dir, "b.ts"), 'import { a } from "./a";\nexport const b = 1;\nexport { a };\n');
+
+        expect(await importsPackage(join(dir, "a.ts"))).toBe(false);
+    });
+
+    // Regression test: PR #456 review round 4 — a `#` import mapped by package.json stopped the scan
+    test("an import through a package.json `#` mapping counts, exact and wildcard", async () => {
+        const dir = scratch();
+        mkdirSync(join(dir, "lib"));
+        writeFileSync(
+            join(dir, "package.json"),
+            SafeJSON.stringify({
+                imports: { "#helper": "./lib/helper.ts", "#lib/*": { bun: "./lib/*.ts", default: "./missing/*.js" } },
+            })
+        );
+        writeFileSync(join(dir, "lib", "helper.ts"), `export * from "${PACKAGE_NAME}/json2md/document-file";\n`);
+        writeFileSync(join(dir, "exact.ts"), 'export * from "#helper";\n');
+        writeFileSync(join(dir, "wild.ts"), 'export * from "#lib/helper";\n');
+        writeFileSync(join(dir, "unmapped.ts"), 'export * from "#nothing";\n');
+
+        expect(await importsPackage(join(dir, "exact.ts"))).toBe(true);
+        expect(await importsPackage(join(dir, "wild.ts"))).toBe(true);
+        expect(await importsPackage(join(dir, "unmapped.ts"))).toBe(false);
+    });
+});
+
+// Regression test: PR #456 review round 4 — the link check probed only the document's folder, so a
+// helper in a separately linked project made a working document look unlinked
+describe("packageImporterDirs", () => {
+    test("names the folder of each module that imports the package, not the entry's", async () => {
+        const docDir = scratch();
+        const helperDir = scratch();
+        writeFileSync(join(helperDir, "helper.ts"), `export * from "${PACKAGE_NAME}/json2md/document-file";\n`);
+        writeFileSync(join(docDir, "doc.ts"), `export * from ${SafeJSON.stringify(join(helperDir, "helper.ts"))};\n`);
+
+        expect(await packageImporterDirs(join(docDir, "doc.ts"))).toEqual([helperDir]);
+    });
+
+    test("is empty when nothing in the graph imports the package", async () => {
+        const dir = scratch();
+        writeFileSync(join(dir, "doc.ts"), "export const x = 1;\n");
+
+        expect(await packageImporterDirs(join(dir, "doc.ts"))).toEqual([]);
+    });
 });
 
 describe("linkUtilsPackage", () => {

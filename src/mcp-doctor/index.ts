@@ -4,7 +4,7 @@ import { out } from "@genesiscz/utils/logger";
 import { Command } from "commander";
 import { mergeServers, readConfigSources } from "./lib/discovery";
 import { probeServer } from "./lib/probe";
-import { buildReport, formatConfigTable, formatHealthTable } from "./lib/report";
+import { buildReport, formatConfigTable, formatEmptyServersMessage, formatHealthTable } from "./lib/report";
 import type { NormalizedServer, ProbeResult } from "./lib/types";
 
 interface SharedOpts {
@@ -74,7 +74,7 @@ withSharedOptions(program.command("list"))
         }
 
         if (servers.length === 0) {
-            out.log.warn("No MCP servers configured.");
+            out.log.warn(formatEmptyServersMessage());
             return;
         }
 
