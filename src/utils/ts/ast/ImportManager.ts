@@ -43,6 +43,12 @@ function importedNameOf(s: ImportSpecifier): string | undefined {
     return typeof name === "string" ? name : undefined;
 }
 
+/** `import { type Props } from "ui"`: a type-only named specifier inside a value import. */
+function isInlineTypeSpecifier(s: ImportSpecifier): boolean {
+    // the ast-types ImportSpecifier type has no importKind field, although the tsx parser sets it
+    return "importKind" in s && s.importKind === "type";
+}
+
 /** A specifier's explicit local name. */
 function localOf(s: AnyImportSpecifier): string | undefined {
     const name = s.local?.name;
@@ -508,6 +514,8 @@ interface ImportSpecMem {
     imported: string;
     /** Local binding name (for a namespace: the namespace name) */
     local: string;
+    /** A named specifier of a value import that carries its own `type` marker: `import { type Props }` */
+    typeOnly?: boolean;
 }
 
 interface ModuleMem {
@@ -572,8 +580,11 @@ export class ImportManagerMemoryImpl implements ImportManager {
                 } else if (s.type === "ImportSpecifier") {
                     const imported = importedNameOf(s) ?? "";
                     const local = typeof s.local?.name === "string" ? s.local.name : imported;
-                    this.debug(`[Imports:Mem] ${mod} add named ${imported} as ${local} (${kind})`);
-                    m[kind].push({ kind: "named", imported, local });
+                    const typeOnly = kind === "value" && isInlineTypeSpecifier(s);
+                    this.debug(
+                        `[Imports:Mem] ${mod} add named ${imported} as ${local} (${typeOnly ? "inline type" : kind})`
+                    );
+                    m[kind].push({ kind: "named", imported, local, typeOnly });
                 }
             }
         });
@@ -606,8 +617,15 @@ export class ImportManagerMemoryImpl implements ImportManager {
     ensureImport(module: string, importedName: string, localName?: string): { localName: string } {
         const m = this.ensureModuleMem(module);
         const targetLocal = localName || importedName;
-        const exists = m.value.some((s) => s.local === targetLocal && s.imported === (importedName || s.imported));
-        if (!exists) {
+        const existing = m.value.find((s) => s.local === targetLocal && s.imported === (importedName || s.imported));
+        if (existing?.typeOnly) {
+            // the caller needs the value; a value import brings the type along, so the inline marker goes
+            existing.typeOnly = false;
+            this.logImportChange(module, importedName, "ensure", "was an inline type import");
+            this.debug(`[Imports:Mem] ensureImport ${module} ${importedName} drops its inline type marker`);
+        }
+
+        if (!existing) {
             if (importedName === "default") {
                 m.value.push({ kind: "default", imported: "default", local: targetLocal });
             } else if (importedName === "*") {
@@ -754,9 +772,11 @@ export class ImportManagerMemoryImpl implements ImportManager {
 
         for (const s of specs) {
             if (s.kind === "named") {
-                list.push(
-                    j.importSpecifier(j.identifier(s.imported), s.local !== s.imported ? j.identifier(s.local) : null)
+                const spec = j.importSpecifier(
+                    j.identifier(s.imported),
+                    s.local !== s.imported ? j.identifier(s.local) : null
                 );
+                list.push(s.typeOnly ? Object.assign(spec, { importKind: "type" }) : spec);
             }
         }
 

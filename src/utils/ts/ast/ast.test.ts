@@ -856,6 +856,22 @@ describe("ImportManagerMemoryImpl", () => {
     });
 });
 
+describe("ImportManagerMemoryImpl inline type markers", () => {
+    it("keeps `type` on a named import, and ensureImport of that name turns it into a value import", () => {
+        const source = `import { type Props, Card } from "ui";\nimport { type Size } from "tokens";\nconst x = 1;`;
+        const root = j(source);
+        const imports = new ImportManagerMemoryImpl(j, root, createAutoLogger(), { path: "file.tsx", source });
+
+        imports.scan();
+        imports.ensureImport("tokens", "Size");
+        imports.applyChanges();
+
+        expect(flat(root.toSource())).toBe(
+            `import { type Props, Card } from "ui"; import { Size } from "tokens"; const x = 1;`
+        );
+    });
+});
+
 // ============================================================================
 // ImportConflictResolver
 // ============================================================================
