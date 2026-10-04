@@ -499,7 +499,15 @@ export class MacReminders {
 
     static async listLists(options?: GuardOptions): Promise<ReminderListInfo[]> {
         await MacReminders.ensureAuthorized({ timeoutMs: options?.timeoutMs, requestIfNeeded: isInteractive() });
+        return MacReminders.listListsUnguarded(options);
+    }
 
+    /**
+     * Unguarded: a caller that already knows the authorization state (a diagnostic that
+     * checked `authorizationStatus()` itself) can list without `ensureAuthorized` re-checking
+     * it, which would otherwise risk the doctor rule that a diagnostic must never prompt.
+     */
+    static async listListsUnguarded(options?: GuardOptions): Promise<ReminderListInfo[]> {
         const result = await runDarwinkitGuarded(
             getDarwinKit(),
             "reminders.lists",

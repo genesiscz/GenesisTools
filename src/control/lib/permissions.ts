@@ -398,7 +398,10 @@ export function buildChecks(input: {
         let detail: string;
 
         if (liveValue !== undefined) {
-            status = liveValue ? "granted" : recorded === "not-determined" ? "not-determined" : "denied";
+            // A negative probe says "not granted", not why. Only a readable TCC.db tells a
+            // never-asked identity from a denied one; an unreadable one (no Full Disk Access, the
+            // fresh-Mac case) proves no denial, and a denial is what stops a request from prompting.
+            status = liveValue ? "granted" : recorded === "granted" ? "denied" : recorded;
             source = `live ${probe} in ax-tool ${via}`;
             detail =
                 liveValue || recorded !== "granted"
@@ -467,11 +470,19 @@ export function buildChecks(input: {
     ];
 }
 
+/** The first fix for a missing Accessibility or Screen Recording grant: it asks macOS and waits. */
+export const REQUEST_COMMAND = "tools control permissions request";
+
 const TCCUTIL_SERVICES: Record<PermissionCheck["id"], string> = {
     accessibility: "Accessibility",
     "screen-recording": "ScreenCapture",
     automation: "AppleEvents",
 };
+
+/** `tccutil reset <Service> <bundle-id>`, or undefined for a host without a bundle id: tccutil resets by bundle id. */
+export function tccResetCommand(grant: PermissionCheck["id"], holder: ResponsibleHolder): string | undefined {
+    return holder.bundleId ? `tccutil reset ${TCCUTIL_SERVICES[grant]} ${holder.bundleId}` : undefined;
+}
 
 /**
  * One missing grant, with the advice its state calls for. A never-asked identity is not in the
@@ -486,17 +497,16 @@ function grantProblem(check: PermissionCheck, holder: ResponsibleHolder): string
             return `Automation has never been asked for ${check.identity}. macOS asks once per target app the first time osascript drives it; allow ${name} then.`;
         }
 
-        return `${check.label} has never been asked for ${check.identity}. Open ${open} and turn on ${name}; add it with + if it is not listed.`;
+        return `${check.label} has never been asked for ${check.identity}. Run \`${REQUEST_COMMAND}\` to ask macOS for it, or open ${open} and turn on ${name}; add it with + if it is not listed.`;
     }
 
     if (check.status === "denied") {
-        const reset = holder.bundleId
-            ? `, or clear the decision with \`tccutil reset ${TCCUTIL_SERVICES[check.id]} ${holder.bundleId}\` and re-run`
-            : "";
-        return `${check.label} is denied for ${check.identity}, and macOS will not ask again: turn on ${name} in ${open}${reset}.`;
+        const command = tccResetCommand(check.id, holder);
+        const reset = command ? `, or clear the decision with \`${command}\` and re-run` : "";
+        return `${check.label} is denied for ${check.identity}, and macOS will not ask again. Run \`${REQUEST_COMMAND}\` to open the pane and wait while you turn on ${name}, or turn it on in ${open} yourself${reset}.`;
     }
 
-    return `${check.label} is ${check.status} for ${check.identity}. Open ${open} and check that ${name} is turned on.`;
+    return `${check.label} is ${check.status} for ${check.identity}. Run \`${REQUEST_COMMAND}\`, or open ${open} and check that ${name} is turned on.`;
 }
 
 /** How to get the launcher back for this run, or how to live without it: whole sentences. */
@@ -536,17 +546,64 @@ function versionedFolder(path: string | undefined): string | undefined {
  * self-updating host, so a host that installs every version into a new folder loses its grants
  * on each update while TCC still lists the old path as allowed.
  */
-export function collectFindings(route: ResponsibleRoute): string[] {
-    const version = route.routed ? undefined : versionedFolder(route.holder.path);
+export function collectFindings({ route, checks }: { route: ResponsibleRoute; checks: PermissionCheck[] }): string[] {
+    const findings: string[] = [];
 
-    if (!version) {
-        return [];
+    if (!route.routed) {
+        findings.push(unwrappedFinding(route, checks));
+        const version = versionedFolder(route.holder.path);
+
+        if (version) {
+            const name = holderName(route.holder);
+            findings.push(
+                `${name} runs from a versioned folder (…/${version}/…), and macOS ties a grant to that exact path, so the next ${name} update drops every grant given to it. GenesisTools.app keeps one identity across updates. ${restoreLauncher(route)}`
+            );
+        }
     }
 
-    const name = holderName(route.holder);
-    return [
-        `${name} runs from a versioned folder (…/${version}/…), and macOS ties a grant to that exact path, so the next ${name} update drops every grant given to it. GenesisTools.app keeps one identity across updates. ${restoreLauncher(route)}`,
-    ];
+    for (const check of checks) {
+        if (isAskedOnFirstUse(check)) {
+            findings.push(grantProblem(check, route.holder));
+        }
+    }
+
+    return findings;
+}
+
+/**
+ * Automation has no prompt to request ahead of time: macOS asks once per target app on the first
+ * Apple event. A never-asked Automation grant is therefore a note, not a failure, or doctor could
+ * never pass on a fresh Mac.
+ */
+function isAskedOnFirstUse(check: PermissionCheck): boolean {
+    return check.id === "automation" && check.status === "not-determined";
+}
+
+/**
+ * Running without the launcher works whenever the host holds the grants, so it is a warning, not
+ * a failure: a Mac with only the Command Line Tools cannot build GenesisTools.app at all, and its
+ * doctor used to exit 1 forever. The missing grants themselves stay problems.
+ */
+function unwrappedFinding(route: ResponsibleRoute, checks: PermissionCheck[]): string {
+    const unwrapped = `ax-tool, peekaboo and osascript run unwrapped (${route.reason})`;
+    const allHeld =
+        checks.length > 0 && checks.every((check) => check.status === "granted" || isAskedOnFirstUse(check));
+
+    if (!allHeld) {
+        return `${unwrapped}, so their grants follow ${route.identity}. ${launcherFix(route)}`;
+    }
+
+    // A process tree started under the app keeps its identity even with the launcher bypassed.
+    if (route.holder.viaGenesisApp) {
+        return `${unwrapped}, but this process tree started under ${route.identity}, which holds every grant tools control needs. ${launcherFix(route)}`;
+    }
+
+    return `${unwrapped}, and ${route.identity} holds every grant tools control needs, so it works. GenesisTools.app would hold them once for every terminal and agent. ${restoreLauncher(route)}`;
+}
+
+/** The verdict line when nothing is missing. */
+export function allGrantedSummary(route: ResponsibleRoute): string {
+    return `every grant tools control needs is held by ${route.identity}`;
 }
 
 export function collectProblems(input: {
@@ -558,11 +615,7 @@ export function collectProblems(input: {
     const { route, checks, live, liveError } = input;
     const problems: string[] = [];
 
-    if (!route.routed) {
-        problems.push(
-            `ax-tool, peekaboo and osascript run unwrapped (${route.reason}), so their grants follow ${route.identity}. ${launcherFix(route)}`
-        );
-    } else if (live && !live.viaGenesisApp) {
+    if (route.routed && live && !live.viaGenesisApp) {
         problems.push(
             `the launcher is installed but macOS held pid ${live.responsiblePid} (${live.responsibleBundleId || live.responsiblePath}) responsible for the probe, not GenesisTools.app; run \`tools macos permissions\` to check the bundle's signature.`
         );
@@ -573,7 +626,7 @@ export function collectProblems(input: {
     }
 
     for (const check of checks) {
-        if (check.status === "granted") {
+        if (check.status === "granted" || isAskedOnFirstUse(check)) {
             continue;
         }
 
@@ -607,7 +660,7 @@ export function controlDoctor(): ControlDoctorReport {
         checks,
         routes: capabilityRoutes(route),
         problems: collectProblems({ route, checks, live, liveError: error }),
-        findings: collectFindings(route),
+        findings: collectFindings({ route, checks }),
     };
 }
 

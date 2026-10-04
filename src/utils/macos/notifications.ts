@@ -659,6 +659,36 @@ export async function resolveNotificationFallbackState(
     return { kind: "osascript-only" };
 }
 
+/**
+ * The launchd session this process runs in. Banners and permission prompts appear only in the
+ * user's GUI login session ("Aqua"); an SSH or background session ("Background") never shows
+ * them, whatever backend runs (#455). When the session cannot be read, this claims nothing.
+ */
+export function launchdSession(readManager: () => string | null = readLaunchdManagerName): {
+    gui: boolean;
+    manager: string | null;
+} {
+    const manager = readManager();
+
+    return { gui: manager === null || manager === "Aqua", manager };
+}
+
+function readLaunchdManagerName(): string | null {
+    if (process.platform !== "darwin") {
+        return null;
+    }
+
+    try {
+        const proc = Bun.spawnSync(["launchctl", "managername"], { stdout: "pipe", stderr: "pipe" });
+        const name = proc.stdout.toString().trim();
+
+        return proc.exitCode === 0 && name ? name : null;
+    } catch (error) {
+        logger.debug({ error }, "launchctl managername failed");
+        return null;
+    }
+}
+
 export interface NotificationCenterStatus {
     authorization: string;
     alertSetting: string;

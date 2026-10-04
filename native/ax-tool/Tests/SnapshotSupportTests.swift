@@ -21,6 +21,20 @@ final class SnapshotSupportTests: XCTestCase {
 
     /// Each refusal names the guard that must fire, so a wrong guard rejecting the input, or every
     /// case collapsing onto one guard after a refactor, fails with the offending label.
+    // Regression test: #447 D3 — act must re-walk a cut tree the way see cut it, or every index would be refused
+    func testATruncatedSnapshotCarriesTheCutToAct() throws {
+        let token = SnapshotToken(pid: 42, launch: 123, window: 1, depth: 50, digest: "cut", created: 1000, truncate: true)
+        let decoded = try JSONDecoder().decode(SnapshotToken.self, from: JSONEncoder().encode(token))
+
+        XCTAssertTrue(decoded.truncates)
+    }
+
+    func testATokenFromBeforeTruncationDecodesAsWhole() throws {
+        let json = Data(#"{"version":1,"pid":42,"launch":123,"window":1,"depth":20,"digest":"d","created":1000}"#.utf8)
+
+        XCTAssertFalse(try JSONDecoder().decode(SnapshotToken.self, from: json).truncates)
+    }
+
     func testEachRefusalComesFromTheGuardItTargets() throws {
         let token = SnapshotToken(pid: 42, launch: 123, window: 1, depth: 20,
                                   digest: "original", created: 1000)

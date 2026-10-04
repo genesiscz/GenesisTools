@@ -73,3 +73,29 @@ func cmdAudit() {
                 "responsible": genesisAppBundleId() ?? "not GenesisTools.app",
                 "note": "manualAccessibility on = an assistive client asked the app to build its AX tree; tools control sets it on every --app resolution and never clears it. enhancedUserInterface is never set by tools control."])
 }
+
+/// The prompting twins of the probes in `cmdPermissions`, for `tools control permissions request`.
+/// While a grant was never decided, `AXIsProcessTrustedWithOptions` with the prompt option and
+/// `CGRequestScreenCaptureAccess` show the system dialog and list the responsible app in the pane.
+/// After a denial macOS shows nothing, so the caller does not ask for a denied grant at all.
+func cmdRequestPermission() {
+    let responsible = responsibleProcess()
+    var result: [String: Any] = ["ok": true, "pid": getpid(),
+                                 "responsiblePid": responsible.pid,
+                                 "responsibleBundleId": responsible.bundleId ?? "",
+                                 "responsiblePath": responsible.path,
+                                 "responsibleName": responsible.displayName,
+                                 "viaGenesisApp": responsible.viaGenesisApp]
+    switch argValue("--grant") {
+    case "accessibility":
+        let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
+        result["grant"] = "accessibility"
+        result["granted"] = AXIsProcessTrustedWithOptions(options)
+    case "screen-recording":
+        result["grant"] = "screen-recording"
+        result["granted"] = CGRequestScreenCaptureAccess()
+    default:
+        errorExit("--grant accessibility|screen-recording required")
+    }
+    jsonOutput(result)
+}

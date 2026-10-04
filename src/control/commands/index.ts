@@ -15,7 +15,7 @@ import { registerFillCommand } from "./fill";
 import { registerInteractCommands } from "./interact";
 import { registerObserveCommand } from "./observe";
 import { registerOsascriptCommand } from "./osascript";
-import { registerPermissionsCommands } from "./permissions";
+import { registerPermissionsCommands, registerPermissionsRequestCommand } from "./permissions";
 import { registerRecordPlanCommand } from "./record-plan";
 import { registerReplayCommand } from "./replay";
 import { registerReplayPlanCommand } from "./replay-plan";
@@ -44,6 +44,7 @@ export function registerControlCommands(program: Command): void {
     registerDecisionCommands(program);
     registerOsascriptCommand(program);
     registerPermissionsCommands(program);
+    registerPermissionsRequestCommand(program);
     registerDrawCommand(program);
     registerInteractCommands(program);
     registerObserveCommand(program);

@@ -1,8 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import type { TccRow } from "@app/macos/lib/permissions/tcc";
 import { fitColumnWidths } from "./output-format";
+import { type PermissionRequestBoundary, type RequestableGrant, requestPermissions } from "./permission-request";
 import {
     type AxLivePermissions,
+    allGrantedSummary,
     buildChecks,
     capabilityRoutes,
     collectFindings,
@@ -43,6 +45,8 @@ const appMissing: ResponsibleRoute = {
 };
 
 const noRows = { readable: true, rows: [] };
+
+const commandLineTools = { kind: "command-line-tools", developerDir: "/Library/Developer/CommandLineTools" } as const;
 
 function live(overrides: Partial<AxLivePermissions> = {}): AxLivePermissions {
     return {
@@ -88,6 +92,13 @@ const fullSystem = {
 };
 const fullUser = { readable: true, rows: [row("kTCCServiceAppleEvents", APP, 2, "com.apple.systemevents")] };
 
+/** Terminal.app holding all three grants itself, with no GenesisTools.app on the Mac. */
+const terminalSystem = {
+    readable: true,
+    rows: [row("kTCCServiceAccessibility", TERMINAL, 2), row("kTCCServiceScreenCapture", TERMINAL, 2)],
+};
+const terminalUser = { readable: true, rows: [row("kTCCServiceAppleEvents", TERMINAL, 2, "com.apple.systemevents")] };
+
 describe("buildChecks", () => {
     test("every grant held by GenesisTools.app reads as granted from the live probe", () => {
         const checks = buildChecks({ route: routed, live: live(), system: fullSystem, user: fullUser });
@@ -125,6 +136,20 @@ describe("buildChecks", () => {
         });
 
         expect(checks.map((c) => c.status)).toEqual(["not-determined", "not-determined", "not-determined"]);
+    });
+
+    // Regression test: PR #456 review — without Full Disk Access TCC.db is unreadable, which proves no denial
+    test("a negative live probe with an unreadable TCC.db is unknown, never denied", () => {
+        const checks = buildChecks({
+            route: routed,
+            live: live({ accessibility: false, screenRecording: false }),
+            system: { readable: false, rows: [] },
+            user: { readable: false, rows: [] },
+        });
+
+        expect(checks[0].status).toBe("unknown");
+        expect(checks[1].status).toBe("unknown");
+        expect(checks[0].detail).toContain("unknown");
     });
 
     test("without a live probe the verdict comes from TCC.db and says so", () => {
@@ -184,22 +209,50 @@ describe("collectProblems", () => {
         expect(collectProblems({ route: routed, checks, live: live() })).toEqual([]);
     });
 
-    test("an unrouted run is a problem even when the terminal happens to hold the grants", () => {
-        const terminal = "com.example.terminal";
-        const checks = buildChecks({
-            route: unrouted,
-            live: live(),
-            system: {
-                readable: true,
-                rows: [row("kTCCServiceAccessibility", terminal, 2), row("kTCCServiceScreenCapture", terminal, 2)],
-            },
-            user: { readable: true, rows: [row("kTCCServiceAppleEvents", terminal, 2, "com.apple.systemevents")] },
-        });
-        const problems = collectProblems({ route: unrouted, checks, live: live() });
+    // Regression test: #447 D10 — doctor exited 1 forever on a Mac that cannot build GenesisTools.app, though the host held every grant
+    test("an unrouted run whose host holds every grant has no problems", () => {
+        const probe = terminalProbe();
+        const route = refineRoute(appMissing, probe);
+        const checks = buildChecks({ route, live: probe, system: terminalSystem, user: terminalUser });
 
-        expect(problems).toHaveLength(1);
-        expect(problems[0]).toContain("run unwrapped");
-        expect(problems[0]).toContain("GENESIS_TOOLS_NO_APP=1 is set");
+        expect(collectProblems({ route, checks, live: probe })).toEqual([]);
+    });
+
+    // Regression test: #447 D10 — the launcher being off is a warning that proposes the build, with the Xcode steps
+    test("an unrouted run whose host holds every grant is warned, with the build proposal", () => {
+        const probe = terminalProbe();
+        const route = refineRoute({ ...appMissing, toolchain: commandLineTools }, probe);
+        const checks = buildChecks({ route, live: probe, system: terminalSystem, user: terminalUser });
+        const [unwrapped] = collectFindings({ route, checks });
+
+        expect(unwrapped).toContain("Terminal (com.apple.Terminal), pid 1940 holds every grant tools control needs");
+        expect(unwrapped).toContain("install Xcode");
+    });
+
+    test("an unrouted run inside a GenesisTools.app session does not offer GenesisTools.app as an improvement", () => {
+        const probe = live({ responsiblePid: 33 });
+        const route = refineRoute(unrouted, probe);
+        const checks = buildChecks({ route, live: probe, system: fullSystem, user: fullUser });
+        const [unwrapped] = collectFindings({ route, checks });
+
+        expect(unwrapped).not.toContain("GenesisTools.app would hold them");
+        expect(unwrapped).toContain("unset GENESIS_TOOLS_NO_APP");
+    });
+
+    test("an unrouted run with a missing grant still has a problem", () => {
+        const probe = terminalProbe({ screenRecording: false });
+        const route = refineRoute(appMissing, probe);
+        const checks = buildChecks({ route, live: probe, system: terminalSystem, user: terminalUser });
+
+        expect(collectProblems({ route, checks, live: probe })).toHaveLength(1);
+    });
+
+    test("the summary of a clean run names the identity that holds the grants", () => {
+        const probe = terminalProbe();
+
+        expect(allGrantedSummary(refineRoute(appMissing, probe))).toBe(
+            "every grant tools control needs is held by Terminal (com.apple.Terminal), pid 1940"
+        );
     });
 
     test("a missing grant names the pane, the open command and GenesisTools", () => {
@@ -232,21 +285,21 @@ describe("collectProblems", () => {
 
     // Regression test: #447 — "Fix: unset GENESIS_TOOLS_NO_APP" was offered on Macs where it was never set
     test("an unrouted run offers to unset GENESIS_TOOLS_NO_APP only when that variable is the cause", () => {
-        const probe = terminalProbe();
+        const probe = terminalProbe({ screenRecording: false });
         const missing = refineRoute(appMissing, probe);
         const fromEnv = refineRoute(unrouted, probe);
         const checks = buildChecks({ route: missing, live: probe, system: noRows, user: noRows });
 
-        expect(collectProblems({ route: missing, checks, live: probe })[0]).not.toContain("GENESIS_TOOLS_NO_APP");
-        expect(collectProblems({ route: fromEnv, checks, live: probe })[0]).toContain("unset GENESIS_TOOLS_NO_APP");
+        expect(collectFindings({ route: missing, checks })[0]).not.toContain("GENESIS_TOOLS_NO_APP");
+        expect(collectFindings({ route: fromEnv, checks })[0]).toContain("unset GENESIS_TOOLS_NO_APP");
     });
 
     // Regression test: #447 — the unrouted line read "not GenesisTools.app instead of GenesisTools.app"
     test("without GenesisTools.app the unrouted line names the responsible app and how to fix it", () => {
-        const probe = terminalProbe();
+        const probe = terminalProbe({ screenRecording: false });
         const route = refineRoute(appMissing, probe);
         const checks = buildChecks({ route, live: probe, system: noRows, user: noRows });
-        const unwrapped = collectProblems({ route, checks, live: probe })[0];
+        const unwrapped = collectFindings({ route, checks })[0];
 
         expect(unwrapped).toContain("their grants follow Terminal (com.apple.Terminal), pid 1940.");
         expect(unwrapped).toContain("turn the grants below on for Terminal");
@@ -264,6 +317,30 @@ describe("collectProblems", () => {
 
         expect(accessibility).toContain("macOS will not ask again");
         expect(accessibility).toContain("`tccutil reset Accessibility com.apple.Terminal`");
+    });
+
+    // Regression test: #447 D2 — the verdict sent users to the pane by hand, though a command can ask macOS
+    test("a never-asked grant names `tools control permissions request` before the manual pane", () => {
+        const probe = terminalProbe({ accessibility: false });
+        const route = refineRoute(appMissing, probe);
+        const checks = buildChecks({ route, live: probe, system: noRows, user: noRows });
+        const accessibility =
+            collectProblems({ route, checks, live: probe }).find((p) => p.startsWith("Accessibility")) ?? "";
+
+        expect(accessibility).toContain("Run `tools control permissions request`");
+        expect(accessibility.indexOf("permissions request")).toBeLessThan(accessibility.indexOf("System Settings"));
+    });
+
+    test("a denied grant names `tools control permissions request` before the manual pane", () => {
+        const probe = terminalProbe({ screenRecording: false });
+        const route = refineRoute(appMissing, probe);
+        const system = { readable: true, rows: [row("kTCCServiceScreenCapture", TERMINAL, 0)] };
+        const checks = buildChecks({ route, live: probe, system, user: noRows });
+        const screen =
+            collectProblems({ route, checks, live: probe }).find((p) => p.startsWith("Screen Recording")) ?? "";
+
+        expect(screen).toContain("Run `tools control permissions request`");
+        expect(screen.indexOf("permissions request")).toBeLessThan(screen.indexOf("System Settings"));
     });
 
     // Regression test: #447 — the tccutil service name differs from the pane name for Screen Recording
@@ -313,19 +390,37 @@ describe("collectProblems", () => {
     test("a never-asked Automation grant says macOS asks on the first osascript run", () => {
         const probe = terminalProbe();
         const route = refineRoute(appMissing, probe);
-        const checks = buildChecks({ route, live: probe, system: noRows, user: noRows });
-        const automation = collectProblems({ route, checks, live: probe }).find((p) => p.startsWith("Automation"));
+        const checks = buildChecks({ route, live: probe, system: terminalSystem, user: noRows });
+        const automation = collectFindings({ route, checks }).find((f) => f.startsWith("Automation"));
 
         expect(automation).toContain("macOS asks once per target app the first time osascript drives it");
     });
 
+    // Regression test: #447 — Automation can only be asked by the first Apple event, so doctor exited 1 on every fresh Mac
+    test("a never-asked Automation grant is not a problem when the other grants are held", () => {
+        const probe = terminalProbe();
+        const route = refineRoute(appMissing, probe);
+        const checks = buildChecks({ route, live: probe, system: terminalSystem, user: noRows });
+
+        expect(collectProblems({ route, checks, live: probe })).toEqual([]);
+    });
+
+    test("a denied Automation grant is still a problem", () => {
+        const probe = terminalProbe();
+        const route = refineRoute(appMissing, probe);
+        const denied = { readable: true, rows: [row("kTCCServiceAppleEvents", TERMINAL, 0, "com.apple.systemevents")] };
+        const checks = buildChecks({ route, live: probe, system: terminalSystem, user: denied });
+
+        expect(collectProblems({ route, checks, live: probe }).some((p) => p.startsWith("Automation"))).toBe(true);
+    });
+
     // Regression test: #447 — a launcher switched off by marker got the GENESIS_TOOLS_NO_APP advice
     test("a launcher switched off by its marker is fixed with `tools macos permissions enable`", () => {
-        const probe = terminalProbe();
+        const probe = terminalProbe({ screenRecording: false });
         const route = refineRoute({ ...appMissing, cause: "marker", reason: "the launcher is switched off" }, probe);
         const checks = buildChecks({ route, live: probe, system: noRows, user: noRows });
 
-        const unwrapped = collectProblems({ route, checks, live: probe })[0];
+        const unwrapped = collectFindings({ route, checks })[0];
 
         expect(unwrapped).toContain("Fix: `tools macos permissions enable`");
         expect(unwrapped).not.toContain("GENESIS_TOOLS_NO_APP");
@@ -343,7 +438,7 @@ describe("collectProblems", () => {
         );
         const checks = buildChecks({ route, live: probe, system: noRows, user: noRows });
 
-        expect(collectProblems({ route, checks, live: probe })[0]).toContain("install Xcode");
+        expect(collectFindings({ route, checks })[0]).toContain("install Xcode");
     });
 
     test("a launcher that macOS did not hold responsible is reported, not hidden", () => {
@@ -395,6 +490,10 @@ describe("capabilityRoutes", () => {
 });
 
 describe("collectFindings", () => {
+    function versionedFindings(route: ResponsibleRoute): string[] {
+        return collectFindings({ route, checks: [] }).filter((finding) => finding.includes("versioned folder"));
+    }
+
     function hostAt(path: string): ResponsibleRoute {
         return refineRoute(
             appMissing,
@@ -407,7 +506,7 @@ describe("collectFindings", () => {
         const route = hostAt(
             "/Users/someone/Library/Application Support/Host/agent/2.1.286/f2326db61802/agent.app/Contents/MacOS/agent"
         );
-        const findings = collectFindings(route);
+        const findings = versionedFindings(route);
 
         expect(findings).toHaveLength(1);
         expect(findings[0]).toContain("2.1.286");
@@ -417,11 +516,11 @@ describe("collectFindings", () => {
 
     // Regression test: #447 — version folders also come with a leading v (nvm, some Electron installers)
     test("a v-prefixed version folder counts as versioned", () => {
-        expect(collectFindings(hostAt("/Users/someone/.nvm/versions/node/v26.10.0/bin/node"))).toHaveLength(1);
+        expect(versionedFindings(hostAt("/Users/someone/.nvm/versions/node/v26.10.0/bin/node"))).toHaveLength(1);
     });
 
     test("an app at a fixed path gets no versioned-folder warning", () => {
-        expect(collectFindings(refineRoute(appMissing, terminalProbe()))).toEqual([]);
+        expect(versionedFindings(refineRoute(appMissing, terminalProbe()))).toEqual([]);
     });
 });
 
@@ -471,5 +570,269 @@ describe("refineRoute", () => {
         const refined = refineRoute(unrouted, live({ responsiblePid: 33 }));
 
         expect(refined.identity).toBe(`GenesisTools.app (${APP}), pid 33`);
+    });
+});
+
+describe("requestPermissions", () => {
+    /** The Mac as the request sees it: a probe that turns true after N polls, a clock moved only by sleep. */
+    function fakeMac(base: AxLivePermissions, grantAfterPolls: Partial<Record<RequestableGrant, number>> = {}) {
+        let clock = 0;
+        let polls = 0;
+        const prompted: RequestableGrant[] = [];
+        const opened: RequestableGrant[] = [];
+        const sleeps: number[] = [];
+        const lines: string[] = [];
+        const boundary: PermissionRequestBoundary = {
+            probe: () => {
+                polls++;
+                return {
+                    ...base,
+                    accessibility:
+                        base.accessibility || polls >= (grantAfterPolls.accessibility ?? Number.POSITIVE_INFINITY),
+                    screenRecording:
+                        base.screenRecording ||
+                        polls >= (grantAfterPolls["screen-recording"] ?? Number.POSITIVE_INFINITY),
+                };
+            },
+            prompt: (grant) => {
+                prompted.push(grant);
+                return { ok: true };
+            },
+            openPane: (grant) => {
+                opened.push(grant);
+            },
+            sleep: async (ms, signal) => {
+                if (signal.aborted) {
+                    throw new Error("aborted");
+                }
+
+                sleeps.push(ms);
+                clock += ms;
+            },
+            now: () => clock,
+        };
+        return {
+            boundary,
+            prompted,
+            opened,
+            sleeps,
+            lines,
+            say: (line: string) => lines.push(line),
+            polls: () => polls,
+        };
+    }
+
+    function terminalChecks(probe: AxLivePermissions, system: { readable: boolean; rows: TccRow[] } = noRows) {
+        const route = refineRoute(appMissing, probe);
+        return { route, checks: buildChecks({ route, live: probe, system, user: noRows }) };
+    }
+
+    // Regression test: #447 D2 — nothing ever asked macOS, so a fresh Terminal was never even listed in the pane
+    test("a never-asked grant is prompted, its pane opened, and the request waits until it is live", async () => {
+        const probe = terminalProbe({ accessibility: false });
+        const { route, checks } = terminalChecks(probe);
+        const mac = fakeMac(probe, { accessibility: 3 });
+
+        const outcome = await requestPermissions({
+            checks,
+            holder: route.holder,
+            boundary: mac.boundary,
+            signal: new AbortController().signal,
+            say: mac.say,
+        });
+
+        expect(mac.prompted).toEqual(["accessibility"]);
+        expect(mac.opened).toEqual(["accessibility"]);
+        expect(outcome).toEqual({ granted: ["accessibility", "screen-recording"], missing: [] });
+        expect(mac.sleeps.every((ms) => ms >= 1000)).toBe(true);
+    });
+
+    // Regression test: #447 D2 — macOS never asks again after a denial, so a prompt would silently do nothing
+    test("a denied grant is not prompted; it says why and gives the tccutil reset", async () => {
+        const probe = terminalProbe({ accessibility: false });
+        const { route, checks } = terminalChecks(probe, {
+            readable: true,
+            rows: [row("kTCCServiceAccessibility", TERMINAL, 0)],
+        });
+        const mac = fakeMac(probe, { accessibility: 2 });
+
+        await requestPermissions({
+            checks,
+            holder: route.holder,
+            boundary: mac.boundary,
+            signal: new AbortController().signal,
+            say: mac.say,
+        });
+
+        expect(mac.prompted).toEqual([]);
+        expect(mac.opened).toEqual(["accessibility"]);
+        expect(mac.lines.join("\n")).toContain("macOS will not ask again");
+        expect(mac.lines.join("\n")).toContain("`tccutil reset Accessibility com.apple.Terminal`");
+    });
+
+    // Regression test: PR #456 review — a fresh Mac has no Full Disk Access, so TCC.db is unreadable;
+    // only a recorded denial proves macOS will not ask, so an unknown decision is still prompted
+    test("a missing grant whose TCC.db row cannot be read is still prompted", async () => {
+        const probe = terminalProbe({ accessibility: false });
+        const { route, checks } = terminalChecks(probe, { readable: false, rows: [] });
+        const mac = fakeMac(probe, { accessibility: 2 });
+
+        await requestPermissions({
+            checks,
+            holder: route.holder,
+            boundary: mac.boundary,
+            signal: new AbortController().signal,
+            say: mac.say,
+        });
+
+        expect(mac.prompted).toEqual(["accessibility"]);
+        expect(mac.lines.join("\n")).not.toContain("macOS will not ask again");
+    });
+
+    // Regression test: #447 D2 — a new Screen Recording grant applies to the host only after it restarts
+    test("a Screen Recording request says the host app must be restarted", async () => {
+        const probe = terminalProbe({ screenRecording: false });
+        const { route, checks } = terminalChecks(probe);
+        const mac = fakeMac(probe, { "screen-recording": 2 });
+
+        await requestPermissions({
+            checks,
+            holder: route.holder,
+            boundary: mac.boundary,
+            signal: new AbortController().signal,
+            say: mac.say,
+        });
+
+        expect(mac.prompted).toEqual(["screen-recording"]);
+        expect(mac.lines.join("\n")).toContain("quit and reopen Terminal");
+    });
+
+    // Regression test: PR #456 review — a failed request-permission spawn shows no dialog, yet the request said "Asked macOS"
+    test("a prompt ax-tool could not deliver is reported, and the pane still opens", async () => {
+        const probe = terminalProbe({ accessibility: false });
+        const { route, checks } = terminalChecks(probe);
+        const mac = fakeMac(probe, { accessibility: 2 });
+        mac.boundary.prompt = (grant) => {
+            mac.prompted.push(grant);
+            return { ok: false, error: "unknown subcommand request-permission" };
+        };
+
+        await requestPermissions({
+            checks,
+            holder: route.holder,
+            boundary: mac.boundary,
+            signal: new AbortController().signal,
+            say: mac.say,
+        });
+
+        const text = mac.lines.join("\n");
+        expect(text).toContain("could not ask macOS for Accessibility");
+        expect(text).toContain("unknown subcommand request-permission");
+        expect(text).not.toContain("Asked macOS");
+        expect(mac.opened).toEqual(["accessibility"]);
+    });
+
+    test("the wait ends at its deadline and names what is still missing", async () => {
+        const probe = terminalProbe({ screenRecording: false });
+        const { route, checks } = terminalChecks(probe);
+        const mac = fakeMac(probe);
+
+        const outcome = await requestPermissions({
+            checks,
+            holder: route.holder,
+            boundary: mac.boundary,
+            signal: new AbortController().signal,
+            say: mac.say,
+            timeoutMs: 120_000,
+        });
+
+        expect(outcome).toEqual({ granted: ["accessibility"], missing: ["screen-recording"] });
+        expect(mac.sleeps.reduce((sum, ms) => sum + ms, 0)).toBe(120_000);
+        expect(mac.lines.at(-1)).toContain("Still missing after 120 s: Screen Recording");
+    });
+
+    // Regression test: PR #456 review — a grant turned on while the wait was on another one was reported missing
+    test("a grant that goes live while the wait is on another one counts, and is not prompted", async () => {
+        const probe = terminalProbe({ accessibility: false, screenRecording: false });
+        const { route, checks } = terminalChecks(probe);
+        const mac = fakeMac(probe, { "screen-recording": 2 });
+
+        const outcome = await requestPermissions({
+            checks,
+            holder: route.holder,
+            boundary: mac.boundary,
+            signal: new AbortController().signal,
+            say: mac.say,
+            timeoutMs: 10_000,
+        });
+
+        expect(outcome).toEqual({ granted: ["screen-recording"], missing: ["accessibility"] });
+        expect(mac.prompted).toEqual(["accessibility"]);
+        expect(mac.lines.join("\n")).toContain("Screen Recording is now granted to Terminal");
+    });
+
+    // Regression test: PR #456 review — the second grant shared the first one's deadline, so it got no time at all
+    test("each grant gets its own wait, so the second is still polled after the first times out", async () => {
+        const probe = terminalProbe({ accessibility: false, screenRecording: false });
+        const { route, checks } = terminalChecks(probe);
+        const mac = fakeMac(probe, { "screen-recording": 15 });
+
+        const outcome = await requestPermissions({
+            checks,
+            holder: route.holder,
+            boundary: mac.boundary,
+            signal: new AbortController().signal,
+            say: mac.say,
+            timeoutMs: 10_000,
+        });
+
+        expect(outcome).toEqual({ granted: ["screen-recording"], missing: ["accessibility"] });
+        expect(mac.prompted).toEqual(["accessibility", "screen-recording"]);
+        expect(mac.sleeps.reduce((sum, ms) => sum + ms, 0)).toBe(15_000);
+        expect(mac.lines.at(-1)).toContain("Still missing after 10 s: Accessibility");
+    });
+
+    test("Ctrl-C stops the wait and reports what is still missing", async () => {
+        const probe = terminalProbe({ accessibility: false });
+        const { route, checks } = terminalChecks(probe);
+        const mac = fakeMac(probe);
+        const interrupt = new AbortController();
+        const sleep = mac.boundary.sleep;
+        mac.boundary.sleep = async (ms, signal) => {
+            if (mac.sleeps.length === 2) {
+                interrupt.abort();
+            }
+
+            await sleep(ms, signal);
+        };
+
+        const outcome = await requestPermissions({
+            checks,
+            holder: route.holder,
+            boundary: mac.boundary,
+            signal: interrupt.signal,
+            say: mac.say,
+        });
+
+        expect(outcome.missing).toEqual(["accessibility"]);
+        expect(mac.polls()).toBeLessThan(5);
+    });
+
+    test("grants already held are neither prompted nor opened", async () => {
+        const probe = terminalProbe();
+        const { route, checks } = terminalChecks(probe);
+        const mac = fakeMac(probe);
+
+        const outcome = await requestPermissions({
+            checks,
+            holder: route.holder,
+            boundary: mac.boundary,
+            signal: new AbortController().signal,
+            say: mac.say,
+        });
+
+        expect(mac.prompted).toEqual([]);
+        expect(mac.opened).toEqual([]);
+        expect(outcome).toEqual({ granted: ["accessibility", "screen-recording"], missing: [] });
     });
 });

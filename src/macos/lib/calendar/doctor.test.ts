@@ -1,6 +1,7 @@
 import { describe, expect, it, test } from "bun:test";
+import { env } from "@genesiscz/utils/env";
 import type { CalendarDoctorReport } from "./doctor";
-import { buildVerdict, readTccCalendarRows, tccDecisionRecorded } from "./doctor";
+import { buildVerdict, readTccCalendarRows, tccDecisionRecorded, tccRowLine, thisProcessTccClient } from "./doctor";
 
 // tccAuthLabel moved to ../permissions/tcc, where it takes the service so Calendar's
 // "Add Only" can be told apart from a plain allow. Its tests moved with it.
@@ -101,5 +102,70 @@ describe("buildVerdict when the prompt was skipped", () => {
 
         expect(verdict.verdict).toContain("3 calendars");
         expect(verdict.fix).toBeUndefined();
+    });
+});
+
+// Regression test: PR #456 review round 2 — the doctors looked TCC.db up by __CFBundleIdentifier,
+// which still names the terminal under the launcher, so a grant held by GenesisTools.app read as
+// "no recorded answer" and the status was never read
+describe("thisProcessTccClient", () => {
+    const appRow = {
+        service: "kTCCServiceReminders",
+        client: "com.genesiscz.genesistools",
+        clientType: 0,
+        authValue: 2,
+        label: "allowed",
+        lastModified: "2026-10-04T00:00:00.000Z",
+    };
+
+    it("names GenesisTools.app, not the terminal, when the launcher ran this process", async () => {
+        await env.testing.withOverrides(
+            { GENESIS_TOOLS_APP_BUNDLE_ID: "com.genesiscz.genesistools", __CFBundleIdentifier: "com.example.terminal" },
+            () => {
+                const client = thisProcessTccClient();
+
+                expect(client.bundleId).toBe("com.genesiscz.genesistools");
+                expect(tccDecisionRecorded({ readable: true, rows: [appRow] }, client)).toBe(true);
+            }
+        );
+    });
+
+    it("names the terminal when the launcher did not run this process", async () => {
+        await env.testing.withOverrides(
+            { GENESIS_TOOLS_APP_BUNDLE_ID: undefined, __CFBundleIdentifier: "com.example.terminal" },
+            () => {
+                const client = thisProcessTccClient();
+
+                expect(client.bundleId).toBe("com.example.terminal");
+                expect(tccDecisionRecorded({ readable: true, rows: [appRow] }, client)).toBe(false);
+            }
+        );
+    });
+});
+
+// Regression test: PR #456 review round 1 (t5, same defect in Calendar) — the calendar doctor marked
+// only bundle-id rows, so a path-keyed row (client_type 1) never read "<- this process"
+describe("tccRowLine", () => {
+    const client = { bundleId: "com.example.terminal", executablePath: "/opt/fixture/bin/bun" };
+    const base = {
+        service: "kTCCServiceCalendar",
+        authValue: 2,
+        label: "Full Access",
+        lastModified: "2026-10-04T00:00:00.000Z",
+    };
+
+    it("marks a path row that names this process's executable", () => {
+        expect(tccRowLine({ ...base, clientType: 1, client: "/opt/fixture/bin/bun" }, client)).toBe(
+            "/opt/fixture/bin/bun: Full Access  <- this process"
+        );
+    });
+
+    it("marks a bundle row by the bundle id, and leaves other rows unmarked", () => {
+        expect(tccRowLine({ ...base, clientType: 0, client: "com.example.terminal" }, client)).toContain(
+            "<- this process"
+        );
+        expect(tccRowLine({ ...base, clientType: 0, client: "com.example.other" }, client)).toBe(
+            "com.example.other: Full Access"
+        );
     });
 });

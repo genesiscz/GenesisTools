@@ -39,6 +39,8 @@ export interface CalendarDoctorReport {
         responsible: ResponsibleIdentity;
         bundleId?: string;
         termProgram?: string;
+        /** the executable a path-keyed TCC row (client_type 1) names for this process */
+        executablePath: string;
     };
     tcc: TccReadResult;
     verdict: string;
@@ -111,6 +113,38 @@ export function readTccCalendarRows(dbPath = TCC_USER_DB_PATH): TccReadResult {
     return readTccRows({ dbPath, services: [TCC_CALENDAR_SERVICE] });
 }
 
+/** The two keys TCC.db can name this process by. */
+export interface TccClient {
+    bundleId?: string;
+    executablePath?: string;
+}
+
+/**
+ * Who TCC.db names this process by: the responsible bundle id (GenesisTools.app when the launcher
+ * ran us; `__CFBundleIdentifier` still names the terminal then, so it is never the key) and the
+ * executable path.
+ */
+export function thisProcessTccClient(): TccClient {
+    return { bundleId: responsibleIdentity().bundleId, executablePath: execPath };
+}
+
+/**
+ * Whether a TCC row is this process's own: a bundle-id row (client_type 0) by the bundle id, a
+ * path row (client_type 1) by the executable path.
+ */
+export function isThisProcessRow(row: TccRow, client: TccClient): boolean {
+    if (row.clientType === 0) {
+        return client.bundleId !== undefined && row.client === client.bundleId;
+    }
+
+    return row.clientType === 1 && client.executablePath !== undefined && row.client === client.executablePath;
+}
+
+/** One TCC row for a doctor's listing, marked when it is this process's own. */
+export function tccRowLine(row: TccRow, client: TccClient): string {
+    return `${row.client}: ${row.label}${isThisProcessRow(row, client) ? "  <- this process" : ""}`;
+}
+
 /**
  * True when macOS has already recorded an answer for this process, so reading
  * the status cannot show a dialog.
@@ -121,21 +155,14 @@ export function readTccCalendarRows(dbPath = TCC_USER_DB_PATH): TccReadResult {
  * recorded answer, keyed by bundle id (`client_type` 0) or by the launching
  * executable's absolute path (`client_type` 1).
  */
-export function tccDecisionRecorded(
-    tcc: CalendarDoctorReport["tcc"],
-    hostApp: { bundleId?: string; executablePath?: string }
-): boolean {
+export function tccDecisionRecorded(tcc: CalendarDoctorReport["tcc"], client: TccClient): boolean {
     if (!tcc.readable) {
         // Cannot prove a decision exists, so assume none: the doctor must not
         // gamble a permission dialog on a guess.
         return false;
     }
 
-    return tcc.rows.some(
-        (row) =>
-            (row.clientType === 0 && row.client === hostApp.bundleId) ||
-            (row.clientType === 1 && row.client === hostApp.executablePath)
-    );
+    return tcc.rows.some((row) => isThisProcessRow(row, client));
 }
 
 export interface CalendarDoctorOptions {
@@ -154,13 +181,14 @@ export async function runCalendarDoctor(opts: CalendarDoctorOptions = {}): Promi
 
     const hostApp = { bundleId: env.device.getHostBundleIdentifier(), termProgram: env.device.getTermProgram() };
     const tcc = readTccCalendarRows();
-    const mayRead = opts.requestAccess === true || tccDecisionRecorded(tcc, { ...hostApp, executablePath: execPath });
+    const client = thisProcessTccClient();
+    const mayRead = opts.requestAccess === true || tccDecisionRecorded(tcc, client);
     const auth: CalendarAuthorizedResult = mayRead
         ? await MacCalendar.authorizationStatus()
         : { status: "notDetermined", authorized: false };
 
     if (!mayRead) {
-        logger.debug({ bundleId: hostApp.bundleId, tccReadable: tcc.readable }, "calendar doctor: skipped the prompt");
+        logger.debug({ client, tccReadable: tcc.readable }, "calendar doctor: skipped the prompt");
     }
 
     let calendars: CalendarInfo[] = [];
@@ -180,9 +208,8 @@ export async function runCalendarDoctor(opts: CalendarDoctorOptions = {}): Promi
         placeholderOnly,
         sources: sources.map((s) => ({ title: s.title, source_type: s.source_type })),
         binary: { path: binaryPath, inAppBundle: plistPath !== undefined, hasCalendarUsageString },
-        // `hostApp` is also the input to tccDecisionRecorded above, so it stays a const;
         // `responsible` is who macOS actually asks, which is the app when the launcher ran us.
-        hostApp: { responsible: responsibleIdentity(), ...hostApp },
+        hostApp: { responsible: responsibleIdentity(), ...hostApp, executablePath: execPath },
         tcc,
         ...buildVerdict({
             status: auth.status,

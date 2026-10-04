@@ -16,7 +16,9 @@ if args.count < 2 || args[1] == "--help" || args[1] == "-h" {
     remains available for legacy discovery and screen metadata.
 
     Usage:
-      ax-tool see --app <name> [--window-index N | --window-id ID] [--depth 20] [--scope window|chrome] [--path shot.png]
+      ax-tool see --app <name> [--window-index N | --window-id ID] [--depth 20|auto] [--truncate] [--scope window|chrome] [--path shot.png]
+                      --depth: 1 to 50, auto = 50. A deeper tree fails unless --truncate, which cuts it at --depth
+                      and lists the cut rows in truncatedAt; the token carries the cut, so act indices stay valid.
                       Indexed AX tree + exact-window PNG + 120-second snapshot token; multiple windows require an index.
                       --scope query --query TEXT [--query-role AXRole]: walk the whole window, keep only matches and their
                       ancestors (works past the 4000-row limit); the result's query block counts depth-limited subtrees.
@@ -40,6 +42,7 @@ if args.count < 2 || args[1] == "--help" || args[1] == "-h" {
       ax-tool apps [--all]                                    List running apps (valid --app values)
       ax-tool front                                           On-screen windows front to back with owner pid/app (no --app)
       ax-tool permissions                                     Live Accessibility + Screen Recording state of THIS process (never prompts)
+      ax-tool request-permission --grant accessibility|screen-recording   Ask macOS (shows the dialog only while never decided)
       ax-tool audit [--all]                                   Which running apps carry AXManualAccessibility / AXEnhancedUserInterface
                       (read-only: never resolves an app, so it cannot set the flag it reports)
       ax-tool list    --app <name> [--depth <n=10>]           List elements (flat, max 2000)
@@ -130,6 +133,10 @@ if command == "cursor-feedback" {
 }
 if command == "permissions" {
     cmdPermissions()
+    exit(0)
+}
+if command == "request-permission" {
+    cmdRequestPermission()
     exit(0)
 }
 if command == "audit" {

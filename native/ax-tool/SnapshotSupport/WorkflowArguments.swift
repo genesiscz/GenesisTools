@@ -21,7 +21,7 @@ public struct WorkflowArguments {
         switch command {
         case "see":
             valueOptions = ["--app", "--window-index", "--window-id", "--depth", "--path", "--scope", "--perception", "--perception-crop", "--perception-width", "--perception-reuse", "--budget-ms", "--query", "--query-role"]
-            flagOptions = ["--no-image"]
+            flagOptions = ["--no-image", "--truncate"]
         case "act":
             valueOptions = [
                 "--app", "--snapshot", "--element", "--action", "--value", "--ax-action", "--direction", "--text",
@@ -98,6 +98,13 @@ public struct WorkflowArguments {
             }
             if let query = parsedValues["--query"], query.trimmingCharacters(in: .whitespaces).isEmpty || query.count > 300 {
                 throw WorkflowArgumentError.invalid("--query must be 1 to 300 characters")
+            }
+            if parsedFlags.contains("--truncate"), parsedValues["--scope"] == "query" {
+                throw WorkflowArgumentError.invalid("--truncate cuts the window and chrome scopes; a --query already counts the subtrees its depth left unwalked")
+            }
+            // `auto` is the deepest depth see allows; a deeper tree still needs --truncate.
+            if parsedValues["--depth"] == "auto" {
+                parsedValues["--depth"] = String(maxObservedDepth)
             }
         }
         if command == "act" {

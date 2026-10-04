@@ -1,4 +1,8 @@
-import { out } from "@genesiscz/utils/logger";
+import { SETTINGS_PANES, settingsUrl } from "@app/macos/lib/permissions/report";
+import { abortableSleep } from "@genesiscz/utils/async";
+import { withInterrupt } from "@genesiscz/utils/cli/interrupt";
+import { ui } from "@genesiscz/utils/cli/ui";
+import { logger, out } from "@genesiscz/utils/logger";
 import {
     createBoxTable,
     formatDotStatus,
@@ -15,8 +19,10 @@ import {
     resolveFormat,
     stdoutTableWidth,
 } from "../lib/output-format";
+import { type PermissionRequestBoundary, type RequestableGrant, requestPermissions } from "../lib/permission-request";
 import {
     type AuditedApp,
+    allGrantedSummary,
     type CapabilityRoute,
     type ControlAuditReport,
     type ControlDoctorReport,
@@ -24,7 +30,9 @@ import {
     controlDoctor,
     type GrantStatus,
     type PermissionCheck,
+    readLivePermissions,
 } from "../lib/permissions";
+import { runAx } from "../lib/runner";
 
 const STATUS_LABELS: Record<GrantStatus, string> = {
     granted: "granted",
@@ -117,7 +125,7 @@ function printVerdict(report: ControlDoctorReport | ControlAuditReport): void {
     }
 
     if (report.problems.length === 0) {
-        out.println(`  ${pc.green("✓")} every grant tools control needs is held by GenesisTools.app`);
+        out.println(`  ${pc.green("✓")} ${allGrantedSummary(report.responsible)}`);
         return;
     }
 
@@ -321,5 +329,60 @@ export function registerPermissionsCommands(program: Command): void {
             if (report.problems.length > 0) {
                 process.exitCode = 1;
             }
+        });
+}
+
+/** The real Mac behind `permissions request`: ax-tool through the launcher, System Settings, the clock. */
+function liveRequestBoundary(): PermissionRequestBoundary {
+    return {
+        probe: () => readLivePermissions().live,
+        prompt: (grant: RequestableGrant) => {
+            const result = runAx(["request-permission", "--grant", grant]);
+            logger.debug({ grant, result }, "permission request: asked macOS");
+            return { ok: result.ok, error: result.error };
+        },
+        openPane: (grant: RequestableGrant) => {
+            const url = settingsUrl(SETTINGS_PANES[grant]);
+            const opened = Bun.spawnSync(["open", url]);
+
+            if (opened.exitCode !== 0) {
+                ui.warn(
+                    `could not open ${url} (exit ${opened.exitCode}); open it with \`tools macos permissions open --pane ${grant}\``
+                );
+            }
+        },
+        sleep: (ms, signal) => abortableSleep(ms, signal),
+        now: () => Date.now(),
+    };
+}
+
+export function registerPermissionsRequestCommand(program: Command): void {
+    program
+        .command("permissions")
+        .description("Ask macOS for the grants tools control needs")
+        .command("request")
+        .description(
+            "Ask macOS for Accessibility and Screen Recording for the identity every ax-tool spawn uses, open each pane, and wait up to 120 s for each grant until it is live. A denied grant is never prompted again by macOS: this says so and prints the tccutil reset. Exits 1 while a grant is missing."
+        )
+        .action(async () => {
+            const report = controlDoctor();
+
+            if (!report.live) {
+                ui.err(`the live ax-tool probe failed: ${report.liveError ?? "no result"}`);
+                process.exitCode = 1;
+                return;
+            }
+
+            const outcome = await withInterrupt((signal) =>
+                requestPermissions({
+                    checks: report.checks,
+                    holder: report.responsible.holder,
+                    boundary: liveRequestBoundary(),
+                    signal,
+                    say: (line) => ui.info(line),
+                })
+            );
+
+            process.exitCode = outcome.missing.length > 0 ? 1 : 0;
         });
 }

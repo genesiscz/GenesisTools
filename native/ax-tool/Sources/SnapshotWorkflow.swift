@@ -56,6 +56,9 @@ private struct ObservedWindow {
 }
 
 private var workflowDispatchState: String?
+/// `see --truncate`, or a token from one: every tree walk of this process cuts at the depth instead of
+/// refusing, so act re-walks the window exactly as see cut it.
+private var workflowTruncate = false
 
 private func workflowFailure(_ message: String, category: SnapshotRefusal = .refused,
                              extras: [String: Any] = [:]) -> Never {
@@ -252,7 +255,8 @@ private func observedTree(_ window: AXUIElement, depth: Int, scope: String) thro
     if scope != "chrome", ProcessInfo.processInfo.environment["AX_TOOL_NO_BULK"] == nil, let reader = BulkHierarchyReader() {
         do {
             let source = try reader.read(root: window, attributes: bulkAttributeList, maxDepth: depth + 2, maxArrayCount: observedElementLimit)
-            let tree = try buildObservedTree(root: window, source: source, depth: depth, scope: scope, expired: workflowExpired)
+            let tree = try buildObservedTree(root: window, source: source, depth: depth, scope: scope,
+                                            truncate: workflowTruncate, expired: workflowExpired)
             workflowBulkUsed = true
             return tree
         } catch is BulkHierarchyError {
@@ -261,7 +265,7 @@ private func observedTree(_ window: AXUIElement, depth: Int, scope: String) thro
         }
     }
     return try buildObservedTree(root: window, source: LiveHierarchySource(root: window), depth: depth, scope: scope,
-                                 expired: workflowExpired)
+                                 truncate: workflowTruncate, expired: workflowExpired)
 }
 
 private func workflowTree(_ window: AXUIElement, depth: Int, scope: String) -> ObservedTreeData {
@@ -357,7 +361,8 @@ private func workflowSnapshotOnce(appName: String, pid: pid_t, launch: Double, w
     let token = SnapshotToken(pid: pid, launch: launch, window: Int(window.id), depth: depth,
                               digest: tree.digest, created: capturedAt, scope: scope, visual: visual,
                               query: scope == "query" ? workflowQuery : nil,
-                              document: scope == "window" ? try documentScope(tree.rows) : nil)
+                              document: scope == "window" ? try documentScope(tree.rows) : nil,
+                              truncate: workflowTruncate)
     let encoded: String
     do {
         encoded = try JSONEncoder().encode(token).base64EncodedString()
@@ -390,6 +395,11 @@ private func workflowSnapshotOnce(appName: String, pid: pid_t, launch: Double, w
             "elements": publicRows]
     if !queryReport.isEmpty {
         output["query"] = queryReport
+    }
+    if !tree.truncatedAt.isEmpty {
+        // Rows at --depth whose children were left out; every index still addresses the same element.
+        output["truncated"] = true
+        output["truncatedAt"] = tree.truncatedAt
     }
 
     return output
@@ -601,6 +611,7 @@ private func workflowWindowByID(_ id: Int, pid: pid_t) -> ObservedWindow {
 
 func cmdSee(appName _: String) {
     let appName = workflowParse("see")
+    workflowTruncate = workflowFlag("--truncate")
     workflowPermissions()
     let pid = resolveApp(appName)
     let launch = workflowLaunch(pid)
@@ -899,6 +910,7 @@ func cmdAct(appName _: String) {
         }
         token = decoded
         workflowQuery = decoded.query
+        workflowTruncate = decoded.truncates
         elementIndex = workflowArgument("--coords") == nil && workflowArgument("--region") == nil
             ? workflowInteger("--element") : 0
         do {
@@ -932,7 +944,7 @@ func cmdAct(appName _: String) {
                 ? try resolvedTargetIndex(key:key,rows:tree.rows,ordinal:workflowArgument("--target-ordinal").flatMap(TargetOrdinal.init))
                 : try preparedTargetIndex(key:key,rows:tree.rows,ordinal:workflowArgument("--target-ordinal").flatMap(TargetOrdinal.init))
             dispatchToken = SnapshotToken(pid:pid,launch:launch,window:Int(window.id),depth:token.depth,
-                digest:tree.digest,created:token.created,scope:token.effectiveScope,query:token.query)
+                digest:tree.digest,created:token.created,scope:token.effectiveScope,query:token.query,truncate:token.truncates)
         } catch { workflowFailure(error) }
     }
     // A page target is checked against the page, not the whole window: browser chrome churns on its
@@ -945,7 +957,7 @@ func cmdAct(appName _: String) {
         elementIndex = remapped
         documentPin = current
         dispatchToken = SnapshotToken(pid:pid,launch:launch,window:Int(window.id),depth:token.depth,
-            digest:tree.digest,created:token.created,scope:token.effectiveScope,query:token.query)
+            digest:tree.digest,created:token.created,scope:token.effectiveScope,query:token.query,truncate:token.truncates)
     }
     do {
         _ = try dispatchToken.validate(pid: pid, launch: launch, window: Int(window.id), digest: tree.digest,
@@ -991,7 +1003,7 @@ func cmdAct(appName _: String) {
         do { try validateModalTarget(rows: tree.rows, target: elementIndex) }
         catch { workflowFailure(error) }
         dispatchToken = SnapshotToken(pid:pid,launch:launch,window:Int(window.id),depth:token.depth,
-            digest:tree.digest,created:token.created,scope:token.effectiveScope,query:token.query)
+            digest:tree.digest,created:token.created,scope:token.effectiveScope,query:token.query,truncate:token.truncates)
         workflowFrontWindow(window,pid:pid)
         prepared = true
     }

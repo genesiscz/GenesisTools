@@ -13,6 +13,7 @@
 
 | Subcommand | What it does |
 |------------|--------------|
+| `doctor` | Every read-only check below in one pass: GenesisTools.app/permissions, Calendar, Reminders, Notifications. Exits 1 if any fails |
 | `mail` | Search, list, and download messages from Apple Mail |
 | `calendar` | List calendars/events, search, add, update, delete events |
 | `reminders` | List/add/search/remove reminders across lists |
@@ -26,6 +27,9 @@
 ## Quick Start
 
 ```bash
+# Doctor (every read-only check in one pass)
+tools macos doctor
+
 # Mail
 tools macos mail search "invoice"
 tools macos mail list INBOX --limit 20 --from 14h        # INBOX = every account's inbox (Gmail All Mail, EWS "Doručená pošta" included)
@@ -39,6 +43,7 @@ tools macos calendar search "standup"
 tools macos calendar add "Dentist" --start "2026-05-02 10:00"
 
 # Reminders
+tools macos reminders doctor
 tools macos reminders list-lists
 tools macos reminders list Home --include-completed
 tools macos reminders add "Buy milk" --list Home --due "tomorrow 18:00"
@@ -167,3 +172,11 @@ Full Disk Access and Accessibility have no system prompt. Only Mail, Messages an
 | Denied / none | nothing |
 
 Every read command (`list`, `search`, `list-calendars`, `update`, `delete`) checks the status first and exits 1 with the fix instead of printing an empty list. On a TTY it first asks macOS to upgrade Add Only to Full Access (a system dialog; the tool waits up to 15 s for your answer). `tools macos calendar doctor` shows the status, the responsible identity and every `kTCCServiceCalendar` row.
+
+### Reminders: same shape as the Calendar doctor
+
+Every read/write command (`list-lists`, `list`, `search`, `add`, `remove`) asks macOS for Reminders access itself when the status is still undetermined and the terminal is interactive, instead of failing with DarwinKit's internal "Call reminders.authorized first." `tools macos reminders doctor` is the Reminders equivalent of `tools macos calendar doctor`: authorization status (never asking, so it cannot show the dialog on its own), the list count once readable, the responsible identity, and every `kTCCServiceReminders` row.
+
+### `tools macos doctor`: every read-only check in one pass
+
+Runs the permissions report, the Calendar doctor, the Reminders doctor and the Notifications status together, one section per check, and exits 1 if any of them failed. It calls each check's library function directly rather than spawning the individual subcommands, so none of them can show a permission dialog or write durable state — the same read-only contract as each doctor on its own.

@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { systemChannelDelivered } from "@genesiscz/utils/notifications/channels/system";
 import { setupStorageSandbox } from "@genesiscz/utils/storage/test-sandbox";
 import * as notifications from "./notifications";
-import { resolveNotificationFallbackState, sendViaTerminalNotifier } from "./notifications";
+import { launchdSession, resolveNotificationFallbackState, sendViaTerminalNotifier } from "./notifications";
 
 setupStorageSandbox();
 
@@ -191,5 +191,21 @@ describe("probeTerminalNotifier", () => {
         chmodSync(path, 0o644);
 
         expect(await notifications.probeTerminalNotifier(path, { timeoutMs: 2_000 })).toBe(false);
+    });
+});
+
+describe("launchdSession", () => {
+    // Regression test: #455 — an SSH or background session can never show a notification or a
+    // permission prompt; the user should be told so instead of only "not confirmed".
+    it("reports no GUI session for the Background launchd session", () => {
+        expect(launchdSession(() => "Background")).toEqual({ gui: false, manager: "Background" });
+    });
+
+    it("reports a GUI session for the Aqua login session", () => {
+        expect(launchdSession(() => "Aqua")).toEqual({ gui: true, manager: "Aqua" });
+    });
+
+    it("claims nothing when the session cannot be read", () => {
+        expect(launchdSession(() => null)).toEqual({ gui: true, manager: null });
     });
 });

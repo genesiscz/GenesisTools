@@ -44,6 +44,7 @@ interface WorkflowOptions {
     query?: string;
     queryRole?: string;
     depth?: string;
+    truncate?: boolean;
     scope?: string | boolean;
     path?: string;
     snapshot?: string;
@@ -270,7 +271,15 @@ export function registerWorkflowCommands(program: Command): void {
             "--window-title <substring>",
             "select the window whose title contains this (case-insensitive); 0 or 2+ matches exit 1 with the candidates"
         )
-        .option("--depth <n>", "tree depth, 1–50; refuses truncated trees", "20")
+        .option(
+            "--depth <n>",
+            "tree depth: 1 to 50, or auto for the deepest (50). A tree deeper than this fails unless --truncate is given",
+            "20"
+        )
+        .option(
+            "--truncate",
+            "return the tree cut at --depth instead of failing: truncated: true, and truncatedAt lists the rows whose children were left out. Every index stays valid for act"
+        )
         .option(
             "--scope [name]",
             "window (default), chrome (omit web-area descendants for browser controls), or menu (the app's MENU BAR; pair with --menu to descend into one top-level menu)"
@@ -318,6 +327,14 @@ export function registerWorkflowCommands(program: Command): void {
                 return;
             }
 
+            if (opts.truncate && opts.scope === "menu") {
+                logger.error(
+                    "--truncate does not apply to --scope menu: the menu surface walks its own fixed depth and ignores --depth"
+                );
+                process.exitCode = 1;
+                return;
+            }
+
             // 🛑 The menu surface is a different native command with a different root, so none of
             // the window flags below apply to it. Routing here keeps one verb for the caller while
             // refusing the combinations that would silently be ignored.
@@ -342,6 +359,11 @@ export function registerWorkflowCommands(program: Command): void {
             if (opts.image === false) {
                 args.push("--no-image");
             }
+
+            if (opts.truncate) {
+                args.push("--truncate");
+            }
+
             if (typeof opts.scope === "string") {
                 args.push("--scope", opts.scope);
             }

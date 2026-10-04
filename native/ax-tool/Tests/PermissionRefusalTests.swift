@@ -40,6 +40,18 @@ final class PermissionRefusalTests: XCTestCase {
         XCTAssertTrue(message.contains("If you just granted it, quit and reopen Terminal, then re-run."), message)
     }
 
+    // Regression test: #447 D2 — the refusal named only the pane, though a command can ask macOS
+    func testEveryRefusalNamesTheRequestCommandBeforeThePane() {
+        for grant in [PermissionGrant.accessibility, .screenRecording] {
+            let message = permissionRefusalMessage(grant, responsible: terminal)
+            guard let request = message.range(of: "Run `tools control permissions request`"),
+                  let pane = message.range(of: "System Settings") else {
+                return XCTFail("missing the request command or the pane: \(message)")
+            }
+            XCTAssertLessThan(request.lowerBound, pane.lowerBound, message)
+        }
+    }
+
     func testAccessibilityRefusalSaysNothingAboutReopening() {
         XCTAssertFalse(permissionRefusalMessage(.accessibility, responsible: terminal).contains("reopen"))
     }

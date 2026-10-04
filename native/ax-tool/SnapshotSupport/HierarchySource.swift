@@ -46,6 +46,8 @@ public struct ObservedTreeData {
     public var digest: String = ""
     /// Elements that vanished during this walk, left out with their subtrees.
     public var vanished = 0
+    /// Rows at the depth limit whose children `--truncate` left out.
+    public var truncatedAt: [Int] = []
     public init() {}
 }
 
@@ -58,12 +60,12 @@ public let observedElementLimit = 4000
 /// The deepest `--depth` see accepts.
 public let maxObservedDepth = 50
 
-/// A refused depth names the maximum and a retry that can work. At the maximum there is none.
+/// A refused depth names the maximum, a retry that can work, and --truncate for a partial tree.
 func depthOverflowMessage(_ depth: Int) -> String {
     if depth >= maxObservedDepth {
-        return "AX tree exceeds --depth \(depth), the maximum: this window's tree is deeper than see can observe"
+        return "AX tree exceeds --depth \(depth), the maximum: this window's tree is deeper than see can observe; add --truncate to get it cut at depth \(depth) with truncated: true"
     }
-    return "AX tree exceeds --depth \(depth) (max \(maxObservedDepth)); retry with --depth \(maxObservedDepth)"
+    return "AX tree exceeds --depth \(depth) (max \(maxObservedDepth)); retry with --depth auto (\(maxObservedDepth)), or add --truncate to get the tree cut at depth \(depth) with truncated: true"
 }
 
 /// AppKit animates anonymous glyph groups inside standard window buttons. Expose the actual
@@ -106,7 +108,7 @@ public func observationBudgetMessage(walked: Int) -> String {
 /// `observedElementLimit` is refused rather than truncated. `expired` is the caller's deadline:
 /// once it answers true the walk stops with an error, never with a partial tree.
 public func buildObservedTree(root: AXUIElement, source: HierarchySource, depth: Int, scope: String,
-                              expired: () -> Bool = { false }) throws -> ObservedTreeData {
+                              truncate: Bool = false, expired: () -> Bool = { false }) throws -> ObservedTreeData {
     guard (1...maxObservedDepth).contains(depth) else {
         throw ObservedTreeError("--depth must be between 1 and \(maxObservedDepth)")
     }
@@ -137,7 +139,10 @@ public func buildObservedTree(root: AXUIElement, source: HierarchySource, depth:
         let role = source.attribute(element, "AXRole") as? String ?? ""
         let omittedWebContent = scope == "chrome" && role == "AXWebArea"
         let children = windowButton || omittedWebContent ? [] : rawChildren
-        guard level < depth || children.isEmpty else {
+        // A row at the depth limit that still has children: refused by default, or kept as a leaf
+        // under --truncate. Its index stays where a full walk would put it, so act can address it.
+        let cut = level >= depth && !children.isEmpty
+        guard !cut || truncate else {
             throw ObservedTreeError(depthOverflowMessage(depth))
         }
         let frame = snapshotFrame(element, source: source)
@@ -201,6 +206,10 @@ public func buildObservedTree(root: AXUIElement, source: HierarchySource, depth:
         tree.elements.append(element)
         tree.frames.append(frame)
         tree.rows.append(row)
+        if cut {
+            tree.truncatedAt.append(tree.rows.count - 1)
+            return
+        }
         let childClip = role == "AXScrollArea" ? clip.intersection(frame) : clip
         for child in children {
             try walk(child, level: level + 1, clip: childClip)

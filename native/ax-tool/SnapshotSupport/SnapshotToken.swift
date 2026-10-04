@@ -21,10 +21,14 @@ public struct SnapshotToken: Codable {
     public let query: TreeQuery?
     /// The page inside the observed window, so a page target survives churn in browser chrome.
     public let document: DocumentScope?
+    /// `see --truncate` cut the tree at `depth`; `act` must re-walk it the same way. Absent in older tokens.
+    public let truncate: Bool?
     public var effectiveScope: String { scope ?? "window" }
+    public var truncates: Bool { truncate == true }
 
     public init(pid: Int32, launch: Double, window: Int, depth: Int, digest: String, created: Double, scope: String = "window",
-                visual: VisualCaptureIdentity? = nil, query: TreeQuery? = nil, document: DocumentScope? = nil) {
+                visual: VisualCaptureIdentity? = nil, query: TreeQuery? = nil, document: DocumentScope? = nil,
+                truncate: Bool = false) {
         self.version = 1
         self.pid = pid
         self.launch = launch
@@ -36,6 +40,7 @@ public struct SnapshotToken: Codable {
         self.visual = visual
         self.query = query
         self.document = document
+        self.truncate = truncate ? true : nil
     }
 
     public func validate(pid: Int32, launch: Double, window: Int, digest: String, element: Int, count: Int, now: Double) throws -> Int {

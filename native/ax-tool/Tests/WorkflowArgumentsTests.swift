@@ -2,6 +2,30 @@ import XCTest
 @testable import SnapshotSupport
 
 final class WorkflowArgumentsTests: XCTestCase {
+    // Regression test: #447 D3 — see had no way to return a tree deeper than --depth
+    func testSeeTakesTruncate() throws {
+        let arguments = try WorkflowArguments(["--app", "Claude", "--truncate"], command: "see")
+
+        XCTAssertTrue(arguments.flags.contains("--truncate"))
+    }
+
+    // Regression test: #447 D3 — `--depth auto` is the deepest depth see allows
+    func testDepthAutoIsTheMaximumDepth() throws {
+        let arguments = try WorkflowArguments(["--app", "Claude", "--depth", "auto"], command: "see")
+
+        XCTAssertEqual(arguments.values["--depth"], "50")
+    }
+
+    // A query already counts the subtrees its depth left unwalked; --truncate would be silently ignored there.
+    func testTruncateIsRefusedForAQuery() {
+        XCTAssertThrowsError(try WorkflowArguments([
+            "--app", "Claude", "--scope", "query", "--query", "Send", "--truncate",
+        ], command: "see")) { error in
+            XCTAssertEqual(error.localizedDescription,
+                           "--truncate cuts the window and chrome scopes; a --query already counts the subtrees its depth left unwalked")
+        }
+    }
+
     func testByIdentifierNeedsNoSnapshotToken() throws {
         let arguments = try WorkflowArguments([
             "--app", "Genesis", "--by-identifier", "focus-hud-primary", "--action", "press",

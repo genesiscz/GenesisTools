@@ -152,7 +152,7 @@ final class ObservedTreeBuilderTests: XCTestCase {
     func testDepthOverflowIsRefusedNotTruncated() {
         let fake = source()
         XCTAssertThrowsError(try buildObservedTree(root: fake.element(1), source: fake, depth: 1, scope: "window")) { error in
-            XCTAssertEqual((error as? ObservedTreeError)?.message, "AX tree exceeds --depth 1 (max 50); retry with --depth 50")
+            XCTAssertEqual((error as? ObservedTreeError)?.message, "AX tree exceeds --depth 1 (max 50); retry with --depth auto (50), or add --truncate to get the tree cut at depth 1 with truncated: true")
         }
     }
 
@@ -164,8 +164,36 @@ final class ObservedTreeBuilderTests: XCTestCase {
         }
         XCTAssertThrowsError(try buildObservedTree(root: fake.element(1), source: fake, depth: 50, scope: "window")) { error in
             XCTAssertEqual((error as? ObservedTreeError)?.message,
-                           "AX tree exceeds --depth 50, the maximum: this window's tree is deeper than see can observe")
+                           "AX tree exceeds --depth 50, the maximum: this window's tree is deeper than see can observe; add --truncate to get it cut at depth 50 with truncated: true")
         }
+    }
+
+    // Regression test: #447 D3 — an Electron window deeper than --depth gave no tree at all
+    func testTruncateCutsTheTreeAtTheDepthAndNamesTheRowsWhoseChildrenWereDropped() throws {
+        let fake = source()
+        let tree = try buildObservedTree(root: fake.element(1), source: fake, depth: 1, scope: "window", truncate: true)
+
+        XCTAssertEqual(tree.rows.map { $0["role"] as? String }, ["AXWindow", "AXButton", "AXGroup"])
+        XCTAssertEqual(tree.truncatedAt, [2])
+    }
+
+    // Regression test: #447 D3 — act re-walks the window, so a cut tree must come out the same every time
+    func testATruncatedTreeIsTheSameOnEveryWalk() throws {
+        let fake = source()
+        let first = try buildObservedTree(root: fake.element(1), source: fake, depth: 1, scope: "window", truncate: true)
+        let second = try buildObservedTree(root: fake.element(1), source: fake, depth: 1, scope: "window", truncate: true)
+
+        XCTAssertEqual(first.digest, second.digest)
+        XCTAssertEqual(first.rows.count, second.rows.count)
+    }
+
+    func testTruncateLeavesATreeThatFitsTheDepthUntouched() throws {
+        let fake = source()
+        let cut = try buildObservedTree(root: fake.element(1), source: fake, depth: 5, scope: "window", truncate: true)
+        let whole = try buildObservedTree(root: fake.element(1), source: fake, depth: 5, scope: "window")
+
+        XCTAssertEqual(cut.truncatedAt, [])
+        XCTAssertEqual(cut.digest, whole.digest)
     }
 
     func testDepthBoundsAreValidated() {

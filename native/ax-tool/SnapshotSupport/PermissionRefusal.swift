@@ -84,7 +84,8 @@ public func permissionRefusalMessage(_ grant: PermissionGrant, responsible: Resp
     let name = responsible.displayName
     var parts = [
         "\(grant.label) is not granted to \(responsible.described), the app macOS holds responsible for ax-tool (pid \(responsible.pid)).",
-        "Turn on \(name) in System Settings > Privacy & Security > \(grant.label) (`tools macos permissions open --pane \(grant.pane)`); add it with + if it is not listed.",
+        "Run `tools control permissions request` to ask macOS for it and wait until it is on.",
+        "Turn on \(name) in System Settings > Privacy & Security > \(grant.label) (`tools macos permissions open --pane \(grant.pane)`) if no dialog appears; add it with + if it is not listed.",
         // macOS applies a new Screen Recording grant to a process only after it restarts.
         grant == .screenRecording ? "If you just granted it, quit and reopen \(name), then re-run." : "Then re-run.",
     ]

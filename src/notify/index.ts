@@ -9,6 +9,7 @@ import type { NotificationAction, NotificationOptions } from "@genesiscz/utils/m
 import {
     askNotification,
     authorizeNotifications,
+    launchdSession,
     listNotifications,
     notificationStatus,
     openNotificationSettings,
@@ -345,6 +346,14 @@ program
                 out.warn(
                     "One or more notification channels failed or could not confirm delivery. See: tools notify status"
                 );
+                const session = launchdSession();
+
+                if (!session.gui) {
+                    out.warn(
+                        `This process runs in the "${session.manager}" launchd session, not your GUI login session, so macOS cannot show notifications or permission prompts here (for example over SSH).`
+                    );
+                }
+
                 process.exitCode = 1;
             }
         }

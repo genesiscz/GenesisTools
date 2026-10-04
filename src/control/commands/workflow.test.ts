@@ -43,6 +43,28 @@ test("snapshot inspection exposes its window selection without touching a live a
     expect(result.stdout).toContain("--path");
 });
 
+// Regression test: #447 D3 — the help never said how to get a tree deeper than --depth
+test("see help offers --truncate and --depth auto", () => {
+    const result = spawnSync("bun", [entry, "see", "--help"], { env: process.env, encoding: "utf8", timeout: 30_000 });
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("--truncate");
+    expect(result.stdout).toContain("auto");
+});
+
+// Regression test: PR #456 review — the menu surface is a different native command, so it silently ignored --truncate
+test("see refuses --truncate with --scope menu instead of ignoring it", () => {
+    const result = spawnSync("bun", [entry, "see", "--app", "Finder", "--scope", "menu", "--truncate"], {
+        env: process.env,
+        encoding: "utf8",
+        timeout: 30_000,
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("--truncate does not apply to --scope menu");
+    expect(result.stderr).not.toContain("real machine");
+});
+
 test("action help exposes native drag selection and paste options", () => {
     const result = spawnSync("bun", [entry, "act", "--help"], {
         env: process.env,
