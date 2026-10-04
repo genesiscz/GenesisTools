@@ -474,9 +474,6 @@ function buildOutputOptions(outDir: string, input: string) {
     };
 }
 
-let productionBuildsRunning = 0;
-let nodeEnvBeforeProductionBuilds: string | undefined;
-
 /**
  * `mode: "production"` alone does not force React's production bundle: vite
  * decides `isProduction` from `process.env.NODE_ENV` at resolve time, and
@@ -486,31 +483,12 @@ let nodeEnvBeforeProductionBuilds: string | undefined;
  * so a `--watch` rebuild loop (or anything else in this process) keeps
  * whatever NODE_ENV it had.
  *
- * Builds can overlap, so the override is counted: the first build saves the
- * caller's value, every build sees "production", and only the last one to
- * finish puts the saved value back. Nothing but NODE_ENV is touched.
+ * Builds can overlap: `env.withScoped` lets scopes that set the same value run
+ * together, and puts the caller's value back after the last one ends. Nothing
+ * but NODE_ENV is touched.
  */
 export async function withProductionNodeEnv(run: () => Promise<void>): Promise<void> {
-    if (productionBuildsRunning === 0) {
-        nodeEnvBeforeProductionBuilds = env.get("NODE_ENV");
-        env.testing.set("NODE_ENV", "production");
-    }
-
-    productionBuildsRunning++;
-
-    try {
-        await run();
-    } finally {
-        productionBuildsRunning--;
-
-        if (productionBuildsRunning === 0) {
-            if (nodeEnvBeforeProductionBuilds === undefined) {
-                env.testing.unset("NODE_ENV");
-            } else {
-                env.testing.set("NODE_ENV", nodeEnvBeforeProductionBuilds);
-            }
-        }
-    }
+    await env.withScoped({ NODE_ENV: "production" }, run);
 }
 
 /** Bundle an .html entry in place. */

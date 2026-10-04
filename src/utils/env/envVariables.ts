@@ -13,6 +13,7 @@ import {
     isNonEmpty,
     parseIntEnv,
 } from "@genesiscz/utils/env/env-core";
+import { withScopedEnv } from "@genesiscz/utils/env/env-scoped";
 import { restoreEnv, setEnv, snapshotEnv, unsetEnv, withEnvOverrides } from "@genesiscz/utils/env/env-testing";
 import { env as envClient } from "@genesiscz/utils/env.client";
 
@@ -47,6 +48,8 @@ export const env = {
 
     /** Shallow copy of process.env for child spawn inheritance and debug dumps. */
     getProcessEnv: snapshotEnv,
+    /** Run with some variables overridden, then restore only those (for production code; tests use `testing`). */
+    withScoped: withScopedEnv,
 
     /**
      * Spawn env with HTTP(S) proxy keys stripped. Grok's CLI wrapper sets a socks
@@ -404,7 +407,22 @@ export const env = {
         getConversationsDir: () => getTrimmed("ASK_CONVERSATIONS_DIR"),
     },
 
-    node: envClient.node,
+    node: {
+        ...envClient.node,
+        /**
+         * Sets NODE_ENV to `value` only when it is not already set. Ink CLI entries call
+         * this before importing ink/react so those packages' own `process.env.NODE_ENV
+         * === "production"` check (read at require time) picks the production build
+         * instead of the slower, warning-noisy development one — but only when nothing
+         * upstream already decided (a developer running NODE_ENV=development, `bun
+         * test`'s NODE_ENV=test). See #446 item 4.
+         */
+        setDefaultEnv: (value: "production" | "development" | "test"): void => {
+            if (process.env.NODE_ENV === undefined) {
+                process.env.NODE_ENV = value;
+            }
+        },
+    },
 
     youtube: {
         ...envClient.youtube,
