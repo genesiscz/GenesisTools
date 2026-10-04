@@ -120,8 +120,11 @@ const ArtistHarvestSchema = z.object({
 
 export type ArtistHarvestResult = z.infer<typeof ArtistHarvestSchema>;
 
-/** One artist overview per ~0.33 s plus a 1 s pause per three: 200 artists take about 80 s. */
-const ARTIST_HARVEST_DEADLINE_MS = 15 * 60_000;
+/**
+ * The payload starts one artist overview a second, so 200 artists take about 200 s. The deadline
+ * grows with the list (3 s an artist leaves room for retries) and never drops below 15 minutes.
+ */
+const artistHarvestDeadlineMs = (artists: number) => Math.max(15 * 60_000, artists * 3_000);
 
 export interface AutoHarvestOptions {
     browserUrl: string;
@@ -184,12 +187,12 @@ export async function autoHarvestArtists({
     try {
         const tab = await openSignedInGql({ tabs, browserUrl, onLog });
 
-        onLog(`probe ok — reading ${artistUris.length} artist pages (3 in flight, 1s between batches)`);
+        onLog(`probe ok — reading ${artistUris.length} artist pages (one request a second, at most 3 in flight)`);
 
         const source = `async () => (${payload("harvestArtists")})(${SafeJSON.stringify(artistUris, { strict: true })})`;
         const harvested = parsePayload(
             ArtistHarvestSchema,
-            await tab.evaluate(source, { deadlineMs: ARTIST_HARVEST_DEADLINE_MS })
+            await tab.evaluate(source, { deadlineMs: artistHarvestDeadlineMs(artistUris.length) })
         );
 
         if (!harvested) {

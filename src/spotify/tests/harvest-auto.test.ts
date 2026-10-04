@@ -22,13 +22,96 @@ describe("payload extraction", () => {
 });
 
 /**
- * The artist payload runs in the page, so it is evaluated here with a fake `window.__gql` and a
- * `setTimeout` that does not wait, both passed in as the names the payload text refers to.
+ * A fake clock for the artist payload: `setTimeout`, `clearTimeout` and `Date.now` that move only
+ * when `run` fires the next timer, after one real tick has let every pending promise settle. Start
+ * times come out exact, and a 15 s deadline costs nothing.
  */
+function fakeClock() {
+    let now = 0;
+    let nextId = 1;
+    const timers = new Map<number, { at: number; fn: () => void }>();
+
+    const setTimeoutFake = (fn: () => void, ms = 0) => {
+        const id = nextId++;
+        timers.set(id, { at: now + ms, fn });
+
+        return id;
+    };
+
+    async function run<T>(work: Promise<T>): Promise<T> {
+        let settled = false;
+        work.then(
+            () => {
+                settled = true;
+            },
+            () => {
+                settled = true;
+            }
+        );
+
+        // A bound, so a payload that waits on itself fails the test instead of hanging it.
+        for (let step = 0; step < 10_000; step++) {
+            await new Promise((resolve) => setImmediate(resolve));
+            if (settled) {
+                return work;
+            }
+
+            const [id, timer] = [...timers].sort(([ia, a], [ib, b]) => a.at - b.at || ia - ib)[0] ?? [];
+            if (id === undefined || !timer) {
+                throw new Error("the payload is waiting, but no timer is pending");
+            }
+
+            timers.delete(id);
+            now = Math.max(now, timer.at);
+            timer.fn();
+        }
+
+        throw new Error("the payload did not finish within 10,000 timer steps");
+    }
+
+    return {
+        now: () => now,
+        after: (ms: number) => new Promise<void>((resolve) => setTimeoutFake(resolve, ms)),
+        setTimeout: setTimeoutFake,
+        clearTimeout: (id: number) => {
+            timers.delete(id);
+        },
+        run,
+    };
+}
+
+type Gql = (operation: string, hash: string, vars: { uri: string }, options?: { signal?: AbortSignal }) => unknown;
+
+interface ArtistPayloadResult {
+    requested: number;
+    fetched: number;
+    errors: { uri: string; error: string }[];
+    artists: { uri: string }[];
+}
+
+/** The payload text, evaluated with the fake page and clock in place of the names it uses. */
+function artistPayload(
+    gql: Gql,
+    clock: ReturnType<typeof fakeClock>
+): (uris: string[]) => Promise<ArtistPayloadResult> {
+    return new Function("window", "setTimeout", "clearTimeout", "Date", `return (${payload("harvestArtists")});`)(
+        { __gql: gql },
+        clock.setTimeout,
+        clock.clearTimeout,
+        { now: clock.now }
+    );
+}
+
+const overview = (uri: string) => ({
+    status: 200,
+    json: { data: { artistUnion: { profile: { name: uri }, discography: {} } } },
+});
+
 describe("the artist payload", () => {
     test("a request that throws is retried, then reported, and every other artist is kept", async () => {
+        const clock = fakeClock();
         const calls = new Map<string, number>();
-        const gql = async (_operation: string, _hash: string, vars: { uri: string }) => {
+        const gql: Gql = async (_operation, _hash, vars) => {
             const n = (calls.get(vars.uri) ?? 0) + 1;
             calls.set(vars.uri, n);
 
@@ -37,36 +120,115 @@ describe("the artist payload", () => {
                 throw new TypeError("Failed to fetch");
             }
 
-            return { status: 200, json: { data: { artistUnion: { profile: { name: vars.uri }, discography: {} } } } };
-        };
-        const waits: number[] = [];
-        const noWait = (fn: () => void, ms: number) => {
-            waits.push(ms);
-
-            return setTimeout(fn, 0);
+            return overview(vars.uri);
         };
 
-        const harvest = new Function("window", "setTimeout", `return (${payload("harvestArtists")});`)(
-            { __gql: gql },
-            noWait
-        );
         const uris = ["spotify:artist:A", "spotify:artist:Flaky", "spotify:artist:Broken", "spotify:artist:Later"];
-        const result = await harvest(uris);
+        const result = await clock.run(artistPayload(gql, clock)(uris));
 
         expect(result).toMatchObject({
             requested: 4,
             fetched: 3,
             errors: [{ uri: "spotify:artist:Broken", error: "request failed: Failed to fetch" }],
         });
-        expect(result.artists.map((a: { uri: string }) => a.uri)).toEqual([
+        expect(result.artists.map((a) => a.uri)).toEqual([
             "spotify:artist:A",
             "spotify:artist:Flaky",
             "spotify:artist:Later",
         ]);
         expect(calls.get("spotify:artist:Flaky")).toBe(2);
         expect(calls.get("spotify:artist:Broken")).toBe(3);
-        // Backed off before each retry, and paused between the two batches of three.
-        expect(waits.sort((a, b) => a - b)).toEqual([1000, 2000, 2000, 4000]);
+    });
+
+    // A request that never settled never reached the retry, and held every other artist with it
+    // until the outer CDP deadline gave up on the whole harvest.
+    test("a request that never answers times out, is reported, and the others are kept", async () => {
+        const clock = fakeClock();
+        let aborted = 0;
+        const gql: Gql = (_operation, _hash, vars, options) => {
+            if (vars.uri === "spotify:artist:Stalled") {
+                // Like `fetch`: the signal is the only way out.
+                return new Promise((_resolve, reject) => {
+                    options?.signal?.addEventListener("abort", () => {
+                        aborted++;
+                        reject(options.signal?.reason);
+                    });
+                });
+            }
+
+            if (vars.uri === "spotify:artist:Deaf") {
+                // An older `__gql` that drops the signal: the timer race still ends the attempt.
+                return new Promise(() => {});
+            }
+
+            return Promise.resolve(overview(vars.uri));
+        };
+
+        const uris = ["spotify:artist:A", "spotify:artist:Stalled", "spotify:artist:Deaf", "spotify:artist:B"];
+        const result = await clock.run(artistPayload(gql, clock)(uris));
+
+        expect(result.artists.map((a) => a.uri)).toEqual(["spotify:artist:A", "spotify:artist:B"]);
+        expect(result.errors).toEqual([
+            { uri: "spotify:artist:Stalled", error: "request failed: no answer within 15 s" },
+            { uri: "spotify:artist:Deaf", error: "request failed: no answer within 15 s" },
+        ]);
+        // Each of the three attempts was cancelled, not just abandoned.
+        expect(aborted).toBe(3);
+    });
+
+    // The comment promised about one request a second; three started at once and retries skipped
+    // the pause, so fast answers ran at about three a second.
+    test("requests start one second apart, retries included", async () => {
+        const clock = fakeClock();
+        const starts: [string, number][] = [];
+        const tries = new Map<string, number>();
+        const gql: Gql = async (_operation, _hash, vars) => {
+            starts.push([vars.uri, clock.now()]);
+            const n = (tries.get(vars.uri) ?? 0) + 1;
+            tries.set(vars.uri, n);
+
+            return vars.uri === "spotify:artist:Flaky" && n === 1 ? { status: 503, json: "busy" } : overview(vars.uri);
+        };
+
+        const uris = ["spotify:artist:A", "spotify:artist:Flaky", "spotify:artist:B", "spotify:artist:C"];
+        const result = await clock.run(artistPayload(gql, clock)(uris));
+
+        expect(result.fetched).toBe(4);
+        expect(starts).toEqual([
+            ["spotify:artist:A", 0],
+            ["spotify:artist:Flaky", 1000],
+            ["spotify:artist:B", 2000],
+            ["spotify:artist:C", 3000],
+            // The retry waited its 2 s back-off, then took the next free slot.
+            ["spotify:artist:Flaky", 4000],
+        ]);
+    });
+
+    test("slow answers keep at most three requests in flight, still one start a second", async () => {
+        const clock = fakeClock();
+        const starts: number[] = [];
+        let inFlight = 0;
+        let mostInFlight = 0;
+        const gql: Gql = async (_operation, _hash, vars) => {
+            starts.push(clock.now());
+            inFlight++;
+            mostInFlight = Math.max(mostInFlight, inFlight);
+            await clock.after(2500);
+            inFlight--;
+
+            return overview(vars.uri);
+        };
+
+        const uris = Array.from({ length: 7 }, (_, i) => `spotify:artist:${i}`);
+        const result = await clock.run(artistPayload(gql, clock)(uris));
+
+        expect(result.fetched).toBe(7);
+        expect(mostInFlight).toBe(3);
+        for (const [i, at] of starts.entries()) {
+            if (i > 0) {
+                expect(at - (starts[i - 1] ?? 0)).toBeGreaterThanOrEqual(1000);
+            }
+        }
     });
 });
 
