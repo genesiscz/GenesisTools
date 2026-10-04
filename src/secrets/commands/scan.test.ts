@@ -83,6 +83,47 @@ describe("DETECTORS", () => {
             expect(det.regex.flags).toContain("g");
         }
     });
+
+    // Regression test: #451 — value-based detectors for providers GenesisTools users leak most.
+    test("an OpenAI key carrying the T3BlbkFJ marker is detected", () => {
+        const key = `sk-proj-${"a".repeat(48)}T3BlbkFJ${"b".repeat(48)}`;
+        expect(namesMatching(`export const openai = "${key}";`)).toContain("openai-key");
+    });
+
+    test("an OpenAI key in the newer markerless 100+ char form is detected", () => {
+        const key = `sk-proj-${"c".repeat(110)}`;
+        expect(namesMatching(`export const openai = "${key}";`)).toContain("openai-key");
+    });
+
+    test("a short sk-proj- value with no marker and under 100 chars is NOT a detected OpenAI key", () => {
+        const key = `sk-proj-${"d".repeat(40)}`;
+        expect(namesMatching(`export const openai = "${key}";`)).not.toContain("openai-key");
+    });
+
+    test("an Anthropic key is detected", () => {
+        const key = `sk-ant-api03-${"e".repeat(85)}`;
+        expect(namesMatching(`export const anthropic = "${key}";`)).toContain("anthropic-key");
+    });
+
+    test("a Stripe live key is detected", () => {
+        const key = `sk_live_${"f".repeat(24)}`;
+        expect(namesMatching(`export const stripe = "${key}";`)).toContain("stripe-key");
+    });
+
+    test("an OpenRouter key is detected", () => {
+        const key = `sk-or-v1-${"a1b2c3d4".repeat(8)}`;
+        expect(namesMatching(`export const openrouter = "${key}";`)).toContain("openrouter-key");
+    });
+
+    test("a Google API key is detected", () => {
+        const key = `AIza${"g".repeat(35)}`;
+        expect(namesMatching(`export const google = "${key}";`)).toContain("google-api-key");
+    });
+
+    test("a GitHub fine-grained token is detected", () => {
+        const key = `github_pat_${"h".repeat(82)}`;
+        expect(namesMatching(`export const gh = "${key}";`)).toContain("github-fine-grained");
+    });
 });
 
 describe("scanContent", () => {
@@ -147,6 +188,104 @@ describe("scanContent", () => {
         const findings = scanContent({ content, file: "a.ts", config: cfg });
         const spans = new Set(findings.map((f) => `${f.line}:${f.column}:${f.masked}`));
         expect(spans.size).toBe(findings.length);
+    });
+});
+
+describe("dotenv-assignment", () => {
+    const cfg = defaultScanConfig();
+
+    // Regression test: #451 — a standard unquoted .env line is invisible today because
+    // generic-assignment and high-entropy-base64 both require a quoted value.
+    test("an unquoted dotenv line with a secret-ish identifier is flagged", () => {
+        const content = "OPENAI_API_KEY=sk-proj-abcdefghijklmnopqrstuvwxyz0123456789ABCD";
+        const findings = scanContent({ content, file: ".env", config: cfg });
+
+        expect(findings).toHaveLength(1);
+        expect(findings[0].detector).toBe("dotenv-assignment");
+    });
+
+    test("a trailing # comment is stripped from the captured value", () => {
+        const content = "API_KEY=abcdefghijklmnop # trailing comment";
+        const findings = scanContent({ content, file: ".env", config: cfg });
+
+        expect(findings).toHaveLength(1);
+        expect(findings[0].masked).toBe("abcd…mnop");
+    });
+
+    test("a real-shaped OpenAI key in an unquoted .env line is reported once, not twice", () => {
+        const key = `sk-proj-${"a".repeat(48)}T3BlbkFJ${"b".repeat(48)}`;
+        const content = `OPENAI_API_KEY=${key}`;
+        const findings = scanContent({ content, file: ".env", config: cfg });
+
+        expect(findings).toHaveLength(1);
+    });
+
+    test("ordinary dotenv lines with no secret-ish identifier are not flagged", () => {
+        expect(scanContent({ content: "PORT=3000", file: ".env", config: cfg })).toHaveLength(0);
+        expect(scanContent({ content: "NODE_ENV=production", file: ".env", config: cfg })).toHaveLength(0);
+    });
+
+    test("a function-call assignment is not flagged", () => {
+        const content = "const token = getToken();";
+        expect(scanContent({ content, file: "a.ts", config: cfg })).toHaveLength(0);
+    });
+
+    test("a short property-access assignment is not flagged", () => {
+        const content = "password = input.value";
+        expect(scanContent({ content, file: "a.ts", config: cfg })).toHaveLength(0);
+    });
+
+    // Regression test: #451 — the dotenv detector must not report ordinary config values as secrets.
+    test("an identifier where 'auth' starts a longer word is not flagged", () => {
+        const content = "AUTHOR_NAME=JonathanSmithson";
+        expect(scanContent({ content, file: ".env", config: cfg })).toHaveLength(0);
+    });
+
+    test("a URL value without credentials is not flagged", () => {
+        const content = "AUTH_URL=https://login.mycompany.io/oauth2";
+        expect(scanContent({ content, file: ".env", config: cfg })).toHaveLength(0);
+    });
+
+    test("a URL value that carries a password is flagged", () => {
+        // Built at runtime so this file holds no literal credential-bearing URL for scanners to flag.
+        const password = ["s3cret", "pass"].join("");
+        const content = `AUTH_URL=https://app:${password}@login.mycompany.io/oauth2`;
+        expect(scanContent({ content, file: ".env", config: cfg })).toHaveLength(1);
+    });
+
+    // Regression test: PR #457 review — a URL counted as plain configuration whenever it had no
+    // `user:pass@`, so a token carried in its query string was never reported.
+    test("a URL value that carries a credential in its query string is flagged", () => {
+        const token = ["a1B2", "c3D4", "e5F6", "g7H8"].join("");
+        const content = `AUTH_URL=https://login.mycompany.io/callback?token=${token}`;
+        expect(scanContent({ content, file: ".env", config: cfg })).toHaveLength(1);
+    });
+
+    test("a URL value whose query string carries no credential is not flagged", () => {
+        const content = "AUTH_URL=https://login.mycompany.io/oauth2?client=webapp&prompt=consent";
+        expect(scanContent({ content, file: ".env", config: cfg })).toHaveLength(0);
+    });
+
+    // Regression test: PR #457 review — the match ran on through a trailing comment, so a comment
+    // repeating the value moved the finding onto the comment and the preview showed the real value.
+    test("a trailing comment that repeats the value does not move the finding or unmask the value", () => {
+        const value = ["a1B2", "c3D4", "e5F6", "g7H8"].join("");
+        const content = `API_TOKEN=${value} # was ${value}`;
+        const findings = scanContent({ content, file: ".env", config: cfg });
+
+        expect(findings).toHaveLength(1);
+        expect(findings[0].column).toBe("API_TOKEN=".length + 1);
+        expect(findings[0].preview.startsWith(`API_TOKEN=${findings[0].masked}`)).toBe(true);
+    });
+
+    test("a filesystem path value is not flagged", () => {
+        const content = "TOKEN_CACHE_DIR=/var/cache/someapp/tokens";
+        expect(scanContent({ content, file: ".env", config: cfg })).toHaveLength(0);
+    });
+
+    test("a code assignment with spaces around = is not flagged", () => {
+        const content = "password = settings.DATABASE_PASSWORD";
+        expect(scanContent({ content, file: "settings.py", config: cfg })).toHaveLength(0);
     });
 });
 

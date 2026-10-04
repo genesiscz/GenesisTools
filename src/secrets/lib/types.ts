@@ -3,8 +3,15 @@ export type DetectorName =
     | "private-key"
     | "slack-token"
     | "github-token"
+    | "github-fine-grained"
     | "jwt"
+    | "openai-key"
+    | "anthropic-key"
+    | "stripe-key"
+    | "openrouter-key"
+    | "google-api-key"
     | "generic-assignment"
+    | "dotenv-assignment"
     | "high-entropy-base64";
 
 export interface Finding {
