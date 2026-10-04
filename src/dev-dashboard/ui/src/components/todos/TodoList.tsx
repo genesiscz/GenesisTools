@@ -116,15 +116,19 @@ function TodoRow({
                         <p className="mt-0.5 line-clamp-1 text-xs text-[var(--dd-text-secondary)]">{preview}</p>
                     ) : null}
 
-                    <div className="mt-1 flex flex-wrap items-center gap-2 text-[10px] font-mono uppercase tracking-wide">
+                    <div className="mt-1 flex flex-wrap items-center gap-2 text-[10px] font-mono">
                         {showListName ? (
                             <span className="rounded border border-[var(--dd-border)] px-1.5 py-0.5 text-[var(--dd-text-muted)]">
                                 {reminder.list_title}
                             </span>
                         ) : null}
-                        {showPriority ? <span className="text-[var(--dd-accent-from)]">{priority}</span> : null}
+                        {showPriority ? (
+                            <span className="text-[var(--dd-accent-from)] first-letter:uppercase">{priority}</span>
+                        ) : null}
                         {dueLabel ? (
-                            <span className={overdue ? "text-amber-400" : "text-[var(--dd-text-muted)]"}>
+                            <span
+                                className={`first-letter:uppercase ${overdue ? "text-amber-400" : "text-[var(--dd-text-muted)]"}`}
+                            >
                                 {dueLabel}
                             </span>
                         ) : null}
@@ -162,7 +166,7 @@ function TodoRow({
                         <button
                             type="button"
                             onClick={() => onEdit(reminder.identifier)}
-                            className="dd-accent-text cursor-pointer font-mono text-[10px] uppercase tracking-wider transition-opacity hover:opacity-80"
+                            className="dd-accent-text cursor-pointer font-mono text-[10px] first-letter:uppercase transition-opacity hover:opacity-80"
                         >
                             Edit title & notes
                         </button>
@@ -170,7 +174,7 @@ function TodoRow({
                     <dl className="grid gap-2 text-xs">
                         {detailFields.map((field) => (
                             <div key={`${field.label}-${field.value.slice(0, 24)}`} className="grid gap-0.5">
-                                <dt className="font-mono uppercase tracking-wider text-[var(--dd-text-muted)]">
+                                <dt className="font-mono first-letter:uppercase text-[var(--dd-text-muted)]">
                                     {field.label}
                                 </dt>
                                 <dd className="whitespace-pre-wrap break-words text-[var(--dd-text-secondary)]">
@@ -219,7 +223,7 @@ export function TodoList({
                 <section key={group.key} aria-labelledby={`todo-group-${group.key}`}>
                     <h3
                         id={`todo-group-${group.key}`}
-                        className="dd-accent-text mb-2 font-mono text-[11px] font-semibold uppercase tracking-[0.18em]"
+                        className="dd-accent-text mb-2 font-mono text-[11px] font-semibold first-letter:uppercase"
                     >
                         {group.label}
                         <span className="ml-2 text-[var(--dd-text-muted)]">({group.items.length})</span>

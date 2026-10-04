@@ -82,7 +82,7 @@ export function QaSoundWrench() {
                 </Button>
             }
         >
-            <div className="text-xs uppercase tracking-wider text-[var(--dd-text-muted)]">Notification sound</div>
+            <div className="text-xs first-letter:uppercase text-[var(--dd-text-muted)]">Notification sound</div>
             <select
                 className="rounded border border-[var(--dd-border)] bg-transparent px-2 py-1 text-sm text-[var(--dd-text-secondary)]"
                 value={selected}

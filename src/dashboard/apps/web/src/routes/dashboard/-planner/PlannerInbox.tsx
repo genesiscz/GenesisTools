@@ -94,7 +94,7 @@ export function PlannerInbox({ tasks, completedToday, deferredToTomorrow }: Plan
             ].join(" ")}
         >
             <div className="flex items-center justify-between px-1">
-                <h3 className="text-xs font-semibold uppercase tracking-widest text-zinc-400">Inbox</h3>
+                <h3 className="text-xs font-semibold first-letter:uppercase text-zinc-400">Inbox</h3>
                 <span className="text-[10px] text-zinc-600" style={{ fontFamily: "'JetBrains Mono', monospace" }}>
                     {tasks.length} task{tasks.length !== 1 ? "s" : ""}
                 </span>
@@ -133,7 +133,7 @@ export function PlannerInbox({ tasks, completedToday, deferredToTomorrow }: Plan
                     >
                         {completedToday}
                     </span>
-                    <span className="text-[9px] uppercase tracking-widest text-zinc-500">done today</span>
+                    <span className="text-[9px] first-letter:uppercase text-zinc-500">done today</span>
                 </div>
                 <div className="flex flex-col items-center rounded-lg border border-white/5 bg-zinc-800/60 py-2 px-1">
                     <span
@@ -142,7 +142,7 @@ export function PlannerInbox({ tasks, completedToday, deferredToTomorrow }: Plan
                     >
                         {deferredToTomorrow}
                     </span>
-                    <span className="text-[9px] uppercase tracking-widest text-zinc-500">for tomorrow</span>
+                    <span className="text-[9px] first-letter:uppercase text-zinc-500">for tomorrow</span>
                 </div>
             </div>
         </div>

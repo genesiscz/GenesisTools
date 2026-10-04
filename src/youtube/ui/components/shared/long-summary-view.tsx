@@ -47,7 +47,7 @@ export function LongSummaryView({ summary, streaming, onSeek, playerTime }: Long
     return (
         <div className="space-y-5">
             <section>
-                <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-primary">TL;DR</p>
+                <p className="font-mono text-[11px] first-letter:uppercase text-primary">TL;DR</p>
                 {summary.tldr ? (
                     <p className="mt-2 bg-gradient-to-r from-amber-200 via-amber-300 to-cyan-300 bg-clip-text text-lg font-medium leading-relaxed text-transparent">
                         {summary.tldr}
@@ -59,7 +59,7 @@ export function LongSummaryView({ summary, streaming, onSeek, playerTime }: Long
 
             {keyPoints.length > 0 ? (
                 <section>
-                    <h4 className="font-mono text-[11px] uppercase tracking-[0.18em] text-secondary">Key points</h4>
+                    <h4 className="font-mono text-[11px] first-letter:uppercase text-secondary">Key points</h4>
                     <ol className="mt-2 space-y-2">
                         {keyPoints.map((point, index) => (
                             <li
@@ -80,7 +80,7 @@ export function LongSummaryView({ summary, streaming, onSeek, playerTime }: Long
 
             {learnings.length > 0 ? (
                 <section>
-                    <h4 className="font-mono text-[11px] uppercase tracking-[0.18em] text-emerald-300">Learnings</h4>
+                    <h4 className="font-mono text-[11px] first-letter:uppercase text-emerald-300">Learnings</h4>
                     <ul className="mt-2 space-y-2">
                         {learnings.map((point, index) => (
                             <li
@@ -99,7 +99,7 @@ export function LongSummaryView({ summary, streaming, onSeek, playerTime }: Long
 
             {chapters.length > 0 ? (
                 <section>
-                    <h4 className="font-mono text-[11px] uppercase tracking-[0.18em] text-cyan-200">Chapters</h4>
+                    <h4 className="font-mono text-[11px] first-letter:uppercase text-cyan-200">Chapters</h4>
                     <div className="mt-2 space-y-2">
                         {chapters.map((chapter, index) => (
                             <ChapterCard
@@ -144,7 +144,7 @@ function SkeletonLines({ count }: { count: number }) {
 function PendingSection({ label, labelClass }: { label: string; labelClass: string }) {
     return (
         <section>
-            <h4 className={`font-mono text-[11px] uppercase tracking-[0.18em] ${labelClass}`}>{label}</h4>
+            <h4 className={`font-mono text-[11px] first-letter:uppercase ${labelClass}`}>{label}</h4>
             <SkeletonLines count={3} />
         </section>
     );
@@ -200,9 +200,7 @@ function ChapterCard({ title, summary, streaming, startSec, active, onSeek }: Ch
                     <h5 className="text-sm font-semibold text-foreground/95">{title}</h5>
                     <span className="flex shrink-0 items-center gap-2">
                         {active ? (
-                            <span className="font-mono text-[11px] uppercase tracking-[0.18em] text-primary">
-                                playing
-                            </span>
+                            <span className="font-mono text-[11px] first-letter:uppercase text-primary">playing</span>
                         ) : null}
                         <ChevronDown
                             className={

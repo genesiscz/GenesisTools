@@ -102,7 +102,7 @@ export function AppSidebar({
                                   <span className="font-semibold text-sm tracking-tight gradient-text">
                                       {brand.name}
                                   </span>
-                                  <span className="text-[10px] text-muted-foreground tracking-widest uppercase">
+                                  <span className="text-[10px] text-muted-foreground first-letter:uppercase">
                                       {brand.tagline}
                                   </span>
                               </div>
@@ -114,10 +114,8 @@ export function AppSidebar({
                 {navGroups.map((group) => (
                     <SidebarGroup key={group.label}>
                         {group.label && (
-                            <SidebarGroupLabel
-                                className={`${groupLabel[group.theme]} text-[10px] tracking-widest uppercase font-semibold`}
-                            >
-                                {group.label}
+                            <SidebarGroupLabel className={`${groupLabel[group.theme]} text-[10px] font-semibold`}>
+                                <span className="first-letter:uppercase">{group.label}</span>
                             </SidebarGroupLabel>
                         )}
                         <SidebarGroupContent>

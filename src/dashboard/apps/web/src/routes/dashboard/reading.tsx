@@ -138,7 +138,7 @@ function ReadingPage() {
                                 <div className="flex items-center gap-2 border-b border-border pb-2">
                                     <ColIcon className="h-4 w-4 text-primary" />
                                     <h3 className="text-sm font-semibold text-foreground">{col.label}</h3>
-                                    <span className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground/50">
+                                    <span className="font-mono text-[10px] first-letter:uppercase text-muted-foreground/50">
                                         {colItems.length}
                                     </span>
                                 </div>

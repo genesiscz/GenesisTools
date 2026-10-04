@@ -101,7 +101,7 @@ function ExpensesPage() {
                                         <h3 className="text-sm font-semibold text-foreground">Transactions</h3>
                                         <span
                                             data-testid="expenses-total"
-                                            className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground/50"
+                                            className="font-mono text-[10px] first-letter:uppercase text-muted-foreground/50"
                                         >
                                             {summary.count} item{summary.count !== 1 ? "s" : ""} · {monthLabel}
                                         </span>

@@ -548,7 +548,7 @@ function FillResultsCard({ result }: { result: ExecuteFillResult }) {
                                     {/* Debug: HTTP request/response */}
                                     {hasDebug && (
                                         <div className="space-y-2 border border-gray-700/50 rounded p-2 bg-card/60">
-                                            <div className="text-[10px] font-mono text-gray-500 uppercase tracking-wider">
+                                            <div className="text-[10px] font-mono text-gray-500 first-letter:uppercase">
                                                 HTTP Request
                                             </div>
                                             <pre className="text-xs font-mono text-gray-400 overflow-x-auto max-h-48 overflow-y-auto whitespace-pre-wrap">
@@ -559,7 +559,7 @@ function FillResultsCard({ result }: { result: ExecuteFillResult }) {
                                                 {SafeJSON.stringify(entry.debug!.requestBody, null, 2)}
                                             </pre>
 
-                                            <div className="text-[10px] font-mono text-gray-500 uppercase tracking-wider mt-2">
+                                            <div className="text-[10px] font-mono text-gray-500 first-letter:uppercase mt-2">
                                                 HTTP Response ({entry.debug!.responseStatus})
                                             </div>
                                             <pre className="text-xs font-mono text-gray-400 overflow-x-auto max-h-48 overflow-y-auto whitespace-pre-wrap">

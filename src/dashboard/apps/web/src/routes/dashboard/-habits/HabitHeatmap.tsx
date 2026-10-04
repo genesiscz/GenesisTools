@@ -35,7 +35,7 @@ export function HabitHeatmap({ days, color, todayPending, onToggleToday }: Habit
     return (
         <div className="flex flex-col gap-1.5" data-testid="habit-heatmap">
             {/* Month labels above the grid */}
-            <div className="flex gap-[3px] pl-7 text-[9px] font-mono uppercase tracking-wider text-muted-foreground/50">
+            <div className="flex gap-[3px] pl-7 text-[9px] font-mono first-letter:uppercase text-muted-foreground/50">
                 {monthLabels.map((label, i) => (
                     <span
                         key={`${label}-${i}`}
@@ -49,7 +49,7 @@ export function HabitHeatmap({ days, color, todayPending, onToggleToday }: Habit
 
             <div className="flex gap-[3px]">
                 {/* Weekday rail */}
-                <div className="flex w-6 shrink-0 flex-col gap-[3px] pr-1 text-[8px] font-mono uppercase text-muted-foreground/45">
+                <div className="flex w-6 shrink-0 flex-col gap-[3px] pr-1 text-[8px] font-mono first-letter:uppercase text-muted-foreground/45">
                     {WEEKDAY_LABELS.map((label, i) => (
                         <span key={i} className="flex h-[11px] items-center justify-end leading-none">
                             {label}
@@ -103,13 +103,13 @@ export function HabitHeatmap({ days, color, todayPending, onToggleToday }: Habit
             </div>
 
             {/* Legend */}
-            <div className="flex items-center gap-1.5 pl-7 pt-0.5 text-[9px] font-mono uppercase tracking-wider text-muted-foreground/45">
-                <span>less</span>
+            <div className="flex items-center gap-1.5 pl-7 pt-0.5 text-[9px] font-mono first-letter:uppercase text-muted-foreground/45">
+                <span>Less</span>
                 <span className="h-[10px] w-[10px] rounded-[2px] bg-muted/40" />
                 {color.heatmapLevels.map((c, i) => (
                     <span key={i} className={cn("h-[10px] w-[10px] rounded-[2px]", c)} />
                 ))}
-                <span>more</span>
+                <span>More</span>
             </div>
         </div>
     );

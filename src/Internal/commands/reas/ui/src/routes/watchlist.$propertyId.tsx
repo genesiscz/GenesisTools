@@ -415,7 +415,7 @@ function WatchlistPropertyDetailPage() {
                                 <Card>
                                     <CardContent className="flex flex-col gap-4 p-5 md:flex-row md:items-center md:justify-between">
                                         <div className="space-y-3">
-                                            <div className="text-xs font-mono uppercase tracking-[0.24em] text-slate-500">
+                                            <div className="text-xs font-mono first-letter:uppercase text-slate-500">
                                                 Snapshot verdict
                                             </div>
                                             <div className="text-2xl font-mono font-semibold text-foreground">

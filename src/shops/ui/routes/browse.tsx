@@ -104,7 +104,7 @@ function BrowsePage() {
     return (
         <div className="max-w-7xl mx-auto px-4 sm:px-6 py-6 space-y-5">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                <h1 className="font-mono tracking-[0.3em] text-sm text-muted-foreground uppercase">
+                <h1 className="font-mono text-sm text-muted-foreground first-letter:uppercase">
                     Browse :: <span className="text-foreground">Master Catalog</span>
                 </h1>
                 <div className="flex items-center gap-2 flex-wrap">

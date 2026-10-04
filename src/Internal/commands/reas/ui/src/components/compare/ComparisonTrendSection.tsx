@@ -70,7 +70,7 @@ export function ComparisonTrendSection({ comparisons, snapshotResolution }: Comp
                                 onClick={() => setTimeframeDays(timeframe.days)}
                                 aria-pressed={timeframeDays === timeframe.days}
                                 className={cn(
-                                    "rounded-md border px-2.5 py-1 text-[10px] font-mono uppercase tracking-wider transition-colors",
+                                    "rounded-md border px-2.5 py-1 text-[10px] font-mono first-letter:uppercase transition-colors",
                                     timeframeDays === timeframe.days
                                         ? "border-cyan-400/40 bg-cyan-500/10 text-cyan-300"
                                         : "border-border/60 bg-card/60 text-gray-500 hover:border-border/60 hover:text-gray-300"
@@ -80,7 +80,7 @@ export function ComparisonTrendSection({ comparisons, snapshotResolution }: Comp
                             </button>
                         ))}
                     </div>
-                    <div className="rounded-lg border border-border/60 bg-card/60 px-3 py-2 text-[10px] font-mono uppercase tracking-[0.24em] text-gray-400">
+                    <div className="rounded-lg border border-border/60 bg-card/60 px-3 py-2 text-[10px] font-mono first-letter:uppercase text-gray-400">
                         {snapshotResolution === "monthly"
                             ? "Monthly snapshots loaded for smoother district overlays"
                             : "Daily snapshots loaded for high-frequency market reads"}
@@ -125,7 +125,7 @@ export function ComparisonTrendSection({ comparisons, snapshotResolution }: Comp
                                         <div className="text-sm font-mono font-semibold text-gray-100">
                                             {series.district}
                                         </div>
-                                        <div className="text-[10px] font-mono uppercase tracking-wider text-gray-500">
+                                        <div className="text-[10px] font-mono first-letter:uppercase text-gray-500">
                                             Latest snapshot {series.latestDate ?? "N/A"}
                                         </div>
                                     </div>
@@ -178,7 +178,7 @@ export function ComparisonTrendSection({ comparisons, snapshotResolution }: Comp
 function MetricPair({ label, value }: { label: string; value: string }) {
     return (
         <div>
-            <div className="text-[10px] uppercase tracking-wider text-gray-500">{label}</div>
+            <div className="text-[10px] first-letter:uppercase text-gray-500">{label}</div>
             <div className="mt-1 text-gray-200">{value}</div>
         </div>
     );

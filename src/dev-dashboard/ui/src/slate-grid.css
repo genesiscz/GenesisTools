@@ -149,8 +149,11 @@
     color: #6ee7b7;
     font-size: 10px;
     font-weight: 600;
-    letter-spacing: 0.06em;
     padding: 1px 7px;
+}
+
+/* Sentence case, never ALL CAPS (docs/design-system.md § Text case). */
+.dd-qa-unread-badge::first-letter {
     text-transform: uppercase;
 }
 
@@ -1197,8 +1200,11 @@
 }
 
 .dd-keybar-label {
-    text-transform: uppercase;
     font-weight: 600;
+}
+
+.dd-keybar-label::first-letter {
+    text-transform: uppercase;
 }
 
 @keyframes dd-activity-fade-in {

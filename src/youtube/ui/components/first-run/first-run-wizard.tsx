@@ -34,7 +34,7 @@ export function FirstRunWizard() {
                             <Server className="size-6" />
                         </div>
                         <div>
-                            <p className="font-mono text-xs uppercase tracking-[0.3em] text-secondary">First run</p>
+                            <p className="font-mono text-xs first-letter:uppercase text-secondary">First run</p>
                             <CardTitle className="text-2xl">Connect your API server</CardTitle>
                         </div>
                     </div>
@@ -46,7 +46,7 @@ export function FirstRunWizard() {
                 <CardContent className="space-y-5">
                     <div className="space-y-2">
                         <label
-                            className="font-mono text-xs uppercase tracking-[0.22em] text-muted-foreground"
+                            className="font-mono text-xs first-letter:uppercase text-muted-foreground"
                             htmlFor="api-url"
                         >
                             API Base URL

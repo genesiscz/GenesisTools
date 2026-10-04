@@ -116,7 +116,7 @@ export function BucketFilter({ lists, selectedIds, onChange, defaultList }: Buck
                 onClick={() => setOpen((value) => !value)}
                 className="cursor-pointer rounded-md border border-[var(--dd-border)] bg-[var(--dd-bg-panel)] px-3 py-1.5 text-sm text-[var(--dd-text-primary)] transition-colors hover:border-[var(--dd-accent-from)] hover:bg-[var(--dd-border)]/20"
             >
-                <span className="font-mono text-[10px] uppercase tracking-wider text-[var(--dd-text-muted)]">
+                <span className="font-mono text-[10px] first-letter:uppercase text-[var(--dd-text-muted)]">
                     Buckets{" "}
                 </span>
                 {summary}

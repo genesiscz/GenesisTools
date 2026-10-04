@@ -32,7 +32,7 @@ function ChartTooltipContent({
     return (
         <div className={cn("min-w-48 rounded-xl px-3 py-2 text-xs", className)} style={chartTooltipStyle}>
             {title ? (
-                <div className="mb-2 font-mono text-[11px] uppercase tracking-[0.2em] text-slate-300">{title}</div>
+                <div className="mb-2 font-mono text-[11px] first-letter:uppercase text-slate-300">{title}</div>
             ) : null}
             <div className="flex flex-col gap-1.5">
                 {payload.map((entry) => (

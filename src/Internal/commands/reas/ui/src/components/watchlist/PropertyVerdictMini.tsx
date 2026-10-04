@@ -8,7 +8,7 @@ export function PropertyVerdictMini({ grade, model }: { grade: string | null; mo
 
     return (
         <div className="rounded-md border border-border/60 bg-card/60 px-3 py-3">
-            <div className="text-[10px] font-mono uppercase tracking-wider text-gray-600">Verdict</div>
+            <div className="text-[10px] font-mono first-letter:uppercase text-gray-600">Verdict</div>
             <div className="mt-2 flex items-center gap-2">
                 <Badge variant="outline" className={cn("text-[10px] font-mono", gradeStyle)}>
                     {grade ?? "-"}

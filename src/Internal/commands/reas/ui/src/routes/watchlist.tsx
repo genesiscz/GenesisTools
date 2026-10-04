@@ -62,9 +62,7 @@ function SummaryMetric({ label, value, hint, tone = "default" }: SummaryMetricPr
     return (
         <Card>
             <CardHeader className="pb-2">
-                <CardTitle className="text-[10px] font-mono uppercase tracking-[0.18em] text-gray-600">
-                    {label}
-                </CardTitle>
+                <CardTitle className="text-[10px] font-mono first-letter:uppercase text-gray-600">{label}</CardTitle>
             </CardHeader>
             <CardContent>
                 <div
@@ -445,7 +443,7 @@ function WatchlistIndexPage() {
                         <div className="block">
                             <label
                                 htmlFor="watchlist-search"
-                                className="block text-[10px] font-mono text-gray-500 mb-1 uppercase tracking-wider"
+                                className="block text-[10px] font-mono text-gray-500 mb-1 first-letter:uppercase"
                             >
                                 Search
                             </label>
@@ -462,7 +460,7 @@ function WatchlistIndexPage() {
                         </div>
 
                         <label className="block">
-                            <span className="block text-[10px] font-mono text-gray-500 mb-1 uppercase tracking-wider">
+                            <span className="block text-[10px] font-mono text-gray-500 mb-1 first-letter:uppercase">
                                 District
                             </span>
                             <select
@@ -480,7 +478,7 @@ function WatchlistIndexPage() {
                         </label>
 
                         <label className="block">
-                            <span className="block text-[10px] font-mono text-gray-500 mb-1 uppercase tracking-wider">
+                            <span className="block text-[10px] font-mono text-gray-500 mb-1 first-letter:uppercase">
                                 Grade
                             </span>
                             <select
@@ -504,7 +502,7 @@ function WatchlistIndexPage() {
 
                         <div className="grid grid-cols-2 gap-2">
                             <label className="block">
-                                <span className="block text-[10px] font-mono text-gray-500 mb-1 uppercase tracking-wider">
+                                <span className="block text-[10px] font-mono text-gray-500 mb-1 first-letter:uppercase">
                                     Yield Min
                                 </span>
                                 <Input
@@ -516,7 +514,7 @@ function WatchlistIndexPage() {
                                 />
                             </label>
                             <label className="block">
-                                <span className="block text-[10px] font-mono text-gray-500 mb-1 uppercase tracking-wider">
+                                <span className="block text-[10px] font-mono text-gray-500 mb-1 first-letter:uppercase">
                                     Yield Max
                                 </span>
                                 <Input
@@ -530,7 +528,7 @@ function WatchlistIndexPage() {
                         </div>
 
                         <label className="block">
-                            <span className="block text-[10px] font-mono text-gray-500 mb-1 uppercase tracking-wider">
+                            <span className="block text-[10px] font-mono text-gray-500 mb-1 first-letter:uppercase">
                                 Analysis
                             </span>
                             <select
@@ -545,7 +543,7 @@ function WatchlistIndexPage() {
                         </label>
 
                         <label className="block">
-                            <span className="block text-[10px] font-mono text-gray-500 mb-1 uppercase tracking-wider">
+                            <span className="block text-[10px] font-mono text-gray-500 mb-1 first-letter:uppercase">
                                 Sort
                             </span>
                             <div className="flex gap-2">

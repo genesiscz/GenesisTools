@@ -130,7 +130,7 @@ function VideoDetailPage() {
             <section className="col-span-12 space-y-4 lg:col-span-7">
                 <YouTubeIframe id={id as VideoId} seekToSec={seekToSec} />
                 <header className="yt-panel rounded-3xl p-5">
-                    <p className="font-mono text-xs uppercase tracking-[0.28em] text-secondary">
+                    <p className="font-mono text-xs first-letter:uppercase text-secondary">
                         {video.data.video.channelHandle}
                     </p>
                     <h1 className="mt-2 text-2xl font-bold leading-tight">{video.data.video.title}</h1>

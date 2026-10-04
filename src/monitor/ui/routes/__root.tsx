@@ -67,7 +67,7 @@ function SidebarSummary() {
     const open = overview.data?.openIncidents.length ?? 0;
 
     return (
-        <div className="space-y-2 rounded-2xl border border-border/50 bg-card/40 p-3 font-mono text-[0.68rem] uppercase tracking-[0.18em]">
+        <div className="space-y-2 rounded-2xl border border-border/50 bg-card/40 p-3 font-mono text-[0.68rem] first-letter:uppercase">
             <div className="flex justify-between text-muted-foreground">
                 <span>Up</span>
                 <span className="text-emerald-300">{counts.up}</span>
@@ -107,7 +107,7 @@ function RootLayout() {
                                 <Radar className="size-5" />
                             </div>
                             <div>
-                                <p className="font-mono text-xs uppercase tracking-[0.35em] text-primary">Genesis</p>
+                                <p className="font-mono text-xs first-letter:uppercase text-primary">Genesis</p>
                                 <h1 className="text-lg font-semibold text-foreground">Monitor</h1>
                             </div>
                         </div>

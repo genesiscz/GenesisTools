@@ -141,7 +141,7 @@ export function QaSaveToObsidianDialog({
                         <div className="grid gap-6 lg:grid-cols-[minmax(0,1.15fr)_minmax(0,0.85fr)] lg:gap-8">
                             <section className="flex min-h-0 flex-col gap-3">
                                 <div>
-                                    <Label className="text-xs uppercase tracking-wider text-[var(--dd-text-muted)]">
+                                    <Label className="text-xs first-letter:uppercase text-[var(--dd-text-muted)]">
                                         Vault
                                     </Label>
                                     <p className="mt-0.5 text-[11px] text-[var(--dd-text-muted)]">
@@ -199,7 +199,7 @@ export function QaSaveToObsidianDialog({
                                 <div>
                                     <Label
                                         htmlFor="name"
-                                        className="text-xs uppercase tracking-wider text-[var(--dd-text-muted)]"
+                                        className="text-xs first-letter:uppercase text-[var(--dd-text-muted)]"
                                     >
                                         Filename
                                     </Label>
@@ -223,7 +223,7 @@ export function QaSaveToObsidianDialog({
                                 </div>
 
                                 <div className="space-y-2">
-                                    <Label className="text-xs uppercase tracking-wider text-[var(--dd-text-muted)]">
+                                    <Label className="text-xs first-letter:uppercase text-[var(--dd-text-muted)]">
                                         Mode
                                     </Label>
                                     <SegmentedControl
@@ -239,7 +239,7 @@ export function QaSaveToObsidianDialog({
                                 </div>
 
                                 <div className="space-y-3 rounded-md border border-[var(--dd-border)]/80 bg-black/15 p-3">
-                                    <p className="text-[10px] font-mono uppercase tracking-wider text-[var(--dd-text-muted)]">
+                                    <p className="text-[10px] font-mono first-letter:uppercase text-[var(--dd-text-muted)]">
                                         Include in note
                                     </p>
                                     <div className="flex items-center gap-2">

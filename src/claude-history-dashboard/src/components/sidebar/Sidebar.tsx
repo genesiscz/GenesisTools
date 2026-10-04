@@ -27,7 +27,7 @@ export function Sidebar() {
 							"bg-clip-text text-transparent"
 						}
 					>
-						CLAUDE::HISTORY
+						Claude::History
 					</span>
 				</Link>
 			</div>

@@ -100,7 +100,7 @@ export function JobActivityDrawer({
                     <SheetHeader className="space-y-3 px-1 pt-2">
                         <div className="flex items-center gap-2">
                             <span className="size-2 rounded-full bg-emerald-400 shadow-[0_0_14px_rgba(16,185,129,0.85)]" />
-                            <span className="font-mono text-[0.65rem] uppercase tracking-[0.32em] text-secondary">
+                            <span className="font-mono text-[0.65rem] first-letter:uppercase text-secondary">
                                 Pipeline activity · live
                             </span>
                         </div>
@@ -174,13 +174,13 @@ function SummaryCard({
     return (
         <div className="relative overflow-hidden rounded-2xl border border-primary/15 bg-black/40 p-4">
             <div aria-hidden className={`pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r ${ring}`} />
-            <div className="flex items-center gap-2 font-mono text-[0.65rem] uppercase tracking-[0.22em] text-muted-foreground">
+            <div className="flex items-center gap-2 font-mono text-[0.65rem] text-muted-foreground">
                 <span className="text-secondary">{icon}</span>
-                {label}
+                <span className="first-letter:uppercase">{label}</span>
             </div>
             <div className={`mt-2 truncate font-mono text-lg font-bold tabular-nums ${valueClass}`}>{value}</div>
             {hint ? (
-                <div className="mt-0.5 font-mono text-[0.6rem] uppercase tracking-[0.22em] text-muted-foreground/70">
+                <div className="mt-0.5 font-mono text-[0.6rem] first-letter:uppercase text-muted-foreground/70">
                     {hint}
                 </div>
             ) : null}
@@ -212,12 +212,12 @@ function ActivityRow({ row }: { row: JobActivity }) {
                 <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-2">
                         <span
-                            className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 font-mono text-[0.6rem] uppercase tracking-[0.2em] ${kind.badgeClass}`}
+                            className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 font-mono text-[0.6rem] first-letter:uppercase ${kind.badgeClass}`}
                         >
                             {kind.label}
                         </span>
                         {row.stage ? (
-                            <span className="font-mono text-[0.6rem] uppercase tracking-[0.22em] text-muted-foreground">
+                            <span className="font-mono text-[0.6rem] first-letter:uppercase text-muted-foreground">
                                 {row.stage}
                             </span>
                         ) : null}
@@ -270,7 +270,7 @@ function ActivityRow({ row }: { row: JobActivity }) {
 function Stat({ label, children }: { label: string; children: React.ReactNode }) {
     return (
         <span className="flex items-baseline gap-1.5">
-            <span className="text-[0.6rem] uppercase tracking-[0.22em] text-muted-foreground/65">{label}</span>
+            <span className="text-[0.6rem] first-letter:uppercase text-muted-foreground/65">{label}</span>
             <span>{children}</span>
         </span>
     );
@@ -286,7 +286,7 @@ function PayloadBlock({ label, value, tone }: { label: string; value: string | n
     return (
         <div className="overflow-hidden rounded-xl border border-border/40 bg-black/55">
             <div className="flex items-center justify-between border-b border-border/40 bg-black/30 px-3 py-1.5">
-                <span className={`font-mono text-[0.6rem] uppercase tracking-[0.28em] ${labelClass}`}>{label}</span>
+                <span className={`font-mono text-[0.6rem] first-letter:uppercase ${labelClass}`}>{label}</span>
                 <button
                     type="button"
                     onClick={() => {
@@ -297,9 +297,9 @@ function PayloadBlock({ label, value, tone }: { label: string; value: string | n
                                 toast.error("Copy failed");
                             });
                     }}
-                    className="inline-flex items-center gap-1 rounded-full border border-border/40 bg-black/40 px-2 py-0.5 font-mono text-[0.6rem] uppercase tracking-[0.22em] text-muted-foreground transition hover:border-amber-400/40 hover:text-amber-200"
+                    className="inline-flex items-center gap-1 rounded-full border border-border/40 bg-black/40 px-2 py-0.5 font-mono text-[0.6rem] first-letter:uppercase text-muted-foreground transition hover:border-amber-400/40 hover:text-amber-200"
                 >
-                    <Copy className="size-3" /> copy
+                    <Copy className="size-3" /> Copy
                 </button>
             </div>
             <pre className="yt-scroll max-h-72 overflow-auto whitespace-pre-wrap break-words p-3 font-mono text-xs leading-5 text-foreground/85">
@@ -333,9 +333,7 @@ function ActivityEmpty() {
             <div className="mx-auto flex size-12 items-center justify-center rounded-full border border-amber-400/25 bg-amber-400/5 text-amber-300">
                 <Cog className="size-5" />
             </div>
-            <p className="mt-3 font-mono text-[0.7rem] uppercase tracking-[0.28em] text-muted-foreground">
-                no calls yet
-            </p>
+            <p className="mt-3 font-mono text-[0.7rem] first-letter:uppercase text-muted-foreground">no calls yet</p>
             <p className="mt-1 text-sm text-muted-foreground/80">
                 Activity appears as stages run yt-dlp / YouTube fetches, LLMs, embedders, or transcribers. Older jobs
                 completed before API tracing won't have rows.

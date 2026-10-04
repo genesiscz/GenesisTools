@@ -91,8 +91,8 @@ function SpotifyLayout({ children }: { children: ReactNode }) {
 
     return (
         <DashboardLayout
-            title="SPOTIFY"
-            titleAccent="LIFE"
+            title="Spotify"
+            titleAccent="Life"
             icon={<Disc3 className="w-4 h-4 text-primary" />}
             navLinks={navLinks}
             activePath={currentPath}

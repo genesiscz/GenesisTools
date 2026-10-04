@@ -125,7 +125,7 @@ function BadgeCard({ displayName, description, iconName, rarity }: BadgeCardProp
                 <p className="text-[10px] text-muted-foreground mt-0.5 line-clamp-2">{description}</p>
                 <span
                     className={cn(
-                        "text-[8px] uppercase tracking-wider mt-2 px-1.5 py-0.5 rounded-full",
+                        "text-[8px] first-letter:uppercase mt-2 px-1.5 py-0.5 rounded-full",
                         rarityColors.rarityBg,
                         rarityColors.text
                     )}

@@ -26,7 +26,7 @@ export function Timeline({ events }: Props) {
         <div className="flex flex-col gap-4">
             {groups.map((group) => (
                 <div key={group.hourKey} className="flex flex-col gap-2">
-                    <h2 className="font-mono text-xs font-bold uppercase tracking-widest text-[var(--dd-text-secondary)]">
+                    <h2 className="font-mono text-xs font-bold first-letter:uppercase text-[var(--dd-text-secondary)]">
                         {group.label}
                     </h2>
                     <div className="dd-panel flex flex-col divide-y divide-[var(--dd-border)] p-4">

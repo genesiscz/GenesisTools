@@ -178,7 +178,7 @@ export function TaskCard({
                         {/* Urgency badge */}
                         <span
                             className={cn(
-                                "text-[10px] font-semibold px-2 py-0.5 rounded-full uppercase tracking-wide",
+                                "text-[10px] font-semibold px-2 py-0.5 rounded-full first-letter:uppercase",
                                 urgencyInfo.bgClass,
                                 urgencyInfo.colorClass,
                                 "border",

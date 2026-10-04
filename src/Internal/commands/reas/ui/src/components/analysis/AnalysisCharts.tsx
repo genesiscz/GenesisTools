@@ -168,7 +168,7 @@ function ScatterTooltip({
 
     return (
         <div className="min-w-56 rounded-xl border border-border/60 bg-slate-950/95 px-3 py-2 text-xs shadow-2xl backdrop-blur-sm">
-            <div className="mb-2 text-[11px] font-mono uppercase tracking-[0.2em] text-slate-300">{item.address}</div>
+            <div className="mb-2 text-[11px] font-mono first-letter:uppercase text-slate-300">{item.address}</div>
             <div className="space-y-1 font-mono text-slate-200">
                 <div className="flex items-center justify-between gap-4">
                     <span className="text-slate-400">Area</span>
@@ -218,7 +218,7 @@ function TrendTooltip({
 
     return (
         <div className="min-w-56 rounded-xl border border-border/60 bg-slate-950/95 px-3 py-2 text-xs shadow-2xl backdrop-blur-sm">
-            <div className="mb-2 text-[11px] font-mono uppercase tracking-[0.2em] text-slate-300">{item.period}</div>
+            <div className="mb-2 text-[11px] font-mono first-letter:uppercase text-slate-300">{item.period}</div>
             <div className="space-y-1 font-mono text-slate-200">
                 <div className="flex items-center justify-between gap-4">
                     <span className="text-slate-400">Median price / m²</span>
@@ -554,7 +554,7 @@ function HistogramTooltip({
 
     return (
         <div className="min-w-56 rounded-xl border border-border/60 bg-slate-950/95 px-3 py-2 text-xs shadow-2xl backdrop-blur-sm">
-            <div className="mb-2 text-[11px] font-mono uppercase tracking-[0.2em] text-slate-300">{item.range}</div>
+            <div className="mb-2 text-[11px] font-mono first-letter:uppercase text-slate-300">{item.range}</div>
             <div className="font-mono text-slate-200">
                 {item.count} {countLabel}
             </div>
@@ -586,7 +586,7 @@ function ActiveSaleTooltip({
 
     return (
         <div className="min-w-56 rounded-xl border border-border/60 bg-slate-950/95 px-3 py-2 text-xs shadow-2xl backdrop-blur-sm">
-            <div className="mb-2 text-[11px] font-mono uppercase tracking-[0.2em] text-slate-300">{item.address}</div>
+            <div className="mb-2 text-[11px] font-mono first-letter:uppercase text-slate-300">{item.address}</div>
             <div className="space-y-1 font-mono text-slate-200">
                 <div className="flex items-center justify-between gap-4">
                     <span className="text-slate-400">Area</span>

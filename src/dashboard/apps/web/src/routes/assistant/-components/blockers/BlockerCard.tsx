@@ -143,7 +143,7 @@ export function BlockerCard({
                     {followUpInfo && FollowUpIcon && (
                         <span
                             className={cn(
-                                "flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full uppercase tracking-wide",
+                                "flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full first-letter:uppercase",
                                 "bg-rose-500/10 border border-rose-500/20",
                                 followUpInfo.colorClass
                             )}

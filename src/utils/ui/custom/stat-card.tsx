@@ -81,7 +81,7 @@ export function StatCardNexus({ icon, value, label, color, className }: StatCard
             </div>
             <div>
                 <div className={cn("text-2xl font-mono font-bold", c.value)}>{value}</div>
-                <div className="text-[10px] text-foreground/60 uppercase tracking-wider font-medium">{label}</div>
+                <div className="text-[10px] text-foreground/60 first-letter:uppercase font-medium">{label}</div>
             </div>
         </div>
     );

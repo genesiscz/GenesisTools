@@ -113,7 +113,7 @@ function HistoryPage() {
             {/* District + Type selector toolbar */}
             <div className="flex flex-col sm:flex-row gap-3 mb-6">
                 <div className="flex-1 max-w-xs">
-                    <div className="block text-[10px] font-mono text-gray-500 mb-1 uppercase tracking-wider">
+                    <div className="block text-[10px] font-mono text-gray-500 mb-1 first-letter:uppercase">
                         District
                     </div>
                     <div className="flex items-center gap-2">
@@ -140,7 +140,7 @@ function HistoryPage() {
                 <div>
                     <label
                         htmlFor="history-construction"
-                        className="block text-[10px] font-mono text-gray-500 mb-1 uppercase tracking-wider"
+                        className="block text-[10px] font-mono text-gray-500 mb-1 first-letter:uppercase"
                     >
                         Construction
                     </label>

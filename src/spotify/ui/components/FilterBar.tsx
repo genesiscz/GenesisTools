@@ -45,7 +45,7 @@ export function FilterBar() {
                 </PopoverTrigger>
                 <PopoverContent align="end" className="w-72 space-y-3">
                     <div className="space-y-1">
-                        <div className="text-[11px] uppercase tracking-widest text-muted-foreground">Year</div>
+                        <div className="text-[11px] first-letter:uppercase text-muted-foreground">Year</div>
                         <Select
                             value={filters.year || ALL_TIME}
                             onValueChange={(y) => setFilters({ year: y === ALL_TIME ? "" : y })}
@@ -65,7 +65,7 @@ export function FilterBar() {
                     </div>
 
                     <div className="space-y-1">
-                        <div className="text-[11px] uppercase tracking-widest text-muted-foreground">
+                        <div className="text-[11px] first-letter:uppercase text-muted-foreground">
                             Or an explicit range
                         </div>
                         <div className="flex items-center gap-2">

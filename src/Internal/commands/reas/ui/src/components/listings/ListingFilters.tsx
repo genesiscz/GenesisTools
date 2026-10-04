@@ -63,7 +63,7 @@ export function ListingFilters({
                 <form className="flex flex-col gap-4" onSubmit={onSubmit}>
                     <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
                         <div className="block">
-                            <span className="mb-1.5 block text-[10px] font-mono uppercase tracking-[0.2em] text-gray-500">
+                            <span className="mb-1.5 block text-[10px] font-mono first-letter:uppercase text-gray-500">
                                 District
                             </span>
                             <DistrictCommandSelect
@@ -135,7 +135,7 @@ export function ListingFilters({
                     </div>
 
                     <div className="rounded-xl border border-border/60 bg-card/60 p-3">
-                        <span className="mb-3 block text-[10px] font-mono uppercase tracking-[0.2em] text-gray-500">
+                        <span className="mb-3 block text-[10px] font-mono first-letter:uppercase text-gray-500">
                             Seen date range
                         </span>
                         <DateRangePicker
@@ -186,7 +186,7 @@ function FilterInput({
 }) {
     return (
         <div className="block">
-            <span className="mb-1.5 block text-[10px] font-mono uppercase tracking-[0.2em] text-gray-500">{label}</span>
+            <span className="mb-1.5 block text-[10px] font-mono first-letter:uppercase text-gray-500">{label}</span>
             <Input
                 type={type}
                 value={value}
@@ -213,7 +213,7 @@ function FilterMultiSelect({
 }) {
     return (
         <div className="block">
-            <span className="mb-1.5 block text-[10px] font-mono uppercase tracking-[0.2em] text-gray-500">{label}</span>
+            <span className="mb-1.5 block text-[10px] font-mono first-letter:uppercase text-gray-500">{label}</span>
             <Popover>
                 <PopoverTrigger asChild>
                     <Button
@@ -259,7 +259,7 @@ function SelectField<TValue extends string>({
 }) {
     return (
         <div className="block">
-            <span className="mb-1.5 block text-[10px] font-mono uppercase tracking-[0.2em] text-gray-500">{label}</span>
+            <span className="mb-1.5 block text-[10px] font-mono first-letter:uppercase text-gray-500">{label}</span>
             <Select value={value} onValueChange={(nextValue) => onChange(nextValue as TValue)}>
                 <SelectTrigger className="border-border/60 bg-card/60 font-mono text-xs text-gray-200 hover:border-border/60 focus:border-primary/40">
                     <SelectValue />

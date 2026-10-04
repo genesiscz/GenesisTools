@@ -39,7 +39,7 @@ export function PhaseBadge({ phase, sessionCount, cycleLength }: PhaseBadgeProps
             className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-full border transition-colors duration-1000 ${cls.wrap}`}
         >
             <span className={`h-1.5 w-1.5 rounded-full ${cls.dot}`} />
-            <span className={`text-[10px] tracking-widest uppercase font-mono font-semibold ${cls.label}`}>
+            <span className={`text-[10px] first-letter:uppercase font-mono font-semibold ${cls.label}`}>
                 {labelMap[phase]}
             </span>
             {phase === "work" && (

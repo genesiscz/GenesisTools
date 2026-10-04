@@ -11,12 +11,12 @@ interface CompareGridProps {
 
 export function CompareGrid({ data, isLoading }: CompareGridProps) {
     if (isLoading || !data) {
-        return <div className="font-mono text-xs text-muted-foreground tracking-[0.15em] uppercase">loading…</div>;
+        return <div className="font-mono text-xs text-muted-foreground first-letter:uppercase">loading…</div>;
     }
 
     if (data.items.length === 0) {
         return (
-            <div className="font-mono text-xs text-muted-foreground tracking-[0.15em] uppercase border border-dashed border-border rounded-md p-12 text-center">
+            <div className="font-mono text-xs text-muted-foreground first-letter:uppercase border border-dashed border-border rounded-md p-12 text-center">
                 no master products match the requested ids
             </div>
         );
@@ -39,7 +39,7 @@ export function CompareGrid({ data, isLoading }: CompareGridProps) {
                             )}
                         </div>
                         <div className="min-w-0 flex-1">
-                            <div className="font-mono text-[10px] tracking-[0.2em] text-muted-foreground uppercase mb-1">
+                            <div className="font-mono text-[10px] text-muted-foreground first-letter:uppercase mb-1">
                                 {item.brand ?? "no brand"}
                             </div>
                             <CardTitle className="font-mono text-sm leading-tight">{item.canonical_name}</CardTitle>

@@ -22,7 +22,7 @@ export function TtydCloseDialog({ open, sessionLabel, onOpenChange, onKeep, onKi
         <Dialog open={open} onOpenChange={onOpenChange}>
             <DialogContent className="dd-panel max-w-md border-[var(--dd-border)] bg-[#050505]/95">
                 <DialogHeader>
-                    <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-[var(--dd-text-muted)]">
+                    <p className="font-mono text-[10px] first-letter:uppercase text-[var(--dd-text-muted)]">
                         Close terminal
                     </p>
                     <DialogTitle className="font-mono text-base">Close web terminal?</DialogTitle>

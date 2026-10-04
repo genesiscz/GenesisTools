@@ -504,9 +504,7 @@ export function AddPropertyForm({ onAdd }: AddPropertyFormProps) {
                         )}
                         {importedListingPreview && (
                             <div className="mt-2 rounded border border-cyan-500/20 bg-cyan-500/5 px-3 py-2 text-[10px] font-mono text-cyan-100">
-                                <div className="uppercase tracking-[0.18em] text-cyan-300/80">
-                                    Cached listing imported
-                                </div>
+                                <div className="first-letter:uppercase text-cyan-300/80">Cached listing imported</div>
                                 <div className="mt-1 text-gray-300">{importedListingPreview.address}</div>
                                 <div className="mt-2 flex flex-wrap gap-2 text-[10px]">
                                     <span className="rounded border border-border/60 bg-card/60 px-2 py-1 text-gray-300">
@@ -575,9 +573,7 @@ export function AddPropertyForm({ onAdd }: AddPropertyFormProps) {
                     </div>
 
                     <div className="rounded border border-border/60 bg-card/60 p-3">
-                        <div className="mb-3 text-[10px] font-mono uppercase tracking-[0.18em] text-gray-500">
-                            Mortgage
-                        </div>
+                        <div className="mb-3 text-[10px] font-mono first-letter:uppercase text-gray-500">Mortgage</div>
                         <div className="grid gap-3 md:grid-cols-2">
                             <div>
                                 <label
@@ -647,9 +643,7 @@ export function AddPropertyForm({ onAdd }: AddPropertyFormProps) {
                     </div>
 
                     <div className="rounded border border-border/60 bg-card/60 p-3">
-                        <div className="mb-3 text-[10px] font-mono uppercase tracking-[0.18em] text-gray-500">
-                            Alerts
-                        </div>
+                        <div className="mb-3 text-[10px] font-mono first-letter:uppercase text-gray-500">Alerts</div>
                         <div className="grid gap-3 md:grid-cols-2">
                             <div>
                                 <label

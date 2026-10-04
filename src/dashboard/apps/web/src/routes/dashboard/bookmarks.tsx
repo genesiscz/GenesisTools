@@ -112,7 +112,7 @@ function BookmarksPage() {
 
                 {/* Stat footer */}
                 {bookmarks.length > 0 && (
-                    <p className="font-mono text-[10px] tracking-widest uppercase text-muted-foreground/40 text-center">
+                    <p className="font-mono text-[10px] first-letter:uppercase text-muted-foreground/40 text-center">
                         {filtered.length} of {bookmarks.length} bookmark{bookmarks.length !== 1 ? "s" : ""}
                         {activeTag ? ` · tag: ${activeTag}` : ""}
                         {search ? ` · search: "${search}"` : ""}

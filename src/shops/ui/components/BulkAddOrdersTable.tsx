@@ -62,7 +62,7 @@ export function BulkAddOrdersTable({ providers, onBulkAdd }: Props): ReactNode {
             {providers.map((p) => (
                 <Card key={p.shop_origin}>
                     <CardHeader>
-                        <CardTitle className="font-mono text-xs tracking-[0.25em] uppercase text-muted-foreground">
+                        <CardTitle className="font-mono text-xs first-letter:uppercase text-muted-foreground">
                             {p.shop_origin} · {p.orders.length} orders
                         </CardTitle>
                     </CardHeader>

@@ -6,8 +6,8 @@ export default function Header() {
 	const location = useLocation();
 
 	const navItems = [
-		{ to: "/", label: "SESSIONS", icon: MessageSquare },
-		{ to: "/stats", label: "ANALYTICS", icon: BarChart3 },
+		{ to: "/", label: "Sessions", icon: MessageSquare },
+		{ to: "/stats", label: "Analytics", icon: BarChart3 },
 	] as const;
 
 	return (

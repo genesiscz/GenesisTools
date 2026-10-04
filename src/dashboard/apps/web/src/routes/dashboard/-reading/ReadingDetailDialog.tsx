@@ -149,7 +149,7 @@ export function ReadingDetailDialog({ item, onOpenChange }: ReadingDetailDialogP
                                             <p className="mt-1.5 text-xs italic text-muted-foreground">{h.note}</p>
                                         )}
                                         {h.location && (
-                                            <span className="mt-1.5 inline-block font-mono text-[10px] uppercase tracking-widest text-muted-foreground/50">
+                                            <span className="mt-1.5 inline-block font-mono text-[10px] first-letter:uppercase text-muted-foreground/50">
                                                 {h.location}
                                             </span>
                                         )}

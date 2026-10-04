@@ -261,7 +261,7 @@ export function HandoffTaskRow({
 
                     {!task.checked && task.proof ? (
                         <div className="mt-1 flex flex-col gap-1.5 rounded border border-[var(--dd-border)]/40 bg-black/15 p-2 text-xs text-[var(--dd-text-secondary)] opacity-60">
-                            <span className="font-mono text-[10px] uppercase tracking-wider text-[var(--dd-text-muted)]">
+                            <span className="font-mono text-[10px] first-letter:uppercase text-[var(--dd-text-muted)]">
                                 previous proof
                             </span>
                             <ProofBody proof={task.proof} attachments={attachments} proofIds={proofIds} />

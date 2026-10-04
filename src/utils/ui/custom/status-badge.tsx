@@ -8,6 +8,7 @@ interface StatusBadgeProps {
     borderClass?: string;
     shape?: "flat" | "pill";
     size?: "xs" | "sm";
+    /** Capitalise the first letter (sentence case). Dashboards never render ALL CAPS. */
     uppercase?: boolean;
     icon?: React.ReactNode;
     className?: string;
@@ -34,7 +35,7 @@ export function StatusBadge({
                 borderClass && "border",
                 sizing,
                 rounded,
-                uppercase && "uppercase tracking-wide",
+
                 bgClass,
                 textClass,
                 borderClass,
@@ -42,7 +43,7 @@ export function StatusBadge({
             )}
         >
             {icon}
-            {children}
+            {uppercase ? <span className="first-letter:uppercase">{children}</span> : children}
         </span>
     );
 }

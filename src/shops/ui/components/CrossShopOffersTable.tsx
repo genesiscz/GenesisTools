@@ -12,7 +12,7 @@ interface CrossShopOffersTableProps {
 export function CrossShopOffersTable({ offers }: CrossShopOffersTableProps) {
     if (offers.length === 0) {
         return (
-            <div className="border border-dashed border-border rounded p-8 text-center font-mono text-xs tracking-[0.2em] text-muted-foreground uppercase">
+            <div className="border border-dashed border-border rounded p-8 text-center font-mono text-xs text-muted-foreground first-letter:uppercase">
                 no offers
             </div>
         );
@@ -24,7 +24,7 @@ export function CrossShopOffersTable({ offers }: CrossShopOffersTableProps) {
         <div className="border border-border rounded-md overflow-hidden">
             <Table>
                 <TableHeader>
-                    <TableRow className="font-mono text-[10px] tracking-[0.2em] uppercase">
+                    <TableRow className="font-mono text-[10px] first-letter:uppercase">
                         <TableHead>Shop</TableHead>
                         <TableHead>Name</TableHead>
                         <TableHead className="text-right">Price</TableHead>

@@ -646,7 +646,7 @@ function TaskDetailPage() {
                                         <span className="text-xs text-purple-300 font-medium">
                                             Last parked {formatDateTime(new Date(activeParking.parkedAt))}
                                         </span>
-                                        <span className="text-[10px] uppercase tracking-wider text-purple-400 font-semibold px-2 py-0.5 rounded bg-purple-500/20">
+                                        <span className="text-[10px] first-letter:uppercase text-purple-400 font-semibold px-2 py-0.5 rounded bg-purple-500/20">
                                             Active
                                         </span>
                                     </div>
@@ -686,7 +686,7 @@ function TaskDetailPage() {
                                                 </span>
                                                 <span
                                                     className={cn(
-                                                        "text-[10px] uppercase tracking-wider font-semibold px-1.5 py-0.5 rounded",
+                                                        "text-[10px] first-letter:uppercase font-semibold px-1.5 py-0.5 rounded",
                                                         parking.status === "resumed"
                                                             ? "text-green-400 bg-green-500/20"
                                                             : "text-gray-400 bg-gray-500/20"
@@ -1039,7 +1039,7 @@ function BlockedDuration({ blockedSince }: { blockedSince: Date }) {
     return (
         <span
             className={cn(
-                "text-[10px] font-semibold px-2 py-0.5 rounded-full uppercase tracking-wide",
+                "inline-block text-[10px] font-semibold px-2 py-0.5 rounded-full first-letter:uppercase",
                 "bg-rose-500/20",
                 colorClass
             )}

@@ -336,7 +336,7 @@ export function BadgeUnlockAnimation({ badge, open, onClose }: BadgeUnlockAnimat
                         </h3>
                         <p className="text-sm text-muted-foreground max-w-xs">{definition.description}</p>
                         <p
-                            className="mt-2 text-xs uppercase tracking-wider font-semibold"
+                            className="mt-2 text-xs first-letter:uppercase font-semibold"
                             style={{ color: config.secondary }}
                         >
                             {rarity} Badge

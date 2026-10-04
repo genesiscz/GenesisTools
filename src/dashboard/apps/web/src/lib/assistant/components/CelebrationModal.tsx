@@ -231,7 +231,7 @@ export function CelebrationModal({
                     {/* New badges */}
                     {newBadges.length > 0 && (
                         <div className="relative mb-6 p-4 rounded-xl bg-gradient-to-r from-amber-500/10 to-purple-500/10 border border-amber-500/30">
-                            <p className="text-xs uppercase tracking-wider text-amber-400 font-semibold mb-3">
+                            <p className="text-xs first-letter:uppercase text-amber-400 font-semibold mb-3">
                                 New Badge Unlocked!
                             </p>
                             <div className="flex justify-center gap-4">
@@ -245,7 +245,7 @@ export function CelebrationModal({
                                         </span>
                                         <span
                                             className={cn(
-                                                "text-[10px] uppercase tracking-wider font-semibold px-2 py-0.5 rounded mt-1",
+                                                "text-[10px] first-letter:uppercase font-semibold px-2 py-0.5 rounded mt-1",
                                                 badge.rarity === "legendary" && "text-amber-400 bg-amber-500/20",
                                                 badge.rarity === "rare" && "text-purple-400 bg-purple-500/20",
                                                 badge.rarity === "uncommon" && "text-green-400 bg-green-500/20",

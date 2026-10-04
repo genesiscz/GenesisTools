@@ -32,12 +32,10 @@
     box-shadow: 0 8px 28px rgba(0, 0, 0, 0.35);
 }
 
-/* Category badge: uppercase, letter-spaced, monospace. */
+/* Category badge: monospace, sentence case (never ALL CAPS). */
 .dd-ai-badge {
     font-family: ui-monospace, "JetBrains Mono", SFMono-Regular, Menlo, monospace;
     font-size: 10px;
-    letter-spacing: 0.14em;
-    text-transform: uppercase;
     line-height: 1;
     padding: 4px 7px;
     border-radius: 4px;

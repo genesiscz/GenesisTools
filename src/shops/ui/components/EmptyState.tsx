@@ -15,7 +15,7 @@ export function EmptyState({ title, body, icon, action }: EmptyStateProps) {
                 {icon && (
                     <div className="text-[var(--color-neon-cyan)] opacity-60 [&>svg]:w-10 [&>svg]:h-10">{icon}</div>
                 )}
-                <h3 className="font-mono text-sm tracking-[0.2em] text-foreground uppercase">{title}</h3>
+                <h3 className="font-mono text-sm text-foreground first-letter:uppercase">{title}</h3>
                 <p className="text-xs text-muted-foreground max-w-md">{body}</p>
                 {action && <div className="mt-2">{action}</div>}
             </CardContent>

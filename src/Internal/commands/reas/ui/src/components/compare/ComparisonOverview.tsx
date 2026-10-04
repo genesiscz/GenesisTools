@@ -105,9 +105,9 @@ export function ComparisonOverview({ comparisons }: ComparisonOverviewProps) {
 function OverviewStat({ label, value, icon }: { label: string; value: string; icon: React.ReactNode }) {
     return (
         <div className="rounded-lg border border-border/60 bg-card/60 p-3">
-            <div className="flex items-center gap-2 text-[10px] font-mono uppercase tracking-wider text-gray-500">
+            <div className="flex items-center gap-2 text-[10px] font-mono text-gray-500">
                 {icon}
-                {label}
+                <span className="first-letter:uppercase">{label}</span>
             </div>
             <div className="mt-2 text-sm font-mono font-semibold text-gray-100">{value}</div>
         </div>

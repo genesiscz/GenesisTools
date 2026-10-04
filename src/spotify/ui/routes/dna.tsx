@@ -92,7 +92,7 @@ function DnaPage() {
                             <>
                                 <div className="grid md:grid-cols-2 gap-3 mb-4">
                                     <Card variant="wow-static" className="p-4">
-                                        <div className="text-xs font-mono uppercase tracking-widest text-muted-foreground mb-2">
+                                        <div className="text-xs font-mono first-letter:uppercase text-muted-foreground mb-2">
                                             continuity
                                         </div>
                                         <ScoreBar value={r.continuity} />

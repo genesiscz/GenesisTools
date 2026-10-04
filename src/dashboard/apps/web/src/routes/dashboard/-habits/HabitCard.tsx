@@ -53,7 +53,7 @@ export function HabitCard({ habit, pending, onToggleToday, onArchive, className 
                             <h3 className="truncate text-sm font-semibold text-foreground" data-testid="habit-name">
                                 {habit.name}
                             </h3>
-                            <p className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground/60">
+                            <p className="font-mono text-[10px] first-letter:uppercase text-muted-foreground/60">
                                 {habit.cadence === "weekly" ? `${habit.targetPerWeek}× / week` : "daily"}
                             </p>
                         </div>
@@ -81,7 +81,7 @@ export function HabitCard({ habit, pending, onToggleToday, onArchive, className 
                             )}
                         />
                         <span className="text-lg font-bold tabular-nums text-foreground">{habit.currentStreak}</span>
-                        <span className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground/50">
+                        <span className="font-mono text-[10px] first-letter:uppercase text-muted-foreground/50">
                             day{habit.currentStreak === 1 ? "" : "s"}
                         </span>
                     </div>
@@ -96,7 +96,7 @@ export function HabitCard({ habit, pending, onToggleToday, onArchive, className 
                             >
                                 {habit.weekCount}
                             </span>
-                            <span className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground/50">
+                            <span className="font-mono text-[10px] first-letter:uppercase text-muted-foreground/50">
                                 / {habit.targetPerWeek} this week
                             </span>
                         </div>

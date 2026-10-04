@@ -33,7 +33,7 @@ export function FocusSettingsPopover({ settings, onChange }: FocusSettingsPopove
 
                 <div className="space-y-1">
                     <Label className="text-xs font-mono text-amber-500/80">
-                        WORK · {minutes(settings.workDuration)}m
+                        Work · {minutes(settings.workDuration)}m
                     </Label>
                     <Slider
                         min={5}
@@ -46,7 +46,7 @@ export function FocusSettingsPopover({ settings, onChange }: FocusSettingsPopove
 
                 <div className="space-y-1">
                     <Label className="text-xs font-mono text-emerald-400/80">
-                        SHORT BREAK · {minutes(settings.shortBreakDuration)}m
+                        Short break · {minutes(settings.shortBreakDuration)}m
                     </Label>
                     <Slider
                         min={1}
@@ -59,7 +59,7 @@ export function FocusSettingsPopover({ settings, onChange }: FocusSettingsPopove
 
                 <div className="space-y-1">
                     <Label className="text-xs font-mono text-cyan-400/80">
-                        LONG BREAK · {minutes(settings.longBreakDuration)}m
+                        Long break · {minutes(settings.longBreakDuration)}m
                     </Label>
                     <Slider
                         min={5}
@@ -72,7 +72,7 @@ export function FocusSettingsPopover({ settings, onChange }: FocusSettingsPopove
 
                 <div className="space-y-1">
                     <Label className="text-xs font-mono text-muted-foreground">
-                        SESSIONS BEFORE LONG BREAK · {settings.sessionsBeforeLongBreak}
+                        Sessions before long break · {settings.sessionsBeforeLongBreak}
                     </Label>
                     <Slider
                         min={2}

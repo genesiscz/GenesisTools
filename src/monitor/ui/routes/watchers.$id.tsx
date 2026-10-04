@@ -52,7 +52,7 @@ export const Route = createFileRoute("/watchers/$id")({
 function Stat({ label, value, sub }: { label: string; value: string; sub?: string }) {
     return (
         <div className="mon-panel rounded-2xl p-4">
-            <p className="font-mono text-[0.65rem] uppercase tracking-[0.2em] text-muted-foreground">{label}</p>
+            <p className="font-mono text-[0.65rem] first-letter:uppercase text-muted-foreground">{label}</p>
             <p className="mt-1 text-2xl font-bold text-foreground">{value}</p>
             {sub && <p className="text-xs text-muted-foreground">{sub}</p>}
         </div>
@@ -182,7 +182,7 @@ function Header({ watcher }: { watcher: WatcherSummary }) {
                             <span className="font-mono text-xs text-secondary">{watcher.target}</span>
                         )}
                         {watcher.lastDetail && <span>{watcher.lastDetail}</span>}
-                        <span className="font-mono text-[0.65rem] uppercase tracking-[0.18em] text-muted-foreground">
+                        <span className="font-mono text-[0.65rem] first-letter:uppercase text-muted-foreground">
                             {watcher.notify ? <TargetNames ids={watcher.targetIds} /> : "notifications muted"}
                         </span>
                     </span>
@@ -294,14 +294,14 @@ function WatcherPageBody({ id }: { id: number }) {
             <LatencyChart checks={checks.data ?? []} threshold={data.config.degradedAboveMs} />
 
             <section className="space-y-3">
-                <h2 className="font-mono text-[0.7rem] uppercase tracking-[0.32em] text-secondary">Incidents</h2>
+                <h2 className="font-mono text-[0.7rem] first-letter:uppercase text-secondary">Incidents</h2>
                 <IncidentsTable incidents={incidents.data ?? []} showWatcher={false} />
             </section>
 
             {data.kind === "rss" && <FeedItemsSection watcherId={data.id} />}
 
             <section className="space-y-3">
-                <h2 className="font-mono text-[0.7rem] uppercase tracking-[0.32em] text-secondary">Recent checks</h2>
+                <h2 className="font-mono text-[0.7rem] first-letter:uppercase text-secondary">Recent checks</h2>
                 <ChecksTable checks={checks.data ?? []} />
             </section>
         </div>
@@ -314,7 +314,7 @@ function FeedItemsSection({ watcherId }: { watcherId: number }) {
 
     return (
         <section className="space-y-3">
-            <h2 className="font-mono text-[0.7rem] uppercase tracking-[0.32em] text-secondary">Feed items</h2>
+            <h2 className="font-mono text-[0.7rem] first-letter:uppercase text-secondary">Feed items</h2>
             {list.length === 0 ? (
                 <p className="mon-panel rounded-3xl p-6 text-sm text-muted-foreground">
                     No items seen yet. The first check primes the history without delivering it; new items after that go
@@ -337,7 +337,7 @@ function FeedItemsSection({ watcherId }: { watcherId: number }) {
                                 ) : (
                                     <span className="font-medium text-foreground">{item.title}</span>
                                 )}
-                                <span className="font-mono text-[0.65rem] uppercase tracking-[0.18em] text-muted-foreground">
+                                <span className="font-mono text-[0.65rem] first-letter:uppercase text-muted-foreground">
                                     {formatAgo(item.publishedAt ?? item.seenAt)} ·{" "}
                                     {item.delivered ? "delivered" : "not delivered"}
                                 </span>

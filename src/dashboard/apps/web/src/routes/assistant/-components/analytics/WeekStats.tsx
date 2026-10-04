@@ -112,7 +112,7 @@ function StatCard({ icon: Icon, iconColor, iconBg, label, value, subValue, value
                     <Icon className={cn("h-5 w-5", iconColor)} />
                 </div>
                 <div className="flex-1 min-w-0">
-                    <p className="text-xs text-muted-foreground uppercase tracking-wider mb-1">{label}</p>
+                    <p className="text-xs text-muted-foreground first-letter:uppercase mb-1">{label}</p>
                     <p className={cn("text-2xl font-bold tracking-tight", valueClassName)}>{value}</p>
                     {subValue && <div className="mt-1">{subValue}</div>}
                 </div>

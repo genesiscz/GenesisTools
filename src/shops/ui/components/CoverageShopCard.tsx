@@ -37,11 +37,11 @@ function botProtectionBadge(p: CoverageRow["bot_protection"]) {
         case "none":
             return null;
         case "soft":
-            return { label: "SOFT", className: "border-amber-400/40 text-amber-300" };
+            return { label: "Soft", className: "border-amber-400/40 text-amber-300" };
         case "akamai":
-            return { label: "AKAMAI", className: "border-rose-400/40 text-rose-300" };
+            return { label: "Akamai", className: "border-rose-400/40 text-rose-300" };
         case "cloudflare":
-            return { label: "CLOUDFLARE", className: "border-rose-400/40 text-rose-300" };
+            return { label: "Cloudflare", className: "border-rose-400/40 text-rose-300" };
     }
 }
 
@@ -56,7 +56,7 @@ export function CoverageShopCard({ row }: CoverageShopCardProps) {
                     {bot && (
                         <Badge
                             variant="outline"
-                            className={`font-mono text-[9px] tracking-[0.15em] uppercase ${bot.className}`}
+                            className={`font-mono text-[9px] first-letter:uppercase ${bot.className}`}
                         >
                             {bot.label}
                         </Badge>
@@ -64,7 +64,7 @@ export function CoverageShopCard({ row }: CoverageShopCardProps) {
                 </div>
 
                 <div className="font-mono text-2xl text-foreground">{row.product_count.toLocaleString()}</div>
-                <div className="font-mono text-[10px] tracking-[0.15em] text-muted-foreground uppercase">products</div>
+                <div className="font-mono text-[10px] text-muted-foreground first-letter:uppercase">products</div>
 
                 <div className="flex flex-wrap gap-1">
                     {CAPABILITY_FIELDS.map(({ key, label }) =>
@@ -72,7 +72,7 @@ export function CoverageShopCard({ row }: CoverageShopCardProps) {
                             <Badge
                                 key={key as string}
                                 variant="outline"
-                                className="font-mono text-[9px] tracking-[0.15em] uppercase border-emerald-400/30 text-emerald-300/80 px-1.5 py-0.5"
+                                className="font-mono text-[9px] first-letter:uppercase border-emerald-400/30 text-emerald-300/80 px-1.5 py-0.5"
                             >
                                 {label}
                             </Badge>
@@ -82,12 +82,12 @@ export function CoverageShopCard({ row }: CoverageShopCardProps) {
 
                 <div className="flex items-center gap-1 pt-1">
                     {row.recent_runs.length === 0 ? (
-                        <span className="font-mono text-[9px] tracking-[0.15em] text-muted-foreground uppercase">
+                        <span className="font-mono text-[9px] text-muted-foreground first-letter:uppercase">
                             no crawls
                         </span>
                     ) : (
                         <>
-                            <span className="font-mono text-[9px] tracking-[0.15em] text-muted-foreground uppercase mr-1">
+                            <span className="font-mono text-[9px] text-muted-foreground first-letter:uppercase mr-1">
                                 runs:
                             </span>
                             {row.recent_runs.map((r) => (

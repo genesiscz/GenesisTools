@@ -21,16 +21,16 @@ export function FocusStatsRow({ timeFocusedTodayMs, sessionsToday, dayStreak }: 
             <StatTile
                 icon={<Clock />}
                 value={formatHMS(timeFocusedTodayMs)}
-                label="FOCUSED TODAY"
+                label="Focused today"
                 valueColor="text-amber-400"
             />
             <StatTile
                 icon={<Target />}
                 value={sessionsToday.toString()}
-                label="POMODOROS"
+                label="Pomodoros"
                 valueColor="text-purple-400"
             />
-            <StatTile icon={<Flame />} value={dayStreak.toString()} label="DAY STREAK" valueColor="text-rose-400" />
+            <StatTile icon={<Flame />} value={dayStreak.toString()} label="Day streak" valueColor="text-rose-400" />
         </div>
     );
 }

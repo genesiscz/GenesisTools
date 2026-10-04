@@ -113,34 +113,34 @@ export function ListingsTable({
                         <Table>
                             <TableHeader>
                                 <TableRow className="border-border/60 hover:bg-transparent">
-                                    <TableHead className="text-[10px] font-mono uppercase tracking-[0.2em] text-gray-500">
+                                    <TableHead className="text-[10px] font-mono first-letter:uppercase text-gray-500">
                                         Source
                                     </TableHead>
-                                    <TableHead className="text-[10px] font-mono uppercase tracking-[0.2em] text-gray-500">
+                                    <TableHead className="text-[10px] font-mono first-letter:uppercase text-gray-500">
                                         Address
                                     </TableHead>
-                                    <TableHead className="text-[10px] font-mono uppercase tracking-[0.2em] text-gray-500">
+                                    <TableHead className="text-[10px] font-mono first-letter:uppercase text-gray-500">
                                         District
                                     </TableHead>
-                                    <TableHead className="text-[10px] font-mono uppercase tracking-[0.2em] text-gray-500">
+                                    <TableHead className="text-[10px] font-mono first-letter:uppercase text-gray-500">
                                         Disp.
                                     </TableHead>
-                                    <TableHead className="text-[10px] font-mono uppercase tracking-[0.2em] text-right text-gray-500">
+                                    <TableHead className="text-[10px] font-mono first-letter:uppercase text-right text-gray-500">
                                         Area
                                     </TableHead>
-                                    <TableHead className="text-[10px] font-mono uppercase tracking-[0.2em] text-right text-gray-500">
+                                    <TableHead className="text-[10px] font-mono first-letter:uppercase text-right text-gray-500">
                                         Price
                                     </TableHead>
-                                    <TableHead className="text-[10px] font-mono uppercase tracking-[0.2em] text-right text-gray-500">
+                                    <TableHead className="text-[10px] font-mono first-letter:uppercase text-right text-gray-500">
                                         Price / m2
                                     </TableHead>
-                                    <TableHead className="text-[10px] font-mono uppercase tracking-[0.2em] text-right text-gray-500">
+                                    <TableHead className="text-[10px] font-mono first-letter:uppercase text-right text-gray-500">
                                         Market
                                     </TableHead>
-                                    <TableHead className="text-[10px] font-mono uppercase tracking-[0.2em] text-right text-gray-500">
+                                    <TableHead className="text-[10px] font-mono first-letter:uppercase text-right text-gray-500">
                                         Seen
                                     </TableHead>
-                                    <TableHead className="text-[10px] font-mono uppercase tracking-[0.2em] text-right text-gray-500">
+                                    <TableHead className="text-[10px] font-mono first-letter:uppercase text-right text-gray-500">
                                         Actions
                                     </TableHead>
                                 </TableRow>
@@ -171,7 +171,7 @@ export function ListingsTable({
                                                 <Badge
                                                     variant="outline"
                                                     className={cn(
-                                                        "text-[10px] font-mono uppercase tracking-[0.18em]",
+                                                        "text-[10px] font-mono first-letter:uppercase",
                                                         listing.status === "sold" &&
                                                             "border-primary/30 bg-primary/10 text-primary",
                                                         listing.status === "active" &&

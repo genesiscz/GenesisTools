@@ -42,7 +42,7 @@ export function ProductSearchPanel({ onSelect }: ProductSearchPanelProps) {
             </div>
             <div className="flex-1 overflow-y-auto">
                 {debounced.length < 2 ? (
-                    <div className="p-12 text-center font-mono text-xs tracking-[0.2em] text-muted-foreground uppercase">
+                    <div className="p-12 text-center font-mono text-xs text-muted-foreground first-letter:uppercase">
                         type to search
                     </div>
                 ) : searchQuery.isLoading ? (
@@ -52,7 +52,7 @@ export function ProductSearchPanel({ onSelect }: ProductSearchPanelProps) {
                         ))}
                     </div>
                 ) : !searchQuery.data || searchQuery.data.hits.length === 0 ? (
-                    <div className="p-12 text-center font-mono text-xs tracking-[0.2em] text-muted-foreground uppercase">
+                    <div className="p-12 text-center font-mono text-xs text-muted-foreground first-letter:uppercase">
                         no hits
                     </div>
                 ) : (
@@ -80,7 +80,7 @@ export function ProductSearchPanel({ onSelect }: ProductSearchPanelProps) {
                                             {hit.shop_origin ? (
                                                 <ShopBadge origin={hit.shop_origin} />
                                             ) : (
-                                                <span className="font-mono text-[10px] text-cyan-300 tracking-[0.15em] uppercase">
+                                                <span className="font-mono text-[10px] text-cyan-300 first-letter:uppercase">
                                                     master
                                                 </span>
                                             )}

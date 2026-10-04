@@ -81,7 +81,7 @@ function TogetherPage() {
                         {(r) => (
                             <>
                                 <Card variant="wow-static" className="p-5 mb-6">
-                                    <div className="text-xs font-mono uppercase tracking-widest text-muted-foreground mb-2">
+                                    <div className="text-xs font-mono first-letter:uppercase text-muted-foreground mb-2">
                                         {r.a.label} × {r.b.label}
                                     </div>
                                     <div className="text-4xl font-bold text-foreground mb-3">
@@ -114,13 +114,13 @@ function TogetherPage() {
                                     <Side label={r.a.label} plays={r.a.plays} ms={r.a.ms} artists={r.a.artists} />
                                     <Side label={r.b.label} plays={r.b.plays} ms={r.b.ms} artists={r.b.artists} />
                                     <Card variant="wow-static" className="p-3">
-                                        <div className="text-[11px] font-mono uppercase tracking-widest text-muted-foreground">
+                                        <div className="text-[11px] font-mono first-letter:uppercase text-muted-foreground">
                                             shared artists
                                         </div>
                                         <div className="text-lg font-semibold">{int(r.sharedArtists)}</div>
                                     </Card>
                                     <Card variant="wow-static" className="p-3">
-                                        <div className="text-[11px] font-mono uppercase tracking-widest text-muted-foreground">
+                                        <div className="text-[11px] font-mono first-letter:uppercase text-muted-foreground">
                                             shared songs
                                         </div>
                                         <div className="text-lg font-semibold">{int(r.sharedSongs)}</div>
@@ -457,7 +457,7 @@ function TogetherPage() {
 function Side({ label, plays, ms, artists }: { label: string; plays: number; ms: number; artists: number }) {
     return (
         <Card variant="wow-static" className="p-3">
-            <div className="text-[11px] font-mono uppercase tracking-widest text-muted-foreground">{label}</div>
+            <div className="text-[11px] font-mono first-letter:uppercase text-muted-foreground">{label}</div>
             <div className="text-lg font-semibold">{int(plays)}</div>
             <div className="text-xs text-muted-foreground">
                 {hours(ms)} · {int(artists)} artists

@@ -199,7 +199,7 @@ function OverviewPage() {
 function Row({ label, value }: { label: string; value: string }) {
     return (
         <div className="flex items-baseline justify-between gap-3">
-            <span className="text-xs font-mono uppercase tracking-widest text-muted-foreground">{label}</span>
+            <span className="text-xs font-mono first-letter:uppercase text-muted-foreground">{label}</span>
             <span className="text-sm text-foreground text-right">{value}</span>
         </div>
     );

@@ -70,7 +70,7 @@ function FeedRow({ item }: { item: FeedItem }) {
     if (item.kind === "message") {
         return (
             <div className="border-b border-[var(--dd-border)]/50 py-2">
-                <div className="mb-1 font-mono text-[10px] text-[var(--dd-text-muted)] uppercase">
+                <div className="mb-1 font-mono text-[10px] text-[var(--dd-text-muted)] first-letter:uppercase">
                     {item.data.author || "unknown"}
                 </div>
                 <div className="text-sm text-[var(--dd-text-primary)]">
@@ -82,7 +82,7 @@ function FeedRow({ item }: { item: FeedItem }) {
 
     return (
         <div className="border-b border-[var(--dd-border)]/50 py-2 text-sm text-[var(--dd-text-secondary)]">
-            <span className="font-mono text-[10px] text-[var(--dd-text-muted)] uppercase">
+            <span className="block font-mono text-[10px] text-[var(--dd-text-muted)] first-letter:uppercase">
                 {item.data.createdBy || "unknown"} revised
             </span>
             <div className="whitespace-pre-wrap">{item.data.prompt}</div>
@@ -103,17 +103,19 @@ function SessionRow({ item, onOpenAnnotation }: { item: SessionItem; onOpenAnnot
                 onClick={() => onOpenAnnotation(a.id)}
                 className="block w-full border-b border-[var(--dd-border)]/50 py-2 text-left hover:bg-[var(--dd-bg-hover)]"
             >
-                <div className="mb-1 flex items-center gap-2 font-mono text-[10px] uppercase">
+                <div className="mb-1 flex items-center gap-2 font-mono text-[10px]">
                     <span
                         className="flex h-4 w-4 items-center justify-center rounded-full border text-[9px] font-bold"
                         style={{ borderColor: STATUS_COLOR[a.status], color: STATUS_COLOR[a.status] }}
                     >
                         {a.id}
                     </span>
-                    <span className="text-[var(--dd-text-muted)]">
+                    <span className="text-[var(--dd-text-muted)] first-letter:uppercase">
                         {a.intent === "other" ? a.intentOther || "other" : a.intent}
                     </span>
-                    <span style={{ color: STATUS_COLOR[a.status] }}>{a.status}</span>
+                    <span className="first-letter:uppercase" style={{ color: STATUS_COLOR[a.status] }}>
+                        {a.status}
+                    </span>
                     <span className="ml-auto text-[var(--dd-text-muted)]">{a.createdBy || ""}</span>
                 </div>
                 <div className="truncate text-sm text-[var(--dd-text-primary)]">{a.prompt}</div>
@@ -124,7 +126,7 @@ function SessionRow({ item, onOpenAnnotation }: { item: SessionItem; onOpenAnnot
     const q = item.question;
     return (
         <div className="border-b border-[var(--dd-border)]/50 py-2 text-sm">
-            <div className="mb-1 font-mono text-[10px] text-[var(--dd-text-muted)] uppercase">
+            <div className="mb-1 font-mono text-[10px] text-[var(--dd-text-muted)] first-letter:uppercase">
                 picker {q.staged ? "· staged" : "· sent"}
             </div>
             <div className="text-[var(--dd-text-secondary)]">{q.prompt}</div>

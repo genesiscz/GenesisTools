@@ -70,7 +70,7 @@ export const CHANNEL_SPECS: Record<
     },
 };
 
-const FIELD_LABEL = "font-mono text-[0.65rem] uppercase tracking-[0.2em] text-muted-foreground";
+const FIELD_LABEL = "font-mono text-[0.65rem] first-letter:uppercase text-muted-foreground";
 const CUSTOM_PREFIX = "custom::";
 
 /**

@@ -105,7 +105,7 @@ export function OverviewTab({ data }: AnalysisSectionProps) {
                 <CardContent className="grid gap-6 p-6 lg:grid-cols-[1.3fr_0.7fr]">
                     <div className="space-y-4">
                         <div className="flex flex-wrap items-center gap-2">
-                            <Badge className="border-primary/20 bg-primary/10 font-mono text-[10px] uppercase tracking-[0.24em] text-primary">
+                            <Badge className="border-primary/20 bg-primary/10 font-mono text-[10px] first-letter:uppercase text-primary">
                                 Overview
                             </Badge>
                             <Badge variant="outline" className="border-border/60 font-mono text-[10px] text-slate-300">
@@ -270,7 +270,7 @@ export function OverviewTab({ data }: AnalysisSectionProps) {
                                         className="flex items-center justify-between rounded-lg border border-border/60 bg-slate-950/50 px-3 py-2"
                                     >
                                         <div>
-                                            <div className="text-xs font-mono uppercase tracking-[0.2em] text-slate-300">
+                                            <div className="text-xs font-mono first-letter:uppercase text-slate-300">
                                                 {provider.provider}
                                             </div>
                                             <div className="text-[11px] font-mono text-slate-500">
@@ -819,7 +819,7 @@ export function RentalsTab({ data }: AnalysisSectionProps) {
                                     </CardTitle>
                                     <Badge
                                         className={cn(
-                                            "border font-mono text-[10px] uppercase tracking-[0.2em]",
+                                            "border font-mono text-[10px] first-letter:uppercase",
                                             getConfidenceTone(group.confidence)
                                         )}
                                     >
@@ -853,9 +853,7 @@ export function RentalsTab({ data }: AnalysisSectionProps) {
                                             key={provider}
                                             className="flex items-center justify-between text-xs font-mono text-slate-400"
                                         >
-                                            <span className="uppercase tracking-[0.2em] text-slate-500">
-                                                {provider}
-                                            </span>
+                                            <span className="first-letter:uppercase text-slate-500">{provider}</span>
                                             <span>
                                                 {stats.count} listings · {formatCompactCurrency(stats.median)}
                                             </span>
@@ -1071,7 +1069,7 @@ export function RentalsTab({ data }: AnalysisSectionProps) {
                                                 <div className="text-xs font-mono text-slate-200">
                                                     {benchmark.municipality}
                                                 </div>
-                                                <div className="text-[11px] font-mono uppercase tracking-[0.2em] text-slate-500">
+                                                <div className="text-[11px] font-mono first-letter:uppercase text-slate-500">
                                                     {benchmark.cadastralUnit} · {benchmark.sizeCategory}
                                                 </div>
                                             </div>
@@ -1255,7 +1253,7 @@ export function InvestmentTab({ data }: AnalysisSectionProps) {
                         {decomposition.map((item) => (
                             <Card key={item.label} className="bg-slate-950/40">
                                 <CardContent className="space-y-2 p-4">
-                                    <div className="text-[10px] font-mono uppercase tracking-[0.24em] text-slate-500">
+                                    <div className="text-[10px] font-mono first-letter:uppercase text-slate-500">
                                         {item.label}
                                     </div>
                                     <div
@@ -1322,7 +1320,7 @@ export function InvestmentTab({ data }: AnalysisSectionProps) {
                         return (
                             <Card key={benchmark.name} className="bg-slate-950/40">
                                 <CardContent className="space-y-2 p-4">
-                                    <div className="text-[10px] font-mono uppercase tracking-[0.24em] text-slate-500">
+                                    <div className="text-[10px] font-mono first-letter:uppercase text-slate-500">
                                         {benchmark.name}
                                     </div>
                                     <div className="flex items-end justify-between gap-4">
@@ -1448,7 +1446,7 @@ export function VerdictTab({ data }: AnalysisSectionProps) {
                         <div className="flex items-center gap-2">
                             <Badge
                                 className={cn(
-                                    "border font-mono text-[10px] uppercase tracking-[0.24em]",
+                                    "border font-mono text-[10px] first-letter:uppercase",
                                     scoreModel.score >= 65
                                         ? "border-green-500/20 bg-green-500/10 text-green-200"
                                         : scoreModel.score >= 45
@@ -1573,7 +1571,7 @@ export function VerdictTab({ data }: AnalysisSectionProps) {
                                 <div className="text-sm font-mono text-slate-200">{item.label}</div>
                                 <Badge
                                     className={cn(
-                                        "border font-mono text-[10px] uppercase tracking-[0.2em]",
+                                        "border font-mono text-[10px] first-letter:uppercase",
                                         item.passed
                                             ? "border-emerald-500/20 bg-emerald-500/10 text-emerald-300"
                                             : "border-red-500/20 bg-red-500/10 text-red-300"

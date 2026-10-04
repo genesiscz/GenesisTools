@@ -13,7 +13,7 @@ export function AccountHeaderControl() {
 
     if (me.isPending) {
         return (
-            <span className="inline-flex h-8 items-center gap-1.5 rounded-full border border-primary/15 bg-black/30 px-2.5 font-mono text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
+            <span className="inline-flex h-8 items-center gap-1.5 rounded-full border border-primary/15 bg-black/30 px-2.5 font-mono text-[10px] first-letter:uppercase text-muted-foreground">
                 <Loader2 className="size-3 animate-spin" />
                 Account
             </span>
@@ -54,7 +54,7 @@ export function AccountHeaderControl() {
         <Button
             size="sm"
             variant="cyber-secondary"
-            className="h-8 gap-1.5 font-mono text-[0.65rem] uppercase tracking-[0.18em]"
+            className="h-8 gap-1.5 font-mono text-[0.65rem] first-letter:uppercase"
             onClick={() => auth?.openAuth("login")}
             disabled={!auth}
             title="Log in or register"

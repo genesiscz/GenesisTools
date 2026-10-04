@@ -74,7 +74,7 @@ function JobsPage() {
                                             : "size-2 rounded-full bg-amber-400/70"
                                     }
                                 />
-                                <p className="font-mono text-[0.7rem] uppercase tracking-[0.32em] text-secondary">
+                                <p className="font-mono text-[0.7rem] first-letter:uppercase text-secondary">
                                     {stream.connected ? "Pipeline monitor · live" : "Pipeline monitor · reconnecting"}
                                 </p>
                             </div>
@@ -87,7 +87,7 @@ function JobsPage() {
                                 and transcription call recorded against that job.
                             </p>
                         </div>
-                        <div className="flex shrink-0 items-center gap-1 rounded-full border border-primary/20 bg-black/30 p-1 font-mono text-[0.7rem] uppercase tracking-[0.18em]">
+                        <div className="flex shrink-0 items-center gap-1 rounded-full border border-primary/20 bg-black/30 p-1 font-mono text-[0.7rem] first-letter:uppercase">
                             <StatPill label="Total" value={counts.all ?? 0} tone="amber" />
                             <span className="h-4 w-px bg-primary/15" />
                             <StatPill label="Running" value={counts.running ?? 0} tone="cyan" />
@@ -106,8 +106,8 @@ function JobsPage() {
                                     onClick={() => setStatus(option)}
                                     className={
                                         active
-                                            ? "rounded-full border border-amber-400/55 bg-amber-400/15 px-3 py-1 font-mono text-[0.7rem] uppercase tracking-[0.18em] text-amber-100 shadow-[0_0_22px_rgba(245,158,11,0.18)] transition"
-                                            : "rounded-full border border-border/50 bg-black/30 px-3 py-1 font-mono text-[0.7rem] uppercase tracking-[0.18em] text-muted-foreground transition hover:border-amber-400/30 hover:text-amber-100"
+                                            ? "rounded-full border border-amber-400/55 bg-amber-400/15 px-3 py-1 font-mono text-[0.7rem] first-letter:uppercase text-amber-100 shadow-[0_0_22px_rgba(245,158,11,0.18)] transition"
+                                            : "rounded-full border border-border/50 bg-black/30 px-3 py-1 font-mono text-[0.7rem] first-letter:uppercase text-muted-foreground transition hover:border-amber-400/30 hover:text-amber-100"
                                     }
                                 >
                                     {option}

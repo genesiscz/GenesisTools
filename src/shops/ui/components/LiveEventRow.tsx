@@ -113,7 +113,7 @@ export function LiveEventRow({ frame }: LiveEventRowProps) {
                 </span>
                 <Badge
                     variant="outline"
-                    className={`font-mono text-[10px] tracking-[0.15em] uppercase ${
+                    className={`font-mono text-[10px] first-letter:uppercase ${
                         frame.status === "completed"
                             ? "border-emerald-400/40 text-emerald-300"
                             : frame.status === "running"
@@ -141,7 +141,7 @@ export function LiveEventRow({ frame }: LiveEventRowProps) {
                 </span>
                 <Badge
                     variant="outline"
-                    className="font-mono text-[10px] tracking-[0.15em] uppercase border-amber-400/40 text-amber-300"
+                    className="font-mono text-[10px] first-letter:uppercase border-amber-400/40 text-amber-300"
                 >
                     notify
                 </Badge>
@@ -156,26 +156,26 @@ function LiveHttpDetail({ frame }: { frame: LiveHttpRequestEvent }) {
     return (
         <div className="px-3 pb-2 pt-1 font-mono text-[10px] space-y-1 bg-card/60 border-t border-border/50">
             <div className="grid grid-cols-[90px_1fr] gap-2">
-                <span className="text-muted-foreground tracking-[0.15em] uppercase">URL</span>
+                <span className="text-muted-foreground first-letter:uppercase">URL</span>
                 <span className="break-all text-foreground">{frame.url}</span>
-                <span className="text-muted-foreground tracking-[0.15em] uppercase">Source</span>
+                <span className="text-muted-foreground first-letter:uppercase">Source</span>
                 <span className="text-foreground">{frame.source}</span>
                 {frame.operation ? (
                     <>
-                        <span className="text-muted-foreground tracking-[0.15em] uppercase">Operation</span>
+                        <span className="text-muted-foreground first-letter:uppercase">Operation</span>
                         <span className="text-foreground">{frame.operation}</span>
                     </>
                 ) : null}
                 {frame.request_id ? (
                     <>
-                        <span className="text-muted-foreground tracking-[0.15em] uppercase">Request ID</span>
+                        <span className="text-muted-foreground first-letter:uppercase">Request ID</span>
                         <span className="text-foreground">{frame.request_id}</span>
                     </>
                 ) : null}
             </div>
             {frame.request_excerpt ? (
                 <div>
-                    <div className="text-muted-foreground tracking-[0.15em] uppercase mb-0.5">Request Excerpt</div>
+                    <div className="text-muted-foreground first-letter:uppercase mb-0.5">Request Excerpt</div>
                     <pre className="whitespace-pre-wrap break-all max-h-40 overflow-auto text-foreground bg-card/60 rounded px-2 py-1">
                         {frame.request_excerpt}
                     </pre>
@@ -183,7 +183,7 @@ function LiveHttpDetail({ frame }: { frame: LiveHttpRequestEvent }) {
             ) : null}
             {frame.response_excerpt ? (
                 <div>
-                    <div className="text-muted-foreground tracking-[0.15em] uppercase mb-0.5">Response Excerpt</div>
+                    <div className="text-muted-foreground first-letter:uppercase mb-0.5">Response Excerpt</div>
                     <pre className="whitespace-pre-wrap break-all max-h-40 overflow-auto text-foreground bg-card/60 rounded px-2 py-1">
                         {frame.response_excerpt}
                     </pre>

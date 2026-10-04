@@ -3,7 +3,7 @@ import { StatusBadge } from "@app/monitor/ui/components/status-badge";
 import { formatDateTime, formatLatency } from "@app/monitor/ui/lib/format";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@genesiscz/utils/ui/components/table";
 
-const HEAD = "font-mono text-[0.65rem] uppercase tracking-[0.22em] text-muted-foreground";
+const HEAD = "font-mono text-[0.65rem] first-letter:uppercase text-muted-foreground";
 
 export function ChecksTable({ checks }: { checks: CheckRecord[] }) {
     if (checks.length === 0) {

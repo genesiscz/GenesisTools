@@ -18,7 +18,7 @@ import { useHandoffCreate } from "./useHandoffApi";
 
 const DIALOG_PANEL_CLASS =
     "dd-panel border-[var(--dd-border)] bg-[var(--dd-bg-panel)]/95 text-[var(--dd-text-primary)] shadow-[0_0_80px_rgba(0,0,0,0.55)]";
-const LABEL_CLASS = "text-xs uppercase tracking-wider text-[var(--dd-text-muted)]";
+const LABEL_CLASS = "text-xs first-letter:uppercase text-[var(--dd-text-muted)]";
 const INPUT_CLASS = "mt-1.5 border-[var(--dd-border)] bg-black/20";
 
 export interface ProofDraft {

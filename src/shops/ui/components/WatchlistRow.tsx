@@ -38,7 +38,7 @@ export function WatchlistRow({ row, pendingNotifications, sparklinePoints, onAck
                     <span className="text-foreground font-medium">
                         {row.label ?? `master#${row.master_product_id}`}
                     </span>
-                    <span className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                    <span className="text-[10px] first-letter:uppercase text-muted-foreground">
                         {row.restricted_to_shop ? `[${row.restricted_to_shop} only]` : "[any shop]"}
                     </span>
                 </div>

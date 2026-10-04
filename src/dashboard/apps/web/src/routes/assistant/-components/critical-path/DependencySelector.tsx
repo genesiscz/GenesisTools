@@ -168,7 +168,7 @@ export function DependencySelector({
                                                     </div>
                                                     <span
                                                         className={cn(
-                                                            "text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded mt-1 inline-block",
+                                                            "text-[10px] font-semibold first-letter:uppercase px-1.5 py-0.5 rounded mt-1 inline-block",
                                                             colors
                                                         )}
                                                     >

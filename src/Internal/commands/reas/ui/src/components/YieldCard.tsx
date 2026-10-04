@@ -82,7 +82,7 @@ export function YieldCard({ data }: YieldCardProps) {
 
                 {/* At market price comparison */}
                 <div className="rounded-md border border-border/60 bg-muted/50 px-3 py-2 space-y-1.5">
-                    <span className="text-[10px] font-mono uppercase tracking-wider text-gray-600">
+                    <span className="text-[10px] font-mono first-letter:uppercase text-gray-600">
                         {marketPrice === null
                             ? "At Market Price"
                             : `At Market Price (${(marketPrice / 1_000_000).toFixed(1)}M CZK)`}
@@ -106,8 +106,8 @@ export function YieldCard({ data }: YieldCardProps) {
                 {/* Benchmarks */}
                 {benchmarks.length > 0 && (
                     <div className="space-y-1.5">
-                        <span className="text-[10px] font-mono uppercase tracking-wider text-gray-600">
-                            vs Benchmarks
+                        <span className="text-[10px] font-mono first-letter:uppercase text-gray-600">
+                            Versus benchmarks
                         </span>
                         <div className="flex flex-wrap gap-2">
                             {benchmarks.map((b) => {
@@ -148,7 +148,7 @@ function YieldMetric({ label, value }: { label: string; value: number | null | u
     return (
         <div className="rounded-md border border-border/60 bg-muted/50 p-3 text-center">
             <div className={cn("text-xl font-bold font-mono", yieldColor(value))}>{formatYield(value)}</div>
-            <div className="mt-1 text-[10px] font-mono text-gray-500 uppercase tracking-wider">{label}</div>
+            <div className="mt-1 text-[10px] font-mono text-gray-500 first-letter:uppercase">{label}</div>
         </div>
     );
 }

@@ -72,7 +72,7 @@ export function ConversationSidebar({
     return (
         <aside className="flex h-full w-64 shrink-0 flex-col border-r border-white/10 bg-black/30 backdrop-blur-sm">
             <div className="flex items-center justify-between border-b border-white/10 p-3">
-                <span className="text-xs font-mono font-semibold uppercase tracking-widest text-white/50">
+                <span className="text-xs font-mono font-semibold first-letter:uppercase text-white/50">
                     Conversations
                 </span>
 

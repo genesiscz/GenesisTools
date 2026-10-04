@@ -27,8 +27,8 @@ export function RegularsPanel({ items, onOpen }: Props): ReactNode {
     return (
         <Card>
             <CardHeader>
-                <CardTitle className="font-mono text-[10px] tracking-[0.25em] uppercase text-muted-foreground">
-                    REGULARS · {items.length}
+                <CardTitle className="font-mono text-[10px] first-letter:uppercase text-muted-foreground">
+                    Regulars · {items.length}
                 </CardTitle>
             </CardHeader>
             <CardContent className="space-y-1">

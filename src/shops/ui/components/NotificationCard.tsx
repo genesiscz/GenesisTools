@@ -21,7 +21,7 @@ export function NotificationCard({ notification, onAck, onOpen }: Props) {
                             {notification.shop_origin} · {notification.curr_price?.toFixed(2)} CZK
                         </span>
                     </div>
-                    <span className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                    <span className="text-[10px] first-letter:uppercase text-muted-foreground">
                         {notification.fired_at}
                     </span>
                 </div>

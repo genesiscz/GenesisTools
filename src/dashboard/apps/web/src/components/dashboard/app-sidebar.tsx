@@ -175,7 +175,7 @@ export function AppSidebar() {
 
     return (
         <SharedAppSidebar
-            brand={{ initial: "N", name: "NEXUS", tagline: "Command Center" }}
+            brand={{ initial: "N", name: "Nexus", tagline: "Command Center" }}
             navGroups={navGroups}
             activePath={location.pathname}
             user={{

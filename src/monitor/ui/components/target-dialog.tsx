@@ -146,7 +146,7 @@ export function TargetDialog({
                     </div>
 
                     <div className="space-y-1.5">
-                        <Label className="font-mono text-[0.65rem] uppercase tracking-[0.2em] text-muted-foreground">
+                        <Label className="font-mono text-[0.65rem] first-letter:uppercase text-muted-foreground">
                             Name
                         </Label>
                         <Input

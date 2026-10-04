@@ -78,7 +78,7 @@ export function DeadlinePerformance({ review, loading }: DeadlinePerformanceProp
                 <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
                     <div className="text-center">
                         <p className="text-2xl font-bold text-amber-400">{hitRate}%</p>
-                        <p className="text-[10px] text-muted-foreground uppercase tracking-wider">On Time</p>
+                        <p className="text-[10px] text-muted-foreground first-letter:uppercase">On Time</p>
                     </div>
                 </div>
             </div>

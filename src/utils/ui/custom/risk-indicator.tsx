@@ -55,7 +55,7 @@ export function RiskIndicator({ level, label, onClick, className }: RiskIndicato
             type={onClick ? "button" : undefined}
             onClick={onClick}
             className={cn(
-                "inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full border text-[10px] font-semibold uppercase tracking-wide",
+                "inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full border text-[10px] font-semibold",
                 "transition-all duration-200",
                 onClick && "cursor-pointer hover:scale-105",
                 config.bgClass,
@@ -82,7 +82,7 @@ export function RiskIndicator({ level, label, onClick, className }: RiskIndicato
                     )}
                 />
             </span>
-            {label ?? config.label}
+            <span className="first-letter:uppercase">{label ?? config.label}</span>
         </Component>
     );
 }

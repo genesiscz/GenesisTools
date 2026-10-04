@@ -104,8 +104,6 @@ export function ActivityGraph({
 
 function GraphLabel() {
     return (
-        <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
-            activity · last 30 days
-        </p>
+        <p className="font-mono text-[11px] first-letter:uppercase text-muted-foreground">activity · last 30 days</p>
     );
 }

@@ -69,7 +69,7 @@ export function GlassDialogScroll({ className, children, ...props }: ComponentPr
 
 export function GlassDialogEyebrow({ className, children, ...props }: ComponentProps<"p">) {
     return (
-        <p className={cn("font-mono text-[10px] uppercase tracking-[0.2em] text-zinc-500", className)} {...props}>
+        <p className={cn("font-mono text-[10px] first-letter:uppercase text-zinc-500", className)} {...props}>
             {children}
         </p>
     );

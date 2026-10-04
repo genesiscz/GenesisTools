@@ -174,7 +174,7 @@ function GoalsPage() {
                             return (
                                 <section key={quarter || "no-quarter"} className="flex flex-col gap-3">
                                     <div className="flex items-center gap-3">
-                                        <h2 className="font-mono text-xs font-semibold uppercase tracking-widest text-muted-foreground">
+                                        <h2 className="font-mono text-xs font-semibold first-letter:uppercase text-muted-foreground">
                                             {quarter || "No quarter"}
                                         </h2>
                                         <span className="font-mono text-[10px] text-muted-foreground/50">
@@ -230,7 +230,7 @@ function SummaryTile({ label, value, icon: Icon, colorClassName }: SummaryTilePr
         <Card variant="wow-static" className="flex flex-col gap-2 p-4">
             <Icon className={`h-4 w-4 ${colorClassName}`} />
             <span className={`text-2xl font-bold tabular-nums ${colorClassName}`}>{value}</span>
-            <span className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground">{label}</span>
+            <span className="font-mono text-[10px] first-letter:uppercase text-muted-foreground">{label}</span>
         </Card>
     );
 }

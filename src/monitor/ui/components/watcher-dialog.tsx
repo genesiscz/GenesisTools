@@ -252,7 +252,9 @@ function toInput(form: FormState): WatcherInput {
 function Field({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
     return (
         <div className="space-y-1.5">
-            <Label className="font-mono text-[0.65rem] uppercase tracking-[0.2em] text-muted-foreground">{label}</Label>
+            <Label className="font-mono text-[0.65rem] text-muted-foreground">
+                <span className="first-letter:uppercase">{label}</span>
+            </Label>
             {children}
             {hint && <p className="text-[0.7rem] text-muted-foreground/80">{hint}</p>}
         </div>
@@ -285,7 +287,7 @@ function ComponentPicker({
     return (
         <div className="space-y-2 sm:col-span-2">
             <div className="flex items-center justify-between gap-2">
-                <Label className="font-mono text-[0.65rem] uppercase tracking-[0.2em] text-muted-foreground">
+                <Label className="font-mono text-[0.65rem] first-letter:uppercase text-muted-foreground">
                     Components
                 </Label>
                 <Button
@@ -354,9 +356,7 @@ function TargetPicker({ selected, onChange }: { selected: number[]; onChange: (n
 
     return (
         <div className="space-y-2">
-            <Label className="font-mono text-[0.65rem] uppercase tracking-[0.2em] text-muted-foreground">
-                Notify via
-            </Label>
+            <Label className="font-mono text-[0.65rem] first-letter:uppercase text-muted-foreground">Notify via</Label>
             {list.length === 0 ? (
                 <p className="text-sm text-muted-foreground">
                     The library is empty, so this watcher uses the defaults.{" "}
@@ -506,7 +506,7 @@ export function WatcherDialog({
 
                     {!editing && visiblePresets.length > 0 && (
                         <div className="space-y-2">
-                            <p className="font-mono text-[0.65rem] uppercase tracking-[0.2em] text-muted-foreground">
+                            <p className="font-mono text-[0.65rem] first-letter:uppercase text-muted-foreground">
                                 Presets
                             </p>
                             <div className="flex flex-wrap gap-1.5">

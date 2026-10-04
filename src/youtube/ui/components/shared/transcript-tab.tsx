@@ -434,7 +434,7 @@ export function TranscriptTab({
                                 </SelectItem>
                                 {existingLangs.map((code) => (
                                     <SelectItem key={code} value={code}>
-                                        <span className="font-mono text-xs uppercase">{code}</span>{" "}
+                                        <span className="font-mono text-xs">{code.toUpperCase()}</span>{" "}
                                         {outputLangLabel(code)}
                                     </SelectItem>
                                 ))}

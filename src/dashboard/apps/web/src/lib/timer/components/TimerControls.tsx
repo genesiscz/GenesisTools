@@ -39,7 +39,7 @@ export const TimerControls = memo(function TimerControls({
                 className={cn(
                     "group relative flex items-center justify-center gap-2.5",
                     "min-w-[140px] h-14 px-6 rounded-xl",
-                    "font-semibold text-base uppercase tracking-wider",
+                    "font-semibold text-base first-letter:uppercase",
                     "transition-all duration-300 ease-out",
                     "overflow-hidden",
                     isRunning
@@ -88,7 +88,7 @@ export const TimerControls = memo(function TimerControls({
                     className={cn(
                         "group relative flex items-center justify-center gap-2",
                         "h-14 px-5 rounded-xl",
-                        "font-medium text-sm uppercase tracking-wider",
+                        "font-medium text-sm first-letter:uppercase",
                         "border-2 transition-all duration-300",
                         isRunning && canAddLap
                             ? [

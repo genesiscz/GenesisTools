@@ -26,7 +26,7 @@ export function StatCard({
         <Card className={cn("border-l-2", STAT_CARD_ACCENT_STYLES[accent], className)}>
             <CardContent className="flex h-full flex-col gap-3 p-4">
                 <div className="flex items-center justify-between gap-3">
-                    <span className="text-[10px] font-mono uppercase tracking-[0.24em] text-slate-500">{label}</span>
+                    <span className="text-[10px] font-mono first-letter:uppercase text-slate-500">{label}</span>
                     {Icon ? <Icon className="h-4 w-4 text-slate-400" /> : null}
                 </div>
                 <div className={cn("text-2xl font-mono font-semibold text-foreground", valueClassName)}>{value}</div>

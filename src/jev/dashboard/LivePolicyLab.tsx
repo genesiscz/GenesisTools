@@ -129,7 +129,9 @@ function CardShell({
 function TailRow({ row }: { row: ListenLabTail }) {
     return (
         <li className="grid grid-cols-[4.5rem_1fr_7rem_3rem] items-baseline gap-2 border-b border-border/40 py-1.5 last:border-0">
-            <span className={`font-mono text-xs uppercase ${STATUS_CLASS[row.status] ?? "text-muted-foreground"}`}>
+            <span
+                className={`font-mono text-xs first-letter:uppercase ${STATUS_CLASS[row.status] ?? "text-muted-foreground"}`}
+            >
                 {row.status}
             </span>
             <span className="truncate font-mono text-sm text-foreground" title={row.command ?? row.transcript}>

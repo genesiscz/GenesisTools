@@ -28,7 +28,7 @@ function Column({ title, children, delayMs }: { title: string; children: ReactNo
             className="flex min-h-[280px] flex-1 flex-col animate-in fade-in slide-in-from-bottom-3 fill-mode-both duration-700"
             style={{ animationDelay: `${delayMs}ms` }}
         >
-            <p className="mb-2 font-mono text-[10px] uppercase tracking-[0.2em] text-[var(--dd-text-muted)]">{title}</p>
+            <p className="mb-2 font-mono text-[10px] first-letter:uppercase text-[var(--dd-text-muted)]">{title}</p>
             <BezelCard className="flex min-h-0 flex-1 flex-col" innerClassName="flex min-h-0 flex-1 flex-col p-1.5">
                 <div className="h-64 space-y-1 overflow-y-auto">{children}</div>
             </BezelCard>

@@ -610,7 +610,7 @@ function TypeScriptLab({ provider }: { provider: EvaluationProviderId }) {
                     <Panel title="Current file" extra={<span className="jev-help">main.ts</span>}>
                         <div className="flex justify-between gap-6">
                             <div>
-                                <p className="jev-help">STEP</p>
+                                <p className="jev-help">Step</p>
                                 <div className="jev-metric">
                                     {tokens.length}
                                     <span className="text-sm text-muted-foreground"> / {maxSteps}</span>
@@ -839,9 +839,9 @@ export default function Dashboard() {
     }, []);
     return (
         <DashboardLayout
-            title="JEV"
+            title="Jev"
             themeKey="jev"
-            titleAccent="LAB"
+            titleAccent="Lab"
             icon={<FlaskConical size={17} />}
             navLinks={[
                 { label: "Playground", href: "playground", icon: <CheckCheck size={15} /> },

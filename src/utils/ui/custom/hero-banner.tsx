@@ -22,9 +22,9 @@ export function HeroBanner({ eyebrow, eyebrowIcon, title, description, children,
         >
             <GlowOrbsNexus />
             <div className="relative z-10">
-                <div className="flex items-center gap-2 text-primary/70 text-xs tracking-widest uppercase mb-2 font-semibold">
+                <div className="flex items-center gap-2 text-primary/70 text-xs mb-2 font-semibold">
                     {eyebrowIcon}
-                    <span>{eyebrow}</span>
+                    <span className="first-letter:uppercase">{eyebrow}</span>
                 </div>
                 <h2 className="text-4xl font-bold mb-3">{title}</h2>
                 <p className="text-foreground/70 max-w-xl leading-relaxed">{description}</p>

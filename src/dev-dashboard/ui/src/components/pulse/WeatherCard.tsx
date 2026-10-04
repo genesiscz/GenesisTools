@@ -20,7 +20,7 @@ function timeOnly(value: string | null): string {
 export function WeatherCard({ tempC, description, sunrise, sunset, label, error }: WeatherCardProps) {
     return (
         <div className="dd-panel flex flex-col gap-2 p-4">
-            <h3 className="dd-accent-text text-sm font-bold tracking-widest">WEATHER</h3>
+            <h3 className="dd-accent-text text-sm font-bold">Weather</h3>
             <span className="font-mono text-xs" style={{ color: "var(--dd-text-muted)" }}>
                 {label}
             </span>

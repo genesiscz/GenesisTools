@@ -65,7 +65,7 @@ export function DataProvenance({
                         <Badge
                             key={provider}
                             variant="outline"
-                            className="border-border/60 bg-muted/50 font-mono text-[10px] uppercase tracking-[0.2em] text-slate-300"
+                            className="border-border/60 bg-muted/50 font-mono text-[10px] first-letter:uppercase text-slate-300"
                         >
                             {provider}
                         </Badge>
@@ -73,7 +73,7 @@ export function DataProvenance({
                     {provenance.count !== undefined ? (
                         <Badge
                             variant="outline"
-                            className="border-cyan-500/20 bg-cyan-500/10 font-mono text-[10px] uppercase tracking-[0.2em] text-cyan-300"
+                            className="border-cyan-500/20 bg-cyan-500/10 font-mono text-[10px] first-letter:uppercase text-cyan-300"
                         >
                             {provenance.count} rows
                         </Badge>
@@ -101,7 +101,7 @@ export function DataProvenance({
                             >
                                 <div className="flex items-start justify-between gap-3">
                                     <div>
-                                        <div className="text-[10px] font-mono uppercase tracking-[0.2em] text-slate-500">
+                                        <div className="text-[10px] font-mono first-letter:uppercase text-slate-500">
                                             {detail.provider}
                                         </div>
                                         <div className="mt-1 text-xs font-mono text-slate-300">
@@ -111,7 +111,7 @@ export function DataProvenance({
                                     <Badge
                                         variant="outline"
                                         className={cn(
-                                            "font-mono text-[10px] uppercase tracking-[0.2em]",
+                                            "font-mono text-[10px] first-letter:uppercase",
                                             detail.status === "error"
                                                 ? "border-red-500/20 bg-red-500/10 text-red-300"
                                                 : detail.status === "warning"

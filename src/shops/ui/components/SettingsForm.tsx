@@ -67,7 +67,7 @@ export function SettingsForm({ initial }: SettingsFormProps) {
         <div className="space-y-5">
             <Card>
                 <CardHeader>
-                    <CardTitle className="font-mono text-xs tracking-[0.25em] text-muted-foreground uppercase">
+                    <CardTitle className="font-mono text-xs text-muted-foreground first-letter:uppercase">
                         Appearance & Defaults
                     </CardTitle>
                 </CardHeader>
@@ -111,7 +111,7 @@ export function SettingsForm({ initial }: SettingsFormProps) {
 
             <Card>
                 <CardHeader>
-                    <CardTitle className="font-mono text-xs tracking-[0.25em] text-muted-foreground uppercase">
+                    <CardTitle className="font-mono text-xs text-muted-foreground first-letter:uppercase">
                         Notifications
                     </CardTitle>
                 </CardHeader>
@@ -166,7 +166,7 @@ export function SettingsForm({ initial }: SettingsFormProps) {
 
             <Card>
                 <CardHeader>
-                    <CardTitle className="font-mono text-xs tracking-[0.25em] text-muted-foreground uppercase">
+                    <CardTitle className="font-mono text-xs text-muted-foreground first-letter:uppercase">
                         Crawler & Storage
                     </CardTitle>
                 </CardHeader>
@@ -196,14 +196,12 @@ export function SettingsForm({ initial }: SettingsFormProps) {
 
             <div className="flex items-center justify-end gap-3">
                 {dirty && (
-                    <span className="font-mono text-[10px] tracking-[0.15em] text-amber-400 uppercase">
-                        unsaved changes
-                    </span>
+                    <span className="font-mono text-[10px] text-amber-400 first-letter:uppercase">unsaved changes</span>
                 )}
                 <Button
                     onClick={() => saveMutation.mutate()}
                     disabled={!dirty || saveMutation.isPending}
-                    className="font-mono text-xs tracking-[0.15em] uppercase"
+                    className="font-mono text-xs first-letter:uppercase"
                 >
                     Save
                 </Button>
@@ -215,7 +213,7 @@ export function SettingsForm({ initial }: SettingsFormProps) {
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
     return (
         <div className="flex items-center justify-between gap-3">
-            <span className="font-mono text-xs tracking-[0.15em] text-muted-foreground uppercase">{label}</span>
+            <span className="font-mono text-xs text-muted-foreground first-letter:uppercase">{label}</span>
             {children}
         </div>
     );

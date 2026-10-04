@@ -165,7 +165,7 @@ export function ListingDetailSheet({ listingId, open, onOpenChange }: ListingDet
                                     <Badge
                                         variant="outline"
                                         className={cn(
-                                            "text-[10px] font-mono uppercase tracking-[0.2em]",
+                                            "text-[10px] font-mono first-letter:uppercase",
                                             getStatusStyle(listing.status)
                                         )}
                                     >
@@ -173,7 +173,7 @@ export function ListingDetailSheet({ listingId, open, onOpenChange }: ListingDet
                                     </Badge>
                                     <Badge
                                         variant="outline"
-                                        className="border-border/60 bg-muted/50 text-[10px] font-mono uppercase tracking-[0.2em] text-gray-300"
+                                        className="border-border/60 bg-muted/50 text-[10px] font-mono first-letter:uppercase text-gray-300"
                                     >
                                         {listing.type}
                                     </Badge>
@@ -182,7 +182,7 @@ export function ListingDetailSheet({ listingId, open, onOpenChange }: ListingDet
                                             asChild
                                             size="sm"
                                             variant="outline"
-                                            className="h-7 border-cyan-500/20 bg-cyan-500/5 px-2.5 text-[10px] font-mono uppercase tracking-[0.18em] text-cyan-300 hover:bg-cyan-500/10"
+                                            className="h-7 border-cyan-500/20 bg-cyan-500/5 px-2.5 text-[10px] font-mono first-letter:uppercase text-cyan-300 hover:bg-cyan-500/10"
                                         >
                                             <Link
                                                 to="/watchlist/$propertyId"
@@ -237,7 +237,7 @@ export function ListingDetailSheet({ listingId, open, onOpenChange }: ListingDet
                                     <section className="rounded-xl border border-cyan-500/15 bg-cyan-500/[0.03] p-4">
                                         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                                             <div>
-                                                <div className="text-[11px] font-mono uppercase tracking-[0.24em] text-cyan-300">
+                                                <div className="text-[11px] font-mono first-letter:uppercase text-cyan-300">
                                                     Watchlist link
                                                 </div>
                                                 <p className="mt-1 font-mono text-sm text-gray-200">
@@ -265,7 +265,7 @@ export function ListingDetailSheet({ listingId, open, onOpenChange }: ListingDet
                                 )}
 
                                 <section className="rounded-xl border border-border/60 bg-muted/50 p-4">
-                                    <div className="mb-2 text-[11px] font-mono uppercase tracking-[0.24em] text-gray-500">
+                                    <div className="mb-2 text-[11px] font-mono first-letter:uppercase text-gray-500">
                                         Description
                                     </div>
                                     <p className="whitespace-pre-wrap text-sm leading-6 text-gray-300">
@@ -275,7 +275,7 @@ export function ListingDetailSheet({ listingId, open, onOpenChange }: ListingDet
 
                                 {imageGallery.length > 0 && (
                                     <section className="rounded-xl border border-border/60 bg-muted/50 p-4">
-                                        <div className="mb-3 text-[11px] font-mono uppercase tracking-[0.24em] text-gray-500">
+                                        <div className="mb-3 text-[11px] font-mono first-letter:uppercase text-gray-500">
                                             Media gallery
                                         </div>
                                         <div className="flex gap-3 overflow-x-auto pb-1">
@@ -301,7 +301,7 @@ export function ListingDetailSheet({ listingId, open, onOpenChange }: ListingDet
 
                                 {listingTimeline.length > 0 && (
                                     <section className="rounded-xl border border-border/60 bg-muted/50 p-4">
-                                        <div className="mb-3 text-[11px] font-mono uppercase tracking-[0.24em] text-gray-500">
+                                        <div className="mb-3 text-[11px] font-mono first-letter:uppercase text-gray-500">
                                             Price timeline
                                         </div>
                                         <div className="grid gap-3 sm:grid-cols-2">
@@ -324,7 +324,7 @@ export function ListingDetailSheet({ listingId, open, onOpenChange }: ListingDet
                                         <section className="rounded-xl border border-border/60 bg-muted/50 p-4">
                                             <div className="mb-3 flex items-center justify-between gap-3">
                                                 <div>
-                                                    <div className="text-[11px] font-mono uppercase tracking-[0.24em] text-gray-500">
+                                                    <div className="text-[11px] font-mono first-letter:uppercase text-gray-500">
                                                         Map
                                                     </div>
                                                     <p className="mt-1 font-mono text-xs text-gray-400">
@@ -355,7 +355,7 @@ export function ListingDetailSheet({ listingId, open, onOpenChange }: ListingDet
 
                                 {hydratedDetail && (
                                     <section className="rounded-xl border border-cyan-500/15 bg-cyan-500/[0.03] p-4">
-                                        <div className="mb-3 text-[11px] font-mono uppercase tracking-[0.24em] text-cyan-300">
+                                        <div className="mb-3 text-[11px] font-mono first-letter:uppercase text-cyan-300">
                                             Bezrealitky detail
                                         </div>
                                         <div className="grid gap-3 sm:grid-cols-2">
@@ -420,7 +420,7 @@ export function ListingDetailSheet({ listingId, open, onOpenChange }: ListingDet
 
                                         {poiHighlights.length > 0 && (
                                             <div className="mt-4 rounded-xl border border-border/60 bg-card/60 p-3">
-                                                <div className="mb-2 text-[11px] font-mono uppercase tracking-[0.24em] text-gray-500">
+                                                <div className="mb-2 text-[11px] font-mono first-letter:uppercase text-gray-500">
                                                     Nearby signals
                                                 </div>
                                                 <div className="flex flex-wrap gap-2">
@@ -439,7 +439,7 @@ export function ListingDetailSheet({ listingId, open, onOpenChange }: ListingDet
 
                                         {reportLinks.length > 0 && (
                                             <div className="mt-4 rounded-xl border border-border/60 bg-card/60 p-3">
-                                                <div className="mb-2 text-[11px] font-mono uppercase tracking-[0.24em] text-gray-500">
+                                                <div className="mb-2 text-[11px] font-mono first-letter:uppercase text-gray-500">
                                                     Report links
                                                 </div>
                                                 <div className="flex flex-wrap gap-2">
@@ -463,7 +463,7 @@ export function ListingDetailSheet({ listingId, open, onOpenChange }: ListingDet
 
                                         {formattedAds.length > 0 && (
                                             <div className="mt-4 rounded-xl border border-border/60 bg-card/60 p-3">
-                                                <div className="mb-2 text-[11px] font-mono uppercase tracking-[0.24em] text-gray-500">
+                                                <div className="mb-2 text-[11px] font-mono first-letter:uppercase text-gray-500">
                                                     Formatted ads
                                                 </div>
                                                 <div className="flex flex-col gap-2">
@@ -500,7 +500,7 @@ export function ListingDetailSheet({ listingId, open, onOpenChange }: ListingDet
 
                                         {relatedAdverts.length > 0 && (
                                             <div className="mt-4 rounded-xl border border-border/60 bg-card/60 p-3">
-                                                <div className="mb-2 text-[11px] font-mono uppercase tracking-[0.24em] text-gray-500">
+                                                <div className="mb-2 text-[11px] font-mono first-letter:uppercase text-gray-500">
                                                     Related adverts
                                                 </div>
                                                 <div className="flex flex-col gap-2">
@@ -527,7 +527,7 @@ export function ListingDetailSheet({ listingId, open, onOpenChange }: ListingDet
                                 <section className="rounded-xl border border-border/60 bg-muted/50 p-4">
                                     <div className="mb-3 flex items-center justify-between gap-3">
                                         <div>
-                                            <div className="text-[11px] font-mono uppercase tracking-[0.24em] text-gray-500">
+                                            <div className="text-[11px] font-mono first-letter:uppercase text-gray-500">
                                                 Source link
                                             </div>
                                             <p className="mt-1 break-all font-mono text-xs text-gray-400">
@@ -592,7 +592,7 @@ export function ListingDetailSheet({ listingId, open, onOpenChange }: ListingDet
                                 </section>
 
                                 <section className="rounded-xl border border-border/60 bg-card/60 p-4">
-                                    <div className="mb-3 text-[11px] font-mono uppercase tracking-[0.24em] text-gray-500">
+                                    <div className="mb-3 text-[11px] font-mono first-letter:uppercase text-gray-500">
                                         Raw payload
                                     </div>
                                     <pre className="overflow-x-auto whitespace-pre-wrap break-all rounded-lg border border-border/60 bg-card/60 p-4 font-mono text-[11px] leading-5 text-gray-300">
@@ -611,7 +611,7 @@ export function ListingDetailSheet({ listingId, open, onOpenChange }: ListingDet
 function Metric({ label, value, accent = false }: { label: string; value: string; accent?: boolean }) {
     return (
         <div className="rounded-xl border border-border/60 bg-muted/50 p-4">
-            <div className="text-[11px] font-mono uppercase tracking-[0.24em] text-gray-500">{label}</div>
+            <div className="text-[11px] font-mono first-letter:uppercase text-gray-500">{label}</div>
             <div className={cn("mt-2 font-mono text-sm text-gray-200", accent && "text-primary")}>{value}</div>
         </div>
     );

@@ -17,7 +17,7 @@ export function MoodHistory({ entries, today, onDelete }: MoodHistoryProps) {
         <Card variant="wow-static" data-testid="mood-history" className="rounded-2xl p-5 gap-0">
             <div className="mb-4 flex items-center justify-between">
                 <h3 className="text-sm font-semibold text-foreground">History</h3>
-                <span className="font-mono text-[10px] tracking-widest uppercase text-muted-foreground/50">
+                <span className="font-mono text-[10px] first-letter:uppercase text-muted-foreground/50">
                     {entries.length} {entries.length === 1 ? "entry" : "entries"}
                 </span>
             </div>

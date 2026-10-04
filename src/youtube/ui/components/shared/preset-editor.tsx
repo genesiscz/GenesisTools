@@ -50,11 +50,11 @@ export function PresetEditor({
             >
                 <ArrowLeft className="size-4" /> Back
             </button>
-            <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-muted-foreground">New style preset</p>
+            <p className="font-mono text-[11px] first-letter:uppercase text-muted-foreground">New style preset</p>
             <div className="space-y-1">
                 <label
                     htmlFor="preset-editor-name"
-                    className="text-xs font-medium uppercase tracking-wider text-muted-foreground"
+                    className="text-xs font-medium first-letter:uppercase text-muted-foreground"
                 >
                     Name
                 </label>
@@ -69,7 +69,7 @@ export function PresetEditor({
             <div className="space-y-1">
                 <label
                     htmlFor="preset-editor-instructions"
-                    className="text-xs font-medium uppercase tracking-wider text-muted-foreground"
+                    className="text-xs font-medium first-letter:uppercase text-muted-foreground"
                 >
                     Instructions
                 </label>

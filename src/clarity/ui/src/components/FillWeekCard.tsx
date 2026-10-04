@@ -201,7 +201,7 @@ export function FillWeekCard({
                                     <TableRow className="border-primary/10">
                                         <TableCell
                                             colSpan={workDays.length + 2}
-                                            className="font-mono text-[10px] text-gray-500 py-1.5 uppercase tracking-wider"
+                                            className="font-mono text-[10px] text-gray-500 py-1.5 first-letter:uppercase"
                                         >
                                             Clarity only (no ADO mapping)
                                         </TableCell>

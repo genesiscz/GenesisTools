@@ -32,7 +32,7 @@ export const Route = createFileRoute("/")({
 function IndexPage() {
     return (
         <div className="max-w-6xl mx-auto px-6 py-12 text-center">
-            <h1 className="font-mono text-2xl text-foreground tracking-[0.2em] mb-3">SHOPS :: HOME</h1>
+            <h1 className="font-mono text-2xl text-foreground mb-3">Shops :: Home</h1>
             <p className="text-muted-foreground text-sm">
                 Open <span className="text-[var(--color-neon-cyan)]">/watchlist</span> for your tracked products,
                 <span className="text-[var(--color-neon-amber)]"> /browse</span> to explore the catalog, or change your

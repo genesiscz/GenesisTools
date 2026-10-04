@@ -45,7 +45,7 @@ export function BookmarkCard({ bookmark, onDelete, className }: BookmarkCardProp
                     ) : (
                         <Globe className="h-4 w-4 shrink-0 text-muted-foreground/50" />
                     )}
-                    <span className="font-mono text-[10px] tracking-widest uppercase text-muted-foreground/60 truncate">
+                    <span className="font-mono text-[10px] first-letter:uppercase text-muted-foreground/60 truncate">
                         {domain}
                     </span>
                 </div>

@@ -86,7 +86,7 @@ function OfferDetailPanel({ offer }: { offer: MasterOfferRow }) {
                             {breadcrumb.length > 0 ? (
                                 <Tooltip>
                                     <TooltipTrigger asChild>
-                                        <div className="font-mono text-[10px] tracking-[0.15em] text-muted-foreground uppercase mb-1 truncate">
+                                        <div className="font-mono text-[10px] text-muted-foreground first-letter:uppercase mb-1 truncate">
                                             {breadcrumb.join(" › ")}
                                         </div>
                                     </TooltipTrigger>
@@ -99,7 +99,7 @@ function OfferDetailPanel({ offer }: { offer: MasterOfferRow }) {
                             <div className="flex flex-wrap items-center gap-2 mt-1">
                                 <ShopBadge origin={offer.shop_origin} label={offer.shop_display_name} />
                                 {offer.brand ? (
-                                    <span className="font-mono text-[10px] tracking-[0.15em] text-muted-foreground uppercase">
+                                    <span className="font-mono text-[10px] text-muted-foreground first-letter:uppercase">
                                         {offer.brand}
                                     </span>
                                 ) : null}
@@ -153,7 +153,7 @@ function OfferDetailPanel({ offer }: { offer: MasterOfferRow }) {
 
             {offer.description ? (
                 <div className="border-t border-border/80 px-4 py-3">
-                    <div className="font-mono text-[10px] tracking-[0.25em] text-muted-foreground uppercase mb-1.5">
+                    <div className="font-mono text-[10px] text-muted-foreground first-letter:uppercase mb-1.5">
                         Description
                     </div>
                     <p className="font-mono text-xs text-foreground leading-relaxed whitespace-pre-line">
@@ -193,7 +193,7 @@ function OfferDetailPanel({ offer }: { offer: MasterOfferRow }) {
 function Spec({ label, value }: { label: string; value: string | null }) {
     return (
         <div className="min-w-0">
-            <div className="text-[9px] tracking-[0.2em] text-muted-foreground uppercase">{label}</div>
+            <div className="text-[9px] text-muted-foreground first-letter:uppercase">{label}</div>
             {value ? (
                 <Tooltip>
                     <TooltipTrigger asChild>
@@ -220,7 +220,7 @@ function RawPayload({ meta }: { meta: Record<string, unknown> }) {
                 type="button"
                 onClick={() => setOpen((v) => !v)}
                 aria-expanded={open}
-                className="w-full px-4 py-2 flex items-center gap-2 font-mono text-[10px] tracking-[0.25em] text-muted-foreground uppercase hover:bg-primary/5 transition-colors cursor-pointer"
+                className="w-full px-4 py-2 flex items-center gap-2 font-mono text-[10px] text-muted-foreground first-letter:uppercase hover:bg-primary/5 transition-colors cursor-pointer"
             >
                 <ChevronDown className={`w-3 h-3 transition-transform ${open ? "rotate-0" : "-rotate-90"}`} />
                 Raw shop payload {open ? "" : `· ${Object.keys(meta).length} keys`}

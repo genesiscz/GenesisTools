@@ -83,7 +83,7 @@ export function PortFilters({ selected, onChange, sortKey, sortDir, onSortKey, o
             </div>
             <span className="text-[var(--dd-text-muted)]">·</span>
             <div className="flex flex-wrap items-center gap-1">
-                <span className="text-[10px] uppercase tracking-wide text-[var(--dd-text-muted)]">Sort</span>
+                <span className="text-[10px] first-letter:uppercase text-[var(--dd-text-muted)]">Sort</span>
                 {SORTS.map((s) => {
                     const active = sortKey === s.id;
                     return (

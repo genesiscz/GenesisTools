@@ -311,7 +311,7 @@ export function BadgeCelebration({ celebration, onDismiss, particlesEnabled = tr
                     <div className="mt-4">
                         <span
                             className={cn(
-                                "inline-block text-[10px] font-bold uppercase tracking-wider px-3 py-1 rounded",
+                                "inline-block text-[10px] font-bold first-letter:uppercase px-3 py-1 rounded",
                                 styles.bg,
                                 styles.text
                             )}

@@ -254,7 +254,7 @@ function ComparePage() {
                                 <GitCompare className="h-5 w-5 text-primary" />
                             </div>
                             <div>
-                                <div className="text-[11px] font-mono uppercase tracking-[0.32em] text-cyan-300/80">
+                                <div className="text-[11px] font-mono first-letter:uppercase text-cyan-300/80">
                                     District intelligence
                                 </div>
                                 <h1 className="text-2xl font-mono font-bold text-foreground sm:text-3xl">
@@ -452,7 +452,7 @@ function ComparePage() {
                             <div className="rounded-2xl border border-border/60 bg-card/60 p-4">
                                 <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
                                     <div>
-                                        <div className="text-[10px] font-mono uppercase tracking-[0.3em] text-cyan-300/80">
+                                        <div className="text-[10px] font-mono first-letter:uppercase text-cyan-300/80">
                                             Trend cadence
                                         </div>
                                         <p className="mt-1 text-xs font-mono text-gray-400">
@@ -474,7 +474,7 @@ function ComparePage() {
                                                 onClick={() => setSnapshotResolution(option.value)}
                                                 aria-pressed={snapshotResolution === option.value}
                                                 className={cn(
-                                                    "rounded-full border px-3 py-1.5 text-[10px] font-mono uppercase tracking-[0.24em] transition-colors",
+                                                    "rounded-full border px-3 py-1.5 text-[10px] font-mono first-letter:uppercase transition-colors",
                                                     snapshotResolution === option.value
                                                         ? "border-cyan-400/40 bg-cyan-500/10 text-cyan-200"
                                                         : "border-border/60 bg-card/60 text-gray-500 hover:border-border/60 hover:text-gray-300"
@@ -679,9 +679,9 @@ function HeroMetricCard({
 }) {
     return (
         <div className="rounded-2xl border border-border/60 bg-muted/50 p-4 backdrop-blur-sm">
-            <div className="flex items-center gap-2 text-[10px] font-mono uppercase tracking-[0.28em] text-slate-400">
+            <div className="flex items-center gap-2 text-[10px] font-mono text-slate-400">
                 {icon}
-                {label}
+                <span className="first-letter:uppercase">{label}</span>
             </div>
             <div className="mt-3 text-lg font-mono font-semibold text-foreground">{value}</div>
             <div className="mt-1 text-xs font-mono text-slate-400">{detail}</div>

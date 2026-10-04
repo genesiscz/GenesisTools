@@ -34,11 +34,11 @@ function ComparePage() {
 
     return (
         <div className="max-w-7xl mx-auto px-4 sm:px-6 py-6 space-y-5">
-            <h1 className="font-mono tracking-[0.3em] text-sm text-muted-foreground uppercase">
+            <h1 className="font-mono text-sm text-muted-foreground first-letter:uppercase">
                 Compare :: <span className="text-foreground">N-Way</span>
             </h1>
             {ids.length === 0 ? (
-                <div className="font-mono text-xs text-muted-foreground tracking-[0.15em] uppercase border border-dashed border-border rounded-md p-12 text-center">
+                <div className="font-mono text-xs text-muted-foreground first-letter:uppercase border border-dashed border-border rounded-md p-12 text-center">
                     pass <span className="text-[var(--color-neon-cyan)]">?ids=A,B,C</span> to compare master products
                 </div>
             ) : (

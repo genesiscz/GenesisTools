@@ -29,7 +29,7 @@ function ProductPage() {
 
     return (
         <div className="max-w-3xl mx-auto px-4 sm:px-6 py-12 text-center space-y-4">
-            <div className="font-mono tracking-[0.3em] text-xs text-muted-foreground uppercase">
+            <div className="font-mono text-xs text-muted-foreground first-letter:uppercase">
                 Product :: {shop} / {slug}
             </div>
             {lookupQuery.isLoading && <div className="font-mono text-xs">looking up master link…</div>}
@@ -42,16 +42,14 @@ function ProductPage() {
                 <Link
                     to="/master/$id"
                     params={{ id: String(lookupQuery.data.master_product_id) }}
-                    className="inline-block font-mono text-sm text-[var(--color-neon-cyan)] underline tracking-[0.15em] uppercase"
+                    className="inline-block font-mono text-sm text-[var(--color-neon-cyan)] underline first-letter:uppercase"
                 >
                     Open master :: {lookupQuery.data.name}
                 </Link>
             )}
             {lookupQuery.data && lookupQuery.data.master_product_id === null && (
                 <div className="space-y-2">
-                    <div className="font-mono text-xs text-amber-400 tracking-[0.15em] uppercase">
-                        Pending master link
-                    </div>
+                    <div className="font-mono text-xs text-amber-400 first-letter:uppercase">Pending master link</div>
                     <a
                         href={lookupQuery.data.url}
                         target="_blank"

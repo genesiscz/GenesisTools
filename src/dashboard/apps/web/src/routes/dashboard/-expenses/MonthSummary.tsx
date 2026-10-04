@@ -59,7 +59,7 @@ export function MonthSummary({ summary, monthLabel }: MonthSummaryProps) {
             <Card variant="wow-static" className="rounded-2xl p-5 lg:col-span-2" data-testid="expense-chart">
                 <div className="mb-4 flex items-center justify-between">
                     <h3 className="text-sm font-semibold text-foreground">Where it went</h3>
-                    <span className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground/60">
+                    <span className="font-mono text-[10px] first-letter:uppercase text-muted-foreground/60">
                         {monthLabel}
                     </span>
                 </div>

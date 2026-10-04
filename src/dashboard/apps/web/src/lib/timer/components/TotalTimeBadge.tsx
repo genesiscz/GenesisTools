@@ -80,7 +80,7 @@ export function TotalTimeBadge({ totalTimeMs, showTotal, onToggle, className }: 
 
                     <Clock className="h-3.5 w-3.5 text-cyan-400 relative z-10" />
                     <span className="text-xs font-mono text-cyan-400 relative z-10 tracking-wide">
-                        TOTAL: {formattedTotal}
+                        Total: {formattedTotal}
                     </span>
                 </div>
             )}

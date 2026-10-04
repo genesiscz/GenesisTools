@@ -388,7 +388,7 @@ export function AskTab({
     return (
         <div className="space-y-4">
             <div>
-                <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-secondary">
+                <p className="font-mono text-[11px] first-letter:uppercase text-secondary">
                     Ask the video
                     {outputLang && outputLang !== "en" ? ` · ${outputLang.toUpperCase()}` : ""}
                 </p>
@@ -593,7 +593,7 @@ export function AskTab({
                         type="button"
                         onClick={() => setShowOlder((value) => !value)}
                         aria-expanded={showOlder}
-                        className="inline-flex items-center gap-1.5 font-mono text-[11px] uppercase tracking-[0.18em] text-muted-foreground transition-colors hover:text-foreground"
+                        className="inline-flex items-center gap-1.5 font-mono text-[11px] first-letter:uppercase text-muted-foreground transition-colors hover:text-foreground"
                     >
                         {showOlder ? (
                             <ChevronDown className="size-3" strokeWidth={2} />

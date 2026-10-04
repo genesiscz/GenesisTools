@@ -53,7 +53,7 @@ export function StatusBadge({
     return (
         <Badge
             variant="outline"
-            className={cn("gap-1.5 font-mono text-[0.65rem] uppercase tracking-[0.18em]", tone.className, className)}
+            className={cn("gap-1.5 font-mono text-[0.65rem] first-letter:uppercase", tone.className, className)}
         >
             <Icon className="size-3" />
             {key === "paused" ? "Paused" : STATUS_LABEL[status]}

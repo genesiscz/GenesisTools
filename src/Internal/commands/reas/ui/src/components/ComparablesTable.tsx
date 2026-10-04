@@ -81,7 +81,7 @@ export function ComparablesTable({ data }: ComparablesTableProps) {
                                     <TableHead
                                         key={col.key}
                                         className={cn(
-                                            "font-mono text-[10px] uppercase tracking-wider text-gray-500 cursor-pointer select-none hover:text-primary transition-colors",
+                                            "font-mono text-[10px] first-letter:uppercase text-gray-500 cursor-pointer select-none hover:text-primary transition-colors",
                                             col.align === "right" && "text-right"
                                         )}
                                         onClick={() => handleSort(col.key)}

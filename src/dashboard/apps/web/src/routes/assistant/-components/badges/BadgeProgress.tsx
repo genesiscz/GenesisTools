@@ -152,7 +152,7 @@ function BadgeProgressItem({ progress, className }: { progress: BadgeProgressTyp
                         <span className="text-muted-foreground">
                             {progress.current}/{progress.target}
                         </span>
-                        <span className={cn("uppercase tracking-wider", config.textColor)}>{progress.rarity}</span>
+                        <span className={cn("first-letter:uppercase", config.textColor)}>{progress.rarity}</span>
                     </div>
                 </div>
             </div>
@@ -287,7 +287,7 @@ export function NextBadgePreview({ progress, className }: { progress: BadgeProgr
                     <IconComponent className={cn("h-6 w-6", config.textColor)} />
                 </div>
                 <div>
-                    <p className="text-xs text-muted-foreground uppercase tracking-wider">Next Badge</p>
+                    <p className="text-xs text-muted-foreground first-letter:uppercase">Next Badge</p>
                     <p className="font-semibold">{progress.displayName}</p>
                 </div>
             </div>

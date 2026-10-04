@@ -166,7 +166,7 @@ function InsightCard({
                     <Icon className="h-4 w-4" />
                 </div>
                 <div className="flex-1 min-w-0">
-                    <p className="text-xs text-slate-500 uppercase tracking-wider font-mono mb-1">{label}</p>
+                    <p className="text-xs text-slate-500 first-letter:uppercase font-mono mb-1">{label}</p>
                     <p className={cn("font-semibold truncate", iconColors[color])}>{value}</p>
                     {subtext && <p className="text-xs text-slate-500 mt-1">{subtext}</p>}
                 </div>

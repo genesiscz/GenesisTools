@@ -131,7 +131,7 @@ export function WeeklyTrendsCard({ dailyActivity, dailyTokens }: WeeklyTrendsCar
 					{/* Messages This Week */}
 					<div className="space-y-1">
 						<div className="flex items-center gap-2">
-							<span className="text-xs text-muted-foreground uppercase tracking-wide">Messages</span>
+							<span className="text-xs text-muted-foreground first-letter:uppercase">Messages</span>
 							{getTrendIcon(stats.messageChange)}
 						</div>
 						<div className="flex items-baseline gap-2">
@@ -147,7 +147,7 @@ export function WeeklyTrendsCard({ dailyActivity, dailyTokens }: WeeklyTrendsCar
 					{/* Tokens This Week */}
 					<div className="space-y-1">
 						<div className="flex items-center gap-2">
-							<span className="text-xs text-muted-foreground uppercase tracking-wide">Tokens</span>
+							<span className="text-xs text-muted-foreground first-letter:uppercase">Tokens</span>
 							{getTrendIcon(stats.tokenChange)}
 						</div>
 						<div className="flex items-baseline gap-2">

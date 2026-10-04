@@ -141,6 +141,35 @@ clarity's/shops' **full** pages (01, 05) — a pure composition gap.
 
 ---
 
+## Text Case: sentence case, never ALL CAPS (2026-10-04 18:21)
+
+The user's rule: "This case is good, THIS CASE isn't." Every label, heading, badge, tab, table
+header, nav item and button in every dashboard is **sentence case**.
+
+- **Never** the `uppercase` class, `text-transform: uppercase`, or a literal ALL CAPS word.
+  The 2026-10-04 sweep removed about 470 of them across all dashboards.
+- When the source text is lowercase data (`label="diversity"`), use
+  `first-letter:uppercase` (CSS: `::first-letter { text-transform: uppercase }`). It only
+  capitalises the first letter. `::first-letter` works only on a block container: a block,
+  inline-block, list item or table cell, or any flex or grid item. It does nothing on a flex
+  or grid container (`flex`, `inline-flex`, `Badge`, `Button`, `Label`, `TabsTrigger`), on a
+  plain inline `<span>`, or on a table row. There, put the class on a `<span>` around the text
+  (inside a flex container that span is a flex item), add `block` or `inline-block` to the
+  span, or fix the case at the source. A leading icon in the same block container also stops
+  it, so keep the icon outside the text span.
+- Codes keep their capitals in the value, not through CSS: `{lang.toUpperCase()}` for a
+  language code. Brand names keep their own case (`eReality`), and so do user tags.
+- Drop the wide letter-spacing (`tracking-wider`, `tracking-widest`, `tracking-[0.2em]`)
+  that only suits ALL CAPS.
+- Acronyms stay as they are: URL, CPU, PID, HTTP, API, DNA, REAS, CZ.
+
+## Ask, do not default
+
+When creating a dashboard, or changing the look of one, **ask the user** which theme
+(`cyberpunk`, `gold-bento`, `native`) and which style choices they want. Do not default to
+either theme or to a text style, and do not carry one dashboard's choices into another
+without asking.
+
 ## Component Variant Cheat-Sheet
 
 - **Card:** `default` (theme-aware glass/glow — preferred), `wow`
@@ -166,6 +195,7 @@ clarity's/shops' **full** pages (01, 05) — a pure composition gap.
 - [ ] Cards use a rich variant or unmodified themed `default`
 - [ ] Empty states have icon + glow + heading + CTA (not bare text)
 - [ ] Screenshot it next to a dashboard page — same visual family?
+- [ ] No ALL CAPS anywhere: `rg -n '\buppercase\b'` over the UI finds only `first-letter:uppercase`
 
 ---
 
@@ -198,6 +228,7 @@ same line**. Wire it into CI alongside `lint`.
 
 ## New-Dashboard Checklist
 
+0. Ask the user which theme and style choices this dashboard gets (§ Ask, do not default).
 1. Root document: `<html className={useDashboardTheme(key).documentClassName}>` (it stays
    constant on the client, so React never rewrites the `<html>` classes; use `className` for a
    themed subtree such as the shell or `<body>`), plus a

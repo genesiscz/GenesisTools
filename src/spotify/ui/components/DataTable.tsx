@@ -91,7 +91,7 @@ export function DataTable<T>({
                                     key={c.key}
                                     style={c.width ? { width: c.width } : undefined}
                                     className={cn(
-                                        "px-3 py-2 text-[11px] font-mono uppercase tracking-widest text-muted-foreground",
+                                        "px-3 py-2 text-[11px] font-mono first-letter:uppercase text-muted-foreground",
                                         c.align === "right" ? "text-right" : "text-left"
                                     )}
                                 >

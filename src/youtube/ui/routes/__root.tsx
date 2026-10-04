@@ -112,9 +112,7 @@ function RootLayout() {
                                     <PlaySquare className="size-5" />
                                 </div>
                                 <div>
-                                    <p className="text-xs font-mono uppercase tracking-[0.35em] text-primary">
-                                        Genesis
-                                    </p>
+                                    <p className="text-xs font-mono first-letter:uppercase text-primary">Genesis</p>
                                     <h1 className="text-lg font-semibold text-foreground">YouTube AI</h1>
                                 </div>
                             </div>

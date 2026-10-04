@@ -40,13 +40,9 @@ export function ShopBadge({ origin, label, className }: ShopBadgeProps) {
     return (
         <Badge
             variant="outline"
-            className={cn(
-                "font-mono text-[10px] tracking-[0.15em] uppercase px-1.5 py-0.5",
-                shopColorClass(origin),
-                className
-            )}
+            className={cn("font-mono text-[10px] px-1.5 py-0.5", shopColorClass(origin), className)}
         >
-            {label ?? origin.replace(/\.cz$/, "")}
+            <span className="first-letter:uppercase">{label ?? origin.replace(/\.cz$/, "")}</span>
         </Badge>
     );
 }

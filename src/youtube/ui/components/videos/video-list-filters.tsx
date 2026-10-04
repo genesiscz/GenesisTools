@@ -17,7 +17,7 @@ export function VideoListFilters({
     return (
         <div className="grid gap-3 rounded-2xl border border-primary/20 bg-black/20 p-4 md:grid-cols-[1fr_10rem_auto] md:items-end">
             <label className="space-y-2">
-                <span className="font-mono text-xs uppercase tracking-[0.22em] text-muted-foreground">Since</span>
+                <span className="font-mono text-xs first-letter:uppercase text-muted-foreground">Since</span>
                 <Input
                     type="date"
                     value={value.since}
@@ -25,7 +25,7 @@ export function VideoListFilters({
                 />
             </label>
             <label className="space-y-2">
-                <span className="font-mono text-xs uppercase tracking-[0.22em] text-muted-foreground">Limit</span>
+                <span className="font-mono text-xs first-letter:uppercase text-muted-foreground">Limit</span>
                 <Input
                     type="number"
                     min={1}

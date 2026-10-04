@@ -12,7 +12,7 @@ export function PortKindBadge({ port }: { port: PortInfo }) {
     if (port.probeStatus === "pending") {
         return (
             <span
-                className="inline-flex items-center gap-1 font-mono text-[10px] uppercase tracking-wide text-[var(--dd-text-muted)]"
+                className="inline-flex items-center gap-1 font-mono text-[10px] first-letter:uppercase text-[var(--dd-text-muted)]"
                 title="Probing…"
             >
                 <Loader2 className="h-3 w-3 animate-spin" />…
@@ -21,21 +21,19 @@ export function PortKindBadge({ port }: { port: PortInfo }) {
     }
 
     if (port.visibility === "system") {
-        return (
-            <span className="font-mono text-[10px] uppercase tracking-wide text-[var(--dd-text-muted)]">system</span>
-        );
+        return <span className="font-mono text-[10px] first-letter:uppercase text-[var(--dd-text-muted)]">System</span>;
     }
 
     if (port.visibility === "junk") {
-        return <span className="font-mono text-[10px] uppercase tracking-wide text-[var(--dd-text-muted)]">junk</span>;
+        return <span className="font-mono text-[10px] first-letter:uppercase text-[var(--dd-text-muted)]">Junk</span>;
     }
 
     const kind = port.kind ?? "other";
-    const label = kind === "genesis-tools" ? "genesis" : kind === "web" ? "web" : kind === "api" ? "api" : "other";
+    const label = kind === "genesis-tools" ? "Genesis" : kind === "web" ? "Web" : kind === "api" ? "API" : "Other";
 
     return (
         <span
-            className={`inline-flex rounded border px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wide ${KIND_STYLES[kind] ?? KIND_STYLES.other}`}
+            className={`inline-flex rounded border px-1.5 py-0.5 font-mono text-[10px] first-letter:uppercase ${KIND_STYLES[kind] ?? KIND_STYLES.other}`}
         >
             {label}
         </span>

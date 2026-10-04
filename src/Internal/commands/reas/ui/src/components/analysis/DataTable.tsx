@@ -64,7 +64,7 @@ export function DataTable<Row extends Record<string, ReactNode>>({
                             <TableHead
                                 key={String(column.key)}
                                 className={cn(
-                                    "font-mono text-[10px] uppercase tracking-[0.22em] text-slate-500",
+                                    "font-mono text-[10px] first-letter:uppercase text-slate-500",
                                     column.align === "right" ? "text-right" : undefined,
                                     column.className
                                 )}

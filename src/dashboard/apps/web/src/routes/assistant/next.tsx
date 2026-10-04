@@ -243,7 +243,7 @@ function WhatsNextPage() {
 
                     {/* Alternatives - 1 column */}
                     <div className="space-y-4">
-                        <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">
+                        <h3 className="text-sm font-semibold text-muted-foreground first-letter:uppercase">
                             Also Consider
                         </h3>
 
@@ -306,11 +306,13 @@ function RecommendationCard({
                 <div className="flex items-center justify-between mb-3">
                     <div className="flex items-center gap-2">
                         <UrgencyIcon className={cn("h-4 w-4", urgency.color)} />
-                        <span className={cn("text-xs font-semibold uppercase", urgency.color)}>{urgency.label}</span>
+                        <span className={cn("text-xs font-semibold first-letter:uppercase", urgency.color)}>
+                            {urgency.label}
+                        </span>
                     </div>
 
                     {isPrimary && (
-                        <span className="text-[10px] uppercase tracking-wider font-bold text-purple-400 px-2 py-1 rounded bg-purple-500/20">
+                        <span className="text-[10px] first-letter:uppercase font-bold text-purple-400 px-2 py-1 rounded bg-purple-500/20">
                             Recommended
                         </span>
                     )}

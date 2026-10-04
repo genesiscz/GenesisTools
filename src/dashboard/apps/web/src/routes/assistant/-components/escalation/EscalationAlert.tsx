@@ -132,7 +132,7 @@ export function EscalationAlert({ open, onOpenChange, task, risk, onResolve }: E
                         <div className="flex items-center gap-2 p-2 rounded bg-background/50">
                             <Calendar className={cn("h-4 w-4", isOverdue ? "text-red-400" : "text-muted-foreground")} />
                             <div>
-                                <p className="text-[10px] uppercase text-muted-foreground tracking-wider">Deadline</p>
+                                <p className="text-[10px] first-letter:uppercase text-muted-foreground">Deadline</p>
                                 <p className={cn("text-sm font-medium", isOverdue && "text-red-400")}>
                                     {task.deadline ? formatDate(task.deadline) : "Not set"}
                                 </p>
@@ -148,7 +148,7 @@ export function EscalationAlert({ open, onOpenChange, task, risk, onResolve }: E
                                 )}
                             />
                             <div>
-                                <p className="text-[10px] uppercase text-muted-foreground tracking-wider">Time Left</p>
+                                <p className="text-[10px] first-letter:uppercase text-muted-foreground">Time Left</p>
                                 <p
                                     className={cn(
                                         "text-sm font-medium",
@@ -165,7 +165,7 @@ export function EscalationAlert({ open, onOpenChange, task, risk, onResolve }: E
                         <div className="flex items-center gap-2 p-2 rounded bg-background/50">
                             <Percent className="h-4 w-4 text-muted-foreground" />
                             <div>
-                                <p className="text-[10px] uppercase text-muted-foreground tracking-wider">Progress</p>
+                                <p className="text-[10px] first-letter:uppercase text-muted-foreground">Progress</p>
                                 <p className="text-sm font-medium">{Math.round(risk.percentComplete)}%</p>
                             </div>
                         </div>
@@ -176,7 +176,7 @@ export function EscalationAlert({ open, onOpenChange, task, risk, onResolve }: E
                                 className={cn("h-4 w-4", risk.daysLate > 0 ? "text-red-400" : "text-green-400")}
                             />
                             <div>
-                                <p className="text-[10px] uppercase text-muted-foreground tracking-wider">Projected</p>
+                                <p className="text-[10px] first-letter:uppercase text-muted-foreground">Projected</p>
                                 <p className={cn("text-sm font-medium", risk.daysLate > 0 && "text-red-400")}>
                                     {formatDate(risk.projectedCompletionDate)}
                                 </p>

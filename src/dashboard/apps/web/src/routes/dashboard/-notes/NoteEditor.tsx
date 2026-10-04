@@ -166,7 +166,7 @@ export function NoteEditor({ note, userId }: NoteEditorProps) {
             <div className="flex flex-1 gap-3 min-h-0">
                 <div className="flex flex-1 flex-col min-w-0">
                     <p
-                        className="mb-1 text-[10px] text-zinc-600 uppercase tracking-wider"
+                        className="mb-1 text-[10px] text-zinc-600 first-letter:uppercase"
                         style={{ fontFamily: "'JetBrains Mono', monospace" }}
                     >
                         Markdown
@@ -188,7 +188,7 @@ export function NoteEditor({ note, userId }: NoteEditorProps) {
 
                 <div className="flex flex-1 flex-col min-w-0">
                     <p
-                        className="mb-1 text-[10px] text-zinc-600 uppercase tracking-wider"
+                        className="mb-1 text-[10px] text-zinc-600 first-letter:uppercase"
                         style={{ fontFamily: "'JetBrains Mono', monospace" }}
                     >
                         Preview

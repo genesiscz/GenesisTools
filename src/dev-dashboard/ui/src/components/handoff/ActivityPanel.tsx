@@ -251,7 +251,7 @@ export function ActivityPanel({ id }: { id: string | null }) {
                 onClick={() => panel.setState("expanded")}
                 title="expand activity"
             >
-                <span className="[writing-mode:vertical-rl] font-mono text-[10px] uppercase tracking-wider text-[var(--dd-text-muted)]">
+                <span className="[writing-mode:vertical-rl] font-mono text-[10px] first-letter:uppercase text-[var(--dd-text-muted)]">
                     Activity
                 </span>
                 {total > 0 ? (
@@ -266,7 +266,7 @@ export function ActivityPanel({ id }: { id: string | null }) {
     return (
         <div className="dd-panel flex min-h-0 flex-col gap-2 self-start p-3 lg:h-full">
             <div className="flex items-center justify-between">
-                <span className="font-mono text-[10px] uppercase tracking-wider text-[var(--dd-text-muted)]">
+                <span className="font-mono text-[10px] first-letter:uppercase text-[var(--dd-text-muted)]">
                     Activity{total > 0 ? ` · ${total}` : ""}
                 </span>
                 <button

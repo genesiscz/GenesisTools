@@ -207,7 +207,7 @@ export function HandoffDocument({ handoff, decisions = [], blockers = [], classN
                 <div>
                     <h2 className="text-2xl font-bold text-cyan-400 font-mono mb-4">
                         <span className="text-cyan-500/50"># </span>
-                        HANDOFF: {handoff.summary}
+                        Handoff: {handoff.summary}
                     </h2>
                     <div className="flex flex-wrap gap-4 text-sm font-mono">
                         <div className="flex items-center gap-2 text-muted-foreground">
@@ -425,7 +425,7 @@ function CollapsibleSection({
             >
                 <div className="flex items-center gap-2">
                     <Icon className="h-4 w-4" />
-                    <span className="font-mono text-sm font-semibold uppercase tracking-wider">{title}</span>
+                    <span className="font-mono text-sm font-semibold first-letter:uppercase">{title}</span>
                 </div>
                 {expanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
             </button>

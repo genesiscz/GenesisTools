@@ -49,7 +49,7 @@ export function ScoreRow({ label, value, hint }: { label: string; value: number;
     return (
         <div>
             <div className="flex items-baseline justify-between mb-1">
-                <span className="text-xs font-mono uppercase tracking-widest text-muted-foreground">{label}</span>
+                <span className="text-xs font-mono first-letter:uppercase text-muted-foreground">{label}</span>
                 <span className="text-xs text-muted-foreground">{hint}</span>
             </div>
             <ScoreBar value={value} />

@@ -73,12 +73,12 @@ function TargetCard({ target, onEdit }: { target: NotifyTarget; onEdit: (target:
                     <div className="min-w-0">
                         <CardTitle className="flex flex-wrap items-center gap-2 text-lg">
                             <span className="truncate">{target.name}</span>
-                            <Badge variant="cyber" className="font-mono text-[0.6rem] uppercase tracking-[0.18em]">
+                            <Badge variant="cyber" className="font-mono text-[0.6rem] first-letter:uppercase">
                                 {target.channel}
                             </Badge>
                         </CardTitle>
                         <CardDescription className="mt-1 truncate">{describeTargetConfig(target)}</CardDescription>
-                        <p className="mt-1 font-mono text-[0.65rem] uppercase tracking-[0.18em] text-muted-foreground">
+                        <p className="mt-1 font-mono text-[0.65rem] first-letter:uppercase text-muted-foreground">
                             {target.watcherCount === 0
                                 ? "not used yet"
                                 : `used by ${target.watcherCount} watcher${target.watcherCount === 1 ? "" : "s"}`}
@@ -201,14 +201,11 @@ function DefaultChannelCard({ view }: { view: ChannelView }) {
                         <CardTitle className="flex flex-wrap items-center gap-2 text-lg">
                             {spec.title}
                             {view.overridden.length > 0 ? (
-                                <Badge variant="cyber" className="font-mono text-[0.6rem] uppercase tracking-[0.18em]">
+                                <Badge variant="cyber" className="font-mono text-[0.6rem] first-letter:uppercase">
                                     monitor override
                                 </Badge>
                             ) : (
-                                <Badge
-                                    variant="outline"
-                                    className="font-mono text-[0.6rem] uppercase tracking-[0.18em]"
-                                >
+                                <Badge variant="outline" className="font-mono text-[0.6rem] first-letter:uppercase">
                                     global default
                                 </Badge>
                             )}
@@ -282,7 +279,7 @@ function EventsCard({ settings }: { settings: NotifySettings }) {
 function SectionTitle({ title, hint }: { title: string; hint: string }) {
     return (
         <div className="space-y-1">
-            <h2 className="font-mono text-[0.7rem] uppercase tracking-[0.32em] text-secondary">{title}</h2>
+            <h2 className="font-mono text-[0.7rem] first-letter:uppercase text-secondary">{title}</h2>
             <p className="text-sm text-muted-foreground">{hint}</p>
         </div>
     );

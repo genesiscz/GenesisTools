@@ -43,7 +43,7 @@ export function SourceBadge({ source, className, href }: SourceBadgeProps) {
         <Badge
             variant="outline"
             className={cn(
-                "gap-1 text-[10px] font-mono uppercase tracking-[0.16em]",
+                "gap-1 text-[10px] font-mono first-letter:uppercase",
                 metadata?.className ?? "border-border/60 bg-muted/50 text-gray-300",
                 className
             )}

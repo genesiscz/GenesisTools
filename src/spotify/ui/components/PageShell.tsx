@@ -64,7 +64,7 @@ export function Section({
 export function StatTile({ label, value, hint }: { label: string; value: string | number; hint?: string }) {
     return (
         <Card variant="wow-static" data-stat-card="" className="p-3">
-            <div data-stat="label" className="text-[11px] font-mono uppercase tracking-widest text-muted-foreground">
+            <div data-stat="label" className="text-[11px] font-mono first-letter:uppercase text-muted-foreground">
                 {label}
             </div>
             <div data-stat="value" className="text-lg font-semibold text-foreground">

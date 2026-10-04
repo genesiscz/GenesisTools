@@ -276,7 +276,7 @@ export function SummaryTab({
                     data-testid="summary-locked"
                     className="space-y-3 rounded-2xl border border-border/50 bg-muted/30 p-3"
                 >
-                    <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-secondary">summary</p>
+                    <p className="font-mono text-[11px] first-letter:uppercase text-secondary">summary</p>
                     <p className="line-clamp-3 text-sm text-muted-foreground [mask-image:linear-gradient(to_bottom,black_40%,transparent)]">
                         {lockedInfo.preview.tldr}
                     </p>

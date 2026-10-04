@@ -66,7 +66,7 @@ function MatchReviewPage() {
                 </TabsList>
                 <TabsContent value="all">
                     <div className="space-y-5">
-                        <h1 className="font-mono tracking-[0.3em] text-sm text-muted-foreground uppercase">
+                        <h1 className="font-mono text-sm text-muted-foreground first-letter:uppercase">
                             Match :: <span className="text-foreground">{pairs.length} pending</span>
                         </h1>
                         {pairs.length === 0 ? (
@@ -107,7 +107,7 @@ function PairCard({ pair, onAccept, onReject }: PairCardProps) {
     return (
         <Card>
             <CardHeader className="flex flex-row items-center justify-between font-mono py-3 px-4">
-                <span className="text-xs uppercase tracking-wider text-muted-foreground">
+                <span className="text-xs first-letter:uppercase text-muted-foreground">
                     similarity · <span className="text-cyan-300">{pair.similarity.toFixed(3)}</span>
                 </span>
                 <Badge variant="secondary" className="font-mono text-[10px]">

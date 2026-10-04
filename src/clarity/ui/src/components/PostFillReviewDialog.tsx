@@ -74,7 +74,7 @@ export function PostFillReviewDialog({ open, onClose, result, commentedWeeks }: 
                     </Alert>
 
                     <div className="flex flex-col gap-1">
-                        <div className="text-[10px] font-mono text-gray-500 uppercase tracking-wider">
+                        <div className="text-[10px] font-mono text-gray-500 first-letter:uppercase">
                             Affected Timesheets
                         </div>
                         <div className="flex flex-wrap gap-1.5">

@@ -237,13 +237,13 @@ function ListingsPage() {
                         {selectedFreshness && <StalenessIndicator generatedAt={selectedFreshness} />}
                         <Badge
                             variant="outline"
-                            className="border-border/60 bg-muted/50 px-2.5 py-1 text-[10px] font-mono uppercase tracking-[0.2em] text-gray-300"
+                            className="border-border/60 bg-muted/50 px-2.5 py-1 text-[10px] font-mono first-letter:uppercase text-gray-300"
                         >
                             {listingsQuery.data?.total ?? 0} matches
                         </Badge>
                         <Badge
                             variant="outline"
-                            className="border-cyan-500/20 bg-cyan-500/5 px-2.5 py-1 text-[10px] font-mono uppercase tracking-[0.2em] text-cyan-300"
+                            className="border-cyan-500/20 bg-cyan-500/5 px-2.5 py-1 text-[10px] font-mono first-letter:uppercase text-cyan-300"
                         >
                             {activeFilterCount} filters
                         </Badge>
@@ -309,7 +309,7 @@ function ListingsPage() {
                                                 </span>
                                             </div>
                                             <div className="mt-3 flex items-center justify-between gap-2">
-                                                <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-gray-600">
+                                                <span className="font-mono text-[10px] first-letter:uppercase text-gray-600">
                                                     Freshness
                                                 </span>
                                                 {source.lastFetchedAt ? (
@@ -341,7 +341,7 @@ function ListingsPage() {
                             <TabsTrigger
                                 key={type.value}
                                 value={type.value}
-                                className="font-mono text-xs uppercase tracking-[0.18em] data-[state=active]:bg-primary/10 data-[state=active]:text-primary"
+                                className="font-mono text-xs first-letter:uppercase data-[state=active]:bg-primary/10 data-[state=active]:text-primary"
                             >
                                 {type.label}
                             </TabsTrigger>
@@ -467,7 +467,7 @@ function DistrictSourceBreakdown({ districtSources }: { districtSources: Distric
                 className="flex w-full items-center justify-between text-left"
                 onClick={() => setExpanded(!expanded)}
             >
-                <span className="font-mono text-[10px] uppercase tracking-[0.2em] text-gray-500">
+                <span className="font-mono text-[10px] first-letter:uppercase text-gray-500">
                     Per-district breakdown · {uniqueDistricts} districts
                 </span>
                 <ChevronDown
@@ -478,7 +478,7 @@ function DistrictSourceBreakdown({ districtSources }: { districtSources: Distric
             <div className="overflow-x-auto">
                 <table className="w-full text-xs font-mono">
                     <thead>
-                        <tr className="border-b border-border/60 text-left text-[9px] uppercase tracking-[0.2em] text-gray-600">
+                        <tr className="border-b border-border/60 text-left text-[9px] first-letter:uppercase text-gray-600">
                             <th className="px-2 py-1.5">District</th>
                             <th className="px-2 py-1.5">Source</th>
                             <th className="px-2 py-1.5">Type</th>

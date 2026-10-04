@@ -121,7 +121,7 @@ function SettingsPage() {
     return (
         <div className="mx-auto max-w-5xl space-y-6 pb-24">
             <header className="yt-panel rounded-3xl p-5">
-                <p className="font-mono text-xs uppercase tracking-[0.3em] text-secondary">Control room</p>
+                <p className="font-mono text-xs first-letter:uppercase text-secondary">Control room</p>
                 <h1 className="mt-2 text-3xl font-bold">Settings</h1>
                 <p className="mt-2 text-sm text-muted-foreground">
                     Config path: {config.data?.where ?? "~/.genesis-tools/youtube/server.json"}
@@ -312,7 +312,7 @@ function SettingsCard({ title, icon, children }: { title: string; icon?: React.R
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
     return (
         <label className="space-y-2">
-            <span className="font-mono text-xs uppercase tracking-[0.22em] text-muted-foreground">{label}</span>
+            <span className="block font-mono text-xs first-letter:uppercase text-muted-foreground">{label}</span>
             {children}
         </label>
     );
@@ -369,7 +369,7 @@ function ProviderSelect({
 function Metric({ label, value }: { label: string; value: string | number }) {
     return (
         <div className="rounded-2xl border border-primary/20 bg-black/20 p-4">
-            <p className="font-mono text-xs uppercase tracking-[0.22em] text-muted-foreground">{label}</p>
+            <p className="font-mono text-xs first-letter:uppercase text-muted-foreground">{label}</p>
             <p className="mt-2 text-2xl font-bold text-primary">{value}</p>
         </div>
     );

@@ -37,7 +37,7 @@ export function EventRow({ event }: Props) {
                 ) : null}
             </span>
             <span
-                className="shrink-0 rounded-full border border-[var(--dd-border)] px-2 py-0.5 font-mono text-[10px] font-bold uppercase tracking-widest"
+                className="shrink-0 rounded-full border border-[var(--dd-border)] px-2 py-0.5 font-mono text-[10px] font-bold first-letter:uppercase"
                 style={{ color: visual.color }}
             >
                 {visual.pillLabel}

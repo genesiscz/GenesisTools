@@ -137,7 +137,7 @@ export function GoalCard({
                                 {goal.targetDate}
                             </span>
                         )}
-                        <span className="ml-auto font-mono text-[10px] uppercase tracking-widest text-muted-foreground/60">
+                        <span className="ml-auto font-mono text-[10px] first-letter:uppercase text-muted-foreground/60">
                             {derivedFromKrs ? `${krs.length} KR${krs.length === 1 ? "" : "s"}` : "manual"}
                         </span>
                     </div>

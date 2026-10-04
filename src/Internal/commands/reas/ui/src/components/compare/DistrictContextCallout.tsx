@@ -37,7 +37,7 @@ function Section({ label, values, tone }: { label: string; values: string[]; ton
 
     return (
         <div className="flex flex-col gap-2">
-            <div className="text-[10px] font-mono uppercase tracking-[0.24em] text-gray-500">{label}</div>
+            <div className="text-[10px] font-mono first-letter:uppercase text-gray-500">{label}</div>
             <div className="flex flex-wrap gap-2">
                 {values.map((value) => (
                     <Badge key={value} variant="outline" className={toneClass}>

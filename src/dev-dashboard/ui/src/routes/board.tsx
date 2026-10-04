@@ -43,7 +43,7 @@ function OperatorDialog({ defaultValue, onSubmit }: { defaultValue: string; onSu
                 }}
                 className="dd-panel w-72 p-4"
             >
-                <p className="mb-2 text-sm font-semibold text-[var(--dd-text-primary)]">YOU ARE</p>
+                <p className="mb-2 text-sm font-semibold text-[var(--dd-text-primary)]">You are</p>
                 <input
                     autoFocus
                     type="text"

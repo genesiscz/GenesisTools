@@ -37,7 +37,7 @@ function IncidentsPage() {
                 title="When things went sideways"
                 description="An incident opens the moment a watcher leaves the operational state and closes when it comes back. Unknown results (a status page that did not answer) never open or close one."
                 actions={
-                    <div className="flex items-center gap-1 rounded-full border border-primary/20 bg-black/30 p-1 font-mono text-[0.7rem] uppercase tracking-[0.18em]">
+                    <div className="flex items-center gap-1 rounded-full border border-primary/20 bg-black/30 p-1 font-mono text-[0.7rem] first-letter:uppercase">
                         <StatPill label="Open" value={openCount} tone={openCount > 0 ? "amber" : "emerald"} />
                         <span className="h-4 w-px bg-primary/15" />
                         <StatPill label="Resolved" value={closedCount} tone="muted" />
@@ -60,8 +60,8 @@ function IncidentsPage() {
                                 onClick={() => setOpenOnly(value)}
                                 className={
                                     active
-                                        ? "rounded-full border border-amber-400/55 bg-amber-400/15 px-3 py-1 font-mono text-[0.7rem] uppercase tracking-[0.18em] text-amber-100 shadow-[0_0_22px_rgba(245,158,11,0.18)] transition"
-                                        : "rounded-full border border-border/50 bg-black/30 px-3 py-1 font-mono text-[0.7rem] uppercase tracking-[0.18em] text-muted-foreground transition hover:border-amber-400/30 hover:text-amber-100"
+                                        ? "rounded-full border border-amber-400/55 bg-amber-400/15 px-3 py-1 font-mono text-[0.7rem] first-letter:uppercase text-amber-100 shadow-[0_0_22px_rgba(245,158,11,0.18)] transition"
+                                        : "rounded-full border border-border/50 bg-black/30 px-3 py-1 font-mono text-[0.7rem] first-letter:uppercase text-muted-foreground transition hover:border-amber-400/30 hover:text-amber-100"
                                 }
                             >
                                 {label}

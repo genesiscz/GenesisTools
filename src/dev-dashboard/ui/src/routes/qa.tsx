@@ -467,7 +467,7 @@ export function QaRoute() {
     };
 
     const tabClass = (active: boolean): string =>
-        `cursor-pointer rounded-t border-b-2 px-3 py-1.5 font-mono text-xs uppercase tracking-wider transition-colors ${
+        `cursor-pointer rounded-t border-b-2 px-3 py-1.5 font-mono text-xs first-letter:uppercase transition-colors ${
             active
                 ? "dd-accent-text border-[var(--color-primary)]"
                 : "border-transparent text-[var(--dd-text-muted)] hover:text-[var(--dd-text-primary)]"
@@ -816,7 +816,7 @@ function QaFeed() {
 
             {pending.forms.length > 0 ? (
                 <section className="flex flex-col gap-3" data-testid="qa-pending-section">
-                    <h2 className="font-mono text-xs tracking-wider text-[var(--dd-text-muted)] uppercase">
+                    <h2 className="font-mono text-xs text-[var(--dd-text-muted)] first-letter:uppercase">
                         Waiting for you
                         <span className="dd-accent-text ml-1.5">{pending.forms.length}</span>
                     </h2>

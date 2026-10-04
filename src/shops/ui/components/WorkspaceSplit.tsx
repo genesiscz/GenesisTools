@@ -46,8 +46,8 @@ export function WorkspaceSplit() {
             </div>
             <div className="border border-border rounded-md overflow-y-auto p-4 bg-card">
                 {selectedId === null ? (
-                    <div className="h-full flex items-center justify-center font-mono text-xs tracking-[0.2em] text-muted-foreground uppercase">
-                        select a master from the left
+                    <div className="h-full flex items-center justify-center font-mono text-xs text-muted-foreground first-letter:uppercase">
+                        Select a master from the left
                     </div>
                 ) : (
                     <MasterDetail

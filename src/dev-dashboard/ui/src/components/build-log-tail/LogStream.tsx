@@ -171,7 +171,7 @@ export function LogStream({ logFile }: Props) {
                         type="button"
                         data-testid="build-log-tail-autoscroll-toggle"
                         onClick={() => setAutoScroll((v) => !v)}
-                        className="rounded border px-2 py-0.5 text-[10px] font-bold uppercase tracking-widest transition-colors"
+                        className="rounded border px-2 py-0.5 text-[10px] font-bold first-letter:uppercase transition-colors"
                         style={{
                             borderColor: "var(--dd-border)",
                             color: autoScroll ? "var(--dd-accent-from)" : "var(--dd-text-muted)",

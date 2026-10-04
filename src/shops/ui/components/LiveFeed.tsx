@@ -102,7 +102,7 @@ export function LiveFeed() {
             <div className="border border-border rounded-md overflow-hidden">
                 <div className="max-h-[70vh] overflow-y-auto">
                     {filtered.length === 0 ? (
-                        <div className="p-12 text-center font-mono text-xs tracking-[0.2em] text-muted-foreground uppercase">
+                        <div className="p-12 text-center font-mono text-xs text-muted-foreground first-letter:uppercase">
                             no events yet — fire up a crawl: tools shops crawl --shop rohlik
                         </div>
                     ) : (

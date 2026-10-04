@@ -27,7 +27,7 @@ export function ChannelsGrid() {
         <div className="space-y-6">
             <header className="flex flex-col gap-4 rounded-3xl border border-primary/20 bg-black/25 p-5 md:flex-row md:items-center md:justify-between">
                 <div>
-                    <p className="font-mono text-xs uppercase tracking-[0.3em] text-secondary">Library</p>
+                    <p className="font-mono text-xs first-letter:uppercase text-secondary">Library</p>
                     <h1 className="gradient-text text-3xl font-bold">Channels</h1>
                 </div>
                 <div className="flex flex-col gap-3 sm:flex-row">

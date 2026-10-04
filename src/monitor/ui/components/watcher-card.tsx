@@ -182,13 +182,11 @@ export function WatcherCard({
                     <p className="text-3xl font-bold tracking-tight text-foreground">
                         {formatLatency(watcher.lastLatencyMs)}
                     </p>
-                    <p className="font-mono text-[0.65rem] uppercase tracking-[0.2em] text-muted-foreground">latency</p>
+                    <p className="font-mono text-[0.65rem] first-letter:uppercase text-muted-foreground">latency</p>
                 </div>
                 <div className="text-right">
                     <p className="text-xl font-semibold text-foreground">{formatUptime(watcher.uptime24h)}</p>
-                    <p className="font-mono text-[0.65rem] uppercase tracking-[0.2em] text-muted-foreground">
-                        uptime 24h
-                    </p>
+                    <p className="font-mono text-[0.65rem] first-letter:uppercase text-muted-foreground">uptime 24h</p>
                 </div>
             </div>
 
@@ -200,9 +198,9 @@ export function WatcherCard({
                     {isMuted(watcher) && (
                         <span
                             title={`Muted until ${formatDateTime(watcher.mutedUntil)}`}
-                            className="inline-flex items-center gap-1 rounded-full border border-border/60 bg-muted/40 px-2 py-0.5 font-mono text-[0.6rem] uppercase tracking-[0.18em] text-muted-foreground"
+                            className="inline-flex items-center gap-1 rounded-full border border-border/60 bg-muted/40 px-2 py-0.5 font-mono text-[0.6rem] first-letter:uppercase text-muted-foreground"
                         >
-                            <BellOff className="size-3" /> muted
+                            <BellOff className="size-3" /> Muted
                         </span>
                     )}
                 </span>

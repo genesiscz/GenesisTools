@@ -276,7 +276,7 @@ export function DecisionCard({
                 >
                     {/* Reasoning */}
                     <div className="space-y-2">
-                        <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                        <h4 className="text-xs font-semibold text-muted-foreground first-letter:uppercase">
                             Reasoning
                         </h4>
                         <p className="text-sm text-foreground/90 whitespace-pre-wrap">{decision.reasoning}</p>
@@ -285,7 +285,7 @@ export function DecisionCard({
                     {/* Alternatives */}
                     {decision.alternativesConsidered.length > 0 && (
                         <div className="space-y-2 mt-4">
-                            <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                            <h4 className="text-xs font-semibold text-muted-foreground first-letter:uppercase">
                                 Alternatives Considered
                             </h4>
                             <ul className="space-y-1.5">
@@ -302,7 +302,7 @@ export function DecisionCard({
                     {/* Reversal reason (if reversed) */}
                     {decision.status === "reversed" && decision.reversalReason && (
                         <AlertBlock color="rose" className="space-y-2 mt-4">
-                            <h4 className="text-xs font-semibold text-rose-400 uppercase tracking-wide">
+                            <h4 className="text-xs font-semibold text-rose-400 first-letter:uppercase">
                                 Reversal Reason
                             </h4>
                             <p className="text-sm text-rose-300">{decision.reversalReason}</p>

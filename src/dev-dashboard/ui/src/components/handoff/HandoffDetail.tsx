@@ -319,7 +319,7 @@ export function HandoffDetail({ id }: { id: string }) {
                     </h2>
                 )}
                 <span
-                    className={`rounded-full border px-2 py-[1px] font-mono text-[11px] uppercase ${statusBadgeClass(handoff.status)}`}
+                    className={`rounded-full border px-2 py-[1px] font-mono text-[11px] first-letter:uppercase ${statusBadgeClass(handoff.status)}`}
                 >
                     {handoff.status}
                 </span>
@@ -367,7 +367,7 @@ export function HandoffDetail({ id }: { id: string }) {
 
             {handoff.claimedBy.length > 0 ? (
                 <div className="flex flex-col gap-1.5">
-                    <span className="font-mono text-[10px] uppercase tracking-wider text-[var(--dd-text-muted)]">
+                    <span className="font-mono text-[10px] first-letter:uppercase text-[var(--dd-text-muted)]">
                         claimed by
                     </span>
                     <div className="flex flex-wrap gap-1.5">
@@ -429,7 +429,7 @@ export function HandoffDetail({ id }: { id: string }) {
             {handoff.description !== undefined ? (
                 <div>
                     <div className="mb-1 flex items-center gap-2">
-                        <span className="font-mono text-[10px] uppercase tracking-wider text-[var(--dd-text-muted)]">
+                        <span className="font-mono text-[10px] first-letter:uppercase text-[var(--dd-text-muted)]">
                             description
                         </span>
                         {!terminal && !editingDescription ? (
@@ -491,9 +491,7 @@ export function HandoffDetail({ id }: { id: string }) {
             <AttachmentStrip attachments={handoffLevelAttachments} />
 
             <div className="flex flex-col gap-1.5">
-                <span className="font-mono text-[10px] uppercase tracking-wider text-[var(--dd-text-muted)]">
-                    tasks
-                </span>
+                <span className="font-mono text-[10px] first-letter:uppercase text-[var(--dd-text-muted)]">tasks</span>
                 {handoff.tasks.map((task) => (
                     <HandoffTaskRow
                         key={task.id}
@@ -543,7 +541,7 @@ export function HandoffDetail({ id }: { id: string }) {
             </div>
 
             <div className="flex flex-col gap-2">
-                <span className="font-mono text-[10px] uppercase tracking-wider text-[var(--dd-text-muted)]">
+                <span className="font-mono text-[10px] first-letter:uppercase text-[var(--dd-text-muted)]">
                     comments
                 </span>
                 {handoff.comments.length === 0 ? (

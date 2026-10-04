@@ -146,11 +146,11 @@ export function FocusHero({ linkedTaskId }: { linkedTaskId?: string }) {
                     >
                         {formatMMSS(f.remainingMs)}
                     </h1>
-                    <p className="text-xs font-mono tracking-widest uppercase text-muted-foreground mt-4">
+                    <p className="text-xs font-mono first-letter:uppercase text-muted-foreground mt-4">
                         {f.phase === "work" ? "deep focus" : f.phase === "short_break" ? "step away" : "recharge"}
                     </p>
                     {linkedTask && (
-                        <p className="mt-3 font-mono text-xs uppercase tracking-widest text-amber-400/80">
+                        <p className="mt-3 font-mono text-xs first-letter:uppercase text-amber-400/80">
                             Focusing on: {linkedTask.title}
                         </p>
                     )}

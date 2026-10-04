@@ -37,31 +37,31 @@ export function JobsTable({ jobs }: { jobs: PipelineJob[] }) {
                 <Table>
                     <TableHeader>
                         <TableRow className="border-primary/20 hover:bg-transparent">
-                            <TableHead className="font-mono text-[0.65rem] uppercase tracking-[0.22em] text-muted-foreground">
+                            <TableHead className="font-mono text-[0.65rem] first-letter:uppercase text-muted-foreground">
                                 Status
                             </TableHead>
-                            <TableHead className="font-mono text-[0.65rem] uppercase tracking-[0.22em] text-muted-foreground">
+                            <TableHead className="font-mono text-[0.65rem] first-letter:uppercase text-muted-foreground">
                                 Job
                             </TableHead>
-                            <TableHead className="font-mono text-[0.65rem] uppercase tracking-[0.22em] text-muted-foreground">
+                            <TableHead className="font-mono text-[0.65rem] first-letter:uppercase text-muted-foreground">
                                 When
                             </TableHead>
-                            <TableHead className="font-mono text-[0.65rem] uppercase tracking-[0.22em] text-muted-foreground">
+                            <TableHead className="font-mono text-[0.65rem] first-letter:uppercase text-muted-foreground">
                                 Target
                             </TableHead>
-                            <TableHead className="font-mono text-[0.65rem] uppercase tracking-[0.22em] text-muted-foreground">
+                            <TableHead className="font-mono text-[0.65rem] first-letter:uppercase text-muted-foreground">
                                 Stages
                             </TableHead>
-                            <TableHead className="font-mono text-[0.65rem] uppercase tracking-[0.22em] text-muted-foreground">
+                            <TableHead className="font-mono text-[0.65rem] first-letter:uppercase text-muted-foreground">
                                 Progress
                             </TableHead>
-                            <TableHead className="font-mono text-[0.65rem] uppercase tracking-[0.22em] text-muted-foreground">
+                            <TableHead className="font-mono text-[0.65rem] first-letter:uppercase text-muted-foreground">
                                 Duration
                             </TableHead>
-                            <TableHead className="font-mono text-[0.65rem] uppercase tracking-[0.22em] text-muted-foreground">
+                            <TableHead className="font-mono text-[0.65rem] first-letter:uppercase text-muted-foreground">
                                 Error
                             </TableHead>
-                            <TableHead className="text-right font-mono text-[0.65rem] uppercase tracking-[0.22em] text-muted-foreground">
+                            <TableHead className="text-right font-mono text-[0.65rem] first-letter:uppercase text-muted-foreground">
                                 Actions
                             </TableHead>
                         </TableRow>
@@ -106,7 +106,7 @@ export function JobsTable({ jobs }: { jobs: PipelineJob[] }) {
                                         <div className="max-w-72 truncate font-medium text-foreground/95">
                                             {job.target}
                                         </div>
-                                        <div className="mt-0.5 font-mono text-[0.65rem] uppercase tracking-[0.2em] text-muted-foreground">
+                                        <div className="mt-0.5 font-mono text-[0.65rem] first-letter:uppercase text-muted-foreground">
                                             {job.targetKind}
                                         </div>
                                     </TableCell>
@@ -120,8 +120,8 @@ export function JobsTable({ jobs }: { jobs: PipelineJob[] }) {
                                                         key={stage}
                                                         className={
                                                             current
-                                                                ? "rounded-full border border-cyan-400/45 bg-cyan-400/10 px-2 py-0.5 font-mono text-[0.65rem] uppercase tracking-[0.16em] text-cyan-200 shadow-[0_0_14px_rgba(34,211,238,0.25)]"
-                                                                : "rounded-full border border-border/40 bg-black/30 px-2 py-0.5 font-mono text-[0.65rem] uppercase tracking-[0.16em] text-muted-foreground"
+                                                                ? "rounded-full border border-cyan-400/45 bg-cyan-400/10 px-2 py-0.5 font-mono text-[0.65rem] first-letter:uppercase text-cyan-200 shadow-[0_0_14px_rgba(34,211,238,0.25)]"
+                                                                : "rounded-full border border-border/40 bg-black/30 px-2 py-0.5 font-mono text-[0.65rem] first-letter:uppercase text-muted-foreground"
                                                         }
                                                     >
                                                         {stage}
@@ -164,7 +164,7 @@ export function JobsTable({ jobs }: { jobs: PipelineJob[] }) {
                                                     event.stopPropagation();
                                                     setActivityJobId(job.id);
                                                 }}
-                                                className="inline-flex items-center gap-1.5 rounded-full border border-cyan-400/30 bg-cyan-400/[0.06] px-2.5 py-1 font-mono text-[0.65rem] uppercase tracking-[0.18em] text-cyan-200 transition hover:border-cyan-300/55 hover:bg-cyan-400/15 hover:shadow-[0_0_18px_rgba(34,211,238,0.25)]"
+                                                className="inline-flex items-center gap-1.5 rounded-full border border-cyan-400/30 bg-cyan-400/[0.06] px-2.5 py-1 font-mono text-[0.65rem] first-letter:uppercase text-cyan-200 transition hover:border-cyan-300/55 hover:bg-cyan-400/15 hover:shadow-[0_0_18px_rgba(34,211,238,0.25)]"
                                             >
                                                 <Activity className="size-3" />
                                                 Activity
@@ -176,14 +176,14 @@ export function JobsTable({ jobs }: { jobs: PipelineJob[] }) {
                                                     size="sm"
                                                     onClick={(event) => onCancel(event, job.id)}
                                                     disabled={cancelJob.isPending}
-                                                    className="h-7 gap-1.5 border-red-400/30 bg-red-500/5 px-2.5 font-mono text-[0.65rem] uppercase tracking-[0.18em] text-red-200 hover:border-red-300/55 hover:bg-red-500/15 hover:text-red-100"
+                                                    className="h-7 gap-1.5 border-red-400/30 bg-red-500/5 px-2.5 font-mono text-[0.65rem] first-letter:uppercase text-red-200 hover:border-red-300/55 hover:bg-red-500/15 hover:text-red-100"
                                                 >
                                                     <Ban className="size-3" />
                                                     Cancel
                                                 </Button>
                                             ) : (
-                                                <span className="inline-flex items-center justify-end gap-1 font-mono text-[0.65rem] uppercase tracking-[0.18em] text-muted-foreground/70">
-                                                    <PlayCircle className="size-3" /> idle
+                                                <span className="inline-flex items-center justify-end gap-1 font-mono text-[0.65rem] first-letter:uppercase text-muted-foreground/70">
+                                                    <PlayCircle className="size-3" /> Idle
                                                 </span>
                                             )}
                                         </div>

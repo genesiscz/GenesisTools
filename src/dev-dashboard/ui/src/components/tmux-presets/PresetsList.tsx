@@ -63,7 +63,7 @@ export function PresetsList({ presets, onRestore, onDelete, restoringName, delet
                 >
                     <div className="flex items-center justify-between gap-2">
                         <h3 className="dd-accent-text truncate font-mono text-base font-semibold">{preset.name}</h3>
-                        <span className="dd-dot shrink-0 rounded-full border border-[var(--dd-border)] px-2 py-0.5 font-mono text-[10px] uppercase tracking-widest text-[var(--dd-accent-from)]">
+                        <span className="dd-dot shrink-0 rounded-full border border-[var(--dd-border)] px-2 py-0.5 font-mono text-[10px] first-letter:uppercase text-[var(--dd-accent-from)]">
                             {preset.panes} panes
                         </span>
                     </div>

@@ -15,8 +15,8 @@ export function ProgressBar({
 
     return (
         <div className="rounded-2xl border border-primary/20 bg-black/25 p-4">
-            <div className="mb-2 flex items-center justify-between font-mono text-xs uppercase tracking-[0.2em] text-muted-foreground">
-                <span>{label}</span>
+            <div className="mb-2 flex items-center justify-between font-mono text-xs text-muted-foreground">
+                <span className="first-letter:uppercase">{label}</span>
                 <span className="text-primary">{normalized}%</span>
             </div>
             <Progress

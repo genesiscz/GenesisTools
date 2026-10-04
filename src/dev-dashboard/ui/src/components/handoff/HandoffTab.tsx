@@ -174,7 +174,7 @@ export function HandoffTab() {
 
                         return (
                             <div key={group.key} className="flex flex-col gap-1.5">
-                                <span className="font-mono text-[10px] uppercase tracking-wider text-[var(--dd-text-muted)]">
+                                <span className="font-mono text-[10px] first-letter:uppercase text-[var(--dd-text-muted)]">
                                     {group.label} · {groupRows.length}
                                 </span>
                                 {groupRows.map((row) => (

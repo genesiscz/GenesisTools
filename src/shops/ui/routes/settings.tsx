@@ -29,7 +29,7 @@ function SettingsPage() {
 
     return (
         <div className="max-w-3xl mx-auto px-4 sm:px-6 py-6 space-y-5">
-            <h1 className="font-mono tracking-[0.3em] text-sm text-muted-foreground uppercase">
+            <h1 className="font-mono text-sm text-muted-foreground first-letter:uppercase">
                 Settings :: <span className="text-foreground">Configuration</span>
             </h1>
             {settingsQuery.isLoading || !settingsQuery.data ? (

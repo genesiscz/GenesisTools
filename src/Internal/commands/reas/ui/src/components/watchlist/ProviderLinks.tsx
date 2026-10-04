@@ -21,7 +21,7 @@ export function ProviderLinks({ district, listingUrl, providers }: ProviderLinks
 
     return (
         <div className="rounded-md border border-border/60 bg-card/60 p-3">
-            <div className="mb-3 text-[10px] font-mono uppercase tracking-[0.18em] text-gray-500">Provider links</div>
+            <div className="mb-3 text-[10px] font-mono first-letter:uppercase text-gray-500">Provider links</div>
             <div className="flex flex-col gap-2">
                 {links.map((link) => (
                     <div

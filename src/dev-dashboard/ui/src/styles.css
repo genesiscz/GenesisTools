@@ -177,8 +177,6 @@ pre,
     font-family: "JetBrains Mono", Menlo, monospace;
     font-size: 10px;
     font-weight: 500;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
     color: var(--dd-text-muted);
     text-align: left;
     padding: 4px 10px 4px 0;
@@ -214,8 +212,6 @@ pre,
     font-family: "JetBrains Mono", Menlo, monospace;
     font-size: 10px;
     font-weight: 500;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
     color: var(--dd-text-muted);
     text-align: left;
     padding: 4px 10px 4px 0;

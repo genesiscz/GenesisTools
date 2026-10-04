@@ -18,7 +18,7 @@ interface MoodCheckInProps {
     onSave: (values: MoodCheckInValues) => Promise<void>;
 }
 
-const FIELD_LABEL = "font-mono text-[10px] tracking-widest uppercase text-muted-foreground/70 mb-2 block";
+const FIELD_LABEL = "font-mono text-[10px] first-letter:uppercase text-muted-foreground/70 mb-2 block";
 
 export function MoodCheckIn({ today, todayEntry, saving, onSave }: MoodCheckInProps) {
     const [mood, setMood] = useState<MoodValue | null>(null);
@@ -92,7 +92,7 @@ export function MoodCheckIn({ today, todayEntry, saving, onSave }: MoodCheckInPr
             <div className="relative flex items-center justify-between gap-3 mb-1">
                 <h2 className="text-2xl font-bold text-foreground">How are you?</h2>
                 {isUpdate && (
-                    <span className="font-mono text-[10px] tracking-widest uppercase text-emerald-400/80">
+                    <span className="font-mono text-[10px] first-letter:uppercase text-emerald-400/80">
                         Logged today
                     </span>
                 )}

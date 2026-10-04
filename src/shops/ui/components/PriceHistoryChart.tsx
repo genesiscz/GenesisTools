@@ -16,7 +16,7 @@ export function PriceHistoryChart({ history, isLoading, targetPrice, referencePr
         <Card className="overflow-hidden">
             <CardHeader>
                 <CardTitle className="font-mono text-xs tracking-[0.25em] text-muted-foreground">
-                    PRICE HISTORY
+                    Price history
                 </CardTitle>
             </CardHeader>
             <CardContent className="pt-0">

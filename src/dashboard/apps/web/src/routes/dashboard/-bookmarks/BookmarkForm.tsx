@@ -17,7 +17,7 @@ interface BookmarkFormProps {
     existingTags: string[];
 }
 
-const FIELD_LABEL = "font-mono text-[10px] tracking-widest uppercase text-muted-foreground/70 mb-1 block";
+const FIELD_LABEL = "font-mono text-[10px] first-letter:uppercase text-muted-foreground/70 mb-1 block";
 
 export function BookmarkForm({ open, onOpenChange, onSubmit, existingTags }: BookmarkFormProps) {
     const [url, setUrl] = useState("");

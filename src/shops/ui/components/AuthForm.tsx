@@ -35,7 +35,7 @@ export function AuthForm({ title, submitLabel, onSubmit, bottomSlot }: AuthFormP
             icon={<ShoppingBasket className="h-6 w-6 text-primary-foreground" />}
             footer={<>Czech eshop price aggregator — watchlist, alerts, observability</>}
         >
-            <h1 className="font-mono text-sm tracking-[0.25em] uppercase text-muted-foreground mb-6">{title}</h1>
+            <h1 className="font-mono text-sm first-letter:uppercase text-muted-foreground mb-6">{title}</h1>
             <form
                 className="space-y-3"
                 onSubmit={(e) => {

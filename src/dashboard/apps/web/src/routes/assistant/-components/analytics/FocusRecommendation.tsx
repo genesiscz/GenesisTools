@@ -161,7 +161,7 @@ export function FocusRecommendation({ heatmapData, tasks, className }: FocusReco
                     <div className="flex items-center gap-2 mb-1">
                         <span
                             className={cn(
-                                "text-xs font-mono uppercase tracking-wider",
+                                "text-xs font-mono first-letter:uppercase",
                                 isPeakTime ? "text-amber-400" : "text-cyan-400"
                             )}
                         >

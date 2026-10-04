@@ -169,7 +169,7 @@ export function CmuxSendTargetDialog({ open, onOpenChange, tmuxSessionName, onSe
                             </span>
                         </BezelCard>
 
-                        <p className="shrink-0 font-mono text-[10px] uppercase tracking-[0.2em] text-[var(--dd-text-muted)]">
+                        <p className="shrink-0 font-mono text-[10px] first-letter:uppercase text-[var(--dd-text-muted)]">
                             or choose destination
                         </p>
 

@@ -116,7 +116,7 @@ function ShopsLayout({ children }: { children: React.ReactNode }) {
 
     return (
         <DashboardLayout
-            title="SHOPS"
+            title="Shops"
             themeKey="shops"
             titleAccent="CZ"
             navLinks={decoratedLinks}
@@ -150,7 +150,7 @@ function HeaderUser() {
         return (
             <Link
                 to="/login"
-                className="text-xs font-mono uppercase tracking-widest text-muted-foreground hover:text-foreground"
+                className="text-xs font-mono first-letter:uppercase text-muted-foreground hover:text-foreground"
             >
                 Login
             </Link>

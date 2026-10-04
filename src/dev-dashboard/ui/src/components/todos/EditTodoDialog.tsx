@@ -107,7 +107,7 @@ export function EditTodoDialog({ open, reminder, pending, onOpenChange, onSave }
             <DialogContent className="dd-panel max-w-lg border-[var(--dd-border)] bg-[#050505]/95">
                 <form onSubmit={handleSubmit}>
                     <DialogHeader>
-                        <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-[var(--dd-text-muted)]">
+                        <p className="font-mono text-[10px] first-letter:uppercase text-[var(--dd-text-muted)]">
                             Edit todo
                         </p>
                         <DialogTitle className="font-mono text-base">Update reminder</DialogTitle>
@@ -118,7 +118,7 @@ export function EditTodoDialog({ open, reminder, pending, onOpenChange, onSave }
 
                     <div className="flex flex-col gap-3 py-2">
                         <label className="flex flex-col gap-1">
-                            <span className="font-mono text-[10px] uppercase tracking-wider text-[var(--dd-text-muted)]">
+                            <span className="font-mono text-[10px] first-letter:uppercase text-[var(--dd-text-muted)]">
                                 Title
                             </span>
                             <input
@@ -131,7 +131,7 @@ export function EditTodoDialog({ open, reminder, pending, onOpenChange, onSave }
                         </label>
 
                         <label className="flex flex-col gap-1">
-                            <span className="font-mono text-[10px] uppercase tracking-wider text-[var(--dd-text-muted)]">
+                            <span className="font-mono text-[10px] first-letter:uppercase text-[var(--dd-text-muted)]">
                                 Notes
                             </span>
                             <textarea
@@ -145,7 +145,7 @@ export function EditTodoDialog({ open, reminder, pending, onOpenChange, onSave }
 
                         <div className="grid gap-3 sm:grid-cols-2">
                             <label className="flex flex-col gap-1">
-                                <span className="font-mono text-[10px] uppercase tracking-wider text-[var(--dd-text-muted)]">
+                                <span className="font-mono text-[10px] first-letter:uppercase text-[var(--dd-text-muted)]">
                                     Due
                                 </span>
                                 <input
@@ -157,7 +157,7 @@ export function EditTodoDialog({ open, reminder, pending, onOpenChange, onSave }
                             </label>
 
                             <label className="flex flex-col gap-1">
-                                <span className="font-mono text-[10px] uppercase tracking-wider text-[var(--dd-text-muted)]">
+                                <span className="font-mono text-[10px] first-letter:uppercase text-[var(--dd-text-muted)]">
                                     Priority
                                 </span>
                                 <select
@@ -175,7 +175,7 @@ export function EditTodoDialog({ open, reminder, pending, onOpenChange, onSave }
                         </div>
 
                         <label className="flex flex-col gap-1">
-                            <span className="font-mono text-[10px] uppercase tracking-wider text-[var(--dd-text-muted)]">
+                            <span className="font-mono text-[10px] first-letter:uppercase text-[var(--dd-text-muted)]">
                                 URL
                             </span>
                             <input

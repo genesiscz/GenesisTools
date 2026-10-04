@@ -64,7 +64,7 @@ function IndexPage() {
 								</div>
 							</div>
 							<div>
-								<CardTitle className="text-4xl font-black tracking-tight gradient-text">CLAUDE HISTORY</CardTitle>
+								<CardTitle className="text-4xl font-black tracking-tight gradient-text">Claude history</CardTitle>
 								<CardDescription className="text-gray-400 font-light tracking-wide mt-1">
 									{"Neural conversation archive // All projects"}
 								</CardDescription>
@@ -102,12 +102,12 @@ function IndexPage() {
 				<div className="flex items-center justify-between mb-6">
 					<div className="flex items-center gap-3">
 						<div className="w-2 h-2 bg-amber-500 rounded-full animate-pulse" />
-						<span className="text-xs font-mono text-amber-500/80 tracking-wider">ACTIVE SESSIONS</span>
+						<span className="text-xs font-mono text-amber-500/80 ">Active sessions</span>
 					</div>
 					<Button variant="ghost" size="sm" asChild className="text-cyan-400 hover:text-cyan-300 hover:bg-cyan-500/10">
 						<Link to="/stats" className="flex items-center gap-2 font-mono text-xs">
 							<Zap className="w-3 h-3" />
-							VIEW ANALYTICS
+							View analytics
 							<ArrowRight className="w-3 h-3" />
 						</Link>
 					</Button>
@@ -158,7 +158,7 @@ function IndexPage() {
 														variant="outline"
 														className="bg-amber-500/10 text-amber-400 border-amber-500/30 font-mono text-[10px] tracking-wider animate-pulse-glow"
 													>
-														AGENT
+														Agent
 													</Badge>
 												)}
 											</div>

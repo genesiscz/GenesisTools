@@ -50,7 +50,7 @@ function OrdersPage() {
 
     return (
         <div className="max-w-5xl mx-auto px-4 sm:px-6 py-6 space-y-6">
-            <h1 className="font-mono tracking-[0.3em] text-sm text-muted-foreground uppercase">
+            <h1 className="font-mono text-sm text-muted-foreground first-letter:uppercase">
                 Orders :: <span className="text-foreground">spend & bulk-add</span>
             </h1>
             {insights.data ? (

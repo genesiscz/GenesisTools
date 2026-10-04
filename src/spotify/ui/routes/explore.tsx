@@ -342,7 +342,7 @@ function ExplorePage() {
 function Fact({ label, value, hint }: { label: string; value: string; hint?: string }) {
     return (
         <div>
-            <div className="text-[11px] font-mono uppercase tracking-widest text-muted-foreground">{label}</div>
+            <div className="text-[11px] font-mono first-letter:uppercase text-muted-foreground">{label}</div>
             <div className="text-base font-semibold text-foreground">{value}</div>
             {hint && <div className="text-xs text-muted-foreground">{hint}</div>}
         </div>

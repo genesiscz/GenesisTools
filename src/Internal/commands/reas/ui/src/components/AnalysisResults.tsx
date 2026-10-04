@@ -40,7 +40,7 @@ export function AnalysisResults({ data }: AnalysisResultsProps) {
                 <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
                     <div className="space-y-2">
                         <div className="flex flex-wrap items-center gap-2">
-                            <Badge className="border-primary/20 bg-primary/10 font-mono text-[10px] uppercase tracking-[0.24em] text-primary">
+                            <Badge className="border-primary/20 bg-primary/10 font-mono text-[10px] first-letter:uppercase text-primary">
                                 Analyze
                             </Badge>
                             <StalenessIndicator generatedAt={data.meta.generatedAt} />
@@ -55,9 +55,7 @@ export function AnalysisResults({ data }: AnalysisResultsProps) {
                     </div>
                     <div className="flex items-center gap-3">
                         <div className="hidden text-right sm:block">
-                            <div className="text-[10px] font-mono uppercase tracking-[0.24em] text-slate-500">
-                                Providers
-                            </div>
+                            <div className="text-[10px] font-mono first-letter:uppercase text-slate-500">Providers</div>
                             <div className="text-xs font-mono text-slate-300">
                                 {(data.meta.providers ?? []).join(" · ")}
                             </div>
@@ -83,7 +81,7 @@ export function AnalysisResults({ data }: AnalysisResultsProps) {
                             key={tab.value}
                             value={tab.value}
                             className={cn(
-                                "rounded-xl px-3 py-2 font-mono text-[11px] uppercase tracking-[0.18em]",
+                                "rounded-xl px-3 py-2 font-mono text-[11px] first-letter:uppercase",
                                 "data-[state=active]:bg-primary/15 data-[state=active]:text-primary data-[state=active]:shadow-none"
                             )}
                         >

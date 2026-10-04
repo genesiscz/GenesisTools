@@ -208,8 +208,7 @@ body.gold-bento {
 }
 
 /* ----------------------------------------------------------------------------
-   One family: monospace stays for real code only. Uppercase micro-labels keep
-   their case but lose the terminal tracking.
+   One family: monospace stays for real code only.
    ---------------------------------------------------------------------------- */
 .gold-bento .font-mono:not(:is(code, pre, kbd, samp, code *, pre *)),
 .gold-bento svg text {
@@ -217,10 +216,6 @@ body.gold-bento {
   font-variant-numeric: tabular-nums;
 }
 
-.gold-bento .uppercase:is(.tracking-wider, .tracking-widest, [class*="tracking-[0."]) {
-  letter-spacing: 0.06em;
-  font-weight: 500;
-}
 
 /* ----------------------------------------------------------------------------
    Accent text. `--accent` is a surface here, so text that used it as a

@@ -130,7 +130,7 @@ function SignInPage() {
                     <div className="absolute inset-0 flex items-center">
                         <div className="w-full border-t border-amber-500/10" />
                     </div>
-                    <div className="relative flex justify-center text-xs uppercase">
+                    <div className="relative flex justify-center text-xs first-letter:uppercase">
                         <span className="bg-[#030308] px-4 text-gray-500">Or continue with email</span>
                     </div>
                 </div>

@@ -13,7 +13,7 @@ export function TimestampedSummaryView({ entries, tldr, onSeek }: TimestampedSum
         <div className="space-y-4">
             {tldr ? (
                 <div className="rounded-2xl border border-primary/20 bg-primary/5 p-4">
-                    <p className="font-mono text-[0.65rem] uppercase tracking-[0.28em] text-primary">TL;DR</p>
+                    <p className="font-mono text-[0.65rem] first-letter:uppercase text-primary">TL;DR</p>
                     <p className="mt-2 leading-7 text-foreground/95">{tldr}</p>
                 </div>
             ) : null}

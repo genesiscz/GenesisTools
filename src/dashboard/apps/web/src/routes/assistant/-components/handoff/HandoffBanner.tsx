@@ -171,17 +171,13 @@ export function HandoffBanner({
                         <div className="p-4 rounded-lg bg-black/30 border border-cyan-500/20 space-y-3">
                             {/* Summary */}
                             <div>
-                                <h5 className="text-xs font-mono text-cyan-400 uppercase tracking-wider mb-1">
-                                    Summary
-                                </h5>
+                                <h5 className="text-xs font-mono text-cyan-400 first-letter:uppercase mb-1">Summary</h5>
                                 <p className="text-sm text-foreground/90">{handoff.summary}</p>
                             </div>
 
                             {/* Context preview */}
                             <div>
-                                <h5 className="text-xs font-mono text-cyan-400 uppercase tracking-wider mb-1">
-                                    Context
-                                </h5>
+                                <h5 className="text-xs font-mono text-cyan-400 first-letter:uppercase mb-1">Context</h5>
                                 <p className="text-sm text-foreground/80 font-mono line-clamp-3 whitespace-pre-wrap">
                                     {handoff.contextNotes}
                                 </p>
@@ -190,7 +186,7 @@ export function HandoffBanner({
                             {/* Next steps preview */}
                             {handoff.nextSteps.length > 0 && (
                                 <div>
-                                    <h5 className="text-xs font-mono text-emerald-400 uppercase tracking-wider mb-1">
+                                    <h5 className="text-xs font-mono text-emerald-400 first-letter:uppercase mb-1">
                                         Next Steps
                                     </h5>
                                     <div className="space-y-1">
@@ -212,7 +208,7 @@ export function HandoffBanner({
                             {/* Gotchas preview */}
                             {handoff.gotchas && (
                                 <div>
-                                    <h5 className="text-xs font-mono text-amber-400 uppercase tracking-wider mb-1">
+                                    <h5 className="text-xs font-mono text-amber-400 first-letter:uppercase mb-1">
                                         Watch Out For
                                     </h5>
                                     <p className="text-sm text-foreground/80 font-mono line-clamp-2">
@@ -223,9 +219,7 @@ export function HandoffBanner({
 
                             {/* Contact */}
                             <div>
-                                <h5 className="text-xs font-mono text-cyan-400 uppercase tracking-wider mb-1">
-                                    Contact
-                                </h5>
+                                <h5 className="text-xs font-mono text-cyan-400 first-letter:uppercase mb-1">Contact</h5>
                                 <p className="text-sm text-foreground/80 font-mono">{handoff.contact}</p>
                             </div>
                         </div>

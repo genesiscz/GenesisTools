@@ -43,8 +43,8 @@ export function ProviderCard({
     return (
         <Card>
             <CardHeader className="flex flex-row items-center justify-between gap-3 pb-3">
-                <CardTitle className="font-mono text-sm tracking-[0.25em] uppercase">{data.display_name}</CardTitle>
-                <Badge variant={statusVariant[data.status]} className="font-mono text-[10px] tracking-widest uppercase">
+                <CardTitle className="font-mono text-sm first-letter:uppercase">{data.display_name}</CardTitle>
+                <Badge variant={statusVariant[data.status]} className="font-mono text-[10px] first-letter:uppercase">
                     {data.status}
                 </Badge>
             </CardHeader>

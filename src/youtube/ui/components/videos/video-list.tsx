@@ -54,7 +54,7 @@ export function VideoList({ handle }: { handle: ChannelHandle }) {
                             </div>
                         )}
                         <div>
-                            <p className="font-mono text-xs uppercase tracking-[0.25em] text-secondary">{handle}</p>
+                            <p className="font-mono text-xs first-letter:uppercase text-secondary">{handle}</p>
                             <h1 className="text-3xl font-bold">{channel?.title ?? handle}</h1>
                             <div className="mt-2 flex flex-wrap gap-2">
                                 <Badge variant="cyber-secondary">{formatNumber(channel?.subscriberCount)} subs</Badge>

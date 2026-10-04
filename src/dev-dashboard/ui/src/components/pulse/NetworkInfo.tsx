@@ -15,7 +15,7 @@ function Row({ label, value }: { label: string; value: string | null }) {
 export function NetworkInfo({ wifiSsid, publicIp }: NetworkInfoProps) {
     return (
         <div className="dd-panel flex flex-col gap-2 p-4">
-            <h3 className="dd-accent-text mb-1 text-sm font-bold tracking-widest">NETWORK</h3>
+            <h3 className="dd-accent-text mb-1 text-sm font-bold">Network</h3>
             <Row label="Wi-Fi" value={wifiSsid} />
             <Row label="Public IP" value={publicIp} />
         </div>

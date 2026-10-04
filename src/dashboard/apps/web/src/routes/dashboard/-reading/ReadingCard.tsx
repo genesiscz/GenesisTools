@@ -122,7 +122,7 @@ export function ReadingCard({ item, onSetStatus, onSetPage, onSetRating, onOpenD
                 <div className="space-y-1.5" data-testid="reading-progress">
                     <ProgressBar value={item.currentPage} max={item.totalPages} />
                     <div className="flex items-center justify-between">
-                        <span className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground/60">
+                        <span className="font-mono text-[10px] first-letter:uppercase text-muted-foreground/60">
                             {item.currentPage} / {item.totalPages} · {pct}%
                         </span>
                         {item.status === "reading" && (
@@ -170,7 +170,7 @@ export function ReadingCard({ item, onSetStatus, onSetPage, onSetRating, onOpenD
             {/* Rating (done items) */}
             {item.status === "done" && (
                 <div className="flex items-center justify-between">
-                    <span className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground/60">
+                    <span className="font-mono text-[10px] first-letter:uppercase text-muted-foreground/60">
                         Rating
                     </span>
                     <StarRatingInput

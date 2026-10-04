@@ -64,7 +64,7 @@ export const LapsList = memo(function LapsList({ laps, onClear, maxVisible = 3, 
             <div className="flex items-center justify-between mb-3 px-1">
                 <div className="flex items-center gap-3">
                     <span className="text-xs font-mono text-cyan-500/70">{">"}</span>
-                    <span className="text-xs uppercase tracking-[0.2em] text-gray-400 font-medium">Lap Records</span>
+                    <span className="text-xs first-letter:uppercase text-gray-400 font-medium">Lap Records</span>
                     <span className="text-xs font-mono text-cyan-400/60 tabular-nums">
                         [{laps.length.toString().padStart(2, "0")}]
                     </span>
@@ -152,7 +152,7 @@ export const LapsList = memo(function LapsList({ laps, onClear, maxVisible = 3, 
                                         {(isBest || isWorst) && (
                                             <span
                                                 className={cn(
-                                                    "flex items-center gap-1 text-[10px] uppercase tracking-wider mt-0.5",
+                                                    "flex items-center gap-1 text-[10px] first-letter:uppercase mt-0.5",
                                                     isBest && "text-emerald-400/70",
                                                     isWorst && "text-red-400/70"
                                                 )}
@@ -176,7 +176,7 @@ export const LapsList = memo(function LapsList({ laps, onClear, maxVisible = 3, 
 
                                 {/* Right: Split time */}
                                 <div className="text-right">
-                                    <span className="text-[10px] uppercase tracking-wider text-gray-500 block mb-0.5">
+                                    <span className="text-[10px] first-letter:uppercase text-gray-500 block mb-0.5">
                                         Split
                                     </span>
                                     <span className="font-mono text-sm text-gray-400 tabular-nums">

@@ -37,7 +37,7 @@ export function BookmarkFilters({ search, onSearchChange, activeTag, onTagChange
             {/* Tag filter chips */}
             {allTags.length > 0 && (
                 <div className="flex flex-wrap gap-1.5 items-center">
-                    <span className="font-mono text-[10px] tracking-widest uppercase text-muted-foreground/50 mr-1">
+                    <span className="font-mono text-[10px] first-letter:uppercase text-muted-foreground/50 mr-1">
                         Filter:
                     </span>
 
@@ -46,7 +46,7 @@ export function BookmarkFilters({ search, onSearchChange, activeTag, onTagChange
                         type="button"
                         onClick={() => onTagChange(null)}
                         className={cn(
-                            "inline-flex items-center rounded-full border px-2.5 py-0.5 text-[10px] font-mono tracking-widest uppercase transition-all duration-150",
+                            "inline-flex items-center rounded-full border px-2.5 py-0.5 text-[10px] font-mono first-letter:uppercase transition-all duration-150",
                             activeTag === null
                                 ? "border-rose-500/50 bg-rose-500/15 text-rose-300"
                                 : "border-white/10 bg-white/5 text-muted-foreground hover:border-white/20 hover:text-foreground/70"
@@ -61,7 +61,7 @@ export function BookmarkFilters({ search, onSearchChange, activeTag, onTagChange
                             key={tag}
                             onClick={() => onTagChange(activeTag === tag ? null : tag)}
                             className={cn(
-                                "inline-flex items-center rounded-full border px-2.5 py-0.5 text-[10px] font-mono tracking-widest uppercase transition-all duration-150",
+                                "inline-flex items-center rounded-full border px-2.5 py-0.5 text-[10px] font-mono first-letter:uppercase transition-all duration-150",
                                 activeTag === tag
                                     ? "border-rose-500/50 bg-rose-500/15 text-rose-300"
                                     : "border-white/10 bg-white/5 text-muted-foreground hover:border-white/20 hover:text-foreground/70"

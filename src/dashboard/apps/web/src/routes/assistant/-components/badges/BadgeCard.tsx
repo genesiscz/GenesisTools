@@ -247,7 +247,7 @@ export function BadgeCard({
                 </div>
                 <p className="text-xs text-muted-foreground">{definition.description}</p>
                 <div className="flex items-center justify-between text-[10px]">
-                    <span className={cn("uppercase tracking-wider font-medium", config.labelColor)}>{rarity}</span>
+                    <span className={cn("first-letter:uppercase font-medium", config.labelColor)}>{rarity}</span>
                     {earnedDate && <span className="text-muted-foreground">Earned {earnedDate}</span>}
                 </div>
             </TooltipContent>

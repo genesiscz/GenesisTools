@@ -11,7 +11,7 @@ export function PropertyYieldBreakdown({ model }: { model: PropertyCardModel }) 
 
     return (
         <div className="rounded-md border border-border/60 bg-card/60 px-3 py-3">
-            <div className="text-[10px] font-mono uppercase tracking-wider text-gray-600">Yield Breakdown</div>
+            <div className="text-[10px] font-mono first-letter:uppercase text-gray-600">Yield Breakdown</div>
             <div className="mt-3 grid grid-cols-2 gap-2 text-[11px] font-mono text-gray-300">
                 <span>Gross {formatYield(model.yieldBreakdown.grossYield)}</span>
                 <span>Net {formatYield(model.yieldBreakdown.netYield)}</span>
@@ -30,7 +30,7 @@ export function PropertyYieldBreakdown({ model }: { model: PropertyCardModel }) 
 
             {model.yieldBreakdown.benchmarks.length > 0 && (
                 <div className="mt-3 space-y-2">
-                    <div className="text-[10px] font-mono uppercase tracking-wider text-gray-600">Benchmarks</div>
+                    <div className="text-[10px] font-mono first-letter:uppercase text-gray-600">Benchmarks</div>
                     {model.yieldBreakdown.benchmarks.map((benchmark) => (
                         <div key={benchmark.name} className="space-y-1">
                             <div className="flex items-center justify-between text-[10px] font-mono text-gray-400">

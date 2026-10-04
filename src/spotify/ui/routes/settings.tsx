@@ -226,7 +226,7 @@ function SettingsPage() {
 function PathRow({ label, path, exists }: { label: string; path: string | undefined; exists: boolean }) {
     return (
         <div className="flex items-baseline gap-2 text-xs">
-            <span className="font-mono uppercase tracking-widest text-muted-foreground w-16">{label}</span>
+            <span className="font-mono first-letter:uppercase text-muted-foreground w-16">{label}</span>
             {path ? (
                 <span className={exists ? "font-mono text-foreground" : "font-mono text-destructive"}>
                     {path}
@@ -247,7 +247,7 @@ function Check({ label, ok, value }: { label: string; ok: boolean; value: string
             ) : (
                 <CircleAlert className="h-3.5 w-3.5 text-muted-foreground" />
             )}
-            <span className="text-xs font-mono uppercase tracking-widest text-muted-foreground">{label}</span>
+            <span className="text-xs font-mono first-letter:uppercase text-muted-foreground">{label}</span>
             <span className="text-xs text-foreground">{value}</span>
         </div>
     );

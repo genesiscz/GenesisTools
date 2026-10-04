@@ -109,7 +109,7 @@ export const TimerDisplay = memo(function TimerDisplay({
             {/* Completed indicator */}
             {isCompleted && !isRunning && (
                 <div className="flex items-center justify-center gap-2 mt-4">
-                    <span className="text-sm uppercase tracking-[0.2em] text-amber-400 font-bold animate-pulse">
+                    <span className="text-sm first-letter:uppercase text-amber-400 font-bold animate-pulse">
                         ▶ Complete ◀
                     </span>
                 </div>

@@ -53,7 +53,7 @@ export function MasterDetail({
                 <div className="flex-1 min-w-0 space-y-3">
                     <div className="flex items-start justify-between gap-3">
                         <div className="min-w-0">
-                            <div className="font-mono text-[10px] tracking-[0.25em] text-muted-foreground uppercase mb-1">
+                            <div className="font-mono text-[10px] text-muted-foreground first-letter:uppercase mb-1">
                                 {detail.brand ?? "no brand"} · {detail.master_category_name ?? "uncategorized"}
                             </div>
                             <h1 className="font-mono text-xl text-foreground leading-tight">{detail.canonical_name}</h1>
@@ -62,7 +62,7 @@ export function MasterDetail({
                     </div>
                     <div className="flex flex-wrap items-end gap-4">
                         <div>
-                            <div className="font-mono text-[10px] tracking-[0.2em] text-muted-foreground uppercase">
+                            <div className="font-mono text-[10px] text-muted-foreground first-letter:uppercase">
                                 Best Price
                             </div>
                             <div className="font-mono text-3xl text-[var(--color-neon-cyan)]">
@@ -92,7 +92,7 @@ export function MasterDetail({
             ) : null}
 
             <div>
-                <h2 className="font-mono text-xs tracking-[0.25em] text-muted-foreground uppercase mb-3">
+                <h2 className="font-mono text-xs text-muted-foreground first-letter:uppercase mb-3">
                     Cross-Shop Offers
                 </h2>
                 <CrossShopOffersTable offers={detail.offers} />
@@ -100,7 +100,7 @@ export function MasterDetail({
 
             {detail.offers.length > 0 ? (
                 <div>
-                    <h2 className="font-mono text-xs tracking-[0.25em] text-muted-foreground uppercase mb-3">
+                    <h2 className="font-mono text-xs text-muted-foreground first-letter:uppercase mb-3">
                         Per-shop detail
                     </h2>
                     <OfferDetailTabs offers={detail.offers} />

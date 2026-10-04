@@ -274,8 +274,6 @@ code, pre, .font-mono,
     display: block;
     padding: 0.3rem 0.75rem;
     font-size: 0.6rem;
-    text-transform: uppercase;
-    letter-spacing: 0.1em;
     color: color-mix(in oklch, var(--color-primary) 45%, transparent);
     background: color-mix(in oklch, var(--color-card) 80%, black);
     border-bottom: 1px solid var(--color-border);
@@ -407,8 +405,6 @@ code, pre, .font-mono,
     text-align: left;
     font-weight: 600;
     font-size: 0.9em;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
     padding: 0.5em 0.75em;
     background: color-mix(in oklch, var(--color-card) 80%, transparent);
     border-bottom: 1px solid color-mix(in oklch, var(--color-primary) 15%, transparent);

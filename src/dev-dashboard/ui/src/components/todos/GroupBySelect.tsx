@@ -15,7 +15,7 @@ interface GroupBySelectProps {
 export function GroupBySelect({ value, onChange }: GroupBySelectProps) {
     return (
         <label className="flex items-center gap-2 text-xs text-[var(--dd-text-muted)]">
-            <span className="font-mono uppercase tracking-wider">Group by</span>
+            <span className="font-mono first-letter:uppercase">Group by</span>
             <select
                 aria-label="Group todos by"
                 value={value}

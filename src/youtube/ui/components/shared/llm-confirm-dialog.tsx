@@ -213,21 +213,21 @@ export function LlmConfirmDialog({
                     <div className="space-y-1">
                         <label
                             htmlFor="llm-confirm-lang"
-                            className="text-xs font-medium uppercase tracking-wider text-muted-foreground"
+                            className="text-xs font-medium first-letter:uppercase text-muted-foreground"
                         >
                             Language
                         </label>
                         <Select value={lang} onValueChange={onLangChange}>
                             <SelectTrigger id="llm-confirm-lang" className="h-8 w-full text-sm">
                                 <SelectValue>
-                                    <span className="font-mono text-[12px] uppercase">{lang}</span>{" "}
+                                    <span className="font-mono text-[12px]">{lang.toUpperCase()}</span>{" "}
                                     {langs.find((l) => l.code === lang)?.label}
                                 </SelectValue>
                             </SelectTrigger>
                             <SelectContent>
                                 {langs.map((l) => (
                                     <SelectItem key={l.code} value={l.code}>
-                                        <span className="font-mono text-[12px] uppercase">{l.code}</span> {l.label}
+                                        <span className="font-mono text-[12px]">{l.code.toUpperCase()}</span> {l.label}
                                     </SelectItem>
                                 ))}
                             </SelectContent>
@@ -245,7 +245,7 @@ export function LlmConfirmDialog({
                     <div className="space-y-1">
                         <label
                             htmlFor="llm-confirm-model"
-                            className="text-xs font-medium uppercase tracking-wider text-muted-foreground"
+                            className="text-xs font-medium first-letter:uppercase text-muted-foreground"
                         >
                             Model · dev
                         </label>

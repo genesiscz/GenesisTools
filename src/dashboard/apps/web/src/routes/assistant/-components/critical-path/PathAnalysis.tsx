@@ -149,7 +149,10 @@ export function PathAnalysis({ analysis, onTaskClick, className }: PathAnalysisP
                                             <p className="text-sm font-medium line-clamp-1">{task.title}</p>
                                             <div className="flex items-center gap-2 mt-1">
                                                 <span
-                                                    className={cn("text-[10px] font-semibold uppercase", colors.text)}
+                                                    className={cn(
+                                                        "text-[10px] font-semibold first-letter:uppercase",
+                                                        colors.text
+                                                    )}
                                                 >
                                                     {task.urgencyLevel}
                                                 </span>
@@ -225,7 +228,12 @@ export function PathAnalysis({ analysis, onTaskClick, className }: PathAnalysisP
                                     >
                                         <div className="text-left">
                                             <p className="text-sm font-medium line-clamp-1">{task.title}</p>
-                                            <span className={cn("text-[10px] font-semibold uppercase", colors.text)}>
+                                            <span
+                                                className={cn(
+                                                    "block text-[10px] font-semibold first-letter:uppercase",
+                                                    colors.text
+                                                )}
+                                            >
                                                 {task.urgencyLevel}
                                             </span>
                                         </div>

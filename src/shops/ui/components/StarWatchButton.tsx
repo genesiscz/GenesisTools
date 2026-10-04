@@ -41,7 +41,7 @@ export function StarWatchButton({ masterProductId, isFavorite = false }: StarWat
             size="sm"
             onClick={() => addMutation.mutate()}
             disabled={isFavorite || addMutation.isPending}
-            className="font-mono text-xs tracking-[0.15em] uppercase"
+            className="font-mono text-xs first-letter:uppercase"
         >
             <Heart className={`w-3.5 h-3.5 mr-1.5 ${isFavorite ? "fill-current text-rose-400" : ""}`} />
             {isFavorite ? "Watched" : "Watch"}

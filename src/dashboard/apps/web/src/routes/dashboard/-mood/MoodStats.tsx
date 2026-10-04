@@ -60,9 +60,7 @@ function StatTile({ testId, icon, value, suffix, label, accent }: StatTileProps)
                 >
                     {icon}
                 </span>
-                <span className="font-mono text-[10px] tracking-widest uppercase text-muted-foreground/60">
-                    {label}
-                </span>
+                <span className="font-mono text-[10px] first-letter:uppercase text-muted-foreground/60">{label}</span>
             </div>
             <div className="flex items-baseline gap-1.5">
                 <span className="text-2xl font-bold text-foreground">{value}</span>

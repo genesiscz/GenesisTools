@@ -36,7 +36,7 @@ function NotificationsPage() {
     return (
         <div className="max-w-5xl mx-auto px-4 sm:px-6 py-6 space-y-5">
             <div className="flex items-center justify-between gap-3">
-                <h1 className="font-mono tracking-[0.3em] text-sm text-muted-foreground uppercase">
+                <h1 className="font-mono text-sm text-muted-foreground first-letter:uppercase">
                     Alerts ::{" "}
                     <span className="text-foreground">
                         {pending} pending · {rows.length} total

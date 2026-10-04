@@ -19,24 +19,24 @@ interface LiveFilterBarProps {
 
 const ALL_EVENTS: Array<{ name: LiveEventName; label: string; color: string }> = [
     { name: "http-request", label: "HTTP", color: "border-cyan-400/40 text-cyan-300" },
-    { name: "crawl-progress", label: "CRAWL", color: "border-emerald-400/40 text-emerald-300" },
-    { name: "notification-fired", label: "ALERT", color: "border-amber-400/40 text-amber-300" },
+    { name: "crawl-progress", label: "Crawl", color: "border-emerald-400/40 text-emerald-300" },
+    { name: "notification-fired", label: "Alert", color: "border-amber-400/40 text-amber-300" },
 ];
 
 function statusBadge(status: SseStatus) {
     if (status === "live") {
-        return { label: "LIVE", className: "border-emerald-400/40 text-emerald-300" };
+        return { label: "Live", className: "border-emerald-400/40 text-emerald-300" };
     }
 
     if (status === "connecting") {
-        return { label: "CONNECTING", className: "border-amber-400/40 text-amber-300" };
+        return { label: "Connecting", className: "border-amber-400/40 text-amber-300" };
     }
 
     if (status === "reconnecting") {
-        return { label: "RECONNECTING", className: "border-amber-400/40 text-amber-300" };
+        return { label: "Reconnecting", className: "border-amber-400/40 text-amber-300" };
     }
 
-    return { label: "DOWN", className: "border-rose-400/40 text-rose-300" };
+    return { label: "Down", className: "border-rose-400/40 text-rose-300" };
 }
 
 export function LiveFilterBar({
@@ -55,7 +55,7 @@ export function LiveFilterBar({
     return (
         <div className="flex flex-col sm:flex-row gap-3 sm:items-center sm:justify-between border-b border-border pb-3">
             <div className="flex flex-wrap items-center gap-2">
-                <Badge variant="outline" className={`font-mono text-[10px] tracking-[0.2em] uppercase ${sb.className}`}>
+                <Badge variant="outline" className={`font-mono text-[10px] first-letter:uppercase ${sb.className}`}>
                     {sb.label}
                 </Badge>
                 <span className="font-mono text-[10px] text-muted-foreground">{queueSize} events</span>
@@ -66,7 +66,7 @@ export function LiveFilterBar({
                             type="button"
                             key={name}
                             onClick={() => onToggleEvent(name)}
-                            className={`font-mono text-[10px] tracking-[0.15em] uppercase border rounded px-1.5 py-0.5 transition-colors ${
+                            className={`font-mono text-[10px] first-letter:uppercase border rounded px-1.5 py-0.5 transition-colors ${
                                 enabled ? color : "border-border text-muted-foreground hover:text-foreground"
                             }`}
                         >

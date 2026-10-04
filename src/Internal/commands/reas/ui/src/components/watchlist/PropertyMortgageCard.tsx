@@ -4,7 +4,7 @@ import { formatCurrencyCompact, formatCurrencyFull, formatPercent, formatYield }
 export function PropertyMortgageCard({ mortgage }: { mortgage: PropertyMortgageModel | null }) {
     return (
         <div className="rounded-md border border-border/60 bg-card/60 px-3 py-3">
-            <div className="text-[10px] font-mono uppercase tracking-wider text-gray-600">Mortgage</div>
+            <div className="text-[10px] font-mono first-letter:uppercase text-gray-600">Mortgage</div>
             {mortgage ? (
                 <>
                     <div className="mt-3 space-y-2 text-[11px] font-mono text-gray-300">
@@ -16,7 +16,7 @@ export function PropertyMortgageCard({ mortgage }: { mortgage: PropertyMortgageM
                         <div>Break-even {formatPercent(mortgage.breakEvenOccupancy)}</div>
                     </div>
                     <div className="mt-3">
-                        <div className="mb-1 text-[10px] font-mono uppercase tracking-wider text-gray-600">Balance</div>
+                        <div className="mb-1 text-[10px] font-mono first-letter:uppercase text-gray-600">Balance</div>
                         <svg viewBox="0 0 100 24" className="h-6 w-full overflow-visible" aria-hidden="true">
                             <polyline
                                 fill="none"

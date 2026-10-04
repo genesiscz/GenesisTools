@@ -108,7 +108,7 @@ export function CustomizationSection() {
                                 key={kind}
                                 className="space-y-3 rounded-2xl border border-secondary/15 bg-black/10 p-4"
                             >
-                                <p className="font-mono text-xs uppercase tracking-[0.22em] text-secondary">{label}</p>
+                                <p className="font-mono text-xs first-letter:uppercase text-secondary">{label}</p>
                                 <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
                                     <SettingRow label="Tone">
                                         <AutoSelect
@@ -230,7 +230,7 @@ export function CustomizationSection() {
 function SettingRow({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
     return (
         <label className="space-y-1.5">
-            <span className="font-mono text-xs uppercase tracking-[0.22em] text-muted-foreground">{label}</span>
+            <span className="block font-mono text-xs first-letter:uppercase text-muted-foreground">{label}</span>
             {children}
             {hint ? <span className="block text-xs text-muted-foreground/70">{hint}</span> : null}
         </label>

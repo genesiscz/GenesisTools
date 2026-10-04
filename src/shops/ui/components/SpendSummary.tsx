@@ -32,8 +32,8 @@ export function SpendSummary({ data, onProductClick }: Props): ReactNode {
     return (
         <div className="space-y-4">
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                <StatCard label="ALL-TIME SPEND" value={`${allTime.toLocaleString("cs-CZ")} CZK`} />
-                <StatCard label="ORDERS" value={String(data.months.reduce((a, m) => a + m.orders, 0))} />
+                <StatCard label="All-time spend" value={`${allTime.toLocaleString("cs-CZ")} CZK`} />
+                <StatCard label="Orders" value={String(data.months.reduce((a, m) => a + m.orders, 0))} />
                 <StatCard
                     label="WOULD'VE SAVED (90D)"
                     value={`${data.counterfactual.would_have_saved_at_best.toLocaleString("cs-CZ")} CZK`}
@@ -44,7 +44,7 @@ export function SpendSummary({ data, onProductClick }: Props): ReactNode {
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 <Card>
                     <CardHeader>
-                        <CardTitle className="font-mono text-[10px] tracking-[0.25em] uppercase text-muted-foreground">
+                        <CardTitle className="font-mono text-[10px] first-letter:uppercase text-muted-foreground">
                             MONTH-BY-MONTH SPEND
                         </CardTitle>
                     </CardHeader>
@@ -80,7 +80,7 @@ export function SpendSummary({ data, onProductClick }: Props): ReactNode {
 
                 <Card>
                     <CardHeader>
-                        <CardTitle className="font-mono text-[10px] tracking-[0.25em] uppercase text-muted-foreground">
+                        <CardTitle className="font-mono text-[10px] first-letter:uppercase text-muted-foreground">
                             PER-SHOP SPLIT
                         </CardTitle>
                     </CardHeader>
@@ -92,7 +92,7 @@ export function SpendSummary({ data, onProductClick }: Props): ReactNode {
                         ) : data.byShop.length === 1 ? (
                             <div className="h-44 flex flex-col items-center justify-center gap-1 font-mono">
                                 <div className="text-3xl tabular-nums text-[var(--color-neon-cyan)]">100%</div>
-                                <div className="text-[10px] tracking-[0.25em] uppercase text-muted-foreground">
+                                <div className="text-[10px] first-letter:uppercase text-muted-foreground">
                                     {data.byShop[0].shop_origin}
                                 </div>
                             </div>
@@ -133,7 +133,7 @@ export function SpendSummary({ data, onProductClick }: Props): ReactNode {
 
             <Card>
                 <CardHeader>
-                    <CardTitle className="font-mono text-[10px] tracking-[0.25em] uppercase text-muted-foreground">
+                    <CardTitle className="font-mono text-[10px] first-letter:uppercase text-muted-foreground">
                         TOP PRODUCTS
                     </CardTitle>
                 </CardHeader>
@@ -182,7 +182,7 @@ function StatCard({ label, value, accent }: { label: string; value: string; acce
             }`}
         >
             <CardContent className="py-4">
-                <div className="font-mono text-[10px] tracking-[0.2em] text-muted-foreground uppercase">{label}</div>
+                <div className="font-mono text-[10px] text-muted-foreground first-letter:uppercase">{label}</div>
                 <div
                     className={`font-mono text-2xl ${accent ? "text-[var(--color-neon-cyan)]" : "text-foreground"} tabular-nums`}
                 >

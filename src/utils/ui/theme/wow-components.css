@@ -282,14 +282,16 @@
   background: linear-gradient(135deg, #1a1a22, #111116);
 }
 
-/* Section Label — uppercase tracking label above section headings */
+/* Section Label: small label above section headings, sentence case (never ALL CAPS) */
 .section-label {
   font-size: 12px;
   font-weight: 600;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
   color: #10b981;
   margin-bottom: 12px;
+}
+
+.section-label::first-letter {
+  text-transform: uppercase;
 }
 .section-label-emerald { color: #10b981; }
 .section-label-cyan    { color: #06b6d4; }

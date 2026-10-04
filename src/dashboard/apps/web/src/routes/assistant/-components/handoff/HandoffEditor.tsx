@@ -53,7 +53,7 @@ function SectionHeader({
         <div className={cn("flex items-start gap-3 mb-3", color)}>
             <Icon className="h-5 w-5 flex-shrink-0 mt-0.5" />
             <div>
-                <h4 className="font-mono font-semibold text-sm uppercase tracking-wider">{title}</h4>
+                <h4 className="font-mono font-semibold text-sm first-letter:uppercase">{title}</h4>
                 {description && <p className="text-xs text-muted-foreground mt-0.5">{description}</p>}
             </div>
         </div>

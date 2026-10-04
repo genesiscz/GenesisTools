@@ -34,7 +34,7 @@ export function CoverageGrid({ data, isLoading }: CoverageGridProps) {
         <div className="space-y-5">
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 border border-border rounded-md p-4 bg-card">
                 <div>
-                    <div className="font-mono text-[10px] tracking-[0.2em] text-muted-foreground uppercase">
+                    <div className="font-mono text-[10px] text-muted-foreground first-letter:uppercase">
                         Total Products
                     </div>
                     <div className="font-mono text-2xl text-[var(--color-neon-cyan)]">
@@ -42,7 +42,7 @@ export function CoverageGrid({ data, isLoading }: CoverageGridProps) {
                     </div>
                 </div>
                 <div>
-                    <div className="font-mono text-[10px] tracking-[0.2em] text-muted-foreground uppercase">
+                    <div className="font-mono text-[10px] text-muted-foreground first-letter:uppercase">
                         Offers Today
                     </div>
                     <div className="font-mono text-2xl text-[var(--color-neon-emerald)]">
@@ -50,9 +50,7 @@ export function CoverageGrid({ data, isLoading }: CoverageGridProps) {
                     </div>
                 </div>
                 <div>
-                    <div className="font-mono text-[10px] tracking-[0.2em] text-muted-foreground uppercase">
-                        Last Crawl
-                    </div>
+                    <div className="font-mono text-[10px] text-muted-foreground first-letter:uppercase">Last Crawl</div>
                     <div className="font-mono text-sm text-foreground mt-1.5">
                         {data.summary.last_crawl_at ? data.summary.last_crawl_at.slice(0, 16).replace("T", " ") : "—"}
                     </div>

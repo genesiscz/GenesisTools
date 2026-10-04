@@ -36,7 +36,7 @@ export function BrowseCard({ item }: BrowseCardProps) {
                         </div>
                     )}
                     <div className="absolute inset-x-0 bottom-0 px-2 py-1.5 bg-gradient-to-t from-black/90 to-transparent translate-y-full group-hover:translate-y-0 transition-transform duration-200">
-                        <div className="font-mono text-[10px] uppercase tracking-[0.15em] text-muted-foreground">
+                        <div className="font-mono text-[10px] first-letter:uppercase text-muted-foreground">
                             {item.brand ?? "no brand"}
                         </div>
                     </div>

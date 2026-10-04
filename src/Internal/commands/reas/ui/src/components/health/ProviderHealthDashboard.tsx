@@ -98,12 +98,12 @@ export function ProviderHealthDashboard({ health, recentLog }: ProviderHealthDas
                     >
                         <CardHeader className="pb-2">
                             <div className="flex items-center justify-between gap-3">
-                                <CardTitle className="text-sm font-mono uppercase tracking-[0.2em] text-foreground">
+                                <CardTitle className="text-sm font-mono first-letter:uppercase text-foreground">
                                     {provider.provider}
                                 </CardTitle>
                                 <Badge
                                     className={cn(
-                                        "border font-mono text-[10px] uppercase tracking-[0.2em]",
+                                        "border font-mono text-[10px] first-letter:uppercase",
                                         getSuccessRateColor(provider.successRate)
                                     )}
                                 >
@@ -117,7 +117,7 @@ export function ProviderHealthDashboard({ health, recentLog }: ProviderHealthDas
                         <CardContent className="space-y-3">
                             <div className="grid grid-cols-2 gap-3">
                                 <div className="rounded-lg bg-slate-950/40 px-2.5 py-2">
-                                    <div className="text-[10px] font-mono uppercase tracking-[0.2em] text-slate-500">
+                                    <div className="text-[10px] font-mono first-letter:uppercase text-slate-500">
                                         Avg count
                                     </div>
                                     <div className="mt-0.5 text-sm font-mono text-foreground">
@@ -125,7 +125,7 @@ export function ProviderHealthDashboard({ health, recentLog }: ProviderHealthDas
                                     </div>
                                 </div>
                                 <div className="rounded-lg bg-slate-950/40 px-2.5 py-2">
-                                    <div className="text-[10px] font-mono uppercase tracking-[0.2em] text-slate-500">
+                                    <div className="text-[10px] font-mono first-letter:uppercase text-slate-500">
                                         Avg speed
                                     </div>
                                     <div className="mt-0.5 text-sm font-mono text-foreground">
@@ -196,7 +196,7 @@ export function ProviderHealthDashboard({ health, recentLog }: ProviderHealthDas
                     <div className="overflow-x-auto">
                         <table className="w-full text-xs font-mono">
                             <thead>
-                                <tr className="border-b border-border/60 text-left text-[10px] uppercase tracking-[0.2em] text-slate-500">
+                                <tr className="border-b border-border/60 text-left text-[10px] first-letter:uppercase text-slate-500">
                                     <th className="px-4 py-2">Timestamp</th>
                                     <th className="px-4 py-2">Provider</th>
                                     <th className="px-4 py-2">Contract</th>
@@ -213,7 +213,7 @@ export function ProviderHealthDashboard({ health, recentLog }: ProviderHealthDas
                                         className="border-b border-border/60 transition-colors hover:bg-primary/5"
                                     >
                                         <td className="px-4 py-2 text-slate-400">{formatTimestamp(row.created_at)}</td>
-                                        <td className="px-4 py-2 uppercase tracking-[0.15em] text-slate-200">
+                                        <td className="px-4 py-2 first-letter:uppercase text-slate-200">
                                             {row.provider}
                                         </td>
                                         <td className="px-4 py-2 text-slate-500">{row.source_contract}</td>
@@ -223,7 +223,7 @@ export function ProviderHealthDashboard({ health, recentLog }: ProviderHealthDas
                                                 {getStatusIcon(row.status)}
                                                 <Badge
                                                     className={cn(
-                                                        "border font-mono text-[9px] uppercase tracking-[0.2em]",
+                                                        "border font-mono text-[9px] first-letter:uppercase",
                                                         getStatusBadgeClass(row.status)
                                                     )}
                                                 >

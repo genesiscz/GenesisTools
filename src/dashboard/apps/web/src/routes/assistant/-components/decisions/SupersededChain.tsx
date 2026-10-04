@@ -79,7 +79,7 @@ function ChainNode({
             {/* Status indicator */}
             <div className="flex items-center gap-2 mb-2">
                 <span className={cn("h-2 w-2 rounded-full", colors.dotClass)} />
-                <span className={cn("text-[10px] font-semibold uppercase tracking-wide", colors.textClass)}>
+                <span className={cn("text-[10px] font-semibold first-letter:uppercase", colors.textClass)}>
                     {decision.status}
                 </span>
                 {isFirst && (
@@ -165,7 +165,7 @@ export function SupersededChain({ chain, onSelectDecision, className }: Supersed
     if (chain.length === 1) {
         return (
             <div className={cn("space-y-2", className)}>
-                <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">
+                <h3 className="text-xs font-semibold text-muted-foreground first-letter:uppercase mb-3">
                     Decision History
                 </h3>
                 <ChainNode
@@ -180,7 +180,7 @@ export function SupersededChain({ chain, onSelectDecision, className }: Supersed
 
     return (
         <div className={cn("space-y-2", className)}>
-            <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">
+            <h3 className="text-xs font-semibold text-muted-foreground first-letter:uppercase mb-3">
                 Decision Evolution ({chain.length} decisions)
             </h3>
 

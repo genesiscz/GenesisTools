@@ -11,7 +11,7 @@ interface ProcessTableProps {
 export function ProcessTable({ processes }: ProcessTableProps) {
     return (
         <div className="dd-panel p-4">
-            <h3 className="dd-accent-text mb-3 text-sm font-bold tracking-widest">TOP RAM</h3>
+            <h3 className="dd-accent-text mb-3 text-sm font-bold">Top RAM</h3>
             {processes.length === 0 ? (
                 <p className="font-mono text-sm" style={{ color: "var(--dd-text-muted)" }}>
                     —

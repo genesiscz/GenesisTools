@@ -106,7 +106,7 @@ export function ObsidianNewFolderDialog({
                             <FolderPlus className="h-4 w-4" />
                         </span>
                         <div className="min-w-0">
-                            <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-[var(--dd-text-muted)]">
+                            <p className="font-mono text-[10px] first-letter:uppercase text-[var(--dd-text-muted)]">
                                 Obsidian vault
                             </p>
                             <DialogTitle className="text-base text-[var(--dd-text-primary)]">New folder</DialogTitle>
@@ -124,7 +124,7 @@ export function ObsidianNewFolderDialog({
                 </DialogHeader>
 
                 <div className="space-y-2">
-                    <Label htmlFor={inputId} className="text-xs uppercase tracking-wider text-[var(--dd-text-muted)]">
+                    <Label htmlFor={inputId} className="text-xs first-letter:uppercase text-[var(--dd-text-muted)]">
                         Folder name
                     </Label>
                     <Input

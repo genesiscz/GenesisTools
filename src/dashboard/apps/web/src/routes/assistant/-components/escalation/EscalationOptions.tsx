@@ -142,7 +142,7 @@ export function EscalationOptions({
                             {isRecommended && (
                                 <div
                                     className={cn(
-                                        "absolute -top-2 -right-2 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase",
+                                        "absolute -top-2 -right-2 px-2 py-0.5 rounded-full text-[10px] font-bold first-letter:uppercase",
                                         "bg-gradient-to-r from-cyan-500 to-purple-500 text-white",
                                         "animate-pulse shadow-lg shadow-purple-500/30"
                                     )}

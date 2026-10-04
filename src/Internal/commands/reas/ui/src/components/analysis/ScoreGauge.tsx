@@ -21,10 +21,10 @@ export function ScoreGauge({ score, max = 100, label, className }: ScoreGaugePro
             >
                 <div className="flex size-20 flex-col items-center justify-center rounded-full bg-slate-950 text-center">
                     <div className="text-2xl font-mono font-semibold text-foreground">{clampedScore}</div>
-                    <div className="text-[10px] font-mono uppercase tracking-[0.2em] text-slate-500">/{safeMax}</div>
+                    <div className="text-[10px] font-mono first-letter:uppercase text-slate-500">/{safeMax}</div>
                 </div>
             </div>
-            {label ? <div className="text-xs font-mono uppercase tracking-[0.2em] text-slate-400">{label}</div> : null}
+            {label ? <div className="text-xs font-mono first-letter:uppercase text-slate-400">{label}</div> : null}
         </div>
     );
 }

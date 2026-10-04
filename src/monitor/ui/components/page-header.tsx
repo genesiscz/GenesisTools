@@ -34,7 +34,7 @@ export function PageHeader({
                                     }
                                 />
                             )}
-                            <p className="font-mono text-[0.7rem] uppercase tracking-[0.32em] text-secondary">
+                            <p className="font-mono text-[0.7rem] first-letter:uppercase text-secondary">
                                 {eyebrow}
                                 {live !== undefined && (live ? " · live" : " · reconnecting")}
                             </p>

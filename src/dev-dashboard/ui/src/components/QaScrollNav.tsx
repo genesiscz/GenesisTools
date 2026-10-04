@@ -31,7 +31,7 @@ export function QaScrollNav({
 
     return (
         <aside className="dd-panel fixed top-20 right-2 z-20 w-64 max-h-[calc(100vh-6rem)]">
-            <div className="border-b border-[var(--dd-border)] px-3 py-2 text-xs tracking-wider text-[var(--dd-text-muted)] uppercase">
+            <div className="border-b border-[var(--dd-border)] px-3 py-2 text-xs text-[var(--dd-text-muted)] first-letter:uppercase">
                 Navigate ({entries.length})
             </div>
             <ScrollArea className="max-h-[calc(100vh-9rem)]">

@@ -159,7 +159,7 @@ function WatchlistPage() {
             ) : null}
             <Card>
                 <CardHeader>
-                    <CardTitle className="font-mono uppercase tracking-wider text-xs text-muted-foreground">
+                    <CardTitle className="font-mono first-letter:uppercase text-xs text-muted-foreground">
                         Watchlist · {filtered.length}/{rows.length}
                     </CardTitle>
                 </CardHeader>

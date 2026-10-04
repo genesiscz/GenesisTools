@@ -146,7 +146,7 @@ export function KanbanCard({ task, isDragOverlay = false, className }: KanbanCar
                     <span
                         className={cn(
                             "inline-flex items-center gap-1",
-                            "text-[9px] font-bold uppercase tracking-wider",
+                            "text-[9px] font-bold first-letter:uppercase",
                             "px-1.5 py-0.5 rounded",
                             urgencyConfig.bgColor,
                             urgencyConfig.textColor,
@@ -160,7 +160,7 @@ export function KanbanCard({ task, isDragOverlay = false, className }: KanbanCar
 
                     {/* Shipping blocker indicator */}
                     {task.isShippingBlocker && (
-                        <span className="text-[9px] font-bold text-red-400 uppercase tracking-wide">Blocker</span>
+                        <span className="text-[9px] font-bold text-red-400 first-letter:uppercase">Blocker</span>
                     )}
                 </div>
 
