@@ -1,3 +1,5 @@
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
+
 export type SearchMode = "auto" | "fulltext" | "hybrid" | "vector";
 export type ResolvedMethod = "bm25" | "rrf" | "cosine";
 
@@ -31,5 +33,5 @@ export function formatFallbackStart(): string {
 }
 
 export function formatFallbackStop(count: number, ms: number): string {
-    return `${count} matches via Spotlight + LIKE in ${(ms / 1000).toFixed(1)}s — run "tools macos mail index sync" for proper FTS`;
+    return `${count} matches via Spotlight + LIKE in ${(ms / 1000).toFixed(1)}s — run "${toolCommand("macos mail index sync")}" for proper FTS`;
 }

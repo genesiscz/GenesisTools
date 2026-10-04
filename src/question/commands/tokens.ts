@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 
 import { suggestEnumFlag } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import { createBoxTable, formatDotStatus, renderCliHeader, truncateDisplay } from "@genesiscz/utils/table";
@@ -56,7 +57,7 @@ function renderKinds(): void {
         out.println(pc.dim(line));
     }
 
-    out.println(pc.dim("Descriptions and every example: tools question tokens --format json"));
+    out.println(pc.dim(`Descriptions and every example: ${toolCommand("question tokens", "--format", "json")}`));
 }
 
 /**
@@ -109,7 +110,7 @@ export function registerTokensCommand(program: Command): void {
             if (!text.trim()) {
                 out.printlnErr(
                     pc.red(
-                        'Give the text to resolve, e.g. tools question tokens resolve \'{{lines path="a.ts" range="1-5"}}\''
+                        `Give the text to resolve, e.g. ${toolCommand("question tokens resolve")} '{{lines path="a.ts" range="1-5"}}'`
                     )
                 );
                 process.exitCode = 1;

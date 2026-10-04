@@ -21,6 +21,7 @@ import { registerPlay } from "@app/spotify/commands/play";
 import { registerProfiles } from "@app/spotify/commands/profiles";
 import { registerUiCommand } from "@app/spotify/commands/ui";
 import { enhanceHelp, runTool } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { out } from "@genesiscz/utils/logger";
 import { Command } from "commander";
 import pc from "picocolors";
@@ -37,26 +38,26 @@ export function createSpotifyProgram(): Command {
             "after",
             `
 ${pc.bold("Getting started")}
-  tools spotify profile add me --history ~/Spotify/streaming-history --data ~/Spotify/data
-  tools spotify analytics summary
-  tools spotify analytics top artists --year 2026
+  ${toolCommand("spotify profile add", "me", "--history", "~/Spotify/streaming-history", "--data", "~/Spotify/data")}
+  ${toolCommand("spotify analytics summary")}
+  ${toolCommand("spotify analytics top", "artists", "--year", "2026")}
 
 ${pc.bold("Two people")}
-  tools spotify profile add kaja --history ~/Downloads/kaja-export
-  tools spotify analytics compat me kaja
-  tools spotify analytics compat me kaja --timeline --bucket quarter
-  tools spotify analytics blend me kaja --top 40
+  ${toolCommand("spotify profile add", "kaja", "--history", "~/Downloads/kaja-export")}
+  ${toolCommand("spotify analytics compat", "me", "kaja")}
+  ${toolCommand("spotify analytics compat", "me", "kaja", "--timeline", "--bucket", "quarter")}
+  ${toolCommand("spotify analytics blend", "me", "kaja", "--top", "40")}
 
 ${pc.bold("Yourself, over time")}
-  tools spotify analytics dna
-  tools spotify analytics shift 2019 2026
+  ${toolCommand("spotify analytics dna")}
+  ${toolCommand("spotify analytics shift", "2019", "2026")}
 
 ${pc.bold("Hear it")}
-  tools spotify play plan --windows 10:3,20:3,30:3 --tracks ~/Spotify/candidates.json
-  tools spotify play run --resume
+  ${toolCommand("spotify play plan", "--windows", "10:3,20:3,30:3", "--tracks", "~/Spotify/candidates.json")}
+  ${toolCommand("spotify play run", "--resume")}
 
 ${pc.bold("In a browser")}
-  tools spotify ui
+  ${toolCommand("spotify ui")}
 
 ${pc.bold("Notes")}
   A play means 30 seconds or more, matching Spotify's own royalty threshold.

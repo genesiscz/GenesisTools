@@ -1,4 +1,5 @@
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger, out } from "@genesiscz/utils/logger";
 import { profiler } from "@genesiscz/utils/profile";
 import type { Command } from "commander";
@@ -18,12 +19,12 @@ export function registerTeamsCommand(program: Command): void {
         .command("teams")
         .description(
             "List Claude Code agent teams and re-attach teammates with OAuth " +
-                "(focus live pane, split lead tmux, or launch tools cc run -- --agent-id …). " +
+                `(focus live pane, split lead tmux, or launch ${toolCommand("cc run")} -- --agent-id …). ` +
                 "Default: current project; use --all for every team."
         )
         .option("--all", "Include teams from all projects, not just cwd")
         .option("--json", "Machine-readable dump (no interactive UI)")
-        .option("--account <name>", "Account for tools cc run when launching a teammate")
+        .option("--account <name>", `Account for ${toolCommand("cc run")} when launching a teammate`)
         .option("--watch", "Non-interactive: re-print the tree every 2s (Ctrl+C to stop)")
         .action(async (flags: TeamsFlags) => {
             await runTeams(flags);
@@ -110,7 +111,9 @@ async function runWatch(all?: boolean): Promise<void> {
         try {
             clear();
             const teams = discoverTeams({ all });
-            out.println(`${pc.dim(new Date().toLocaleTimeString())}  tools claude teams${all ? " --all" : ""}`);
+            out.println(
+                `${pc.dim(new Date().toLocaleTimeString())}  ${toolCommand("claude teams")}${all ? " --all" : ""}`
+            );
             out.println("");
             printTeamsList(teams);
         } catch (error) {

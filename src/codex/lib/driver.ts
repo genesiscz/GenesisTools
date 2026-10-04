@@ -1,5 +1,6 @@
 import { type LogsOptions, printLogs, printTranscript } from "@app/codex/commands/logs";
 import { THOUGHT_MODES, TRANSCRIPT_FORMATS } from "@genesiscz/utils/ai/transcripts/render";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger, out } from "@genesiscz/utils/logger";
 import { formatDotStatus, truncateDisplay } from "@genesiscz/utils/table";
 import type { WorkerDriver, WorkerVerbOutcome } from "@genesiscz/utils/worker/driver";
@@ -48,8 +49,8 @@ export const codexDriver: WorkerDriver<CodexSessionMeta> = {
             .option("--effort <effort>", "Reasoning effort")
             .option("--write <policy>", "ask | allow | deny")
             .option("--mode <mode>", "review | task", "task")
-            .option("--no-agents", "Disable tools agents integration")
-            .option("--session <id>", "Parent tools agents session id")
+            .option("--no-agents", `Disable ${toolCommand("agents")} integration`)
+            .option("--session <id>", `Parent ${toolCommand("agents")} session id`)
             .option("--writable-root <path...>", "Additional writable roots");
     },
 

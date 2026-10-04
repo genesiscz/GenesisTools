@@ -1,5 +1,6 @@
 import type { AITask, AITextToSpeechProvider, TTSOptions, TTSResult, TTSVoice } from "@genesiscz/utils/ai/types";
 import { rateLimitAwareDelay, retry } from "@genesiscz/utils/async";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import type { AIProviderType } from "@genesiscz/utils/config/ai.types";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
@@ -238,7 +239,7 @@ export class AIElevenLabsTextToSpeechProvider implements AITextToSpeechProvider 
         if (!first) {
             throw new Error(
                 "ElevenLabs returned no voices for this account, so there is no default voice. " +
-                    "Pass one with: tools say <text> --provider elevenlabs --voice <voice_id>"
+                    `Pass one with: ${toolCommand("say")} <text> --provider elevenlabs --voice <voice_id>`
             );
         }
 

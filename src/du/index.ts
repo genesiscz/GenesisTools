@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, statSync } from "node:fs";
 import { isAbsolute, relative, resolve, sep } from "node:path";
 import { runTool } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
 import { profiler } from "@genesiscz/utils/profile";
@@ -35,7 +36,7 @@ function assertClonePlatform(): void {
     }
 
     out.error(
-        `tools du measures APFS clone sharing and only runs on macOS (this is ${process.platform}).\n` +
+        `${toolCommand("du")} measures APFS clone sharing and only runs on macOS (this is ${process.platform}).\n` +
             `Linux reflinks (btrfs/XFS) would need a FIEMAP backend, which this build does not have.\n` +
             `For a plain allocated-size total anywhere, use \`du -sh\`.`
     );
@@ -52,7 +53,7 @@ async function cacheDir(): Promise<string> {
 }
 
 program
-    .name("tools du")
+    .name(toolCommand("du"))
     .description(
         "Clone-aware disk usage for APFS. Measures the REAL on-disk footprint of trees\n" +
             "full of clonefiles (e.g. bun's clonefile(2) node_modules shared across git\n" +
@@ -134,13 +135,13 @@ program
         [
             "",
             "Examples:",
-            "  tools du clonesize .                          # this dir, pretty output",
-            "  tools du clonesize ~/repo --ignore-worktrees  # skip sibling worktrees",
-            "  tools du clonesize ~/repo --format json       # machine-readable",
-            "  tools du clonesize ~/repo --engine bun        # independent Bun impl",
-            "  tools du clonesize ~ --depth 1 --changed-within 7d   # what actually grew this week",
-            "  tools du clonesize ~ --depth 2 --save mon.json       # ... then, days later:",
-            "  tools du clonesize ~ --depth 2 --diff mon.json       # per-dir grown/shrunk/new/gone",
+            `  ${toolCommand("du clonesize")} .                          # this dir, pretty output`,
+            `  ${toolCommand("du clonesize")} ~/repo --ignore-worktrees  # skip sibling worktrees`,
+            `  ${toolCommand("du clonesize")} ~/repo --format json       # machine-readable`,
+            `  ${toolCommand("du clonesize")} ~/repo --engine bun        # independent Bun impl`,
+            `  ${toolCommand("du clonesize")} ~ --depth 1 --changed-within 7d   # what actually grew this week`,
+            `  ${toolCommand("du clonesize")} ~ --depth 2 --save mon.json       # ... then, days later:`,
+            `  ${toolCommand("du clonesize")} ~ --depth 2 --diff mon.json       # per-dir grown/shrunk/new/gone`,
             "",
             "Repeat scans are served from an extent cache in ~/.genesis-tools/du/cache: a file",
             "whose (id, mtime, size, allocation) is unchanged cannot have moved blocks, so its",
@@ -288,8 +289,8 @@ program
             "so anything the walk could not read shows up as an explicit UNACCOUNTED line",
             "instead of silently vanishing from the total.",
             "",
-            "  tools du volume                       # the Data volume",
-            "  sudo tools du volume                  # ... including root-only subtrees",
+            `  ${toolCommand("du volume")}                       # the Data volume`,
+            `  sudo ${toolCommand("du volume")}                  # ... including root-only subtrees`,
         ].join("\n")
     )
     .action(
@@ -346,8 +347,8 @@ program
             "That is the question that decides whether a package-manager cache is safe to delete:",
             "blocks a live node_modules still references are not freed by deleting the cache.",
             "",
-            "  tools du partners ~/.bun --against ~/Projects",
-            "  tools du partners ~/repo/.worktrees/feat-x --against ~/repo",
+            `  ${toolCommand("du partners")} ~/.bun --against ~/Projects`,
+            `  ${toolCommand("du partners")} ~/repo/.worktrees/feat-x --against ~/repo`,
         ].join("\n")
     )
     .action(async (dir: string, o: { against?: string; format: "human" | "json"; threads?: number; top?: number }) => {

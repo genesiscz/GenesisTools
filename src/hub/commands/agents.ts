@@ -1,3 +1,4 @@
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { formatRelativeTime } from "@genesiscz/utils/format";
 import { out } from "@genesiscz/utils/logger";
 import { createBoxTable, formatDotStatus, renderCliHeader, truncateDisplay } from "@genesiscz/utils/table";
@@ -27,8 +28,8 @@ export interface AgentsFlags {
 }
 
 const COLUMNS = ["AGENT", "HARNESS", "KIND", "STATUS", "MODEL", "TOOLS", "MAIL", "LAST", "ID"];
-const COUNTS_COMMAND = "tools hub agents counts --session <lead session id> --ids <agent id,agent id> --json";
-const MAIL_COMMAND = "tools hub agents mail --session <lead session id> --agent <agent id>";
+const COUNTS_COMMAND = `${toolCommand("hub agents counts")} --session <lead session id> --ids <agent id,agent id> --json`;
+const MAIL_COMMAND = `${toolCommand("hub agents mail")} --session <lead session id> --agent <agent id>`;
 
 const STATUS_DOT: Record<AgentStatus, "ok" | "warn" | "err" | "dim"> = {
     running: "ok",

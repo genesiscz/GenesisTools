@@ -1,6 +1,7 @@
 import { copyFile, mkdir } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
 import { printLn } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import type { Command } from "commander";
 import { captureRoot, readSetConfig } from "../lib/config";
 import { appendShot, readManifest, uniqueDestName, writeManifest } from "../lib/manifest";
@@ -25,7 +26,7 @@ export function registerAddCommand(program: Command): void {
                 const cfg = await readSetConfig(root);
 
                 if (!cfg) {
-                    process.stderr.write("no set config found — run `tools boards init` first\n");
+                    process.stderr.write(`no set config found — run \`${toolCommand("boards init")}\` first\n`);
                     process.exitCode = 1;
                     return;
                 }

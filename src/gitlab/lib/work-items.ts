@@ -8,6 +8,7 @@
 
 import type { WorkItemConfig } from "@app/gitlab/lib/config";
 import { execTool } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 
@@ -184,7 +185,7 @@ export async function fetchAdoWorkItem(id: number, options: FetchAdoOptions): Pr
         args.push("--force");
     }
 
-    logger.debug({ id, cwd: options.cwd }, "gitlab: reading work item via tools azure-devops");
+    logger.debug({ id, cwd: options.cwd }, `gitlab: reading work item via ${toolCommand("azure-devops")}`);
     const result = await execTool(args, { cwd: options.cwd });
     const stdout = result.stdout.trim();
 

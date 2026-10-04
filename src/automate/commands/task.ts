@@ -4,6 +4,7 @@ import { computeNextRunAt, parseInterval } from "@app/automate/lib/interval-pars
 import { createRunLogger } from "@app/automate/lib/run-logger";
 import { listPresets, loadPreset } from "@app/automate/lib/storage";
 import * as p from "@clack/prompts";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { formatDuration } from "@genesiscz/utils/format";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
@@ -22,7 +23,7 @@ export function registerTaskCommand(parent: Command): void {
             const schedules = await db.listSchedules();
 
             if (schedules.length === 0) {
-                p.log.info("No scheduled tasks. Run: tools automate task create");
+                p.log.info(`No scheduled tasks. Run: ${toolCommand("automate task create")}`);
                 return;
             }
 
@@ -47,7 +48,7 @@ export function registerTaskCommand(parent: Command): void {
 
             const presets = await listPresets();
             if (presets.length === 0) {
-                p.log.error("No presets found. Create one first: tools automate preset create");
+                p.log.error(`No presets found. Create one first: ${toolCommand("automate preset create")}`);
                 p.outro("");
                 return;
             }
@@ -109,7 +110,7 @@ export function registerTaskCommand(parent: Command): void {
             const db = getDb();
             await db.createSchedule(name as string, presetName as string, interval as string, nextRunAt);
             p.log.success(`Task "${name}" created. Next run: ${nextRunAt}`);
-            p.log.info("Start the daemon to begin executing: tools automate daemon start");
+            p.log.info(`Start the daemon to begin executing: ${toolCommand("automate daemon start")}`);
             p.outro("");
         });
 

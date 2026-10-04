@@ -2,6 +2,7 @@ import type { TimelyService } from "@app/timely/api/service";
 import type { OAuth2Tokens, TimelyEntry, TimelyEvent, TimelyEventSlim } from "@app/timely/types";
 import { formatDuration } from "@app/timely/utils/date";
 import { buildSubEntryMap, fetchMemoriesForDates } from "@app/timely/utils/memories";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import type { FuzzyMatchResult } from "@genesiscz/utils/fuzzy-match";
 import { fuzzyMatchBest } from "@genesiscz/utils/fuzzy-match";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -95,7 +96,7 @@ async function eventsAction(storage: Storage, service: TimelyService, options: E
         ? parseInt(options.account, 10)
         : await storage.getConfigValue<number>("selectedAccountId");
     if (!accountId) {
-        logger.error("No account selected. Run 'tools timely accounts --select' first.");
+        logger.error(`No account selected. Run '${toolCommand("timely accounts")} --select' first.`);
         process.exit(1);
     }
 
@@ -115,7 +116,7 @@ async function eventsAction(storage: Storage, service: TimelyService, options: E
 
     if (!from && !to && !options.day) {
         logger.error("Please provide at least one date filter: --from, --to, or --day");
-        logger.info("Example: tools timely events --from 2025-11-01 --to 2025-11-30");
+        logger.info(`Example: ${toolCommand("timely events")} --from 2025-11-01 --to 2025-11-30`);
         process.exit(1);
     }
 
@@ -133,7 +134,7 @@ async function eventsAction(storage: Storage, service: TimelyService, options: E
     if (fetchEntries) {
         const tokens = await storage.getConfigValue<OAuth2Tokens>("tokens");
         if (!tokens?.access_token) {
-            logger.error("Not authenticated. Run 'tools timely login' first.");
+            logger.error(`Not authenticated. Run '${toolCommand("timely login")}' first.`);
             process.exit(1);
         }
 

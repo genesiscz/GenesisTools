@@ -1,6 +1,7 @@
 import { existsSync, readdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
@@ -140,7 +141,7 @@ export function collectProblems(report: Omit<PermissionsReport, "problems">): st
     // GenesisTools.app is a positive probe: FDA is missing, and so are Mail, Messages and Voice Memos.
     if (report.identity.kind === "genesis-app" && report.app.built && !report.userDb.readable) {
         problems.push(
-            "Full Disk Access is not granted to GenesisTools: Mail, Messages, Voice Memos and the grant table below are unavailable. Run `tools macos permissions open --pane full-disk-access`; the picker lists GenesisTools under Applications."
+            `Full Disk Access is not granted to GenesisTools: Mail, Messages, Voice Memos and the grant table below are unavailable. Run \`${toolCommand("macos permissions open", "--pane", "full-disk-access")}\`; the picker lists GenesisTools under Applications.`
         );
     }
 
@@ -156,13 +157,13 @@ export function collectProblems(report: Omit<PermissionsReport, "problems">): st
 
     if (report.app.built && report.launchdJobsOutsideApp.length > 0) {
         problems.push(
-            `launchd jobs still run outside GenesisTools.app and keep the terminal-less grants: ${report.launchdJobsOutsideApp.join(", ")}. Each migrates on its next start: \`tools <dashboard> ui up\`, \`tools ai-proxy daemon install\`, \`tools daemon restart\`, \`tools automate daemon install\`.`
+            `launchd jobs still run outside GenesisTools.app and keep the terminal-less grants: ${report.launchdJobsOutsideApp.join(", ")}. Each migrates on its next start: \`tools <dashboard> ui up\`, \`${toolCommand("ai-proxy install")}\`, \`${toolCommand("daemon restart")}\`, \`${toolCommand("automate daemon install")}\`.`
         );
     }
 
     if (report.app.built && report.disabledByMarker) {
         problems.push(
-            "The launcher is switched off (GenesisTools window > Settings, or `tools macos permissions disable`): tools run under the terminal's grants. Re-enable with `tools macos permissions enable`."
+            `The launcher is switched off (GenesisTools window > Settings, or \`${toolCommand("macos permissions disable")}\`): tools run under the terminal's grants. Re-enable with \`${toolCommand("macos permissions enable")}\`.`
         );
     } else if (report.app.built && report.identity.kind !== "genesis-app") {
         problems.push(

@@ -22,6 +22,7 @@ import { join, resolve } from "node:path";
 import { historyFiles, PLAY_MS } from "@app/spotify/lib/history";
 import { writeJsonl } from "@app/spotify/lib/io";
 import { loadLibraryIn } from "@app/spotify/lib/library";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 
@@ -152,7 +153,7 @@ export function mergeHistory(opts: MergeHistoryOptions): MergeHistoryResult {
     // library carrying one merge's numbers.
     const tracks = loadLibraryIn(dir).map((t) => ({ ...t }) as Track);
     if (!tracks.length) {
-        throw new Error(`no library in ${dir}. Run \`tools spotify build\` first.`);
+        throw new Error(`no library in ${dir}. Run \`${toolCommand("spotify build")}\` first.`);
     }
 
     let matched = 0;

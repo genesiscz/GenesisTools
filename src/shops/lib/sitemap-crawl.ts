@@ -8,6 +8,7 @@ import type { ShopsDatabase } from "@app/shops/db/ShopsDatabase";
 import { createBulkMatcher } from "@app/shops/lib/bulk-matcher";
 import type { HttpRequestSink } from "@app/shops/lib/http-sink";
 import { walkSitemap } from "@app/shops/lib/sitemap-fetcher";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger } from "@genesiscz/utils/logger";
 
 const log = logger.child({ component: "sitemap-crawl" });
@@ -89,7 +90,7 @@ export async function crawlFromSitemap(opts: SitemapCrawlOptions): Promise<Sitem
 
     if (!hasListByIds(client)) {
         throw new Error(
-            `${strategy.shopOrigin} client does not implement listByIds(); add the method or use \`tools shops crawl\` for category-based ingestion`
+            `${strategy.shopOrigin} client does not implement listByIds(); add the method or use \`${toolCommand("shops crawl")}\` for category-based ingestion`
         );
     }
 

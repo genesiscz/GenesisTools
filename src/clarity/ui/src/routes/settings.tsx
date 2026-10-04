@@ -1,3 +1,4 @@
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
@@ -536,19 +537,19 @@ function SettingsPage() {
                 <CardContent>
                     <div className="space-y-2 font-mono text-xs">
                         <div className="flex items-center gap-2">
-                            <code className="text-primary">tools clarity configure auth</code>
+                            <code className="text-primary">{toolCommand("clarity configure auth")}</code>
                             <span className="text-gray-500">Initial setup with base URL and auth</span>
                         </div>
                         <div className="flex items-center gap-2">
-                            <code className="text-primary">tools clarity mappings</code>
+                            <code className="text-primary">{toolCommand("clarity mappings")}</code>
                             <span className="text-gray-500">Create ADO-Clarity mappings</span>
                         </div>
                         <div className="flex items-center gap-2">
-                            <code className="text-primary">tools clarity fill --month N</code>
+                            <code className="text-primary">{toolCommand("clarity fill")} --month N</code>
                             <span className="text-gray-500">Fill timesheets from CLI</span>
                         </div>
                         <div className="flex items-center gap-2">
-                            <code className="text-primary">tools clarity timesheet</code>
+                            <code className="text-primary">{toolCommand("clarity timesheet")}</code>
                             <span className="text-gray-500">View current timesheet</span>
                         </div>
                     </div>

@@ -3,6 +3,7 @@ import { readUnifiedConfig, stripMeta, writeUnifiedConfig } from "@app/mcp-manag
 import type { MCPProvider, UnifiedMCPServerConfig } from "@app/mcp-manager/utils/providers/types.js";
 import { WriteResult } from "@app/mcp-manager/utils/providers/types.js";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import * as p from "@genesiscz/utils/prompts/p";
@@ -42,7 +43,9 @@ export async function installServer(
     if (!finalServerName) {
         if (!isInteractive()) {
             logger.error("Server name is required in non-interactive mode.");
-            logger.info('Usage: tools mcp-manager install <name> "<command>" --type stdio --provider claude');
+            logger.info(
+                `Usage: ${toolCommand("mcp-manager install", "<name>", '"<command>"', "--type", "stdio", "--provider", "claude")}`
+            );
             process.exit(1);
         }
 

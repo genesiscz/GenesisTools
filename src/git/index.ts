@@ -22,6 +22,7 @@ import { registerMonsterCommand } from "@app/git/commands/monster";
 import { registerRebaseCascadeCommand } from "@app/git/commands/rebase-cascade";
 import { registerWorktreeCommand } from "@app/git/commands/worktree";
 import { enhanceHelp, runTool } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger, out } from "@genesiscz/utils/logger";
 import { Storage } from "@genesiscz/utils/storage";
 import { Command } from "commander";
@@ -59,7 +60,7 @@ function showHelpFull(): void {
 Git Tool
 
 Usage:
-  tools git <command> [options]
+  ${toolCommand("git")} <command> [options]
 
 Commands:
   commits                      Query commits by date range with workitem extraction
@@ -116,29 +117,29 @@ Rebase-Cascade Options:
 
 Examples:
   # Query commits for a date range
-  tools git commits --from 2026-02-01 --to 2026-02-08
+  ${toolCommand("git commits")} --from 2026-02-01 --to 2026-02-08
 
   # With stats and specific author
-  tools git commits --from 2026-02-01 --to 2026-02-08 --stat --author "Your Name"
+  ${toolCommand("git commits")} --from 2026-02-01 --to 2026-02-08 --stat --author "Your Name"
 
   # Is feat/x already in master? Which of my branches are done?
-  tools git merged feat/x
-  tools git merged --all
+  ${toolCommand("git merged")} feat/x
+  ${toolCommand("git merged")} --all
 
   # Remove two refs a plain run listed as MERGED
-  tools git merged --prune feat/x --prune .worktrees/feat-y
+  ${toolCommand("git merged")} --prune feat/x --prune .worktrees/feat-y
 
   # Rebase feat/parent onto master and transplant its children
-  tools git rebase-cascade feat/parent --dry-run
-  tools git rebase-cascade feat/parent
+  ${toolCommand("git rebase-cascade")} feat/parent --dry-run
+  ${toolCommand("git rebase-cascade")} feat/parent
 
   # Repo config and base detection
-  tools git config show
-  tools git config init
-  tools git base feat/x
+  ${toolCommand("git config show")}
+  ${toolCommand("git config init")}
+  ${toolCommand("git base")} feat/x
 
   # Show the repo's scariest files as an ASCII monster
-  tools git monster src --top 10
+  ${toolCommand("git monster")} src --top 10
 
 Storage:
   Config: ~/.genesis-tools/git/config.json

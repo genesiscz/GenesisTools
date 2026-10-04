@@ -30,6 +30,7 @@ import {
     requireConfig,
     saveTemplate,
 } from "@app/azure-devops/utils";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
 import { ExitPromptError } from "@inquirer/core";
@@ -703,7 +704,7 @@ async function handleCreate(options: {
     if (!hasValidMode) {
         // No valid mode specified - show help without requiring config
         out.println(`
-Usage: tools azure-devops workitem-create [options]
+Usage: ${toolCommand("azure-devops workitem-create")} [options]
 
 Modes:
   -i, --interactive             Interactive mode with prompts
@@ -713,11 +714,11 @@ Modes:
   --type <type> --title <text>  Quick non-interactive creation
 
 Examples:
-  tools azure-devops workitem-create -i
-  tools azure-devops workitem-create --from-file template.json
-  tools azure-devops workitem-create "https://.../_queries/query/abc" --type Bug
-  tools azure-devops workitem-create "https://.../_workitems/edit/123"
-  tools azure-devops workitem-create --type Task --title "Fix bug"
+  ${toolCommand("azure-devops workitem-create")} -i
+  ${toolCommand("azure-devops workitem-create")} --from-file template.json
+  ${toolCommand("azure-devops workitem-create")} "https://.../_queries/query/abc" --type Bug
+  ${toolCommand("azure-devops workitem-create")} "https://.../_workitems/edit/123"
+  ${toolCommand("azure-devops workitem-create")} --type Task --title "Fix bug"
 `);
         return;
     }
@@ -783,7 +784,7 @@ Examples:
         }
 
         out.println(`\n💡 Fill the template and run:`);
-        out.println(`   tools azure-devops workitem-create --from-file "${filePath}"`);
+        out.println(`   ${toolCommand("azure-devops workitem-create")} --from-file "${filePath}"`);
         return;
     }
 
@@ -825,7 +826,7 @@ Examples:
         }
 
         out.println(`\n💡 Fill the template and run:`);
-        out.println(`   tools azure-devops workitem-create --from-file "${filePath}"`);
+        out.println(`   ${toolCommand("azure-devops workitem-create")} --from-file "${filePath}"`);
         return;
     }
 

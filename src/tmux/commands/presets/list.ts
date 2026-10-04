@@ -1,3 +1,4 @@
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { out } from "@genesiscz/utils/logger";
 import { TmuxPresetStore } from "@genesiscz/utils/tmux/snapshot-store";
 import type { Command } from "commander";
@@ -27,7 +28,7 @@ export function runListPresets(flags: ListPresetsFlags): void {
     }
 
     if (presets.length === 0) {
-        out.println(pc.dim(`(no presets — save one with "tools tmux presets save")`));
+        out.println(pc.dim(`(no presets — save one with "${toolCommand("tmux presets save")}")`));
         out.println(pc.dim(`dir: ${store.getDir()}`));
         return;
     }

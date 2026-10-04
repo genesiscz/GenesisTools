@@ -1,4 +1,5 @@
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import * as p from "@genesiscz/utils/prompts/p";
@@ -19,7 +20,7 @@ interface KeyValuePair {
  */
 export function showHelp() {
     logger.info(`
-Usage: tools mcp-manager [command] [options]
+Usage: ${toolCommand("mcp-manager")} [command] [options]
 
 Manage MCP (Model Context Protocol) servers across multiple AI assistants.
 
@@ -59,51 +60,51 @@ Options:
   -h, --help               Show this help message
 
 Interactive Examples:
-  tools mcp-manager config
-  tools mcp-manager sync
-  tools mcp-manager list
-  tools mcp-manager install
-  tools mcp-manager enable github
-  tools mcp-manager disable github
+  ${toolCommand("mcp-manager config")}
+  ${toolCommand("mcp-manager sync")}
+  ${toolCommand("mcp-manager list")}
+  ${toolCommand("mcp-manager install")}
+  ${toolCommand("mcp-manager enable", "github")}
+  ${toolCommand("mcp-manager disable", "github")}
 
 Non-Interactive Examples (for scripts and AI assistants):
   # Show config path without opening editor
-  tools mcp-manager config --path
+  ${toolCommand("mcp-manager config", "--path")}
 
   # Sync to/from specific providers
-  tools mcp-manager sync --provider claude,gemini,codex,cursor
-  tools mcp-manager sync-from-providers --provider claude
+  ${toolCommand("mcp-manager sync", "--provider", "claude,gemini,codex,cursor")}
+  ${toolCommand("mcp-manager sync-from-providers", "--provider", "claude")}
 
   # Install stdio server with env vars (multiple --env flags supported)
-  tools mcp-manager install my-server "npx -y @org/server" --type stdio \\
+  ${toolCommand("mcp-manager install", "my-server", "npx -y @org/server", "--type", "stdio")} \\
     --env "API_KEY=xxx" --env "TOKEN=yyy" --provider claude
 
   # Install http server with headers (uses colon separator, multiple flags supported)
-  tools mcp-manager install jina-ai "https://api.jina.ai/mcp" --type http \\
+  ${toolCommand("mcp-manager install", "jina-ai", '"https://api.jina.ai/mcp"', "--type", "http")} \\
     --headers "Authorization: Bearer YOUR_TOKEN" --provider claude
 
   # Install with Basic Auth (base64 values with = padding work correctly)
-  tools mcp-manager install jenkins "https://jenkins.example.com/mcp" --type http \\
+  ${toolCommand("mcp-manager install", "jenkins", '"https://jenkins.example.com/mcp"', "--type", "http")} \\
     --headers "Authorization: Basic cWtmb2x0eW5tYXI6YWJjMTIz==" --provider claude
 
   # Enable/disable with specific provider
-  tools mcp-manager enable github --provider claude
-  tools mcp-manager disable omnisearch --provider claude,cursor
+  ${toolCommand("mcp-manager enable", "github", "--provider", "claude")}
+  ${toolCommand("mcp-manager disable", "omnisearch", "--provider", "claude,cursor")}
 
   # Show server config
-  tools mcp-manager show github
+  ${toolCommand("mcp-manager show", "github")}
 
   # Output servers as JSON (all servers)
-  tools mcp-manager config-json
+  ${toolCommand("mcp-manager config-json")}
 
   # Output only enabled servers for claude format
-  tools mcp-manager config-json --client claude --enabled-only
+  ${toolCommand("mcp-manager config-json", "--client", "claude", "--enabled-only")}
 
   # Output specific servers, copy to clipboard
-  tools mcp-manager config-json --servers github,filesystem --clipboard
+  ${toolCommand("mcp-manager config-json", "--servers", "github,filesystem", "--clipboard")}
 
   # Output bare mcpServers object without wrapper
-  tools mcp-manager config-json --bare
+  ${toolCommand("mcp-manager config-json", "--bare")}
 `);
 }
 

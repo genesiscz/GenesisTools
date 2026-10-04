@@ -27,6 +27,7 @@ import { AIConfig } from "@genesiscz/utils/ai/AIConfig";
 import { findClaudeCommand } from "@genesiscz/utils/claude";
 import { keychainOwnerUuidOffline } from "@genesiscz/utils/claude/keychain";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import type { AIAccountEntry } from "@genesiscz/utils/config/ai.types";
 import { env } from "@genesiscz/utils/env";
 import { logger, out } from "@genesiscz/utils/logger";
@@ -416,7 +417,7 @@ async function warnKeychainLimits(accountName: string, aiConfig: AIConfig, model
                 "  so this session would refuse on its first turn."
         )
     );
-    out.printlnErr(pc.dim(`  Fix it with: ${pc.cyan(`tools claude start --keychain ${accountName}`)}`));
+    out.printlnErr(pc.dim(`  Fix it with: ${pc.cyan(toolCommand("claude start", "--keychain", accountName))}`));
 }
 
 /** "resets in 2h 5m" / "resetting now" from an ISO reset timestamp. */
@@ -657,10 +658,10 @@ async function resolveAccountName(
     const hasEntry = aiConfig.getAccount(nameArg);
     if (hasEntry && opts.keychain) {
         out.error(pc.red(`Account "${nameArg}" has no secondary login.`));
-        out.printlnErr(pc.dim(`Save one with: ${pc.cyan(`tools claude login-secondary ${nameArg}`)}`));
+        out.printlnErr(pc.dim(`Save one with: ${pc.cyan(toolCommand("claude login-secondary", nameArg))}`));
     } else if (hasEntry) {
         out.error(pc.red(`Account "${nameArg}" has no long-lived token.`));
-        out.printlnErr(pc.dim(`Save one with: ${pc.cyan(`tools claude login-long ${nameArg}`)}`));
+        out.printlnErr(pc.dim(`Save one with: ${pc.cyan(toolCommand("claude login-long", nameArg))}`));
     } else {
         out.error(pc.red(`Account "${nameArg}" not found.`));
         out.printlnErr(pc.dim(`With token: ${withToken.map((a) => a.name).join(", ")}`));
@@ -824,11 +825,15 @@ async function main(nameArg: string | undefined, opts: StartOptions, passthrough
     if (withToken.length === 0) {
         if (opts.keychain) {
             out.error(pc.red("No accounts with a secondary login."));
-            out.printlnErr(pc.dim(`Run ${pc.cyan("tools claude login-secondary <name>")} first to save one.`));
+            out.printlnErr(
+                pc.dim(`Run ${pc.cyan(toolCommand("claude login-secondary", "<name>"))} first to save one.`)
+            );
         } else {
             out.error(pc.red("No accounts with a long-lived token."));
             out.printlnErr(
-                pc.dim(`Run ${pc.cyan("tools claude login-long")} first to save one (see \`claude setup-token\`).`)
+                pc.dim(
+                    `Run ${pc.cyan(toolCommand("claude login-long"))} first to save one (see \`claude setup-token\`).`
+                )
             );
         }
         await out.flush();

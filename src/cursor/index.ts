@@ -1,5 +1,6 @@
 #!/usr/bin/env bun
 
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { out } from "@genesiscz/utils/logger";
 import { handleReadmeFlag } from "@genesiscz/utils/readme";
 import pc from "picocolors";
@@ -29,7 +30,7 @@ for (let i = 0; i < args.length; i++) {
     } else if (arg === "--raw") {
         raw = true;
     } else if (arg === "--help" || arg === "-h") {
-        out.println(`Usage: tools cursor [options] <question>
+        out.println(`Usage: ${toolCommand("cursor")} [options] <question>
 
 Ask Cursor Agent a question about the codebase and stream the answer.
 
@@ -52,7 +53,7 @@ const question = positional.join(" ").trim();
 
 if (!question) {
     out.error(pc.red("No question provided."));
-    out.error(pc.dim('Usage: tools cursor "which service creates the reservation?"'));
+    out.error(pc.dim(`Usage: ${toolCommand("cursor")} "which service creates the reservation?"`));
     process.exit(1);
 }
 

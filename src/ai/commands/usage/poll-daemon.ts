@@ -9,6 +9,7 @@ import { pollAccounts } from "@genesiscz/utils/ai/usage-poll/poll";
 import { usagePollStorage } from "@genesiscz/utils/ai/usage-poll/storage";
 import type { AccountUsageSnapshot } from "@genesiscz/utils/ai/usage-poll/types";
 import { withTimeout } from "@genesiscz/utils/async";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger, out } from "@genesiscz/utils/logger";
 
 const ANTHROPIC_SUB = "anthropic-sub";
@@ -86,7 +87,7 @@ async function main(): Promise<void> {
 
         if (snapshots.length === 0) {
             logger.warn("[ai-usage] daemon poll found no configured accounts");
-            out.error("No accounts configured. Run: tools claude login");
+            out.error(`No accounts configured. Run: ${toolCommand("claude login")}`);
             process.exit(1);
         }
 

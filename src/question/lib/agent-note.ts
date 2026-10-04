@@ -1,3 +1,4 @@
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { loadConfig } from "./config";
 
 /**
@@ -15,7 +16,7 @@ export function agentNote(askViaQuestionTool = loadConfig().askViaQuestionTool =
     }
 
     return (
-        "The user has not opted in to agents asking through tools question (tools question config). " +
+        `The user has not opted in to agents asking through ${toolCommand("question")} (${toolCommand("question config")}). ` +
         "The post was saved to the inbox, but ask decisive questions with your native question tool " +
         `(for example AskUserQuestion) and in your chat reply. ${copy}`
     );

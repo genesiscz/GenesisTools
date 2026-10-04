@@ -3,6 +3,7 @@ import type { AgentLauncher } from "@app/ai/commands/agent/spec";
 import type { AccountEntry } from "@genesiscz/utils/ai/config/schema";
 import { materialiseGrokGrant } from "@genesiscz/utils/ai/grok/grant-file";
 import { resolveGrokHome } from "@genesiscz/utils/ai/grok/paths";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { grokRoot } from "@genesiscz/utils/grok/worker-paths";
 import { logger, out } from "@genesiscz/utils/logger";
 import { surfacesFromFlags } from "@genesiscz/utils/worker/isolation";
@@ -54,7 +55,7 @@ export const grokLauncher: AgentLauncher = {
         // `tools grok run --name x --cwd y` was the headless worker before `run` meant the TUI on
         // every tool. The flags stay, hidden, and route to the worker with a notice.
         for (const [flags, description] of [
-            ["--name <name>", "worker session name (headless worker; use tools grok spawn)"],
+            ["--name <name>", `worker session name (headless worker; use ${toolCommand("grok spawn")})`],
             ["--prompt-file <path>", "worker brief file (headless worker)"],
             ["--prompt <text>", "worker inline brief (headless worker)"],
             ["--readonly", "worker review mode (headless worker)"],
@@ -87,7 +88,9 @@ export const grokLauncher: AgentLauncher = {
         }
 
         out.printlnErr(
-            pc.dim("`tools grok run --name` is the headless worker; `tools grok run [account]` is the TUI.")
+            pc.dim(
+                `\`${toolCommand("grok run")} --name\` is the headless worker; \`${toolCommand("grok run")} [account]\` is the TUI.`
+            )
         );
         const result = await runSession({
             name: legacy.name,

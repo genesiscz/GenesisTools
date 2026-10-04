@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 import { UsageDatabase } from "@app/ask/output/UsageDatabase";
 import { runTool } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { formatDateTime } from "@genesiscz/utils/date";
 import { formatCost, formatTokens } from "@genesiscz/utils/format";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -19,7 +20,7 @@ interface Options {
 
 function showHelp() {
     out.println(`
-Usage: tools usage [options]
+Usage: ${toolCommand("usage")} [options]
 
 Display usage statistics and analytics for ASK tool.
 
@@ -31,11 +32,11 @@ Options:
   -?, --help-full         Show this detailed help message
 
 Examples:
-  tools usage                    # Show last 30 days usage
-  tools usage --days 7           # Show last 7 days usage
-  tools usage --provider openai   # Filter by provider
-  tools usage --format summary    # Show summary only
-  tools usage --format json       # Output as JSON
+  ${toolCommand("usage")}                    # Show last 30 days usage
+  ${toolCommand("usage")} --days 7           # Show last 7 days usage
+  ${toolCommand("usage")} --provider openai   # Filter by provider
+  ${toolCommand("usage")} --format summary    # Show summary only
+  ${toolCommand("usage")} --format json       # Output as JSON
 `);
 }
 

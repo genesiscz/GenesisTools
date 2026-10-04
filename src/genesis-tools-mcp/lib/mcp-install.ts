@@ -4,6 +4,7 @@ import { CodexProvider } from "@app/mcp-manager/utils/providers/codex.js";
 import { CursorProvider } from "@app/mcp-manager/utils/providers/cursor.js";
 import { GeminiProvider } from "@app/mcp-manager/utils/providers/gemini.js";
 import type { MCPProvider } from "@app/mcp-manager/utils/providers/types.js";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import type { Command } from "commander";
 
 export interface InstallArgs {
@@ -54,7 +55,7 @@ export function buildInstallArgs(o: { agent?: string }): InstallArgs {
     // Stable global command (not the ephemeral worktree path) so the registration survives.
     return {
         serverName: "genesis-tools",
-        commandOrUrl: "tools genesis-tools-mcp",
+        commandOrUrl: toolCommand("genesis-tools-mcp"),
         options: { type: "stdio", provider },
     };
 }
@@ -79,7 +80,7 @@ export async function installGenesisToolsMcp(
     if (!target || !(await target.configExists())) {
         const where = target ? ` at ${target.getConfigPath()}` : "";
         throw new Error(
-            `${a.options.provider} has no config file${where}, so there is nothing to register the server in. Start ${a.options.provider} once, then run \`tools genesis-tools-mcp install\`.`
+            `${a.options.provider} has no config file${where}, so there is nothing to register the server in. Start ${a.options.provider} once, then run \`${toolCommand("genesis-tools-mcp install")}\`.`
         );
     }
 

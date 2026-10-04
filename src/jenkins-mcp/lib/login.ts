@@ -12,6 +12,7 @@
  * a status code alone does not prove a login worked).
  */
 import { spawn } from "node:child_process";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { env } from "@genesiscz/utils/env";
 import { logger, out } from "@genesiscz/utils/logger";
 import * as p from "@genesiscz/utils/prompts/p";
@@ -187,7 +188,7 @@ export async function runLogin(opts: LoginOptions): Promise<number> {
         return 1;
     }
 
-    const done = `Saved ${auth.url} for ${auth.user} in ${secretStoreName()}. Remove it with: tools jenkins-mcp logout`;
+    const done = `Saved ${auth.url} for ${auth.user} in ${secretStoreName()}. Remove it with: ${toolCommand("jenkins-mcp logout")}`;
 
     if (scripted) {
         out.info(done);

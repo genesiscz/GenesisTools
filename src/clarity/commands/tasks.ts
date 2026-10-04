@@ -21,6 +21,7 @@ import {
 import * as p from "@clack/prompts";
 import { ClarityApi } from "@genesiscz/utils/clarity";
 import { isInteractive } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { addDay, formatLocalDate } from "@genesiscz/utils/date";
 import { out } from "@genesiscz/utils/logger";
 import { createBoxTable, renderCliHeader, truncateDisplay } from "@genesiscz/utils/table";
@@ -60,14 +61,14 @@ export function registerTasksCommand(parent: Command): void {
             [
                 "",
                 "Examples:",
-                "  tools clarity tasks --date 2026-08                 catalogue for every week of August",
-                "  tools clarity tasks --timesheet 9115177            catalogue of one timesheet",
-                "  tools clarity tasks --date 2026-09 --add-from 2026-08-25 --yes",
-                "  tools clarity tasks --date 2026-09-01 --add 8902005 8902008 --yes",
-                "  tools clarity tasks --date 2026-09-01 --remove 8902008 --yes",
-                "  tools clarity tasks --date 2026-09 --search 410001      task named D_410001_… or 410001_…",
+                `  ${toolCommand("clarity tasks")} --date 2026-08                 catalogue for every week of August`,
+                `  ${toolCommand("clarity tasks")} --timesheet 9115177            catalogue of one timesheet`,
+                `  ${toolCommand("clarity tasks")} --date 2026-09 --add-from 2026-08-25 --yes`,
+                `  ${toolCommand("clarity tasks")} --date 2026-09-01 --add 8902005 8902008 --yes`,
+                `  ${toolCommand("clarity tasks")} --date 2026-09-01 --remove 8902008 --yes`,
+                `  ${toolCommand("clarity tasks")} --date 2026-09 --search 410001      task named D_410001_… or 410001_…`,
                 "",
-                "Mappings between ADO work items and Clarity tasks live in: tools clarity mappings",
+                `Mappings between ADO work items and Clarity tasks live in: ${toolCommand("clarity mappings")}`,
                 "",
             ].join("\n")
         )
@@ -264,7 +265,9 @@ async function runSearch({
     const missing = hits.filter((hit) => !hit.onTimesheet);
 
     if (missing.length > 0) {
-        out.println(pc.dim(`  Add one to the timesheet: tools clarity tasks ${scopeArg} --add <task id> --yes`));
+        out.println(
+            pc.dim(`  Add one to the timesheet: ${toolCommand("clarity tasks")} ${scopeArg} --add <task id> --yes`)
+        );
     }
 }
 

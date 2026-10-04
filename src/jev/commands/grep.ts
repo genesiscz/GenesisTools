@@ -1,5 +1,6 @@
 import { selectedProvider } from "@genesiscz/utils/ai/evaluation/cli";
 import { suggestCommand } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { ui } from "@genesiscz/utils/cli/ui";
 import { formatCost, formatTokens } from "@genesiscz/utils/format";
 import { logger, out } from "@genesiscz/utils/logger";
@@ -58,7 +59,10 @@ export function parseGrepCommand(
     }
 
     if (!question?.trim()) {
-        throw new GrepSetupError("usage", 'A question is required: tools jev grep "<question>" [root].');
+        throw new GrepSetupError(
+            "usage",
+            `A question is required: ${toolCommand("jev grep", '"<question>"', "[root]")}.`
+        );
     }
 
     let concurrency: number | undefined;

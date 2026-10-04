@@ -1,3 +1,4 @@
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { renderFrontmatter } from "@genesiscz/utils/json2md/frontmatter";
 import { firstName } from "./speakers";
 import type { TermSuggestion } from "./terms";
@@ -131,7 +132,7 @@ export function meetingFrontmatter(meeting: Meeting, options: RenderOptions): Re
 
 /** An Obsidian callout listing each suspect term with its candidates, plus the command that applies them. */
 export function suspectsCallout(suspects: TermSuggestion[], fixCommand?: string): string {
-    const lines = ["> [!warning]- Possibly misheard terms (tools wisprflow, confidence per candidate)"];
+    const lines = [`> [!warning]- Possibly misheard terms (${toolCommand("wisprflow")}, confidence per candidate)`];
 
     for (const s of suspects) {
         const candidates = s.candidates.map((c) => `${c.term} ${c.confidence} % (${c.source})`).join(" · ");

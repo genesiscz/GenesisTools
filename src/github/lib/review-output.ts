@@ -4,6 +4,7 @@
 import { mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, extname, join, resolve as pathResolve } from "node:path";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { formatRelativeTime } from "@genesiscz/utils/format";
 import type { ParsedReviewThread, PRLevelComment, ReviewData } from "@genesiscz/utils/github/types";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -527,9 +528,9 @@ export function formatReviewLLM(data: ReviewData, sessionId: string): string {
     }
 
     output += "\n";
-    output += `Expand: tools github review expand t1 -s ${sessionId}\n`;
-    output += `Respond: tools github review respond t1 "message" -s ${sessionId}\n`;
-    output += `Resolve: tools github review resolve t1,t2 -s ${sessionId}\n`;
+    output += `Expand: ${toolCommand("github review expand")} t1 -s ${sessionId}\n`;
+    output += `Respond: ${toolCommand("github review respond")} t1 "message" -s ${sessionId}\n`;
+    output += `Resolve: ${toolCommand("github review resolve")} t1,t2 -s ${sessionId}\n`;
 
     return output;
 }
@@ -573,8 +574,8 @@ export function formatThreadExpanded(thread: ParsedReviewThread, sessionId: stri
         output += "\n";
     }
 
-    output += `Respond: tools github review respond t${thread.threadNumber} "message" -s ${sessionId}\n`;
-    output += `Resolve: tools github review resolve t${thread.threadNumber} -s ${sessionId}\n`;
+    output += `Respond: ${toolCommand("github review respond")} t${thread.threadNumber} "message" -s ${sessionId}\n`;
+    output += `Resolve: ${toolCommand("github review resolve")} t${thread.threadNumber} -s ${sessionId}\n`;
 
     return output;
 }

@@ -2,6 +2,7 @@
 
 import * as p from "@clack/prompts";
 import { isInteractive, runTool, suggestCommand } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
 import type { GenesisAppRpcFailure, GenesisAppRpcOutcome } from "@genesiscz/utils/macos/genesis-app-rpc";
@@ -275,7 +276,7 @@ async function configCommand(): Promise<void> {
         }
     }
 
-    p.outro(pc.dim('Run `tools notify "test"` to try it out.'));
+    p.outro(pc.dim(`Run \`${toolCommand("notify")} "test"\` to try it out.`));
 }
 
 const program = new Command();
@@ -344,7 +345,7 @@ program
 
             if (!delivered) {
                 out.warn(
-                    "One or more notification channels failed or could not confirm delivery. See: tools notify status"
+                    `One or more notification channels failed or could not confirm delivery. See: ${toolCommand("notify status")}`
                 );
                 const session = launchdSession();
 

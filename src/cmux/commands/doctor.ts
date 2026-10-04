@@ -1,4 +1,5 @@
 import { probeSelfSend } from "@app/cmux/lib/send-self-preflight";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { ui } from "@genesiscz/utils/cli/ui";
 import { type CmuxHealth, type CmuxProbeResult, probeCmuxHealth } from "@genesiscz/utils/cmux/lib/health";
 import { out } from "@genesiscz/utils/logger";
@@ -65,12 +66,16 @@ export async function runDoctor(flags: DoctorFlags): Promise<void> {
                     ". UI clicks and every state command are stuck."
             );
             ui.section("Rescue recipe");
-            ui.raw("  1. tools cmux profiles save rescue --offline   # capture layout+commands without the socket");
+            ui.raw(
+                `  1. ${toolCommand("cmux profiles save", "rescue", "--offline")}   # capture layout+commands without the socket`
+            );
             ui.raw("  2. kill -TERM <app pid>   # plain TERM works; wait, then kill -9 if it survives");
             ui.raw("  3. Relaunch with a CLEAN env — never `open -a cmux` from an agent shell:");
             ui.raw('     env -i HOME="$HOME" USER="$USER" PATH=/usr/bin:/bin:/usr/sbin:/sbin open -a cmux');
             ui.raw("     (`open` forwards its env; agent markers make resumed claudes disable transcript saving)");
-            ui.raw("  4. tools cmux profiles restore rescue --enter   # review the drift diff it prints");
+            ui.raw(
+                `  4. ${toolCommand("cmux profiles restore", "rescue", "--enter")}   # review the drift diff it prints`
+            );
             break;
     }
 

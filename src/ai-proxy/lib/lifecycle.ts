@@ -26,6 +26,7 @@ import { getAiProxyStorage } from "@app/ai-proxy/lib/storage";
 import { probeUrl } from "@app/ai-proxy/lib/tunnel/cloudflared";
 import type { AiProxyConfig } from "@app/ai-proxy/lib/types";
 import { scheduleBillingSyncForConfig } from "@app/ai-proxy/lib/usage/billing-sync";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { spawnDetached } from "@genesiscz/utils/DashboardApp/detach";
 import { waitForUrlReady } from "@genesiscz/utils/DashboardApp/readiness";
 import { logger, out } from "@genesiscz/utils/logger";
@@ -338,9 +339,9 @@ export async function runAiProxyStatus(): Promise<StatusResult> {
     if (pidState.status === "foreign") {
         staleWarning =
             `recorded pid ${pidState.pid} belongs to another process (${pidState.command}) — ` +
-            `stale record, run \`tools ai-proxy up\` to restart`;
+            `stale record, run \`${toolCommand("ai-proxy up")}\` to restart`;
     } else if (pidState.status === "dead") {
-        staleWarning = `recorded pid ${pidState.pid} is gone — run \`tools ai-proxy up\` to restart`;
+        staleWarning = `recorded pid ${pidState.pid} is gone — run \`${toolCommand("ai-proxy up")}\` to restart`;
     } else if (pidState.status === "live" && !localProbe.ok) {
         staleWarning = `pid ${pidState.pid} is alive but not answering ${localHealthUrl} — check ${getAiProxyStorage().proxyLogPath()}`;
     }
@@ -478,6 +479,6 @@ export async function runAiProxyUninstallLaunchd(): Promise<LaunchdUninstallResu
         removed: true,
         label: AI_PROXY_LAUNCHD_LABEL,
         plistPath,
-        message: `Launchd agent ${AI_PROXY_LAUNCHD_LABEL} unloaded and ${plistPath} removed — start the proxy again with \`tools ai-proxy up\``,
+        message: `Launchd agent ${AI_PROXY_LAUNCHD_LABEL} unloaded and ${plistPath} removed — start the proxy again with \`${toolCommand("ai-proxy up")}\``,
     };
 }

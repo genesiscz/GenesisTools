@@ -5,6 +5,7 @@ import { SessionManager } from "@app/har-analyzer/core/session-manager";
 import type { HarFile, HarSession, IndexedEntry, OutputOptions } from "@app/har-analyzer/types";
 import { isInterestingMimeType } from "@app/har-analyzer/types";
 import * as p from "@clack/prompts";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { formatBytes, formatDuration } from "@genesiscz/utils/format";
 import { out } from "@genesiscz/utils/logger";
 import { formatTable } from "@genesiscz/utils/table";
@@ -354,9 +355,11 @@ export async function runInteractive(parentOpts: OutputOptions): Promise<void> {
                     if (p.isCancel(e2)) {
                         break;
                     }
-                    p.log.info(`Use CLI: tools har-analyzer diff e${e1.replace(/^e/, "")} e${e2.replace(/^e/, "")}`);
+                    p.log.info(
+                        `Use CLI: ${toolCommand("har-analyzer diff")} e${e1.replace(/^e/, "")} e${e2.replace(/^e/, "")}`
+                    );
                 } else {
-                    p.log.info(`Use CLI: tools har-analyzer ${moreAction}`);
+                    p.log.info(`Use CLI: ${toolCommand("har-analyzer")} ${moreAction}`);
                 }
                 break;
             }

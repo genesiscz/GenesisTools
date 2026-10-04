@@ -1,4 +1,5 @@
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { out } from "@genesiscz/utils/logger";
 import { readInput, writeOutput } from "./io";
 import { restore } from "./restore";
@@ -25,7 +26,7 @@ async function resolveMapping(mapPath: string | undefined): Promise<Mapping | nu
 export async function runRestore(args: RunRestoreArgs): Promise<void> {
     const mapping = await resolveMapping(args.map);
     if (mapping === null) {
-        out.log.error("No mapping found: pass --map <file> or run `tools redact` first.");
+        out.log.error(`No mapping found: pass --map <file> or run \`${toolCommand("redact")}\` first.`);
         process.exitCode = 1;
         return;
     }

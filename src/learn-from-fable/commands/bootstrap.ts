@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { env } from "@genesiscz/utils/env";
 import { logger, out } from "@genesiscz/utils/logger";
 import { input } from "@inquirer/prompts";
@@ -45,7 +46,7 @@ export async function bootstrapCommand(options: BootstrapOptions): Promise<void>
         packPath,
         sessionsMirrorPath: join(FABLE_LOCAL_DIR, "sessions"),
         sessionSources: [resolve(homedir(), ".claude", "projects"), join(FABLE_LOCAL_DIR, "sessions")],
-        notes: "Written by tools learn-from-fable bootstrap.",
+        notes: `Written by ${toolCommand("learn-from-fable bootstrap")}.`,
     });
     out.log.success(`Config written: ${FABLE_CONFIG_PATH} → packPath ${packPath}`);
 }

@@ -9,6 +9,7 @@ import { decodeSessionPathSegment, isSafeLogSessionName } from "@app/log-viewer/
 import { sortSessionsByRecency } from "@app/log-viewer/session-recency";
 import { resolveSessionState } from "@app/log-viewer/session-state";
 import { enrichDashboardTimestamps } from "@app/log-viewer/tail-bridge";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 
 const REF_ID = /^([se])([1-9]\d*)$/;
@@ -324,7 +325,7 @@ function notBuiltHtml(): { status: number; body: string; contentType: string } {
 <body>
   <h1><span class="pulse"></span>DASHBOARD NOT BUILT</h1>
   <p>The dashboard frontend hasn't been built yet. Run:</p>
-  <p><code>tools debugging-master dashboard build</code></p>
+  <p><code>${toolCommand("debugging-master dashboard build")}</code></p>
   <p>then refresh this page.</p>
   <p style="opacity:.6;margin-top:32px">ingest server is up — unified dbg + task sessions.</p>
 </body></html>`,

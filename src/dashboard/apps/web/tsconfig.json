@@ -26,6 +26,7 @@
       "@ui/*": ["../../../utils/ui/*"],
       "@genesiscz/utils/logger/client": ["../../../utils/logger/client.ts"],
       "@genesiscz/utils/json": ["../../../utils/json.ts"],
+      "@genesiscz/utils/cli/tool-command": ["../../../utils/cli/tool-command.ts"],
       "@genesiscz/utils/env.client": ["../../../utils/env.client.ts"],
       "@genesiscz/utils/env": ["../../../utils/env/index.ts"],
       "@genesiscz/utils/env/*": ["../../../utils/env/*"],

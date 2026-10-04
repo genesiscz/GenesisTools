@@ -18,6 +18,7 @@ import { expandAtMentions } from "@ask/utils/at-mentions";
 import { webSearchTool } from "@ask/utils/websearch";
 import * as p from "@clack/prompts";
 import { transcriptionManager } from "@genesiscz/utils/ai/transcription/TranscriptionManager";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger, out } from "@genesiscz/utils/logger";
 import { input } from "@genesiscz/utils/prompts/clack";
 import { handleReadmeFlag } from "@genesiscz/utils/readme";
@@ -200,7 +201,7 @@ class ASKTool {
     }
 
     private suggestCommand(provider: string, model: string): void {
-        const cmd = `tools ask -p ${provider} -m ${model} "your message"`;
+        const cmd = `${toolCommand("ask")} -p ${provider} -m ${model} "your message"`;
         p.log.info(pc.dim(`Non-interactive: ${cmd}`));
     }
 
@@ -208,12 +209,12 @@ class ASKTool {
         out.error(pc.red(reason));
         out.error("");
         out.error(pc.dim("Usage examples:"));
-        out.error(pc.dim(`  tools ask -p anthropic -m claude-sonnet-4-20250514 "your message"`));
-        out.error(pc.dim(`  tools ask -p openai -m gpt-4o "your message"`));
-        out.error(pc.dim(`  echo "your message" | tools ask -p anthropic -m claude-sonnet-4-20250514`));
+        out.error(pc.dim(`  ${toolCommand("ask")} -p anthropic -m claude-sonnet-4-20250514 "your message"`));
+        out.error(pc.dim(`  ${toolCommand("ask")} -p openai -m gpt-4o "your message"`));
+        out.error(pc.dim(`  echo "your message" | ${toolCommand("ask")} -p anthropic -m claude-sonnet-4-20250514`));
         out.error("");
-        out.error(pc.dim("Configure defaults:  tools ask config"));
-        out.error(pc.dim("List providers:      tools ask models"));
+        out.error(pc.dim(`Configure defaults:  ${toolCommand("ask config")}`));
+        out.error(pc.dim(`List providers:      ${toolCommand("ask models")}`));
         process.exit(1);
     }
 
@@ -234,7 +235,7 @@ class ASKTool {
                 out.error("");
                 out.error(pc.yellow("Did you mean one of these?"));
                 for (const m of matches.slice(0, 8)) {
-                    out.error(pc.dim(`  tools ask -p ${m.provider.name} -m ${m.model.id} "your message"`));
+                    out.error(pc.dim(`  ${toolCommand("ask")} -p ${m.provider.name} -m ${m.model.id} "your message"`));
                 }
             }
         }
@@ -254,7 +255,7 @@ class ASKTool {
         }
 
         out.error("");
-        out.error(pc.dim("Configure defaults:  tools ask config"));
+        out.error(pc.dim(`Configure defaults:  ${toolCommand("ask config")}`));
         process.exit(1);
     }
 

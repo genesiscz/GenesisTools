@@ -16,6 +16,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { readJson, readJsonl, writeJsonl } from "@app/spotify/lib/io";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/storage";
@@ -50,8 +51,8 @@ export function loadArtistIndex(dir: string, profileHint?: string): ArtistIndex 
         throw new Error(
             `no artist index in ${dir}.\n` +
                 `  It is built from the harvested library:\n` +
-                `    tools spotify build${profile}\n` +
-                "  If there is no library yet, harvest one first: tools spotify harvest --auto"
+                `    ${toolCommand("spotify build")}${profile}\n` +
+                `  If there is no library yet, harvest one first: ${toolCommand("spotify harvest", "--auto")}`
         );
     }
 

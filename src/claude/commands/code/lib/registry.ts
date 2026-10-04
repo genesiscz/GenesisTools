@@ -1,3 +1,4 @@
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 
 export type Fetcher = typeof fetch;
@@ -50,7 +51,9 @@ export async function fetchPackument({ pkg, fetcher = fetch }: { pkg: string; fe
 export function resolveRange({ all, from, to }: { all: string[]; from: string; to: string }): string[] {
     for (const endpoint of [from, to]) {
         if (!all.includes(endpoint)) {
-            throw new Error(`version ${endpoint} was never published (check \`tools claude code versions\`)`);
+            throw new Error(
+                `version ${endpoint} was never published (check \`${toolCommand("claude code versions")}\`)`
+            );
         }
     }
 

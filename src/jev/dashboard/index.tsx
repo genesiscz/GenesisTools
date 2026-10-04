@@ -1,5 +1,6 @@
 import { Badge, Callout, CodeBlock, JsonView, Meter } from "@artifact/kit";
 import { type EvaluationProviderId, evaluationProviderSchema } from "@genesiscz/utils/ai/evaluation/types";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { Button } from "@ui/components/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@ui/components/card";
@@ -906,7 +907,7 @@ export default function Dashboard() {
                     <Playground key={tab} advanced={tab === "requests"} provider={provider} />
                 )}
                 <footer className="mt-10 flex flex-wrap justify-between gap-2 border-t border-border pt-5 text-xs text-muted-foreground">
-                    <span>Local Jev workbench · Powered by tools artifact</span>
+                    <span>Local Jev workbench · Powered by {toolCommand("artifact")}</span>
                     <span>
                         Credentials stay on this Mac. Requests go to{" "}
                         {provider === "vercel" ? "Vercel AI Gateway" : "TypeSafe API"}.

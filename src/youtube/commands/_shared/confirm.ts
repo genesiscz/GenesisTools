@@ -1,5 +1,6 @@
 import * as p from "@clack/prompts";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli/executor";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { out } from "@genesiscz/utils/logger";
 import pc from "picocolors";
 
@@ -12,7 +13,7 @@ export async function confirmDestructive(opts: {
         if (opts.assumeYesFlag) {
             out.error(pc.red(`Refusing to ${opts.message} without ${opts.assumeYesFlag} in non-interactive mode.`));
             out.error(
-                `Re-run with: ${suggestCommand(opts.toolName ?? "tools youtube", { add: [opts.assumeYesFlag] })}`
+                `Re-run with: ${suggestCommand(opts.toolName ?? toolCommand("youtube"), { add: [opts.assumeYesFlag] })}`
             );
         } else {
             out.error(pc.red(`Refusing to ${opts.message} in non-interactive mode.`));

@@ -17,6 +17,7 @@
 
 import { exitWithAuthGuide, exitWithSslGuide, isAuthError, isSslError } from "@app/azure-devops/cli.utils";
 import { azLoginSuggestionBlock } from "@app/azure-devops/lib/az-cli.utils";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger, out } from "@genesiscz/utils/logger";
 import * as p from "@genesiscz/utils/prompts/p";
 import { inquirerBackend } from "@genesiscz/utils/prompts/p/inquirer-backend";
@@ -85,7 +86,7 @@ function showHelpFull(): void {
 Azure DevOps Work Item Tool
 
 Usage:
-  tools azure-devops <command> [options]
+  ${toolCommand("azure-devops")} <command> [options]
 
 Commands:
   configure <url>        Configure organization and project from any Azure DevOps URL
@@ -150,80 +151,80 @@ First-Time Setup:
   2. Install extension: az extension add --name azure-devops
   3. Login:
 ${azLoginSuggestionBlock({ indent: "     " })}
-  4. Configure: tools azure-devops configure "https://dev.azure.com/MyOrg/MyProject/_workitems"
+  4. Configure: ${toolCommand("azure-devops configure")} "https://dev.azure.com/MyOrg/MyProject/_workitems"
 
 Examples:
   # Configure with any Azure DevOps URL
-  tools azure-devops configure "https://dev.azure.com/MyOrg/MyProject/_workitems"
-  tools azure-devops configure "https://myorg.visualstudio.com/MyProject/_queries/query/..."
+  ${toolCommand("azure-devops configure")} "https://dev.azure.com/MyOrg/MyProject/_workitems"
+  ${toolCommand("azure-devops configure")} "https://myorg.visualstudio.com/MyProject/_queries/query/..."
 
   # Fetch query
-  tools azure-devops query d6e14134-9d22-4cbb-b897-b1514f888667
+  ${toolCommand("azure-devops query")} d6e14134-9d22-4cbb-b897-b1514f888667
 
   # Saved tree, with the columns the query editor shows
-  tools azure-devops query <id-or-url> --tree
-  tools azure-devops query <id-or-url> --tree -f json
+  ${toolCommand("azure-devops query")} <id-or-url> --tree
+  ${toolCommand("azure-devops query")} <id-or-url> --tree -f json
 
   # Fetch work items (supports comma-separated IDs)
-  tools azure-devops workitem 12345
-  tools azure-devops workitem 12345,12346,12347
+  ${toolCommand("azure-devops workitem")} 12345
+  ${toolCommand("azure-devops workitem")} 12345,12346,12347
 
   # Force refresh
-  tools azure-devops workitem 12345 --force
+  ${toolCommand("azure-devops workitem")} 12345 --force
 
   # Filter by state/severity
-  tools azure-devops query abc123 --state Active,Development
-  tools azure-devops query abc123 --severity A,B
+  ${toolCommand("azure-devops query")} abc123 --state Active,Development
+  ${toolCommand("azure-devops query")} abc123 --severity A,B
 
   # Download all work items from a query to tasks/
-  tools azure-devops query abc123 --download-workitems
-  tools azure-devops query abc123 --state Active --download-workitems --force
+  ${toolCommand("azure-devops query")} abc123 --download-workitems
+  ${toolCommand("azure-devops query")} abc123 --state Active --download-workitems --force
 
   # Organize work items into categories
-  tools azure-devops query abc123 --download-workitems --category react19
-  tools azure-devops workitem 12345 --category hotfixes
+  ${toolCommand("azure-devops query")} abc123 --download-workitems --category react19
+  ${toolCommand("azure-devops workitem")} 12345 --category hotfixes
 
   # Interactive work item creation
-  tools azure-devops workitem-create -i
+  ${toolCommand("azure-devops workitem-create")} -i
 
   # Generate template from query
-  tools azure-devops workitem-create "https://dev.azure.com/.../query/abc" --type Bug
+  ${toolCommand("azure-devops workitem-create")} "https://dev.azure.com/.../query/abc" --type Bug
 
   # Quick non-interactive creation
-  tools azure-devops workitem-create --type Task --title "Fix login bug"
+  ${toolCommand("azure-devops workitem-create")} --type Task --title "Fix login bug"
 
   # Time logging
-  tools azure-devops timelog add --workitem 12345 --hours 2 --type "Development"
-  tools azure-devops timelog list --workitem 12345
-  tools azure-devops timelog delete <timeLogId> --yes
-  tools azure-devops timelog types
+  ${toolCommand("azure-devops timelog add")} --workitem 12345 --hours 2 --type "Development"
+  ${toolCommand("azure-devops timelog list")} --workitem 12345
+  ${toolCommand("azure-devops timelog delete")} <timeLogId> --yes
+  ${toolCommand("azure-devops timelog types")}
 
 Sprint Commands:
-  tools azure-devops iterations                          List the project's sprints
-  tools azure-devops sprint --mine --totals               Current sprint, my items, effort sums
-  tools azure-devops sprint "Sprint 17" --order   One sprint in Backlog order
+  ${toolCommand("azure-devops iterations")}                          List the project's sprints
+  ${toolCommand("azure-devops sprint")} --mine --totals               Current sprint, my items, effort sums
+  ${toolCommand("azure-devops sprint")} "Sprint 17" --order   One sprint in Backlog order
   # These never use @CurrentIteration: that macro needs a team context and
   # fails with VS402612. An explicit [System.IterationPath] predicate is used.
 
 Wiki Commands:
-  tools azure-devops wiki list                     The project's wikis
-  tools azure-devops wiki pages [path] --depth 2   Page tree under a path
-  tools azure-devops wiki get <url|id|path>        Page details + markdown (--images, -o, -f json)
-  tools azure-devops wiki search "<text>"          Full-text search over the pages
-  tools azure-devops wiki history <page>           Commits that changed the page
-  tools azure-devops wiki diff <page> [from] [to]  What an edit changed (default: the last one)
+  ${toolCommand("azure-devops wiki list")}                     The project's wikis
+  ${toolCommand("azure-devops wiki pages")} [path] --depth 2   Page tree under a path
+  ${toolCommand("azure-devops wiki get")} <url|id|path>        Page details + markdown (--images, -o, -f json)
+  ${toolCommand("azure-devops wiki search")} "<text>"          Full-text search over the pages
+  ${toolCommand("azure-devops wiki history")} <page>           Commits that changed the page
+  ${toolCommand("azure-devops wiki diff")} <page> [from] [to]  What an edit changed (default: the last one)
 
 Comment Commands:
-  tools azure-devops comment list <id>                     Comments, newest first (--format json)
-  tools azure-devops comment add <id> --file note.md       Post markdown (--text "...", --file - for stdin, --html)
-  tools azure-devops comment edit <id> <commentId> --file note.md   Replace a comment's text
-  tools azure-devops comment delete <id> <commentId>       Delete a comment
+  ${toolCommand("azure-devops comment list")} <id>                     Comments, newest first (--format json)
+  ${toolCommand("azure-devops comment add")} <id> --file note.md       Post markdown (--text "...", --file - for stdin, --html)
+  ${toolCommand("azure-devops comment edit")} <id> <commentId> --file note.md   Replace a comment's text
+  ${toolCommand("azure-devops comment delete")} <id> <commentId>       Delete a comment
 
 History Commands:
-  tools azure-devops history show <id>          Show history for a work item
-  tools azure-devops history search --wiql      Search via WIQL EVER query (server-side)
-  tools azure-devops history search             Search local cached history
-  tools azure-devops history sync               Bulk sync history for cached items
+  ${toolCommand("azure-devops history show")} <id>          Show history for a work item
+  ${toolCommand("azure-devops history search")} --wiql      Search via WIQL EVER query (server-side)
+  ${toolCommand("azure-devops history search")}             Search local cached history
+  ${toolCommand("azure-devops history sync")}               Bulk sync history for cached items
 
 Storage:
   Config:  .claude/azure/config.json (per-project, searched up to 3 levels)

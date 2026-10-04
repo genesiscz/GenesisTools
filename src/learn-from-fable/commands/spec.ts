@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
 import { type FableConfig, packPaths, requireStageModel } from "../lib/config";
@@ -141,7 +142,9 @@ export async function specCommand(config: FableConfig, options: SpecCommandOptio
             out.log.info("Review, then promote it yourself — this stage never touches the canonical spec:");
             out.println(`  diff -u "${paths.spec}" "${target}" | less`);
             out.println(`  cp "${target}" "${paths.spec}"   # only after you agree with the diff`);
-            out.println(`  tools learn-from-fable skill --max-lines 150 --sync   # regenerate the skill from it`);
+            out.println(
+                `  ${toolCommand("learn-from-fable skill", "--max-lines", "150", "--sync")}   # regenerate the skill from it`
+            );
         }
     );
 }

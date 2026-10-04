@@ -34,6 +34,7 @@ import {
     isQueryIdOrUrl,
     requireConfig,
 } from "@app/azure-devops/utils";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { formatLocalDateTimeStamp } from "@genesiscz/utils/date";
 import { logger, out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
@@ -100,7 +101,7 @@ function formatAI(queryId: string, items: WorkItem[], changes: ChangeInfo[], cac
         lines.push("");
         lines.push("To get full details + comments for changed items, run:");
         for (const change of changes) {
-            lines.push(`  tools azure-devops workitem ${change.id}`);
+            lines.push(`  ${toolCommand("azure-devops workitem")} ${change.id}`);
         }
     }
 
@@ -137,8 +138,8 @@ async function resolveQueryId(input: string, api: Api, config: AzureConfig): Pro
                 "`query` resolves a SAVED query by name, id or URL; passing WIQL would fuzzy-match it",
                 "against query names and return an unrelated query's rows.",
                 "",
-                "  Search history server-side:  tools azure-devops history search --wiql --assigned-to <name>",
-                '  Where you were mentioned:    tools azure-devops history mentions --user "<name>" --from <date>',
+                `  Search history server-side:  ${toolCommand("azure-devops history search")} --wiql --assigned-to <name>`,
+                `  Where you were mentioned:    ${toolCommand("azure-devops history mentions")} --user "<name>" --from <date>`,
             ].join("\n")
         );
     }

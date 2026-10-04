@@ -1,5 +1,6 @@
 import { runTranscriptDoor } from "@genesiscz/utils/ai/transcripts/door";
 import { THOUGHT_MODES, TRANSCRIPT_FORMATS } from "@genesiscz/utils/ai/transcripts/render";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
@@ -19,7 +20,7 @@ export interface LogsOptions {
 export async function printTranscript(options: LogsOptions, follow: boolean, subcommand: string): Promise<void> {
     const store = new CodexSessionStore();
     await runTranscriptDoor({
-        tool: `tools codex ${subcommand}`,
+        tool: `${toolCommand("codex")} ${subcommand}`,
         subcommand: [subcommand],
         provider: "codex",
         query: options.name,

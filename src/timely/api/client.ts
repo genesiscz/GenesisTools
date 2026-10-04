@@ -1,5 +1,6 @@
 import type { OAuth2Tokens, OAuthApplication } from "@app/timely/types";
 import { tokenNeedsRefresh } from "@app/timely/utils/token-status";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import * as p from "@genesiscz/utils/prompts/p";
@@ -70,7 +71,7 @@ export class TimelyApiClient {
     private async getAccessToken(): Promise<string> {
         const tokens = await this.storage.getConfigValue<OAuth2Tokens>("tokens");
         if (!tokens?.access_token) {
-            throw new Error("Not authenticated. Run 'tools timely login' first.");
+            throw new Error(`Not authenticated. Run '${toolCommand("timely login")}' first.`);
         }
 
         if (tokenNeedsRefresh(tokens)) {

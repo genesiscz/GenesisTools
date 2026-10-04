@@ -1,3 +1,4 @@
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger } from "@genesiscz/utils/logger";
 import {
     type AxLivePermissions,
@@ -114,7 +115,9 @@ export async function requestPermissions(input: {
     if (missing.length > 0) {
         const labels = pending.filter((check) => missing.includes(check.id)).map((check) => check.label);
         const why = signal.aborted ? "Stopped" : `Still missing after ${Math.round(timeoutMs / 1000)} s`;
-        say(`${why}: ${labels.join(", ")}. Turn on ${name} in the pane, then run \`tools control doctor\`.`);
+        say(
+            `${why}: ${labels.join(", ")}. Turn on ${name} in the pane, then run \`${toolCommand("control doctor")}\`.`
+        );
     }
 
     return { granted: requestable.map((check) => check.id).filter((id) => granted.has(id)), missing };
@@ -132,7 +135,7 @@ function askFor(input: {
     if (check.status === "denied") {
         const reset = tccResetCommand(check.id, holder);
         say(
-            `${check.label} is denied for ${name}, and macOS will not ask again. Turn on ${name} in the pane that opens${reset ? `, or run \`${reset}\` and then \`tools control permissions request\` again` : ""}.`
+            `${check.label} is denied for ${name}, and macOS will not ask again. Turn on ${name} in the pane that opens${reset ? `, or run \`${reset}\` and then \`${toolCommand("control permissions request")}\` again` : ""}.`
         );
     } else {
         const prompted = boundary.prompt(check.id);

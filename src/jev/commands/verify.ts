@@ -1,5 +1,6 @@
 import { selectedProvider } from "@genesiscz/utils/ai/evaluation/cli";
 import { createEvaluator, type Evaluator } from "@genesiscz/utils/ai/evaluation/service";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
 import { failPlain, printResult, withSigint } from "../lib/cli-output";
@@ -60,7 +61,9 @@ export function registerVerify(program: Command): void {
 
 async function runVerify(program: Command, options: VerifyOptions): Promise<void> {
     if (!options.claims) {
-        throw new Error("verify needs --claims <file|->. Run tools jev verify --list to see the templates.");
+        throw new Error(
+            `verify needs --claims <file|->. Run ${toolCommand("jev verify")} --list to see the templates.`
+        );
     }
 
     if (!options.against && !options.againstDir) {

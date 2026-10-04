@@ -4,6 +4,7 @@ import { requireTimeLogConfig, requireTimeLogUser } from "@app/azure-devops/util
 import type { TimeEntryRecord, TimeSeriesValue } from "@genesiscz/utils/clarity";
 import { ClarityApi } from "@genesiscz/utils/clarity";
 import { suggestCommand } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { addDay, getDaysInPeriodInclusive, isDateInHalfOpenRange } from "@genesiscz/utils/date";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
@@ -106,7 +107,7 @@ function renderWeekPreview(plan: WeekPlan, noteText: string): void {
             out.println(pc.yellow(`    #${wi.workItemId}: ${formatMinutes(wi.minutes)}`));
         }
 
-        out.println(pc.yellow("  Run 'tools clarity mappings' to create mappings"));
+        out.println(pc.yellow(`  Run '${toolCommand("clarity mappings")}' to create mappings`));
     }
 
     if (noteText) {
@@ -208,8 +209,10 @@ export function registerFillCommand(program: Command): void {
 
             if (unmapped.blocked) {
                 out.error("Refusing to fill an incomplete month. Map these work items first:");
-                out.error("  tools clarity mappings --date <YYYY-MM> --unassigned");
-                out.error("  tools clarity mappings --date <YYYY-MM> --assign <workItemId>:<clarityTaskId>");
+                out.error(`  ${toolCommand("clarity mappings", "--date", "<YYYY-MM>", "--unassigned")}`);
+                out.error(
+                    `  ${toolCommand("clarity mappings", "--date", "<YYYY-MM>", "--assign", "<workItemId>:<clarityTaskId>")}`
+                );
                 out.error("Pass --allow-unmapped to fill the mapped work items anyway.");
                 process.exit(1);
             }
@@ -225,7 +228,7 @@ export function registerFillCommand(program: Command): void {
             const allDates = [...allDatesSet].sort();
 
             if (allDates.length === 0 && unmappedByWi.size > 0) {
-                out.println(pc.yellow("\nAll entries are unmapped. Run 'tools clarity mappings' first."));
+                out.println(pc.yellow(`\nAll entries are unmapped. Run '${toolCommand("clarity mappings")}' first.`));
                 return;
             }
 

@@ -1,4 +1,5 @@
 import type { UnifiedMCPConfig, UnifiedMCPServerConfig } from "@app/mcp-manager/utils/providers/types.js";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { GATEWAY_HEADER } from "../auth/constants.ts";
@@ -66,7 +67,7 @@ function loginRequiredResponse(name: string, server: UnifiedMCPServerConfig, lau
 
     if (outcome === "cooling-down") {
         return jsonRpcError(
-            `${name} needs a login and the last attempt failed. Run tools mcp-manager auth login ${name}${link}${code}`
+            `${name} needs a login and the last attempt failed. Run ${toolCommand("mcp-manager auth login", name)}${link}${code}`
         );
     }
 
@@ -159,7 +160,9 @@ export async function startGatewayServer(
                 localToken = await ensureGatewayClientToken();
 
                 if (!localTokenMatches(request, localToken)) {
-                    return jsonRpcError(`missing ${GATEWAY_HEADER}. Run tools mcp-manager auth login ${name}`);
+                    return jsonRpcError(
+                        `missing ${GATEWAY_HEADER}. Run ${toolCommand("mcp-manager auth login", name)}`
+                    );
                 }
             }
 

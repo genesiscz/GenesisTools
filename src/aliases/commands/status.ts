@@ -1,4 +1,5 @@
 import { bar, readState } from "@app/aliases/lib/analysis";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
 
@@ -7,7 +8,7 @@ async function statusAction(): Promise<void> {
     const entries = Object.values(state.paths).sort((a, b) => b.level - a.level);
 
     if (entries.length === 0) {
-        out.result("No alias-level state yet. Run `tools aliases analyze` first.");
+        out.result(`No alias-level state yet. Run \`${toolCommand("aliases analyze")}\` first.`);
         return;
     }
 

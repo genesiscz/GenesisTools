@@ -1,6 +1,7 @@
 import { readUnifiedConfig, setGlobalOptions, writeUnifiedConfig } from "@app/mcp-manager/utils/config.utils.js";
 import type { UnifiedMCPServerConfig } from "@app/mcp-manager/utils/providers/types.js";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { ui } from "@genesiscz/utils/cli/ui";
 import { logger, out } from "@genesiscz/utils/logger";
 import * as p from "@genesiscz/utils/prompts/p";
@@ -43,7 +44,9 @@ export async function authLogin(
         }
 
         if (remotes.length === 0) {
-            logger.error("No HTTP MCP servers in unified config. Add one with tools mcp-manager install first.");
+            logger.error(
+                `No HTTP MCP servers in unified config. Add one with ${toolCommand("mcp-manager install")} first.`
+            );
             process.exitCode = 1;
 
             return;
@@ -65,7 +68,7 @@ export async function authLogin(
     }
 
     if (!name || !config.mcpServers[name]) {
-        logger.error(`Unknown server '${name ?? ""}'. Add it with tools mcp-manager install first.`);
+        logger.error(`Unknown server '${name ?? ""}'. Add it with ${toolCommand("mcp-manager install")} first.`);
         process.exitCode = 1;
 
         return;
@@ -245,7 +248,7 @@ export async function authRefresh(serverName: string | undefined): Promise<void>
     const auth = serverAuth(config.mcpServers[serverName]);
 
     if (!auth?.tokenEndpoint || !auth.resource) {
-        logger.error(`Run tools mcp-manager auth login ${serverName} first`);
+        logger.error(`Run ${toolCommand("mcp-manager auth login", serverName)} first`);
         process.exitCode = 1;
 
         return;

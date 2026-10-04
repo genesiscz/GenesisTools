@@ -1,4 +1,5 @@
 /** @jsxImportSource @opentui/solid */
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger } from "@genesiscz/utils/logger";
 import type { JSX } from "@opentui/solid";
 import { ErrorBoundary as SolidErrorBoundary } from "solid-js";
@@ -21,7 +22,7 @@ function renderError(err: Error) {
                 <strong>TUI error</strong>
             </text>
             <text fg={THEME.fg}>{err.message}</text>
-            <text fg={THEME.fgDim}>Retry with `tools doctor --plain` for the linear renderer.</text>
+            <text fg={THEME.fgDim}>Retry with `{toolCommand("doctor", "--plain")}` for the linear renderer.</text>
         </box>
     );
 }

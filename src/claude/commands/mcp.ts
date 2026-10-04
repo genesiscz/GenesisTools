@@ -1,4 +1,5 @@
 import { registerMcpInstallCommand } from "@app/genesis-tools-mcp/lib/mcp-install";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
 
@@ -9,7 +10,7 @@ export function registerMcpCommand(program: Command): void {
         .command("mcp")
         .description(
             "Run the genesis-tools MCP server (stdio) — exposes question_answer + boards " +
-                "(alias of tools genesis-tools-mcp). " +
+                `(alias of ${toolCommand("genesis-tools-mcp")}). ` +
                 "Set GENESIS_TOOLS_MCP_CAPABILITIES (comma-delimited, e.g. question_answer,boards) to restrict."
         )
         .action(async () => {

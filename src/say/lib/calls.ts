@@ -1,6 +1,7 @@
 import { Database } from "bun:sqlite";
 import { mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { type Migration, runMigrations } from "@genesiscz/utils/database/migrations";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
@@ -25,7 +26,7 @@ const ATTENTION_PATTERN = /attention/i;
 export const CALLS_MIGRATIONS: Migration[] = [
     {
         id: "001-say-calls",
-        description: "one row per tools say invocation: the caller, the request and the outcome",
+        description: `one row per ${toolCommand("say")} invocation: the caller, the request and the outcome`,
         apply: (db) => {
             db.exec(`CREATE TABLE IF NOT EXISTS calls (
                 id TEXT PRIMARY KEY,

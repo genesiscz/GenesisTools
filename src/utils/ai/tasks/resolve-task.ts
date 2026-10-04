@@ -1,3 +1,4 @@
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger } from "@genesiscz/utils/logger";
 import { AiConfigStore } from "../config/AiConfigStore";
 import type { TaskName } from "../config/schema";
@@ -72,7 +73,7 @@ export class NoProviderForTaskError extends Error {
         super(
             `No available provider supports task "${task}". Tried: ${tried.join(", ") || "nothing"}. ` +
                 `Last resolution error: ${cause}. ` +
-                `Configure one with: tools ai config default set ${task} <@account/...>`
+                `Configure one with: ${toolCommand("ai config default set")} ${task} <@account/...>`
         );
         this.name = "NoProviderForTaskError";
     }

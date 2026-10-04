@@ -1,5 +1,6 @@
 import * as path from "node:path";
 import { runTool } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
 import { handleReadmeFlag } from "@genesiscz/utils/readme";
@@ -40,7 +41,7 @@ function showHelp() {
 ${chalk.bold("fsevents-profile")} - Profile file system events using fsevents
 
 ${chalk.bold("Usage:")}
-  tools fsevents-profile [options] [path]
+  ${toolCommand("fsevents-profile")} [options] [path]
 
 ${chalk.bold("Arguments:")}
   [path]        Path to monitor (default: "/")
@@ -53,11 +54,11 @@ ${chalk.bold("Options:")}
   -h, --help                Show this help message
 
 ${chalk.bold("Examples:")}
-  tools fsevents-profile                    # Monitor entire filesystem for 15 seconds
-  tools fsevents-profile /Users             # Monitor user directory for 15 seconds
-  tools fsevents-profile -d 30              # Monitor for 30 seconds
-  tools fsevents-profile -t 5 /tmp          # Monitor /tmp, show top 5 directories
-  tools fsevents-profile --watchers         # Show processes watching fsevents
+  ${toolCommand("fsevents-profile")}                    # Monitor entire filesystem for 15 seconds
+  ${toolCommand("fsevents-profile")} /Users             # Monitor user directory for 15 seconds
+  ${toolCommand("fsevents-profile")} -d 30              # Monitor for 30 seconds
+  ${toolCommand("fsevents-profile")} -t 5 /tmp          # Monitor /tmp, show top 5 directories
+  ${toolCommand("fsevents-profile")} --watchers         # Show processes watching fsevents
 
 ${chalk.bold("Notes:")}
   Press Ctrl+C at any time to stop monitoring early and see the analysis results.
@@ -189,7 +190,7 @@ async function showFseventsWatchers() {
 
     if (!env.device.isRoot()) {
         logger.error("This command requires root privileges to run fs_usage.");
-        logger.info(`Please re-run with sudo: ${chalk.cyan("sudo tools fsevents-profile --watchers")}`);
+        logger.info(`Please re-run with sudo: ${chalk.cyan(`sudo ${toolCommand("fsevents-profile", "--watchers")}`)}`);
         process.exit(1);
     }
 

@@ -3,6 +3,7 @@ import { readUnifiedConfig, stripMeta, writeUnifiedConfig } from "@app/mcp-manag
 import type { MCPProvider } from "@app/mcp-manager/utils/providers/types.js";
 import { WriteResult } from "@app/mcp-manager/utils/providers/types.js";
 import type { MCPProviderName, PerProjectEnabledState } from "@app/mcp-manager/utils/types.js";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger } from "@genesiscz/utils/logger";
 
 export interface ToggleOptions {
@@ -31,7 +32,7 @@ export async function toggleServer(
     const config = await readUnifiedConfig();
 
     if (Object.keys(config.mcpServers).length === 0) {
-        logger.warn("No servers found in unified config. Run 'tools mcp-manager config' to add servers.");
+        logger.warn(`No servers found in unified config. Run '${toolCommand("mcp-manager config")}' to add servers.`);
         return;
     }
 
@@ -153,7 +154,7 @@ export async function toggleServer(
             // If disabling, server must exist in unified config
             if (!enabled && !serverConfig) {
                 logger.warn(
-                    `Server '${serverName}' not found in unified config. Run 'tools mcp-manager config' to add it first.`
+                    `Server '${serverName}' not found in unified config. Run '${toolCommand("mcp-manager config")}' to add it first.`
                 );
                 continue;
             }

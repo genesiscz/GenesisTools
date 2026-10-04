@@ -1,5 +1,6 @@
 /** scaffold / cheatsheet / mcp — the scripting doors. */
 import { join } from "node:path";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
@@ -23,7 +24,7 @@ export function registerScripting(program: Command): void {
     program
         .command("scaffold")
         .description(
-            "create a CDP scratch script in the `tools scripts` store (versioned, listable, runnable there) from a probed recipe"
+            `create a CDP scratch script in the \`${toolCommand("scripts")}\` store (versioned, listable, runnable there) from a probed recipe`
         )
         .argument("[name]", "script name (letters, digits, dash, underscore)")
         .option("--recipe <recipe>", "which recipe to start from (see --list)")
@@ -36,8 +37,8 @@ ${recipeHelpLines().join("\n")}
 
 Examples:
   ${suggest(["scaffold", "colRedirects", "--recipe", "redirect-chain"])}
-  tools scripts run colRedirects -- --port 9222 --match idp.example.com
-  tools scripts show colRedirects`
+  ${toolCommand("scripts run", "colRedirects", "--", "--port", "9222", "--match", "idp.example.com")}
+  ${toolCommand("scripts show", "colRedirects")}`
         )
         .action(async (name: string | undefined, opts: { recipe?: string; list?: boolean }) => {
             if (opts.list || !name) {
@@ -62,7 +63,7 @@ Examples:
             const result = await scaffoldRecipeScript({ name, recipe });
             out.log.success(`created ${result.file}`);
             out.log.info(`  run:  ${result.runHint}`);
-            out.log.info(`  edit: it is yours — tools scripts show ${name}`);
+            out.log.info(`  edit: it is yours — ${toolCommand("scripts show", name)}`);
             process.exit(0);
         });
 

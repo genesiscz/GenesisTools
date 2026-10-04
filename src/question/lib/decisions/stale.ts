@@ -1,6 +1,7 @@
 import { resolve } from "node:path";
 import { loadHooksConfig } from "@app/agents/lib/hooks/config";
 import { isTaskRegistered, registerTask, unregisterTask } from "@app/daemon/lib/register";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger } from "@genesiscz/utils/logger";
 import { dispatchNotification } from "@genesiscz/utils/notifications";
 import { shellCommandLine } from "@genesiscz/utils/shell/quote";
@@ -66,7 +67,7 @@ export async function installStaleTask(): Promise<void> {
         every: STALE_TASK_EVERY,
         retries: 0,
         timeoutMs: 60_000,
-        description: "Notify blocking decisions waiting past decisions.staleness (tools question stale)",
+        description: `Notify blocking decisions waiting past decisions.staleness (${toolCommand("question stale")})`,
         overwrite: true,
         notify: false,
     });

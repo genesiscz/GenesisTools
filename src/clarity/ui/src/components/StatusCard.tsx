@@ -1,3 +1,4 @@
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { useQuery } from "@tanstack/react-query";
 import { Badge } from "@ui/components/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@ui/components/card";
@@ -116,8 +117,9 @@ function DirectoryWarning({ projectCwd }: { projectCwd: string }) {
                 <span className="font-mono text-foreground">{projectCwd}</span>
                 <br />
                 Config is read from this directory. Run{" "}
-                <span className="font-mono text-foreground/80">tools clarity ui</span> from the same folder where you
-                ran <span className="font-mono text-foreground/80">tools azure-devops configure</span>.
+                <span className="font-mono text-foreground/80">{toolCommand("clarity ui")}</span> from the same folder
+                where you ran{" "}
+                <span className="font-mono text-foreground/80">{toolCommand("azure-devops configure")}</span>.{""}
             </div>
         </div>
     );
@@ -169,7 +171,7 @@ function AdoSection({ ado }: { ado: GranularStatus["ado"] }) {
             ) : (
                 <div className="ml-4 text-xs font-mono text-muted-foreground">
                     Not configured — set up below or run:{" "}
-                    <span className="font-mono">tools azure-devops configure &lt;url&gt;</span>
+                    <span className="font-mono">{toolCommand("azure-devops configure")} &lt;url&gt;</span>
                 </div>
             )}
             <AuthError state={ado} />
@@ -202,7 +204,7 @@ function TimelogSection({ timelog }: { timelog: GranularStatus["timelog"] }) {
             ) : (
                 <div className="ml-4 text-xs font-mono text-muted-foreground">
                     Not configured — set up below or run:{" "}
-                    <span className="font-mono">tools azure-devops timelog configure</span>
+                    <span className="font-mono">{toolCommand("azure-devops timelog configure")}</span>
                 </div>
             )}
             <AuthError state={timelog} />

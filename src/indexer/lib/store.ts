@@ -2,6 +2,7 @@ import { Database } from "bun:sqlite";
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
 import { Embedder } from "@genesiscz/utils/ai/tasks/Embedder";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { attachReadonly, detachQuietly } from "@genesiscz/utils/database/attach";
 import { countActiveEmbeddings, countPairedEmbeddings } from "@genesiscz/utils/database/embedding-stats";
 import { getPendingMigrations, runMigrations } from "@genesiscz/utils/database/migrations";
@@ -311,7 +312,7 @@ export function checkDateRangeCoverage(args: {
 
     return (
         `Requested range partially outside indexed coverage (${minDay} -> ${maxDay}). ` +
-        `Run "tools macos mail index" to refresh.\n`
+        `Run "${toolCommand("macos mail index")}" to refresh.\n`
     );
 }
 
@@ -355,7 +356,7 @@ export async function searchIndexReadonly(
                 pendingWarnedFor.add(indexName);
                 readonlySearchWarn(
                     opts,
-                    `[indexer] outdated schema for "${indexName}" — next "tools macos mail index sync" will apply: ${pending.map((m) => m.id).join(", ")}`
+                    `[indexer] outdated schema for "${indexName}" — next "${toolCommand("macos mail index")}" will apply: ${pending.map((m) => m.id).join(", ")}`
                 );
             }
         }
@@ -381,7 +382,7 @@ export async function searchIndexReadonly(
             if (ageMs > staleThresholdMs) {
                 readonlySearchWarn(
                     opts,
-                    `[indexer] "${indexName}" status is "in-progress" but last update was ${Math.round(ageMs / 60000)}min ago — likely interrupted. Run: tools macos mail index sync`
+                    `[indexer] "${indexName}" status is "in-progress" but last update was ${Math.round(ageMs / 60000)}min ago — likely interrupted. Run: ${toolCommand("macos mail index")}`
                 );
             }
         }

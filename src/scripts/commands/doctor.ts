@@ -6,6 +6,7 @@ import { peekAccessToken } from "@app/mcp-manager/lib/auth/tokens.ts";
 import { gatewayHealth } from "@app/mcp-manager/lib/gateway/ensure.ts";
 import { readUnifiedConfigReadOnly } from "@app/mcp-manager/utils/config.utils.js";
 import { suggestCommand } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { ui } from "@genesiscz/utils/cli/ui";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
@@ -147,7 +148,7 @@ export function registerDoctor(program: Command): void {
                     findings.push({
                         level: "warn",
                         what: `'${entry.name}' binds server(s) no provider lists any more: ${missingServers.join(", ")}`,
-                        fix: `${suggestCommand("tools scripts", { replaceCommand: ["servers", "--refresh"] })}, or re-enable via tools mcp-manager`,
+                        fix: `${suggestCommand("tools scripts", { replaceCommand: ["servers", "--refresh"] })}, or re-enable via ${toolCommand("mcp-manager")}`,
                     });
                 }
 

@@ -3,6 +3,7 @@
 import { join } from "node:path";
 import * as p from "@clack/prompts";
 import { enhanceHelp, runTool, suggestCommand } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger, out } from "@genesiscz/utils/logger";
 import { Command } from "commander";
 import pc from "picocolors";
@@ -55,7 +56,7 @@ program
 
             if (profile.highlightCount > 0) {
                 out.log.info(
-                    `${profile.highlightCount} highlights — ${pc.cyan(`tools instagram highlights ${username}`)}`
+                    `${profile.highlightCount} highlights — ${pc.cyan(`${toolCommand("instagram highlights")} ${username}`)}`
                 );
             }
         } catch (error) {
@@ -114,7 +115,9 @@ program
             }
 
             displayHighlights(info.highlights);
-            out.log.info(`Media needs a session — ${pc.cyan(`tools instagram highlight ${username} <id> --download`)}`);
+            out.log.info(
+                `Media needs a session — ${pc.cyan(`${toolCommand("instagram highlight")} ${username} <id> --download`)}`
+            );
         } catch (error) {
             explainError(error);
             process.exit(1);
@@ -183,7 +186,7 @@ program
         if (!session) {
             out.log.warn("No session cookie resolved — only anonymous commands will work.");
             out.log.info(
-                `Set ${pc.cyan("IG_SESSIONID")}, or run ${pc.cyan("tools instagram session --use-env NAME")}.`
+                `Set ${pc.cyan("IG_SESSIONID")}, or run ${pc.cyan(toolCommand("instagram session", "--use-env", "NAME"))}.`
             );
 
             if (config.sessionIdEnv) {

@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { type Logger, logger as rootLogger } from "@genesiscz/utils/logger";
 import { parseTranscludeText, type Segment, type TokenSegment } from "./parse";
 import { redactSecretsInText } from "./redact";
@@ -219,7 +220,7 @@ export function contentSignature(content: string): string {
 
 /** The shell line that re-resolves a token, single-quoted so a `"` inside it survives. */
 export function recheckCommand(raw: string): string {
-    return `tools question tokens resolve '${raw.replace(/'/g, "'\\''")}'`;
+    return `${toolCommand("question tokens resolve")} '${raw.replace(/'/g, "'\\''")}'`;
 }
 
 function formatCaptureTime(iso: string): string {

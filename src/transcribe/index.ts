@@ -23,6 +23,7 @@ import { runTool } from "@genesiscz/utils/cli";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli/executor.ts";
 import { isQuietOutput } from "@genesiscz/utils/cli/output-mode.ts";
 import { createQuietSpinner } from "@genesiscz/utils/cli/quiet-spinner.ts";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { copyToClipboard } from "@genesiscz/utils/clipboard.ts";
 import { env } from "@genesiscz/utils/env";
 import { formatBytes, formatDuration } from "@genesiscz/utils/format.ts";
@@ -198,7 +199,7 @@ async function runTranscription(filePath: string, opts: TranscribeFlags): Promis
 // ============================================
 
 async function interactiveMode(): Promise<void> {
-    p.intro(pc.bgCyan(pc.black(" tools transcribe ")));
+    p.intro(pc.bgCyan(pc.black(` ${toolCommand("transcribe")} `)));
 
     const filePath = await p.text({
         message: "Audio file or URL:",
@@ -378,7 +379,7 @@ const program = new Command()
     })
     .addHelpText(
         "after",
-        "\nExamples:\n  $ tools transcribe meeting.m4a\n  $ tools transcribe https://youtu.be/dQw4w9WgXcQ\n  $ tools transcribe https://x.com/user/status/123 --provider deepgram\n  $ tools transcribe https://cdn.example.com/talk.mp4\n"
+        `\nExamples:\n  $ ${toolCommand("transcribe")} meeting.m4a\n  $ ${toolCommand("transcribe")} https://youtu.be/dQw4w9WgXcQ\n  $ ${toolCommand("transcribe")} https://x.com/user/status/123 --provider deepgram\n  $ ${toolCommand("transcribe")} https://cdn.example.com/talk.mp4\n`
     )
     .action(async (file: string | undefined, opts: TranscribeFlags) => {
         if (!file) {

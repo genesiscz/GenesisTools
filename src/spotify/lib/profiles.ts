@@ -7,6 +7,7 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { bootstrapRoots, expandHome, legacyRegistryPath, registryPath } from "@app/spotify/lib/paths";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
@@ -120,7 +121,7 @@ export function getProfile(name?: string): Profile {
 
         throw new Error(
             `no profile "${want}". Known: ${known}. Add one with:\n` +
-                `  tools spotify profile add ${want} --history <dir> [--data <dir>]`
+                `  ${toolCommand("spotify profile add", want, "--history", "<dir>", "[--data", "<dir>]")}`
         );
     }
 

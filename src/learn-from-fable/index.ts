@@ -1,4 +1,5 @@
 import { runTool, suggestCommand } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger, out } from "@genesiscz/utils/logger";
 import { Command } from "commander";
 import { bootstrapCommand } from "./commands/bootstrap";
@@ -153,7 +154,7 @@ function addMineFlags(cmd: ReturnType<Command["command"]>): ReturnType<Command["
         .option("--max-per-session <n>", "Episode cap per session", "4")
         .option("--model <id>", "Model id (default: config models.mine)")
         .option("--backend <name>", "Runner backend: ai-proxy | grok | claude-code", "ai-proxy")
-        .option("--cc-profile <name>", "claude-code backend: tools cc run profile")
+        .option("--cc-profile <name>", `claude-code backend: ${toolCommand("cc")} run profile`)
         .option("--session <path...>", "Explicit session file(s), overrides selection")
         .option("--session-concurrency <n>", "Sessions mined at once (each fans out its own windows)", "3")
         .option("--effort <level>", "Reasoning effort for model calls: low | medium | high")

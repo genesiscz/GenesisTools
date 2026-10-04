@@ -2,6 +2,7 @@
 
 import * as p from "@clack/prompts";
 import { enhanceHelp, isInteractive, runTool } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { out } from "@genesiscz/utils/logger";
 import { withCancel } from "@genesiscz/utils/prompts/clack/helpers";
 import { Command } from "commander";
@@ -122,7 +123,7 @@ async function maybeKillProcessesForPort(
         pidsToKill = [...new Set(processes.map((processInfo) => processInfo.pid))];
     } else if (!isInteractive()) {
         p.log.info(
-            `Non-interactive mode: re-run with ${pc.cyan("tools port --kill --yes <number>")} to terminate these PIDs.`
+            `Non-interactive mode: re-run with ${pc.cyan(toolCommand("port", "--kill", "--yes", "<number>"))} to terminate these PIDs.`
         );
         return;
     } else {
@@ -242,7 +243,7 @@ async function cleanPorts(options: { yes?: boolean }): Promise<void> {
     if (!options.yes) {
         if (!isInteractive()) {
             p.log.info(
-                `Re-run with ${pc.cyan("tools port clean --yes")} to terminate these listeners in non-interactive mode.`
+                `Re-run with ${pc.cyan(toolCommand("port clean", "--yes"))} to terminate these listeners in non-interactive mode.`
             );
             return;
         }

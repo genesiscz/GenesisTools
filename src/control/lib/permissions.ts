@@ -19,6 +19,7 @@ import {
     TCC_USER_DB_PATH,
     type TccRow,
 } from "@app/macos/lib/permissions/tcc";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
@@ -163,8 +164,7 @@ export interface ControlAuditReport {
     findings: string[];
 }
 
-export const DARWINKIT_NOTE =
-    "tools control does not use DarwinKit. The Accessibility client is native/ax-tool; a `darwinkit serve` process on this Mac belongs to other tools (calendar, reminders, mail) and holds no grant tools control depends on.";
+export const DARWINKIT_NOTE = `${toolCommand("control")} does not use DarwinKit. The Accessibility client is native/ax-tool; a \`darwinkit serve\` process on this Mac belongs to other tools (calendar, reminders, mail) and holds no grant ${toolCommand("control")} depends on.`;
 
 const PEEKABOO_IDENTITIES = ["boo.peekaboo.mac", "boo.peekaboo.peekaboo"];
 const TCC_AX = "kTCCServiceAccessibility";
@@ -419,7 +419,7 @@ export function buildChecks(input: {
             status,
             identity: route.identity,
             pane: settingsPane(label),
-            openCommand: `tools macos permissions open --pane ${label.toLowerCase().replace(/ /g, "-")}`,
+            openCommand: toolCommand("macos permissions open", "--pane", label.toLowerCase().replace(/ /g, "-")),
             source,
             detail,
             usedBy,
@@ -457,7 +457,7 @@ export function buildChecks(input: {
             status: automationStatus,
             identity: route.identity,
             pane: settingsPane("Automation"),
-            openCommand: "tools macos permissions open --pane automation",
+            openCommand: toolCommand("macos permissions open", "--pane", "automation"),
             source: "TCC.db only (user); a live probe would send an Apple event and prompt",
             detail: input.user.readable
                 ? targets.length === 0
@@ -517,7 +517,7 @@ function launcherFix(route: ResponsibleRoute): string {
         case "env":
             return `Fix: unset GENESIS_TOOLS_NO_APP, or turn the grants below on for ${name}.`;
         case "marker":
-            return `Fix: \`tools macos permissions enable\`, or turn the grants below on for ${name}.`;
+            return `Fix: \`${toolCommand("macos permissions enable")}\`, or turn the grants below on for ${name}.`;
         default:
             return `Fix: turn the grants below on for ${name}, or build GenesisTools.app so one identity holds them for every terminal and agent. ${genesisAppBuildHint(route.toolchain)}`;
     }
@@ -529,7 +529,7 @@ function restoreLauncher(route: ResponsibleRoute): string {
         case "env":
             return "Unset GENESIS_TOOLS_NO_APP to use it.";
         case "marker":
-            return "Turn its launcher back on with `tools macos permissions enable`.";
+            return `Turn its launcher back on with \`${toolCommand("macos permissions enable")}\`.`;
         default:
             return genesisAppBuildHint(route.toolchain);
     }
@@ -595,15 +595,15 @@ function unwrappedFinding(route: ResponsibleRoute, checks: PermissionCheck[]): s
 
     // A process tree started under the app keeps its identity even with the launcher bypassed.
     if (route.holder.viaGenesisApp) {
-        return `${unwrapped}, but this process tree started under ${route.identity}, which holds every grant tools control needs. ${launcherFix(route)}`;
+        return `${unwrapped}, but this process tree started under ${route.identity}, which holds every grant ${toolCommand("control")} needs. ${launcherFix(route)}`;
     }
 
-    return `${unwrapped}, and ${route.identity} holds every grant tools control needs, so it works. GenesisTools.app would hold them once for every terminal and agent. ${restoreLauncher(route)}`;
+    return `${unwrapped}, and ${route.identity} holds every grant ${toolCommand("control")} needs, so it works. GenesisTools.app would hold them once for every terminal and agent. ${restoreLauncher(route)}`;
 }
 
 /** The verdict line when nothing is missing. */
 export function allGrantedSummary(route: ResponsibleRoute): string {
-    return `every grant tools control needs is held by ${route.identity}`;
+    return `every grant ${toolCommand("control")} needs is held by ${route.identity}`;
 }
 
 export function collectProblems(input: {
@@ -617,7 +617,7 @@ export function collectProblems(input: {
 
     if (route.routed && live && !live.viaGenesisApp) {
         problems.push(
-            `the launcher is installed but macOS held pid ${live.responsiblePid} (${live.responsibleBundleId || live.responsiblePath}) responsible for the probe, not GenesisTools.app; run \`tools macos permissions\` to check the bundle's signature.`
+            `the launcher is installed but macOS held pid ${live.responsiblePid} (${live.responsibleBundleId || live.responsiblePath}) responsible for the probe, not GenesisTools.app; run \`${toolCommand("macos permissions")}\` to check the bundle's signature.`
         );
     }
 
@@ -740,13 +740,13 @@ export function controlAudit(options: { all?: boolean } = {}): ControlAuditRepor
 
     if (manualAccessibilityOn.length > 0) {
         findings.push(
-            `AXManualAccessibility is on in ${manualAccessibilityOn.map((a) => a.name).join(", ")}: an assistive client asked for the AX tree, which is what every tools control --app call does, and nothing clears it (only a relaunch of the app does).`
+            `AXManualAccessibility is on in ${manualAccessibilityOn.map((a) => a.name).join(", ")}: an assistive client asked for the AX tree, which is what every ${toolCommand("control")} --app call does, and nothing clears it (only a relaunch of the app does).`
         );
     }
 
     if (enhancedUserInterfaceOn.length > 0) {
         findings.push(
-            `AXEnhancedUserInterface is on in ${enhancedUserInterfaceOn.map((a) => a.name).join(", ")}: tools control never sets it (it changes AppKit layout), so a VoiceOver-style client did.`
+            `AXEnhancedUserInterface is on in ${enhancedUserInterfaceOn.map((a) => a.name).join(", ")}: ${toolCommand("control")} never sets it (it changes AppKit layout), so a VoiceOver-style client did.`
         );
     }
 
@@ -755,7 +755,7 @@ export function controlAudit(options: { all?: boolean } = {}): ControlAuditRepor
             `peekaboo's local runtime lacks ${peekaboo.local
                 .filter((g) => !g.granted)
                 .map((g) => g.name)
-                .join(", ")} when spawned the way tools control spawns it.`
+                .join(", ")} when spawned the way ${toolCommand("control")} spawns it.`
         );
     }
 

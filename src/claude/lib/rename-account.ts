@@ -1,3 +1,4 @@
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger } from "@genesiscz/utils/logger";
 import type { WarmupConfig } from "./config";
 import { UsageHistoryDb } from "./usage/history-db";
@@ -49,7 +50,7 @@ export function partialRenameAdvice(oldName: string, newName: string): string[] 
     return [
         `Re-running the rename cannot fix these: AIConfig no longer knows "${oldName}".`,
         "Rename back to get one consistent set of names again, then retry once the store is writable:",
-        `  tools claude config rename ${newName} --to ${oldName}`,
+        `  ${toolCommand("claude config rename")} ${newName} --to ${oldName}`,
     ];
 }
 

@@ -1,6 +1,7 @@
 import type { MasterListResponse } from "@app/shops/types";
 import { BrowseCard } from "@app/shops/ui/components/BrowseCard";
 import { EmptyState } from "@app/shops/ui/components/EmptyState";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import {
     Pagination,
     PaginationContent,
@@ -36,7 +37,7 @@ export function BrowseGrid({ data, isLoading, page, onPageChange }: BrowseGridPr
             <EmptyState
                 icon={<LayoutGrid />}
                 title="NO MASTERS"
-                body="No products match the current filters. Try clearing brand/category or running a crawl: tools shops crawl --shop rohlik."
+                body={`No products match the current filters. Try clearing brand/category or running a crawl: ${toolCommand("shops crawl", "--shop", "rohlik")}.`}
             />
         );
     }

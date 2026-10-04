@@ -14,6 +14,7 @@ import { TimeLogApi } from "@app/azure-devops/timelog-api";
 import type { AzureConfigWithTimeLog, TimeLogUser } from "@app/azure-devops/types";
 import { type ClarityConfig, getConfig as getClarityConfig } from "@app/clarity/config";
 import { ClarityApi } from "@genesiscz/utils/clarity";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 
 export type AuthStatus = "ok" | "expired" | "error" | "unknown";
 
@@ -102,7 +103,9 @@ export async function pingTimelog(config: AzureConfigWithTimeLog | null): Promis
         return {
             status: looksAuth ? "expired" : "error",
             error: msg,
-            fix: looksAuth ? "tools azure-devops timelog configure  # rotates the functions key" : undefined,
+            fix: looksAuth
+                ? `${toolCommand("azure-devops timelog configure")}  # rotates the functions key`
+                : undefined,
         };
     }
 }

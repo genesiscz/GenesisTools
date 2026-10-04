@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { execPath } from "node:process";
 import type { CalendarInfo, SourceInfo } from "@genesiscz/darwinkit";
 import { ensureBinary } from "@genesiscz/darwinkit";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
 import {
@@ -62,7 +63,7 @@ export function buildVerdict(input: {
         return {
             verdict:
                 "macOS has recorded no Calendar answer for this process, and the doctor did not ask: reading the status would show the permission dialog and write a durable TCC grant, which a diagnostic must never do.",
-            fix: `Run \`tools macos calendar list-calendars\` once and answer the macOS dialog, or grant it yourself: ${fix}`,
+            fix: `Run \`${toolCommand("macos calendar list-calendars")}\` once and answer the macOS dialog, or grant it yourself: ${fix}`,
         };
     }
 

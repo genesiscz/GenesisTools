@@ -1,4 +1,5 @@
 import { resolve } from "node:path";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { shellQuote } from "@genesiscz/utils/shell/quote";
 import { findProjectRoot } from "./context";
 import { TodoStore } from "./store";
@@ -71,7 +72,7 @@ export function rerunWithProjectCommand(projectRoot: string): string {
         args.push("--project", quoteArg(projectRoot));
     }
 
-    return `tools todo ${args.join(" ")}`;
+    return `${toolCommand("todo")} ${args.join(" ")}`;
 }
 
 /**
@@ -106,7 +107,7 @@ export async function reportMissingTodo(id: string, searchedProjectRoot: string)
         const lines = [
             `Todo not found: ${id}`,
             `  searched project: ${searchedProjectRoot}`,
-            "  No other project store holds this id either. `tools todo list --all` lists every project.",
+            `  No other project store holds this id either. \`${toolCommand("todo list")} --all\` lists every project.`,
         ];
 
         return { found: null, lines, message: lines.join("\n") };
@@ -117,7 +118,7 @@ export async function reportMissingTodo(id: string, searchedProjectRoot: string)
             `Todo not found in this project: ${id}`,
             `  searched project: ${searchedProjectRoot}`,
             `  id lives in:      ${UNRECORDED_ROOT} — its store has no meta.json`,
-            "  `tools todo list --all` lists every project.",
+            `  \`${toolCommand("todo list")} --all\` lists every project.`,
         ];
 
         return { found, lines: unrecorded, message: unrecorded.join("\n") };

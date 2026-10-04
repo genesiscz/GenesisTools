@@ -1,4 +1,5 @@
 import type { EvaluationProviderId } from "@genesiscz/utils/ai/evaluation/types";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 
 let provider: EvaluationProviderId = "vercel";
@@ -22,7 +23,7 @@ export async function api<T>({
         signal,
     });
     if (!response.headers.get("content-type")?.includes("application/json")) {
-        throw new Error("Start this dashboard with tools jev dashboard to enable the local API.");
+        throw new Error(`Start this dashboard with ${toolCommand("jev dashboard")} to enable the local API.`);
     }
 
     const data: T & { error?: string } = await response.json();

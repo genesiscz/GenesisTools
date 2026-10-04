@@ -13,6 +13,7 @@ import {
     revokeGrants,
 } from "@genesiscz/utils/ai/gate";
 import { suggestCommand, suggestEnumFlag } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { parseJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import { isGenesisAppRpcAvailable } from "@genesiscz/utils/macos/genesis-app-rpc";
@@ -69,7 +70,7 @@ export function registerGateCommands(program: Command): void {
         .option("--provider [value]", `Provider: ${GATE_PROVIDERS.join(", ")}`)
         .option(
             "--account <name>",
-            `Account name or id from \`tools ai accounts list\`; optional for ${GATE_API_KEY_PROVIDERS.join(", ")} (an account that stores a key, tagged ${GATE_ONLY_TAG} first)`
+            `Account name or id from \`${toolCommand("ai accounts list")}\`; optional for ${GATE_API_KEY_PROVIDERS.join(", ")} (an account that stores a key, tagged ${GATE_ONLY_TAG} first)`
         )
         .option("--json", "Print the full result as JSON")
         .option("--print-token", "Print only the token or key (for a provider's `!command` credential)")
@@ -101,7 +102,7 @@ export function registerGateCommands(program: Command): void {
 
                 if (result.provider === "anthropic-sub" && result.tokenKind === "access") {
                     out.log.warn(
-                        `"${result.account.name}" has no long-lived token, so this is an OAuth access token: it dies when any app refreshes the account. Attach one: tools claude login-long ${result.account.name}`
+                        `"${result.account.name}" has no long-lived token, so this is an OAuth access token: it dies when any app refreshes the account. Attach one: ${toolCommand("claude login-long")} ${result.account.name}`
                     );
                 }
 

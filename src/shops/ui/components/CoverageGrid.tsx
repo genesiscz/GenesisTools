@@ -1,6 +1,7 @@
 import type { CoverageResponse } from "@app/shops/types";
 import { CoverageShopCard } from "@app/shops/ui/components/CoverageShopCard";
 import { EmptyState } from "@app/shops/ui/components/EmptyState";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { Skeleton } from "@genesiscz/utils/ui/components/skeleton";
 import { ShoppingBasket } from "lucide-react";
 
@@ -25,7 +26,7 @@ export function CoverageGrid({ data, isLoading }: CoverageGridProps) {
             <EmptyState
                 icon={<ShoppingBasket />}
                 title="NO SHOPS REGISTERED"
-                body="Run tools shops db migrate then tools shops crawl --shop rohlik to populate."
+                body={`Run ${toolCommand("shops db migrate")} then ${toolCommand("shops crawl", "--shop", "rohlik")} to populate.`}
             />
         );
     }

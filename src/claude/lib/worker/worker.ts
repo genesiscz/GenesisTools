@@ -2,6 +2,7 @@ import { closeSync, existsSync, openSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { pinnedLaunchEnv } from "@app/claude/lib/launch-env";
 import { resolveClaudeBinaryForTeammates } from "@app/claude/lib/teammate-wrapper";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
 import { buildWorkerContract } from "@genesiscz/utils/worker/contract";
@@ -103,7 +104,7 @@ export function claimTurnLog(args: { store: ClaudeWorkerStore; name: string; tur
     } catch (err) {
         if ((err as NodeJS.ErrnoException).code === "EEXIST") {
             throw new Error(
-                `Turn ${turn} of claude worker '${name}' already has a transcript — another turn is running or died uncleanly. Read it with 'tools claude worker read --name ${name} --turn ${turn}'.`
+                `Turn ${turn} of claude worker '${name}' already has a transcript — another turn is running or died uncleanly. Read it with '${toolCommand("claude worker read")} --name ${name} --turn ${turn}'.`
             );
         }
 
@@ -226,7 +227,9 @@ export async function steerWorker(options: SteerWorkerOptions): Promise<ClaudeTu
     const store = new ClaudeWorkerStore();
     const meta = store.readMeta(options.name);
     if (!meta) {
-        throw new Error(`Claude worker not found: ${options.name}. Start one with 'tools claude worker spawn'.`);
+        throw new Error(
+            `Claude worker not found: ${options.name}. Start one with '${toolCommand("claude worker spawn")}'.`
+        );
     }
 
     return runTurn({

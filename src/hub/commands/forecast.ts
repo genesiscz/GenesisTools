@@ -1,3 +1,4 @@
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { out } from "@genesiscz/utils/logger";
 import { createBoxTable, formatDotStatus, renderCliHeader } from "@genesiscz/utils/table";
 import type { Command } from "commander";
@@ -43,7 +44,7 @@ export function registerForecastCommand(program: Command): void {
             if (result.accounts.length === 0) {
                 out.println(
                     result.source
-                        ? "No usage snapshots in the last 8 days (the usage poller records them: tools ai usage)."
+                        ? `No usage snapshots in the last 8 days (the usage poller records them: ${toolCommand("ai usage")}).`
                         : "No history database yet."
                 );
                 return;

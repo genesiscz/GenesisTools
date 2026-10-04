@@ -6,6 +6,7 @@ import type { AiProxyAccountConfig, AiProxyProviderType, ResolvedRoute } from "@
 import { accountRef, accountRefIn, refToId } from "@genesiscz/utils/ai/config/refs";
 import type { AccountEntry } from "@genesiscz/utils/ai/config/schema";
 import { isGateOnly, isProxyEligible } from "@genesiscz/utils/ai/config/selectors";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger } from "@genesiscz/utils/logger";
 
 const ACCOUNT_MODEL_PREFIX = "@account/";
@@ -93,7 +94,7 @@ export async function resolveAccountModelRoute(
 
     if (!entry) {
         throw new Error(
-            `No enabled account for model '${proxyModelId}': no AI account '${parsed.account}' (tools ai config account list).`
+            `No enabled account for model '${proxyModelId}': no AI account '${parsed.account}' (${toolCommand("ai config account list")}).`
         );
     }
 
@@ -109,7 +110,7 @@ export async function resolveAccountModelRoute(
 
     if (isGateOnly(entry)) {
         throw new Error(
-            `No enabled account for model '${proxyModelId}': AI account '${entry.name}' is gate-only and serves \`tools ai gate\` alone.`
+            `No enabled account for model '${proxyModelId}': AI account '${entry.name}' is gate-only and serves \`${toolCommand("ai gate")}\` alone.`
         );
     }
 

@@ -1,4 +1,5 @@
 import { join } from "node:path";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger } from "@genesiscz/utils/logger";
 import { type Capability, type CapabilityCheck, hasCapability } from "./capabilities";
 import { compileRoutePattern, linkPattern, type PresetOptions, type RouteRule, type RouterConfig } from "./route";
@@ -112,7 +113,7 @@ function catalog({ linkHost, options }: CatalogContext): PresetSpec[] {
             id: "mail",
             title: "Mail",
             kind: "installable",
-            description: "https://<link host>/mail/show/<rowid> opens that message in Mail (tools macos mail open).",
+            description: `https://<link host>/mail/show/<rowid> opens that message in Mail (${toolCommand("macos mail open")}).`,
             enabledIf: ["platform:darwin"],
             needsLinkHost: true,
             routes: withHost((host) => [
@@ -254,7 +255,7 @@ function catalog({ linkHost, options }: CatalogContext): PresetSpec[] {
     ];
 }
 
-const LINK_HOST_MISSING = "a link host (tools browser-router link-host <host>)";
+const LINK_HOST_MISSING = `a link host (${toolCommand("browser-router link-host")} <host>)`;
 
 /** The catalog for this config: routes built on its link host, availability from this Mac. */
 export function presets({

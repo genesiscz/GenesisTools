@@ -1,5 +1,6 @@
 import { resolve } from "node:path";
 import { Executor, runTool } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { copyToClipboard } from "@genesiscz/utils/clipboard";
 import { logger } from "@genesiscz/utils/logger";
 import * as p from "@genesiscz/utils/prompts/p";
@@ -16,7 +17,7 @@ handleReadmeFlag(import.meta.url);
 
 function showHelp() {
     logger.info(`
-Usage: tools git-last-commits-diff <directory> [--commits X] [--output FILE | --clipboard] [--help]
+Usage: ${toolCommand("git-last-commits-diff")} <directory> [--commits X] [--output FILE | --clipboard] [--help]
 
 Arguments:
   <directory>     Required. Path to the Git repository.

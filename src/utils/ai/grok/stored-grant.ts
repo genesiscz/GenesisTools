@@ -1,6 +1,7 @@
 import { AiConfigStore } from "@genesiscz/utils/ai/config/AiConfigStore";
 import { vaultPathFor } from "@genesiscz/utils/ai/config/migrations/2026-08-secretsToVault";
 import type { AccountEntry } from "@genesiscz/utils/ai/config/schema";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger } from "@genesiscz/utils/logger";
 import { masterKey, resolveSecret, type SecureRef, secrets } from "@genesiscz/utils/security";
 import { NETWORKED_LOCK_WAIT_MS } from "@genesiscz/utils/storage/file-lock";
@@ -68,7 +69,7 @@ export async function resolveStoredGrokGrant(
     const deps: StoredGrokGrantDeps = { ...defaultDeps, ...options.deps };
     const store = await deps.loadStore(!options.noRefresh);
     const account = requireGrokAccount(store.account(accountName), accountName);
-    const hint = `Run: tools grok login ${account.name}`;
+    const hint = `Run: ${toolCommand("grok login")} ${account.name}`;
     const token = await deps.resolveSecret(account.credentials.accessToken);
 
     if (!token) {

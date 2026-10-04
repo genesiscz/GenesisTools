@@ -11,6 +11,7 @@
  * The split matters: regenerating bindings after a server updates its schema
  * must never touch the code you wrote.
  */
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import type { ToolInfo } from "./registry.ts";
 import { allOptional, isEmptySchema, schemaToType } from "./schema-ts.ts";
@@ -136,7 +137,7 @@ export function renderToolsModule(bound: BoundTool[], selectors: string[], gener
     lines.push(` * Generated: ${generatedAt}`);
     lines.push(" *");
     lines.push(" * Regenerate after a server changes its schema:");
-    lines.push(" *   tools scripts regen <name>");
+    lines.push(` *   ${toolCommand("scripts regen", "<name>")}`);
     lines.push(" */");
     lines.push('import type { Kit } from "@gt/scripts/kit";');
     lines.push("");
@@ -225,7 +226,7 @@ export function renderScriptModule(ctx: ScaffoldContext): string {
     }
 
     lines.push(" *");
-    lines.push(` * Run:  tools scripts run ${ctx.name}`);
+    lines.push(` * Run:  ${toolCommand("scripts run")} ${ctx.name}`);
 
     if (ctx.bound.length > 0) {
         lines.push(` * Edit: this file. Typed tool bindings live in ./${ctx.name}.tools.ts (generated).`);

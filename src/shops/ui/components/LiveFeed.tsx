@@ -3,6 +3,7 @@ import { LiveEventRow } from "@app/shops/ui/components/LiveEventRow";
 import { LiveFilterBar } from "@app/shops/ui/components/LiveFilterBar";
 import type { SseStatus } from "@app/shops/ui/hooks/useSseStream";
 import { useSseStream } from "@app/shops/ui/hooks/useSseStream";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { useMemo, useRef, useState } from "react";
 
 const MAX_FRAMES = 1000;
@@ -103,7 +104,7 @@ export function LiveFeed() {
                 <div className="max-h-[70vh] overflow-y-auto">
                     {filtered.length === 0 ? (
                         <div className="p-12 text-center font-mono text-xs text-muted-foreground first-letter:uppercase">
-                            no events yet — fire up a crawl: tools shops crawl --shop rohlik
+                            no events yet — fire up a crawl: {toolCommand("shops crawl")} --shop rohlik
                         </div>
                     ) : (
                         filtered.map((f, i) => (

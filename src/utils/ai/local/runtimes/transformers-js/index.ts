@@ -1,3 +1,4 @@
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { env } from "@genesiscz/utils/env";
 import { formatBytes } from "@genesiscz/utils/format";
 import { logger } from "@genesiscz/utils/logger";
@@ -170,7 +171,7 @@ export class TransformersJsRuntime {
                 }
 
                 throw new Error(
-                    `Model "${model}" requires a HuggingFace token. Run: tools ai config → Hugging Face token`
+                    `Model "${model}" requires a HuggingFace token. Run: ${toolCommand("ai config")} → Hugging Face token`
                 );
             }
 

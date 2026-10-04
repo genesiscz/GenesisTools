@@ -1,6 +1,7 @@
 import type { StepContext } from "@app/automate/lib/registry";
 import { registerStepCatalog, registerStepHandler } from "@app/automate/lib/registry";
 import type { NotifyStepParams, PresetStep, StepResult } from "@app/automate/lib/types";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { copyToClipboard } from "@genesiscz/utils/clipboard";
 import { makeResult } from "./helpers";
 
@@ -47,7 +48,7 @@ async function notifyHandler(step: PresetStep, ctx: StepContext): Promise<StepRe
 
                 const config = await loadTelegramConfig();
                 if (!config) {
-                    ctx.log("warn", "Telegram not configured. Run: tools telegram-bot configure");
+                    ctx.log("warn", `Telegram not configured. Run: ${toolCommand("telegram-bot configure")}`);
                     return makeResult("skipped", { reason: "not_configured" }, start);
                 }
 

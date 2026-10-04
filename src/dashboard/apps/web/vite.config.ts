@@ -96,6 +96,10 @@ const config = defineConfig({
                 replacement: fileURLToPath(new URL("../../../utils/json.ts", import.meta.url)),
             },
             {
+                find: "@genesiscz/utils/cli/tool-command",
+                replacement: fileURLToPath(new URL("../../../utils/cli/tool-command.ts", import.meta.url)),
+            },
+            {
                 find: "@genesiscz/utils/env.client",
                 replacement: fileURLToPath(new URL("../../../utils/env.client.ts", import.meta.url)),
             },

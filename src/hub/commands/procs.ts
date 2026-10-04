@@ -1,5 +1,6 @@
 import * as p from "@clack/prompts";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { formatBytes } from "@genesiscz/utils/format";
 import { out } from "@genesiscz/utils/logger";
 import { createBoxTable, formatDotStatus, renderCliHeader, truncateDisplay } from "@genesiscz/utils/table";
@@ -144,7 +145,7 @@ async function confirmed(message: string, retry: string[], yes?: boolean): Promi
     }
 
     if (!isInteractive()) {
-        out.log.error("Non-interactive: read `tools hub procs` first, then pass --yes.");
+        out.log.error(`Non-interactive: read \`${toolCommand("hub procs")}\` first, then pass --yes.`);
         out.log.info(suggestCommand("tools hub", { replaceCommand: retry, add: ["--yes"] }));
         process.exitCode = 2;
         return false;

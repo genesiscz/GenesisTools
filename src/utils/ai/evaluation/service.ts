@@ -1,5 +1,6 @@
 import { recordUsage } from "@genesiscz/utils/ai/usage";
 import { currentCommand } from "@genesiscz/utils/cli/current-command";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger } from "@genesiscz/utils/logger";
 import { profiler } from "@genesiscz/utils/profile";
 import { createGateway } from "ai";
@@ -183,7 +184,7 @@ function describeTypeSafeFailure(error: unknown): string {
             ? error.statusCode
             : undefined;
     return status === 401
-        ? "TypeSafe rejected the credential. Run tools jev login --provider typesafe."
+        ? `TypeSafe rejected the credential. Run ${toolCommand("jev login")} --provider typesafe.`
         : status === 403
           ? "TypeSafe denied access. Check your TypeSafe account and key permissions."
           : status === 429
@@ -206,7 +207,10 @@ export async function gatewayStatus(provider: EvaluationProviderId = "vercel") {
         apiKey = await resolveApiKey(provider);
     } catch (error) {
         logger.debug("Jev dashboard has no usable saved credential");
-        return { configured: false, error: error instanceof Error ? error.message : "Run tools jev login." };
+        return {
+            configured: false,
+            error: error instanceof Error ? error.message : `Run ${toolCommand("jev login")}.`,
+        };
     }
 
     if (provider === "typesafe") {

@@ -1,3 +1,4 @@
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { findById, findByName } from "./derived-registry";
 import { FriendlyError, listAvailableNames } from "./errors";
 import type { AgentRecord } from "./types";
@@ -32,7 +33,7 @@ export function resolveOne(records: AgentRecord[], token: string, role: "sender"
     if (role === "recipient" && found.agent_id === "") {
         throw new FriendlyError(
             `recipient "${token}" is registered but has not logged in yet (no agent_id assigned)`,
-            `Wait for the subagent to run:\n  tools agents login --agent-name ${found.agent_name}\nOr check status:\n  tools agents discover`
+            `Wait for the subagent to run:\n  ${toolCommand("agents login", "--agent-name", found.agent_name)}\nOr check status:\n  ${toolCommand("agents discover")}`
         );
     }
 

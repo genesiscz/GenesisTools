@@ -1,5 +1,6 @@
 import * as p from "@clack/prompts";
 import { isInteractive } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { formatDuration } from "@genesiscz/utils/format";
 import type { Command } from "commander";
 import pc from "picocolors";
@@ -23,7 +24,7 @@ export function registerRebuildCommand(program: Command): void {
                     const names = manager.getIndexNames();
 
                     if (names.length === 0) {
-                        p.log.info("No indexes configured. Run: tools indexer add <path>");
+                        p.log.info(`No indexes configured. Run: ${toolCommand("indexer add", "<path>")}`);
                         return;
                     }
 

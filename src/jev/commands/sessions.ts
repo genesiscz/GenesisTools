@@ -1,4 +1,5 @@
 import { suggestCommand } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { ui } from "@genesiscz/utils/cli/ui";
 import { logger, out } from "@genesiscz/utils/logger";
 import { createBoxTable, formatDotStatus, renderCliHeader, truncateDisplay } from "@genesiscz/utils/table";
@@ -147,7 +148,7 @@ function showList(sessions: JevSession[], json: boolean): void {
         return;
     }
 
-    renderCliHeader("Jev sessions", "newest first; open one with tools jev sessions <n>");
+    renderCliHeader("Jev sessions", `newest first; open one with ${toolCommand("jev sessions", "<n>")}`);
     const table = createBoxTable(["#", "WHEN", "CMD", "APP", "STT", "OUTCOME", "SAID"]);
     sessions.forEach((session, index) => {
         const verdict = outcome(session);
@@ -162,7 +163,9 @@ function showList(sessions: JevSession[], json: boolean): void {
         ]);
     });
     out.println(table.toString());
-    out.println(pc.dim(`  ${sessions.length} sessions · open one with "tools jev sessions <n>" or "… last"`));
+    out.println(
+        pc.dim(`  ${sessions.length} sessions · open one with "${toolCommand("jev sessions", "<n>")}" or "… last"`)
+    );
 }
 
 function showOne(session: JevSession, json: boolean): void {

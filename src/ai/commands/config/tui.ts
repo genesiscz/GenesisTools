@@ -1,6 +1,7 @@
 import { AIConfig } from "@genesiscz/utils/ai/AIConfig";
 import { AiConfigStore } from "@genesiscz/utils/ai/config/AiConfigStore";
 import { type AccountEntry, TASK_NAMES } from "@genesiscz/utils/ai/config/schema";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import * as p from "@genesiscz/utils/prompts/p";
 import { secrets } from "@genesiscz/utils/security";
 import pc from "picocolors";
@@ -323,7 +324,11 @@ export async function runConfigTui(): Promise<void> {
                 { value: "defaults", label: "Defaults", hint: "which model answers each task" },
                 { value: "secrets", label: "Secrets", hint: `${vaultEntries.length} vault entries` },
                 { value: "doctor", label: "Doctor", hint: "diagnose the whole configuration" },
-                { value: "hf-token", label: "Hugging Face token", hint: "for gated local models and tools ai image" },
+                {
+                    value: "hf-token",
+                    label: "Hugging Face token",
+                    hint: `for gated local models and ${toolCommand("ai image")}`,
+                },
                 { value: "quit", label: "Quit" },
             ],
         });

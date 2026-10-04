@@ -1,5 +1,6 @@
 import { type LogoutFlags, logoutTargetsFromFlags } from "@app/ai/lib/accounts/logout-flags";
 import { runLogout } from "@app/ai/lib/accounts/run-logout";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import type { Command } from "commander";
 
 /**
@@ -23,7 +24,7 @@ export function registerLogoutCommand(program: Command): void {
                 targets: logoutTargetsFromFlags(opts),
                 all: opts.all,
                 yes: opts.yes,
-                tool: "tools claude logout",
+                tool: toolCommand("claude logout"),
                 subcommand: ["logout"],
             });
         });

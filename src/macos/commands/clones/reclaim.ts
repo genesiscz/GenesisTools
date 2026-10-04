@@ -26,6 +26,7 @@ import { resolveSelector, type SelectorError } from "@app/macos/lib/clones/selec
 import { TARGET_KIND_VALUES } from "@app/macos/lib/clones/targets";
 import { isInteractive, suggestCommand, suggestEnumFlag } from "@genesiscz/utils/cli";
 import { printLn } from "@genesiscz/utils/cli/stdout";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { ui } from "@genesiscz/utils/cli/ui";
 import { formatBytes } from "@genesiscz/utils/format";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -93,7 +94,7 @@ function applyOutputFlags(cmd: Command): Command {
         .option("-v, --verbose", "Verbose logging", false)
         .option(
             "--no-daemon",
-            "Do not register the daily scan and cache reconciliation with tools daemon (clones daemon disable makes it permanent)"
+            `Do not register the daily scan and cache reconciliation with ${toolCommand("daemon")} (clones daemon disable makes it permanent)`
         )
         .option("--silent", "Suppress non-essential output", false);
 }

@@ -1,4 +1,5 @@
 import * as p from "@clack/prompts";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { formatDuration } from "@genesiscz/utils/format";
 import type { Command } from "commander";
 import pc from "picocolors";
@@ -33,7 +34,7 @@ export function registerWatchCommand(program: Command): void {
             const names = name ? [name] : manager.getIndexNames();
 
             if (names.length === 0) {
-                p.log.info("No indexes configured. Run: tools indexer add <path>");
+                p.log.info(`No indexes configured. Run: ${toolCommand("indexer add", "<path>")}`);
                 return;
             }
 

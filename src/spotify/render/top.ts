@@ -1,11 +1,12 @@
 import type { TopReport } from "@app/spotify/lib/reports/top";
 import { type Column, c, heading, hours, int, line, pct, spark, table } from "@app/spotify/render/text";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 
 /** Every genre view prints this instead of a table of zeros. */
 export function renderNoGenreData(profile: string): void {
     line(c.yellow(`profile "${profile}" has no genre data.`));
     line(c.grey("  Genres come from MusicBrainz and Last.fm, not from Spotify. Run:"));
-    line(c.grey(`    tools spotify enrich --profile ${profile}`));
+    line(c.grey(`    ${toolCommand("spotify enrich", "--profile", profile)}`));
 }
 
 export function renderTop(r: TopReport): void {

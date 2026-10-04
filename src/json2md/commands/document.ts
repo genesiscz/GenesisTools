@@ -1,6 +1,7 @@
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { suggestCommand } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import {
     checkDocument,
@@ -218,8 +219,8 @@ function template(input: { data: string; title: string; moduleName: string }): s
  *   ${input.moduleName}   this file, the only place a shape decision lives
  *   ${input.moduleName.replace(/\.ts$/, ".md")}   the output, never edited by hand
  *
- * Regenerate:  tools json2md build ${input.moduleName}
- * Verify:      tools json2md check ${input.moduleName}
+ * Regenerate:  ${toolCommand("json2md build", input.moduleName)}
+ * Verify:      ${toolCommand("json2md check", input.moduleName)}
  *
  * The .md carries a stamp recording the hash of the generated body, so a hand edit is
  * detected and the build refuses to overwrite it.
@@ -458,7 +459,7 @@ function registerInit(program: Command): void {
 
                 // The scaffold files were created; not being linked yet is guidance for the
                 // next step, not a failure, so this stays exit 0.
-                out.log.info(`Then: tools json2md build ${short(modulePath)}`);
+                out.log.info(`Then: ${toolCommand("json2md build", short(modulePath))}`);
 
                 return;
             }
@@ -480,8 +481,8 @@ function registerInit(program: Command): void {
             }
 
             out.log.success(`Created ${short(result.outPath)}.`);
-            out.log.info(`Regenerate with  tools json2md build ${short(modulePath)}`);
-            out.log.info(`Verify with      tools json2md check ${short(modulePath)}`);
+            out.log.info(`Regenerate with  ${toolCommand("json2md build", short(modulePath))}`);
+            out.log.info(`Verify with      ${toolCommand("json2md check", short(modulePath))}`);
         });
 }
 

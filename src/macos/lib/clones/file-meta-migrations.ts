@@ -1,3 +1,4 @@
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import type { Migration } from "@genesiscz/utils/database/migrations";
 
 /** Pinned migration-context tableName. The default deriveScope is path-based,
@@ -7,7 +8,7 @@ export const FILE_META_MIGRATION_CONTEXT = { tableName: "macos_clones_file_meta"
 
 const initFileMeta: Migration = {
     id: "2026-05-init-file-meta",
-    description: "Per-file metadata cache for `tools macos clones duplicates` re-scans",
+    description: `Per-file metadata cache for \`${toolCommand("macos clones duplicates")}\` re-scans`,
     isApplied(db) {
         const row = db.query("SELECT name FROM sqlite_master WHERE type='table' AND name='file_meta'").get() as {
             name: string;

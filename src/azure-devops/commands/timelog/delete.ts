@@ -4,6 +4,7 @@ import { formatMinutes, TimeLogApi } from "@app/azure-devops/timelog-api";
 import { requireTimeLogConfig, requireTimeLogUser } from "@app/azure-devops/utils";
 import * as p from "@clack/prompts";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
 
@@ -45,9 +46,9 @@ export function registerDeleteSubcommand(parent: Command): void {
                     if (workItemId == null) {
                         out.error("Provide a timeLogId or --workitem for interactive selection");
                         out.error("\nExamples:");
-                        out.error("  tools azure-devops timelog delete <timeLogId> --yes");
-                        out.error("  tools azure-devops timelog delete --workitem 12345");
-                        out.error("  tools azure-devops timelog delete <timeLogId> --dry-run");
+                        out.error(`  ${toolCommand("azure-devops timelog delete")} <timeLogId> --yes`);
+                        out.error(`  ${toolCommand("azure-devops timelog delete")} --workitem 12345`);
+                        out.error(`  ${toolCommand("azure-devops timelog delete")} <timeLogId> --dry-run`);
                         process.exit(1);
                     }
 

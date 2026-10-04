@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import * as p from "@clack/prompts";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { formatDuration } from "@genesiscz/utils/format";
 import { SafeJSON } from "@genesiscz/utils/json";
 import type { Command } from "commander";
@@ -26,7 +27,7 @@ export function registerContextCommand(program: Command): void {
                 const baseNames = names.filter((n) => !n.endsWith(CONTEXT_SUFFIX));
 
                 if (baseNames.length === 0) {
-                    p.log.info("No indexes configured. Run: tools indexer add <path>");
+                    p.log.info(`No indexes configured. Run: ${toolCommand("indexer add", "<path>")}`);
                     return;
                 }
 

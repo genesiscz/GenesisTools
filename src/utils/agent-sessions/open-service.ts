@@ -1,4 +1,5 @@
 import { Database } from "bun:sqlite";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger } from "@genesiscz/utils/logger";
 import { HistoryDatabase, openHistoryReadOnly } from "./database";
 import { fileListingFreshness } from "./listing-freshness";
@@ -107,7 +108,7 @@ export async function catalogHistory(options: {
         } catch (error) {
             log.warn(
                 { error, provider },
-                "[history] a read-only listing could not read the index (it may still need a migration); it lists nothing and leaves the index alone (an ordinary listing, such as tools claude history, migrates it)"
+                `[history] a read-only listing could not read the index (it may still need a migration); it lists nothing and leaves the index alone (an ordinary listing, such as ${toolCommand("claude history")}, migrates it)`
             );
         } finally {
             db.close();

@@ -1,3 +1,4 @@
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
@@ -24,7 +25,9 @@ export function registerStateCommands(program: Command): void {
             out.println(
                 `${pc.green("snapshot")} app=${pc.cyan(String(result.app))} mouse=(${m?.x?.toFixed(0)},${m?.y?.toFixed(0)})`
             );
-            out.println(pc.dim(`  restore with: tools control restore --snapshot '${SafeJSON.stringify(result)}'`));
+            out.println(
+                pc.dim(`  restore with: ${toolCommand("control restore")} --snapshot '${SafeJSON.stringify(result)}'`)
+            );
         });
 
     program

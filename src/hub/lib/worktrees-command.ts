@@ -1,5 +1,6 @@
 import * as p from "@clack/prompts";
 import { isInteractive, parseNonNegativeInt, suggestCommand } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { formatBytes } from "@genesiscz/utils/format";
 import { moveAsideRoot } from "@genesiscz/utils/fs/move-aside";
 import { out } from "@genesiscz/utils/logger";
@@ -132,7 +133,7 @@ export function registerWorktreesCommand(program: Command): void {
     worktrees
         .command("size")
         .description(
-            "Clone-aware disk size of each worktree (the tools du core) and the floor of what removing it frees"
+            `Clone-aware disk size of each worktree (the ${toolCommand("du")} core) and the floor of what removing it frees`
         )
         .argument("<paths...>", "worktree folders")
         .option("--json", "machine-readable output")
@@ -172,7 +173,9 @@ export function registerWorktreesCommand(program: Command): void {
         .action(async (paths: string[], opts: ScanFlags & { yes?: boolean }) => {
             if (!opts.yes) {
                 if (!isInteractive()) {
-                    out.log.error("Non-interactive: pass --yes once you have read `tools hub worktrees list`.");
+                    out.log.error(
+                        `Non-interactive: pass --yes once you have read \`${toolCommand("hub worktrees list")}\`.`
+                    );
                     out.log.info(
                         suggestCommand("tools hub", {
                             replaceCommand: ["worktrees", "remove", ...paths],
@@ -241,7 +244,9 @@ export function registerWorktreesCommand(program: Command): void {
         .action(async (paths: string[], opts: ScanFlags & { yes?: boolean }) => {
             if (!opts.yes) {
                 if (!isInteractive()) {
-                    out.log.error("Non-interactive: pass --yes once you have read `tools hub worktrees list`.");
+                    out.log.error(
+                        `Non-interactive: pass --yes once you have read \`${toolCommand("hub worktrees list")}\`.`
+                    );
                     out.log.info(
                         suggestCommand("tools hub", {
                             replaceCommand: ["worktrees", "move-aside", ...paths],

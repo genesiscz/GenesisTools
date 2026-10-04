@@ -4,6 +4,7 @@ import { formatClock, videoUrl } from "@app/youtube/lib/transcript-export";
 import type { VideoId } from "@app/youtube/lib/video.types";
 import type { Youtube } from "@app/youtube/lib/youtube";
 import type { ProviderChoice } from "@genesiscz/utils/ask/types";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger } from "@genesiscz/utils/logger";
 
 export interface AnswerProgress {
@@ -86,7 +87,7 @@ export async function answerOverVideos(opts: AnswerOverVideosOpts): Promise<Answ
 
     if (usable.length === 0) {
         throw new Error(
-            `ask: none of the ${opts.videoIds.length} video(s) in scope have ${sources.join(" or ")} data yet — run "tools youtube queue add <target> --stages metadata,captions" first`
+            `ask: none of the ${opts.videoIds.length} video(s) in scope have ${sources.join(" or ")} data yet — run "${toolCommand("youtube queue add", "<target>", "--stages", "metadata,captions")}" first`
         );
     }
 

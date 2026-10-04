@@ -1,5 +1,6 @@
 import * as p from "@clack/prompts";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli/executor";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { out } from "@genesiscz/utils/logger";
 import { withCancel } from "@genesiscz/utils/prompts/clack/helpers";
 import pc from "picocolors";
@@ -26,7 +27,7 @@ export async function interactiveMode(): Promise<void> {
 
     if (allSuites.length === 0) {
         p.log.info("No suites available. Add one with:");
-        p.log.info(pc.bold('tools benchmark add "name" "label1:cmd1" "label2:cmd2"'));
+        p.log.info(pc.bold(`${toolCommand("benchmark add")} "name" "label1:cmd1" "label2:cmd2"`));
         p.outro(pc.dim("Done."));
         return;
     }

@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { type ProjectRef, projectRefFromRemote } from "@genesiscz/utils/git";
 import { type RepoFacts, repoFactsMany } from "@genesiscz/utils/git/repo-facts";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -161,7 +162,7 @@ export function testNotification(pr: string | null, bundle = genesisAppBundlePat
     return {
         app: "hub",
         title: "TEST · hub PR notification",
-        subtitle: "This is a test from tools hub notify test",
+        subtitle: `This is a test from ${toolCommand("hub notify test")}`,
         message: pr ? `A click opens the hub at ${pr}` : "A click opens the hub's PRs",
         group: "hub-pr-test",
         execute: openHubCommand(pr, bundle),
@@ -261,14 +262,14 @@ async function pollLocked({
     const finish = (): PollReport => ({ ...report, elapsedMs: Math.round(performance.now() - started) });
 
     if (!config.enabled) {
-        report.skipped = "notifications are off (tools hub notify set --enabled on)";
+        report.skipped = `notifications are off (${toolCommand("hub notify set", "--enabled", "on")})`;
         return finish();
     }
 
     const paths = watchedRepoPaths(config);
 
     if (paths.length === 0) {
-        report.skipped = "no repo is watched (tools hub notify set --repo <path> --repo-enabled on)";
+        report.skipped = `no repo is watched (${toolCommand("hub notify set", "--repo", "<path>", "--repo-enabled", "on")})`;
         return finish();
     }
 

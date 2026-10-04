@@ -23,6 +23,7 @@ import {
     WatcherValidationError,
 } from "@app/monitor/lib/validate";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { formatDuration, formatRelativeTime, parseDuration } from "@genesiscz/utils/format";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
@@ -78,7 +79,7 @@ async function requireWatcher(monitor: Monitor, raw: string): Promise<Watcher> {
     const watcher = await monitor.getWatcher(parseEntityId(raw));
 
     if (!watcher) {
-        throw new WatcherValidationError(`no watcher with id ${raw}; run: tools monitor list`);
+        throw new WatcherValidationError(`no watcher with id ${raw}; run: ${toolCommand("monitor list")}`);
     }
 
     return watcher;
@@ -245,13 +246,13 @@ export function printStatus(report: MonitorStatusReport): void {
         "Server",
         report.server.running
             ? `${formatDotStatus("ok", "running")} pid ${report.server.pid} on :${report.server.port}${report.server.uptimeMs ? ` · up ${formatDuration(report.server.uptimeMs)}` : ""}${report.server.launchdInstalled ? " · launchd" : ""}`
-            : `${formatDotStatus("err", "stopped")}  ${pc.dim("start: tools monitor server up")}`
+            : `${formatDotStatus("err", "stopped")}  ${pc.dim(`start: ${toolCommand("monitor server up")}`)}`
     );
     renderCliKeyRow(
         "Dashboard",
         report.ui.running
             ? `${formatDotStatus("ok", "running")} pid ${report.ui.pid} on :${report.ui.port}`
-            : `${formatDotStatus("dim", "stopped")}  ${pc.dim("start: tools monitor ui up")}`
+            : `${formatDotStatus("dim", "stopped")}  ${pc.dim(`start: ${toolCommand("monitor ui up")}`)}`
     );
     const c = report.counts;
     renderCliKeyRow(
@@ -444,7 +445,7 @@ export async function watchEvents(opts: { all: boolean; port: number }): Promise
             }
         };
         socket.onerror = () => {
-            out.error(`Cannot reach the monitor server at ${url}. Start it with: tools monitor server up`);
+            out.error(`Cannot reach the monitor server at ${url}. Start it with: ${toolCommand("monitor server up")}`);
             process.exitCode = 1;
             resolve();
         };
@@ -484,7 +485,7 @@ export async function runDoctor(monitor: Monitor): Promise<DoctorLine[]> {
                   level: "err",
                   subject: "server",
                   detail: "not running; nothing is checked on a schedule",
-                  fix: "tools monitor server up",
+                  fix: toolCommand("monitor server up"),
               }
     );
     lines.push(
@@ -494,19 +495,29 @@ export async function runDoctor(monitor: Monitor): Promise<DoctorLine[]> {
                   level: "warn",
                   subject: "launchd",
                   detail: "server is not installed as a launchd agent",
-                  fix: "tools monitor server install",
+                  fix: toolCommand("monitor server install"),
               }
     );
     lines.push(
         status.ui.running
             ? { level: "ok", subject: "dashboard", detail: `on :${status.ui.port}` }
-            : { level: "warn", subject: "dashboard", detail: "not running (optional)", fix: "tools monitor ui up" }
+            : {
+                  level: "warn",
+                  subject: "dashboard",
+                  detail: "not running (optional)",
+                  fix: toolCommand("monitor ui up"),
+              }
     );
 
     const watchers = await monitor.db.summarizeAll();
 
     if (watchers.length === 0) {
-        lines.push({ level: "warn", subject: "watchers", detail: "none configured", fix: "tools monitor add <url>" });
+        lines.push({
+            level: "warn",
+            subject: "watchers",
+            detail: "none configured",
+            fix: toolCommand("monitor add", "<url>"),
+        });
     } else {
         lines.push({
             level: "ok",
@@ -529,7 +540,7 @@ export async function runDoctor(monitor: Monitor): Promise<DoctorLine[]> {
                 level: "warn",
                 subject: `#${watcher.id} ${watcher.name}`,
                 detail: `last checked ${ago(watcher.lastCheckedAt)}, more than 3 intervals ago`,
-                fix: `tools monitor run ${watcher.id}`,
+                fix: toolCommand("monitor run", String(watcher.id)),
             });
         }
 
@@ -542,7 +553,7 @@ export async function runDoctor(monitor: Monitor): Promise<DoctorLine[]> {
                 level: "warn",
                 subject: `#${watcher.id} ${watcher.name}`,
                 detail: `every recent check is unknown: ${watcher.lastDetail ?? "no detail"}`,
-                fix: `tools monitor check ${watcher.id}`,
+                fix: toolCommand("monitor check", String(watcher.id)),
             });
         }
     }
@@ -559,7 +570,7 @@ export async function runDoctor(monitor: Monitor): Promise<DoctorLine[]> {
             level: "warn",
             subject: "notifications",
             detail: `${usingDefaults} watcher(s) rely on the defaults but no default channel is enabled`,
-            fix: `tools monitor notify set system --enable`,
+            fix: toolCommand("monitor notify set", "system", "--enable"),
         });
     } else {
         lines.push({
@@ -770,7 +781,7 @@ export function registerExtraCommands(program: Command): void {
         .description(
             "Create the watchers and targets from an export file; existing ones (same kind + target, same target name) are kept"
         )
-        .argument("<file>", "JSON file written by `tools monitor export`")
+        .argument("<file>", `JSON file written by \`${toolCommand("monitor export")}\``)
         .option("--json", "Emit the counts as JSON")
         .action(async (file: string, opts: { json?: boolean }) => {
             const raw = await Bun.file(file).text();

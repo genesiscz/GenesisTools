@@ -1,6 +1,7 @@
 import type { BoardSummaryDto, CardDto, EdgeDto } from "@app/dev-dashboard/contract/dto";
 import { paths } from "@app/dev-dashboard/contract/endpoints";
 import { printLn } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import type { Command } from "commander";
 import { BoardsHttpError, postJson, resolveBaseUrl } from "../lib/client";
 import { captureRoot, readSetConfig, slugifyBranch } from "../lib/config";
@@ -37,7 +38,7 @@ export function registerBoardFromSetCommand(program: Command): void {
             const root = captureRoot(cwd, opts.dir);
             const cfg = await readSetConfig(root);
             if (!cfg) {
-                process.stderr.write("no set config found — run `tools boards init` first\n");
+                process.stderr.write(`no set config found — run \`${toolCommand("boards init")}\` first\n`);
                 process.exitCode = 1;
                 return;
             }

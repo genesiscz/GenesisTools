@@ -1,3 +1,4 @@
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { defineTransclusion, TransclusionError } from "../registry";
 import { codeBlock } from "./shared";
 
@@ -171,7 +172,7 @@ export const cmdTransclusion = defineTransclusion({
     name: "cmd",
     description:
         "The output of one allowlisted read-only command (git log/show/status/diff/blame/rev-parse/ls-files/" +
-        "shortlog/describe/merge-base, tools ts skeleton, tools git base|merged, tools question list|tokens). " +
+        `shortlog/describe/merge-base, ${toolCommand("ts skeleton")}, ${toolCommand("git base")}|merged, ${toolCommand("question list")}|tokens). ` +
         "No shell, a timeout, and the exit code is shown.",
     params: [
         { name: "run", type: "string", required: true, description: "The command line, e.g. git log --oneline -5." },
@@ -183,7 +184,10 @@ export const cmdTransclusion = defineTransclusion({
             description: `Milliseconds, at most ${MAX_TIMEOUT_MS} and never past the token's own deadline.`,
         },
     ],
-    examples: ['{{cmd run="git log --oneline -5"}}', '{{cmd run="tools ts skeleton src/utils/transclude/engine.ts"}}'],
+    examples: [
+        '{{cmd run="git log --oneline -5"}}',
+        `{{cmd run="${toolCommand("ts skeleton")} src/utils/transclude/engine.ts"}}`,
+    ],
     action: "substitute",
     async resolve(params, ctx) {
         const line = params.string("run");

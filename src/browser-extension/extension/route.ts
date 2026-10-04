@@ -1,3 +1,4 @@
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import type { HostResponse } from "../lib/host/messages";
 import { ext } from "./chrome";
 import { callHost, isHostResponse, isRecord } from "./shared/bridge";
@@ -91,8 +92,7 @@ async function main(): Promise<void> {
 
     if (await cameBack(target)) {
         status.className = "gt-error";
-        status.textContent =
-            "GenesisTools.app sent this link straight back to the browser, so it is not handed over again. Run tools browser-router status and tools browser-router explain on it.";
+        status.textContent = `GenesisTools.app sent this link straight back to the browser, so it is not handed over again. Run ${toolCommand("browser-router status")} and ${toolCommand("browser-router explain")} on it.`;
         close.hidden = false;
         return;
     }

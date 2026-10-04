@@ -2,6 +2,7 @@ import { spawn as nodeSpawn } from "node:child_process";
 import { resolve } from "node:path";
 import * as p from "@clack/prompts";
 import { runTool } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { formatDuration, parseDuration } from "@genesiscz/utils/format";
 import { out } from "@genesiscz/utils/logger";
 import { isProcessAlive as canonicalIsProcessAlive } from "@genesiscz/utils/process-alive";
@@ -387,7 +388,7 @@ async function cancelTimer(idOrIndex?: string): Promise<void> {
 // ============================================
 
 async function interactiveFlow(initialDuration?: string): Promise<void> {
-    p.intro(pc.bgCyan(pc.black(" tools timer ")));
+    p.intro(pc.bgCyan(pc.black(` ${toolCommand("timer")} `)));
 
     let durationMs = 0;
 
@@ -429,8 +430,12 @@ async function interactiveFlow(initialDuration?: string): Promise<void> {
         p.multiselect({
             message: `On completion ${pc.dim("(space to toggle)")}`,
             options: [
-                { value: "notify" as CompletionAction, label: "Desktop notification", hint: "tools notify" },
-                { value: "say" as CompletionAction, label: "Speak aloud", hint: "tools say" },
+                {
+                    value: "notify" as CompletionAction,
+                    label: "Desktop notification",
+                    hint: `${toolCommand("notify")}`,
+                },
+                { value: "say" as CompletionAction, label: "Speak aloud", hint: `${toolCommand("say")}` },
             ],
             required: false,
         })

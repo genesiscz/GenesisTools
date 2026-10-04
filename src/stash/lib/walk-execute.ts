@@ -2,6 +2,7 @@ import type { Database } from "bun:sqlite";
 import { readFile, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { suggestCommand } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger } from "@genesiscz/utils/logger";
 import type { ApplicationRow, StashRow, VersionRow } from "../types";
 import { classifyRegion } from "./classify";
@@ -334,7 +335,9 @@ export async function walkInteractive(args: { walk: Walk; verb: string }): Promi
         }
         const sel = await select({ message: "decision?", options: selectOpts });
         if (typeof sel !== "string") {
-            ui.warn(`paused; resume with: tools stash ${args.verb} ${args.walk.snapshot().stashName} --continue`);
+            ui.warn(
+                `paused; resume with: ${toolCommand("stash", args.verb, args.walk.snapshot().stashName, "--continue")}`
+            );
             await args.walk.persist();
             process.exit(0);
         }
@@ -360,7 +363,7 @@ export async function emitNonTtyPrompt(args: { walk: Walk; verb: string }): Prom
         })
     );
     process.stderr.write("\nChoose a decision:\n");
-    const cmdName = `tools stash ${args.verb}`;
+    const cmdName = toolCommand("stash", args.verb);
     // Strip any prior `--continue` / `--decision=*` / `--skip` / `--abort` / `--status` so the
     // suggested next-step is a fresh single decision, not a concatenation of previous ones.
     const removePrev = ["--continue", "--decision", "--skip", "--abort", "--status"];

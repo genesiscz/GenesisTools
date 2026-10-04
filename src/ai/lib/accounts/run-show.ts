@@ -9,6 +9,7 @@ import { registerBuiltInPlugins } from "@genesiscz/utils/ai/providers/plugins";
 import { tryProviderPlugin } from "@genesiscz/utils/ai/providers/registry";
 import { readSnapshotsCache } from "@genesiscz/utils/ai/usage-poll/legacy-cache";
 import { suggestCommand } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { formatRelativeTime } from "@genesiscz/utils/format";
 import { logger, out } from "@genesiscz/utils/logger";
 import { renderCliHeader, renderCliKeyRow, renderCliSection } from "@genesiscz/utils/table";
@@ -131,7 +132,7 @@ export async function runShow(opts: RunShowOptions): Promise<void> {
     renderUsage(detail.lastUsage);
 
     renderCliSection("Next");
-    out.println(pc.dim(`  Live quota: ${pc.cyan("tools ai usage")} · this command never polls.`));
+    out.println(pc.dim(`  Live quota: ${pc.cyan(`${toolCommand("ai usage")}`)} · this command never polls.`));
 }
 
 /** The last recorded snapshot, in the same key-row style as the rest of `show`. */
@@ -139,7 +140,7 @@ function renderUsage(snapshot: AccountUsageSnapshot | null): void {
     renderCliSection("Last usage");
 
     if (!snapshot) {
-        out.println(pc.dim(`  No usage snapshot yet. Run: ${pc.cyan("tools ai usage")}`));
+        out.println(pc.dim(`  No usage snapshot yet. Run: ${pc.cyan(`${toolCommand("ai usage")}`)}`));
         return;
     }
 

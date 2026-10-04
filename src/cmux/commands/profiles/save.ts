@@ -4,6 +4,7 @@ import { ProfileExistsError, ProfileStore } from "@app/cmux/lib/store";
 import type { ProfileScope, Window } from "@app/cmux/lib/types";
 import * as p from "@clack/prompts";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { probeCmuxHealth } from "@genesiscz/utils/cmux/lib/health";
 import { logger, out } from "@genesiscz/utils/logger";
 import { withCancel } from "@genesiscz/utils/prompts/clack/helpers";
@@ -77,7 +78,7 @@ async function runSave(rawName: string | undefined, flags: SaveFlags): Promise<v
                 throw new Error(
                     `cmux is ${health.state}, and live capture is unavailable. The requested flags ` +
                         "(--scope/--workspace/--window/--no-cwd/--no-history) are not supported by offline capture. " +
-                        "Retry without them, use --offline explicitly, or run `tools cmux doctor` for triage."
+                        `Retry without them, use --offline explicitly, or run \`${toolCommand("cmux doctor")}\` for triage.`
                 );
             }
 
@@ -87,7 +88,7 @@ async function runSave(rawName: string | undefined, flags: SaveFlags): Promise<v
                     (captureScreen
                         ? "Available cached/native screen contents are included. "
                         : "Screen contents are excluded. ") +
-                    "Run `tools cmux doctor` for triage."
+                    `Run \`${toolCommand("cmux doctor")}\` for triage.`
             );
         }
     }
@@ -154,7 +155,7 @@ async function runSave(rawName: string | undefined, flags: SaveFlags): Promise<v
         }
         p.note(lines.join("\n"), "Profile saved");
 
-        const restoreHint = `tools cmux profiles restore ${name}`;
+        const restoreHint = `${toolCommand("cmux profiles restore")} ${name}`;
         p.outro(`Restore later with ${pc.cyan(restoreHint)}`);
     } catch (error) {
         spinner.stop("Capture failed.");

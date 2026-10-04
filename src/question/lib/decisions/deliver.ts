@@ -2,6 +2,7 @@ import { type FocusTarget, isUnambiguous } from "@app/claude/lib/cmux/focus";
 import { findSessionTargets, type SessionTargetsResult, SOFT_SOURCES } from "@app/claude/lib/cmux/resolve";
 import { CodexSessionStore } from "@app/codex/lib/store";
 import { execTool } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { type CmuxLiveSnapshot, fetchCmuxLiveSnapshot } from "@genesiscz/utils/cmux/lib/live-snapshot";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
@@ -150,7 +151,7 @@ export async function resolveDeliveryTarget(
         const worker = (deps.codexWorkerFor ?? codexWorkerFor)(session);
         return worker
             ? { kind: "codex", label: `codex worker ${worker}`, worker }
-            : { kind: "none", reason: "no live tools codex worker runs this thread" };
+            : { kind: "none", reason: `no live ${toolCommand("codex")} worker runs this thread` };
     }
 
     const find = deps.findTargets ?? ((id, opts) => findSessionTargets(id, opts));

@@ -13,6 +13,7 @@ import { isAccountProviderAlias, providerAliasOf } from "@genesiscz/utils/ai/pro
 import type { ProviderPlugin } from "@genesiscz/utils/ai/providers/plugin-types";
 import { allProviderPlugins, providerPlugin } from "@genesiscz/utils/ai/providers/registry";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import * as p from "@genesiscz/utils/prompts/p";
@@ -232,7 +233,7 @@ async function reportAdded(input: AddAccountInput, json: boolean | undefined): P
     }
 
     out.log.success(`Added ${pc.bold(account.name)} (${account.id}) for ${account.provider}.`);
-    out.log.info(`Verify it with: tools ai config account test ${account.name}`);
+    out.log.info(`Verify it with: ${toolCommand("ai config account test")} ${account.name}`);
 
     // This command enters a credential the user already holds. A subscription
     // provider can OBTAIN one instead, and typing the raw fields for it is work
@@ -240,7 +241,7 @@ async function reportAdded(input: AddAccountInput, json: boolean | undefined): P
     const alias = providerAliasOf(account.provider);
 
     if (isAccountProviderAlias(alias)) {
-        out.log.info(`To log in through the browser use: tools ai accounts login --provider ${alias}`);
+        out.log.info(`To log in through the browser use: ${toolCommand("ai accounts login")} --provider ${alias}`);
     }
 }
 
@@ -410,7 +411,7 @@ export async function cmdAccountRm(idOrName: string, flags: { force?: boolean })
         );
 
         if (result.referrers.length > 0) {
-            out.log.warn(`${result.referrers.length} reference(s) now dangle. Run: tools ai config doctor`);
+            out.log.warn(`${result.referrers.length} reference(s) now dangle. Run: ${toolCommand("ai config doctor")}`);
         }
     } catch (err) {
         if (!(err instanceof AccountInUseError)) {
@@ -478,7 +479,7 @@ export function registerAccountCommands(config: Command): void {
     account
         .command("add")
         .description("Add an account; secrets go straight into the vault")
-        .option("--provider <id>", "Provider plugin id (see: tools ai config account add --help)")
+        .option("--provider <id>", `Provider plugin id (see: ${toolCommand("ai config account add")} --help)`)
         .option("--name <name>", "Human handle for the account")
         .option("--label <label>", "Display label")
         .option("--tag <tag>", "Tag (repeatable)", (value: string, previous: string[] = []) => [...previous, value])

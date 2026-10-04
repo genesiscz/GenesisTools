@@ -14,6 +14,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, unlinkSync 
 import { basename, join } from "node:path";
 import { cacheDir } from "@app/spotify/lib/paths";
 import type { Profile } from "@app/spotify/lib/profiles";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/storage";
@@ -296,7 +297,7 @@ export function loadAllPlays(profile: Profile): Play[] {
         throw new Error(
             `profile "${profile.name}" has no streaming history.\n` +
                 `  Request it at https://www.spotify.com/account/privacy (Extended streaming history),\n` +
-                `  unzip it, then: tools spotify profile add ${profile.name} --history <dir>`
+                `  unzip it, then: ${toolCommand("spotify profile add", profile.name, "--history", "<dir>")}`
         );
     }
 

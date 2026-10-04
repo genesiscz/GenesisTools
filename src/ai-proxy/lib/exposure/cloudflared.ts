@@ -5,6 +5,7 @@ import { readRuntimeState, writeRuntimeState } from "@app/ai-proxy/lib/runtime";
 import { getAiProxyStorage } from "@app/ai-proxy/lib/storage";
 import { isTunnelProcessRunning } from "@app/ai-proxy/lib/tunnel/cloudflared";
 import type { AiProxyConfig } from "@app/ai-proxy/lib/types";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { spawnDetached } from "@genesiscz/utils/DashboardApp/detach";
 import { logger } from "@genesiscz/utils/logger";
 import { isProcessAlive } from "@genesiscz/utils/process-alive";
@@ -15,8 +16,7 @@ export async function ensureCloudflaredExposure(config: AiProxyConfig): Promise<
     if (!tunnelName) {
         return {
             started: false,
-            message:
-                "cloudflared mode requires public.cloudflared.tunnelName — run: tools ai-proxy config setup-tunnel",
+            message: `cloudflared mode requires public.cloudflared.tunnelName — run: ${toolCommand("ai-proxy config setup-tunnel")}`,
         };
     }
 

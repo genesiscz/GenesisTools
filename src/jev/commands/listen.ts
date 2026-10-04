@@ -17,6 +17,7 @@ import {
     STT_PROVIDER_IDS,
 } from "@genesiscz/utils/ai/stt";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { ui } from "@genesiscz/utils/cli/ui";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
@@ -104,7 +105,7 @@ export function registerListen(program: Command): void {
         )
         .option("--no-menus", "Do not offer the app's menu bar items as choosable targets (on by default)")
         .option("--stt [provider]", `Live STT provider: ${STT_PROVIDER_IDS.join("|")}`)
-        .option("--account <id>", "tools ai account id or name for the STT provider")
+        .option("--account <id>", `${toolCommand("ai account")} id or name for the STT provider`)
         .option(
             "--language <codes>",
             "ISO 639-1 codes in priority order, e.g. cs,en (default: the wake marker's, else auto)"
@@ -115,7 +116,7 @@ export function registerListen(program: Command): void {
         .option("--pcm-in <input>", "Audio source: mic (GenesisTools.app), -, a s16le file, or ffmpeg[:device]", "mic")
         .option("--transcript <file>", "Replay a JSONL transcript instead of audio (provider fixture)")
         .option("--goal <text>", "Standing goal; otherwise the transcript is the intent")
-        .option("--gate <n>", "Admission probability (default 0.8, or tools jev config set gate)")
+        .option("--gate <n>", `Admission probability (default 0.8, or ${toolCommand("jev config set", "gate")})`)
         .option("--max-seconds <n>", `Session budget in seconds (default ${DEFAULT_MAX_SECONDS})`)
         .option("--surface [kind]", `ax, browser, or auto (chrome verbs need --port)`)
         .option("--port <n>", "CDP port for the browser surface", "9222")
@@ -149,8 +150,8 @@ async function runListen(program: Command, options: ListenOptions): Promise<void
     const provider = parseSttProvider(
         providerRaw ?? (options.transcript ? "fixture" : isInteractive() ? (saved.stt ?? "deepgram") : "")
     );
-    const wakeMode = parseEnum(options.wakeMode, WAKE_MODES, "--wake-mode", "tools jev listen");
-    const surface = parseEnum(options.surface ?? "ax", SURFACES, "--surface", "tools jev listen");
+    const wakeMode = parseEnum(options.wakeMode, WAKE_MODES, "--wake-mode", toolCommand("jev listen"));
+    const surface = parseEnum(options.surface ?? "ax", SURFACES, "--surface", toolCommand("jev listen"));
     if (!wakeMode || !surface) {
         return;
     }
@@ -174,7 +175,7 @@ async function runListen(program: Command, options: ListenOptions): Promise<void
         return;
     }
 
-    const scope = parseEnum(options.scope ?? saved.scope ?? "auto", SCOPES, "--scope", "tools jev listen");
+    const scope = parseEnum(options.scope ?? saved.scope ?? "auto", SCOPES, "--scope", toolCommand("jev listen"));
     if (!scope) {
         return;
     }

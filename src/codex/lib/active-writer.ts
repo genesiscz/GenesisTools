@@ -1,5 +1,6 @@
 import { statSync } from "node:fs";
 import { join } from "node:path";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger } from "@genesiscz/utils/logger";
 import { readProcessCwd } from "@genesiscz/utils/process/cwd";
 import { type OpenFilesQuery, type OpenFilesResult, openFiles } from "@genesiscz/utils/process/open-files";
@@ -132,7 +133,7 @@ export function formatActiveWriter(report: ActiveWriterReport, resumeCommand?: s
         "",
         "    · switch to that session and keep working there",
         `    · stop it, then retry:  kill ${report.holders.map((holder) => holder.pid).join(" ")}`,
-        `    · start a new thread:   ${resumeCommand ?? "tools codex run <account>"}`
+        `    · start a new thread:   ${resumeCommand ?? toolCommand("codex run", "<account>")}`
     );
 
     return lines;

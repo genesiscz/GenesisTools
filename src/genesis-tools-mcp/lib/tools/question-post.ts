@@ -24,6 +24,7 @@ import type { AskAnswer, AskChoice, AskForm } from "@app/question/lib/pending/ty
 import { DEFAULT_WAIT_BUDGET_MS } from "@app/question/lib/pending/types";
 import { questionTokenRegistry, transcludeItems, transclusionReport } from "@app/question/lib/transclude";
 import { callerCwd } from "@genesiscz/utils/agent/runtime";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import {
     describeTransclusions,
@@ -331,7 +332,7 @@ const ITEM_SCHEMA = {
             type: "string",
             description:
                 "decision/todo: id of an OPEN or DRAFTED item of the same kind this one replaces. It keeps its id " +
-                "and number, the earlier text stays as a prior version (`tools question show <id> --versions`). " +
+                `and number, the earlier text stays as a prior version (\`${toolCommand("question show", "<id>", "--versions")}\`). ` +
                 "Answered items cannot be superseded: post a new one.",
         },
     },

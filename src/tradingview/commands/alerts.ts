@@ -16,7 +16,7 @@ export async function runAlerts(opts: AlertsOpts): Promise<void> {
     if (!session) {
         out.error(
             "No TradingView session found. Set TRADINGVIEW_COOKIE (or TRADINGVIEW_SESSIONID + " +
-                "TRADINGVIEW_SESSIONID_SIGN + TRADINGVIEW_USERNAME + TRADINGVIEW_USER_ID), or run `tools tradingview login`."
+                "TRADINGVIEW_SESSIONID_SIGN + TRADINGVIEW_USERNAME + TRADINGVIEW_USER_ID), or ~/.genesis-tools/tradingview/config.json."
         );
         process.exit(1);
     }

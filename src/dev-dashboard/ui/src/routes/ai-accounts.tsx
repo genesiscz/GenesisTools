@@ -9,6 +9,7 @@ import {
     type AiUsageSeriesResult,
     type SpendSource,
 } from "@app/dev-dashboard/contract/ai-accounts";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
 import { AccountCard } from "@/components/ai-accounts/AccountCard";
@@ -284,7 +285,9 @@ export function AiAccountsRoute() {
                             <p className="text-sm text-[var(--dd-text-primary)]">No accounts match the filters.</p>
                             <p className="text-xs text-[var(--dd-text-muted)]">
                                 Add one with{" "}
-                                <code className="dd-ai-mono">tools ai accounts login --provider claude|codex|grok</code>
+                                <code className="dd-ai-mono">
+                                    {toolCommand("ai accounts login", "--provider", "claude|codex|grok")}
+                                </code>
                                 .
                             </p>
                         </div>

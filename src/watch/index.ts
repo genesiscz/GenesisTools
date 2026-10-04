@@ -2,6 +2,7 @@ import type { WatchEventType, WatchOptions } from "node:fs";
 import fs from "node:fs";
 import path from "node:path";
 import { runTool } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { expandTilde } from "@genesiscz/utils/paths";
@@ -51,7 +52,7 @@ for (const pattern of globPatterns) {
 if (possibleShellExpansion) {
     logger.error(chalk.red("Error: It appears your glob patterns may have been expanded by the shell"));
     logger.info(chalk.yellow("To prevent this, please wrap each pattern in quotes:"));
-    logger.info(chalk.green(`tools watch "src/**/*.ts"`));
+    logger.info(chalk.green(`${toolCommand("watch")} "src/**/*.ts"`));
     logger.info("");
     logger.info(chalk.blue("Without quotes, the shell expands wildcards before passing arguments to the script."));
     process.exit(1);

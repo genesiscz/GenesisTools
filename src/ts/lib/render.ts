@@ -1,3 +1,4 @@
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { out } from "@genesiscz/utils/logger";
 import {
     createBoxTable,
@@ -225,7 +226,7 @@ function renderTree(result: AnalysisResult, graph: ImportGraph, options: RenderA
 export function renderAnalysis(result: AnalysisResult, options: RenderAnalysisOptions): void {
     const measured = result.modules.filter((module) => module.measured);
     const packages = measured.filter((module) => module.kind === "package").length;
-    renderCliHeader(`tools ts imports analyze`, result.entry);
+    renderCliHeader(`${toolCommand("ts imports analyze")}`, result.entry);
     const selfLabel = options.graph.includeDynamic ? "sum of self (lazy included)" : "sum of self";
     out.println(
         `  ${pc.dim("cold import")} ${pc.bold(fmtMs(result.coldMs))}   ${pc.dim(selfLabel)} ${fmtMs(result.sumSelfMs)}   ` +
@@ -305,7 +306,7 @@ export function renderAnalysis(result: AnalysisResult, options: RenderAnalysisOp
 }
 
 export function renderLazy(candidates: LazyCandidate[], entry: string, minMs: number): void {
-    renderCliHeader("tools ts imports lazy", entry);
+    renderCliHeader(`${toolCommand("ts imports lazy")}`, entry);
     const shown = candidates.filter((candidate) => candidate.savingMs >= minMs);
 
     if (shown.length === 0) {
@@ -357,7 +358,7 @@ export function renderLazy(candidates: LazyCandidate[], entry: string, minMs: nu
 }
 
 export function renderBarrels(waste: BarrelWaste[], entry: string, minMs: number): void {
-    renderCliHeader("tools ts imports barrels", entry);
+    renderCliHeader(`${toolCommand("ts imports barrels")}`, entry);
     const shown = waste.filter((item) => item.wastedMs >= minMs);
 
     if (shown.length === 0) {
@@ -396,7 +397,7 @@ export function renderBarrels(waste: BarrelWaste[], entry: string, minMs: number
 }
 
 export function renderCycles(cycles: ImportCycle[], entry: string): void {
-    renderCliHeader("tools ts imports cycles", entry);
+    renderCliHeader(`${toolCommand("ts imports cycles")}`, entry);
 
     if (cycles.length === 0) {
         out.println(pc.green("  no import cycles on the startup path"));

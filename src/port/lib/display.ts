@@ -1,3 +1,4 @@
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { out } from "@genesiscz/utils/logger";
 import {
     createBoxTable,
@@ -75,7 +76,7 @@ export function displayPortTable(ports: PortSnapshot[], filtered: boolean): void
 
     if (ports.length === 0) {
         out.println(pc.dim("  No matching listening ports found.\n"));
-        out.println(pc.dim(`  Try ${pc.cyan("tools port --all")} to include system services.\n`));
+        out.println(pc.dim(`  Try ${pc.cyan(toolCommand("port", "--all"))} to include system services.\n`));
         return;
     }
 
@@ -98,7 +99,7 @@ export function displayPortTable(ports: PortSnapshot[], filtered: boolean): void
     const filterHint = filtered ? `${pc.dim("  ·  ")}${pc.cyan("--all")}${pc.dim(" to show everything")}` : "";
     out.println(
         `${pc.dim(`  ${ports.length} port${ports.length === 1 ? "" : "s"} active  ·  `)}${pc.dim("Run ")}${pc.cyan(
-            "tools port <number>"
+            toolCommand("port", "<number>")
         )}${pc.dim(" for details")}${filterHint}`
     );
     out.println();
@@ -139,7 +140,7 @@ export function displayPortDetail(port: number, snapshots: PortSnapshot[], gitBr
     renderCliKeyRow("Git Branch", gitBranch ? pc.magenta(gitBranch) : pc.dim("—"), 14);
     out.println();
     out.println(
-        `${pc.dim("  Tip: use ")}${pc.cyan("tools port --kill <number>")}${pc.dim(" to skip the prompt and terminate every matching PID.")}`
+        `${pc.dim("  Tip: use ")}${pc.cyan(toolCommand("port", "--kill", "<number>"))}${pc.dim(" to skip the prompt and terminate every matching PID.")}`
     );
     out.println();
 }
@@ -149,7 +150,7 @@ export function displayProcessTable(processes: ProcessSnapshot[], filtered: bool
 
     if (processes.length === 0) {
         out.println(pc.dim("  No matching processes found.\n"));
-        out.println(pc.dim(`  Try ${pc.cyan("tools port ps --all")} to include system processes.\n`));
+        out.println(pc.dim(`  Try ${pc.cyan(toolCommand("port ps", "--all"))} to include system processes.\n`));
         return;
     }
 

@@ -1,5 +1,6 @@
 import { runCapturePlan } from "@app/control/lib/capture-runner";
 import { controlDoctor } from "@app/control/lib/permissions";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger } from "@genesiscz/utils/logger";
 
 const { log } = logger.scoped("jev-demo");
@@ -33,7 +34,7 @@ export async function recordReel(options: { dir: string; platform?: string }): P
         const status = check?.status ?? "unknown";
         log.warn({ status, identity: check?.identity }, "demo --record has no screen-recording grant");
         return {
-            record: `skipped: screen recording is ${status} for ${check?.identity ?? "this process"}; grant it with ${check?.openCommand ?? "tools macos permissions"}`,
+            record: `skipped: screen recording is ${status} for ${check?.identity ?? "this process"}; grant it with ${check?.openCommand ?? `${toolCommand("macos permissions")}`}`,
             ok: false,
         };
     }

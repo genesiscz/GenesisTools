@@ -5,6 +5,7 @@ import {
     storeForProject,
 } from "@app/todo/lib/project";
 import { buildSyncReport, hasSyncableTime, type SyncTarget, syncTodo } from "@app/todo/lib/sync";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { out } from "@genesiscz/utils/logger";
 import { Command } from "commander";
 import pc from "picocolors";
@@ -21,7 +22,7 @@ Every run prints one line per target on stdout:
 
 Ids are per-project. Syncing an id created under another project root needs the same
 --project <path> that created it; otherwise this command names the project that holds it.
-Verify with: tools macos calendar search "<title>"
+Verify with: ${toolCommand("macos calendar search")} "<title>"
 `;
 
 export function createSyncCommand(): Command {
@@ -105,7 +106,7 @@ export function createSyncCommand(): Command {
 
                 if (!todo.at && todo.reminders.length === 0 && target !== "reminders") {
                     out.error(`SYNC_FAILED ${target} ${todo.id}: no event time — set one with \`--at\` first.`);
-                    out.error(`  tools todo edit ${todo.id} --at "2026-09-15 12:00"`);
+                    out.error(`  ${toolCommand("todo edit")} ${todo.id} --at "2026-09-15 12:00"`);
                     process.exit(1);
                 }
 

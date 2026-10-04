@@ -8,6 +8,7 @@ import {
     uninstallLaunchd,
 } from "@app/automate/lib/launchd";
 import * as p from "@clack/prompts";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { out } from "@genesiscz/utils/logger";
 import { LAUNCHD_MIGRATION_HINT } from "@genesiscz/utils/macos/genesis-app";
 import type { Command } from "commander";
@@ -93,18 +94,18 @@ export function registerDaemonCommand(program: Command): void {
             if (status.running) {
                 p.log.success(`Daemon running (launchd, PID ${status.pid})`);
                 showRecentLogs();
-                p.log.info(`\nRun ${pc.cyan("tools automate daemon tail")} to follow logs`);
+                p.log.info(`\nRun ${pc.cyan(toolCommand("automate daemon tail"))} to follow logs`);
             } else if (fgPid) {
                 p.log.success(`Daemon running (foreground, PID ${fgPid})`);
                 showRecentLogs();
             } else if (status.installed) {
                 p.log.warn("Daemon installed but not running");
             } else {
-                p.log.info("Daemon not installed. Run: tools automate daemon install");
+                p.log.info(`Daemon not installed. Run: ${toolCommand("automate daemon install")}`);
             }
 
             if (status.needsMigration) {
-                p.log.warn(`Daemon ${LAUNCHD_MIGRATION_HINT}: ${pc.cyan("tools automate daemon install")}`);
+                p.log.warn(`Daemon ${LAUNCHD_MIGRATION_HINT}: ${pc.cyan(toolCommand("automate daemon install"))}`);
             }
         });
 

@@ -3,6 +3,7 @@ import { gatherHarnessPoster } from "@genesiscz/utils/agent/runtime";
 import { listRecentCachedSessions } from "@genesiscz/utils/agent-sessions/cached-title";
 import { readRouterConfig } from "@genesiscz/utils/browser-router/config";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger, out } from "@genesiscz/utils/logger";
 import * as p from "@genesiscz/utils/prompts/p";
 import type { Command } from "commander";
@@ -33,7 +34,10 @@ export function registerDecideCommand(program: Command): void {
         .option("--session <id>", "Claude session id (links: defaults to the session running this command)")
         .option("--decision <n>", "Decision number")
         .option("--option <letter>", "One letter, a-z (required unless --links)")
-        .option("--question <formId>", "Also answer this pending `tools question` form, so /qa keeps the answer")
+        .option(
+            "--question <formId>",
+            `Also answer this pending \`${toolCommand("question")}\` form, so /qa keeps the answer`
+        )
         .option("--links <letters>", "Instead of sending, print markdown links for these comma-separated options")
         .option("--labels <texts>", "With --links: comma-separated link texts, one per option")
         .action(async (options: DecideFlags) => {
@@ -65,7 +69,7 @@ export function registerDecideCommand(program: Command): void {
         .command("links")
         .description(
             "Print one markdown link per option; paste them under a ❓ DECISION " +
-                "(tools claude decide links --decision 4 --options a,b,c [--labels ...] [--session ID])"
+                `(${toolCommand("claude decide links")} --decision 4 --options a,b,c [--labels ...] [--session ID])`
         )
         .requiredOption("--options <letters>", "Comma-separated letters, e.g. a,b,c")
         .action(async (_options: { options: string }, command: Command) => {

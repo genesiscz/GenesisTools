@@ -16,6 +16,7 @@ import { ErrorPanel, Loading } from "@app/monitor/ui/components/loading";
 import { PageHeader } from "@app/monitor/ui/components/page-header";
 import { TargetDialog } from "@app/monitor/ui/components/target-dialog";
 import { buildChannelOverride } from "@app/monitor/ui/lib/channel-override";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { Badge } from "@genesiscz/utils/ui/components/badge";
 import { Button } from "@genesiscz/utils/ui/components/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@genesiscz/utils/ui/components/card";
@@ -344,7 +345,7 @@ function SettingsPage() {
             <section className="space-y-4">
                 <SectionTitle
                     title="Defaults"
-                    hint="Used by watchers that have no library targets. Overrides for the monitor app on top of the shared notify config (tools notify config)."
+                    hint={`Used by watchers that have no library targets. Overrides for the monitor app on top of the shared notify config (${toolCommand("notify config")}).`}
                 />
                 <EventsCard settings={settings.data} />
                 <div className="grid gap-4 xl:grid-cols-2">

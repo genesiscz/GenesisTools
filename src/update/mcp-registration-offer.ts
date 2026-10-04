@@ -1,4 +1,5 @@
 import type { McpRegistration } from "@app/genesis-tools-mcp/lib/mcp-install";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger } from "@genesiscz/utils/logger";
 
 export interface McpRegistrationOfferDeps {
@@ -25,7 +26,7 @@ export async function offerMcpRegistration(deps: McpRegistrationOfferDeps): Prom
     } catch (error) {
         logger.warn({ error }, "update: could not check the genesis-tools MCP registration");
         deps.log(
-            `Could not check whether the genesis-tools MCP server is registered: ${error instanceof Error ? error.message : String(error)}. Register with: tools genesis-tools-mcp install`
+            `Could not check whether the genesis-tools MCP server is registered: ${error instanceof Error ? error.message : String(error)}. Register with: ${toolCommand("genesis-tools-mcp install")}`
         );
         return;
     }
@@ -36,14 +37,14 @@ export async function offerMcpRegistration(deps: McpRegistrationOfferDeps): Prom
 
     if (registration === "no-config") {
         deps.log(
-            "Claude Code has no config file yet. Start Claude Code once, then register the genesis-tools MCP server with: tools genesis-tools-mcp install"
+            `Claude Code has no config file yet. Start Claude Code once, then register the genesis-tools MCP server with: ${toolCommand("genesis-tools-mcp install")}`
         );
         return;
     }
 
     if (!deps.isTty()) {
         deps.log(
-            "genesis-tools MCP server is not registered with Claude Code. Register with: tools genesis-tools-mcp install"
+            `genesis-tools MCP server is not registered with Claude Code. Register with: ${toolCommand("genesis-tools-mcp install")}`
         );
         return;
     }
@@ -59,7 +60,7 @@ export async function offerMcpRegistration(deps: McpRegistrationOfferDeps): Prom
     } catch (error) {
         logger.warn({ error }, "update: genesis-tools MCP registration failed");
         deps.log(
-            `Could not register the MCP server: ${error instanceof Error ? error.message : String(error)}. Retry with: tools genesis-tools-mcp install`
+            `Could not register the MCP server: ${error instanceof Error ? error.message : String(error)}. Retry with: ${toolCommand("genesis-tools-mcp install")}`
         );
     }
 }

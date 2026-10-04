@@ -1,12 +1,13 @@
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { Command } from "commander";
 
 export function registerControlCommand(program: Command): void {
     const control = new Command("control");
 
     control
-        .description("macOS UI automation — element control + recording (delegates to `tools control`)")
+        .description(`macOS UI automation — element control + recording (delegates to \`${toolCommand("control")}\`)`)
         .allowUnknownOption(true)
         .allowExcessArguments(true)
         .action((_opts, cmd) => {

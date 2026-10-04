@@ -14,6 +14,7 @@ import { existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import * as p from "@clack/prompts";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import {
     createGit,
     formatRepoConfig,
@@ -73,7 +74,7 @@ async function runConfig(options: WorktreeOptions): Promise<number> {
     }
 
     if (!isInteractive()) {
-        out.log.error("`tools git worktree config` needs a TTY to run the guided setup.");
+        out.log.error(`\`${toolCommand("git worktree config")}\` needs a TTY to run the guided setup.`);
         out.log.info(
             "Write the section by hand instead: .claude/genesis-tools.config.json (versioned) or <git-common-dir>/genesis-tools.config.json (local, which is what the wizard writes):"
         );

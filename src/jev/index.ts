@@ -3,6 +3,7 @@
 import { addProviderOption } from "@genesiscz/utils/ai/evaluation/cli";
 import { registerConfig } from "@genesiscz/utils/ai/evaluation/config-cli";
 import { runTool } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { ui } from "@genesiscz/utils/cli/ui";
 import { logger } from "@genesiscz/utils/logger";
 import { Command } from "commander";
@@ -31,7 +32,9 @@ import { registerWatch } from "./commands/watch";
 import { failPlain } from "./lib/cli-output";
 import { registerJevMcp } from "./mcp";
 
-const program = new Command().name("tools jev").description("Jev evaluation tools and local experiment workbench");
+const program = new Command()
+    .name(`${toolCommand("jev")}`)
+    .description("Jev evaluation tools and local experiment workbench");
 addProviderOption(program);
 registerLogin(program);
 registerLook(program);

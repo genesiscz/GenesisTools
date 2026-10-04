@@ -1,6 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { runTool } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger, out } from "@genesiscz/utils/logger";
 import * as p from "@genesiscz/utils/prompts/p";
 import { inquirerBackend } from "@genesiscz/utils/prompts/p/inquirer-backend";
@@ -47,7 +48,7 @@ const options = program.opts<{ current?: boolean; temporary?: boolean; helpFull?
 
 if (options.helpFull) {
     out.println(`
-Usage: tools watchman [options] [directory]
+Usage: ${toolCommand("watchman")} [options] [directory]
 
 Watch a directory for file changes using Facebook's Watchman.
 
@@ -64,11 +65,11 @@ If no directory is provided, you'll be prompted to select from:
   - Current working directory
 
 Examples:
-  tools watchman                    # Interactive directory selection
-  tools watchman .                  # Watch current directory
-  tools watchman /path/to/project   # Watch specific directory
-  tools watchman -c                 # Watch current directory (no prompt)
-  tools watchman -t .               # Watch CWD, unwatch on exit
+  ${toolCommand("watchman")}                    # Interactive directory selection
+  ${toolCommand("watchman")} .                  # Watch current directory
+  ${toolCommand("watchman")} /path/to/project   # Watch specific directory
+  ${toolCommand("watchman")} -c                 # Watch current directory (no prompt)
+  ${toolCommand("watchman")} -t .               # Watch CWD, unwatch on exit
 `);
     process.exit(0);
 }

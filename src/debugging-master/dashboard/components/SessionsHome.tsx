@@ -2,6 +2,7 @@ import type { IndexedLogEntry } from "@app/debugging-master/types";
 import type { DashboardSession, LogSourceId } from "@app/log-viewer/log-source";
 import { sessionKey } from "@app/log-viewer/session-key";
 import { sortSessionsByRecency } from "@app/log-viewer/session-recency";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { shortenPathWithPrefix } from "@genesiscz/utils/paths.client";
 import { buildBalancedMosaicLayout, reconcileMosaicLayout } from "@genesiscz/utils/ui/helpers/mosaic-layout";
 import { useAutoScroll } from "@genesiscz/utils/ui/hooks/useAutoScroll";
@@ -756,7 +757,9 @@ export function SessionsHome({
                 {allActiveSessions.length === 0 ? (
                     <p className="text-xs text-white/35 py-6 text-center border border-dashed border-white/10 rounded-lg mx-1">
                         No active sessions — start one with{" "}
-                        <code className="text-cyan-300/80">tools task run --session &lt;name&gt; -- &lt;cmd&gt;</code>
+                        <code className="text-cyan-300/80">
+                            {toolCommand("task run", "--session", "<name>", "--", "<cmd>")}
+                        </code>
                     </p>
                 ) : mosaicActiveSessions.length === 0 ? (
                     <p className="text-xs text-white/35 py-6 text-center border border-dashed border-white/10 rounded-lg mx-1">

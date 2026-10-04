@@ -1,4 +1,5 @@
 import * as p from "@clack/prompts";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { execTool } from "@genesiscz/utils/cli/tools";
 import { stripAnsi, truncateForTelegram } from "@genesiscz/utils/telegram-bot/lib/formatting";
 import type { Bot } from "grammy";
@@ -8,7 +9,7 @@ export function registerToolsCommand(bot: Bot): void {
         const args = ctx.match?.trim();
         if (!args) {
             p.log.warn("/tools → missing command");
-            await ctx.reply("Usage: /tools <command> [args]\nExample: /tools claude usage");
+            await ctx.reply(`Usage: /tools <command> [args]\nExample: /${toolCommand("claude usage")}`);
             return;
         }
 

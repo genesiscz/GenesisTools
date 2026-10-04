@@ -1,4 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
@@ -252,7 +253,7 @@ export function registerRunCommand(program: Command): void {
       "delayMs":  300,               // pause between steps (ms, default 200; ignored when atMs is used)
       "exact":    false,             // force strict role matching
       "capture":  { ... },           // OPTIONAL — present = record video around the timeline
-                                     //   (full recording contract: tools control capture --help)
+                                     //   (full recording contract: ${toolCommand("control capture")} --help)
       "steps": [
         { "do": "focus" },
         { "do": "press", "q": "Chat" },
@@ -322,7 +323,7 @@ export function registerRunCommand(program: Command): void {
 
             if (plan.semantic !== undefined) {
                 throw new Error(
-                    "Semantic plans require tools control replay-plan; legacy run cannot ignore their postconditions."
+                    `Semantic plans require ${toolCommand("control replay-plan")}; legacy run cannot ignore their postconditions.`
                 );
             }
             const steps = plan.steps ?? plan.actions ?? [];

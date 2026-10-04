@@ -11,6 +11,7 @@ import type { AIProviderType } from "@genesiscz/utils/ai/types.ts";
 import { playBuffer } from "@genesiscz/utils/audio/playback";
 import { runTool } from "@genesiscz/utils/cli";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli/executor";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { parseVariadic } from "@genesiscz/utils/cli/variadic";
 import { env } from "@genesiscz/utils/env";
 import { logger, out } from "@genesiscz/utils/logger";
@@ -86,7 +87,7 @@ const program = new Command()
     .option("--provider <name>", "TTS backend: macos, xai, openai (defaults to profile or macos)")
     .option(
         "--account <id|name>",
-        "AI account whose key speaks (tools ai config account list). Picks the provider when --provider is not given; a gate-only account asks tools ai gate."
+        `AI account whose key speaks (${toolCommand("ai config account list")}). Picks the provider when --provider is not given; a gate-only account asks ${toolCommand("ai gate")}.`
     )
     .option("--language <bcp47>", "Language hint (xai only; defaults to 'auto')")
     .option("--format <codec>", "Output codec: mp3 or wav")
@@ -106,8 +107,11 @@ const program = new Command()
         [] as string[]
     )
     .option("--no-fallback", "Disable automatic fallback to macos TTS when a cloud provider fails")
-    .option("--logs", "Show the last 100 calls (who called, from where, what happened). Same as `tools say logs`.")
-    .option("--stats", "Show call statistics. Same as `tools say stats`.")
+    .option(
+        "--logs",
+        `Show the last 100 calls (who called, from where, what happened). Same as \`${toolCommand("say logs")}\`.`
+    )
+    .option("--stats", `Show call statistics. Same as \`${toolCommand("say stats")}\`.`)
     .action(async (messageParts: string[], opts: SayOptions, cmd: Command) => {
         if (opts.logs) {
             await showCallLogs({ limit: 100 });
@@ -135,8 +139,8 @@ const program = new Command()
 
         if ((opts.mute || opts.unmute) && !opts.save) {
             out.error(pc.red("[say] --mute / --unmute now require --save to persist."));
-            out.error(pc.dim("  e.g.: tools say --app claude --mute --save"));
-            out.error(pc.dim("  or:   tools say config   (interactive)"));
+            out.error(pc.dim(`  e.g.: ${toolCommand("say", "--app", "claude", "--mute", "--save")}`));
+            out.error(pc.dim(`  or:   ${toolCommand("say config")}   (interactive)`));
             process.exit(1);
         }
 
@@ -436,7 +440,7 @@ program
         }
 
         out.println();
-        out.println(pc.dim("Download with: tools ai models download <id>"));
+        out.println(pc.dim(`Download with: ${toolCommand("ai models download", "<id>")}`));
     });
 
 registerCallLogCommands(program);
@@ -949,7 +953,7 @@ await main();
 // ============================================
 
 async function configCommand(mgr: SayConfigManager): Promise<void> {
-    p.intro(pc.bgCyan(pc.black(" tools say config ")));
+    p.intro(pc.bgCyan(pc.black(` ${toolCommand("say config")} `)));
 
     while (true) {
         const apps = await mgr.listApps();

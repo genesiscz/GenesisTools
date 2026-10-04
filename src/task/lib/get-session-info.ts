@@ -8,6 +8,7 @@ import {
     suggestLogsFollow,
     suggestTail,
 } from "@app/task/lib/suggest-flags";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { formatBytes } from "@genesiscz/utils/format";
 import {
     filterByStream,
@@ -104,7 +105,7 @@ export async function getSessionInfo(session: string): Promise<void> {
     out.printlnErr(`║   Grep stdout      ${suggestLogsAllGrep(session)}`);
     out.printlnErr(`║   JSONL + rg       ${suggestLogs(session, ["--jsonl"])} | rg error`);
     out.printlnErr(`║   Dashboard        ${suggestDashboard(session)}`);
-    out.printlnErr("║   Clean all        tools task clean --all");
+    out.printlnErr(`║   Clean all        ${toolCommand("task clean", "--all")}`);
     out.printlnErr("║");
     out.printlnErr("║ FLAGS (logs + tail — short forms also work but mean the same)");
     out.printlnErr("║   -f, --follow  Stream live until Ctrl+C");

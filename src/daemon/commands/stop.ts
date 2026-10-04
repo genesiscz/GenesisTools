@@ -3,6 +3,7 @@ import { getDaemonStatus, uninstallLaunchd } from "@app/daemon/lib/launchd";
 import type { EscalationStep } from "@app/daemon/lib/wait-for-restart";
 import { stopWithEscalation, waitForDaemonRestart } from "@app/daemon/lib/wait-for-restart";
 import * as p from "@clack/prompts";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import type { Command } from "commander";
 import pc from "picocolors";
 
@@ -63,10 +64,10 @@ export function registerStopCommand(program: Command): void {
 
             if (result) {
                 s.stop(`Daemon bounced (PID ${pid} → ${result.pid})`);
-                p.log.info(pc.dim(`To stop permanently: ${pc.cyan("tools daemon uninstall")}`));
+                p.log.info(pc.dim(`To stop permanently: ${pc.cyan(toolCommand("daemon uninstall"))}`));
             } else {
                 s.stop("Daemon stopped");
-                p.log.warn(`Launchd did not restart within 10s. Check: ${pc.cyan("tools daemon logs")}`);
+                p.log.warn(`Launchd did not restart within 10s. Check: ${pc.cyan(toolCommand("daemon logs"))}`);
             }
         });
 }

@@ -1,4 +1,5 @@
 import { runAiProxyStatus } from "@app/ai-proxy/lib/lifecycle";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { out } from "@genesiscz/utils/logger";
 
 export async function runStatusCommand(options: { json?: boolean }): Promise<void> {
@@ -15,7 +16,7 @@ export async function runStatusCommand(options: { json?: boolean }): Promise<voi
     out.log.info(
         status.launchdInstalled
             ? `Launchd:      installed (${status.launchdLabel}) — survives reboot`
-            : "Launchd:      not installed — run `tools ai-proxy install` so it survives reboot"
+            : `Launchd:      not installed — run \`${toolCommand("ai-proxy install")}\` so it survives reboot`
     );
     out.log.info(`Local health: ${status.localHealth ? "ok" : "fail"} — ${status.localUrl}`);
 

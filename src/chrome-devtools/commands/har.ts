@@ -1,3 +1,4 @@
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import { inspectPidFile } from "@genesiscz/utils/process/pidfile";
@@ -65,11 +66,11 @@ async function writeHarFile(
 
     if (!opts.sanitize) {
         out.log.warn(
-            "this HAR can contain cookies, tokens, and POST passwords. Before sharing: re-run with --sanitize, or tools har-analyzer export --sanitize --strip-bodies -o clean.har"
+            `this HAR can contain cookies, tokens, and POST passwords. Before sharing: re-run with --sanitize, or ${toolCommand("har-analyzer export", "--sanitize", "--strip-bodies", "-o", "clean.har")}`
         );
     }
 
-    out.log.info(`Do not cat/jq the file. Next: tools har-analyzer load ${opts.out}`);
+    out.log.info(`Do not cat/jq the file. Next: ${toolCommand("har-analyzer load", opts.out)}`);
 
     if (opts.analyze) {
         const proc = Bun.spawn(["tools", "har-analyzer", "load", opts.out], {
@@ -95,7 +96,7 @@ export function registerHar(program: Command): void {
             "redact Cookie, Set-Cookie, Authorization headers, cookie values, and password/token/code POST params"
         )
         .option("--no-bodies", "live window: skip Network.getResponseBody calls")
-        .option("--analyze", "run tools har-analyzer load on the result")
+        .option("--analyze", `run ${toolCommand("har-analyzer load")} on the result`)
         .option(
             "--summary",
             "also print one line per entry (time, method, status, req/resp bytes, auth scheme, url) — the one-shot assertion table"

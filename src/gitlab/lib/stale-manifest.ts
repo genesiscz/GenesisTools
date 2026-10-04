@@ -16,6 +16,7 @@ import { formatDate } from "@app/gitlab/lib/dates";
 import type { MrWithNotes } from "@app/gitlab/lib/merge-requests";
 import type { StaleMr } from "@app/gitlab/lib/stale-branches";
 import type { AdoWorkItem } from "@app/gitlab/lib/work-items";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 
 export const MANIFEST_STATUSES = [
     "merged",
@@ -102,7 +103,7 @@ export interface StaleManifest {
 
 const INSTRUCTIONS =
     "Manifest of the open-MR staleness sweep: one entry per MR we wrote to. " +
-    "Rebuild with `tools gitlab stale-branches manifest <sweep.json> --out <this file>`; it refetches every MR and its work item live " +
+    `Rebuild with \`${toolCommand("gitlab stale-branches manifest")} <sweep.json> --out <this file>\`; it refetches every MR and its work item live ` +
     "and reports what changed since `previousRunAt`. `status` is the answer to 'what happened after we wrote': " +
     `${MANIFEST_STATUSES.map((s) => `${s} = ${STATUS_MEANING[s]}`).join("; ")}. ` +
     "Never edit by hand: the sweep JSON is the source of our side, GitLab is the source of theirs.";

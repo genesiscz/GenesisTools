@@ -9,6 +9,7 @@ import {
 import { decisionFiles } from "@app/question/lib/decisions/read";
 import { type DecisionRecord, readDecisions } from "@app/question/lib/decisions/store";
 import { byId } from "@genesiscz/utils/ai/catalog/static";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { genesisAppBundlePath } from "@genesiscz/utils/macos/genesis-app";
@@ -474,7 +475,7 @@ function matchesFor(rule: HubRule, inputs: RuleInputs, now: number): { matches: 
                 }));
             const note =
                 inputs.prs.length === 0
-                    ? "no watched PRs yet: tools hub notify set --repo <path> --repo-enabled on"
+                    ? `no watched PRs yet: ${toolCommand("hub notify set", "--repo", "<path>", "--repo-enabled", "on")}`
                     : null;
             return { matches, note };
         }
@@ -749,7 +750,7 @@ export async function runRules({
     };
 
     if (config.rules.length === 0) {
-        return { ...empty, skipped: "no rules (tools hub rules add)" };
+        return { ...empty, skipped: `no rules (${toolCommand("hub rules add")})` };
     }
 
     const evaluate = async (): Promise<RulesRunResult> => {

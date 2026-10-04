@@ -2,6 +2,7 @@
 
 import * as clack from "@clack/prompts";
 import { isInteractive, runTool, suggestCommand } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { getProfilingConfig } from "@genesiscz/utils/GenesisTools";
 import { out } from "@genesiscz/utils/logger";
 import { clearRejectedPackages, listRejectedPackages, removeRejectedPackage } from "@genesiscz/utils/packages";
@@ -37,7 +38,9 @@ export function buildConfigProgram(): Command {
             }
 
             if (!isInteractive()) {
-                clack.log.info("Run `tools config packages` in a terminal to re-enable them or clear every rejection.");
+                clack.log.info(
+                    `Run \`${toolCommand("config packages")}\` in a terminal to re-enable them or clear every rejection.`
+                );
                 return;
             }
 

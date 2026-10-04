@@ -1,5 +1,6 @@
 import { join } from "node:path";
 import { isInteractive } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import * as p from "@genesiscz/utils/prompts/p";
@@ -18,7 +19,7 @@ function backupRoot(): string {
 
 function requireMac(): void {
     if (process.platform !== "darwin") {
-        throw new Error("tools codex desktop patch only supports the macOS Codex desktop app.");
+        throw new Error(`${toolCommand("codex desktop patch")} only supports the macOS Codex desktop app.`);
     }
 }
 
@@ -98,7 +99,7 @@ export function registerDesktopCommand(program: Command): void {
                 return;
             }
 
-            renderCliHeader("Desktop patches", "tools codex desktop patch apply");
+            renderCliHeader("Desktop patches", toolCommand("codex desktop patch apply"));
             for (const row of rows) {
                 renderCliKeyRow(row.id, row.description, 14);
             }
@@ -133,7 +134,7 @@ export function registerDesktopCommand(program: Command): void {
             } else if (!isInteractive()) {
                 printStatus(status, Boolean(options.json));
                 out.log.warn(
-                    "Name the patches to turn on, or run this in a terminal to pick from the list.\ntools codex desktop patch apply tool-outputs --yes"
+                    `Name the patches to turn on, or run this in a terminal to pick from the list.\n${toolCommand("codex desktop patch apply", "tool-outputs", "--yes")}`
                 );
                 process.exitCode = 1;
                 return;
@@ -178,7 +179,7 @@ export function registerDesktopCommand(program: Command): void {
                 yes,
             });
             if (result.kind === "needs-confirmation") {
-                const command = ["tools codex desktop patch apply", ...enabledIds, "--yes"].join(" ");
+                const command = toolCommand("codex desktop patch apply", ...enabledIds, "--yes");
                 if (options.json) {
                     out.result(SafeJSON.stringify({ kind: result.kind, command, status: result.status }, null, 2));
                 } else {
@@ -237,7 +238,7 @@ export function registerDesktopCommand(program: Command): void {
                         SafeJSON.stringify(
                             {
                                 kind: result.kind,
-                                command: "tools codex desktop patch revert --yes",
+                                command: toolCommand("codex desktop patch revert", "--yes"),
                                 status: result.status,
                             },
                             null,
@@ -247,7 +248,7 @@ export function registerDesktopCommand(program: Command): void {
                 } else {
                     printStatus(result.status, false);
                     out.log.warn(
-                        "Refusing to restore the original bundle without --yes.\ntools codex desktop patch revert --yes"
+                        `Refusing to restore the original bundle without --yes.\n${toolCommand("codex desktop patch revert", "--yes")}`
                     );
                 }
 

@@ -7,6 +7,7 @@
  */
 
 import type { AllowedTypeConfig, AzWorkItemRaw, Relation } from "@app/azure-devops/types";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { $ } from "bun";
@@ -167,7 +168,7 @@ export async function precheckWorkItem(
             originalType: "Unknown",
             originalTitle: "",
             message: "allowedWorkItemTypes not configured. Configure allowed types for time logging.",
-            suggestCommands: ["tools azure-devops timelog configure"],
+            suggestCommands: [`${toolCommand("azure-devops timelog configure")}`],
         };
     }
 
@@ -265,6 +266,6 @@ export async function precheckWorkItem(
         originalTitle: title,
         children: best,
         message: `Work item #${workItemId} is a ${type} with ${best.length} children of allowed types. Specify one directly.`,
-        suggestCommands: best.map((c) => `tools azure-devops timelog add --workitem ${c.id}`),
+        suggestCommands: best.map((c) => `${toolCommand("azure-devops timelog add")} --workitem ${c.id}`),
     };
 }

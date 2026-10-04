@@ -5,6 +5,7 @@ import type {
     SpendGrain,
     SpendSource,
 } from "@app/dev-dashboard/contract/ai-accounts";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { formatNumber, formatTokens } from "@genesiscz/utils/format";
 import { IconTooltip } from "@ui/components/icon-button";
 import { SegmentedControl } from "@ui/components/segmented-control";
@@ -41,7 +42,7 @@ const SOURCE_OPTIONS: ReadonlyArray<{ value: SpendSource; label: string }> = [
 ];
 
 const SOURCE_HELP =
-    "Transcripts: cost rebuilt from the coding agents' own session logs on disk (what tools ai-spend and the " +
+    `Transcripts: cost rebuilt from the coding agents' own session logs on disk (what ${toolCommand("ai-spend")} and the ` +
     "Genesis menubar show). Calls: every inference call GenesisTools itself made (ask, ai-proxy, youtube). " +
     "Both: the two added together.";
 

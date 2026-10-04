@@ -1,6 +1,7 @@
 import { exportMessages, parseMailIds } from "@app/macos/lib/mail/export";
 import { rowToMessage } from "@app/macos/lib/mail/transform";
 import * as p from "@clack/prompts";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger } from "@genesiscz/utils/logger";
 import { MailDatabase } from "@genesiscz/utils/macos/MailDatabase";
 import type { Command } from "commander";
@@ -38,8 +39,8 @@ export function registerDownloadCommand(program: Command): void {
 
                     if (ids.length === 0) {
                         p.log.error(
-                            "No email IDs given. Usage: tools macos mail download <id,id,...> --output-dir <dir>\n" +
-                                "To export a whole search instead, use: tools macos mail search-download <query> --output-dir <dir>"
+                            `No email IDs given. Usage: ${toolCommand("macos mail download", "<id,id,...>", "--output-dir", "<dir>")}\n` +
+                                `To export a whole search instead, use: ${toolCommand("macos mail search-download", "<query>", "--output-dir", "<dir>")}`
                         );
                         process.exit(1);
                     }

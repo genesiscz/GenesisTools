@@ -1,6 +1,7 @@
 import type { ChooserComparison } from "@app/control/lib/decision/chooser-replay";
 import type { ResilienceReplay } from "@app/control/lib/decision/resilience-replay";
 import { Badge, Callout, JsonView } from "@artifact/kit";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { Button } from "@ui/components/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@ui/components/card";
 import { Play, Square } from "lucide-react";
@@ -143,7 +144,7 @@ export function ResilienceLab({ kind }: { kind: "recovery" | "workflow" }) {
                 )}
                 <p className="text-xs text-muted-foreground">
                     <code>
-                        tools jev control resilience-replay {selected}
+                        {toolCommand("jev control resilience-replay")} {selected}
                         {jev ? " --jev" : ""}
                     </code>
                 </p>

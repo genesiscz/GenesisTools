@@ -11,6 +11,7 @@ import { answerOverVideos, formatCitationLines } from "@app/youtube/lib/ask-answ
 import type { TimestampedSummaryEntry, VideoId } from "@app/youtube/lib/types";
 import * as p from "@clack/prompts";
 import { isInteractive } from "@genesiscz/utils/cli/executor";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
 import pc from "picocolors";
@@ -142,7 +143,7 @@ export function registerAnalyzeCommand(program: Command): void {
 }
 
 function buildAnalyzeExamples(): string {
-    return '\nExamples:\n  $ tools youtube analyze dQw4w9WgXcQ --summary\n  $ tools youtube analyze dQw4w9WgXcQ --timestamped\n  $ tools youtube analyze dQw4w9WgXcQ otherVideo123 --ask "what are the key claims?"\n  $ tools youtube analyze dQw4w9WgXcQ --summary --provider claude --model claude-haiku-4-5 -y\n';
+    return `\nExamples:\n  $ ${toolCommand("youtube analyze", "dQw4w9WgXcQ", "--summary")}\n  $ ${toolCommand("youtube analyze", "dQw4w9WgXcQ", "--timestamped")}\n  $ ${toolCommand("youtube analyze", "dQw4w9WgXcQ", "otherVideo123", "--ask", "what are the key claims?")}\n  $ ${toolCommand("youtube analyze", "dQw4w9WgXcQ", "--summary", "--provider", "claude", "--model", "claude-haiku-4-5", "-y")}\n`;
 }
 
 interface ConfirmLlmOpts {

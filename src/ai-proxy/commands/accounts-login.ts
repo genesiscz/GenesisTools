@@ -15,6 +15,7 @@ import {
 } from "@genesiscz/utils/ai/github-copilot";
 import { copilotDataDir, copilotGhoTokenAuthKey, githubTokenPath } from "@genesiscz/utils/ai/github-copilot/paths";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger, out } from "@genesiscz/utils/logger";
 import { runGitHubDeviceLogin } from "@genesiscz/utils/oauth";
 import { authStorageBackend, setAuthSecret } from "@genesiscz/utils/storage";
@@ -109,7 +110,7 @@ async function runCodexLogin(): Promise<void> {
     // The ACCOUNT write is the shared lib's, so there is one codex login path
     // rather than two that disagree (decision D4). What stays here is the proxy's
     // own bookkeeping below, which the shared lib knows nothing about.
-    const login = await runLogin({ provider: "openai-sub", tool: "tools ai-proxy accounts login codex" });
+    const login = await runLogin({ provider: "openai-sub", tool: `${toolCommand("ai-proxy accounts login")} codex` });
 
     if (!login.ok || !login.account) {
         return;

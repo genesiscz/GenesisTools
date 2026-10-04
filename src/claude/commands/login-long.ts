@@ -1,4 +1,5 @@
 import { runLoginLong } from "@app/ai/lib/accounts/run-login-long";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import type { Command } from "commander";
 
 /**
@@ -19,7 +20,7 @@ export function registerLoginLongCommand(program: Command): void {
                 provider: "anthropic-sub",
                 name,
                 setupToken: opts.setupToken,
-                tool: "tools claude login-long",
+                tool: toolCommand("claude login-long"),
                 subcommand: ["login-long"],
             });
         });

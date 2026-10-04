@@ -1,4 +1,5 @@
 import type { TodoGroupBy, TodoStatusFilter, TodosResult } from "@app/dev-dashboard/lib/todos/types";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@ui/components/button";
@@ -194,8 +195,10 @@ export function TodosRoute() {
                 </p>
                 <p className="max-w-md text-xs text-[var(--dd-text-secondary)] opacity-80">
                     If no dialog appears, the dashboard may be running in the background (launchd). Run{" "}
-                    <code className="text-[var(--dd-accent)]">tools dev-dashboard ui up --foreground</code> in Terminal,
-                    open Todos again, then click Allow.
+                    <code className="text-[var(--dd-accent)]">
+                        {toolCommand("dev-dashboard ui up", "--foreground")}
+                    </code>{" "}
+                    in Terminal, open Todos again, then click Allow.
                 </p>
                 <Button
                     type="button"

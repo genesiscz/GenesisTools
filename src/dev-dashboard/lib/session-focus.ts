@@ -1,3 +1,4 @@
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 
@@ -101,7 +102,7 @@ export async function focusSessionPane(sessionId: string, deps: FocusSessionDeps
         return {
             ok: false,
             error: `No cmux pane is showing session ${id.slice(0, 8)}.`,
-            remedy: "Reopen it with `tools claude cmux restore`.",
+            remedy: `Reopen it with \`${toolCommand("claude cmux restore")}\`.`,
         };
     }
 

@@ -12,6 +12,7 @@ import {
 } from "@genesiscz/utils/ai/embedding-selection";
 import { embeddingProviderTypes, findDescriptor } from "@genesiscz/utils/ai/local/descriptors";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { formatBytes, formatDuration } from "@genesiscz/utils/format";
 import type { Command } from "commander";
 import pc from "picocolors";
@@ -250,7 +251,7 @@ async function runCleanup(): Promise<void> {
         const meta = manager.listIndexes().find((m) => m.name === MAIL_INDEX_NAME);
 
         if (!meta) {
-            p.log.error("Mail index not found. Run `tools macos mail index` first.");
+            p.log.error(`Mail index not found. Run \`${toolCommand("macos mail index")}\` first.`);
             process.exitCode = 1;
             return;
         }

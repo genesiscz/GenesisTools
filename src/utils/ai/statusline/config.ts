@@ -2,6 +2,7 @@ import { mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { aiDataDir } from "@genesiscz/utils/ai/config/paths";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { shellCommandLine } from "@genesiscz/utils/shell/quote";
@@ -108,7 +109,7 @@ export function formatStatuslineInstallCommand(opts: {
     entryPath?: string;
 }): string {
     if (opts.viaTools) {
-        return `tools ai statusline run --${opts.host}`;
+        return `${toolCommand("ai statusline run")} --${opts.host}`;
     }
 
     return shellCommandLine([

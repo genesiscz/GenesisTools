@@ -1,6 +1,7 @@
 import { Database } from "bun:sqlite";
 import { existsSync } from "node:fs";
 import * as p from "@clack/prompts";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { formatBytes, formatDuration, formatRelativeTime } from "@genesiscz/utils/format";
 import { out } from "@genesiscz/utils/logger";
 import { formatTable } from "@genesiscz/utils/table";
@@ -38,7 +39,7 @@ function showOverview(manager: IndexerManager): void {
     const indexes = manager.listIndexes();
 
     if (indexes.length === 0) {
-        p.log.info("No indexes configured. Run: tools indexer add <path>");
+        p.log.info(`No indexes configured. Run: ${toolCommand("indexer add", "<path>")}`);
         return;
     }
 
@@ -146,7 +147,7 @@ async function showDetailedStatus(manager: IndexerManager, name: string): Promis
     }
 
     if (meta.indexingStatus === "in-progress" || meta.indexingStatus === "cancelled") {
-        p.log.warn(`This index was interrupted. Run: tools indexer sync ${name} to resume.`);
+        p.log.warn(`This index was interrupted. Run: ${toolCommand("indexer sync", name)} to resume.`);
     }
 
     p.outro("");

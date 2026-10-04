@@ -1,5 +1,6 @@
 import type { TimelyService } from "@app/timely/api/service";
 import type { TimelyClient, TimelyProject } from "@app/timely/types";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
 import * as p from "@genesiscz/utils/prompts/p";
@@ -31,7 +32,7 @@ async function projectsAction(storage: Storage, service: TimelyService, options:
         ? parseInt(options.account, 10)
         : await storage.getConfigValue<number>("selectedAccountId");
     if (!accountId) {
-        logger.error("No account selected. Run 'tools timely accounts --select' first.");
+        logger.error(`No account selected. Run '${toolCommand("timely accounts")} --select' first.`);
         process.exit(1);
     }
 

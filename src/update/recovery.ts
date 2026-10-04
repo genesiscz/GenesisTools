@@ -1,3 +1,4 @@
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { out } from "@genesiscz/utils/logger";
 import pc from "picocolors";
 
@@ -75,7 +76,7 @@ export async function recoverFromFailedPull(cwd: string): Promise<boolean> {
     const diverged = contained.code !== 0;
 
     const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-    const stash = await git(["stash", "push", "--include-untracked", "-m", `tools update ${stamp}`], cwd);
+    const stash = await git(["stash", "push", "--include-untracked", "-m", `${toolCommand("update")} ${stamp}`], cwd);
     const stashed = stash.code === 0 && !stash.output.includes("No local changes");
 
     if (stash.code !== 0) {

@@ -1,4 +1,5 @@
 import * as p from "@clack/prompts";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { out } from "@genesiscz/utils/logger";
 import { LAUNCHD_MIGRATION_HINT } from "@genesiscz/utils/macos/genesis-app";
 import type { Command } from "commander";
@@ -23,11 +24,11 @@ export function registerStatusCommand(program: Command): void {
             } else if (status.installed) {
                 p.log.warn("Daemon installed but not running");
             } else {
-                p.log.info("Daemon not running. Run: tools daemon install");
+                p.log.info(`Daemon not running. Run: ${toolCommand("daemon install")}`);
             }
 
             if (status.needsMigration) {
-                p.log.warn(`Daemon ${LAUNCHD_MIGRATION_HINT}: ${pc.cyan("tools daemon restart")}`);
+                p.log.warn(`Daemon ${LAUNCHD_MIGRATION_HINT}: ${pc.cyan(toolCommand("daemon restart"))}`);
             }
 
             const config = await loadConfig();

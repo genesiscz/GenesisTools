@@ -1,3 +1,4 @@
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import type { Analyser, Recommendation } from "./types";
 
 /** Longest shared leading word, so `renderTable` and `renderRow` cluster under `render`. */
@@ -76,7 +77,7 @@ export const godFilesAnalyser: Analyser = {
                 action:
                     clusters.length > 0
                         ? `move the \`${clusters[0]?.prefix}*\` group into its own module and re-export it`
-                        : "split by responsibility; run `tools ts imports cycles` first, so the split does not create one",
+                        : `split by responsibility; run \`${toolCommand("ts imports cycles")}\` first, so the split does not create one`,
                 savedLines: 0,
                 score: Number((top.length * 2 + totalLines / 20).toFixed(2)),
             });

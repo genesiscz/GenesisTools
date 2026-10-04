@@ -14,6 +14,7 @@ import { clampXaiReasoningEffort } from "@app/ai-proxy/lib/reasoning-effort-voca
 import { rewriteBodyModel } from "@app/ai-proxy/lib/rewrite-upstream-body";
 import type { AiProxyAccountConfig, UsageSummary } from "@app/ai-proxy/lib/types";
 import { GrokManagementClient } from "@genesiscz/utils/ai/grok";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
@@ -53,7 +54,7 @@ export class XaiApiKeyProvider implements ProxyProvider {
 
         if (!resolved) {
             throw new Error(
-                `No xAI API key found (checked config apiKey, ${envName} / X_AI_API_KEY). Set it on the account with \`tools ai-proxy accounts set-key ${account.name}\` or get one at https://console.x.ai/team/default/api-keys`
+                `No xAI API key found (checked config apiKey, ${envName} / X_AI_API_KEY). Set it on the account with \`${toolCommand("ai-proxy accounts set-key")} ${account.name}\` or get one at https://console.x.ai/team/default/api-keys`
             );
         }
 

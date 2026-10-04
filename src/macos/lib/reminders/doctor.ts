@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import { execPath } from "node:process";
 import { ensureBinary } from "@genesiscz/darwinkit";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
 import { MacReminders, type RemindersAuthResult } from "@genesiscz/utils/macos/apple-reminders";
@@ -55,7 +56,7 @@ export function buildRemindersVerdict(input: {
         return {
             verdict:
                 "macOS has recorded no Reminders answer for this process, and the doctor did not ask: reading the status would show the permission dialog and write a durable TCC grant, which a diagnostic must never do.",
-            fix: `Run \`tools macos reminders list-lists\` once and answer the macOS dialog, or grant it yourself: ${fix}`,
+            fix: `Run \`${toolCommand("macos reminders list-lists")}\` once and answer the macOS dialog, or grant it yourself: ${fix}`,
         };
     }
 
@@ -75,7 +76,7 @@ export function buildRemindersVerdict(input: {
         case "notDetermined":
             return {
                 verdict: `macOS has not asked ${host} for Reminders access yet, so there is no switch to turn on in System Settings.`,
-                fix: "Run `tools macos reminders doctor --request-access` (or `tools macos reminders list-lists`) and answer the macOS dialog.",
+                fix: `Run \`${toolCommand("macos reminders doctor")} --request-access\` (or \`${toolCommand("macos reminders list-lists")}\`) and answer the macOS dialog.`,
             };
         default:
             return {

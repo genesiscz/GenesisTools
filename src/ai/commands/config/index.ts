@@ -1,5 +1,6 @@
 import { registerBuiltInPlugins } from "@genesiscz/utils/ai/providers/plugins";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
 import { registerAccountCommands } from "./account";
@@ -24,7 +25,9 @@ export function registerConfigCommands(command: Command): void {
         .description("Manage AI accounts, defaults, links, secrets and diagnostics")
         .action(async () => {
             if (!isInteractive()) {
-                out.log.error("tools ai config with no arguments opens an interactive menu, which needs a TTY.");
+                out.log.error(
+                    `${toolCommand("ai config")} with no arguments opens an interactive menu, which needs a TTY.`
+                );
                 out.log.info(suggestCommand("tools ai config", { subcommand: ["config"], add: ["--help"] }));
                 process.exitCode = 1;
                 return;

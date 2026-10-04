@@ -13,6 +13,7 @@ import type {
 import { AIConfig } from "@genesiscz/utils/ai/AIConfig";
 import { CODEX_AUTH_PATH, extractPlanType, readCodexAuthJson } from "@genesiscz/utils/ai/openai/codex-auth";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 
@@ -173,7 +174,7 @@ export async function runAccountsSetEnabled(name: string, enabled: boolean): Pro
     account.enabled = enabled;
     await saveConfig(config);
     out.log.success(`${enabled ? "Enabled" : "Disabled"} account: ${name} (${account.provider})`);
-    out.log.info("Restart the proxy to apply: tools ai-proxy down && tools ai-proxy up");
+    out.log.info(`Restart the proxy to apply: ${toolCommand("ai-proxy down")} && ${toolCommand("ai-proxy up")}`);
 }
 
 const API_KEY_PROVIDERS = new Set<AiProxyProviderType>(["xai-api-key", "openai", "openrouter"]);
@@ -232,7 +233,7 @@ function allowEnvHint(name: string): string {
     return cmd(["accounts", "allow-env", name]);
 }
 
-const RESTART_HINT = "Restart the proxy to apply: tools ai-proxy down && tools ai-proxy up";
+const RESTART_HINT = `Restart the proxy to apply: ${toolCommand("ai-proxy down")} && ${toolCommand("ai-proxy up")}`;
 
 /** Print where the account stands today, then offer the four end states. */
 async function chooseCredential(input: {

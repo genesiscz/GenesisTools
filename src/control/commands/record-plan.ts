@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
 import { classifyPid, readProcessCommand } from "@genesiscz/utils/process-identity";
@@ -409,7 +410,7 @@ export function registerRecordPlanCommand(program: Command): void {
         .description(`Record a plan instead of writing one — capture what happens, emit runnable plan JSON.
 
   Modes (--record):
-    commands  log every subsequent \`tools control\` ACTION command (press/click/
+    commands  log every subsequent \`${toolCommand("control")}\` ACTION command (press/click/
               set/type/hotkey/scroll/perform/screenshot/window/focus) from ANY
               terminal until stop — read-only commands (get/find/attrs/preflight)
               are intentionally NOT recorded
@@ -503,7 +504,9 @@ export function registerRecordPlanCommand(program: Command): void {
                         `${pc.green("plan written")} ${pc.cyan(opts.out)} — ${stepCount} steps (mode=${session.mode})`
                     );
                     out.println(
-                        pc.dim(`review it, then: tools control ${opts.semantic ? "replay-plan" : "run"} ${opts.out}`)
+                        pc.dim(
+                            `review it, then: ${toolCommand("control")} ${opts.semantic ? "replay-plan" : "run"} ${opts.out}`
+                        )
                     );
                 } else {
                     out.println(planJson);
@@ -531,7 +534,7 @@ export function registerRecordPlanCommand(program: Command): void {
                 out.println(
                     `${pc.green("recording")} mode=${session.mode}${session.activityPid ? ` (activity pid ${session.activityPid})` : ""}`
                 );
-                out.println(pc.dim("stop + emit plan: tools control record-plan stop --out plan.json"));
+                out.println(pc.dim(`stop + emit plan: ${toolCommand("control record-plan")} stop --out plan.json`));
                 return;
             }
             if (action === "stop") {

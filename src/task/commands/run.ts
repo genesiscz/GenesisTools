@@ -9,6 +9,7 @@ import { TaskSessionStore } from "@app/task/lib/session-store";
 import { suggestClearOlderThanSeq, suggestTail } from "@app/task/lib/suggest-flags";
 import * as p from "@clack/prompts";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli/executor";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger, out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
 import pc from "picocolors";
@@ -43,7 +44,9 @@ export function registerRunCommand(program: Command): void {
 
             if (command.length === 0) {
                 out.printlnErr("error: Command required after --");
-                out.printlnErr("error: Example: tools task run --session metro -- bash -c 'echo hi'");
+                out.printlnErr(
+                    `error: Example: ${toolCommand("task run", "--session", "metro", "--", "bash", "-c", "'echo", "hi'")}`
+                );
                 await out.flush();
                 process.exit(1);
             }

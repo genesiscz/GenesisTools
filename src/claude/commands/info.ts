@@ -1,4 +1,5 @@
 import { AIConfig } from "@genesiscz/utils/ai/AIConfig";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import type { AIAccountEntry } from "@genesiscz/utils/config/ai.types";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
@@ -112,7 +113,11 @@ export function registerInfoCommand(program: Command): void {
                     out.error(pc.red(`Account "${name}" not found (provider anthropic-sub).`));
                 } else {
                     out.error(pc.red("No account name given and no matching long-lived token arrived on stdin."));
-                    out.printlnErr(pc.dim('Usage: tools claude info <name>   OR   echo "$TOKEN" | tools claude info'));
+                    out.printlnErr(
+                        pc.dim(
+                            `Usage: ${toolCommand("claude info", "<name>")}   OR   echo "$TOKEN" | ${toolCommand("claude info")}`
+                        )
+                    );
                 }
                 await out.flush();
                 process.exit(1);

@@ -1,4 +1,5 @@
 import { loadTaskToolConfig, saveTaskToolConfig } from "@app/task/lib/config";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
@@ -8,7 +9,7 @@ export function registerConfigCommand(program: Command): void {
         .command("config")
         .description("Read/update task retention and GC settings")
         .option("--session-retention-days <n>", "Delete sessions older than N days on GC")
-        .option("--gc-on-run-start <onoff>", "Run GC at the start of each tools task run (on|off)")
+        .option("--gc-on-run-start <onoff>", `Run GC at the start of each ${toolCommand("task run")} (on|off)`)
         .action((opts: { sessionRetentionDays?: string; gcOnRunStart?: string }) => {
             let next = loadTaskToolConfig();
 

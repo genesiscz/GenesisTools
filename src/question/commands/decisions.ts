@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { isInteractive, suggestEnumFlag } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import * as p from "@genesiscz/utils/prompts/p";
@@ -115,7 +116,7 @@ export function noDecisionsMessage(session: string | undefined): string {
         return "No decisions or todos in any session.";
     }
 
-    return "No decisions or todos for this session. All sessions: tools question list --all-sessions";
+    return `No decisions or todos for this session. All sessions: ${toolCommand("question list")} --all-sessions`;
 }
 
 /**
@@ -198,7 +199,7 @@ export function registerDecisionCommands(program: Command): void {
     program
         .command("send")
         .description(
-            "Deliver a session's answered decisions as one message: cmux pane for Claude and Grok, steer for a tools codex worker, else they stay queued for the next prompt"
+            `Deliver a session's answered decisions as one message: cmux pane for Claude and Grok, steer for a ${toolCommand("codex")} worker, else they stay queued for the next prompt`
         )
         .option("--session <id>", "defaults to the harness session")
         .option("--provider <name>", "claude, codex or grok (the store's value when omitted)")

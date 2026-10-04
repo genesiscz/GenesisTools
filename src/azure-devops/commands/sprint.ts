@@ -36,6 +36,7 @@ import {
 import { resolveTeam } from "@app/azure-devops/lib/team";
 import type { AzureConfig, OutputFormat } from "@app/azure-devops/types";
 import { requireConfig } from "@app/azure-devops/utils";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
 import { createBoxTable, renderCliHeader, renderCliSection, truncateDisplay } from "@genesiscz/utils/table";
@@ -206,7 +207,7 @@ async function handleIterations(options: IterationsOptions): Promise<void> {
             ? `  * ${current.name}  (${formatDate(current.attributes?.startDate)} -> ${formatDate(current.attributes?.finishDate)})`
             : "  none: no iteration's date range contains today"
     );
-    out.println(pc.dim("\nNext: tools azure-devops sprint --mine --totals"));
+    out.println(pc.dim(`\nNext: ${toolCommand("azure-devops sprint")} --mine --totals`));
 }
 
 // ============= sprint =============
@@ -242,13 +243,13 @@ async function resolveSprintIteration(
 
     if (resolution.kind === "no-current") {
         out.error(
-            `No iteration in ${sourceLabel} contains today. Name one explicitly, for example: tools azure-devops sprint "Sprint 17"`
+            `No iteration in ${sourceLabel} contains today. Name one explicitly, for example: ${toolCommand("azure-devops sprint")} "Sprint 17"`
         );
         process.exit(1);
     }
 
     out.error(
-        `No iteration in ${sourceLabel} matches "${resolution.query}". List them with: tools azure-devops iterations`
+        `No iteration in ${sourceLabel} matches "${resolution.query}". List them with: ${toolCommand("azure-devops iterations")}`
     );
     process.exit(1);
 }

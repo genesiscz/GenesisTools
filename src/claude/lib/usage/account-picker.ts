@@ -1,4 +1,5 @@
 import type { ClaudeModelFamily } from "@app/claude/lib/models";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import type { AccountUsage, UsageBucket } from "./api";
 import { isSubscriptionExpiredError } from "./api";
 import { type CompactLimits, effectiveLeftPct, extractCompactLimits } from "./compact-limits";
@@ -259,7 +260,7 @@ export function scoreAccounts(accounts: AccountUsage[], opts: ScoreOptions = {})
                 weeklyHeadroomPct: 0,
                 sessionUsableFraction: 0,
                 why: expired
-                    ? `login dead — run tools claude login ${account.accountName}`
+                    ? `login dead — run ${toolCommand("claude login")} ${account.accountName}`
                     : `usage unavailable${account.error ? `: ${account.error.slice(0, 80)}` : ""}`,
                 dataNote: expired ? "expired" : "no data",
             };

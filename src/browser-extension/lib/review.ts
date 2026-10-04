@@ -1,3 +1,4 @@
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger } from "@genesiscz/utils/logger";
 import { startSession } from "./agent";
 import type { Deps } from "./deps";
@@ -38,10 +39,13 @@ export function reviewPrompt(page: ForgePage, root: string): string {
     const facts =
         page.kind === "gitlab"
             ? [
-                  `\`tools gitlab pr review ${n} --json\` (diff hunks, checklist, related MRs)`,
-                  `\`tools gitlab fetch-review ${n}\` (existing threads with the code at each anchor)`,
+                  `\`${toolCommand("gitlab pr review", String(n), "--json")}\` (diff hunks, checklist, related MRs)`,
+                  `\`${toolCommand("gitlab fetch-review", String(n))}\` (existing threads with the code at each anchor)`,
               ]
-            : [`\`tools github review ${n} --llm\` (existing threads)`, `\`tools github pr ${n}\` (details)`];
+            : [
+                  `\`${toolCommand("github review", String(n), "--llm")}\` (existing threads)`,
+                  `\`${toolCommand("github pr", String(n))}\` (details)`,
+              ];
     const noun = page.kind === "gitlab" ? `merge request !${n}` : `pull request #${n}`;
     const forge = page.kind === "gitlab" ? "GitLab" : "GitHub";
 
@@ -54,10 +58,10 @@ export function reviewPrompt(page: ForgePage, root: string): string {
         "",
         `Review this ${noun} with the gt:review-proposal skill.`,
         "",
-        "1. Gate: `tools hub status --json` must exit 0.",
+        `1. Gate: \`${toolCommand("hub status", "--json")}\` must exit 0.`,
         `2. Facts, run in this checkout: ${facts.join("; ")}.`,
         "3. Make sure the checkout has both the base and the head commit (`git fetch origin <source-branch>`).",
-        "4. Write the proposal JSON and push it with `tools hub proposal push <file> --open`.",
+        `4. Write the proposal JSON and push it with \`${toolCommand("hub proposal push", "<file>", "--open")}\`.`,
         "",
         `Never post, approve or merge anything on ${forge}. Every comment waits in the review window, where the user decides.`,
         "",
@@ -77,9 +81,9 @@ export async function reviewGate(deps: Deps, page: ForgePage, root: string): Pro
     }
 
     const reason = !hubOk
-        ? "The GenesisTools.app review window is not installed (tools hub status exits 1)."
+        ? `The GenesisTools.app review window is not installed (${toolCommand("hub status")} exits 1).`
         : !factsOk
-          ? "tools gitlab pr review is not available yet, so the review has no MR facts to start from."
+          ? `${toolCommand("gitlab pr review")} is not available yet, so the review has no MR facts to start from.`
           : null;
     log.info({ hub: hubOk, facts: factsOk, kind: page.kind }, "review gate");
     return { hub: hubOk, facts: factsOk, reason };

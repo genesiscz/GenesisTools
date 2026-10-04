@@ -1,3 +1,4 @@
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { formatBytes } from "@genesiscz/utils/format";
 import { getGetattrlistbulkProbeFailure } from "@genesiscz/utils/macos/getattrlistbulk";
 import { escapeShellArg } from "@genesiscz/utils/string";
@@ -248,7 +249,7 @@ export class TableRenderer implements CloneRenderer {
             // Shell-quote each root so the suggested command is copy-pasteable
             // even when paths contain spaces, quotes, or shell metachars.
             const quotedRoots = r.roots.map(escapeShellArg).join(" ");
-            lines.push(pc.dim(`tools macos clones optimize --apply --yes ${quotedRoots}`));
+            lines.push(pc.dim(`${toolCommand("macos clones optimize", "--apply", "--yes")} ${quotedRoots}`));
         } else {
             lines.push(
                 pc.bold(
@@ -266,7 +267,7 @@ export class TableRenderer implements CloneRenderer {
                 );
             }
             if (r.state === "applied") {
-                lines.push(pc.dim(`tools macos clones optimize --rollback --process ${r.id}`));
+                lines.push(pc.dim(toolCommand("macos clones optimize", "--rollback", "--process", r.id)));
             }
         }
 

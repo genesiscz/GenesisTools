@@ -5,6 +5,7 @@ import { renderTranscriptSrt as toSRT, renderTranscriptVtt as toVTT } from "@app
 import type { Transcript, TranscriptSegment, VideoId } from "@app/youtube/lib/types";
 import * as p from "@clack/prompts";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli/executor";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import { Command } from "commander";
@@ -250,5 +251,5 @@ function transcriptToJson(transcript: Transcript): {
 }
 
 function buildTranscribeExamples(): string {
-    return "\nExamples:\n  $ tools youtube transcribe https://youtu.be/dQw4w9WgXcQ\n  $ tools youtube transcribe dQw4w9WgXcQ --format srt -o /tmp/out.srt\n  $ tools youtube transcribe dQw4w9WgXcQ --force-transcribe --provider local-hf\n";
+    return `\nExamples:\n  $ ${toolCommand("youtube transcribe")} https://youtu.be/dQw4w9WgXcQ\n  $ ${toolCommand("youtube transcribe")} dQw4w9WgXcQ --format srt -o /tmp/out.srt\n  $ ${toolCommand("youtube transcribe")} dQw4w9WgXcQ --force-transcribe --provider local-hf\n`;
 }

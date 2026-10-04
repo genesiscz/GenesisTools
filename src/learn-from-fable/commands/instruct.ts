@@ -5,6 +5,7 @@
  */
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { env } from "@genesiscz/utils/env";
 import { out } from "@genesiscz/utils/logger";
 import { FABLE_MODEL, type FableConfig, packPaths } from "../lib/config";
@@ -59,7 +60,9 @@ export async function skillCommand(config: FableConfig, options: { maxLines: num
         const runtime = join(env.paths.getHome(), ".claude", "skills", "fable-style", "SKILL.md");
 
         if (!existsSync(canonical)) {
-            out.log.error(`No skill to sync at ${canonical}. Generate it first: tools learn-from-fable skill`);
+            out.log.error(
+                `No skill to sync at ${canonical}. Generate it first: ${toolCommand("learn-from-fable skill")}`
+            );
             return;
         }
 
@@ -77,7 +80,7 @@ Regenerate ${join(paths.skillDir, "SKILL.md")} FROM the spec below (the spec is 
 - Body budget: <= ${options.maxLines} lines (parameterized — not a hard 150 anymore).
 - Frontmatter exactly: name fable-style; description "Work the way Fable 5 works - plan, execute, verify, then report outcome-first. Load when running on Sonnet/Opus/Haiku for nontrivial engineering tasks."
 - Content: strongest principles per section (each with its one-line why), 3-5 best golden traces, command idioms. Principle-shaped prose, not MUST-lists.
-- Afterwards run: tools learn-from-fable skill --sync
+- Afterwards run: ${toolCommand("learn-from-fable skill", "--sync")}
 - Then commit the pack repo.
 
 ## FABLE-SPEC.md
@@ -94,6 +97,6 @@ export function preScoreCommand(config: FableConfig): void {
 
 Rank unmined sessions by expected teachable-episode density BEFORE spending mining calls. Deferred by design (late-stage addition; user may revise after reading mined output — ${runs} mine runs so far).
 
-Interim manual recipe: run \`tools learn-from-fable pre-mine --limit 20\` and prioritize sessions with high fableTurns and many windows; error-recovery-heavy projects first. A model-backed scorer becomes worthwhile once mining cost dominates (>50 sessions/run).
+Interim manual recipe: run \`${toolCommand("learn-from-fable pre-mine", "--limit", "20")}\` and prioritize sessions with high fableTurns and many windows; error-recovery-heavy projects first. A model-backed scorer becomes worthwhile once mining cost dominates (>50 sessions/run).
 `);
 }

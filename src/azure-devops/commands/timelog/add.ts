@@ -7,6 +7,7 @@ import { runInteractiveAddInquirer } from "@app/azure-devops/timelog-prompts-inq
 import type { AllowedTypeConfig, AzureConfigWithTimeLog, TimeLogUser } from "@app/azure-devops/types";
 import { requireTimeLogConfig, requireTimeLogUser } from "@app/azure-devops/utils";
 import { precheckWorkItem } from "@app/azure-devops/workitem-precheck";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger, out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
 import pc from "picocolors";
@@ -30,7 +31,7 @@ async function runInteractiveAdd(
 
 function showAddHelp(): void {
     out.println(`
-Usage: tools azure-devops timelog add [options]
+Usage: ${toolCommand("azure-devops timelog add")} [options]
 
 Required (unless -i):
   -w, --workitem <id>     Work item ID to log time against
@@ -46,11 +47,11 @@ Optional:
 Note: If using only minutes, specify --hours 0 --minutes <n> to confirm intent.
 
 Examples:
-  tools azure-devops timelog add -w 12345 -h 2 -t "Development"
-  tools azure-devops timelog add -w 12345 -h 1 -m 30 -t "Code Review" -c "PR review"
-  tools azure-devops timelog add -w 12345 -h 0 -m 30 -t "Test" -d 2026-02-03
-  tools azure-devops timelog add -i
-  tools azure-devops timelog add -w 12345 -i
+  ${toolCommand("azure-devops timelog add")} -w 12345 -h 2 -t "Development"
+  ${toolCommand("azure-devops timelog add")} -w 12345 -h 1 -m 30 -t "Code Review" -c "PR review"
+  ${toolCommand("azure-devops timelog add")} -w 12345 -h 0 -m 30 -t "Test" -d 2026-02-03
+  ${toolCommand("azure-devops timelog add")} -i
+  ${toolCommand("azure-devops timelog add")} -w 12345 -i
 `);
 }
 
@@ -99,12 +100,12 @@ Missing required options for non-interactive mode.
 Required: --workitem, --hours, --type
 
 Examples:
-  tools azure-devops timelog add -w 12345 -h 2 -t "Development"
-  tools azure-devops timelog add -w 12345 -h 1 -m 30 -t "Code Review" -c "PR review"
+  ${toolCommand("azure-devops timelog add")} -w 12345 -h 2 -t "Development"
+  ${toolCommand("azure-devops timelog add")} -w 12345 -h 1 -m 30 -t "Code Review" -c "PR review"
 
 Or use interactive mode:
-  tools azure-devops timelog add -i
-  tools azure-devops timelog add -w 12345 -i
+  ${toolCommand("azure-devops timelog add")} -i
+  ${toolCommand("azure-devops timelog add")} -w 12345 -i
 `);
                     process.exit(1);
                 }

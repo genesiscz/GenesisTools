@@ -1,3 +1,4 @@
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger } from "@genesiscz/utils/logger";
 import { ACCESS_SKEW_MS } from "./constants.ts";
 import { mcpFetch, readJsonRecord } from "./fetch.ts";
@@ -74,7 +75,7 @@ export async function accessTokenForRequest(
         const refreshToken = await readRefreshToken(server);
 
         if (!refreshToken) {
-            throw new Error(`No refresh token for ${server}. Run tools mcp-manager auth login ${server}`);
+            throw new Error(`No refresh token for ${server}. Run ${toolCommand("mcp-manager auth login", server)}`);
         }
 
         const clientId = await readSecret(secretPath(server, "client-id"));
@@ -128,7 +129,9 @@ export async function accessTokenForRequest(
                 lastError: err,
                 expiresAt: again.expiresAt,
             });
-            throw new Error(`Refresh failed for ${server} (${err}). Run tools mcp-manager auth login ${server}`);
+            throw new Error(
+                `Refresh failed for ${server} (${err}). Run ${toolCommand("mcp-manager auth login", server)}`
+            );
         }
 
         const expiresIn = typeof json?.expires_in === "number" ? json.expires_in : 3600;

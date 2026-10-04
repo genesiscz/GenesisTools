@@ -10,6 +10,7 @@ import {
 import { listSayVoices } from "@app/monitor/lib/say-voices";
 import { isNotifyChannel } from "@app/monitor/lib/types";
 import { suggestCommand, suggestEnumFlag } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { out } from "@genesiscz/utils/logger";
 import type { ChannelName } from "@genesiscz/utils/notifications";
 import { createBoxTable, formatDotStatus, renderCliHeader, renderCliSection } from "@genesiscz/utils/table";
@@ -48,7 +49,7 @@ function describeChannel(view: NotifySettings["channels"][number]): string {
 }
 
 function printSettings(settings: NotifySettings): void {
-    renderCliHeader("Monitor notifications", "app overrides on top of `tools notify config`");
+    renderCliHeader("Monitor notifications", `app overrides on top of \`${toolCommand("notify config")}\``);
     const table = createBoxTable(["CHANNEL", "STATE", "SETTINGS", "OVERRIDES"]);
 
     for (const view of settings.channels) {
@@ -156,7 +157,7 @@ export function registerNotifyCommands(program: Command): void {
 
     notify
         .command("set")
-        .description("Override a channel for monitor (global defaults come from `tools notify config`)")
+        .description(`Override a channel for monitor (global defaults come from \`${toolCommand("notify config")}\`)`)
         .argument("[channel]", `One of ${CHANNEL_NAMES.join(", ")}`)
         .option("--enable", "Turn the channel on for monitor")
         .option("--disable", "Turn the channel off for monitor")
@@ -165,7 +166,7 @@ export function registerNotifyCommands(program: Command): void {
         .option("--title <text>", "system: notification title")
         .option("--ignore-dnd", "system: bypass Do Not Disturb")
         .option("--no-ignore-dnd", "system: respect Do Not Disturb")
-        .option("--voice <name>", "say: voice id (see: tools monitor notify voices)")
+        .option("--voice <name>", `say: voice id (see: ${toolCommand("monitor notify voices")})`)
         .option("--provider <name>", "say: TTS backend for that voice: macos, xai, openai")
         .option("--url <url>", "webhook: POST target")
         .option("--bot-token <token>", "telegram: bot token")
@@ -207,7 +208,7 @@ export function registerNotifyCommands(program: Command): void {
 
     notify
         .command("voices")
-        .description("List the voices `tools say` can use right now, grouped by provider")
+        .description(`List the voices \`${toolCommand("say")}\` can use right now, grouped by provider`)
         .option("--json", "Emit JSON")
         .action(async (opts: { json?: boolean }) => {
             const providers = await listSayVoices({ fresh: true });

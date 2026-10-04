@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { selectedProvider } from "@genesiscz/utils/ai/evaluation/cli";
 import { suggestCommand } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { ui } from "@genesiscz/utils/cli/ui";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
@@ -156,7 +157,7 @@ async function createAction(options: { name?: string; from?: string; bundle?: st
         const saved = store().save(options.name, source);
         out.result({
             saved: { name: saved.name, path: saved.path, bytes: saved.source.length },
-            next: `tools jev evaluation run ${saved.name} --input "…"`,
+            next: toolCommand("jev evaluation run", saved.name, "--input", '"…"'),
         });
         return;
     }

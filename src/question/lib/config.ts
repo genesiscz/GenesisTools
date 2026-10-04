@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { SoundChoice } from "@genesiscz/utils/audio/runner.server";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 
@@ -23,7 +24,7 @@ export interface QuestionConfig {
     askViaQuestionTool?: boolean;
 }
 
-export const ASK_VIA_QUESTION_TOOL_LABEL = "Ask agents to use tools question instead of their native question tools?";
+export const ASK_VIA_QUESTION_TOOL_LABEL = `Ask agents to use ${toolCommand("question")} instead of their native question tools?`;
 
 /**
  * What the setting changes, shown by `tools question config`. Keep it in step with the texts it names:
@@ -31,10 +32,10 @@ export const ASK_VIA_QUESTION_TOOL_LABEL = "Ask agents to use tools question ins
  * src/genesis-tools-mcp/lib/tools/question-post.ts and `agentNote()` in ./agent-note.ts.
  */
 export const ASK_VIA_QUESTION_TOOL_DESCRIPTION = [
-    "No hook is involved. Agents learn about tools question from two texts of the genesis-tools MCP server:",
+    `No hook is involved. Agents learn about ${toolCommand("question")} from two texts of the genesis-tools MCP server:`,
     "its server instructions and the question_post tool description. Both are read when the server starts,",
     "so a change reaches an agent session started after it.",
-    "On: both texts tell agents to post every ❓ DECISION with question_post (or tools question ask).",
+    `On: both texts tell agents to post every ❓ DECISION with question_post (or ${toolCommand("question ask")}).`,
     "Off (the default): both texts tell agents to ask with their native question tool (for example",
     "AskUserQuestion) and in their chat reply. A post still lands in the inbox, and its result reminds",
     "the agent that you have not opted in.",

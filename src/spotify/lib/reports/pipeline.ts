@@ -10,6 +10,7 @@ import { type CommonOpts, type Ctx, context, head, minMsOf, type ReportHead } fr
 import { byArtist, bySong, byTrack, counted, sortedAggs } from "@app/spotify/lib/history";
 import { globalPlaycounts, libraryPath, loadLibrary } from "@app/spotify/lib/library";
 import { loadRegistry, type Profile } from "@app/spotify/lib/profiles";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 
 export const EXPORT_KINDS = ["tracks", "songs", "artists", "library"] as const;
 export type ExportKind = (typeof EXPORT_KINDS)[number];
@@ -183,20 +184,22 @@ function diagnose(p: Profile): DoctorProfile {
 
     if (!p.historyDir) {
         gaps.push(
-            `request the export at spotify.com/account/privacy, then: tools spotify profile add ${p.name} --history <dir>`
+            `request the export at spotify.com/account/privacy, then: ${toolCommand("spotify profile add", p.name, "--history", "<dir>")}`
         );
     }
 
     if (!p.dataDir || !path) {
-        gaps.push(`no harvested library — run \`tools spotify harvest\` then \`tools spotify build -p ${p.name}\``);
+        gaps.push(
+            `no harvested library — run \`${toolCommand("spotify harvest")}\` then \`${toolCommand("spotify build", "-p", p.name)}\``
+        );
     }
 
     if (path && !mb) {
-        gaps.push(`no MusicBrainz tags — \`tools spotify enrich musicbrainz -p ${p.name}\``);
+        gaps.push(`no MusicBrainz tags — \`${toolCommand("spotify enrich", "musicbrainz", "-p", p.name)}\``);
     }
 
     if (path && !lf) {
-        gaps.push(`no Last.fm tags — \`tools spotify enrich lastfm -p ${p.name}\``);
+        gaps.push(`no Last.fm tags — \`${toolCommand("spotify enrich", "lastfm", "-p", p.name)}\``);
     }
 
     return {

@@ -2,6 +2,7 @@ import { resolve } from "node:path";
 import { getDaemonStatus } from "@app/daemon/lib/launchd";
 import { isTaskRegistered, registerTask, unregisterTask } from "@app/daemon/lib/register";
 import * as p from "@clack/prompts";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import type { Command } from "commander";
 import pc from "picocolors";
@@ -111,7 +112,7 @@ export function registerDaemonCommands(program: Command): void {
 
             if (!status.running) {
                 p.log.warn(
-                    `Daemon is not running. Start it with: ${pc.cyan("tools daemon start")} or ${pc.cyan("tools daemon install")}`
+                    `Daemon is not running. Start it with: ${pc.cyan(`${toolCommand("daemon start")}`)} or ${pc.cyan(`${toolCommand("daemon install")}`)}`
                 );
             }
         });
@@ -140,7 +141,7 @@ export function registerDaemonCommands(program: Command): void {
                 p.log.success(`Task ${pc.cyan(TASK_NAME)} is registered`);
             } else {
                 p.log.warn(
-                    `Task ${pc.cyan(TASK_NAME)} is not registered. Run: ${pc.cyan("tools wakeup daemon register")}`
+                    `Task ${pc.cyan(TASK_NAME)} is not registered. Run: ${pc.cyan(`${toolCommand("wakeup daemon register")}`)}`
                 );
             }
 
@@ -149,7 +150,7 @@ export function registerDaemonCommands(program: Command): void {
             } else if (daemonStatus.installed) {
                 p.log.warn("Daemon installed but not running");
             } else {
-                p.log.info(`Daemon not installed. Run: ${pc.cyan("tools daemon install")}`);
+                p.log.info(`Daemon not installed. Run: ${pc.cyan(`${toolCommand("daemon install")}`)}`);
             }
         });
 }

@@ -1,6 +1,7 @@
 import type { WorkItemTypeColor } from "@app/azure-devops/lib/work-item-enrichment";
 import type { ClarityMapping } from "@app/clarity/config";
 import type { ClarityTask } from "@app/clarity/lib/types";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { Badge } from "@ui/components/badge";
 import { Button } from "@ui/components/button";
 import { GripVertical, Plus, Unlink } from "lucide-react";
@@ -84,7 +85,7 @@ export function MappingTable({
         return (
             <div className="text-center py-12 text-gray-500 font-mono text-sm">
                 No mappings configured. Use the form below or{" "}
-                <code className="text-primary">tools clarity mappings</code> to create mappings.
+                <code className="text-primary">{toolCommand("clarity mappings")}</code> to create mappings.
             </div>
         );
     }

@@ -2,6 +2,7 @@ import { existsSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { Executor, runTool } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { isPromptCancelled } from "@genesiscz/utils/prompt-helpers.js";
 import * as p from "@genesiscz/utils/prompts/p";
@@ -46,7 +47,7 @@ interface CommitInfo {
 
 function showHelpFull() {
     logger.info(`
-Usage: tools git-rename-commits [--commits N] [--help]
+Usage: ${toolCommand("git-rename-commits")} [--commits N] [--help]
 
 Description:
   Interactively rename commit messages for the last N commits.
@@ -59,8 +60,8 @@ Options:
   -?, --help-full Show this help message (Commander auto-generates --help)
 
 Examples:
-  tools git-rename-commits --commits 3
-  tools git-rename-commits -c 5
+  ${toolCommand("git-rename-commits")} --commits 3
+  ${toolCommand("git-rename-commits")} -c 5
 `);
 }
 
@@ -892,7 +893,7 @@ async function main() {
                 logger.error("   Please push your commits first as a backup:");
                 logger.error(`   ${chalk.cyan(`git push origin ${currentBranch}`)}`);
                 logger.error("\n   If you're sure you want to proceed anyway, use:");
-                logger.error(`   ${chalk.cyan(`tools git-rename-commits --force`)}`);
+                logger.error(`   ${chalk.cyan(`${toolCommand("git-rename-commits")} --force`)}`);
                 process.exit(1);
             }
         } else {

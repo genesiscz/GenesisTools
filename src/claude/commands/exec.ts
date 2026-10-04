@@ -5,6 +5,7 @@ import * as p from "@clack/prompts";
 import { AIConfig } from "@genesiscz/utils/ai/AIConfig";
 import { LONG_TOKEN_MIN_LENGTH, probeLongLivedToken, type TokenVerdict } from "@genesiscz/utils/claude/token-verify";
 import { isInteractive } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import type { AIAccountEntry } from "@genesiscz/utils/config/ai.types";
 import { env } from "@genesiscz/utils/env";
 import { logger, out } from "@genesiscz/utils/logger";
@@ -36,7 +37,7 @@ export function launchGateForVerdict(verdict: TokenVerdict, accountName: string)
         return {
             launch: false,
             reason: `The stored token for "${accountName}" is no longer accepted (401/403).`,
-            fix: `tools claude login-long ${accountName}`,
+            fix: toolCommand("claude login-long", accountName),
         };
     }
 
@@ -144,7 +145,7 @@ export async function execCommand(args: string[]): Promise<never> {
 
     if (command.length === 0) {
         out.error(pc.red("Nothing to run."));
-        out.printlnErr(pc.dim("Usage: tools claude exec [-a <account>] [--] <command> [args...]"));
+        out.printlnErr(pc.dim(`Usage: ${toolCommand("claude exec")} [-a <account>] [--] <command> [args...]`));
         await out.flush();
         process.exit(1);
     }
@@ -154,7 +155,7 @@ export async function execCommand(args: string[]): Promise<never> {
 
     if (eligible.length === 0) {
         out.error(pc.red("No accounts with a long-lived token."));
-        out.printlnErr(pc.dim(`Run ${pc.cyan("tools claude login-long")} first to save one.`));
+        out.printlnErr(pc.dim(`Run ${pc.cyan(toolCommand("claude login-long"))} first to save one.`));
         await out.flush();
         process.exit(1);
     }
@@ -166,7 +167,7 @@ export async function execCommand(args: string[]): Promise<never> {
     // login — the exact wrong-account failure this command exists to prevent.
     if (token.length < LONG_TOKEN_MIN_LENGTH) {
         out.error(pc.red(`The stored token for "${account.name}" is truncated (${token.length} chars, expect ~108).`));
-        out.printlnErr(pc.dim(`Recapture it with: ${pc.cyan(`tools claude login-long ${account.name}`)}`));
+        out.printlnErr(pc.dim(`Recapture it with: ${pc.cyan(toolCommand("claude login-long", account.name))}`));
         await out.flush();
         process.exit(1);
     }
@@ -220,7 +221,7 @@ export function registerExecCommand(program: Command): void {
         .description(
             "Run any command with an account's long-lived token in its environment " +
                 "(so `claude -p` in hooks and CI never depends on the keychain login). " +
-                "Usage: tools claude exec [-a <account>] [--no-verify] [--] <command> [args...]"
+                `Usage: ${toolCommand("claude exec")} [-a <account>] [--no-verify] [--] <command> [args...]`
         )
         .allowUnknownOption(true)
         .allowExcessArguments(true)

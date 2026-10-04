@@ -1,6 +1,7 @@
 // Output formatters for GitHub data
 
 import { formatReviewMarkdown, formatReviewTerminal } from "@app/github/lib/review-output";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { formatLocalDateTimeStamp } from "@genesiscz/utils/date";
 import type {
     ActivityItem,
@@ -315,7 +316,7 @@ function formatIssueMarkdown(data: IssueData, options: FormatOptions): string {
         lines.push(data.issue.body);
     } else {
         const issueType = "pull_request" in data.issue ? "pr" : "issue";
-        const hintCmd = `tools github ${issueType} https://github.com/${data.owner}/${data.repo}/${issueType === "pr" ? "pull" : "issues"}/${data.issue.number} --full`;
+        const hintCmd = `${toolCommand("github")} ${issueType} https://github.com/${data.owner}/${data.repo}/${issueType === "pr" ? "pull" : "issues"}/${data.issue.number} --full`;
         lines.push(`_No description provided._ (Run \`${hintCmd}\` to fetch full details)`);
     }
     lines.push("");

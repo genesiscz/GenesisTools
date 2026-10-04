@@ -11,6 +11,7 @@ import type {
 } from "@app/shops/api/shops/DmClient.types";
 import { ApiClientError } from "@genesiscz/utils/api/ApiClient";
 import { abortableSleep } from "@genesiscz/utils/async";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger } from "@genesiscz/utils/logger";
 
 export type DmCountry = "CZ" | "SK";
@@ -105,7 +106,7 @@ export class DmClient extends ShopApiClient {
 
     async getProduct(input: { url?: string; slug?: string }): Promise<RawProduct> {
         throw new Error(
-            `DmClient.getProduct: not implemented in Phase 2; use listCategory or tools shops get instead (input=${input.url ?? input.slug})`
+            `DmClient.getProduct: not implemented in Phase 2; use listCategory or ${toolCommand("shops get")} instead (input=${input.url ?? input.slug})`
         );
     }
 

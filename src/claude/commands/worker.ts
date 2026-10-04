@@ -1,4 +1,5 @@
 import { registerWorkerVerbs } from "@app/ai/commands/agent/worker";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import type { Command } from "commander";
 import { claudeWorkerDriver } from "../lib/worker/driver";
 
@@ -12,5 +13,5 @@ export function registerWorkerCommand(program: Command): void {
         .command("worker")
         .description("Drive a headless claude -p session pinned to a named account (spawn/steer/read/status/stop)");
 
-    registerWorkerVerbs(worker, claudeWorkerDriver, { tool: "tools claude worker", subcommand: ["worker"] });
+    registerWorkerVerbs(worker, claudeWorkerDriver, { tool: toolCommand("claude worker"), subcommand: ["worker"] });
 }

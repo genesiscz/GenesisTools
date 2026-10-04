@@ -1,3 +1,4 @@
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { out } from "@genesiscz/utils/logger";
 import { createBoxTable, formatDotStatus, renderCliHeader } from "@genesiscz/utils/table";
 import type { Command } from "commander";
@@ -117,7 +118,7 @@ export function registerRulesCommand(program: Command): void {
             renderCliHeader("Hub notification rules", rulesConfigPath());
 
             if (config.rules.length === 0) {
-                out.println("No rules. Add one: tools hub rules add --kind idle --minutes 30");
+                out.println(`No rules. Add one: ${toolCommand("hub rules add", "--kind", "idle", "--minutes", "30")}`);
                 return;
             }
 
@@ -217,7 +218,7 @@ export function registerRulesCommand(program: Command): void {
                         const rule = config.rules.find((entry) => entry.id === id);
 
                         if (!rule) {
-                            throw new Error(`no rule ${id} (tools hub rules list)`);
+                            throw new Error(`no rule ${id} (${toolCommand("hub rules list")})`);
                         }
 
                         const next: HubRule = { ...rule };
@@ -272,7 +273,7 @@ export function registerRulesCommand(program: Command): void {
                     const kept = config.rules.filter((rule) => rule.id !== id);
 
                     if (kept.length === config.rules.length) {
-                        throw new Error(`no rule ${id} (tools hub rules list)`);
+                        throw new Error(`no rule ${id} (${toolCommand("hub rules list")})`);
                     }
 
                     config.rules = kept;

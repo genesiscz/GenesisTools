@@ -2,6 +2,7 @@ import { isAbsolute, relative } from "node:path";
 import { toToon } from "@app/json/lib/toon";
 import * as p from "@clack/prompts";
 import { isInteractive } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import type { SearchResult } from "@genesiscz/utils/search/types";
@@ -96,7 +97,7 @@ export function registerSearchCommand(program: Command): void {
                     const allMeta = manager.listIndexes();
 
                     if (allMeta.length === 0) {
-                        p.log.info("No indexes configured. Run: tools indexer add <path>");
+                        p.log.info(`No indexes configured. Run: ${toolCommand("indexer add", "<path>")}`);
                         return;
                     }
 
@@ -143,7 +144,7 @@ export function registerSearchCommand(program: Command): void {
                 }
 
                 if (names.length === 0) {
-                    p.log.info("No indexes configured. Run: tools indexer add <path>");
+                    p.log.info(`No indexes configured. Run: ${toolCommand("indexer add", "<path>")}`);
                     return;
                 }
 

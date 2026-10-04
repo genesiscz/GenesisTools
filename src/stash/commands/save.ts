@@ -2,6 +2,7 @@ import { Database } from "bun:sqlite";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { renderUnifiedDiff } from "@genesiscz/utils/diff";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
@@ -353,7 +354,9 @@ function emitPostSaveHints(args: { name: string; mode: SaveMode; files: string[]
         // `-u`/`--include-untracked` so brand-new files come along into the git-stash too.
         ui.info(`  to clear all captured changes (recoverable): git stash push -u -m "${args.name}"${fileList}`);
     }
-    ui.info(`  to apply this overlay in another project:    cd <other-project> && tools stash apply ${args.name}`);
+    ui.info(
+        `  to apply this overlay in another project:    cd <other-project> && ${toolCommand("stash apply", args.name)}`
+    );
 }
 
 function quoteIfSpaces(p: string): string {
@@ -421,11 +424,11 @@ function emitMarkerAuthoringInstructions(name: string): void {
     ui.info("Comment syntax adapts per language (# for Python/Ruby/Bash; <!-- --> for HTML/MD; /* */ for CSS).");
     ui.raw("");
     ui.info("Then re-run with --regions:");
-    ui.raw(`    tools stash save ${name} --regions ${name}`);
+    ui.raw(`    ${toolCommand("stash save", name, "--regions", name)}`);
     ui.info("Or capture everything without marking individual regions:");
-    ui.raw(`    tools stash save ${name} --mode all`);
-    ui.raw(`    tools stash save ${name} --mode staged`);
-    ui.raw(`    tools stash save ${name} --mode unstaged`);
+    ui.raw(`    ${toolCommand("stash save", name, "--mode", "all")}`);
+    ui.raw(`    ${toolCommand("stash save", name, "--mode", "staged")}`);
+    ui.raw(`    ${toolCommand("stash save", name, "--mode", "unstaged")}`);
 }
 
 /**

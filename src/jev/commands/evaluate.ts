@@ -1,5 +1,6 @@
 import { selectedProvider } from "@genesiscz/utils/ai/evaluation/cli";
 import type { EvaluationProviderId } from "@genesiscz/utils/ai/evaluation/types";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
@@ -56,7 +57,7 @@ export function registerEvaluation(program: Command): void {
             .option("--state <text>", "Text to evaluate; otherwise stdin")
     ).action(async (question: string, options: Options & { state?: string }) => {
         if (options.state === undefined && process.stdin.isTTY) {
-            throw new Error("Provide --state or pipe text into tools jev ask.");
+            throw new Error(`Provide --state or pipe text into ${toolCommand("jev ask")}.`);
         }
 
         const state = options.state ?? (await Bun.stdin.text());

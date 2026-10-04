@@ -1,4 +1,5 @@
 import { parseNonNegativeInt } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
 import { probeCooccurrence } from "@genesiscz/utils/string";
@@ -101,7 +102,7 @@ export async function bisectCommand(from: string, to: string, opts: BisectOption
             `\nTransition: ${t.before.version} → ${t.after.version} (published ${t.before.published?.slice(0, 10)} → ${t.after.published?.slice(0, 10)})`
         );
         out.println(
-            `Inspect: tools claude code diff ${t.before.version} ${t.after.version} --pattern ${opts.pattern.map((p) => `'${p}'`).join(" ")}`
+            `Inspect: ${toolCommand("claude code diff", t.before.version, t.after.version)} --pattern ${opts.pattern.map((p) => `'${p}'`).join(" ")}`
         );
     }
 }

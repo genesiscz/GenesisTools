@@ -1,6 +1,7 @@
 import type { ReplayCase } from "@app/control/lib/decision/fixtures";
 import type { ReplayResult } from "@app/control/lib/decision/replay";
 import { Badge, Callout, JsonView } from "@artifact/kit";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { Button } from "@ui/components/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@ui/components/card";
 import { CheckCheck, MousePointer2, Play, Square } from "lucide-react";
@@ -284,7 +285,7 @@ function TargetReplayLab() {
                 </Card>
             )}
             <Callout tone="info" title="Use the same core from your terminal">
-                <code>tools control replay context --chooser jev --provider typesafe</code>
+                <code>{toolCommand("control replay")} context --chooser jev --provider typesafe</code>
                 <p className="mt-2">
                     Live commands: resolve, judge, fill, assist, await and sequence. The model chooses among observed
                     actions; native validation admits each action and exact readback remains authoritative.

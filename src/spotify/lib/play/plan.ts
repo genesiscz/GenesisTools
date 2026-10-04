@@ -13,6 +13,7 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { playDir } from "@app/spotify/lib/paths";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/storage";
@@ -208,7 +209,7 @@ export interface RemovedPlan {
 export function removePlan(name: string): RemovedPlan {
     const found = findPlan(name);
     if (!found) {
-        throw new Error(`no plan named "${safePlanName(name)}". List them: tools spotify play plan list`);
+        throw new Error(`no plan named "${safePlanName(name)}". List them: ${toolCommand("spotify play plan list")}`);
     }
 
     // Ownership comes from the recorded provenance, never from the path. The guard sits
@@ -235,7 +236,7 @@ export function loadPlan(name?: string): PlayPlan {
     if (name) {
         const found = findPlan(name);
         if (!found) {
-            throw new Error(`no plan named "${name}". List them: tools spotify play plan list`);
+            throw new Error(`no plan named "${name}". List them: ${toolCommand("spotify play plan list")}`);
         }
 
         return found.plan;

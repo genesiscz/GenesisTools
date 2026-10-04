@@ -1,5 +1,6 @@
 import { chmodSync, cpSync, existsSync, mkdirSync, readdirSync, renameSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger } from "@genesiscz/utils/logger";
 import { liveBlobDir, liveIdbDir, snapshotDir } from "./paths";
 
@@ -17,7 +18,7 @@ export function snapshotTeamsIdb(): SnapshotPaths {
 
     if (!existsSync(idb)) {
         throw new Error(
-            `Teams IndexedDB not found at ${idb}. Grant Full Disk Access to your terminal, then run tools ms-teams doctor.`
+            `Teams IndexedDB not found at ${idb}. Grant Full Disk Access to your terminal, then run ${toolCommand("ms-teams doctor")}.`
         );
     }
 

@@ -1,10 +1,10 @@
 import { Writable } from "node:stream";
 import { AiConfigStore } from "@genesiscz/utils/ai/config/AiConfigStore";
 import type { AccountEntry } from "@genesiscz/utils/ai/config/schema";
-
 import { registerBuiltInPlugins } from "@genesiscz/utils/ai/providers/plugins";
 import { providerPlugin } from "@genesiscz/utils/ai/providers/registry";
 import { ai } from "@genesiscz/utils/ai/tasks/facade";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger } from "@genesiscz/utils/logger";
 
 export interface WarmupResult {
@@ -92,7 +92,7 @@ export function selectWarmupAccounts(
             const account = store.account(selector);
 
             if (!account) {
-                throw new Error(`No account named "${selector}". List them with: tools ai accounts list`);
+                throw new Error(`No account named "${selector}". List them with: ${toolCommand("ai accounts list")}`);
             }
 
             if (opts.provider && account.provider !== opts.provider) {

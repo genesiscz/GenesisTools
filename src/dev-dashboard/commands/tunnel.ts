@@ -13,6 +13,7 @@ import {
 import { buildPairingPayload, persistPairing } from "@app/dev-dashboard/lib/tunnel/pairing";
 import { cancel, confirm, intro, isCancel, log, note, outro, select, spinner, text } from "@clack/prompts";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger, out } from "@genesiscz/utils/logger";
 import { renderQr } from "@genesiscz/utils/qr";
 
@@ -45,7 +46,7 @@ export async function runTunnelSetup(opts: TunnelSetupOptions): Promise<void> {
                 "Install cloudflared manually: https://developers.cloudflare.com/cloudflare-one/connections/connect-apps/install-and-setup/installation",
                 "Manual step"
             );
-            outro("Re-run `tools dev-dashboard tunnel setup` after installing.");
+            outro(`Re-run \`${toolCommand("dev-dashboard tunnel setup")}\` after installing.`);
             return;
         }
     } else {

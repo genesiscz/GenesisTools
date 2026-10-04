@@ -14,6 +14,7 @@
  *
  * The report only wires the profile and the catalogue in.
  */
+
 import { type ArtistCatalog, type CatalogArtist, type CatalogRelease, loadCatalog } from "@app/spotify/lib/catalog";
 import {
     type CommonOpts,
@@ -27,6 +28,7 @@ import {
 import { applyFilter, PLAY_MS, type Play, songKey } from "@app/spotify/lib/history";
 import { type LibTrack, loadLibrary } from "@app/spotify/lib/library";
 import { sessionize } from "@app/spotify/lib/stats";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 
 const DAY_MS = 86_400_000;
 const MONTH_MS = 30 * DAY_MS;
@@ -669,9 +671,9 @@ export function recommendReport(o: RecommendOpts): RecommendReport {
             settings: [],
             missingLibrary: true,
             nextSteps: [
-                ...(ctx.profile.dataDir ? [] : [`tools spotify profile add ${name} --data <dir>`]),
-                `tools spotify harvest --auto --profile ${name}`,
-                `tools spotify build --profile ${name}`,
+                ...(ctx.profile.dataDir ? [] : [`${toolCommand("spotify profile add")} ${name} --data <dir>`]),
+                `${toolCommand("spotify harvest")} --auto --profile ${name}`,
+                `${toolCommand("spotify build")} --profile ${name}`,
             ],
             recommendations: [],
             limit: top,

@@ -1,6 +1,7 @@
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { basename, dirname, extname, join, resolve } from "node:path";
 import { suggestCommand } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { findProjectRoot } from "@genesiscz/utils/fs/project-root";
 import { logger, out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
@@ -221,7 +222,7 @@ export function registerImportsCommands(parent: Command): void {
             .option("--depth <n>", "Tree depth (default 4)")
             .option("--top <n>", "Rows in the heaviest-modules table (default 15)")
     ).action(async (input: string, options: AnalyzeCommandOptions) => {
-        const sessions = await sessionsFor(input, options, "tools ts imports analyze");
+        const sessions = await sessionsFor(input, options, `${toolCommand("ts imports analyze")}`);
 
         if (sessions.length === 0) {
             return;
@@ -263,7 +264,7 @@ export function registerImportsCommands(parent: Command): void {
             )
             .argument("<entry>", "A .ts file, a directory (its index.ts), or a tsconfig.json")
     ).action(async (input: string, options: SharedOptions) => {
-        const sessions = await sessionsFor(input, options, "tools ts imports lazy");
+        const sessions = await sessionsFor(input, options, `${toolCommand("ts imports lazy")}`);
         const minMs = number(options.minMs, 0.5);
 
         if (sessions.length === 0) {
@@ -291,7 +292,7 @@ export function registerImportsCommands(parent: Command): void {
             .description("Barrel files whose re-exports cost the caller more than the names it uses")
             .argument("<entry>", "A .ts file, a directory (its index.ts), or a tsconfig.json")
     ).action(async (input: string, options: SharedOptions) => {
-        const sessions = await sessionsFor(input, options, "tools ts imports barrels");
+        const sessions = await sessionsFor(input, options, `${toolCommand("ts imports barrels")}`);
         const minMs = number(options.minMs, 0.5);
 
         if (sessions.length === 0) {
@@ -319,7 +320,7 @@ export function registerImportsCommands(parent: Command): void {
             .description("Import cycles on the startup path (the source of `undefined` exports at load time)")
             .argument("<entry>", "A .ts file, a directory (its index.ts), or a tsconfig.json")
     ).action(async (input: string, options: SharedOptions) => {
-        const sessions = await sessionsFor(input, options, "tools ts imports cycles");
+        const sessions = await sessionsFor(input, options, `${toolCommand("ts imports cycles")}`);
 
         if (sessions.length === 0) {
             return;

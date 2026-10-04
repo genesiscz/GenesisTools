@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import {
@@ -808,7 +809,7 @@ class JenkinsServer {
             }
         }
 
-        const cmd = `tools jenkins-mcp monitor "${ref.jobPath}" --build ${ref.buildNumber} --timeout 30m`;
+        const cmd = `${toolCommand("jenkins-mcp monitor")} "${ref.jobPath}" --build ${ref.buildNumber} --timeout 30m`;
         const isDone = snap.status !== "IN_PROGRESS";
         const elapsed = snap.startTimeMillis ? formatDuration(now - snap.startTimeMillis) : "?";
         const status = isDone

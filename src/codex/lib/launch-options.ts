@@ -1,5 +1,7 @@
 export { ACCOUNT_ENV_UNSET, buildAccountLaunchOptions } from "@genesiscz/utils/ai/openai/account-launch-options";
 
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
+
 export function validateTuiArgs(args: string[]): string[] {
     const nativeArgs = args[0] === "--" ? args.slice(1) : args;
     const nonTuiCommands = new Set([
@@ -84,7 +86,9 @@ export function validateTuiArgs(args: string[]): string[] {
         }
         foundPositional = true;
         if (nonTuiCommands.has(arg)) {
-            throw new Error("Use tools codex login separately; this command starts an account-bound terminal");
+            throw new Error(
+                `Use ${toolCommand("codex login")} separately; this command starts an account-bound terminal`
+            );
         }
     }
 

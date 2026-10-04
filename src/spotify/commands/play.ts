@@ -32,6 +32,7 @@ import {
 } from "@app/spotify/lib/play/plan";
 import { parseSeedSource, SEED_HELP, SEED_SOURCES, seedTracks } from "@app/spotify/lib/play/seed";
 import { renderHarvestGuide } from "@app/spotify/render/pipeline";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { ui } from "@genesiscz/utils/cli/ui";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -188,8 +189,8 @@ export function registerPlay(program: Command): void {
             if (findPlan(safe)) {
                 throw new Error(
                     `a plan named "${safe}" already exists. Change it with ` +
-                        `\`tools spotify play plan set --plan ${safe} …\`, ` +
-                        `or remove it: \`tools spotify play plan rm ${safe}\``
+                        `\`${toolCommand("spotify play plan set", "--plan", safe)} …\`, ` +
+                        `or remove it: \`${toolCommand("spotify play plan rm", safe)}\``
                 );
             }
 
@@ -250,7 +251,7 @@ export function registerPlay(program: Command): void {
                 // plan makes it newest again. A tester created a plan, saw that promise, and
                 // then watched a different plan hold the newest marker. Naming the plan is
                 // advice that stays true.
-                ui.dim(`  next     tools spotify play run --plan ${r.name}`);
+                ui.dim(`  next     ${toolCommand("spotify play run", "--plan", r.name)}`);
             });
         }
     );
@@ -265,7 +266,9 @@ export function registerPlay(program: Command): void {
             emit(o.json, plans, (rows) => {
                 if (!rows.length) {
                     ui.info("no plans yet");
-                    ui.dim("  tools spotify play plan new gems --from gems --top 30 --seek 30 --play 20");
+                    ui.dim(
+                        `  ${toolCommand("spotify play plan new", "gems", "--from", "gems", "--top", "30", "--seek", "30", "--play", "20")}`
+                    );
 
                     return;
                 }
@@ -343,7 +346,7 @@ export function registerPlay(program: Command): void {
                 const target = o.plan ? findPlan(o.plan) : newestPlan();
 
                 if (o.plan && !target) {
-                    throw new Error(`no plan named "${o.plan}". List them: tools spotify play plan list`);
+                    throw new Error(`no plan named "${o.plan}". List them: ${toolCommand("spotify play plan list")}`);
                 }
 
                 const current = target?.plan ?? { ...DEFAULT_PLAN };
@@ -417,7 +420,7 @@ export function registerPlay(program: Command): void {
 
                 if (!tracksFile) {
                     throw new Error(
-                        "no tracks file. Pass --tracks <file>, or set one: tools spotify play plan --tracks <file>"
+                        `no tracks file. Pass --tracks <file>, or set one: ${toolCommand("spotify play plan", "--tracks", "<file>")}`
                     );
                 }
 
@@ -467,7 +470,7 @@ export function registerPlay(program: Command): void {
 
             if (!tracksFile) {
                 throw new Error(
-                    "no tracks file. Pass --tracks <file>, or set one: tools spotify play plan --tracks <file>"
+                    `no tracks file. Pass --tracks <file>, or set one: ${toolCommand("spotify play plan", "--tracks", "<file>")}`
                 );
             }
 
@@ -512,7 +515,7 @@ export function registerPlay(program: Command): void {
                     }
 
                     if (s.remaining) {
-                        ui.dim(`  next     tools spotify play run --tracks ${s.tracksFile} --resume`);
+                        ui.dim(`  next     ${toolCommand("spotify play run", "--tracks", s.tracksFile, "--resume")}`);
                     }
                 }
             );

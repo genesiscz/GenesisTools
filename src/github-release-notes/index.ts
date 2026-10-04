@@ -1,6 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { runTool } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
 import { handleReadmeFlag } from "@genesiscz/utils/readme";
@@ -152,7 +153,7 @@ function parseRepoArg(repoArg: string): RepoIdentity | null {
 
 function printHelpAndExit(): void {
     logger.info(`
-Usage: tools github-release-notes <owner>/<repo>|<github-url> <output-file> [options]
+Usage: ${toolCommand("github-release-notes")} <owner>/<repo>|<github-url> <output-file> [options]
 
 Arguments:
   owner/repo     GitHub repository in format "owner/repo" or full github.com URL
@@ -164,9 +165,9 @@ Options:
   -h, --help     Show this help message
 
 Example:
-  tools github-release-notes software-mansion/react-native-reanimated releases.md --limit=10
-  tools github-release-notes https://github.com/software-mansion/react-native-reanimated releases.md
-  tools github-release-notes software-mansion/react-native-reanimated releases.md --oldest
+  ${toolCommand("github-release-notes")} software-mansion/react-native-reanimated releases.md --limit=10
+  ${toolCommand("github-release-notes")} https://github.com/software-mansion/react-native-reanimated releases.md
+  ${toolCommand("github-release-notes")} software-mansion/react-native-reanimated releases.md --oldest
   
 Note:
   To avoid GitHub API rate limits, you can set the GITHUB_TOKEN environment variable.

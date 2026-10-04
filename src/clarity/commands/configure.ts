@@ -2,6 +2,7 @@ import { createInterface } from "node:readline";
 import { parseAuthCurl } from "@app/clarity/lib/parse-auth-curl";
 import * as clack from "@clack/prompts";
 import { ClarityApi } from "@genesiscz/utils/clarity";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
 import pc from "picocolors";
@@ -210,7 +211,7 @@ export function registerConfigureCommand(program: Command): void {
             const config = await getConfig();
 
             if (!config) {
-                out.error("Clarity not configured. Run: tools clarity configure auth");
+                out.error(`Clarity not configured. Run: ${toolCommand("clarity configure auth")}`);
                 process.exit(1);
             }
 
@@ -229,7 +230,7 @@ export function registerConfigureCommand(program: Command): void {
             const config = await getConfig();
 
             if (!config) {
-                out.error("Clarity not configured. Run: tools clarity configure auth");
+                out.error(`Clarity not configured. Run: ${toolCommand("clarity configure auth")}`);
                 process.exit(1);
             }
 
@@ -313,7 +314,7 @@ export function registerConfigureCommand(program: Command): void {
         if (!config) {
             clack.intro(pc.bgCyan(pc.black(" Clarity PPM Configuration ")));
             clack.log.warn("Not configured yet.");
-            clack.log.info("Run: tools clarity configure auth");
+            clack.log.info(`Run: ${toolCommand("clarity configure auth")}`);
             clack.outro("");
             return;
         }

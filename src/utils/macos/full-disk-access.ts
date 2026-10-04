@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger } from "@genesiscz/utils/logger";
 import {
     describeResponsibleIdentity,
@@ -101,7 +102,7 @@ export function fullDiskAccessInstructions(context: FullDiskAccessContext): stri
         `Full Disk Access is required to ${context.reason}.`,
         `Add ${fullDiskAccessSubject()} in System Settings > Privacy & Security > Full Disk Access and switch it on. ${others.join(" and ")} start working too, from any terminal and from background services.`,
         isRunningUnderGenesisApp()
-            ? "There is no prompt for this one. `tools macos permissions open --pane full-disk-access` opens the list and reveals the app in Finder."
+            ? `There is no prompt for this one. \`${toolCommand("macos permissions open")} --pane full-disk-access\` opens the list and reveals the app in Finder.`
             : `${genesisAppBuildHint()} That build makes GenesisTools hold the grant instead of whichever terminal ran the command.`,
     ].join("\n");
 }

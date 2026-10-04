@@ -10,6 +10,7 @@ import { applyPlan, validatePlan } from "@app/timely/utils/plan-apply";
 import { buildPlan } from "@app/timely/utils/plan-build";
 import * as p from "@clack/prompts";
 import { isInteractive } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
 import type { Storage } from "@genesiscz/utils/storage";
@@ -115,7 +116,7 @@ async function runCreate(storage: Storage, service: TimelyService, options: Crea
     const accountId = await storage.getConfigValue<number>("selectedAccountId");
     const tokens = await storage.getConfigValue<OAuth2Tokens>("tokens");
     if (!accountId || !tokens?.access_token) {
-        logger.error("Not authenticated. Run 'tools timely login' first.");
+        logger.error(`Not authenticated. Run '${toolCommand("timely login")}' first.`);
         process.exit(1);
     }
 
@@ -231,7 +232,7 @@ async function runPlan(storage: Storage, service: TimelyService, options: Create
     const accountId = await storage.getConfigValue<number>("selectedAccountId");
     const tokens = await storage.getConfigValue<OAuth2Tokens>("tokens");
     if (!accountId || !tokens?.access_token) {
-        logger.error("Not authenticated. Run 'tools timely login' first.");
+        logger.error(`Not authenticated. Run '${toolCommand("timely login")}' first.`);
         process.exit(1);
     }
 
@@ -260,7 +261,7 @@ async function runPlan(storage: Storage, service: TimelyService, options: Create
             `  ${plan.days.length} day(s), ${plan.days.reduce((s, d) => s + d.available_memories.length, 0)} memories`
         );
         printPlanSummary(plan);
-        logger.info(`Edit events[] per day, then: tools timely create --apply ${out} --dry-run`);
+        logger.info(`Edit events[] per day, then: ${toolCommand("timely create")} --apply ${out} --dry-run`);
     }
 }
 
@@ -336,7 +337,7 @@ async function runApply(storage: Storage, service: TimelyService, options: Creat
     const accountId = await storage.getConfigValue<number>("selectedAccountId");
     const tokens = await storage.getConfigValue<OAuth2Tokens>("tokens");
     if (!accountId || !tokens?.access_token) {
-        logger.error("Not authenticated. Run 'tools timely login' first.");
+        logger.error(`Not authenticated. Run '${toolCommand("timely login")}' first.`);
         process.exit(1);
     }
 

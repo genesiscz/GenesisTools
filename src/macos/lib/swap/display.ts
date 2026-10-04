@@ -1,3 +1,4 @@
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { formatBytes, formatDuration } from "@genesiscz/utils/format";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
@@ -64,7 +65,7 @@ export function renderResult(result: ScanResult, top: number): void {
         out.println(pc.dim("  No processes with swap usage found among the scanned set.\n"));
 
         if (showAllHint) {
-            out.println(pc.dim(`  Try ${pc.cyan("tools macos swap --all")} to scan every process (slow).\n`));
+            out.println(pc.dim(`  Try ${pc.cyan(toolCommand("macos swap", "--all"))} to scan every process (slow).\n`));
         }
 
         return;
@@ -88,7 +89,7 @@ export function renderResult(result: ScanResult, top: number): void {
 
     const totalSwap = sorted.reduce((acc, p) => acc + p.swapBytes, 0);
     const trailing = showAllHint
-        ? `${pc.dim("  ·  Run ")}${pc.cyan("tools macos swap --all")}${pc.dim(" to scan everything")}`
+        ? `${pc.dim("  ·  Run ")}${pc.cyan(toolCommand("macos swap", "--all"))}${pc.dim(" to scan everything")}`
         : "";
     out.println(`${pc.dim(`  Top-${sorted.length} swap total: `)}${pc.white(formatBytes(totalSwap))}${trailing}`);
     out.println();

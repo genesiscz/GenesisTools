@@ -2,6 +2,7 @@
 
 import { isTaskRegistered, registerTask, unregisterTask } from "@app/daemon/lib/register";
 import { isInteractive, runTool, suggestCommand } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { formatDuration, formatList } from "@genesiscz/utils/format";
 import { logger, out } from "@genesiscz/utils/logger";
 import { sendNotification } from "@genesiscz/utils/macos/notifications";
@@ -80,7 +81,7 @@ program
 program
     .command("restart")
     .description("Restart services on the current code (launchd jobs through launchd)")
-    .argument("[ids...]", "Service ids from `tools services`")
+    .argument("[ids...]", `Service ids from \`${toolCommand("services")}\``)
     .option("--stale", "Every service on old code")
     .option("--all", "Every service")
     .action(async (ids: string[], options: { stale?: boolean; all?: boolean }) => {
@@ -277,7 +278,7 @@ program
 const idle = program.command("idle").description("The daemon task that runs reap-idle every 15 minutes");
 
 idle.command("install")
-    .description("Register the daemon task (tools daemon must be installed)")
+    .description(`Register the daemon task (${toolCommand("daemon")} must be installed)`)
     .option("--idle-hours <hours>", "Hours without a connected client", String(DEFAULT_IDLE_HOURS))
     .action(async (options: { idleHours: string }) => {
         const hours = Number(options.idleHours);
@@ -290,7 +291,7 @@ idle.command("install")
 
         await registerTask({
             name: IDLE_TASK,
-            command: `tools services reap-idle --idle-hours ${hours}`,
+            command: `${toolCommand("services reap-idle", "--idle-hours", `${hours}`)}`,
             every: "every 15 minutes",
             retries: 0,
             // The reaper notifies when it stops a server; a banner per 15-minute run is noise.
