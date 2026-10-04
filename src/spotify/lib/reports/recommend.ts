@@ -7,6 +7,7 @@
  * Each method is a pure function over one `ArtistIndex`, so tests feed fixtures and the report
  * only wires the profile in.
  */
+import { type ArtistCatalog, type CatalogArtist, type CatalogRelease, loadCatalog } from "@app/spotify/lib/catalog";
 import { type CommonOpts, context, head, numberOption, type ReportHead } from "@app/spotify/lib/context";
 import { PLAY_MS, type Play, songKey } from "@app/spotify/lib/history";
 import { type LibTrack, loadLibrary } from "@app/spotify/lib/library";
@@ -65,6 +66,15 @@ export interface AlbumPick {
     likedSongs: number;
 }
 
+/** A song from the artist's own Spotify page that you have never played or liked. */
+export interface SongToTry {
+    name: string;
+    uri: string;
+    /** Global stream count. */
+    playcount: number | null;
+    cover: string | null;
+}
+
 export interface Recommendation {
     artist: string;
     /** `spotify:artist:…` when the artist appears in Liked Songs. */
@@ -77,6 +87,11 @@ export interface Recommendation {
     songsHeard: number;
     likedSongs: number;
     lastPlayed: string | null;
+    /** Filled from the artist catalogue (`harvest --artists --auto`); empty until it is harvested. */
+    songsToTry: SongToTry[];
+    popularReleases: CatalogRelease[];
+    /** Whether the catalogue has this artist at all, so "nothing new" and "not fetched" differ. */
+    inCatalog: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -220,7 +235,38 @@ function base(s: ArtistStats): Omit<Recommendation, "score" | "reason" | "eviden
         songsHeard: songsHeard(s),
         likedSongs: s.liked.length,
         lastPlayed: isoDay(s.last),
+        songsToTry: [],
+        popularReleases: [],
+        inCatalog: false,
     };
+}
+
+/** The artist's top songs minus everything you played (30 s or more) or liked, by song title. */
+export function songsToTry(s: ArtistStats, entry: CatalogArtist, limit = 5): SongToTry[] {
+    const known = new Set([...s.plays.map((p) => p.name.toLowerCase()), ...s.liked.map((l) => l.name.toLowerCase())]);
+
+    return entry.topTracks
+        .filter((t) => !known.has(t.name.toLowerCase()))
+        .slice(0, limit)
+        .map((t) => ({ name: t.name, uri: t.uri, playcount: t.playcount, cover: t.cover }));
+}
+
+/** Adds the catalogue's songs and releases to each pick that has an artist URI on file. */
+export function withCatalog(recs: Recommendation[], index: ArtistIndex, catalog: ArtistCatalog): Recommendation[] {
+    return recs.map((rec) => {
+        const entry = rec.artistUri ? catalog.artists[rec.artistUri] : undefined;
+        const s = index.artists.get(rec.artist.toLowerCase());
+        if (!entry || !s) {
+            return rec;
+        }
+
+        return {
+            ...rec,
+            inCatalog: true,
+            songsToTry: songsToTry(s, entry),
+            popularReleases: entry.popularReleases.slice(0, 4),
+        };
+    });
 }
 
 // ---------------------------------------------------------------------------
@@ -472,6 +518,8 @@ export interface RecommendReport {
     /** The method needs Liked Songs and this profile has no harvested library. */
     missingLibrary: boolean;
     recommendations: Recommendation[];
+    /** How many shown picks the artist catalogue covers, and how many artists it holds. */
+    catalog: { artists: number; covered: number };
 }
 
 export function recommendReport(o: RecommendOpts): RecommendReport {
@@ -482,6 +530,9 @@ export function recommendReport(o: RecommendOpts): RecommendReport {
     const index = buildArtistIndex(ctx.all, library, PLAY_MS);
     const top = ctx.top;
 
+    const catalog = loadCatalog();
+    const catalogSize = Object.keys(catalog.artists).length;
+
     if (method.needsLibrary && library.length === 0) {
         return {
             head: head(ctx),
@@ -490,6 +541,7 @@ export function recommendReport(o: RecommendOpts): RecommendReport {
             settings: [],
             missingLibrary: true,
             recommendations: [],
+            catalog: { artists: catalogSize, covered: 0 },
         };
     }
 
@@ -538,12 +590,29 @@ export function recommendReport(o: RecommendOpts): RecommendReport {
         recommendations = recommendNeighbours(index, opts);
     }
 
+    const shown = withCatalog(recommendations.slice(0, top), index, catalog);
+
     return {
         head: head(ctx),
         method,
         methods: RECOMMEND_METHODS,
         settings,
         missingLibrary: false,
-        recommendations: recommendations.slice(0, top),
+        recommendations: shown,
+        catalog: { artists: catalogSize, covered: shown.filter((r) => r.inCatalog).length },
     };
+}
+
+/** Artist URIs the given methods would show, most promising first: what `harvest --artists` fetches. */
+export function catalogCandidates(o: RecommendOpts & { methods: RecommendMethod[]; perMethod: number }): string[] {
+    const uris: string[] = [];
+    for (const method of o.methods) {
+        for (const rec of recommendReport({ ...o, method, top: String(o.perMethod) }).recommendations) {
+            if (rec.artistUri && !uris.includes(rec.artistUri)) {
+                uris.push(rec.artistUri);
+            }
+        }
+    }
+
+    return uris;
 }

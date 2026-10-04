@@ -1,4 +1,4 @@
-import { int } from "@app/spotify/lib/format";
+import { compact, int } from "@app/spotify/lib/format";
 import type { Recommendation, RecommendMethod } from "@app/spotify/lib/reports/recommend";
 import { EmptyBlock, PageHeader, ReportState, Section } from "@app/spotify/ui/components/PageShell";
 import { useReport } from "@app/spotify/ui/lib/api";
@@ -20,7 +20,7 @@ const METHOD_TABS: { id: RecommendMethod; label: string }[] = [
     { id: "neighbours", label: "Session neighbours" },
 ];
 
-function spotifyUrl(uri: string | null, kind: "artist" | "album"): string | null {
+function spotifyUrl(uri: string | null, kind: "artist" | "album" | "track"): string | null {
     const prefix = `spotify:${kind}:`;
 
     return uri?.startsWith(prefix) ? `https://open.spotify.com/${kind}/${uri.slice(prefix.length)}` : null;
@@ -74,6 +74,18 @@ function DiscoverPage() {
                                 </div>
                             )}
                         </Card>
+
+                        {!r.missingLibrary && r.catalog.covered < r.recommendations.length && (
+                            <Card className="p-4 mb-6 gap-1">
+                                <div className="text-sm font-medium text-foreground">
+                                    Songs to try come from each artist's own Spotify page
+                                </div>
+                                <p className="text-xs text-muted-foreground">
+                                    {r.catalog.covered} of {r.recommendations.length} picks have it. Fetch the rest from
+                                    your signed-in browser: tools spotify harvest --artists --auto
+                                </p>
+                            </Card>
+                        )}
 
                         {r.missingLibrary ? (
                             <EmptyBlock
@@ -145,12 +157,59 @@ function RecommendationCard({ rec, rank, featured }: { rec: Recommendation; rank
                 )}
             </ul>
 
-            {rec.albums.length > 0 && (
+            {rec.inCatalog && (
+                <div className="space-y-2">
+                    <div className="text-xs font-medium text-muted-foreground">Songs to try</div>
+                    {rec.songsToTry.length === 0 ? (
+                        <p className="text-sm text-muted-foreground">You already know all of their top songs.</p>
+                    ) : (
+                        <ul className="space-y-1.5">
+                            {rec.songsToTry.map((s) => (
+                                <li key={s.uri} className="flex items-center gap-2.5 text-sm">
+                                    {s.cover ? (
+                                        <img src={s.cover} alt="" className="h-7 w-7 shrink-0 rounded" loading="lazy" />
+                                    ) : (
+                                        <div className="h-7 w-7 shrink-0 rounded bg-muted" />
+                                    )}
+                                    <a
+                                        href={spotifyUrl(s.uri, "track") ?? undefined}
+                                        target="_blank"
+                                        rel="noreferrer"
+                                        className="min-w-0 flex-1 truncate text-foreground hover:text-primary"
+                                    >
+                                        {s.name}
+                                    </a>
+                                    {s.playcount !== null && (
+                                        <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
+                                            {compact(s.playcount)} plays
+                                        </span>
+                                    )}
+                                </li>
+                            ))}
+                        </ul>
+                    )}
+                </div>
+            )}
+
+            {rec.popularReleases.length > 0 ? (
                 <div className="flex flex-wrap gap-1.5">
-                    {rec.albums.map((a) => (
-                        <AlbumChip key={a.name} name={a.name} url={spotifyUrl(a.uri, "album")} />
+                    {rec.popularReleases.map((a) => (
+                        <AlbumChip
+                            key={a.uri}
+                            name={a.year ? `${a.name} (${a.year})` : a.name}
+                            url={spotifyUrl(a.uri, "album")}
+                            cover={a.cover}
+                        />
                     ))}
                 </div>
+            ) : (
+                rec.albums.length > 0 && (
+                    <div className="flex flex-wrap gap-1.5">
+                        {rec.albums.map((a) => (
+                            <AlbumChip key={a.name} name={a.name} url={spotifyUrl(a.uri, "album")} />
+                        ))}
+                    </div>
+                )
             )}
 
             <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground tabular-nums">
@@ -167,10 +226,14 @@ function RecommendationCard({ rec, rank, featured }: { rec: Recommendation; rank
     );
 }
 
-function AlbumChip({ name, url }: { name: string; url: string | null }) {
+function AlbumChip({ name, url, cover }: { name: string; url: string | null; cover?: string | null }) {
     const chip = (
         <span className="inline-flex items-center gap-1.5 rounded-md border border-border bg-muted/40 px-2 py-1 text-xs text-foreground">
-            <Disc3 className="h-3 w-3 text-muted-foreground" />
+            {cover ? (
+                <img src={cover} alt="" className="h-4 w-4 rounded-sm" loading="lazy" />
+            ) : (
+                <Disc3 className="h-3 w-3 text-muted-foreground" />
+            )}
             {name}
         </span>
     );

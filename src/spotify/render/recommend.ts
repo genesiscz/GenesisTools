@@ -40,6 +40,10 @@ export function renderRecommend(r: RecommendReport, limit: number): void {
             line(`     ${c.cyan("·")} ${e.song} ${c.grey(e.detail)}`);
         }
 
+        if (rec.songsToTry.length) {
+            line(`     ${c.grey("Songs to try:")} ${rec.songsToTry.map((s) => s.name).join(", ")}`);
+        }
+
         if (rec.albums.length) {
             line(`     ${c.grey("Albums:")} ${rec.albums.map((a) => a.name).join(", ")}`);
         }
@@ -48,6 +52,13 @@ export function renderRecommend(r: RecommendReport, limit: number): void {
         if (link) {
             line(`     ${c.grey(link)}`);
         }
+    }
+
+    if (r.catalog.covered < r.recommendations.length) {
+        line("");
+        line(
+            `  ${c.grey(`Songs to try: ${r.catalog.covered} of ${r.recommendations.length} picks have them. Fetch the rest: tools spotify harvest --artists --auto`)}`
+        );
     }
 
     line("");

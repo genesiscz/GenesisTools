@@ -35,6 +35,15 @@ export function cacheDir(): string {
     return configured ? expandHome(configured) : storage.getCacheDir();
 }
 
+/**
+ * `~/.genesis-tools/spotify/artist-catalog.json` — artist pages fetched by `harvest --artists`.
+ * Public catalogue data, the same for every profile, so it lives with the tool, not in a
+ * profile's data directory, and a later run only fetches artists it has not seen.
+ */
+export function catalogPath(): string {
+    return join(storage.getBaseDir(), "artist-catalog.json");
+}
+
 /** `~/.genesis-tools/spotify/play/` — the playback plan, progress journal and state file. */
 export function playDir(): string {
     return join(storage.getBaseDir(), "play");

@@ -3,6 +3,7 @@
  * that keeps it honest (an old artist is not a burst, a well-explored artist is not unfinished).
  */
 import { describe, expect, test } from "bun:test";
+import { type CatalogArtist, emptyCatalog, mergeCatalog } from "@app/spotify/lib/catalog";
 import type { Play } from "@app/spotify/lib/history";
 import type { LibTrack } from "@app/spotify/lib/library";
 import {
@@ -11,6 +12,7 @@ import {
     recommendNeighbours,
     recommendOldLoves,
     recommendUnfinished,
+    withCatalog,
 } from "@app/spotify/lib/reports/recommend";
 
 const DAY = 86_400_000;
@@ -151,5 +153,57 @@ describe("recommendNeighbours", () => {
 
         expect(recs.map((r) => r.artist)).toEqual(["Next"]);
         expect(recs[0]?.evidence[0]).toEqual({ song: "Fav", detail: "together in 4 sessions" });
+    });
+});
+
+describe("the artist catalogue", () => {
+    const entry = (uri: string, names: string[]): Omit<CatalogArtist, "fetchedAt"> => ({
+        uri,
+        name: "Fresh",
+        topTracks: names.map((name) => ({
+            uri: `spotify:track:${name}`,
+            name,
+            playcount: 1000,
+            albumUri: null,
+            cover: null,
+        })),
+        popularReleases: [],
+    });
+
+    test("songs to try leave out what you played or liked, matched by title", () => {
+        const plays = [play("Fresh", "Played One", T0)];
+        const library = [liked("Fresh", "Liked One", T0), liked("Fresh", "Liked Two", T0 + DAY)];
+        const index = buildArtistIndex(plays, library, 30_000);
+        const catalog = mergeCatalog(
+            emptyCatalog(),
+            [entry("spotify:artist:Fresh", ["played one", "Liked One", "New Song", "Another New"])],
+            new Date(T0)
+        );
+        const [rec] = withCatalog(recommendBursts(index, BURSTS), index, catalog);
+
+        expect(rec?.inCatalog).toBe(true);
+        expect(rec?.songsToTry.map((s) => s.name)).toEqual(["New Song", "Another New"]);
+    });
+
+    test("a pick without a catalogue entry stays as it was, marked not fetched", () => {
+        const library = [liked("Fresh", "a", T0), liked("Fresh", "b", T0 + DAY)];
+        const index = buildArtistIndex([], library, 30_000);
+        const [rec] = withCatalog(recommendBursts(index, BURSTS), index, emptyCatalog());
+
+        expect(rec?.inCatalog).toBe(false);
+        expect(rec?.songsToTry).toEqual([]);
+    });
+
+    test("a merge replaces the artists it fetched and keeps the others", () => {
+        const first = mergeCatalog(
+            emptyCatalog(),
+            [entry("spotify:artist:A", ["x"]), entry("spotify:artist:B", ["y"])],
+            new Date(T0)
+        );
+        const second = mergeCatalog(first, [entry("spotify:artist:A", ["z"])], new Date(T0 + DAY));
+
+        expect(Object.keys(second.artists).sort()).toEqual(["spotify:artist:A", "spotify:artist:B"]);
+        expect(second.artists["spotify:artist:A"]?.topTracks.map((t) => t.name)).toEqual(["z"]);
+        expect(second.artists["spotify:artist:B"]?.fetchedAt).toBe(new Date(T0).toISOString());
     });
 });
