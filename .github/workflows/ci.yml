@@ -495,6 +495,12 @@ jobs:
         timeout-minutes: 1
         run: bun scripts/ci/check-plugin-standalone.ts
 
+      # Every command a hint names through toolCommand()/suggestCommand() must still exist, so a
+      # renamed command fails here instead of in front of a user.
+      - name: Tool command reference guard
+        timeout-minutes: 2
+        run: bun scripts/ci/check-tool-commands.ts
+
       # Every Jev / live-STT function that reaches Jev, the chrome-devtools MCP, the ax-tool or a
       # live socket carries a profiler measurement, so PROFILE=jev-* can show where time went.
       - name: Jev instrumentation guard

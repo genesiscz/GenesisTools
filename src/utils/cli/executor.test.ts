@@ -15,6 +15,7 @@ import {
     suggestCommand,
     suggestEnumFlag,
 } from "@genesiscz/utils/cli/executor";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { Command } from "commander";
 
 const LONG =
@@ -301,5 +302,19 @@ describe("spawnLabel", () => {
         const label = spawnLabel(["gh", "api", "graphql", "-f", `query=${"x".repeat(200)}`, "a", "b", "c"]);
         expect(label.endsWith(" …")).toBe(true);
         expect(label.length).toBeLessThan(140);
+    });
+});
+
+describe("toolCommand", () => {
+    // Feature: one helper names every `tools …` command in hint text, so a renamed command is found by scripts/ci/check-tool-commands.ts.
+    test("joins the tool, its subcommand path and the arguments", () => {
+        expect(toolCommand("macos permissions build")).toBe("tools macos permissions build");
+        expect(toolCommand("notify status", "--json")).toBe("tools notify status --json");
+    });
+
+    test("quotes an argument that contains a space", () => {
+        expect(toolCommand("macos permissions open", "--pane", "full disk")).toBe(
+            'tools macos permissions open --pane "full disk"'
+        );
     });
 });
