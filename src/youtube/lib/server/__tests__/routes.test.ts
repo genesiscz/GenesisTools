@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { startServer } from "@app/youtube/lib/server";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { WEB_SERVICES } from "@genesiscz/utils/ui/dashboards";
 import { apiUrl } from "./test-helpers";
 
 describe("youtube server foundation", () => {
@@ -392,7 +393,7 @@ describe("youtube server foundation", () => {
             const configBody = await configResponse.json();
 
             expect(configResponse.status).toBe(200);
-            expect(configBody.config.apiPort).toBe(9876);
+            expect(configBody.config.apiPort).toBe(WEB_SERVICES["youtube-server"].port);
             expect(configBody.where).toContain("server.json");
 
             const patchResponse = await fetch(apiUrl(handle.port, `/config`), {

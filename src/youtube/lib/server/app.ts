@@ -2,6 +2,7 @@ import { resolve } from "node:path";
 import { collectConfiguredProviderEnv } from "@genesiscz/utils/ai/provider-env";
 import { defineDashboardApp } from "@genesiscz/utils/DashboardApp";
 import { PROJECT_ROOT } from "@genesiscz/utils/paths";
+import { WEB_SERVICES } from "@genesiscz/utils/ui/dashboards";
 
 const SERVER_ENTRY = resolve(PROJECT_ROOT, "src/youtube/lib/server/index.ts");
 
@@ -11,7 +12,7 @@ export const youtubeServerApp = defineDashboardApp({
     name: "YouTube AI API server",
     description: "Run the YouTube AI background API server",
     commandName: "server",
-    port: 9876,
+    port: WEB_SERVICES["youtube-server"].port,
     spawn: {
         cmd: ["bun", "run", SERVER_ENTRY],
         cwd: PROJECT_ROOT,

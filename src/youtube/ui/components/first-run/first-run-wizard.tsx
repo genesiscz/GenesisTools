@@ -1,4 +1,4 @@
-import { patchUiConfig } from "@app/yt/config.client";
+import { FALLBACK_API_BASE_URL, patchUiConfig } from "@app/yt/config.client";
 import { Button } from "@genesiscz/utils/ui/components/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@genesiscz/utils/ui/components/card";
 import { Input } from "@genesiscz/utils/ui/components/input";
@@ -9,7 +9,7 @@ import { toast } from "sonner";
 
 export function FirstRunWizard() {
     const navigate = useNavigate();
-    const [apiUrl, setApiUrl] = useState("http://localhost:9876");
+    const [apiUrl, setApiUrl] = useState(FALLBACK_API_BASE_URL);
     const [submitting, setSubmitting] = useState(false);
 
     async function onSubmit() {
@@ -55,7 +55,7 @@ export function FirstRunWizard() {
                             id="api-url"
                             value={apiUrl}
                             onChange={(event) => setApiUrl(event.target.value)}
-                            placeholder="http://localhost:9876"
+                            placeholder={FALLBACK_API_BASE_URL}
                         />
                     </div>
                     <Button

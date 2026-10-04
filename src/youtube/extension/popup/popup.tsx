@@ -1,6 +1,7 @@
 import { send } from "@ext/api.bridge";
 import { ApiStatus } from "@ext/popup/components/api-status";
 import { QuickActions } from "@ext/popup/components/quick-actions";
+import { DEFAULT_API_BASE_URL } from "@ext/shared/storage";
 import { Button } from "@genesiscz/utils/ui/components/button";
 import { Input } from "@genesiscz/utils/ui/components/input";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -76,7 +77,7 @@ async function ensureHostPermission(rawUrl: string): Promise<"granted" | "denied
 }
 
 function Popup() {
-    const [apiUrl, setApiUrl] = useState("http://localhost:9876");
+    const [apiUrl, setApiUrl] = useState(DEFAULT_API_BASE_URL);
     const [serviceKey, setServiceKey] = useState("");
     const [status, setStatus] = useState<"unknown" | "ok" | "down">("unknown");
     const [note, setNote] = useState<string | null>(null);
@@ -192,7 +193,7 @@ function Popup() {
                     id="apiBaseUrl"
                     value={apiUrl}
                     onChange={(event) => setApiUrl(event.target.value)}
-                    placeholder="http://localhost:9876"
+                    placeholder={DEFAULT_API_BASE_URL}
                 />
             </section>
             <section className="space-y-2">

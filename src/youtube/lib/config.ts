@@ -6,6 +6,30 @@ import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { withFileLock } from "@genesiscz/utils/storage";
+import { WEB_SERVICES } from "@genesiscz/utils/ui/dashboards";
+
+const API_PORT = WEB_SERVICES["youtube-server"].port;
+
+/**
+ * The API's first default port. Blender MCP listens on 9876 too, so the default moved; a saved
+ * value equal to the OLD default was never a choice, so it is read as the new one. Any other
+ * saved port or base URL (a proxy, a tunnel) is a choice and stays.
+ */
+const LEGACY_API_PORT = 9876;
+const LEGACY_BASE_URL = /^http:\/\/(localhost|127\.0\.0\.1):9876\/?$/;
+
+function withoutLegacyPort(patch: YoutubeConfigPatch): YoutubeConfigPatch {
+    const next = { ...patch };
+    if (next.apiPort === LEGACY_API_PORT) {
+        delete next.apiPort;
+    }
+
+    if (typeof next.apiBaseUrl === "string" && LEGACY_BASE_URL.test(next.apiBaseUrl)) {
+        delete next.apiBaseUrl;
+    }
+
+    return next;
+}
 
 // `env.tools.getHome()` falls back to `homedir()`, so production is unchanged.
 // It reads GENESIS_TOOLS_HOME, which the test preload points at a tmp dir —
@@ -14,8 +38,8 @@ export const DEFAULT_BASE_DIR = join(env.tools.getHome(), ".genesis-tools", "you
 export const CONFIG_FILENAME = "server.json";
 
 export const DEFAULT_YOUTUBE_CONFIG: YoutubeConfigShape = {
-    apiPort: 9876,
-    apiBaseUrl: "http://localhost:9876",
+    apiPort: API_PORT,
+    apiBaseUrl: `http://localhost:${API_PORT}`,
     provider: {},
     powerUsers: [],
     // Default the LLM tasks to the SuperGrok subscription (`grok-sub` account →
@@ -81,7 +105,7 @@ export class YoutubeConfig {
 
         const raw = await Bun.file(this.path).text();
         const parsed = SafeJSON.parse(raw, { unbox: true }) as YoutubeConfigPatch | undefined;
-        this.cache = mergeConfig(DEFAULT_YOUTUBE_CONFIG, parsed ?? {});
+        this.cache = mergeConfig(DEFAULT_YOUTUBE_CONFIG, withoutLegacyPort(parsed ?? {}));
 
         return structuredClone(this.cache);
     }
@@ -125,7 +149,7 @@ export class YoutubeConfig {
         const raw = await Bun.file(this.path).text();
         const parsed = SafeJSON.parse(raw, { unbox: true }) as YoutubeConfigPatch | undefined;
 
-        return mergeConfig(DEFAULT_YOUTUBE_CONFIG, parsed ?? {});
+        return mergeConfig(DEFAULT_YOUTUBE_CONFIG, withoutLegacyPort(parsed ?? {}));
     }
 
     private async ensureDir(): Promise<void> {

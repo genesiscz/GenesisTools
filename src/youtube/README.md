@@ -81,7 +81,7 @@ deliberately absent, and the door treats its client as untrusted:
 
 ## API Server
 
-`tools youtube server` runs a background HTTP API (channel tracking, video/transcript/summary/QA access, the ingest pipeline, cache management, and config) on port 9876.
+`tools youtube server` runs a background HTTP API (channel tracking, video/transcript/summary/QA access, the ingest pipeline, cache management, and config) on port 9886, the `youtube-server` entry in `src/utils/ui/dashboards.ts` (it was 9876, which Blender MCP uses).
 
 ```bash
 tools youtube server          # start in background

@@ -12,7 +12,7 @@ local `tools youtube` server.
 
 1. `tools ai-proxy up` — the subscription proxy on :8317. Put its `proxyApiKey`
    (`~/.genesis-tools/ai-proxy/config.json`) into `.env` as `AI_PROXY_API_KEY`.
-2. (For YouTube tools) `tools youtube server start --port 9876`.
+2. (For YouTube tools) `tools youtube server start --port 9886`.
 3. `cp .env.example .env` and fill it in.
 
 ## Run

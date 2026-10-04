@@ -29,11 +29,11 @@ describe("port registry", () => {
 
     test("web services cover youtube server/extension and ai-proxy", () => {
         expect(DASHBOARDS.jev.port).toBe(3088);
-        expect(WEB_SERVICES["youtube-server"].port).toBe(9876);
+        expect(WEB_SERVICES["youtube-server"].port).toBe(9886);
         expect(WEB_SERVICES["youtube-extension"].port).toBe(9877);
         expect(WEB_SERVICES["ai-proxy"].port).toBe(8317);
         expect(WEB_SERVICES["mcp-gateway"].port).toBe(8318);
-        expect(registryEntryForPort(9876)?.name).toBe("YouTube Server");
+        expect(registryEntryForPort(9886)?.name).toBe("YouTube Server");
     });
 });
 
@@ -59,11 +59,11 @@ describe("matchProcess", () => {
         ).toBe(false);
     });
 
-    test("youtube-server rejects unrelated process on 9876", () => {
+    test("youtube-server rejects unrelated process on 9886", () => {
         const entry = WEB_SERVICES["youtube-server"];
         expect(
             entry.matchProcess({
-                port: 9876,
+                port: 9886,
                 command: "node",
                 fullCommand: "node /tmp/random-server.js",
                 cwd: "/tmp",
@@ -72,7 +72,7 @@ describe("matchProcess", () => {
 
         expect(
             entry.matchProcess({
-                port: 9876,
+                port: 9886,
                 command: "bun",
                 fullCommand: "bun run /Users/x/GenesisTools/src/youtube/lib/server/index.ts",
                 cwd: "/Users/x/GenesisTools",

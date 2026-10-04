@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { WEB_SERVICES } from "@genesiscz/utils/ui/dashboards";
 import {
     deriveTitle,
     deriveVisibility,
@@ -75,7 +76,7 @@ describe("isVerifiedGenesisTools (registry + matchProcess)", () => {
     test("youtube server / extension from WEB_SERVICES", () => {
         expect(
             isVerifiedGenesisTools(
-                9876,
+                WEB_SERVICES["youtube-server"].port,
                 "bun run /Users/Martin/projects/GenesisTools/src/youtube/lib/server/index.ts",
                 "/Users/Martin/projects/GenesisTools",
                 "bun"
@@ -83,7 +84,7 @@ describe("isVerifiedGenesisTools (registry + matchProcess)", () => {
         ).toBe(true);
         expect(
             isVerifiedGenesisTools(
-                9877,
+                WEB_SERVICES["youtube-extension"].port,
                 "bun /Users/Martin/projects/GenesisTools/src/youtube/index.ts extension dev",
                 "/Users/Martin/projects/GenesisTools",
                 "bun"
@@ -212,7 +213,7 @@ describe("deriveTitle", () => {
     test("registry name for matched youtube server", () => {
         expect(
             deriveTitle({
-                port: 9876,
+                port: WEB_SERVICES["youtube-server"].port,
                 command: "bun",
                 fullCommand: "bun run /Users/Martin/projects/GenesisTools/src/youtube/lib/server/index.ts",
                 cwd: "/Users/Martin/projects/GenesisTools",

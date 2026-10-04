@@ -2,6 +2,7 @@ import type { YoutubeConfigPatch } from "@app/youtube/lib/config.api.types";
 import type { YoutubeConfigShape } from "@app/youtube/lib/types";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger/client";
+import { WEB_SERVICES } from "@genesiscz/utils/ui/dashboards";
 
 export interface UiConfigResponse {
     config: YoutubeConfigShape;
@@ -12,7 +13,8 @@ export interface UiConfigPatchResponse {
     config: YoutubeConfigShape;
 }
 
-const FALLBACK_API_BASE_URL = "http://localhost:9876";
+/** The local API server's default address, from the registry. */
+export const FALLBACK_API_BASE_URL = `http://localhost:${WEB_SERVICES["youtube-server"].port}`;
 const DEV_CONFIG_PATH = "/__config";
 const API_CONFIG_PATH = "/api/v1/config";
 
@@ -20,7 +22,7 @@ const API_CONFIG_PATH = "/api/v1/config";
  * Resolved at first call: the URL prefix the rest of the UI should use to hit the
  * API server. In Vite dev that's `/__config` (a Vite middleware shim). In a
  * production build (no Vite middleware), the UI tries the same origin first and
- * falls back to `http://localhost:9876` so it Just Works for the local-daemon use
+ * falls back to `FALLBACK_API_BASE_URL` so it Just Works for the local-daemon use
  * case described in the README.
  */
 let resolvedApiPrefix: string | null = null;

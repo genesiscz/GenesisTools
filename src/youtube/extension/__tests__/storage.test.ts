@@ -1,5 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { getExtensionConfig, setExtensionConfig } from "@ext/shared/storage";
+import { WEB_SERVICES } from "@genesiscz/utils/ui/dashboards";
+import manifest from "../manifest.json";
 
 function installStorage(initial: Record<string, unknown> = {}): Record<string, unknown> {
     const store = { ...initial };
@@ -34,9 +36,21 @@ describe("extension storage", () => {
         installStorage();
 
         await expect(getExtensionConfig()).resolves.toEqual({
-            apiBaseUrl: "http://localhost:9876",
+            apiBaseUrl: "http://localhost:9886",
             serviceKey: undefined,
         });
+    });
+
+    it("reads a saved old default (9876, Blender MCP's port) as the new default, keeps any other URL", async () => {
+        installStorage({ apiBaseUrl: "http://localhost:9876" });
+        expect((await getExtensionConfig()).apiBaseUrl).toBe("http://localhost:9886");
+
+        installStorage({ apiBaseUrl: "http://192.168.1.5:9876" });
+        expect((await getExtensionConfig()).apiBaseUrl).toBe("http://192.168.1.5:9876");
+    });
+
+    it("asks the browser for access to the server's registry port", () => {
+        expect(manifest.host_permissions).toContain(`http://localhost:${WEB_SERVICES["youtube-server"].port}/*`);
     });
 
     it("persists partial config patches", async () => {
@@ -77,7 +91,7 @@ describe("extension storage", () => {
         installStorage({ apiBaseUrl: "http://localhost:9876", serviceKey: "" });
 
         await expect(getExtensionConfig()).resolves.toEqual({
-            apiBaseUrl: "http://localhost:9876",
+            apiBaseUrl: "http://localhost:9886",
             serviceKey: undefined,
         });
     });

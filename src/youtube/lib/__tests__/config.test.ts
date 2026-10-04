@@ -19,10 +19,30 @@ describe("YoutubeConfig", () => {
     it("returns defaults on first read", async () => {
         const cfg = new YoutubeConfig({ baseDir });
 
-        expect(await cfg.get("apiPort")).toBe(9876);
-        expect(await cfg.get("apiBaseUrl")).toBe("http://localhost:9876");
+        expect(await cfg.get("apiPort")).toBe(9886);
+        expect(await cfg.get("apiBaseUrl")).toBe("http://localhost:9886");
         expect(await cfg.get("firstRunComplete")).toBe(false);
         expect(await cfg.get("preferredLangs")).toEqual(["en"]);
+    });
+
+    it("reads the old default port (Blender MCP's 9876) as the new one, but keeps a chosen port", async () => {
+        await Bun.write(
+            join(baseDir, CONFIG_FILENAME),
+            SafeJSON.stringify({ apiPort: 9876, apiBaseUrl: "http://127.0.0.1:9876" }, { strict: true })
+        );
+        const legacy = new YoutubeConfig({ baseDir });
+
+        expect(await legacy.get("apiPort")).toBe(9886);
+        expect(await legacy.get("apiBaseUrl")).toBe("http://localhost:9886");
+
+        await Bun.write(
+            join(baseDir, CONFIG_FILENAME),
+            SafeJSON.stringify({ apiPort: 9999, apiBaseUrl: "http://127.0.0.1:9999" }, { strict: true })
+        );
+        const chosen = new YoutubeConfig({ baseDir });
+
+        expect(await chosen.get("apiPort")).toBe(9999);
+        expect(await chosen.get("apiBaseUrl")).toBe("http://127.0.0.1:9999");
     });
 
     it("uses server.json under the configured base directory", () => {
@@ -81,6 +101,6 @@ describe("YoutubeConfig", () => {
         const file = await readFile(cfg.where(), "utf8");
 
         expect(await cfg.get("apiPort")).toBe(DEFAULT_YOUTUBE_CONFIG.apiPort);
-        expect(file).toContain('"apiPort": 9876');
+        expect(file).toContain(`"apiPort": ${DEFAULT_YOUTUBE_CONFIG.apiPort}`);
     });
 });

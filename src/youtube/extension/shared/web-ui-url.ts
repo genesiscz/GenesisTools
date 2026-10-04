@@ -1,6 +1,6 @@
 /**
  * YouTube web UI port — keep in sync with `DASHBOARDS.youtube.port`
- * in `src/utils/ui/dashboards.ts` (3074). The API server (9876) does not
+ * in `src/utils/ui/dashboards.ts` (3074). The API server (`WEB_SERVICES["youtube-server"]`) does not
  * serve the SPA, so "Open in GenesisTools" must target this UI, not apiBaseUrl.
  */
 export const YOUTUBE_WEB_UI_PORT = 3074;

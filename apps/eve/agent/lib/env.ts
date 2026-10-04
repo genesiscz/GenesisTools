@@ -66,7 +66,7 @@ export const eveEnv = {
 
     /** Base URL of the GenesisTools youtube API server eve connects to. */
     getYoutubeApiBaseUrl: (env: Env = agentEnv): string =>
-        (read(env, "YOUTUBE_API_BASE_URL") ?? "http://127.0.0.1:9876").replace(/\/$/, ""),
+        (read(env, "YOUTUBE_API_BASE_URL") ?? "http://127.0.0.1:9886").replace(/\/$/, ""),
 
     /** Comma-separated service keys for that youtube server. */
     getYoutubeServiceKey: (env: Env = agentEnv): string | undefined => read(env, "YOUTUBE_SERVICE_KEY"),

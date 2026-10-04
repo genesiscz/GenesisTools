@@ -23,7 +23,7 @@ divergences (documented below) — not precedents.
 (`.cyberpunk` + `@ui/theme/styles.css` + cyber-grid/scan-lines) and shared
 `@ui/components/*`. It was never flat-drifted because it consumed the system
 correctly — `before ≈ after` in the evidence gallery is *expected*. Needs a
-separate API server (`tools youtube server start`, :9876).
+separate API server (`tools youtube server start`, :9886).
 </context_trigger>
 
 ---
@@ -96,7 +96,7 @@ uniqueness — wire it into a test/launcher when adding a dashboard.
   `assets/ui-drift-2026-05-18/yt-{home,jobs}.png` ≈ `.after.png` by design
   (a positive exemplar, like devdash below — *not* a capture error).
 - **Runtime gotcha:** the UI (`tools youtube ui`, vite frontend) needs a
-  **separate API server** — `tools youtube server start` (default :9876,
+  **separate API server** — `tools youtube server start` (default :9886,
   normally a launchd daemon). Without it the UI renders but every request
   is `ERR_CONNECTION_REFUSED`. (Frontend port moved 3072→3074 on
   2026-05-18 to resolve a hard `--strictPort` clash with reas; both now

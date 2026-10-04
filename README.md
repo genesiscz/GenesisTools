@@ -931,8 +931,8 @@ Ports must be unique across both, and `findPortConflicts()` enforces it.
 | 7243 | Log Viewer (debugging-master plus task) |
 | 7251 | DevDashboard Cloud |
 | 8317 | AI Proxy |
-| 9876 | YouTube Server |
 | 9877 | YouTube Extension |
+| 9886 | YouTube Server (was 9876, which Blender MCP uses) |
 
 Bring them all up or down together with `tools dashboards up|down|restart|status`.
 

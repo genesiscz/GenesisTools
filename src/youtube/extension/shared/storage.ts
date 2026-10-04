@@ -1,11 +1,24 @@
 import type { ExtensionConfig } from "@ext/shared/types";
+import { WEB_SERVICES } from "@genesiscz/utils/ui/dashboards";
 
-const DEFAULT_CONFIG: ExtensionConfig = { apiBaseUrl: "http://localhost:9876" };
+export const DEFAULT_API_BASE_URL = `http://localhost:${WEB_SERVICES["youtube-server"].port}`;
+
+const DEFAULT_CONFIG: ExtensionConfig = { apiBaseUrl: DEFAULT_API_BASE_URL };
+
+/**
+ * The server's first default (9876) is Blender MCP's port, so the server moved. A saved URL that is
+ * exactly that old default was never a choice, so it reads as the new default; any other URL stays.
+ */
+const LEGACY_DEFAULT = /^http:\/\/(localhost|127\.0\.0\.1):9876\/?$/;
+
+function storedBaseUrl(value: unknown): string {
+    return typeof value === "string" && !LEGACY_DEFAULT.test(value) ? value : DEFAULT_CONFIG.apiBaseUrl;
+}
 
 export async function getExtensionConfig(): Promise<ExtensionConfig> {
     const stored = await chrome.storage.local.get(["apiBaseUrl", "serviceKey", "userToken"]);
     return {
-        apiBaseUrl: typeof stored.apiBaseUrl === "string" ? stored.apiBaseUrl : DEFAULT_CONFIG.apiBaseUrl,
+        apiBaseUrl: storedBaseUrl(stored.apiBaseUrl),
         serviceKey:
             typeof stored.serviceKey === "string" && stored.serviceKey.length > 0 ? stored.serviceKey : undefined,
         userToken: typeof stored.userToken === "string" && stored.userToken.length > 0 ? stored.userToken : undefined,

@@ -337,11 +337,13 @@ export const WEB_SERVICES = {
         key: "youtube-server",
         name: "YouTube Server",
         description: "YouTube tool backend API + pipeline (Bun).",
-        port: 9876,
+        // Was 9876 until 2026-10-04: Blender MCP listens on 9876 by default, and whichever started
+        // second failed to bind. A saved `apiPort` of 9876 is read as this port (youtube/lib/config.ts).
+        port: 9886,
         launch: "tools youtube server",
         portOverride: { flag: "--port" },
         serviceKind: "http-api",
-        note: "Default in src/youtube/lib/server/app.ts.",
+        note: "Read by src/youtube/lib/server/app.ts and the youtube config defaults.",
         matchProcess: matchGenesisTool("youtube/lib/server", "youtube/server", "src/youtube/lib/server"),
     },
     "youtube-extension": {

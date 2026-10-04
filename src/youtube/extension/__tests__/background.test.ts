@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { WEB_SERVICES } from "@genesiscz/utils/ui/dashboards";
 
 interface FetchCall {
     url: string;
@@ -9,6 +10,9 @@ interface FetchCall {
 const originalChrome = globalThis.chrome;
 const originalFetch = globalThis.fetch;
 const originalWebSocket = (globalThis as { WebSocket?: unknown }).WebSocket;
+
+/** The default API base; routing does not depend on the port, so take it from the registry. */
+const API = `http://localhost:${WEB_SERVICES["youtube-server"].port}`;
 
 function installEnv(config: Record<string, unknown>): FetchCall[] {
     const calls: FetchCall[] = [];
@@ -63,7 +67,7 @@ async function loadHandleRequest() {
 
 describe("extension background request routing", () => {
     beforeEach(() => {
-        installEnv({ apiBaseUrl: "http://localhost:9876" });
+        installEnv({ apiBaseUrl: API });
     });
 
     afterEach(() => {
@@ -73,36 +77,34 @@ describe("extension background request routing", () => {
     });
 
     it("builds the channel videos URL for api:listVideos", async () => {
-        const calls = installEnv({ apiBaseUrl: "http://localhost:9876" });
+        const calls = installEnv({ apiBaseUrl: API });
         const handleRequest = await loadHandleRequest();
 
         const res = await handleRequest({ type: "api:listVideos", channel: "@mkbhd", limit: 20, includeShorts: true });
 
         expect(res.ok).toBe(true);
-        expect(calls.at(-1)?.url).toBe(
-            "http://localhost:9876/api/v1/videos?channel=%40mkbhd&limit=20&includeShorts=true"
-        );
+        expect(calls.at(-1)?.url).toBe(`${API}/api/v1/videos?channel=%40mkbhd&limit=20&includeShorts=true`);
         expect(calls.at(-1)?.init.method ?? "GET").toBe("GET");
     });
 
     it("POSTs channel sync for api:syncChannel", async () => {
-        const calls = installEnv({ apiBaseUrl: "http://localhost:9876" });
+        const calls = installEnv({ apiBaseUrl: API });
         const handleRequest = await loadHandleRequest();
 
         const res = await handleRequest({ type: "api:syncChannel", handle: "@opat04" });
 
         expect(res.ok).toBe(true);
-        expect(calls.at(-1)?.url).toBe("http://localhost:9876/api/v1/channels/%40opat04/sync");
+        expect(calls.at(-1)?.url).toBe(`${API}/api/v1/channels/%40opat04/sync`);
         expect(calls.at(-1)?.init.method).toBe("POST");
     });
 
     it("omits absent optional params for api:listVideos", async () => {
-        const calls = installEnv({ apiBaseUrl: "http://localhost:9876" });
+        const calls = installEnv({ apiBaseUrl: API });
         const handleRequest = await loadHandleRequest();
 
         await handleRequest({ type: "api:listVideos" });
 
-        expect(calls.at(-1)?.url).toBe("http://localhost:9876/api/v1/videos");
+        expect(calls.at(-1)?.url).toBe(`${API}/api/v1/videos`);
     });
 
     it("attaches a bearer token when a service key is configured", async () => {
@@ -116,7 +118,7 @@ describe("extension background request routing", () => {
     });
 
     it("forwards long mode + tone/format/length to the generateSummary POST body", async () => {
-        const calls = installEnv({ apiBaseUrl: "http://localhost:9876" });
+        const calls = installEnv({ apiBaseUrl: API });
         const handleRequest = await loadHandleRequest();
 
         await handleRequest({
@@ -129,7 +131,7 @@ describe("extension background request routing", () => {
         });
 
         const call = calls.at(-1);
-        expect(call?.url).toBe("http://localhost:9876/api/v1/videos/vid123/summary");
+        expect(call?.url).toBe(`${API}/api/v1/videos/vid123/summary`);
         expect(call?.init.method).toBe("POST");
 
         const body = SafeJSON.parse(String(call?.init.body)) as Record<string, unknown>;
@@ -140,16 +142,16 @@ describe("extension background request routing", () => {
     });
 
     it("forwards long mode as the getSummary GET query param", async () => {
-        const calls = installEnv({ apiBaseUrl: "http://localhost:9876" });
+        const calls = installEnv({ apiBaseUrl: API });
         const handleRequest = await loadHandleRequest();
 
         await handleRequest({ type: "api:getSummary", id: "vid123", mode: "long" });
 
-        expect(calls.at(-1)?.url).toBe("http://localhost:9876/api/v1/videos/vid123/summary?mode=long");
+        expect(calls.at(-1)?.url).toBe(`${API}/api/v1/videos/vid123/summary?mode=long`);
     });
 
     it("forwards lang on generateSummary (Feature 08)", async () => {
-        const calls = installEnv({ apiBaseUrl: "http://localhost:9876" });
+        const calls = installEnv({ apiBaseUrl: API });
         const handleRequest = await loadHandleRequest();
 
         await handleRequest({ type: "api:generateSummary", id: "vid123", mode: "short", lang: "cs" });
@@ -159,26 +161,26 @@ describe("extension background request routing", () => {
     });
 
     it("posts translateTranscript to the transcript/translate route", async () => {
-        const calls = installEnv({ apiBaseUrl: "http://localhost:9876" });
+        const calls = installEnv({ apiBaseUrl: API });
         const handleRequest = await loadHandleRequest();
 
         await handleRequest({ type: "api:translateTranscript", id: "vid123", lang: "cs" });
 
         const call = calls.at(-1);
-        expect(call?.url).toBe("http://localhost:9876/api/v1/videos/vid123/transcript/translate");
+        expect(call?.url).toBe(`${API}/api/v1/videos/vid123/transcript/translate`);
         expect(call?.init.method).toBe("POST");
         const body = SafeJSON.parse(String(call?.init.body)) as Record<string, unknown>;
         expect(body.lang).toBe("cs");
     });
 
     it("PATCHes patchMe to users/me with outputLang/ttsVoice", async () => {
-        const calls = installEnv({ apiBaseUrl: "http://localhost:9876" });
+        const calls = installEnv({ apiBaseUrl: API });
         const handleRequest = await loadHandleRequest();
 
         await handleRequest({ type: "api:patchMe", outputLang: "cs", ttsVoice: "alloy" });
 
         const call = calls.at(-1);
-        expect(call?.url).toBe("http://localhost:9876/api/v1/users/me");
+        expect(call?.url).toBe(`${API}/api/v1/users/me`);
         expect(call?.init.method).toBe("PATCH");
         const body = SafeJSON.parse(String(call?.init.body)) as Record<string, unknown>;
         expect(body.outputLang).toBe("cs");
@@ -188,7 +190,7 @@ describe("extension background request routing", () => {
 
 describe("extension background — phase 4a collections/history/watchlist/digest", () => {
     beforeEach(() => {
-        installEnv({ apiBaseUrl: "http://localhost:9876" });
+        installEnv({ apiBaseUrl: API });
     });
 
     afterEach(() => {
@@ -198,17 +200,17 @@ describe("extension background — phase 4a collections/history/watchlist/digest
     });
 
     it("GETs the collections list", async () => {
-        const calls = installEnv({ apiBaseUrl: "http://localhost:9876" });
+        const calls = installEnv({ apiBaseUrl: API });
         const handleRequest = await loadHandleRequest();
 
         await handleRequest({ type: "api:listCollections" });
 
-        expect(calls.at(-1)?.url).toBe("http://localhost:9876/api/v1/collections");
+        expect(calls.at(-1)?.url).toBe(`${API}/api/v1/collections`);
         expect(calls.at(-1)?.init.method ?? "GET").toBe("GET");
     });
 
     it("POSTs createCollection with name/kind/rule", async () => {
-        const calls = installEnv({ apiBaseUrl: "http://localhost:9876" });
+        const calls = installEnv({ apiBaseUrl: API });
         const handleRequest = await loadHandleRequest();
 
         await handleRequest({
@@ -219,7 +221,7 @@ describe("extension background — phase 4a collections/history/watchlist/digest
         });
 
         const call = calls.at(-1);
-        expect(call?.url).toBe("http://localhost:9876/api/v1/collections");
+        expect(call?.url).toBe(`${API}/api/v1/collections`);
         expect(call?.init.method).toBe("POST");
         const body = SafeJSON.parse(String(call?.init.body)) as Record<string, unknown>;
         expect(body.name).toBe("last month");
@@ -228,39 +230,39 @@ describe("extension background — phase 4a collections/history/watchlist/digest
     });
 
     it("routes collection detail, delete, and membership", async () => {
-        const calls = installEnv({ apiBaseUrl: "http://localhost:9876" });
+        const calls = installEnv({ apiBaseUrl: API });
         const handleRequest = await loadHandleRequest();
 
         await handleRequest({ type: "api:getCollection", id: 7 });
-        expect(calls.at(-1)?.url).toBe("http://localhost:9876/api/v1/collections/7");
+        expect(calls.at(-1)?.url).toBe(`${API}/api/v1/collections/7`);
 
         await handleRequest({ type: "api:deleteCollection", id: 7 });
-        expect(calls.at(-1)?.url).toBe("http://localhost:9876/api/v1/collections/7");
+        expect(calls.at(-1)?.url).toBe(`${API}/api/v1/collections/7`);
         expect(calls.at(-1)?.init.method).toBe("DELETE");
 
         await handleRequest({ type: "api:addCollectionVideo", id: 7, videoId: "vid00000001" });
-        expect(calls.at(-1)?.url).toBe("http://localhost:9876/api/v1/collections/7/videos");
+        expect(calls.at(-1)?.url).toBe(`${API}/api/v1/collections/7/videos`);
         expect(calls.at(-1)?.init.method).toBe("POST");
         expect((SafeJSON.parse(String(calls.at(-1)?.init.body)) as { videoId: string }).videoId).toBe("vid00000001");
 
         await handleRequest({ type: "api:removeCollectionVideo", id: 7, videoId: "a/b" });
-        expect(calls.at(-1)?.url).toBe("http://localhost:9876/api/v1/collections/7/videos/a%2Fb");
+        expect(calls.at(-1)?.url).toBe(`${API}/api/v1/collections/7/videos/a%2Fb`);
         expect(calls.at(-1)?.init.method).toBe("DELETE");
     });
 
     it("routes thread list, thread detail, and ask", async () => {
-        const calls = installEnv({ apiBaseUrl: "http://localhost:9876" });
+        const calls = installEnv({ apiBaseUrl: API });
         const handleRequest = await loadHandleRequest();
 
         await handleRequest({ type: "api:listThreads", id: 3 });
-        expect(calls.at(-1)?.url).toBe("http://localhost:9876/api/v1/collections/3/threads");
+        expect(calls.at(-1)?.url).toBe(`${API}/api/v1/collections/3/threads`);
 
         await handleRequest({ type: "api:getThread", threadId: 9 });
-        expect(calls.at(-1)?.url).toBe("http://localhost:9876/api/v1/collections/threads/9");
+        expect(calls.at(-1)?.url).toBe(`${API}/api/v1/collections/threads/9`);
 
         await handleRequest({ type: "api:askCollection", id: 3, question: "what?", threadId: 9 });
         const ask = calls.at(-1);
-        expect(ask?.url).toBe("http://localhost:9876/api/v1/collections/3/ask");
+        expect(ask?.url).toBe(`${API}/api/v1/collections/3/ask`);
         expect(ask?.init.method).toBe("POST");
         const body = SafeJSON.parse(String(ask?.init.body)) as Record<string, unknown>;
         expect(body.question).toBe("what?");
@@ -268,42 +270,42 @@ describe("extension background — phase 4a collections/history/watchlist/digest
     });
 
     it("builds the userHistory query with groupBy and limit", async () => {
-        const calls = installEnv({ apiBaseUrl: "http://localhost:9876" });
+        const calls = installEnv({ apiBaseUrl: API });
         const handleRequest = await loadHandleRequest();
 
         await handleRequest({ type: "api:userHistory", groupBy: "action", limit: 200 });
 
-        expect(calls.at(-1)?.url).toBe("http://localhost:9876/api/v1/users/history?groupBy=action&limit=200");
+        expect(calls.at(-1)?.url).toBe(`${API}/api/v1/users/history?groupBy=action&limit=200`);
     });
 
     it("routes watchlist add/remove and digest get/sync", async () => {
-        const calls = installEnv({ apiBaseUrl: "http://localhost:9876" });
+        const calls = installEnv({ apiBaseUrl: API });
         const handleRequest = await loadHandleRequest();
 
         await handleRequest({ type: "api:getWatchlist" });
-        expect(calls.at(-1)?.url).toBe("http://localhost:9876/api/v1/users/watchlist");
+        expect(calls.at(-1)?.url).toBe(`${API}/api/v1/users/watchlist`);
 
         await handleRequest({ type: "api:addWatchlistChannel", handle: "@chan" });
-        expect(calls.at(-1)?.url).toBe("http://localhost:9876/api/v1/users/watchlist");
+        expect(calls.at(-1)?.url).toBe(`${API}/api/v1/users/watchlist`);
         expect(calls.at(-1)?.init.method).toBe("POST");
         expect((SafeJSON.parse(String(calls.at(-1)?.init.body)) as { handle: string }).handle).toBe("@chan");
 
         await handleRequest({ type: "api:removeWatchlistChannel", handle: "@chan" });
-        expect(calls.at(-1)?.url).toBe("http://localhost:9876/api/v1/users/watchlist/%40chan");
+        expect(calls.at(-1)?.url).toBe(`${API}/api/v1/users/watchlist/%40chan`);
         expect(calls.at(-1)?.init.method).toBe("DELETE");
 
         await handleRequest({ type: "api:getDigest", sinceDays: 30 });
-        expect(calls.at(-1)?.url).toBe("http://localhost:9876/api/v1/users/digest?sinceDays=30");
+        expect(calls.at(-1)?.url).toBe(`${API}/api/v1/users/digest?sinceDays=30`);
 
         await handleRequest({ type: "api:syncDigest" });
-        expect(calls.at(-1)?.url).toBe("http://localhost:9876/api/v1/users/digest/sync");
+        expect(calls.at(-1)?.url).toBe(`${API}/api/v1/users/digest/sync`);
         expect(calls.at(-1)?.init.method).toBe("POST");
     });
 });
 
 describe("extension background — phase 4b monetization (subscribe/referral)", () => {
     beforeEach(() => {
-        installEnv({ apiBaseUrl: "http://localhost:9876" });
+        installEnv({ apiBaseUrl: API });
     });
 
     afterEach(() => {
@@ -313,25 +315,25 @@ describe("extension background — phase 4b monetization (subscribe/referral)", 
     });
 
     it("POSTs the plan id for api:subscribe", async () => {
-        const calls = installEnv({ apiBaseUrl: "http://localhost:9876" });
+        const calls = installEnv({ apiBaseUrl: API });
         const handleRequest = await loadHandleRequest();
 
         await handleRequest({ type: "api:subscribe", planId: "sub-monthly" });
 
-        expect(calls.at(-1)?.url).toBe("http://localhost:9876/api/v1/users/subscribe");
+        expect(calls.at(-1)?.url).toBe(`${API}/api/v1/users/subscribe`);
         expect(calls.at(-1)?.init.method).toBe("POST");
         expect((SafeJSON.parse(String(calls.at(-1)?.init.body)) as { planId: string }).planId).toBe("sub-monthly");
     });
 
     it("routes referral get and redeem", async () => {
-        const calls = installEnv({ apiBaseUrl: "http://localhost:9876" });
+        const calls = installEnv({ apiBaseUrl: API });
         const handleRequest = await loadHandleRequest();
 
         await handleRequest({ type: "api:getReferral" });
-        expect(calls.at(-1)?.url).toBe("http://localhost:9876/api/v1/users/referral");
+        expect(calls.at(-1)?.url).toBe(`${API}/api/v1/users/referral`);
 
         await handleRequest({ type: "api:redeemReferral", code: "ABCD1234" });
-        expect(calls.at(-1)?.url).toBe("http://localhost:9876/api/v1/users/referral/redeem");
+        expect(calls.at(-1)?.url).toBe(`${API}/api/v1/users/referral/redeem`);
         expect(calls.at(-1)?.init.method).toBe("POST");
         expect((SafeJSON.parse(String(calls.at(-1)?.init.body)) as { code: string }).code).toBe("ABCD1234");
     });
@@ -339,7 +341,7 @@ describe("extension background — phase 4b monetization (subscribe/referral)", 
 
 describe("extension background — phase 4b admin panel", () => {
     beforeEach(() => {
-        installEnv({ apiBaseUrl: "http://localhost:9876" });
+        installEnv({ apiBaseUrl: API });
     });
 
     afterEach(() => {
@@ -349,43 +351,43 @@ describe("extension background — phase 4b admin panel", () => {
     });
 
     it("builds the admin users query with search and sort", async () => {
-        const calls = installEnv({ apiBaseUrl: "http://localhost:9876" });
+        const calls = installEnv({ apiBaseUrl: API });
         const handleRequest = await loadHandleRequest();
 
         await handleRequest({ type: "api:adminUsers", q: "mkbhd", sort: "revenue", dir: "desc" });
 
-        expect(calls.at(-1)?.url).toBe("http://localhost:9876/api/v1/admin/users?q=mkbhd&sort=revenue&dir=desc");
+        expect(calls.at(-1)?.url).toBe(`${API}/api/v1/admin/users?q=mkbhd&sort=revenue&dir=desc`);
     });
 
     it("routes the admin profile drill-in by id", async () => {
-        const calls = installEnv({ apiBaseUrl: "http://localhost:9876" });
+        const calls = installEnv({ apiBaseUrl: API });
         const handleRequest = await loadHandleRequest();
 
         await handleRequest({ type: "api:adminUser", id: 42 });
-        expect(calls.at(-1)?.url).toBe("http://localhost:9876/api/v1/admin/users/42");
+        expect(calls.at(-1)?.url).toBe(`${API}/api/v1/admin/users/42`);
     });
 
     it("builds ops-view queries (ai-calls, webhook-logs, jobs, revenue)", async () => {
-        const calls = installEnv({ apiBaseUrl: "http://localhost:9876" });
+        const calls = installEnv({ apiBaseUrl: API });
         const handleRequest = await loadHandleRequest();
 
         await handleRequest({ type: "api:adminAiCalls", provider: "xai", action: "summary" });
-        expect(calls.at(-1)?.url).toBe("http://localhost:9876/api/v1/admin/ai-calls?provider=xai&action=summary");
+        expect(calls.at(-1)?.url).toBe(`${API}/api/v1/admin/ai-calls?provider=xai&action=summary`);
 
         await handleRequest({ type: "api:adminWebhookLogs", outcome: "error" });
-        expect(calls.at(-1)?.url).toBe("http://localhost:9876/api/v1/admin/webhook-logs?outcome=error");
+        expect(calls.at(-1)?.url).toBe(`${API}/api/v1/admin/webhook-logs?outcome=error`);
 
         await handleRequest({ type: "api:adminJobs", status: "running" });
-        expect(calls.at(-1)?.url).toBe("http://localhost:9876/api/v1/admin/jobs?status=running");
+        expect(calls.at(-1)?.url).toBe(`${API}/api/v1/admin/jobs?status=running`);
 
         await handleRequest({ type: "api:adminRevenue", days: 30 });
-        expect(calls.at(-1)?.url).toBe("http://localhost:9876/api/v1/admin/revenue?days=30");
+        expect(calls.at(-1)?.url).toBe(`${API}/api/v1/admin/revenue?days=30`);
     });
 });
 
 describe("extension background — phase 5 settings", () => {
     beforeEach(() => {
-        installEnv({ apiBaseUrl: "http://localhost:9876" });
+        installEnv({ apiBaseUrl: API });
     });
 
     afterEach(() => {
@@ -395,14 +397,14 @@ describe("extension background — phase 5 settings", () => {
     });
 
     it("GETs settings and PATCHes a sparse patch body", async () => {
-        const calls = installEnv({ apiBaseUrl: "http://localhost:9876" });
+        const calls = installEnv({ apiBaseUrl: API });
         const handleRequest = await loadHandleRequest();
 
         await handleRequest({ type: "api:getSettings" });
-        expect(calls.at(-1)?.url).toBe("http://localhost:9876/api/v1/users/settings");
+        expect(calls.at(-1)?.url).toBe(`${API}/api/v1/users/settings`);
 
         await handleRequest({ type: "api:updateSettings", patch: { theme: "dark", panel: { defaultTab: "ask" } } });
-        expect(calls.at(-1)?.url).toBe("http://localhost:9876/api/v1/users/settings");
+        expect(calls.at(-1)?.url).toBe(`${API}/api/v1/users/settings`);
         expect(calls.at(-1)?.init.method).toBe("PATCH");
         const body = SafeJSON.parse(String(calls.at(-1)?.init.body)) as {
             theme: string;
