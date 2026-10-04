@@ -1,5 +1,5 @@
-import type { Collection, ImportSpecifier, JSCodeshift } from "jscodeshift";
-import { renameModuleBinding } from "./ast-helpers";
+import type { Collection, JSCodeshift } from "jscodeshift";
+import { acceptsNamedImports, renameModuleBinding } from "./ast-helpers";
 
 export interface ImportInfo {
     module: string;
@@ -381,39 +381,37 @@ export class ImportConflictResolver {
         });
 
         importsByModule.forEach((imports, module) => {
-            const existingImport = this.root.find(this.j.ImportDeclaration, {
-                source: { value: module },
-            });
+            const declarations = this.root.find(this.j.ImportDeclaration, { source: { value: module } }).paths();
+            const alreadyImported = new Set(
+                declarations
+                    .filter((path) => path.node.importKind !== "type")
+                    .flatMap((path) =>
+                        (path.node.specifiers || []).flatMap((s) =>
+                            s.type === "ImportSpecifier" && s.imported.type === "Identifier" ? [s.imported.name] : []
+                        )
+                    )
+            );
+            const specs = Array.from(imports)
+                .filter(({ imported }) => !alreadyImported.has(imported))
+                .map(({ imported, local }) =>
+                    this.j.importSpecifier(
+                        this.j.identifier(imported),
+                        local !== imported ? this.j.identifier(local) : null
+                    )
+                );
 
-            if (existingImport.length > 0) {
-                existingImport.forEach((path) => {
-                    const existingSpecifiers = new Set(
-                        (path.node.specifiers || [])
-                            .filter((s): s is ImportSpecifier => s.type === "ImportSpecifier")
-                            .map((s) => (s.imported.type === "Identifier" ? s.imported.name : ""))
-                    );
-
-                    imports.forEach(({ imported, local }) => {
-                        if (!existingSpecifiers.has(imported)) {
-                            path.node.specifiers = path.node.specifiers || [];
-                            path.node.specifiers.push(
-                                this.j.importSpecifier(
-                                    this.j.identifier(imported),
-                                    local !== imported ? this.j.identifier(local) : null
-                                )
-                            );
-                        }
-                    });
-                });
+            if (specs.length === 0) {
                 return;
             }
 
-            const specs = Array.from(imports).map(({ imported, local }) =>
-                this.j.importSpecifier(
-                    this.j.identifier(imported),
-                    local !== imported ? this.j.identifier(local) : null
-                )
-            );
+            // one plain value import takes them: under `import type` they would bind no runtime value, and a
+            // namespace import cannot carry named specifiers at all
+            const target = declarations.find((path) => acceptsNamedImports(path.node));
+            if (target) {
+                target.node.specifiers = [...(target.node.specifiers || []), ...specs];
+                return;
+            }
+
             const newImport = this.j.importDeclaration(specs, this.j.literal(module));
 
             const lastImport = this.root.find(this.j.ImportDeclaration).at(-1);

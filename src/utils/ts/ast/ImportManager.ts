@@ -9,6 +9,7 @@ import type {
     JSCodeshift,
     Program,
 } from "jscodeshift";
+import { acceptsNamedImports } from "./ast-helpers";
 import type { AutoLogger, ImportManager } from "./types";
 
 // -----------------------------------------------------------------------------
@@ -130,12 +131,7 @@ export class ImportManagerImpl {
         this.logImportChange(module, importedName, "ensure", localName ? `as ${localName}` : "");
         const targetLocal = localName || importedName;
 
-        // merge only into a declaration that is not a namespace, not type-only and not side-effect-only
-        const mergeTarget = existing.paths().find((p) => {
-            const specifiers = p.node.specifiers || [];
-            const hasNamespace = specifiers.some((s) => s.type === "ImportNamespaceSpecifier");
-            return !hasNamespace && p.node.importKind !== "type" && specifiers.length > 0;
-        });
+        const mergeTarget = existing.paths().find((p) => acceptsNamedImports(p.node));
 
         if (mergeTarget) {
             const node = mergeTarget.node;

@@ -958,6 +958,25 @@ describe("ImportConflictResolver", () => {
         );
     });
 
+    it("a new import joins one plain value import of the module, never a type-only or namespace one", () => {
+        const typeAndNamespace = conflictResolver(
+            `import type { Props } from "${PRIMARY}";\nimport * as UI from "${PRIMARY}";\nconst a = <OldHeader />;`
+        );
+        const twoValueImports = conflictResolver(`import { A } from "${PRIMARY}";\nimport { B } from "${PRIMARY}";`);
+
+        for (const { resolver } of [typeAndNamespace, twoValueImports]) {
+            resolver.trackResolution(resolver.resolveComponentUsage("OldHeader", "PageHeader", "./old", PRIMARY));
+            resolver.applyImportChanges();
+        }
+
+        expect(flat(typeAndNamespace.root.toSource())).toBe(
+            `import type { Props } from "${PRIMARY}"; import * as UI from "${PRIMARY}"; import { PageHeader } from "${PRIMARY}"; const a = <OldHeader />;`
+        );
+        expect(flat(twoValueImports.root.toSource())).toBe(
+            `import { A, PageHeader } from "${PRIMARY}"; import { B } from "${PRIMARY}";`
+        );
+    });
+
     it("a target that would come from an app-local module is aliased with the prefix", () => {
         const { resolver } = conflictResolver(`import { Card } from "${PRIMARY}";`);
 
