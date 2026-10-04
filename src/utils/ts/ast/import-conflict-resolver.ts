@@ -1,5 +1,5 @@
 import type { Collection, JSCodeshift } from "jscodeshift";
-import { acceptsNamedImports, renameModuleBinding } from "./ast-helpers";
+import { acceptsNamedImports, claimValueImport, renameModuleBinding } from "./ast-helpers";
 
 export interface ImportInfo {
     module: string;
@@ -382,17 +382,9 @@ export class ImportConflictResolver {
 
         importsByModule.forEach((imports, module) => {
             const declarations = this.root.find(this.j.ImportDeclaration, { source: { value: module } }).paths();
-            const alreadyImported = new Set(
-                declarations
-                    .filter((path) => path.node.importKind !== "type")
-                    .flatMap((path) =>
-                        (path.node.specifiers || []).flatMap((s) =>
-                            s.type === "ImportSpecifier" && s.imported.type === "Identifier" ? [s.imported.name] : []
-                        )
-                    )
-            );
+            // the caller writes `local` into its JSX, so only that exact binding, as a value, counts as present
             const specs = Array.from(imports)
-                .filter(({ imported }) => !alreadyImported.has(imported))
+                .filter(({ imported, local }) => !claimValueImport(this.j, declarations, imported, local))
                 .map(({ imported, local }) =>
                     this.j.importSpecifier(
                         this.j.identifier(imported),

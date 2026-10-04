@@ -1008,6 +1008,21 @@ describe("ImportConflictResolver", () => {
         );
     });
 
+    it("a new import is added when the module already exports that name under another local name", () => {
+        const { root, resolver } = conflictResolver(
+            `import { Button as ExistingButton } from "${PRIMARY}";\nconst a = <OldButton />;`
+        );
+
+        const resolution = resolver.resolveComponentUsage("OldButton", "Button", "./old", PRIMARY);
+        resolver.trackResolution(resolution);
+        resolver.applyImportChanges();
+
+        expect(resolution.useName).toBe("Button");
+        expect(flat(root.toSource())).toBe(
+            `import { Button as ExistingButton, Button } from "${PRIMARY}"; const a = <OldButton />;`
+        );
+    });
+
     it("a new import joins one plain value import of the module, never a type-only or namespace one", () => {
         const typeAndNamespace = conflictResolver(
             `import type { Props } from "${PRIMARY}";\nimport * as UI from "${PRIMARY}";\nconst a = <OldHeader />;`
