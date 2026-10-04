@@ -4,6 +4,7 @@
  */
 import { describe, expect, test } from "bun:test";
 import { type CatalogArtist, emptyCatalog, mergeCatalog } from "@app/spotify/lib/catalog";
+import { embedUrl, parseEmbedArtist } from "@app/spotify/lib/embed";
 import type { Play } from "@app/spotify/lib/history";
 import type { LibTrack } from "@app/spotify/lib/library";
 import {
@@ -14,6 +15,7 @@ import {
     recommendUnfinished,
     withCatalog,
 } from "@app/spotify/lib/reports/recommend";
+import { SafeJSON } from "@genesiscz/utils/json";
 
 const DAY = 86_400_000;
 const T0 = Date.parse("2025-01-01T12:00:00Z");
@@ -227,5 +229,68 @@ describe("the artist catalogue", () => {
         expect(Object.keys(second.artists).sort()).toEqual(["spotify:artist:A", "spotify:artist:B"]);
         expect(second.artists["spotify:artist:A"]?.topTracks.map((t) => t.name)).toEqual(["z"]);
         expect(second.artists["spotify:artist:B"]?.fetchedAt).toBe(new Date(T0).toISOString());
+    });
+});
+
+describe("the public embed page", () => {
+    const page = (data: unknown) =>
+        `<html><body><script id="__NEXT_DATA__" type="application/json">${SafeJSON.stringify(data, { strict: true })}</script></body></html>`;
+
+    test("reads an artist's top tracks in order, with no play counts", () => {
+        const html = page({
+            props: {
+                pageProps: {
+                    state: {
+                        data: {
+                            entity: {
+                                name: "Fresh",
+                                uri: "spotify:artist:Fresh",
+                                trackList: [
+                                    { uri: "spotify:track:1", title: "First" },
+                                    { uri: "spotify:track:2", title: "Second" },
+                                ],
+                            },
+                        },
+                    },
+                },
+            },
+        });
+        const artist = parseEmbedArtist(html);
+
+        expect(artist?.source).toBe("embed");
+        expect(artist?.topTracks.map((t) => [t.name, t.playcount])).toEqual([
+            ["First", null],
+            ["Second", null],
+        ]);
+        expect(embedUrl("spotify:artist:Fresh")).toBe("https://open.spotify.com/embed/artist/Fresh");
+    });
+
+    test("a page without the artist data is not an artist", () => {
+        expect(parseEmbedArtist("<html>blocked</html>")).toBeNull();
+        expect(parseEmbedArtist(page({ props: { pageProps: {} } }))).toBeNull();
+    });
+
+    test("an embed entry never replaces a web-player entry", () => {
+        const web = mergeCatalog(
+            emptyCatalog(),
+            [
+                {
+                    uri: "spotify:artist:A",
+                    name: "A",
+                    source: "web-player",
+                    topTracks: [],
+                    popularReleases: [{ uri: "r", name: "LP", type: "ALBUM", year: 2024, tracks: 10, cover: null }],
+                },
+            ],
+            new Date(T0)
+        );
+        const after = mergeCatalog(
+            web,
+            [{ uri: "spotify:artist:A", name: "A", source: "embed", topTracks: [], popularReleases: [] }],
+            new Date(T0 + DAY)
+        );
+
+        expect(after.artists["spotify:artist:A"]?.popularReleases).toHaveLength(1);
+        expect(after.artists["spotify:artist:A"]?.source).toBe("web-player");
     });
 });

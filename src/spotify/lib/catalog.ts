@@ -38,6 +38,12 @@ export interface CatalogArtist {
     uri: string;
     name: string | null;
     fetchedAt: string;
+    /**
+     * `web-player`: read through the signed-in browser (`--auto`), with play counts, covers and
+     * releases. `embed`: the public embed page, top tracks only. Entries written before this
+     * field existed came from the web player.
+     */
+    source?: "web-player" | "embed";
     topTracks: CatalogTrack[];
     popularReleases: CatalogRelease[];
 }
@@ -80,7 +86,13 @@ function isCatalog(value: unknown): value is ArtistCatalog {
     );
 }
 
-/** Adds or replaces the harvested artists; everything else in the catalogue stays. */
+/** The poorer embed data never replaces what the web player returned. */
+const richer = (entry: CatalogArtist | undefined) => entry !== undefined && entry.source !== "embed";
+
+/**
+ * Adds or replaces the harvested artists; everything else in the catalogue stays. An `embed`
+ * entry does not replace a `web-player` one: it would drop the play counts, covers and releases.
+ */
 export function mergeCatalog(
     catalog: ArtistCatalog,
     harvested: Omit<CatalogArtist, "fetchedAt">[],
@@ -88,6 +100,10 @@ export function mergeCatalog(
 ): ArtistCatalog {
     const artists = { ...catalog.artists };
     for (const a of harvested) {
+        if (a.source === "embed" && richer(artists[a.uri])) {
+            continue;
+        }
+
         artists[a.uri] = { ...a, fetchedAt: fetchedAt.toISOString() };
     }
 

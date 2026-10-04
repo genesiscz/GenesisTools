@@ -12,6 +12,7 @@ import { autoHarvest, autoHarvestArtists } from "@app/spotify/lib/browser/harves
 import { loadCatalog, mergeCatalog, saveCatalog } from "@app/spotify/lib/catalog";
 import { type CommonOpts, dateOption, numberOption } from "@app/spotify/lib/context";
 import { toCsv } from "@app/spotify/lib/csv";
+import { fetchEmbedArtists } from "@app/spotify/lib/embed";
 import { buildArtistIndex } from "@app/spotify/lib/enrich/build-artist-index";
 import { enrichLastfm } from "@app/spotify/lib/enrich/lastfm";
 import { mergeGenres } from "@app/spotify/lib/enrich/merge-genres";
@@ -108,15 +109,12 @@ interface HarvestFlags {
     json?: boolean;
 }
 
-/** `harvest --artists --auto`: the artist catalogue that lets Discover name songs you never played. */
+/**
+ * `harvest --artists`: the artist catalogue that lets Discover name songs you never played.
+ * By default from Spotify's public embed pages (no browser, no login, top tracks only); with
+ * `--auto` through the signed-in web player, which adds play counts, covers and releases.
+ */
 async function harvestArtists(o: HarvestFlags): Promise<void> {
-    if (!o.auto) {
-        out.error("--artists reads Spotify's artist pages through the signed-in web player; add --auto.");
-        process.exitCode = 1;
-
-        return;
-    }
-
     const catalog = loadCatalog();
     const perMethod = numberOption(o.perMethod, "per-method", 40, { min: 1, integer: true });
     const candidates = catalogCandidates({
@@ -124,7 +122,12 @@ async function harvestArtists(o: HarvestFlags): Promise<void> {
         methods: RECOMMEND_METHODS.map((m) => m.id),
         perMethod,
     });
-    const todo = o.refresh ? candidates : candidates.filter((uri) => !catalog.artists[uri]);
+    // `--auto` also upgrades artists that so far only have the poorer embed data.
+    const todo = candidates.filter((uri) => {
+        const entry = catalog.artists[uri];
+
+        return o.refresh || !entry || (o.auto === true && entry.source === "embed");
+    });
 
     if (!todo.length) {
         out.println(
@@ -140,11 +143,14 @@ async function harvestArtists(o: HarvestFlags): Promise<void> {
         )
     );
 
-    const result = await autoHarvestArtists({
-        browserUrl: o.browserUrl ?? env.spotify.getBrowserUrl() ?? "http://127.0.0.1:9222",
-        onLog: (line) => out.printlnErr(pc.gray(`  ${line}`)),
-        artistUris: todo,
-    });
+    const onLog = (line: string) => out.printlnErr(pc.gray(`  ${line}`));
+    const result = o.auto
+        ? await autoHarvestArtists({
+              browserUrl: o.browserUrl ?? env.spotify.getBrowserUrl() ?? "http://127.0.0.1:9222",
+              onLog,
+              artistUris: todo,
+          }).then((r) => ({ ...r, artists: r.artists.map((a) => ({ ...a, source: "web-player" as const })) }))
+        : await fetchEmbedArtists({ artistUris: todo, onLog });
     const path = saveCatalog(mergeCatalog(catalog, result.artists, new Date()));
 
     emit(o.json, { ...result, artists: undefined, out: path }, (r) => {
@@ -166,7 +172,10 @@ export function registerPipeline(program: Command): void {
         .option("-p, --profile <name>", "profile whose data directory receives the harvest")
         .option("--out <path>", "write here instead of the profile's data directory")
         .option("--browser-url <url>", "CDP endpoint of the signed-in browser")
-        .option("--artists", "fetch the artist pages behind Discover (top songs, releases) instead of Liked Songs")
+        .option(
+            "--artists",
+            "fetch the top songs of Discover's picks from Spotify's public embed pages (no browser); with --auto, through the signed-in web player, adding play counts, covers and releases"
+        )
         .option("--per-method <n>", "with --artists: how many picks of each Discover method to fetch", "40")
         .option("--refresh", "with --artists: fetch artists that are already in the catalogue again")
         .option("--json", "machine-readable output")
