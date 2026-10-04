@@ -607,6 +607,9 @@ export function transformImports(
             root.find(j.ImportDeclaration, { source: { value: fromModule } }).forEach((path) => {
                 const declaration = path.node;
                 const remainingSpecifiers: ImportSpecifierType[] = [];
+                // a named specifier cannot share a declaration with a namespace one, so it goes into its own
+                const hasNamespace = (declaration.specifiers || []).some((s) => s.type === "ImportNamespaceSpecifier");
+                const separateSpecifiers: ImportSpecifier[] = [];
                 let defaultImportFound = false;
 
                 for (const spec of declaration.specifiers || []) {
@@ -626,7 +629,12 @@ export function transformImports(
                         if (targetModule === fromModule) {
                             // this declaration is the destination, and its specifiers are rewritten below, so the
                             // named specifier takes the default's place instead of going through addOrUpdateImport
-                            remainingSpecifiers.push(namedImportSpecifier(j, defaultImport.toNamed, localName));
+                            const named = namedImportSpecifier(j, defaultImport.toNamed, localName);
+                            if (hasNamespace) {
+                                separateSpecifiers.push(named);
+                            } else {
+                                remainingSpecifiers.push(named);
+                            }
                         } else {
                             addOrUpdateImport(j, root, targetModule, new Map([[defaultImport.toNamed, localName]]));
                         }
@@ -670,6 +678,10 @@ export function transformImports(
                     } else {
                         declaration.specifiers = remainingSpecifiers;
                     }
+                }
+
+                if (separateSpecifiers.length > 0) {
+                    j(path).insertAfter(j.importDeclaration(separateSpecifiers, j.literal(fromModule)));
                 }
             });
         } else if (toModule && toModule !== fromModule) {

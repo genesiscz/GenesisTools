@@ -519,6 +519,16 @@ describe("import helpers", () => {
         );
     });
 
+    it("transformImports puts a default turned named beside a namespace import, in its own declaration", () => {
+        const root = j(`import Def, * as UI from "ui";\nconst a = <Def />;`);
+
+        transformImports(j, root, [{ fromModule: "ui", defaultImport: { toNamed: "Button" } }]);
+
+        expect(flat(root.toSource())).toBe(
+            `import * as UI from "ui"; import { Button as Def } from "ui"; const a = <Def />;`
+        );
+    });
+
     it("transformImports removes a whole module and renames another", () => {
         const root = j(`import { a } from "gone";\nimport { b } from "old-path";\nb(a);`);
 
