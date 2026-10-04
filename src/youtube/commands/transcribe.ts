@@ -251,5 +251,5 @@ function transcriptToJson(transcript: Transcript): {
 }
 
 function buildTranscribeExamples(): string {
-    return `\nExamples:\n  $ ${toolCommand("youtube transcribe", "https://youtu.be/dQw4w9WgXcQ")}\n  $ ${toolCommand("youtube transcribe", "dQw4w9WgXcQ", "--format", "srt", "-o", "/tmp/out.srt")}\n  $ ${toolCommand("youtube transcribe", "dQw4w9WgXcQ", "--force-transcribe", "--provider", "local-hf")}\n`;
+    return `\nExamples:\n  $ ${toolCommand("youtube transcribe")} https://youtu.be/dQw4w9WgXcQ\n  $ ${toolCommand("youtube transcribe")} dQw4w9WgXcQ --format srt -o /tmp/out.srt\n  $ ${toolCommand("youtube transcribe")} dQw4w9WgXcQ --force-transcribe --provider local-hf\n`;
 }
