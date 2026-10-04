@@ -26,6 +26,11 @@ function spotifyUrl(uri: string | null, kind: "artist" | "album" | "track"): str
     return uri?.startsWith(prefix) ? `https://open.spotify.com/${kind}/${uri.slice(prefix.length)}` : null;
 }
 
+/** An artist that is not in Liked Songs has no URI, so its name opens Spotify's search for it instead. */
+function artistUrl(rec: Recommendation): string {
+    return spotifyUrl(rec.artistUri, "artist") ?? `https://open.spotify.com/search/${encodeURIComponent(rec.artist)}`;
+}
+
 function DiscoverPage() {
     const { params, activeProfile } = useFilters();
     const [method, setMethod] = useState<RecommendMethod>("bursts");
@@ -127,26 +132,23 @@ function DiscoverPage() {
 }
 
 function RecommendationCard({ rec, rank, featured }: { rec: Recommendation; rank: number; featured: boolean }) {
-    const artistUrl = spotifyUrl(rec.artistUri, "artist");
+    const url = artistUrl(rec);
 
     return (
         <Card variant="wow-static" data-featured={featured ? "" : undefined} className="p-5 gap-4">
             <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
                     <div className="text-xs text-muted-foreground">Pick {rank}</div>
-                    {artistUrl ? (
-                        <a
-                            href={artistUrl}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="group inline-flex items-center gap-1.5 text-lg font-semibold text-foreground hover:text-primary"
-                        >
-                            <span className="truncate">{rec.artist}</span>
-                            <ExternalLink className="h-3.5 w-3.5 shrink-0 opacity-50 group-hover:opacity-100" />
-                        </a>
-                    ) : (
-                        <div className="text-lg font-semibold text-foreground truncate">{rec.artist}</div>
-                    )}
+                    <a
+                        href={url}
+                        target="_blank"
+                        rel="noreferrer"
+                        title={rec.artistUri ? "Open in Spotify" : "Search Spotify for this artist"}
+                        className="group inline-flex items-center gap-1.5 text-lg font-semibold text-foreground hover:text-primary"
+                    >
+                        <span className="truncate">{rec.artist}</span>
+                        <ExternalLink className="h-3.5 w-3.5 shrink-0 opacity-50 group-hover:opacity-100" />
+                    </a>
                 </div>
                 <Badge variant="outline" className="shrink-0 font-normal tabular-nums">
                     Score {int(rec.score)}
