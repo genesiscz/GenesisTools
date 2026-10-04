@@ -39,6 +39,7 @@ than answering a question.
 | how much do I listen | `analytics summary`, `analytics timeline`, `analytics sessions` |
 | what do I skip | `analytics skips` |
 | what did I used to love | `analytics forgotten`, `analytics obsessions`, `analytics loyalty` |
+| what should I listen to next | `analytics recommend --method bursts` (also `unfinished`, `old-loves`, `neighbours`); the **Discover** tab in the UI |
 | am I basic | `analytics mainstream`, `analytics gems` |
 | describe my taste | `analytics dna`, eight axes on one screen |
 | has my taste changed | `analytics shift 2019 2026`, compatibility with your past self |
