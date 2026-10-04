@@ -700,9 +700,23 @@ export function getAllImports(j: JSCodeshift, root: Collection<Program>): Set<st
 }
 
 /**
- * Adds named imports (imported name -> local name) to a module's import, or creates the import after
- * the last existing one. Named specifiers of an updated import are re-sorted by imported name, and the
- * update drops that import's default and namespace specifiers.
+ * True when named value imports can be added to this declaration: it is not `import type`, has no namespace
+ * specifier (`import * as UI` cannot take named ones), and is not a side-effect-only import.
+ */
+export function acceptsNamedImports(node: ImportDeclaration): boolean {
+    const specifiers = node.specifiers || [];
+    return (
+        node.importKind !== "type" &&
+        specifiers.length > 0 &&
+        !specifiers.some((spec) => spec.type === "ImportNamespaceSpecifier")
+    );
+}
+
+/**
+ * Adds named imports (imported name -> local name) to one of the module's imports that accepts them
+ * (`acceptsNamedImports`), or creates a new import after the last existing one. A name any import of the
+ * module already brings in is skipped. The updated import keeps its default specifier, and its named
+ * specifiers are re-sorted by imported name.
  */
 export function addOrUpdateImport(
     j: JSCodeshift,
@@ -710,47 +724,35 @@ export function addOrUpdateImport(
     moduleName: string,
     imports: Map<string, string>
 ): void {
-    const existingImports = root.find(j.ImportDeclaration, {
-        source: { value: moduleName },
-    });
+    const declarations = root.find(j.ImportDeclaration, { source: { value: moduleName } }).paths();
+    const alreadyImported = new Set(
+        declarations.flatMap((path) =>
+            (path.node.specifiers || []).flatMap((spec) =>
+                spec.type === "ImportSpecifier" ? [importedNameOf(spec)] : []
+            )
+        )
+    );
+    const missing = Array.from(imports.entries())
+        .filter(([imported]) => !alreadyImported.has(imported))
+        .sort((a, b) => a[0].localeCompare(b[0]));
 
-    if (existingImports.length > 0) {
-        existingImports.forEach((path) => {
-            const existingSpecifiers = new Map<string, ImportSpecifier>();
-
-            for (const spec of path.node.specifiers || []) {
-                if (spec.type === "ImportSpecifier" && spec.imported && spec.imported.type === "Identifier") {
-                    existingSpecifiers.set(spec.imported.name, spec);
-                }
-            }
-
-            imports.forEach((localName, importedName) => {
-                if (!existingSpecifiers.has(importedName)) {
-                    existingSpecifiers.set(
-                        importedName,
-                        importedName === localName
-                            ? j.importSpecifier(j.identifier(importedName))
-                            : j.importSpecifier(j.identifier(importedName), j.identifier(localName))
-                    );
-                }
-            });
-
-            path.node.specifiers = Array.from(existingSpecifiers.entries())
-                .sort((a, b) => a[0].localeCompare(b[0]))
-                .map(([_, spec]) => spec);
-        });
+    if (missing.length === 0) {
         return;
     }
 
-    const sortedImports = Array.from(imports.entries()).sort((a, b) => a[0].localeCompare(b[0]));
-    const newImport = j.importDeclaration(
-        sortedImports.map(([imported, local]) =>
-            imported === local
-                ? j.importSpecifier(j.identifier(imported))
-                : j.importSpecifier(j.identifier(imported), j.identifier(local))
-        ),
-        j.literal(moduleName)
-    );
+    const added = missing.map(([imported, local]) => namedImportSpecifier(j, imported, local));
+    const target = declarations.find((path) => acceptsNamedImports(path.node));
+
+    if (target) {
+        const specifiers = target.node.specifiers || [];
+        const named = [...specifiers.filter((spec) => spec.type === "ImportSpecifier"), ...added].sort((a, b) =>
+            importedNameOf(a).localeCompare(importedNameOf(b))
+        );
+        target.node.specifiers = [...specifiers.filter((spec) => spec.type === "ImportDefaultSpecifier"), ...named];
+        return;
+    }
+
+    const newImport = j.importDeclaration(added, j.literal(moduleName));
 
     const allImports = root.find(j.ImportDeclaration);
     if (allImports.length > 0) {

@@ -544,6 +544,44 @@ describe("import helpers", () => {
         expect(flat(root.toSource())).toBe(`import { alpha, Beta, Zeta } from "m";`);
     });
 
+    it("addOrUpdateImport keeps default and namespace imports, adding beside a namespace import instead of into it", () => {
+        const root = j(`import React from "react";\nimport * as UI from "ui-lib";\nconst a = 1;`);
+
+        addOrUpdateImport(j, root, "react", new Map([["useState", "useState"]]));
+        addOrUpdateImport(j, root, "ui-lib", new Map([["Card", "Card"]]));
+
+        expect(flat(root.toSource())).toBe(
+            `import React, { useState } from "react"; import * as UI from "ui-lib"; import { Card } from "ui-lib"; const a = 1;`
+        );
+    });
+
+    it("addOrUpdateImport adds a name once, to one declaration, and skips a name the module already imports", () => {
+        const root = j(`import { x } from "m";\nimport { y } from "m";\nimport type { T } from "m";`);
+
+        addOrUpdateImport(
+            j,
+            root,
+            "m",
+            new Map([
+                ["z", "z"],
+                ["y", "y"],
+                ["T", "T"],
+            ])
+        );
+
+        expect(flat(root.toSource())).toBe(
+            `import { x, z } from "m"; import { y } from "m"; import type { T } from "m";`
+        );
+    });
+
+    it("moveImports into a module with a default import keeps that default binding", () => {
+        const root = j(`import { a } from "from";\nimport Def, { x } from "to";`);
+
+        moveImports(j, root, "from", "to", new Set(["a"]));
+
+        expect(flat(root.toSource())).toBe(`import Def, { a, x } from "to";`);
+    });
+
     it("consolidateImportsFromModule merges value and type imports separately", () => {
         const root = j(
             `import { b } from "m";\nimport type { T } from "m";\nimport Def, { a } from "m";\nimport type { S } from "m";`

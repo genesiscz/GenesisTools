@@ -45,8 +45,6 @@ const output = root.toSource(getRecastOptions());
 
 ## Known behaviour to keep in mind
 
-- `addOrUpdateImport` rewrites an existing declaration with named specifiers only, so it drops that
-  declaration's default and namespace specifiers.
 - `ImportConflictResolver.applyImportChanges()` removes every declaration left without specifiers, and that
   includes side-effect imports such as `import "./styles.css"`.
 - `ComponentNode.renameNestedProp` rewrites an identifier or estree `Literal` key only; a `StringLiteral` key
