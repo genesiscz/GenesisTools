@@ -65,11 +65,13 @@ bun run lint:rules
 echo "▶ bun run lint:dashboard..."
 bun run lint:dashboard
 
+# A failed typecheck fails the push. It used to run `bun install` and retry, which turned a
+# real error report into a pass whenever the install happened to fix it, and hid the failure.
 echo "▶ bun run typecheck:all..."
 if ! bun run typecheck:all; then
-    echo "▶ typecheck failed — running bun install and retrying..."
-    bun install
-    bun run typecheck:all
+    echo "✖ typecheck failed: push refused. If the errors name a missing module, the dependency tree is"
+    echo "  stale: run \`bun install\` and push again."
+    exit 1
 fi
 
 echo "✔ pre-push passed (CI mirror)"
