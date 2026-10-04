@@ -565,7 +565,7 @@ describe("import helpers", () => {
         );
     });
 
-    it("addOrUpdateImport adds a name once, to one declaration, and skips a name the module already imports", () => {
+    it("addOrUpdateImport adds a name once, and a type-only import of it gives way to the value import", () => {
         const root = j(`import { x } from "m";\nimport { y } from "m";\nimport type { T } from "m";`);
 
         addOrUpdateImport(
@@ -579,9 +579,20 @@ describe("import helpers", () => {
             ])
         );
 
-        expect(flat(root.toSource())).toBe(
-            `import { x, z } from "m"; import { y } from "m"; import type { T } from "m";`
+        expect(flat(root.toSource())).toBe(`import { T, x, z } from "m"; import { y } from "m";`);
+    });
+
+    it("addOrUpdateImport adds a binding whose local name differs, and turns an inline type import into a value", () => {
+        const aliased = j(`import Btn from "old-ui";\nimport { Button as OtherButton } from "ui";\nconst a = <Btn />;`);
+        const inlineType = j(`import { type Size, x } from "m";`);
+
+        transformImports(j, aliased, [{ fromModule: "old-ui", defaultImport: { toNamed: "Button", toModule: "ui" } }]);
+        addOrUpdateImport(j, inlineType, "m", new Map([["Size", "Size"]]));
+
+        expect(flat(aliased.toSource())).toBe(
+            `import { Button as OtherButton, Button as Btn } from "ui"; const a = <Btn />;`
         );
+        expect(flat(inlineType.toSource())).toBe(`import { Size, x } from "m";`);
     });
 
     it("moveImports into a module with a default import keeps that default binding", () => {

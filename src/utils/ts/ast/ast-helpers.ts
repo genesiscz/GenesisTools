@@ -726,9 +726,51 @@ export function acceptsNamedImports(node: ImportDeclaration): boolean {
 }
 
 /**
+ * True when `{ imported as local }` already binds a runtime value in one of `declarations` (one module's imports).
+ * An inline `type` marker on that specifier is dropped, so it becomes a value import. A specifier under
+ * `import type` binds no value, and adding the value import beside it would bind `local` twice, so that
+ * specifier is removed (with its declaration when nothing else is left) and the answer is false.
+ */
+export function claimValueImport(
+    j: JSCodeshift,
+    declarations: ASTPath<ImportDeclaration>[],
+    imported: string,
+    local: string
+): boolean {
+    for (const path of declarations) {
+        const specifiers = path.node.specifiers || [];
+        const spec = specifiers.find(
+            (s): s is ImportSpecifier =>
+                s.type === "ImportSpecifier" && importedNameOf(s) === imported && (s.local?.name ?? imported) === local
+        );
+
+        if (!spec) {
+            continue;
+        }
+
+        if (path.node.importKind === "type") {
+            path.node.specifiers = specifiers.filter((s) => s !== spec);
+            if (path.node.specifiers.length === 0) {
+                j(path).remove();
+            }
+
+            return false;
+        }
+
+        if ("importKind" in spec && spec.importKind === "type") {
+            Object.assign(spec, { importKind: "value" });
+        }
+
+        return true;
+    }
+
+    return false;
+}
+
+/**
  * Adds named imports (imported name -> local name) to one of the module's imports that accepts them
- * (`acceptsNamedImports`), or creates a new import after the last existing one. A name any import of the
- * module already brings in is skipped. The updated import keeps its default specifier, and its named
+ * (`acceptsNamedImports`), or creates a new import after the last existing one. A binding the module already
+ * imports as a value (`claimValueImport`) is skipped. The updated import keeps its default specifier, and its named
  * specifiers are re-sorted by imported name.
  */
 export function addOrUpdateImport(
@@ -738,15 +780,8 @@ export function addOrUpdateImport(
     imports: Map<string, string>
 ): void {
     const declarations = root.find(j.ImportDeclaration, { source: { value: moduleName } }).paths();
-    const alreadyImported = new Set(
-        declarations.flatMap((path) =>
-            (path.node.specifiers || []).flatMap((spec) =>
-                spec.type === "ImportSpecifier" ? [importedNameOf(spec)] : []
-            )
-        )
-    );
     const missing = Array.from(imports.entries())
-        .filter(([imported]) => !alreadyImported.has(imported))
+        .filter(([imported, local]) => !claimValueImport(j, declarations, imported, local))
         .sort((a, b) => a[0].localeCompare(b[0]));
 
     if (missing.length === 0) {
@@ -973,16 +1008,7 @@ export function moveImports(
     }
 
     removeImportsFromModule(j, root, fromModule, importsToMove);
-
-    const allDestImports = new Map(getImportsFromModule(j, root, toModule));
-
-    toMove.forEach((localName, importName) => {
-        if (!allDestImports.has(importName)) {
-            allDestImports.set(importName, localName);
-        }
-    });
-
-    addOrUpdateImport(j, root, toModule, allDestImports);
+    addOrUpdateImport(j, root, toModule, toMove);
 
     return movedImports;
 }
