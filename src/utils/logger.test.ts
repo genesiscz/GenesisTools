@@ -139,6 +139,44 @@ describe("scoped out + log.out/log.tee double-mirror rule", () => {
     });
 });
 
+describe("minimal level label — no self-appended colon", () => {
+    // Regression test: #447 (last comment, item 2) — the console showed "ERROR::" / "WARN::"
+    // (double colon). Root cause: pino-pretty's own prettifier (lib/pretty.js) appends exactly
+    // one ':' to the level string UNLESS it already ends with one. The old label baked its own
+    // colon INTO the colored string (`pc.red("ERROR:")`), which under real ANSI wrapping ends
+    // with the color-reset escape code, not literal ':' — so pino-pretty appended a second, bare
+    // one, rendering as "ERROR::". The fix: the label never carries its own colon; pino-pretty's
+    // single append is the only source of the colon, colored or not.
+    it("returns the bare level word for WARN and ERROR, with no trailing colon", async () => {
+        const mod = await import("./logger");
+        expect(mod.formatMinimalLevelLabel(50)).toBe("ERROR");
+        expect(mod.formatMinimalLevelLabel(40)).toBe("WARN");
+    });
+
+    it("hides the label for info/debug/trace", async () => {
+        const mod = await import("./logger");
+        expect(mod.formatMinimalLevelLabel(30)).toBe("");
+        expect(mod.formatMinimalLevelLabel(20)).toBe("");
+        expect(mod.formatMinimalLevelLabel(10)).toBe("");
+    });
+
+    it("a real logger.error() console line carries exactly one colon after the label", async () => {
+        const mod = await import("./logger");
+        mod.setConsoleLevel("info");
+        const chunks: string[] = [];
+        const oe = process.stderr.write.bind(process.stderr);
+        process.stderr.write = (c: string) => {
+            chunks.push(String(c));
+            return true;
+        };
+        mod.logger.error("LEVEL_LABEL_PROBE");
+        process.stderr.write = oe;
+        const stderr = chunks.join("");
+        expect(stderr).toContain("ERROR: LEVEL_LABEL_PROBE");
+        expect(stderr).not.toContain("ERROR::");
+    });
+});
+
 // MUST be the LAST describe in this file: setBaseBinding mutates module-level
 // state (the _base/_effective child) that persists for the rest of the
 // process. Placed last so earlier tests run against the un-bound logger.

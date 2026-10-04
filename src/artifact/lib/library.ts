@@ -86,7 +86,7 @@ function startMount(
 
     return createViteServer({
         configFile: false,
-        envFile: false,
+        envDir: false,
         root: entry.dir,
         appType: "mpa",
         base: `${urlBase}/`,

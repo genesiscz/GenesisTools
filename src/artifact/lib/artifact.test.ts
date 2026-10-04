@@ -11,6 +11,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
+import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { setupStorageSandbox } from "@genesiscz/utils/storage/test-sandbox";
@@ -26,6 +27,8 @@ import {
     resolveEmbedBudget,
     resolveEntry,
     resolveOutPath,
+    SHARED_BUILD,
+    withProductionNodeEnv,
 } from "./build";
 import {
     artifactPathSet,
@@ -37,10 +40,26 @@ import {
     scanArtifacts,
 } from "./catalog";
 import { renderMarkdown } from "./markdown";
-import { type OpenArtifactDeps, openArtifact, pageUrl, runningArtifactPort } from "./open";
+import {
+    defaultPageForTarget,
+    type OpenArtifactDeps,
+    openArtifact,
+    openServeArgv,
+    pageUrl,
+    runningArtifactPort,
+} from "./open";
 import { mdPageExtras } from "./page-extras";
-import { addEntry, loadRegistry, removeEntry, resolveTarget } from "./registry";
-import { findRunning, holdServer, isSignalable, listRunning, recordRunning, removeRunning } from "./running";
+import { addEntry, type DashboardEntry, loadRegistry, removeEntry, resolveTarget } from "./registry";
+import {
+    findRunning,
+    holdServer,
+    isSignalable,
+    listRunning,
+    type RunningServer,
+    recordRunning,
+    removeRunning,
+    runningOutsideRegistry,
+} from "./running";
 import { runningPath } from "./storage";
 import { listShippedTemplates, renderTemplate, resolveTemplateDir } from "./templates";
 import { cacheDirFor, fsAllowRoots } from "./vite";
@@ -649,6 +668,60 @@ describe("embed budget", () => {
 });
 
 describe("build helpers", () => {
+    test("the shared build config never sets vite's deprecated envFile option", () => {
+        // Regression test: #450 — `envFile: false` is the OLD, deprecated spelling and makes vite
+        // warn "The `envFile` option is deprecated, please use `envDir: false` instead." on every run.
+        expect(SHARED_BUILD).not.toHaveProperty("envFile");
+        expect(SHARED_BUILD.envDir).toBe(false);
+    });
+
+    test("the single-file build forces NODE_ENV=production for its vite call, then restores it", async () => {
+        // Regression test: #450 — the build inherited whatever NODE_ENV the shell already had, so a
+        // non-"production" value shipped React's development bundle (the warning string that crashed
+        // the build in the first place, and a much larger output).
+        await env.testing.withOverrides({ NODE_ENV: "development" }, async () => {
+            let seenDuringBuild: string | undefined;
+            await withProductionNodeEnv(async () => {
+                seenDuringBuild = env.get("NODE_ENV");
+            });
+
+            expect(seenDuringBuild).toBe("production");
+            expect(env.get("NODE_ENV")).toBe("development");
+        });
+    });
+
+    // Regression test: PR #457 review — each call snapshotted and restored ALL of process.env, so a
+    // build that finished first put "development" back while another still ran, and the last one
+    // to finish left "production" behind for good.
+    test("overlapping production builds all see production, and the caller's NODE_ENV comes back after the last", async () => {
+        await env.testing.withOverrides({ NODE_ENV: "development" }, async () => {
+            const seen: Array<string | undefined> = [];
+            let finishFirst = (): void => {};
+            let finishSecond = (): void => {};
+            const first = withProductionNodeEnv(async () => {
+                await new Promise<void>((resolve) => {
+                    finishFirst = resolve;
+                });
+                seen.push(env.get("NODE_ENV"));
+            });
+            const second = withProductionNodeEnv(async () => {
+                await new Promise<void>((resolve) => {
+                    finishSecond = resolve;
+                });
+                seen.push(env.get("NODE_ENV"));
+            });
+
+            finishFirst();
+            await first;
+            expect(env.get("NODE_ENV")).toBe("production");
+
+            finishSecond();
+            await second;
+            expect(seen).toEqual(["production", "production"]);
+            expect(env.get("NODE_ENV")).toBe("development");
+        });
+    });
+
     test("resolveEntry picks the single html, honors explicit html/tsx/md, rejects others", () => {
         expect(resolveEntry(dir, undefined)).toBe("report.html");
         expect(resolveEntry(dir, "report.html")).toBe("report.html");
@@ -726,6 +799,54 @@ describe("build helpers", () => {
         expect(inlined).toContain("<style>\nbody{}\n</style>");
         expect(inlined).toContain(`<script type="module">\nrun()\n</script>`);
         expect(inlined).not.toContain("modulepreload");
+    });
+
+    test("inlineAssets does not mistake a stylesheet-shaped string inside the inlined JS for a real <link> tag", () => {
+        // Regression test: #450 — React's dev warning string
+        // `<link rel="stylesheet" href="%s" ... />` lives inside the bundled JS. The old code ran
+        // the stylesheet regex over the HTML AFTER scripts were already inlined, so it matched that
+        // string and called readAsset("%s"), which threw ENOENT and crashed the whole build.
+        const html = [
+            `<link rel="stylesheet" href="./app.css">`,
+            `<script type="module" src="./app.js"></script>`,
+        ].join("\n");
+        const assets: Record<string, string> = {
+            "app.css": "body{}",
+            "app.js": `console.error('<link rel="stylesheet" href="%s" ... />')`,
+        };
+        const reads: string[] = [];
+        const readAsset = (rel: string): string => {
+            reads.push(rel);
+
+            if (!(rel in assets)) {
+                throw new Error(`ENOENT: no such file or directory, open '${rel}'`);
+            }
+
+            return assets[rel];
+        };
+
+        const inlined = inlineAssets(html, readAsset);
+
+        // inlineAssets now leaves an unreadable tag alone instead of throwing, so only the list of
+        // reads can show that the "%s" string inside the inlined JS was never treated as a tag.
+        expect(reads).toEqual(["app.css", "app.js"]);
+        expect(inlined).toContain(`console.error('<link rel="stylesheet" href="%s" ... />')`);
+    });
+
+    test("inlineAssets leaves a tag unchanged and never throws when its href has no file in the build dir", () => {
+        // Regression test: #450 — readAsset's ENOENT propagated straight out of inlineAssets, so
+        // one unresolved href crashed the whole build instead of leaving that tag alone.
+        const html = [
+            `<link rel="stylesheet" href="./missing.css">`,
+            `<script type="module" src="./missing.js"></script>`,
+        ].join("\n");
+        const readAsset = (rel: string): string => {
+            throw new Error(`ENOENT: no such file or directory, open '${rel}'`);
+        };
+
+        const inlined = inlineAssets(html, readAsset);
+        expect(inlined).toContain(`<link rel="stylesheet" href="./missing.css">`);
+        expect(inlined).toContain(`<script type="module" src="./missing.js"></script>`);
     });
 
     test("collectEmbeddableFiles embeds text data, skips node_modules and oversize", () => {
@@ -995,5 +1116,77 @@ describe("openArtifact", () => {
     test("pageUrl drops leading slashes", () => {
         expect(pageUrl(3076, "//a/b")).toBe("http://127.0.0.1:3076/a/b");
         expect(pageUrl(3076)).toBe("http://127.0.0.1:3076/");
+    });
+
+    test("defaultPageForTarget opens a FILE target's own page, but leaves a directory target for the catalog", () => {
+        // Regression test: #450 — `open <file>` opened "/" (the catalog) instead of that file's own page.
+        expect(defaultPageForTarget(join(dir, "report.html"))).toBe("/report");
+        expect(defaultPageForTarget(dir)).toBeUndefined();
+    });
+
+    // Regression test: PR #457 review — `report#1.html` opened `/report#1`, which the browser reads
+    // as page `/report` plus fragment `#1`; a `?` turned the rest of the name into a query string.
+    test("defaultPageForTarget percent-encodes a file name, so # and ? stay part of the page path", () => {
+        const odd = realpathSync(mkdtempSync(join(tmpdir(), "artifact-odd-names-")));
+
+        try {
+            writeFileSync(join(odd, "report#1.html"), "<html></html>");
+            writeFileSync(join(odd, "a?b.md"), "# a");
+
+            expect(defaultPageForTarget(join(odd, "report#1.html"))).toBe("/report%231");
+            expect(defaultPageForTarget(join(odd, "a?b.md"))).toBe("/a%3Fb");
+        } finally {
+            rmSync(odd, { recursive: true, force: true });
+        }
+    });
+
+    test("opens the deps-provided default page when none was requested, and an explicit path wins over it", async () => {
+        // Regression test: #450 — `open` always opened the catalog, ignoring a FILE target's own page.
+        const deps = fakeDeps({ findPort: () => 3103, defaultPage: () => "/report" });
+        expect(await openArtifact({ target: "demo", deps })).toEqual({
+            url: "http://127.0.0.1:3103/report",
+            started: false,
+        });
+
+        const deps2 = fakeDeps({ findPort: () => 3104, defaultPage: () => "/report" });
+        expect(await openArtifact({ target: "demo", path: "/other", deps: deps2 })).toEqual({
+            url: "http://127.0.0.1:3104/other",
+            started: false,
+        });
+    });
+
+    test("open's spawned serve keeps registration on, the way a direct `serve <target>` call does", () => {
+        // Regression test: #450 — open forced --no-register on its spawned serve, so a folder opened
+        // this way never showed up in `list`, even though serve's own default is to register it.
+        expect(openServeArgv("some-dir")).not.toContain("--no-register");
+    });
+});
+
+describe("runningOutsideRegistry", () => {
+    const server = (dir: string): RunningServer => ({
+        pid: 4242,
+        port: 3076,
+        dir,
+        name: basename(dir),
+        startedAt: "2026-10-04T12:00:00.000Z",
+    });
+    const entry = (dir: string): DashboardEntry => ({
+        name: basename(dir),
+        dir,
+        createdAt: "2026-10-04T12:00:00.000Z",
+    });
+
+    // Regression test: #450 — `artifact open hello.tsx` served its folder without registering it,
+    // and `list` said "No folders registered" while that server was running.
+    test("a running server whose folder is not registered is reported", () => {
+        const found = runningOutsideRegistry([server("/work/gtw")], []);
+
+        expect(found.map((s) => s.dir)).toEqual(["/work/gtw"]);
+    });
+
+    test("a running server whose folder is registered is not reported", () => {
+        const found = runningOutsideRegistry([server("/work/gtw")], [entry("/work/gtw")]);
+
+        expect(found).toEqual([]);
     });
 });

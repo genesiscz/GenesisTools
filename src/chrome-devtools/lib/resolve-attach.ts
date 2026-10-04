@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
@@ -607,7 +608,49 @@ export function browserExecutable(opts: {
               .find((p) => fileExists(p))
         : undefined;
 
-    return full ?? exe;
+    if (full) {
+        return full;
+    }
+
+    // Outside the known install roots the bare name still launches, but only when Windows can
+    // find it on PATH; otherwise the browser is not installed here and must not be offered.
+    const exec = opts.exec ?? defaultExec;
+
+    return exec(["where", exe]).exitCode === 0 ? exe : null;
+}
+
+export interface InstalledBrowserQuery {
+    platform?: Platform;
+    exec?: ExecFn;
+    fileExists?: (path: string) => boolean;
+    home?: string;
+}
+
+/** Every supported browser actually found installed here, in BROWSERS' declared order. */
+export function installedBrowsers(query: InstalledBrowserQuery = {}): BrowserId[] {
+    return BROWSERS.filter((b) => browserExecutable({ browser: b, ...query }) !== null).map((b) => b.id);
+}
+
+/**
+ * `open`'s default `--browser` when none was given: the browser `attach`'s
+ * own detection finds already running, else the first one installed here.
+ * `undefined` only when nothing is running and nothing supported is
+ * installed — the caller falls back to a fixed id at that point.
+ */
+export function defaultOpenBrowser(query: InstalledBrowserQuery = {}): BrowserId | undefined {
+    return listRunningBrowsers(query.exec, query.platform)[0] ?? installedBrowsers(query)[0];
+}
+
+/** The message for an (explicit or defaulted) `--browser` that is not installed here. */
+export function browserNotInstalledMessage(id: BrowserId, query: InstalledBrowserQuery = {}): string {
+    const installed = installedBrowsers(query);
+    const app = BROWSER_APPS[id] ?? id;
+
+    if (installed.length === 0) {
+        return `${app} is not installed, and no supported browser was found on this machine.`;
+    }
+
+    return `${app} is not installed. Installed: ${installed.map((i) => BROWSER_APPS[i]).join(", ")}. Use --browser ${installed[0]}.`;
 }
 
 /**
@@ -650,7 +693,13 @@ export function launchBrowser(opts: {
     }
 
     if (!bin) {
-        return { ok: false, message: `${opts.browser.id} has no Windows executable mapping` };
+        const exe = opts.browser.winExes?.[0];
+        return {
+            ok: false,
+            message: exe
+                ? `${exe} for ${opts.browser.id} is not under Program Files or LOCALAPPDATA, and not on PATH`
+                : `${opts.browser.id} has no Windows executable mapping`,
+        };
     }
 
     spawnDetached([bin, ...opts.args, opts.url]);
@@ -658,9 +707,17 @@ export function launchBrowser(opts: {
     return { ok: true, message: `launched ${bin}` };
 }
 
-/** The isolated profile dir `open --fresh` / `--extension` uses. */
+/**
+ * A fresh, unique isolated profile dir for one `open --fresh` / `--extension`
+ * run. Unique per call (not the port alone): a fixed `cdp-profile-<port>`
+ * reused across every run, so cookies and logins from a PREVIOUS throwaway
+ * run were still sitting there — the opposite of what "fresh" promises. Old
+ * directories are left in `/tmp` on purpose (see `open`'s `--fresh` help):
+ * proving one is safe to delete means proving no process still holds it
+ * open, which this tool cannot do from here.
+ */
 export function freshProfileDir(port: number, platform: Platform = currentPlatform()): string {
-    return join(tmpRoot(platform), `cdp-profile-${port}`);
+    return join(tmpRoot(platform), `cdp-profile-${port}-${randomUUID()}`);
 }
 
 export type Endpoint = {
@@ -741,8 +798,22 @@ function truncate(s: string, n: number) {
     return s.length > n ? s.slice(0, n) : s;
 }
 
+/**
+ * `/json/version`'s `Browser` field answers "Chrome/x.y.z" for every Chromium
+ * browser — Brave, Edge and Chromium itself included — so it never names the
+ * actual vendor. Prefixes the owning PROCESS's app name when that process is
+ * known and is not plain Chrome (which already reads correctly on its own).
+ */
+export function describeEndpointBrowser(rawBrowser: string, owner: BrowserId | null): string {
+    if (!owner || owner === "chrome") {
+        return rawBrowser;
+    }
+
+    return `${BROWSER_APPS[owner]} (${rawBrowser})`;
+}
+
 function renderEndpoint(e: Endpoint): string[] {
-    const lines = [`  port ${e.port}: ${e.browser}: ${e.pages.length} page(s)`];
+    const lines = [`  port ${e.port}: ${describeEndpointBrowser(e.browser, e.owner)}: ${e.pages.length} page(s)`];
     e.pages.forEach((p, i) => {
         lines.push(`    [${i}] ${truncate(p.title ?? "", 50)} :: ${truncate(p.url, 110)}`);
     });

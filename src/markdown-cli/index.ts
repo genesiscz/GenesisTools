@@ -7,6 +7,7 @@ import { type MarkdownRenderOptions, renderMarkdownToCli } from "@genesiscz/util
 import chokidar from "chokidar";
 import { Command, Option } from "commander";
 import { resolveColor } from "./lib/color";
+import { resolveInputSource } from "./lib/input-source";
 
 interface MarkdownCLIOptions {
     watch?: boolean;
@@ -55,13 +56,15 @@ program
             tableEngine: (opts?.tableEngine as MarkdownRenderOptions["tableEngine"]) || "auto",
         };
 
-        if (!process.stdin.isTTY) {
+        const source = resolveInputSource(file, Boolean(process.stdin.isTTY));
+
+        if (source === "stdin") {
             const markdown = readFileSync(0, "utf-8");
             out.println(renderMarkdownToCli(markdown, renderOpts));
             return;
         }
 
-        if (!file) {
+        if (source === "help" || !file) {
             program.help();
             return;
         }

@@ -1,5 +1,6 @@
 import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, statSync, watch } from "node:fs";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
+import { env } from "@genesiscz/utils/env";
 import { canonicalDir, isInsideDir } from "@genesiscz/utils/fs/canonical";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
@@ -133,22 +134,33 @@ export function hasLocalAssetRefs(html: string): boolean {
  * Inline every local script/stylesheet reference of a built HTML using
  * `readAsset(relPath)`, producing a self-contained page. Modulepreload hints
  * are dropped (everything is inline).
+ *
+ * The two `<link>` passes run BEFORE the script pass, and the script pass
+ * runs last: once a bundle's JS text is spliced into the page, it can contain
+ * a REACT DEV WARNING STRING that looks exactly like a stylesheet tag
+ * (`console.error('<link rel="stylesheet" href="%s" .../>')`). A `<link>`
+ * regex that ran over that text afterwards matched it and tried to read a
+ * file named "%s". Running the link passes first means they only ever see
+ * the original HTML (and each other's output), never arbitrary bundled JS.
+ *
+ * `readAsset` may throw (a built file genuinely missing, e.g. the `href`
+ * never resolved under the build dir): that tag is left exactly as it was
+ * and logged, never a crash of the whole build.
  */
 export function inlineAssets(html: string, readAsset: (rel: string) => string): string {
     const normalize = (ref: string): string => ref.replace(/^\.\//, "").replace(/^\//, "");
 
-    let out = html.replace(
-        /<script\b([^>]*)\bsrc\s*=\s*["']([^"']+)["']([^>]*)>\s*<\/script>/gi,
-        (full, _pre, ref: string) => {
-            if (/^(?:https?:)?\/\/|^data:/.test(ref)) {
-                return full;
-            }
+    const tryReadAsset = (rel: string): string | null => {
+        try {
+            return readAsset(normalize(rel));
+        } catch (err) {
+            logger.warn({ rel, err }, "[artifact] asset href did not resolve to a build file; left the tag as-is");
 
-            const code = readAsset(normalize(ref));
-
-            return `<script type="module">\n${code}\n</script>`;
+            return null;
         }
-    );
+    };
+
+    let out = html.replace(/[ \t]*<link\b[^>]*\brel\s*=\s*["']modulepreload["'][^>]*>\n?/gi, "");
 
     out = out.replace(/<link\b[^>]*\brel\s*=\s*["']stylesheet["'][^>]*>/gi, (full) => {
         const href = full.match(/\bhref\s*=\s*["']([^"']+)["']/i)?.[1];
@@ -157,10 +169,23 @@ export function inlineAssets(html: string, readAsset: (rel: string) => string): 
             return full;
         }
 
-        return `<style>\n${readAsset(normalize(href))}\n</style>`;
+        const css = tryReadAsset(href);
+
+        return css === null ? full : `<style>\n${css}\n</style>`;
     });
 
-    out = out.replace(/[ \t]*<link\b[^>]*\brel\s*=\s*["']modulepreload["'][^>]*>\n?/gi, "");
+    out = out.replace(
+        /<script\b([^>]*)\bsrc\s*=\s*["']([^"']+)["']([^>]*)>\s*<\/script>/gi,
+        (full, _pre, ref: string) => {
+            if (/^(?:https?:)?\/\/|^data:/.test(ref)) {
+                return full;
+            }
+
+            const code = tryReadAsset(ref);
+
+            return code === null ? full : `<script type="module">\n${code}\n</script>`;
+        }
+    );
 
     return out;
 }
@@ -429,11 +454,13 @@ export function injectShim(html: string, shim: string): string {
     return `${shim}\n${html}`;
 }
 
-const SHARED_BUILD = {
+/** Exported only so a test can assert vite's deprecated `envFile` option never creeps back in. */
+export const SHARED_BUILD = {
     configFile: false,
-    envFile: false,
+    envDir: false,
     base: "./",
     logLevel: "warn",
+    mode: "production",
 } as const;
 
 function buildOutputOptions(outDir: string, input: string) {
@@ -447,16 +474,57 @@ function buildOutputOptions(outDir: string, input: string) {
     };
 }
 
+let productionBuildsRunning = 0;
+let nodeEnvBeforeProductionBuilds: string | undefined;
+
+/**
+ * `mode: "production"` alone does not force React's production bundle: vite
+ * decides `isProduction` from `process.env.NODE_ENV` at resolve time, and
+ * only backfills it when the variable was unset — an inherited "development"
+ * or "test" value on the shell wins and ships React's dev build (full of
+ * warning strings, much larger). Forced while any build runs, then restored,
+ * so a `--watch` rebuild loop (or anything else in this process) keeps
+ * whatever NODE_ENV it had.
+ *
+ * Builds can overlap, so the override is counted: the first build saves the
+ * caller's value, every build sees "production", and only the last one to
+ * finish puts the saved value back. Nothing but NODE_ENV is touched.
+ */
+export async function withProductionNodeEnv(run: () => Promise<void>): Promise<void> {
+    if (productionBuildsRunning === 0) {
+        nodeEnvBeforeProductionBuilds = env.get("NODE_ENV");
+        env.testing.set("NODE_ENV", "production");
+    }
+
+    productionBuildsRunning++;
+
+    try {
+        await run();
+    } finally {
+        productionBuildsRunning--;
+
+        if (productionBuildsRunning === 0) {
+            if (nodeEnvBeforeProductionBuilds === undefined) {
+                env.testing.unset("NODE_ENV");
+            } else {
+                env.testing.set("NODE_ENV", nodeEnvBeforeProductionBuilds);
+            }
+        }
+    }
+}
+
 /** Bundle an .html entry in place. */
 async function buildHtmlEntry(dir: string, entryRel: string, entryAbs: string): Promise<string> {
     const outDir = join(cacheDirFor(dir), "build");
-    await viteBuild({
-        ...SHARED_BUILD,
-        root: dir,
-        cacheDir: cacheDirFor(dir),
-        plugins: basePlugins(),
-        resolve: baseResolve(),
-        build: buildOutputOptions(outDir, entryAbs),
+    await withProductionNodeEnv(async () => {
+        await viteBuild({
+            ...SHARED_BUILD,
+            root: dir,
+            cacheDir: cacheDirFor(dir),
+            plugins: basePlugins(),
+            resolve: baseResolve(),
+            build: buildOutputOptions(outDir, entryAbs),
+        });
     });
     const builtHtml = readFileSync(join(outDir, entryRel), "utf8");
 
@@ -506,13 +574,15 @@ createRoot(document.getElementById("root") as HTMLElement).render(React.createEl
     );
 
     const outDir = join(cacheDirFor(dir), "build");
-    await viteBuild({
-        ...SHARED_BUILD,
-        root: tmpRoot,
-        cacheDir: cacheDirFor(dir),
-        plugins: basePlugins(),
-        resolve: baseResolve(),
-        build: buildOutputOptions(outDir, join(tmpRoot, "index.html")),
+    await withProductionNodeEnv(async () => {
+        await viteBuild({
+            ...SHARED_BUILD,
+            root: tmpRoot,
+            cacheDir: cacheDirFor(dir),
+            plugins: basePlugins(),
+            resolve: baseResolve(),
+            build: buildOutputOptions(outDir, join(tmpRoot, "index.html")),
+        });
     });
     const builtHtml = readFileSync(join(outDir, "index.html"), "utf8");
 

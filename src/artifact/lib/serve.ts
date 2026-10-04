@@ -21,7 +21,7 @@ export interface ServeOptions {
 export async function serveArtifacts(options: ServeOptions): Promise<ViteDevServer> {
     const server = await createServer({
         configFile: false,
-        envFile: false,
+        envDir: false,
         root: options.dir,
         appType: "mpa",
         cacheDir: options.cacheDir ?? cacheDirFor(options.dir),

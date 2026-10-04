@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { resolveColor } from "./lib/color";
+import { resolveInputSource } from "./lib/input-source";
 
 /**
  * Regression test: `tools markdown` defaulted `color` to on unconditionally, so
@@ -23,5 +24,33 @@ describe("resolveColor", () => {
 
     test("--no-color strips even on a TTY", () => {
         expect(resolveColor(false, "cli", true)).toBe(false);
+    });
+});
+
+/**
+ * Regression test: #452 — `tools markdown-cli <file>` rendered stdin instead of the file
+ * whenever stdin was not a TTY (the normal case for agents, cron, editors, CI). The stdin
+ * check ran before the file argument was even looked at, so a file argument piped from
+ * `/dev/null` (or any non-interactive run) silently produced empty output.
+ */
+describe("resolveInputSource", () => {
+    test("a file argument wins even when stdin is not a TTY", () => {
+        expect(resolveInputSource("sample.md", false)).toBe("file");
+    });
+
+    test("a file argument wins when stdin is a TTY too", () => {
+        expect(resolveInputSource("sample.md", true)).toBe("file");
+    });
+
+    test("no file and a non-TTY stdin reads stdin", () => {
+        expect(resolveInputSource(undefined, false)).toBe("stdin");
+    });
+
+    test("an explicit - reads stdin even on a TTY", () => {
+        expect(resolveInputSource("-", true)).toBe("stdin");
+    });
+
+    test("no file and an interactive TTY stdin shows help", () => {
+        expect(resolveInputSource(undefined, true)).toBe("help");
     });
 });

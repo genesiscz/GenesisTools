@@ -37,7 +37,9 @@ async function main(): Promise<void> {
             await out.flush();
             process.exit(0);
         }
-        logger.error(`Error: ${message}`);
+        // No "Error: " prefix here: the logger's own "ERROR:" level label already carries the
+        // severity, and prefixing the message too printed "ERROR: Error: <message>" (#453.1).
+        logger.error(message);
         // Drain before exiting: `out.*` writes are fire-and-forget, so exiting in
         // the same tick can lose the diagnostic entirely (PR #360 review t12).
         await out.flush();

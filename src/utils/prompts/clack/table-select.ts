@@ -250,9 +250,18 @@ export function renderFrame<T>(
 
     if (detailRows > 0) {
         const detail = details[cursor];
+        // `detailWidth` is shared across every row (one absolute "Source file:" path can make it
+        // far wider than the terminal), so padding every line out to it forced `paint()` below to
+        // re-truncate and ellipsis short or empty lines that would otherwise fit untouched — a
+        // row's whole detail panel rendered as blank lines each ending in a lone "…" (#453.2). Cap
+        // the pad target at what this terminal can actually show; a line that is still longer than
+        // that (e.g. the long path itself) is left for `paint()` to truncate, same as before.
+        const detailGutterWidth = 5; // "│  ┌ " / "│  │ " / "│  └ " — BAR, 2 spaces, 1-char gutter, 1 space
+        const visibleDetailWidth = Math.min(detailWidth, Math.max(0, size.columns - 1 - detailGutterWidth));
+
         for (const [i, line] of detail.entries()) {
             const gutter = i === 0 ? "┌" : i === detail.length - 1 ? "└" : "│";
-            lines.push(`${BAR}  ${pc.gray(gutter)} ${padVisible(line, detailWidth)}`);
+            lines.push(`${BAR}  ${pc.gray(gutter)} ${padVisible(line, visibleDetailWidth)}`);
         }
 
         lines.push(BAR);

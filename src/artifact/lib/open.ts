@@ -4,7 +4,7 @@ import { Browser } from "@genesiscz/utils/browser";
 import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
 import { withFileLock } from "@genesiscz/utils/storage";
-import { resolveTarget } from "./registry";
+import { entryUrlPath, resolveTarget } from "./registry";
 import { findRunning } from "./running";
 
 const ARTIFACT_ENTRY = join(import.meta.dir, "..", "index.ts");
@@ -19,6 +19,8 @@ export interface OpenArtifactDeps {
     now(): number;
     /** Runs `run` while no other open of the same artifact runs its own. Default: a per-folder file lock. */
     singleFlight?<T>(options: { target: string; waitMs: number; run: () => Promise<T> }): Promise<T>;
+    /** The page to open when none was explicitly requested. Default: `defaultPageForTarget`. */
+    defaultPage?(target: string): string | undefined;
 }
 
 export interface OpenArtifactOptions {
@@ -65,7 +67,8 @@ export async function openArtifact(options: OpenArtifactOptions): Promise<OpenAr
             return { port: await waitForPort({ deps, target: options.target, deadline, timeoutMs }), started: true };
         },
     });
-    const url = pageUrl(port, options.path);
+    const path = options.path ?? deps.defaultPage?.(options.target);
+    const url = pageUrl(port, path);
 
     while (!(await deps.answers(url))) {
         await sleepUntil({ deps, target: options.target, deadline, timeoutMs });
@@ -127,18 +130,42 @@ export function runningArtifactPort(target: string): number | undefined {
     return findRunning(resolveTarget(target).dir)?.server.port;
 }
 
+/**
+ * The page `open` lands on when none was asked for: a FILE target's own
+ * page, so `open hello.tsx` opens `/hello`, never `/` (the catalog) — a
+ * directory target (or a registered name with no default entry) keeps the
+ * catalog, since there is no single page to prefer.
+ */
+export function defaultPageForTarget(target: string): string | undefined {
+    const resolved = resolveTarget(target);
+
+    return resolved.entry ? entryUrlPath(resolved.entry) : undefined;
+}
+
 function serveLog(target: string): string {
     return join(tmpdir(), `artifact-open-${target.replace(/[^A-Za-z0-9._-]/g, "_")}.log`);
+}
+
+/**
+ * Argv for the detached `serve` that `open` starts when nothing is running —
+ * deliberately the SAME flags a direct `tools artifact serve <target>` call
+ * gets (no `--no-register`), so a folder target registers exactly like
+ * `serve` would; `serve`'s own rule then decides whether a FILE target's
+ * parent folder registers.
+ */
+export function openServeArgv(target: string): string[] {
+    return [ARTIFACT_ENTRY, "serve", target, "--no-open"];
 }
 
 function defaultDeps(): OpenArtifactDeps {
     return {
         findPort: runningArtifactPort,
+        defaultPage: defaultPageForTarget,
         startServer: (target) => {
             resolveTarget(target);
             const log = serveLog(target);
             // Detached (setsid): the click that started it exits right after the page opens.
-            const child = Bun.spawn([process.execPath, ARTIFACT_ENTRY, "serve", target, "--no-open", "--no-register"], {
+            const child = Bun.spawn([process.execPath, ...openServeArgv(target)], {
                 stdin: "ignore",
                 stdout: Bun.file(log),
                 stderr: Bun.file(log),

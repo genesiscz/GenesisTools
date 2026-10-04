@@ -173,12 +173,18 @@ export async function launchCdpBrowser(opts: LaunchCdpOpts): Promise<LaunchedCdp
     }
 
     const isolated = opts.fresh === true || opts.extension !== undefined || opts.userDataDir !== undefined;
-    const userDataDir = isolated ? (opts.userDataDir ?? freshProfileDir(opts.port)) : null;
+    // Resolved ONCE: freshProfileDir() is unique per call, so a second call inside launchArgs would
+    // generate a DIFFERENT directory than the one reported here, and the browser would launch into
+    // one dir while this function told the caller it was using another.
+    const generatedUserDataDir = isolated && opts.userDataDir === undefined ? freshProfileDir(opts.port) : undefined;
+    const userDataDir = isolated ? (opts.userDataDir ?? generatedUserDataDir ?? null) : null;
     const args = launchArgs(opts.port, {
         fresh: opts.fresh,
         extension: opts.extension,
-        userDataDir: opts.userDataDir,
-        disposableProfile: opts.disposableProfile,
+        userDataDir: opts.userDataDir ?? generatedUserDataDir,
+        // A dir THIS function generated is thrown away afterwards by definition, same as the
+        // --fresh/--extension default launchArgs would otherwise have generated itself.
+        disposableProfile: opts.disposableProfile || generatedUserDataDir !== undefined,
         profileDirectory: opts.profileDirectory,
     });
     const url = opts.url ?? "about:blank";

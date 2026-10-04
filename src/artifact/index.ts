@@ -16,18 +16,20 @@ import { buildSingleFile, embedScopeFor, resolveEntry, watchAndRebuild } from ".
 import { filterKitDts, kitApiDts, writeEditorTsconfig } from "./lib/kit-types";
 import { startLibrary } from "./lib/library";
 import { openArtifact } from "./lib/open";
-import { addEntry, loadRegistry, removeEntry, resolveTarget } from "./lib/registry";
-import { findRunning, holdServer, isSignalable, listRunning, removeRunning } from "./lib/running";
+import { addEntry, entryUrlPath, loadRegistry, removeEntry, resolveTarget } from "./lib/registry";
+import {
+    findRunning,
+    holdServer,
+    isSignalable,
+    listRunning,
+    removeRunning,
+    runningOutsideRegistry,
+} from "./lib/running";
 import { serveArtifacts } from "./lib/serve";
 import { describeShippedTemplates, resolveTemplateDir } from "./lib/templates";
 import { RUNTIME_DIR } from "./lib/vite";
 
 const DEFAULT_PORT = DASHBOARDS.artifact.port;
-
-/** Serve route for a single-file entry: the clean extension-less URL. */
-function entryRoute(entry: string): string {
-    return `/${entry.replace(/\.(tsx|jsx|html|md)$/, "")}`;
-}
 
 const program = new Command();
 
@@ -53,20 +55,31 @@ program
         }
 
         renderCliHeader("Artifact Folders", "registered with tools artifact");
+        const unregistered = runningOutsideRegistry(listRunning(), entries);
 
         if (entries.length === 0) {
             out.log.info("No folders registered. `tools artifact serve <dir>` registers automatically.");
+        } else {
+            const table = createBoxTable(["NAME", "DIRECTORY", "ENTRY", "CREATED"]);
 
-            return;
+            for (const e of entries) {
+                table.push([
+                    pc.white(e.name),
+                    e.dir,
+                    e.entry ?? pc.dim("—"),
+                    e.createdAt.slice(0, 16).replace("T", " "),
+                ]);
+            }
+
+            out.println(table.toString());
         }
 
-        const table = createBoxTable(["NAME", "DIRECTORY", "ENTRY", "CREATED"]);
-
-        for (const e of entries) {
-            table.push([pc.white(e.name), e.dir, e.entry ?? pc.dim("—"), e.createdAt.slice(0, 16).replace("T", " ")]);
+        if (unregistered.length > 0) {
+            const folders = unregistered.map((server) => `${server.dir} (port ${server.port})`).join(", ");
+            out.log.info(
+                `Also serving ${unregistered.length} unregistered folder(s): ${folders}. See: tools artifact ps`
+            );
         }
-
-        out.println(table.toString());
     });
 
 program
@@ -156,16 +169,16 @@ program
             });
             const url = server.resolvedUrls?.local[0] ?? `http://${opts.host}:${opts.port}/`;
             const actualPort = Number.parseInt(new URL(url).port, 10) || Number.parseInt(opts.port, 10);
-            const openUrl = resolved.entry ? url.replace(/\/$/, "") + entryRoute(resolved.entry) : url;
+            const openUrl = resolved.entry ? url.replace(/\/$/, "") + entryUrlPath(resolved.entry) : url;
             out.log.success(`Serving ${pc.bold(resolved.entry ? join(resolved.dir, resolved.entry) : resolved.dir)}`);
             out.log.info(
-                `${pc.cyan(openUrl)} ${pc.dim(`(catalog at /__catalog; Ctrl-C stops, or: tools artifact stop ${actualPort})`)}`
+                `${pc.cyan(openUrl)} ${pc.dim(`(catalog at / or /__catalog; Ctrl-C stops, or: tools artifact stop ${actualPort})`)}`
             );
 
             const cleanUrls = readdirSync(resolved.dir)
                 .filter((f) => /\.(tsx|jsx|html|md)$/.test(f) && !f.startsWith("."))
                 .slice(0, 3)
-                .map((f) => entryRoute(f));
+                .map((f) => entryUrlPath(f));
 
             if (cleanUrls.length > 0 && !resolved.entry) {
                 out.log.info(pc.dim(`clean URLs: ${cleanUrls.map((r) => url.replace(/\/$/, "") + r).join("  ")}`));

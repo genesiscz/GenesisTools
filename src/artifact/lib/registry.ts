@@ -125,6 +125,20 @@ export function removeEntry(name: string): DashboardEntry | null {
     return removed;
 }
 
+/** Serve/open route for a single-file entry: the clean extension-less URL. */
+export function entryRoute(entry: string): string {
+    return `/${entry.replace(/\.(tsx|jsx|html|md)$/, "")}`;
+}
+
+/**
+ * `entryRoute` as it goes into a URL: every segment percent-encoded, so a `#` or `?` in a file
+ * name stays part of the page path instead of starting a fragment or a query. The catalog
+ * decodes each segment again when it resolves the request.
+ */
+export function entryUrlPath(entry: string): string {
+    return entryRoute(entry).split("/").map(encodeURIComponent).join("/");
+}
+
 export interface ResolvedTarget {
     dir: string;
     /** Set when the target was a single FILE: its name relative to dir. */

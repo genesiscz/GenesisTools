@@ -3,8 +3,29 @@ import { existsSync } from "node:fs";
 import { env } from "@genesiscz/utils/env";
 import { getGenesisToolsConfigPath, getProfilingConfig } from "@genesiscz/utils/GenesisTools";
 import { isInside, realGenesisToolsRoot, rmTestPath } from "@genesiscz/utils/storage/real-home-guard";
+import { stripAnsi } from "@genesiscz/utils/string";
 import { Command } from "commander";
-import { applyProfilingFlags, registerProfilingCommand, runProfilingCommand } from "./profiling";
+import { buildConfigProgram } from "../index";
+import { applyProfilingFlags, printProfilingStatus, registerProfilingCommand, runProfilingCommand } from "./profiling";
+
+/** Everything the call printed to stdout, with colour removed (pattern: codex/migrate-home.test.ts). */
+async function captureStdout(run: () => void): Promise<string> {
+    const chunks: string[] = [];
+    const original = process.stdout.write.bind(process.stdout);
+    process.stdout.write = (chunk: string) => {
+        chunks.push(String(chunk));
+        return true;
+    };
+
+    try {
+        run();
+        await Bun.sleep(10);
+    } finally {
+        process.stdout.write = original;
+    }
+
+    return stripAnsi(chunks.join(""));
+}
 
 describe("applyProfilingFlags", () => {
     /**
@@ -172,6 +193,18 @@ describe("runProfilingCommand enumerated flags", () => {
     });
 });
 
+describe("printProfilingStatus header", () => {
+    // Regression test: #453.4 — the header box truncated the config path to 31 chars
+    // ("/Users/eva/.genesis-tools/Gene…"), the one value a user would actually want to copy.
+    it("prints the full config path on its own line instead of truncating it into the header box", async () => {
+        const text = await captureStdout(() => printProfilingStatus(getProfilingConfig(), false));
+        const path = getGenesisToolsConfigPath();
+
+        expect(path.length).toBeGreaterThan(31);
+        expect(text).toContain(path);
+    });
+});
+
 describe("registerProfilingCommand option shape", () => {
     it("declares --scopes and --detail as optional values so a bare flag reaches the action", () => {
         const program = new Command();
@@ -180,5 +213,45 @@ describe("registerProfilingCommand option shape", () => {
         const flags = profiling?.options.map((o) => o.flags) ?? [];
         expect(flags.some((f) => f.includes("--scopes") && f.includes("[list]"))).toBe(true);
         expect(flags.some((f) => f.includes("--detail") && f.includes("[mode]"))).toBe(true);
+    });
+});
+
+/**
+ * `.helpInformation()` returns only the built-in usage/options/commands sections — text added
+ * via `.addHelpText()` is emitted by `.outputHelp()` alone, as a write to the configured
+ * stream. `.outputHelp()` itself never calls `process.exit` (only `.help()`, which wraps it,
+ * does), so capturing its write here is safe inside a test.
+ */
+function captureHelp(run: () => void): string {
+    const chunks: string[] = [];
+    const original = process.stdout.write.bind(process.stdout);
+    process.stdout.write = (chunk: string) => {
+        chunks.push(String(chunk));
+        return true;
+    };
+
+    try {
+        run();
+    } finally {
+        process.stdout.write = original;
+    }
+
+    return chunks.join("");
+}
+
+describe("buildConfigProgram", () => {
+    // Regression test: #453.3 — `tools config packages --help` showed only `-h, --help`, with
+    // no way to see how to actually CHANGE a package preference (the command is interactive
+    // only, and nothing in --help said so).
+    it("packages --help documents the interactive flow for changing package preferences", () => {
+        const program = buildConfigProgram();
+        const packages = program.commands.find((c) => c.name() === "packages");
+
+        expect(packages).toBeDefined();
+
+        const help = captureHelp(() => packages?.outputHelp());
+
+        expect(help).toContain("re-enable");
+        expect(help).toContain("clear");
     });
 });

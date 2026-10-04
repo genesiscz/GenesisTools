@@ -82,6 +82,30 @@ const prefixPid = env.log.shouldIncludePid();
 // is interactive. PR #176 review t19.
 const isTerminal = process.stderr.isTTY === true;
 
+/**
+ * The `minimalLevels` level badge for WARN/ERROR (empty for info/debug/trace).
+ * MUST NOT append its own trailing colon: pino-pretty's own prettifier
+ * (lib/pretty.js) appends exactly one ':' to this string unless it already
+ * ends with one. A colon baked in here, inside a `pc.red(...)` color wrap,
+ * ends the string with the ANSI reset escape code rather than literal ':' —
+ * so pino-pretty's check misses it and appends a second, bare colon,
+ * rendering as "ERROR::" (#447). Letting pino-pretty add the only colon
+ * keeps it singular whether or not the label is colorized.
+ */
+export function formatMinimalLevelLabel(logLevelValue: unknown): string {
+    const lvl = String(logLevelValue).toLowerCase();
+    // pino sends level as number (40=warn, 50=error) or label
+    if (lvl === "warn" || lvl === "40") {
+        return isTerminal ? pc.yellow("WARN") : "WARN";
+    }
+
+    if (lvl === "error" || lvl === "50") {
+        return isTerminal ? pc.red("ERROR") : "ERROR";
+    }
+
+    return ""; // hide for trace/debug/info
+}
+
 export interface LoggerOptions {
     level?: LogLevel;
     logToFile?: boolean;
@@ -239,25 +263,11 @@ export const createLogger = (options: LoggerOptions = {}): pino.Logger => {
                 .join(","),
         };
 
-        // minimalLevels: hide level for info/debug/trace, colored WARN:/ERROR:.
+        // minimalLevels: hide level for info/debug/trace, colored WARN/ERROR.
         // picocolors, not chalk: pc costs ~2ms at import vs chalk's ~4ms and
         // is the repo-standard color lib.
         if (minimalLevels) {
-            prettyOptions.customPrettifiers = {
-                level: (logLevelValue: unknown) => {
-                    const lvl = String(logLevelValue).toLowerCase();
-                    // pino sends level as number (40=warn, 50=error) or label
-                    if (lvl === "warn" || lvl === "40") {
-                        return isTerminal ? pc.yellow("WARN:") : "WARN:";
-                    }
-
-                    if (lvl === "error" || lvl === "50") {
-                        return isTerminal ? pc.red("ERROR:") : "ERROR:";
-                    }
-
-                    return ""; // hide for trace/debug/info
-                },
-            };
+            prettyOptions.customPrettifiers = { level: formatMinimalLevelLabel };
         }
 
         const pretty = (requireLazy("pino-pretty") as PinoPrettyFn)(prettyOptions);

@@ -204,7 +204,7 @@ export async function loadClaudeResumeCandidates(
 
         return found.length ? found : byId(await everyIndexed());
     }
-    if (!options.query || options.list) {
+    if (!options.query) {
         return sessions.slice(0, display);
     }
     const query = options.query;
@@ -234,17 +234,40 @@ export async function loadClaudeResumeCandidates(
 }
 // --- UI ---
 
+/**
+ * The "nothing found" message for both the interactive picker and `--list`. A plain,
+ * current-folder search reads as "Claude has no sessions at all" unless the message says so
+ * and names the way to widen it (#453.1); once a search already covers every project, there is
+ * nowhere wider left to point to.
+ */
+function noSessionsError({ query, allProjects, cwd }: { query?: string; allProjects: boolean; cwd: string }): Error {
+    if (query) {
+        return new Error(`No Claude sessions match "${query}".`);
+    }
+
+    if (allProjects) {
+        return new Error("No Claude sessions found.");
+    }
+
+    const folder = cwd.replace(homedir(), "~");
+    return new Error(`No Claude sessions for ${folder} (current folder). Search all projects: tools cc -a`);
+}
+
 export async function selectClaudeResumeSession({
     candidates,
     query,
     interactive = isInteractive(),
+    allProjects = false,
+    cwd = process.cwd(),
 }: {
     candidates: DisplaySession[];
     query?: string;
     interactive?: boolean;
+    allProjects?: boolean;
+    cwd?: string;
 }): Promise<DisplaySession> {
     if (candidates.length === 0) {
-        throw new Error(`No Claude sessions match${query ? ` "${query}"` : " this selection"}.`);
+        throw noSessionsError({ query, allProjects, cwd });
     }
 
     if (candidates.length === 1) {
@@ -319,7 +342,6 @@ async function resumeSession(session: DisplaySession): Promise<never> {
 // --- Main logic ---
 
 export interface SessionPickOptions {
-    list?: boolean;
     allProjects?: boolean;
     limit?: number;
     cwd?: string;
@@ -340,8 +362,9 @@ function effectiveClaudeHome(): string {
  * of 50 that this door refused: a session indexed from several homes stayed two rival
  * candidates here, while `preferHomeCopies` collapses them onto the launch home's copy.
  *
- * A LISTING (`--list`, or no query at all) still uses Claude's own loader. The shared ladder
- * answers "which session is this query", and a listing is not a query.
+ * No query at all still uses Claude's own loader. The shared ladder answers "which session is
+ * this query", and a listing is not a query. `--list` never comes here: see
+ * `listClaudeResumeSessions`.
  */
 export async function pickSessionForResume(
     query: string | undefined,
@@ -349,7 +372,7 @@ export async function pickSessionForResume(
 ): Promise<DisplaySession> {
     const adapter = opts.adapter ?? createClaudeAdapter();
 
-    if (query && !opts.list) {
+    if (query) {
         // A short listing is annoying; a session resume cannot find is the one that costs an
         // evening, because the user knows the conversation exists.
         await warnUnresolvedIdentities(adapter, "claude");
@@ -401,17 +424,52 @@ export async function pickSessionForResume(
         throw error;
     }
 
-    const selected = await selectClaudeResumeSession({ candidates, query, interactive: opts.interactive });
+    const selected = await selectClaudeResumeSession({
+        candidates,
+        query,
+        interactive: opts.interactive,
+        allProjects: opts.allProjects,
+        cwd: opts.cwd ?? process.cwd(),
+    });
     assertClaudeResumeHome({ session: selected });
 
     return selected;
 }
 
+/**
+ * `--list` prints the table and returns — it never enters the interactive picker and never
+ * resumes anything, with or without a TTY (#453.2). A listing is not a selection, so this never
+ * calls `selectClaudeResumeSession`. A query still filters what is listed: `tools cc <query>
+ * --list` shows the sessions that match it, not the most recent ones.
+ */
+export async function listClaudeResumeSessions(
+    query: string | undefined,
+    opts: SessionPickOptions = {}
+): Promise<DisplaySession[]> {
+    const cwd = opts.cwd ?? process.cwd();
+    const candidates = await loadClaudeResumeCandidates({ ...opts, query, cwd });
+
+    if (candidates.length === 0) {
+        throw noSessionsError({ query, allProjects: Boolean(opts.allProjects), cwd });
+    }
+
+    printAmbiguousSessions(candidates, candidates.length);
+
+    return candidates;
+}
+
 async function main(query: string | undefined, opts: ResumeOptions) {
     p.intro(pc.bgCyan(pc.black(" claude resume ")));
 
+    if (opts.list) {
+        await listClaudeResumeSessions(query, {
+            allProjects: opts.allProjects,
+            limit: parseInt(opts.limit, 10) || 20,
+        });
+        return;
+    }
+
     const selected = await pickSessionForResume(query, {
-        list: opts.list,
         allProjects: opts.allProjects,
         limit: parseInt(opts.limit, 10) || 20,
     });

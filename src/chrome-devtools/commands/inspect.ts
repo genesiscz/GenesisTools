@@ -1,7 +1,7 @@
 /** cookies / rm-cookie / console / eval / nav / shot / grid / trace — page and browser inspection. */
 import { out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
-import { browser, classifyEvalError, newTab } from "../lib/cdp.ts";
+import { browser, classifyEvalError, cookiesSummaryLine, newTab } from "../lib/cdp.ts";
 import { artifactPath } from "../lib/platform.ts";
 import { attachTab, ignoreSigpipe, positiveNumber, resolvePort, suggest, withPage, withPort } from "./shared.ts";
 
@@ -40,9 +40,7 @@ export function registerInspect(program: Command): void {
                     );
                 }
 
-                out.println(
-                    `\n${cs.length} cookies. Duplicate name on different paths => longer path is sent FIRST (RFC 6265); servers taking the first value bind to the stale session.`
-                );
+                out.println(`\n${cookiesSummaryLine(cs.length)}`);
             }
 
             b.close();

@@ -103,6 +103,22 @@ async function statusFilter(raw: string | true | undefined): Promise<string[] | 
 }
 
 /**
+ * `decisionsMarkdown([])` is an empty string, so an empty result used to print a single blank
+ * line (#453.5) — no "nothing here" message, no hint about widening the search. `--all-sessions`
+ * never reaches this: it always returns through `out.result()` above, empty or not.
+ *
+ * `session` is the scope the list was filtered to. Without one (no `--session` and no harness
+ * session) the list already covered every session, so there is nothing wider to point to.
+ */
+export function noDecisionsMessage(session: string | undefined): string {
+    if (!session) {
+        return "No decisions or todos in any session.";
+    }
+
+    return "No decisions or todos for this session. All sessions: tools question list --all-sessions";
+}
+
+/**
  * The decision and todo doors of `tools question`: the hub window reads `list` and writes through
  * `answer`, `draft`, `update` and `send`; agents post through `ask --json -` or question_post.
  */
@@ -144,7 +160,14 @@ export function registerDecisionCommands(program: Command): void {
                     return;
                 }
 
-                out.println(decisionsMarkdown(sessions.flatMap((item) => item.decisions)));
+                const decisions = sessions.flatMap((item) => item.decisions);
+
+                if (decisions.length === 0) {
+                    out.println(noDecisionsMessage(session));
+                    return;
+                }
+
+                out.println(decisionsMarkdown(decisions));
             }
         );
 

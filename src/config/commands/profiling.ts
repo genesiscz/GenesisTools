@@ -361,7 +361,10 @@ export function printProfilingStatus(stored: ProfilingConfig, json: boolean): vo
         return;
     }
 
-    renderCliHeader("Profiling", path);
+    // The header box truncates its subtitle to 31 chars — fine for a short label, wrong for the
+    // one value here a user would actually want to copy (#453.4). Print it on its own line.
+    renderCliHeader("Profiling", "GenesisTools config");
+    out.println(pc.dim(`  ${path}`));
     const table = createBoxTable(["KEY", "STORED", "RESOLVED"]);
     table.push(["enabled", String(stored.enabled), String(resolved.on)]);
     const storedScopes = stored.scopes.length ? stored.scopes.join(",") : "(all)";

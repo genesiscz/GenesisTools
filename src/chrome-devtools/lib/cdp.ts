@@ -371,6 +371,19 @@ export interface CdpCookie {
 const sameCookie = (a: CdpCookie, b: CdpCookie): boolean =>
     a.name === b.name && a.domain === b.domain && a.path === b.path;
 
+/**
+ * The summary line `cookies` prints after a listing. The RFC 6265 duplicate-name
+ * tip only makes sense once there is at least one cookie to be confused about —
+ * an empty jar gets a plain count instead.
+ */
+export function cookiesSummaryLine(count: number): string {
+    if (count === 0) {
+        return "0 cookies.";
+    }
+
+    return `${count} cookies. Duplicate name on different paths => longer path is sent FIRST (RFC 6265); servers taking the first value bind to the stale session.`;
+}
+
 /** Browser-level session: cookies across ALL domains incl. httpOnly, target list. */
 export class Browser {
     constructor(

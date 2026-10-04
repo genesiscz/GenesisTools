@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, spyOn, test } from "bun:test";
 import { mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -78,9 +78,24 @@ describe("library server", () => {
         const dir = artifactDir("artifact-lib-mount-", "# MOUNTED_ONE\n");
         const { name } = addEntry({ dir }).entry;
 
-        const { status, body } = await get(`/a/${name}/notes`);
-        expect(status).toBe(200);
-        expect(body).toContain("MOUNTED_ONE");
+        // Regression test: #450 — `envFile: false` is vite's OLD, deprecated spelling and warns
+        // "The `envFile` option is deprecated, please use `envDir: false` instead." on every run;
+        // a mount's Vite server starts lazily, on this very first request to it.
+        const warnings: string[] = [];
+        const warnSpy = spyOn(console, "warn").mockImplementation((...args: unknown[]) => {
+            warnings.push(args.map(String).join(" "));
+        });
+
+        let result: { status: number; body: string };
+        try {
+            result = await get(`/a/${name}/notes`);
+        } finally {
+            warnSpy.mockRestore();
+        }
+
+        expect(result.status).toBe(200);
+        expect(result.body).toContain("MOUNTED_ONE");
+        expect(warnings.join("\n")).not.toContain("envFile");
     }, 60_000);
 
     test("re-registering a name against a NEW directory serves the new one", async () => {

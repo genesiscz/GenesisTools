@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { stripAnsi } from "@genesiscz/utils/string";
 import {
     buildFrameParts,
     type FrameSize,
@@ -39,6 +40,66 @@ function frame(opts: TableSelectOptions<number>, cursor: number, size: FrameSize
 
 const LONG_PATH =
     "Source file: /Users/me/.claude/projects/-Users-me-Projects-shop/c40e86be-2b00-4e48-bf31-e3bb7263bd4b.jsonl";
+
+// One row's absolute path, wide enough that detailWidth (the max across every row) outgrows
+// a normal terminal on its own.
+const VERY_LONG_PATH =
+    "Source file: /Users/me/.claude/projects/-Users-me-Library-Application-Support-Claude-scratch-workspaces-53e91abd-0df2-4aee-83b2-34e32296324f/c40e86be-2b00-4e48-bf31-e3bb7263bd4b.jsonl";
+
+describe("the detail zone pads to the shared width, not past the terminal", () => {
+    // Regression test: #453.2 — one session's long "Source file:" path pushed detailWidth
+    // (shared across every row) past the terminal width, so every OTHER row's short or empty
+    // detail lines were padded out to that same width and then truncated by the terminal-width
+    // clamp, rendering as a trailing "…" on an otherwise blank line.
+    test("a short detail line on a DIFFERENT row does not end in a lone ellipsis", () => {
+        const opts: TableSelectOptions<number> = {
+            message: "Select session to resume:",
+            columns: [{ label: "NAME", minWidth: 20 }, { label: "BRANCH" }, { label: "AGE", align: "right" }],
+            rows: [
+                { value: 0, cells: ["session-a", "main", "1d"], detail: ["header a", VERY_LONG_PATH] },
+                {
+                    value: 1,
+                    cells: ["session-b", "main", "2d"],
+                    detail: ["header b", "continue brew and git installed"],
+                },
+            ],
+        };
+
+        // Focus row 1, the one with the SHORT detail lines.
+        const lines = frame(opts, 1, { columns: 120, rows: 40 });
+        const detailLines = lines.filter((line) => line.includes("header b") || line.includes("continue brew"));
+
+        expect(detailLines).toHaveLength(2);
+        for (const line of detailLines) {
+            expect(stripAnsi(line).trimEnd().endsWith("…")).toBe(false);
+        }
+    });
+
+    test("NEGATIVE CONTROL: the genuinely too-long path on the OTHER row is still cut with an ellipsis", () => {
+        const opts: TableSelectOptions<number> = {
+            message: "Select session to resume:",
+            columns: [{ label: "NAME", minWidth: 20 }, { label: "BRANCH" }, { label: "AGE", align: "right" }],
+            rows: [
+                { value: 0, cells: ["session-a", "main", "1d"], detail: ["header a", VERY_LONG_PATH] },
+                {
+                    value: 1,
+                    cells: ["session-b", "main", "2d"],
+                    detail: ["header b", "continue brew and git installed"],
+                },
+            ],
+        };
+
+        const lines = frame(opts, 0, { columns: 120, rows: 40 });
+        const pathLine = lines.find((line) => line.includes("Source file:"));
+
+        expect(pathLine).toBeDefined();
+        expect(
+            stripAnsi(pathLine ?? "")
+                .trimEnd()
+                .endsWith("…")
+        ).toBe(true);
+    });
+});
 
 describe("no line may wrap", () => {
     test("a detail line holding a whole transcript path is cut to the terminal width", () => {

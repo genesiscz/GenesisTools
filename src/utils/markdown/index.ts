@@ -586,6 +586,25 @@ export interface MarkdownRenderOptions {
     tableEngine?: TableEngine;
 }
 
+/**
+ * The line width handed to cli-html, in place of its own default.
+ *
+ * cli-html's default is `Math.min(120, terminalSize().columns - 2)`. A pseudo-terminal that
+ * reports 0 columns (`script`, some CI runners, an editor's embedded terminal) sends that
+ * negative, which wraps every single word onto its own line. An explicit width always wins;
+ * otherwise this applies cli-html's own formula to `process.stdout.columns` and falls back
+ * to 80 when the terminal reports no usable width.
+ */
+export function effectiveLineWidth(explicit?: number): number {
+    if (explicit && explicit > 0) {
+        return explicit;
+    }
+
+    const usable = (process.stdout.columns ?? 0) - 2;
+
+    return usable > 0 ? Math.min(120, usable) : 80;
+}
+
 function wrapToWidth(str: string, width: number): string {
     const emojiRegex = /\p{Emoji_Presentation}|\p{Extended_Pictographic}/gu;
     return str
@@ -643,9 +662,10 @@ export function renderMarkdownToCli(markdown: string, options?: MarkdownRenderOp
     tableEngine = options?.tableEngine ?? "auto";
 
     const html = mdInstance.render(markdown);
-    // cli-html wraps at the terminal's width unless told otherwise, so an explicit
-    // width has to reach it too; the pass below would only truncate its lines.
-    let output = cliHtml(html, options?.width ? { lineWidth: { value: options.width } } : {});
+    // Always pass an explicit lineWidth: cli-html's own default goes negative when the
+    // terminal reports 0 columns (see `effectiveLineWidth`), and the pass below would only
+    // truncate lines it already wrapped wrong.
+    let output = cliHtml(html, { lineWidth: { value: effectiveLineWidth(options?.width) } });
 
     // Apply width constraint
     if (options?.width) {

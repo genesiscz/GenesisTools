@@ -1,10 +1,12 @@
 import { existsSync, readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { withTimeout } from "@genesiscz/utils/async";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { classifyPid, type PidIdentity, readProcessCommand } from "@genesiscz/utils/process-identity";
 import { withFileLock } from "@genesiscz/utils/storage";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/storage";
+import type { DashboardEntry } from "./registry";
 import { runningPath } from "./storage";
 
 export interface RunningServer {
@@ -83,6 +85,13 @@ function writeAll(servers: RunningServer[]): void {
  */
 export function listRunning(): RunningServer[] {
     return liveRecords().map((match) => match.server);
+}
+
+/** Running servers whose folder is not in the registry: `open <file>` serves a folder without registering it. */
+export function runningOutsideRegistry(running: RunningServer[], registered: DashboardEntry[]): RunningServer[] {
+    const registeredDirs = new Set(registered.map((entry) => resolve(entry.dir)));
+
+    return running.filter((server) => !registeredDirs.has(resolve(server.dir)));
 }
 
 export interface RunningMatch {

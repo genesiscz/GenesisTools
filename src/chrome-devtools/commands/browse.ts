@@ -3,7 +3,17 @@ import { out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
 import { browserVersion, makeMatcher, targets } from "../lib/cdp.ts";
 import { CdpLaunchError, launchCdpBrowser } from "../lib/launch.ts";
-import { BROWSER_APPS, BROWSERS, browserById, listRunningBrowsers, quitBrowser } from "../lib/resolve-attach.ts";
+import {
+    BROWSER_APPS,
+    BROWSERS,
+    browserById,
+    browserExecutable,
+    browserNotInstalledMessage,
+    defaultOpenBrowser,
+    describeEndpointBrowser,
+    listRunningBrowsers,
+    quitBrowser,
+} from "../lib/resolve-attach.ts";
 import {
     formatVerification,
     isSafeProfileDirectory,
@@ -28,7 +38,10 @@ function browserDefOf(raw: unknown): { id: string; name: string } {
         process.exit(1);
     }
 
-    const id = typeof raw === "string" ? raw : "chrome";
+    // `restart`'s --browser always arrives as a string (its own commander default is "chrome"),
+    // so this fallback is only ever exercised by `open`, which declares no default: the same
+    // detection `attach` uses, else the first browser installed here.
+    const id = typeof raw === "string" ? raw : (defaultOpenBrowser() ?? "chrome");
 
     return { id, name: BROWSER_APPS[id] };
 }
@@ -62,8 +75,14 @@ export function registerBrowse(program: Command): void {
             "launch a CDP-enabled browser (the flag is read at startup only; refuses if that app is already running)"
         )
         .argument("[url]", "url to open", "about:blank")
-        .option("--browser <name>", BROWSER_IDS, "chrome")
-        .option("--fresh", "throwaway profile — your own profile stays untouched (but you must log in again)")
+        .option(
+            "--browser <name>",
+            `${BROWSER_IDS} (default: the browser already running, same detection as 'attach'; else the first one installed)`
+        )
+        .option(
+            "--fresh",
+            "throwaway profile in a new directory every run (your own profile stays untouched, but you must log in again). Adds --disable-features=LocalNetworkAccessChecks,PrivateNetworkAccessChecks so pages can reach local dev servers. Old run directories stay in /tmp until it is cleared"
+        )
         .option(
             "--user-data-dir <dir>",
             `persistent separate profile (logins survive between runs; Chrome ≥136 refuses the debug flag on its default profile, so this is the way to keep sessions). Use one directory per browser, e.g. ${persistentProfileHint("chrome")}. Keeps Chrome's local/private-network checks, unlike --fresh`
@@ -79,6 +98,11 @@ export function registerBrowse(program: Command): void {
                 process.exit(1);
             }
 
+            if (browserExecutable({ browser: def }) === null) {
+                out.log.error(browserNotInstalledMessage(id));
+                process.exit(1);
+            }
+
             if (opts.fresh && opts.userDataDir) {
                 out.log.error("--fresh and --user-data-dir contradict each other: one is throwaway, the other is not.");
                 out.log.info("  Drop --fresh to reuse the directory, or drop --user-data-dir for a throwaway profile.");
@@ -87,7 +111,12 @@ export function registerBrowse(program: Command): void {
 
             if (!opts.fresh && !opts.extension && !opts.userDataDir && listRunningBrowsers().includes(id)) {
                 out.log.error(`${name} is already running. The debug flag cannot be added to a live process.`);
-                out.log.info(`  ${suggest(["restart", "--browser", id, "--port", String(port)])}`);
+                out.log.info(
+                    `  Keep your window, use a separate profile: ${suggest(["open", "--browser", id, "--port", String(port), "--fresh", url])}`
+                );
+                out.log.info(
+                    `  Or restart ${name} with debugging (closes tabs): ${suggest(["restart", "--browser", id, "--port", String(port)])}`
+                );
                 process.exit(1);
             }
 
@@ -102,7 +131,13 @@ export function registerBrowse(program: Command): void {
                     userDataDir: opts.userDataDir,
                 });
                 up = true;
-                out.log.info(`up: ${result.browser} on ${port} (${result.pages} pages)`);
+                out.log.info(`up: ${describeEndpointBrowser(result.browser, id)} on ${port} (${result.pages} pages)`);
+
+                if (opts.fresh) {
+                    out.log.info(
+                        `  fresh profile: ${result.userDataDir} (unique to this run; --disable-features=LocalNetworkAccessChecks,PrivateNetworkAccessChecks is active)`
+                    );
+                }
             } catch (err) {
                 if (!(err instanceof CdpLaunchError)) {
                     throw err;
@@ -242,7 +277,7 @@ page targets exist, and whether a picker is still open.`
                 process.exit(1);
             }
 
-            out.log.info(`up: ${result.browser} on ${port} (${result.pages} pages)`);
+            out.log.info(`up: ${describeEndpointBrowser(result.browser, id)} on ${port} (${result.pages} pages)`);
 
             // Read-only end-state check. Before this, proving a restart had worked
             // meant running curl /json/version and an AppleScript window walk by hand.

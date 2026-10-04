@@ -304,8 +304,13 @@ export function escapeCell(value: string, lineBreak: LineBreakStrategy = "strip"
  * the `m` flag only the value's first line was escaped, so `"ok\n# Injected\n- item"` still
  * rendered a heading and a list: both can interrupt a paragraph. `[ \t]` rather than `\s`, so
  * the indent never swallows the newline and jumps a line. `~` covers a `~~~` fence.
+ *
+ * The ordered-list branch captures its digits separately from the `.`/`)` after them: only
+ * the punctuation is a CommonMark escape target. A backslash before a digit means nothing and
+ * prints literally, so escaping the whole `\d+[.)]` span turned `"1.0.0"` into the literal
+ * `"\1.0.0"` instead of the correct `"1\.0.0"`.
  */
-const BLOCK_STARTERS = /^([ \t]*)([#>\-+*=~]|\d+[.)])/gm;
+const BLOCK_STARTERS = /^([ \t]*)(?:([#>\-+*=~])|(\d+)([.)]))/gm;
 
 /**
  * Escapes text that is about to sit in a paragraph, a list item, a heading or a table cell.
@@ -324,7 +329,11 @@ export function escapeInline(value: string): string {
         .replace(/([\\`*_[\]])/g, "\\$1")
         .replace(/</g, "&lt;")
         .replace(/>/g, "&gt;")
-        .replace(BLOCK_STARTERS, (_match, indent: string, marker: string) => `${indent}\\${marker}`);
+        .replace(
+            BLOCK_STARTERS,
+            (_match, indent: string, marker: string | undefined, digits: string | undefined, punct: string) =>
+                marker !== undefined ? `${indent}\\${marker}` : `${indent}${digits}\\${punct}`
+        );
 }
 
 /** Escapes a URL for `](...)`, where an unbalanced parenthesis or a space ends the link. */

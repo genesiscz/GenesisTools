@@ -13,8 +13,8 @@ import { join } from "node:path";
  */
 const ROOT = join(import.meta.dir, "..");
 
-function runTools(name: string): { status: number | null; output: string } {
-    const result = spawnSync("bun", [join(ROOT, "tools"), name], {
+function runTools(name: string, ...extraArgs: string[]): { status: number | null; output: string } {
+    const result = spawnSync("bun", [join(ROOT, "tools"), name, ...extraArgs], {
         cwd: ROOT,
         encoding: "utf-8",
         env: process.env,
@@ -41,5 +41,24 @@ describe("tools dispatcher", () => {
 
         expect(output).toContain("Tool not found");
         expect(status).toBe(1);
+    });
+
+    // Regression test: #446 item 9 — `src/voice-memos/` is a stray README (the real tool moved
+    // to `src/macos`), so `tools voice-memos` reported "Tool not found" instead of pointing at
+    // the command that actually exists.
+    it("points voice-memos at its real home under macos instead of reporting it unknown", () => {
+        const { output } = runTools("voice-memos", "--help");
+
+        expect(output).toContain("tools macos voice-memos");
+        expect(output).not.toContain("Tool not found");
+    });
+
+    // Regression test: #446 item 5 — `tools --help` printed "Tool not found: --help" and exited 1.
+    it.each(["--help", "-h"])("%s prints usage and the tool list, and exits 0", (flag) => {
+        const { status, output } = runTools(flag);
+
+        expect(status).toBe(0);
+        expect(output).toContain("Usage:");
+        expect(output).toContain("macos");
     });
 });

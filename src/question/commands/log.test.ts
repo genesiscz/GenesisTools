@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { stripAnsi } from "@genesiscz/utils/string";
 import { appendEntry } from "../lib/log-store";
 import type { QaEntry } from "../lib/types";
+import { noDecisionsMessage } from "./decisions";
 import { renderDigest } from "./log";
 
 describe("renderDigest", () => {
@@ -50,5 +51,26 @@ describe("renderDigest", () => {
         // pc.dim() colorizes when CI is set (picocolors treats `"CI" in env` as
         // color-supported even without a TTY), so strip ANSI before the exact match.
         expect(stripAnsi(out)).toBe("No questions recorded.");
+    });
+});
+
+describe("noDecisionsMessage", () => {
+    // Regression test: #453.5 — `tools question list` with nothing to show printed a single
+    // blank line (`decisionsMarkdown([])` is an empty string), with no "nothing here" message
+    // and no hint about widening the search.
+    it("names the session scope and hints at --all-sessions", () => {
+        const message = noDecisionsMessage("session-a");
+
+        expect(message).toContain("this session");
+        expect(message).toContain("tools question list --all-sessions");
+    });
+
+    // Regression test: PR #457 review — outside a harness and without --session the list already
+    // covers every session, yet the empty message said "this session" and suggested widening it.
+    it("does not suggest --all-sessions when the search already covered every session", () => {
+        const message = noDecisionsMessage(undefined);
+
+        expect(message).not.toContain("this session");
+        expect(message).not.toContain("--all-sessions");
     });
 });

@@ -408,8 +408,9 @@ function registerInit(program: Command): void {
                     );
                 }
 
+                // The scaffold files were created; not being linked yet is guidance for the
+                // next step, not a failure, so this stays exit 0.
                 out.log.info(`Then: tools json2md build ${short(modulePath)}`);
-                process.exitCode = 1;
 
                 return;
             }

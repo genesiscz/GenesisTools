@@ -7,7 +7,12 @@ import { createNativeHistoryAdapter } from "@genesiscz/utils/agent-sessions/nati
 import type { AgentSearchFilters, AgentSessionAdapter } from "@genesiscz/utils/agent-sessions/types";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { assertClaudeResumeHome, loadClaudeResumeCandidates, pickSessionForResume } from "./resume";
+import {
+    assertClaudeResumeHome,
+    listClaudeResumeSessions,
+    loadClaudeResumeCandidates,
+    pickSessionForResume,
+} from "./resume";
 
 const ID = "11111111-2222-4333-8444-555555555555";
 function fixture() {
@@ -343,4 +348,87 @@ test("a query that matches nothing still fails, and the home guard still refuses
         env.testing.unset("CLAUDE_CONFIG_DIR");
         db.close();
     }
+});
+
+// Regression test: #453.1 — `tools cc` with no sessions for the current folder said only "No
+// Claude sessions match this selection.", with no hint that the search was folder-scoped or how
+// to widen it.
+test("an empty current-folder listing names the folder and hints at --all-projects", async () => {
+    const cwd = "/projects/nothing-here";
+    const adapter: AgentSessionAdapter = { kind: "claude", list: async () => [], search: async () => [] };
+
+    const error = await pickSessionForResume(undefined, {
+        cwd,
+        adapter,
+        allProjects: false,
+        interactive: false,
+    }).catch((err) => err);
+
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toContain("nothing-here");
+    expect((error as Error).message).toContain("tools cc -a");
+});
+
+// Regression test: #453.1 — once a search already covers every project, repeating the
+// --all-projects hint would be wrong advice (there is nowhere wider left to search).
+test("an empty all-projects listing does not repeat the --all-projects hint", async () => {
+    const adapter: AgentSessionAdapter = { kind: "claude", list: async () => [], search: async () => [] };
+
+    const error = await pickSessionForResume(undefined, {
+        cwd: "/anywhere",
+        adapter,
+        allProjects: true,
+        interactive: false,
+    }).catch((err) => err);
+
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).not.toContain("tools cc -a");
+});
+
+// Regression test: #453.2 — `tools cc --list` opened the interactive "Select session to
+// resume:" picker and waited for a keypress instead of printing the table and returning.
+test("--list returns the matching sessions without entering the interactive picker", async () => {
+    const source = fixture();
+    const db = new Database(":memory:");
+
+    try {
+        const adapter = createNativeHistoryAdapter({ kind: "claude", roots: [source.root], database: db });
+        const results = await listClaudeResumeSessions(undefined, { cwd: "/projects/shop", adapter });
+
+        expect(results).toHaveLength(1);
+        expect(results[0]?.sessionId).toBe(ID);
+    } finally {
+        db.close();
+    }
+});
+
+// Regression test: PR #457 review — `tools cc <query> --list` printed the recent sessions and
+// ignored the query, so it listed unrelated sessions and could miss the one asked for.
+test("--list with a query lists only the sessions that match the query", async () => {
+    const source = fixture();
+    const unrelated = "99999999-8888-4777-8666-555555555555";
+    writeFileSync(
+        join(source.root, "-projects-shop", `${unrelated}.jsonl`),
+        `${SafeJSON.stringify({ type: "user", sessionId: unrelated, cwd: "/projects/shop", message: { content: "Deploy notes" } })}\n`
+    );
+    const db = new Database(":memory:");
+
+    try {
+        const adapter = createNativeHistoryAdapter({ kind: "claude", roots: [source.root], database: db });
+        const results = await listClaudeResumeSessions("Invoice callback", { cwd: "/projects/shop", adapter });
+
+        expect(results.map((session) => session.sessionId)).toEqual([ID]);
+    } finally {
+        db.close();
+    }
+});
+
+// Regression test: #453.2 — an empty `--list` must name the same folder/hint as a plain
+// `tools cc`, not a bare "No Claude sessions match this selection."
+test("--list with nothing found throws the same folder-aware message as resume", async () => {
+    const adapter: AgentSessionAdapter = { kind: "claude", list: async () => [], search: async () => [] };
+
+    await expect(
+        listClaudeResumeSessions(undefined, { cwd: "/projects/nothing-here", adapter, allProjects: false })
+    ).rejects.toThrow(/nothing-here/i);
 });

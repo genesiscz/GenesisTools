@@ -20,7 +20,7 @@ function summarizeEvent(event: GitHubEvent): { summary: string; url: string | nu
     switch (event.type) {
         case "PushEvent": {
             const commits = (payload.commits as Array<{ message: string }>) || [];
-            const count = (payload.size as number) ?? commits.length;
+            const size = payload.size as number | undefined;
             const ref = (payload.ref as string)?.replace("refs/heads/", "") || "unknown";
             const before = (payload.before as string)?.slice(0, 7);
             const head = (payload.head as string)?.slice(0, 7);
@@ -28,10 +28,14 @@ function summarizeEvent(event: GitHubEvent): { summary: string; url: string | nu
                 before && head
                     ? `https://github.com/${repo}/compare/${before}...${head}`
                     : `https://github.com/${repo}`;
-            return {
-                summary: `Pushed ${count} commit(s) to ${ref}`,
-                url,
-            };
+            // The Events API omits both `size` and `commits` for some PushEvents — that is
+            // "no count available", not "zero commits" (#453.6). Say so plainly instead of
+            // making up a count, with no extra API call to find the real one.
+            const summary =
+                size === undefined && commits.length === 0
+                    ? `Pushed to ${ref}`
+                    : `Pushed ${size ?? commits.length} commit(s) to ${ref}`;
+            return { summary, url };
         }
         case "CreateEvent":
             return {
@@ -126,6 +130,15 @@ function toActivityItem(event: GitHubEvent): ActivityItem {
 }
 
 /**
+ * Raw events to display-ready items, sorted newest first. The Events API returns roughly
+ * reverse-chronological pages, but merging several pages (and trusting each page's own order)
+ * let at least one row land out of place (#453.6) — sort explicitly rather than trust the feed.
+ */
+export function buildActivityItems(events: GitHubEvent[]): ActivityItem[] {
+    return events.map(toActivityItem).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+}
+
+/**
  * Main activity command handler
  */
 export async function activityCommand(options: ActivityCommandOptions): Promise<void> {
@@ -178,7 +191,7 @@ export async function activityCommand(options: ActivityCommandOptions): Promise<
     verbose(options, `Fetched ${allEvents.length} raw events`);
 
     // Convert to items
-    let items = allEvents.map(toActivityItem);
+    let items = buildActivityItems(allEvents);
 
     // Apply filters
     if (options.repo) {

@@ -19,15 +19,17 @@ describe("launchArgs (PR #326 review — the profile-isolation rule, pinned)", (
         expect(launchArgs(9222, {}).some((a) => a.startsWith("--disable-features"))).toBe(false);
     });
 
-    test("--fresh isolates into a /tmp profile so the user's own profile stays untouched", () => {
+    test("--fresh isolates into a unique /tmp profile so the user's own profile stays untouched", () => {
+        // A fixed /tmp/cdp-profile-9223 used to be reused on every run, so a --fresh profile was
+        // never really throwaway: see freshProfileDir's own uniqueness test in resolve-attach.test.ts.
         const args = launchArgs(9223, { fresh: true });
-        expect(args).toContain("--user-data-dir=/tmp/cdp-profile-9223");
+        expect(args.find((a) => a.startsWith("--user-data-dir="))).toMatch(/^--user-data-dir=\/tmp\/cdp-profile-9223-/);
         expect(args).toContain("--disable-features=LocalNetworkAccessChecks,PrivateNetworkAccessChecks");
     });
 
     test("--extension implies its own profile and restricts loaded extensions to the one given", () => {
         const args = launchArgs(9333, { extension: "/dist/ext" });
-        expect(args).toContain("--user-data-dir=/tmp/cdp-profile-9333");
+        expect(args.find((a) => a.startsWith("--user-data-dir="))).toMatch(/^--user-data-dir=\/tmp\/cdp-profile-9333-/);
         expect(args).toContain("--load-extension=/dist/ext");
         expect(args).toContain("--disable-extensions-except=/dist/ext");
     });
@@ -186,6 +188,27 @@ describe("launchCdpBrowser", () => {
             },
         }).catch((e: unknown) => e);
         expect((err as CdpLaunchError).logTail).toBe("(log unreadable)");
+    });
+
+    test("--fresh: the reported userDataDir is the SAME directory the browser was actually launched with", async () => {
+        // Regression test: #454 — freshProfileDir() now returns a unique path per call. launchArgs
+        // and launchCdpBrowser each used to call it separately for the --fresh/--extension case, so
+        // the returned `userDataDir` and the real `--user-data-dir=` flag could name two different
+        // directories once the function stopped being deterministic.
+        const seen: string[][] = [];
+        const result = await launchCdpBrowser({
+            port: 9224,
+            fresh: true,
+            launch: (o) => {
+                seen.push(o.args);
+
+                return okLaunch();
+            },
+            probe: liveProbe,
+            waitFor: cameUp,
+        });
+        const flag = seen[0]?.find((a) => a.startsWith("--user-data-dir="));
+        expect(flag).toBe(`--user-data-dir=${result.userDataDir}`);
     });
 
     test("a cold profile waits 30s; the user's real profile waits 20s", async () => {

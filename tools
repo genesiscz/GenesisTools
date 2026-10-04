@@ -116,6 +116,9 @@ async function getAvailableTools(srcDir) {
 const TOOL_ALIASES = new Map([
     ["calendar", ["macos", "calendar"]],
     ["reminders", ["macos", "reminders"]],
+    // src/voice-memos/ is a stray README from before this tool moved under src/macos (#446.9);
+    // `tools voice-memos` reported "Tool not found" instead of pointing at the real command.
+    ["voice-memos", ["macos", "voice-memos"]],
 ]);
 
 /**
@@ -416,6 +419,20 @@ function signalToNumber(signal: NodeJS.Signals): number | undefined {
 }
 
 // --- Main Logic ---
+// #446 item 5: `tools --help` used to fall through to the tool-dispatch path, which reported
+// "Tool not found: --help" and exited 1 — the first thing a new user is likely to type. This
+// prints usage plus the real tool list and exits 0 whether or not the shell is interactive.
+async function printToolsUsage(srcDir) {
+    const tools = await getAvailableTools(srcDir);
+    console.log("\n  Usage: tools <tool-name> [args...]\n");
+    console.log("  Run with no arguments to open the interactive tool browser.");
+    console.log(`  Available tools (${tools.length}):\n`);
+    for (const tool of tools) {
+        console.log(`    ${tool}`);
+    }
+    console.log("");
+}
+
 async function main() {
     const args = process.argv.slice(2);
     const workspaceRoot = resolveWorkspaceRoot();
@@ -423,6 +440,11 @@ async function main() {
     // run keeps it current, so `tools update` and a moved checkout need no separate step.
     refreshInstallRecord(workspaceRoot);
     const srcDir = join(workspaceRoot, SRC_DIR_NAME);
+
+    if (args[0] === "--help" || args[0] === "-h") {
+        await printToolsUsage(srcDir);
+        process.exit(0);
+    }
 
     if (args.length === 0) {
         // Launch interactive tool browser

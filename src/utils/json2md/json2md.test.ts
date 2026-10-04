@@ -96,6 +96,19 @@ describe("escape", () => {
         expect(escapeInline("# not a heading")).toBe("\\# not a heading");
         expect(escapeInline("a*b")).toBe("a\\*b");
     });
+
+    // Regression test: #452 — a leading `1.`/`2)` ordered-list marker escaped the DIGIT
+    // instead of the punctuation after it. `\1.0.0` is not a CommonMark escape (a backslash
+    // before a digit is printed literally), so every renderer showed the backslash.
+    test("escapeInline escapes the punctuation of a leading ordered-list marker, not the digits", () => {
+        expect(escapeInline("1.0.0")).toBe("1\\.0.0");
+        expect(escapeInline("2) x")).toBe("2\\) x");
+    });
+
+    test("escapeInline leaves a bare dash or hash marker escaped as before", () => {
+        expect(escapeInline("- dash")).toBe("\\- dash");
+        expect(escapeInline("# hash")).toBe("\\# hash");
+    });
 });
 
 describe("value", () => {

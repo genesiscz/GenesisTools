@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, spyOn, test } from "bun:test";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -18,6 +18,7 @@ let outside: string;
 let cache: string;
 let server: ViteDevServer;
 let base: string;
+const startupWarnings: string[] = [];
 
 async function get(path: string): Promise<{ status: number; body: string }> {
     const res = await fetch(`${base}${path}`);
@@ -53,23 +54,32 @@ beforeAll(async () => {
 
     // Port 0 asks the OS for a free one; strictPort is false so this cannot
     // collide with a dev server the developer already has running.
-    server = await serveArtifacts({
-        dir,
-        port: 0,
-        host: "127.0.0.1",
-        templateDir: resolveTemplateDir(undefined),
-        cacheDir: cache,
-        plugins: [
-            {
-                name: "test:api-extension",
-                configureServer(vite) {
-                    vite.middlewares.use("/api/custom", (_req, res) => {
-                        res.end("custom response");
-                    });
-                },
-            },
-        ],
+    const warnSpy = spyOn(console, "warn").mockImplementation((...args: unknown[]) => {
+        startupWarnings.push(args.map(String).join(" "));
     });
+
+    try {
+        server = await serveArtifacts({
+            dir,
+            port: 0,
+            host: "127.0.0.1",
+            templateDir: resolveTemplateDir(undefined),
+            cacheDir: cache,
+            plugins: [
+                {
+                    name: "test:api-extension",
+                    configureServer(vite) {
+                        vite.middlewares.use("/api/custom", (_req, res) => {
+                            res.end("custom response");
+                        });
+                    },
+                },
+            ],
+        });
+    } finally {
+        warnSpy.mockRestore();
+    }
+
     base = server.resolvedUrls?.local[0]?.replace(/\/$/, "") ?? "";
 }, 60_000);
 
@@ -89,6 +99,12 @@ describe("serveArtifacts middleware", () => {
 
     test("keeps its Vite cache in the folder it was given, not in the repo's node_modules", () => {
         expect(server.config.cacheDir).toBe(cache);
+    });
+
+    test("starting the server never prints vite's deprecated-envFile warning", () => {
+        // Regression test: #450 — `envFile: false` is vite's OLD, deprecated spelling and warns
+        // "The `envFile` option is deprecated, please use `envDir: false` instead." on every run.
+        expect(startupWarnings.join("\n")).not.toContain("envFile");
     });
 
     test("the root serves the catalog with clean hrefs for every artifact kind", async () => {

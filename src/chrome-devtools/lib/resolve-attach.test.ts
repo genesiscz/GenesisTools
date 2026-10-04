@@ -3,9 +3,14 @@ import { env } from "@genesiscz/utils/env";
 import {
     browserById,
     browserExecutable,
+    browserNotInstalledMessage,
     browsersWithEmptyDebugFlag,
     classifyProcessName,
+    defaultOpenBrowser,
+    describeEndpointBrowser,
     discoverListeningCdpPorts,
+    freshProfileDir,
+    installedBrowsers,
     isPortSpecified,
     launchBrowser,
     listRunningBrowsers,
@@ -716,18 +721,38 @@ describe("launchBrowser", () => {
         expect(spawned[0]?.[0]).toContain("Google/Chrome/Application/chrome.exe");
     });
 
-    test("win32: falls back to the bare exe name (PATH) when no install root has it", () => {
+    test("win32: falls back to the bare exe name when no install root has it but PATH does", () => {
         const spawned: string[][] = [];
         const r = launchBrowser({
             browser: chrome,
             args: [],
             url: "about:blank",
             platform: "win32",
+            exec: (argv) =>
+                argv[0] === "where" && argv[1] === "chrome.exe" ? okExec() : { exitCode: 1, stdout: "", stderr: "" },
             spawnDetached: (cmd) => spawned.push(cmd),
             fileExists: () => false,
         });
         expect(r.ok).toBe(true);
         expect(spawned[0]?.[0]).toBe("chrome.exe");
+    });
+
+    // Regression test: PR #457 review — the bare exe name came back even when Windows could not
+    // find it anywhere, so an absent browser counted as installed and its launch failed later.
+    test("win32: a browser in no install root and not on PATH is not launched", () => {
+        const r = launchBrowser({
+            browser: chrome,
+            args: [],
+            url: "about:blank",
+            platform: "win32",
+            exec: () => ({ exitCode: 1, stdout: "", stderr: "" }),
+            spawnDetached: () => {
+                throw new Error("must not spawn a browser that is not installed");
+            },
+            fileExists: () => false,
+        });
+        expect(r.ok).toBe(false);
+        expect(r.message).toContain("chrome.exe");
     });
 
     test("win32: a browser with no exe mapping errors instead of guessing", () => {
@@ -787,5 +812,108 @@ describe("browserExecutable", () => {
                     : { exitCode: 1, stdout: "", stderr: "" },
         });
         expect(bin).toBe("brave");
+    });
+});
+
+describe("installedBrowsers / defaultOpenBrowser / browserNotInstalledMessage", () => {
+    // Regression heritage: #454 — `open` without `--browser` always tried Google Chrome, and
+    // surfaced the raw macOS `open -a` error when a machine had only Brave installed.
+    const onlyBraveInstalled = { fileExists: (p: string) => p.includes("Brave Browser.app") };
+
+    test("installedBrowsers lists only the browsers actually found on disk", () => {
+        expect(installedBrowsers({ platform: "darwin", ...onlyBraveInstalled })).toEqual(["brave"]);
+        expect(installedBrowsers({ platform: "darwin", fileExists: () => false })).toEqual([]);
+    });
+
+    // Regression test: PR #457 review — on Windows every browser with an exe mapping counted as
+    // installed, so with only Brave present `open` picked Chrome and the launch failed.
+    test("installedBrowsers on win32 lists only browsers found under an install root or on PATH", () => {
+        const exec = (argv: string[]) =>
+            argv[0] === "where" && argv[1] === "brave.exe"
+                ? { exitCode: 0, stdout: "C:\\Brave\\brave.exe\r\n", stderr: "" }
+                : { exitCode: 1, stdout: "", stderr: "" };
+
+        expect(installedBrowsers({ platform: "win32", exec, fileExists: () => false })).toEqual(["brave"]);
+        expect(
+            installedBrowsers({
+                platform: "win32",
+                exec: () => ({ exitCode: 1, stdout: "", stderr: "" }),
+                fileExists: () => false,
+            })
+        ).toEqual([]);
+    });
+
+    test("defaultOpenBrowser prefers the running browser `attach` detects over anything installed", () => {
+        const exec = (argv: string[]) =>
+            argv[0] === "pgrep" && argv.at(-1) === "Brave Browser"
+                ? { exitCode: 0, stdout: "1\n", stderr: "" }
+                : { exitCode: 1, stdout: "", stderr: "" };
+
+        expect(defaultOpenBrowser({ platform: "darwin", exec, fileExists: () => false })).toBe("brave");
+    });
+
+    test("defaultOpenBrowser falls back to the first installed browser when nothing is running", () => {
+        expect(
+            defaultOpenBrowser({
+                platform: "darwin",
+                exec: () => ({ exitCode: 1, stdout: "", stderr: "" }),
+                ...onlyBraveInstalled,
+            })
+        ).toBe("brave");
+    });
+
+    test("defaultOpenBrowser is undefined when nothing is running and nothing supported is installed", () => {
+        expect(
+            defaultOpenBrowser({
+                platform: "darwin",
+                exec: () => ({ exitCode: 1, stdout: "", stderr: "" }),
+                fileExists: () => false,
+            })
+        ).toBeUndefined();
+    });
+
+    test("browserNotInstalledMessage names what IS installed and suggests it", () => {
+        expect(browserNotInstalledMessage("chrome", { platform: "darwin", ...onlyBraveInstalled })).toBe(
+            "Google Chrome is not installed. Installed: Brave Browser. Use --browser brave."
+        );
+    });
+
+    test("browserNotInstalledMessage says so plainly when nothing supported is installed either", () => {
+        expect(browserNotInstalledMessage("chrome", { platform: "darwin", fileExists: () => false })).toBe(
+            "Google Chrome is not installed, and no supported browser was found on this machine."
+        );
+    });
+});
+
+describe("describeEndpointBrowser", () => {
+    test("prefixes the owning app's name when a non-Chrome process owns the port", () => {
+        // Regression test: #454 — every Chromium browser answers /json/version as "Chrome/x.y.z",
+        // so the endpoint label never named Brave even though the owning process was known.
+        expect(describeEndpointBrowser("Chrome/154.0.8037.98", "brave")).toBe("Brave Browser (Chrome/154.0.8037.98)");
+    });
+
+    test("leaves the raw label alone for Chrome itself, and when the owner is unknown", () => {
+        expect(describeEndpointBrowser("Chrome/154.0.8037.98", "chrome")).toBe("Chrome/154.0.8037.98");
+        expect(describeEndpointBrowser("Chrome/154.0.8037.98", null)).toBe("Chrome/154.0.8037.98");
+    });
+});
+
+describe("freshProfileDir", () => {
+    test("returns a unique directory per call, not the fixed /tmp/cdp-profile-<port>", () => {
+        // Regression test: #454 — a FIXED path was reused across every --fresh run, so cookies and
+        // logins from a previous throwaway run were still there, the opposite of "throwaway".
+        const a = freshProfileDir(9223, "darwin");
+        const b = freshProfileDir(9223, "darwin");
+        expect(a).not.toBe(b);
+        expect(a.startsWith("/tmp/cdp-profile-9223-")).toBe(true);
+        expect(b.startsWith("/tmp/cdp-profile-9223-")).toBe(true);
+    });
+
+    // Regression test: PR #457 review — an 8-character suffix is 32 random bits, and the old
+    // directories stay in /tmp, so a collision would reopen a previous run's cookies and logins.
+    test("names the directory with a full UUID, not a truncated one", () => {
+        expect(freshProfileDir(9223, "darwin")).toMatch(
+            /^\/tmp\/cdp-profile-9223-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
+        );
     });
 });

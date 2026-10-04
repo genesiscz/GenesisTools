@@ -7,6 +7,7 @@ import {
     cdpPortOf,
     classifyEvalError,
     closeTabCandidates,
+    cookiesSummaryLine,
     evaluationExpression,
     localDebuggerUrl,
     makeMatcher,
@@ -257,6 +258,20 @@ describe("newTab url encoding", () => {
         const sent = await requestFor(target);
 
         expect(decodeURIComponent(new URL(sent.url).search.slice(1))).toBe(target);
+    });
+});
+
+describe("cookiesSummaryLine", () => {
+    test("an empty jar gets a plain count, never the RFC 6265 duplicate-name tip", () => {
+        // Regression test: #454 — `cookies` printed the duplicate-name tip even with 0 cookies,
+        // where there is nothing it could be warning about.
+        expect(cookiesSummaryLine(0)).toBe("0 cookies.");
+    });
+
+    test("any cookie present gets the duplicate-name tip, since it IS possible then", () => {
+        expect(cookiesSummaryLine(1)).toBe(
+            "1 cookies. Duplicate name on different paths => longer path is sent FIRST (RFC 6265); servers taking the first value bind to the stale session."
+        );
     });
 });
 
