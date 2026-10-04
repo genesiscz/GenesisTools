@@ -289,6 +289,143 @@ describe("dotenv-assignment", () => {
     });
 });
 
+// Regression test: #451 round 2 — Twilio API Key SIDs (`SK` + 32 hex) are value-based and
+// distinctive (gitleaks' own `twilio-api-key` rule: `SK[0-9a-fA-F]{32}`), so no identifier is
+// needed. Account SIDs (`AC` + 32 hex, https://www.twilio.com/docs/glossary/what-is-a-sid)
+// are resource identifiers, not secrets, and are deliberately NOT a detector on their own.
+describe("twilio-api-key", () => {
+    const cfg = defaultScanConfig();
+    const sid = `SK${"a1b2c3d4".repeat(4)}`;
+
+    test("a Twilio API Key SID is detected", () => {
+        const content = `export const twilioKey = "${sid}";`;
+        const findings = scanContent({ content, file: "a.ts", config: cfg });
+
+        expect(findings).toHaveLength(1);
+        expect(findings[0].detector).toBe("twilio-api-key");
+    });
+
+    test("a Twilio Account SID alone is not reported", () => {
+        const accountSid = `AC${"a1b2c3d4".repeat(4)}`;
+        const content = `const accountSid = "${accountSid}";`;
+
+        expect(scanContent({ content, file: "a.ts", config: cfg })).toHaveLength(0);
+    });
+
+    test("a git SHA (40 hex chars) is never mistaken for a Twilio SID", () => {
+        const sha = "a1b2c3d4".repeat(5); // 40 hex chars, no SK/AC prefix at all
+        const content = `git checkout ${sha}`;
+
+        expect(scanContent({ content, file: "notes.txt", config: cfg })).toHaveLength(0);
+    });
+
+    test("an MD5 hash is never mistaken for a Twilio SID", () => {
+        const md5 = "d41d8cd98f00b204e9800998ecf8427e".slice(0, 32); // the empty-string MD5
+        const content = `CHECKSUM=${md5}`;
+
+        expect(scanContent({ content, file: ".env", config: cfg })).toHaveLength(0);
+    });
+
+    test("SK followed by 32 hex chars inside a longer word is not flagged", () => {
+        const content = `"DESK${"a".repeat(32)}"`; // "...E" + "SK" + hex run, no word boundary before S
+
+        expect(scanContent({ content, file: "a.ts", config: cfg })).toHaveLength(0);
+    });
+
+    test("an unquoted .env SID is reported once, not twice alongside dotenv-assignment", () => {
+        const content = `TWILIO_API_KEY=${sid}`;
+
+        expect(scanContent({ content, file: ".env", config: cfg })).toHaveLength(1);
+    });
+});
+
+// Regression test: #451 round 2 — a Twilio auth token is a bare 32-char hex string with no
+// fixed prefix (https://www.twilio.com/docs/iam/api/authtoken), so unlike the SID it is only
+// reported when a Twilio-named identifier is assigned to it; TruffleHog's own detector
+// (pkg/detectors/twilio/twilio.go) pairs the same bare `[0-9a-f]{32}` with a nearby Account SID
+// for the same reason — a bare 32-hex run alone is indistinguishable from an MD5 hash.
+describe("twilio-auth-token", () => {
+    const cfg = defaultScanConfig();
+    const token = "deadbeef".repeat(4); // 32 lowercase hex chars
+
+    test("a Twilio-named identifier assigned to a 32-hex value is detected", () => {
+        const content = `const twilioAuthToken = "${token}";`;
+        const findings = scanContent({ content, file: "a.ts", config: cfg });
+
+        expect(findings).toHaveLength(1);
+        expect(findings[0].detector).toBe("twilio-auth-token");
+    });
+
+    test("the same 32-hex value unquoted in a dotenv line is detected once", () => {
+        const content = `TWILIO_AUTH_TOKEN=${token}`;
+        const findings = scanContent({ content, file: ".env", config: cfg });
+
+        expect(findings).toHaveLength(1);
+    });
+
+    test("a 32-hex value with no Twilio-named identifier is not flagged", () => {
+        const content = `SESSION_ID=${token}`;
+
+        expect(scanContent({ content, file: ".env", config: cfg })).toHaveLength(0);
+    });
+
+    // Regression test: PR #456 review — any Twilio-named identifier qualified, so a checksum read as an auth token
+    test("a Twilio-named checksum or id is not flagged; a Twilio token or secret name is", () => {
+        const md5 = "d41d8cd98f00b204e9800998ecf8427e";
+
+        expect(scanContent({ content: `TWILIO_CHECKSUM=${md5}`, file: ".env", config: cfg })).toHaveLength(0);
+        expect(scanContent({ content: `const twilioRequestHash = "${md5}";`, file: "a.ts", config: cfg })).toHaveLength(
+            0
+        );
+        expect(scanContent({ content: `TWILIO_TOKEN=${token}`, file: ".env", config: cfg })).toHaveLength(1);
+        expect(scanContent({ content: `twilio_api_secret: "${token}"`, file: "a.yml", config: cfg })).toHaveLength(1);
+    });
+
+    test("an MD5 hash assigned to a non-Twilio identifier is not flagged", () => {
+        const md5 = "d41d8cd98f00b204e9800998ecf8427e".slice(0, 32);
+        const content = `CHECKSUM=${md5}`;
+
+        expect(scanContent({ content, file: ".env", config: cfg })).toHaveLength(0);
+    });
+});
+
+// Regression test: #451 round 2 — Resend's own documented shape
+// (https://github.com/trufflesecurity/trufflehog/issues/5107, confirmed merged in
+// pkg/detectors/resend/resend.go): `re_` + 8 base58-ish chars + `_` + 24 base58-ish chars.
+// Fixed lengths rule out `re_render_count` / `re_match_groups` and similar snake_case
+// identifiers structurally — neither segment is 8 or 24 characters long.
+describe("resend-key", () => {
+    const cfg = defaultScanConfig();
+    const base58Chunk = "a1B2c3D4"; // no 0/O/I/l, matches the documented alphabet
+    const key = `re_${base58Chunk}_${base58Chunk.repeat(3)}`;
+
+    test("a Resend API key is detected", () => {
+        const content = `const resend = new Resend("${key}");`;
+        const findings = scanContent({ content, file: "a.ts", config: cfg });
+
+        expect(findings).toHaveLength(1);
+        expect(findings[0].detector).toBe("resend-key");
+    });
+
+    test("an unquoted .env key is reported once, not twice alongside dotenv-assignment", () => {
+        const content = `RESEND_API_KEY=${key}`;
+
+        expect(scanContent({ content, file: ".env", config: cfg })).toHaveLength(1);
+    });
+
+    test("re_render_count is not flagged", () => {
+        expect(scanContent({ content: "const x = re_render_count;", file: "a.ts", config: cfg })).toHaveLength(0);
+    });
+
+    test("re_match_groups is not flagged", () => {
+        expect(scanContent({ content: "const y = re_match_groups;", file: "a.ts", config: cfg })).toHaveLength(0);
+    });
+
+    test("a snake_case identifier starting with re_ is not flagged", () => {
+        expect(scanContent({ content: "const z = re_fetch_data();", file: "a.ts", config: cfg })).toHaveLength(0);
+    });
+});
+
 describe("walkFiles", () => {
     function makeRepo(): string {
         const dir = mkdtempSync(join(tmpdir(), "secrets-walk-"));

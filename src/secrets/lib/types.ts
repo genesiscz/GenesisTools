@@ -10,6 +10,9 @@ export type DetectorName =
     | "stripe-key"
     | "openrouter-key"
     | "google-api-key"
+    | "twilio-api-key"
+    | "twilio-auth-token"
+    | "resend-key"
     | "generic-assignment"
     | "dotenv-assignment"
     | "high-entropy-base64";

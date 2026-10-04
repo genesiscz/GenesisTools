@@ -70,6 +70,33 @@ export const DETECTORS: Detector[] = [
         regex: /\bAIza[0-9A-Za-z_-]{35}\b/g,
     },
     {
+        // SID shape: a 2-letter prefix + 32 hex (https://www.twilio.com/docs/glossary/what-is-a-sid).
+        // `SK` is the API Key prefix and is distinctive on its own. `AC` (Account SID) is
+        // deliberately NOT a detector here — it identifies a resource, it does not authenticate.
+        name: "twilio-api-key",
+        regex: /\bSK[0-9a-fA-F]{32}\b/g,
+    },
+    {
+        // The auth token itself carries no fixed prefix — it is a bare 32-char hex string
+        // (https://www.twilio.com/docs/iam/api/authtoken), indistinguishable from an MD5 hash or
+        // a git SHA on its own. TruffleHog's detector (pkg/detectors/twilio/twilio.go) pairs it
+        // with a nearby Account SID for the same reason; this pairs it with a Twilio-named
+        // identifier that also says auth, token or secret, which rules out a bare hash or SHA
+        // and a Twilio-named checksum (`TWILIO_CHECKSUM`) alike.
+        name: "twilio-auth-token",
+        regex: /\btwilio[a-z0-9_]*?(?:auth|token|secret)[a-z0-9_]*["'`]?\s*[:=]\s*["'`]?([0-9a-fA-F]{32})(?![0-9a-fA-F])/gi,
+        secretGroup: 1,
+        accept: (secret) => !isPlaceholderSecret(secret),
+    },
+    {
+        // `re_` + 8 + `_` + 24 chars of a base58-like alphabet (no 0/O/I/l), the format Resend's
+        // own team gave TruffleHog (github.com/trufflesecurity/trufflehog issue #5107, merged as
+        // pkg/detectors/resend/resend.go). The fixed lengths rule out `re_render_count` and
+        // `re_match_groups`: neither segment there is 8 or 24 characters long.
+        name: "resend-key",
+        regex: /\bre_[1-9A-HJ-NP-Za-km-z]{8}_[1-9A-HJ-NP-Za-km-z]{24}\b/g,
+    },
+    {
         // identifier containing a secret-ish word, assigned to a single quoted
         // token (no whitespace — real credentials never contain spaces)
         name: "generic-assignment",
