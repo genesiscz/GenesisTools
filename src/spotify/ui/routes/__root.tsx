@@ -7,6 +7,7 @@ import { createRootRoute, HeadContent, Outlet, Scripts, useRouter, useRouterStat
 import {
     Activity,
     CalendarClock,
+    Compass,
     Disc3,
     Fingerprint,
     Gift,
@@ -29,6 +30,7 @@ const navLinks = [
     { label: "DNA", href: "/dna", icon: <Fingerprint className="w-3.5 h-3.5" /> },
     { label: "Wrapped", href: "/wrapped", icon: <Disc3 className="w-3.5 h-3.5" /> },
     { label: "Together", href: "/together", icon: <Gift className="w-3.5 h-3.5" /> },
+    { label: "Discover", href: "/discover", icon: <Compass className="w-3.5 h-3.5" /> },
     { label: "Explore", href: "/explore", icon: <Search className="w-3.5 h-3.5" /> },
     { label: "Settings", href: "/settings", icon: <Settings className="w-3.5 h-3.5" /> },
 ];

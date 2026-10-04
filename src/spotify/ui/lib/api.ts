@@ -20,6 +20,7 @@ import type { DnaReport, ShiftReport } from "@app/spotify/lib/reports/insight";
 import type { AuditReport, GemsReport, MainstreamReport, SavesReport } from "@app/spotify/lib/reports/library";
 import type { DoctorReport } from "@app/spotify/lib/reports/pipeline";
 import type { ProfileListReport } from "@app/spotify/lib/reports/profiles";
+import type { RecommendReport } from "@app/spotify/lib/reports/recommend";
 import type { SummaryReport } from "@app/spotify/lib/reports/summary";
 import type { CalendarReport, ClockReport, SeasonsReport, TimelineReport } from "@app/spotify/lib/reports/time";
 import type { TopReport } from "@app/spotify/lib/reports/top";
@@ -58,6 +59,7 @@ export interface ReportMap {
     compatTimeline: CompatTimelineReport;
     blend: BlendReport;
     gift: GiftReport;
+    recommend: RecommendReport;
     doctor: DoctorReport;
 }
 

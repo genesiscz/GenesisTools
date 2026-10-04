@@ -40,6 +40,7 @@ export function parseReportRequest(params: URLSearchParams): ReportRequest {
         a: strParam(params, "a"),
         b: strParam(params, "b"),
         timeline: boolParam(params, "timeline"),
+        method: strParam(params, "method"),
     };
 }
 

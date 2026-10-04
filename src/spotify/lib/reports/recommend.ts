@@ -274,12 +274,16 @@ export function recommendBursts(index: ArtistIndex, o: BurstOptions): Recommenda
         const score = Math.round((burst.length * 100) / (1 + exploredAfter / 4 + likedAfter / 2));
         const days = Math.max(1, Math.round((burstEnd - burstStart) / DAY_MS));
 
+        const when =
+            `You liked ${burst.length} songs by ${s.name} within ${days} ${days === 1 ? "day" : "days"} ` +
+            `in ${monthYear(burstStart)}`;
         out.push({
             ...base(s),
             score,
             reason:
-                `You liked ${burst.length} songs by ${s.name} within ${days} ${days === 1 ? "day" : "days"} ` +
-                `in ${monthYear(burstStart)}, right after you first heard them. ` +
+                (s.first === null
+                    ? `${when}, but your history has no full play of them at all. `
+                    : `${when}, right after you first heard them. `) +
                 (exploredAfter === 0
                     ? "You have not played anything else by them since."
                     : `Since then you played only ${exploredAfter} other ${exploredAfter === 1 ? "song" : "songs"} by them.`),
