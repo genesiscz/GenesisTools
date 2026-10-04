@@ -1269,7 +1269,7 @@ function refersToModuleBinding(path: ASTPath<Node>, name: string): boolean {
 
 /**
  * Renames every reference to the module-scope binding `oldName`, such as an import's local name: expressions
- * (`memo(Button)`, `Button.displayName`), JSX tags and the object of a JSX member tag (`<Button.Icon />`), type
+ * (`memo(Button)`, `Button.displayName`), JSX tags and the object of a JSX member tag (`<Button.Label />`), type
  * references and `typeof`. A reference to an inner binding that shadows the name stays, and so do property keys,
  * member properties and JSX attribute names. A shorthand property keeps its key (`{ Button: LocalButton }`) and an
  * export specifier its exported name (`export { LocalButton as Button }`). The declaration that binds the name,
