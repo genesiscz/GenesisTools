@@ -8,7 +8,14 @@
  */
 import { describe, expect, test } from "bun:test";
 import type { CapturedRequest, RequestWaitOptions, TabDriver } from "@app/chrome-devtools/lib/tab-driver";
-import { autoHarvest, payload, preparedSetupGql } from "@app/spotify/lib/browser/harvest";
+import {
+    ARTIST_PACING,
+    artistHarvestBudgetMs,
+    autoHarvest,
+    autoHarvestArtists,
+    payload,
+    preparedSetupGql,
+} from "@app/spotify/lib/browser/harvest";
 import { SPOTIFY_LIBRARY_URL } from "@app/spotify/lib/browser/session";
 
 const tokens = { authorization: "Bearer test-access-token", clientToken: "test-client-token" };
@@ -89,17 +96,23 @@ interface ArtistPayloadResult {
     artists: { uri: string }[];
 }
 
-/** The payload text, evaluated with the fake page and clock in place of the names it uses. */
+/**
+ * The payload text, evaluated with the fake page and clock in place of the names it uses, and
+ * called with the same `ARTIST_PACING` that `autoHarvestArtists` passes.
+ */
 function artistPayload(
     gql: Gql,
     clock: ReturnType<typeof fakeClock>
 ): (uris: string[]) => Promise<ArtistPayloadResult> {
-    return new Function("window", "setTimeout", "clearTimeout", "Date", `return (${payload("harvestArtists")});`)(
-        { __gql: gql },
-        clock.setTimeout,
-        clock.clearTimeout,
-        { now: clock.now }
-    );
+    const harvest: (uris: string[], pacing: typeof ARTIST_PACING) => Promise<ArtistPayloadResult> = new Function(
+        "window",
+        "setTimeout",
+        "clearTimeout",
+        "Date",
+        `return (${payload("harvestArtists")});`
+    )({ __gql: gql }, clock.setTimeout, clock.clearTimeout, { now: clock.now });
+
+    return (uris) => harvest(uris, ARTIST_PACING);
 }
 
 const overview = (uri: string) => ({
@@ -230,6 +243,30 @@ describe("the artist payload", () => {
             }
         }
     });
+
+    // The CDP deadline was a fixed max(15 min, 3 s an artist). Stalled artists hold a worker for
+    // three 15 s attempts plus back-offs, so such a run outlived it and nothing was saved.
+    test("the deadline outlasts a run in which every request stalls", async () => {
+        const clock = fakeClock();
+        const gql: Gql = (_operation, _hash, _vars, options) =>
+            new Promise((_resolve, reject) => {
+                options?.signal?.addEventListener("abort", () => reject(options.signal?.reason));
+            });
+
+        const uris = Array.from({ length: 60 }, (_, i) => `spotify:artist:${i}`);
+        const result = await clock.run(artistPayload(gql, clock)(uris));
+
+        expect(result.errors).toHaveLength(60);
+        expect(clock.now()).toBeGreaterThan(Math.max(15 * 60_000, uris.length * 3_000));
+        expect(clock.now()).toBeLessThanOrEqual(artistHarvestBudgetMs(uris.length));
+    });
+
+    test("the deadline is derived from the pacing, not fixed", () => {
+        // 3 attempts x (3 workers x 1 s slot + 15 s) + 2 s + 4 s back-off = 60 s an artist.
+        expect(artistHarvestBudgetMs(1)).toBe(2 * 60_000 + 60_000);
+        expect(artistHarvestBudgetMs(6)).toBe(3 * 60_000 + 60_000);
+        expect(artistHarvestBudgetMs(6, { ...ARTIST_PACING, attemptMs: 30_000 })).toBe(3 * 105_000 + 60_000);
+    });
 });
 
 describe("preparedSetupGql", () => {
@@ -273,10 +310,13 @@ describe("autoHarvest success path", () => {
         /** When the page sends its pathfinder request: on its own, or only once the library loads. */
         requestWhen?: "idle" | "navigate";
         probeStatus?: number;
+        /** What the artist payload returns, for `autoHarvestArtists`. */
+        artistResult?: unknown;
     }
 
-    function fake({ requestWhen = "idle", probeStatus = 200 }: FakeOptions = {}) {
+    function fake({ requestWhen = "idle", probeStatus = 200, artistResult }: FakeOptions = {}) {
         const evaluated: string[] = [];
+        const deadlines: (number | undefined)[] = [];
         const waits: RequestWaitOptions[] = [];
         let closed = false;
 
@@ -284,7 +324,7 @@ describe("autoHarvest success path", () => {
             tabs: async () => [
                 { id: "tab-spotify", url: "https://open.spotify.com/collection/tracks", title: "Liked Songs" },
             ],
-            evaluate: async (_tabId, source) => {
+            evaluate: async (_tabId, source, options) => {
                 // The sign-in probe runs first, and it asks the PAGE, not the traffic.
                 if (source.includes("now-playing-widget") && source.includes("__REACT_DEVTOOLS_GLOBAL_HOOK__")) {
                     return { ok: true };
@@ -296,6 +336,12 @@ describe("autoHarvest success path", () => {
                     return probeStatus === 200
                         ? { installed: true, probeStatus, totalLikedTracks: 2 }
                         : { installed: true, probeStatus, hint: "token expired" };
+                }
+
+                if (source.includes("queryArtistOverview")) {
+                    deadlines.push(options?.deadlineMs);
+
+                    return artistResult;
                 }
 
                 return {
@@ -326,7 +372,7 @@ describe("autoHarvest success path", () => {
             },
         };
 
-        return { driver, evaluated, waits, isClosed: () => closed };
+        return { driver, evaluated, deadlines, waits, isClosed: () => closed };
     }
 
     test("reads the tokens, installs the helper with them, and returns the library", async () => {
@@ -373,5 +419,44 @@ describe("autoHarvest success path", () => {
         ).rejects.toThrow(/401|token expired/);
         // Only the helper was installed; the library walk never ran.
         expect(f.evaluated).toHaveLength(1);
+    });
+
+    // The page catches what throws, not what it builds wrong. Checking the whole artist list at
+    // once made one track without a name discard every artist: "the artist harvest returned nothing".
+    test("a malformed artist becomes that artist's error, and the valid ones are kept", async () => {
+        const good = (uri: string) => ({
+            uri,
+            name: uri,
+            topTracks: [{ uri: `${uri}:t`, name: "Hit", playcount: 5, albumUri: null, cover: null }],
+            popularReleases: [],
+        });
+        const broken = {
+            ...good("spotify:artist:Broken"),
+            topTracks: [{ uri: "spotify:track:x", playcount: 5, albumUri: null, cover: null }],
+        };
+        const f = fake({
+            artistResult: {
+                requested: 4,
+                fetched: 3,
+                errors: [{ uri: "spotify:artist:Gone", error: "404 not found" }],
+                artists: [good("spotify:artist:A"), broken, good("spotify:artist:B")],
+            },
+        });
+        const uris = ["spotify:artist:A", "spotify:artist:Broken", "spotify:artist:B", "spotify:artist:Gone"];
+
+        const result = await autoHarvestArtists({
+            browserUrl: "http://127.0.0.1:9222",
+            onLog: () => {},
+            driver: f.driver,
+            artistUris: uris,
+        });
+
+        expect(result.artists.map((a) => a.uri)).toEqual(["spotify:artist:A", "spotify:artist:B"]);
+        expect(result.fetched).toBe(2);
+        expect(result.errors[0]).toEqual({ uri: "spotify:artist:Gone", error: "404 not found" });
+        expect(result.errors[1]?.uri).toBe("spotify:artist:Broken");
+        expect(result.errors[1]?.error).toStartWith("malformed artist data at topTracks.0.name:");
+        // The evaluation waits as long as the payload's own pacing can take for this many artists.
+        expect(f.deadlines).toEqual([artistHarvestBudgetMs(uris.length)]);
     });
 });

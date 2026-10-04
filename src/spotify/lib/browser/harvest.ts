@@ -103,28 +103,100 @@ const CatalogReleaseSchema = z.object({
     cover: z.string().nullable(),
 });
 
-/** What `harvestArtists.ts` returns. */
-const ArtistHarvestSchema = z.object({
-    requested: z.number(),
-    fetched: z.number(),
-    errors: z.array(z.object({ uri: z.string(), error: z.string() })),
-    artists: z.array(
-        z.object({
-            uri: z.string(),
-            name: z.string().nullable(),
-            topTracks: z.array(CatalogTrackSchema),
-            popularReleases: z.array(CatalogReleaseSchema),
-        })
-    ),
+const ArtistEntrySchema = z.object({
+    uri: z.string(),
+    name: z.string().nullable(),
+    topTracks: z.array(CatalogTrackSchema),
+    popularReleases: z.array(CatalogReleaseSchema),
 });
 
-export type ArtistHarvestResult = z.infer<typeof ArtistHarvestSchema>;
+/** What `harvestArtists.ts` returns, with each artist left unchecked so one bad entry stays one. */
+const ArtistHarvestEnvelopeSchema = z.object({
+    requested: z.number(),
+    errors: z.array(z.object({ uri: z.string(), error: z.string() })),
+    artists: z.array(z.unknown()),
+});
+
+export interface ArtistHarvestResult {
+    requested: number;
+    fetched: number;
+    errors: { uri: string; error: string }[];
+    artists: z.infer<typeof ArtistEntrySchema>[];
+}
 
 /**
- * The payload starts one artist overview a second, so 200 artists take about 200 s. The deadline
- * grows with the list (3 s an artist leaves room for retries) and never drops below 15 minutes.
+ * Checks the payload's result one artist at a time. An entry the page built but got wrong (a track
+ * without a name, say) becomes that artist's error, naming the field; every valid artist is kept.
+ * Checking the whole array at once turned one bad track into "the harvest returned nothing".
  */
-const artistHarvestDeadlineMs = (artists: number) => Math.max(15 * 60_000, artists * 3_000);
+export function parseArtistHarvest(value: unknown): ArtistHarvestResult | null {
+    const envelope = parsePayload(ArtistHarvestEnvelopeSchema, value);
+    if (!envelope) {
+        return null;
+    }
+
+    const artists: ArtistHarvestResult["artists"] = [];
+    const errors = [...envelope.errors];
+    for (const entry of envelope.artists) {
+        const parsed = ArtistEntrySchema.safeParse(entry);
+        if (parsed.success) {
+            artists.push(parsed.data);
+            continue;
+        }
+
+        const uri =
+            typeof entry === "object" && entry !== null && "uri" in entry && typeof entry.uri === "string"
+                ? entry.uri
+                : "(no uri)";
+        const issue = parsed.error.issues[0];
+        const what = issue ? `${issue.path.map(String).join(".") || "(entry)"}: ${issue.message}` : "unexpected shape";
+        log.warn(
+            { uri, issues: parsed.error.issues },
+            "artist entry has another shape; reported as that artist's error"
+        );
+        errors.push({ uri, error: `malformed artist data at ${what}` });
+    }
+
+    return { requested: envelope.requested, fetched: artists.length, errors, artists };
+}
+
+/**
+ * How `harvestArtists.ts` paces itself. The payload gets this object as its second argument, and
+ * `artistHarvestBudgetMs` derives the CDP deadline from the same numbers, so the two cannot drift.
+ */
+export const ARTIST_PACING = {
+    /** Least time between two request starts, retries included (about 1 request a second). */
+    startIntervalMs: 1_000,
+    /** Requests in flight at once: one worker each. */
+    concurrency: 3,
+    /** Tries per artist: the first request and two retries. */
+    attempts: 3,
+    /** Deadline of one attempt, body included. */
+    attemptMs: 15_000,
+    /** Wait before retry n is n times this. */
+    backoffMs: 2_000,
+} as const;
+
+export type ArtistPacing = { [K in keyof typeof ARTIST_PACING]: number };
+
+/** Room for the evaluation round trip and the page's own work around the requests. */
+const ARTIST_BUDGET_MARGIN_MS = 60_000;
+
+/**
+ * The longest the artist payload can run, worst case: every attempt of every artist times out.
+ *
+ * One artist then holds its worker for `attempts` x (a start slot, at most one interval per worker
+ * ahead, plus the attempt deadline) plus the back-offs between attempts. Workers take the next
+ * artist when free, so the run ends at most one artist's worst time after the others have shared
+ * out the rest. A fixed deadline (15 minutes, or 3 s an artist) ran out on stalled runs, threw
+ * the whole evaluation away and saved nothing.
+ */
+export function artistHarvestBudgetMs(artists: number, pacing: ArtistPacing = ARTIST_PACING): number {
+    const backoffs = pacing.backoffMs * ((pacing.attempts * (pacing.attempts - 1)) / 2);
+    const perArtist = pacing.attempts * (pacing.concurrency * pacing.startIntervalMs + pacing.attemptMs) + backoffs;
+
+    return (Math.ceil(artists / pacing.concurrency) + 1) * perArtist + ARTIST_BUDGET_MARGIN_MS;
+}
 
 export interface AutoHarvestOptions {
     browserUrl: string;
@@ -187,12 +259,15 @@ export async function autoHarvestArtists({
     try {
         const tab = await openSignedInGql({ tabs, browserUrl, onLog });
 
-        onLog(`probe ok — reading ${artistUris.length} artist pages (one request a second, at most 3 in flight)`);
+        onLog(
+            `probe ok — reading ${artistUris.length} artist pages ` +
+                `(one request every ${ARTIST_PACING.startIntervalMs / 1000} s, at most ${ARTIST_PACING.concurrency} in flight)`
+        );
 
-        const source = `async () => (${payload("harvestArtists")})(${SafeJSON.stringify(artistUris, { strict: true })})`;
-        const harvested = parsePayload(
-            ArtistHarvestSchema,
-            await tab.evaluate(source, { deadlineMs: artistHarvestDeadlineMs(artistUris.length) })
+        const args = `${SafeJSON.stringify(artistUris, { strict: true })}, ${SafeJSON.stringify(ARTIST_PACING, { strict: true })}`;
+        const source = `async () => (${payload("harvestArtists")})(${args})`;
+        const harvested = parseArtistHarvest(
+            await tab.evaluate(source, { deadlineMs: artistHarvestBudgetMs(artistUris.length) })
         );
 
         if (!harvested) {

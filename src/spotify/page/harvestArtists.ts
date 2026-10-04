@@ -1,6 +1,8 @@
 /**
- * BROWSER PAYLOAD — run setupGql first, then call this with a list of `spotify:artist:…` URIs.
- * `harvest --artists --auto` runs it for you with the artists the Discover methods picked.
+ * BROWSER PAYLOAD — run setupGql first, then call this with a list of `spotify:artist:…` URIs and
+ * the pacing settings. `harvest --artists --auto` runs it for you with the artists the Discover
+ * methods picked and `ARTIST_PACING` from lib/browser/harvest.ts. The settings live there, not
+ * here, because the same numbers decide how long the tool waits for this payload to finish.
  *
  * One queryArtistOverview request per artist: the artist's most played songs, each with its
  * real global `playcount`, and its popular releases. That is what lets Discover say "songs by
@@ -8,23 +10,27 @@
  *
  * Pacing follows the measured rule in references/pathfinder-api.md (about 1 request per second
  * sustained). One shared limiter spaces the STARTS of all requests, retries included, at least
- * 1 s apart. Up to 3 may be in flight, so a slow answer does not lower the rate either.
+ * `startIntervalMs` (1 s) apart. Up to `concurrency` (3) may be in flight, so a slow answer does
+ * not lower the rate either.
  *
- * Every attempt has a 15 s deadline that covers the body too: the signal goes to `__gql`, which
- * hands it to `fetch`, and a timer race ends the attempt even if an older `__gql` ignores it.
+ * Every attempt has an `attemptMs` (15 s) deadline that covers the body too: the signal goes to
+ * `__gql`, which hands it to `fetch`, and a timer race ends the attempt even if an older `__gql`
+ * ignores it.
  *
  * One artist never sinks the harvest: a non-200 answer, a thrown request (network, JSON) and a
- * timeout are all retried twice and then come back as `{ uri, error }`, so the result still
- * carries every artist that was read before and after it.
+ * timeout are all tried `attempts` (3) times, `backoffMs` (2 s) longer before each retry, and then
+ * come back as `{ uri, error }`, so the result still carries every artist read before and after it.
  *
  * No type annotations: this text is evaluated as JavaScript inside the page.
  */
-async (artistUris) => {
+async (artistUris, pacing) => {
+    if (!pacing) {
+        throw new Error("pass the pacing settings as the second argument (harvest --artists --auto does)");
+    }
+
     const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     const HASH = "ae0e2958a4ab645b35ca19ac04d0495ae12d9c5d7b7286217674801a9aab281a";
-    const START_INTERVAL_MS = 1000;
-    const CONCURRENCY = 3;
-    const ATTEMPT_MS = 15_000;
+    const { startIntervalMs, concurrency, attempts, attemptMs, backoffMs } = pacing;
 
     // The smallest cover that is still sharp at 64 px, so the dashboard does not pull 640 px art.
     const cover = (sources) => {
@@ -40,7 +46,7 @@ async (artistUris) => {
     const paced = async () => {
         const now = Date.now();
         const at = Math.max(now, nextStart);
-        nextStart = at + START_INTERVAL_MS;
+        nextStart = at + startIntervalMs;
 
         if (at > now) {
             await sleep(at - now);
@@ -54,10 +60,10 @@ async (artistUris) => {
         let timer;
         const deadline = new Promise((_, reject) => {
             timer = setTimeout(() => {
-                const err = new Error(`no answer within ${ATTEMPT_MS / 1000} s`);
+                const err = new Error(`no answer within ${attemptMs / 1000} s`);
                 controller.abort(err);
                 reject(err);
-            }, ATTEMPT_MS);
+            }, attemptMs);
         });
 
         try {
@@ -76,8 +82,8 @@ async (artistUris) => {
     };
 
     const retry = async (uri, attempt, error) => {
-        if (attempt < 2) {
-            await sleep(2000 * (attempt + 1));
+        if (attempt < attempts - 1) {
+            await sleep(backoffMs * (attempt + 1));
 
             return one(uri, attempt + 1);
         }
@@ -128,7 +134,7 @@ async (artistUris) => {
         };
     };
 
-    // CONCURRENCY workers take the next artist as soon as they are free. Results land in the
+    // `concurrency` workers take the next artist as soon as they are free. Results land in the
     // order the artists were given, whatever order they finished in.
     const results = new Array(artistUris.length);
     let next = 0;
@@ -141,7 +147,7 @@ async (artistUris) => {
         }
     };
 
-    await Promise.all(Array.from({ length: Math.min(CONCURRENCY, artistUris.length) }, worker));
+    await Promise.all(Array.from({ length: Math.min(concurrency, artistUris.length) }, worker));
 
     const artists = results.filter((r) => !r.error);
     const errors = results.filter((r) => r.error);
