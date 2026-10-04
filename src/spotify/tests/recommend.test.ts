@@ -2,9 +2,19 @@
  * Discover methods over hand-built histories: each method's positive case and the negative case
  * that keeps it honest (an old artist is not a burst, a well-explored artist is not unfinished).
  */
-import { describe, expect, test } from "bun:test";
-import { type CatalogArtist, emptyCatalog, mergeCatalog } from "@app/spotify/lib/catalog";
-import { embedUrl, parseEmbedArtist } from "@app/spotify/lib/embed";
+import { afterAll, describe, expect, test } from "bun:test";
+import { mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import {
+    type CatalogArtist,
+    emptyCatalog,
+    loadCatalog,
+    mergeCatalog,
+    saveCatalog,
+    saveHarvestedArtists,
+} from "@app/spotify/lib/catalog";
+import { embedUrl, fetchEmbedArtists, parseEmbedArtist } from "@app/spotify/lib/embed";
 import type { Play } from "@app/spotify/lib/history";
 import type { LibTrack } from "@app/spotify/lib/library";
 import {
@@ -246,9 +256,80 @@ describe("the artist catalogue", () => {
     });
 });
 
+describe("saving the catalogue", () => {
+    const dir = mkdtempSync(join(tmpdir(), "spotify-catalog-test-"));
+
+    afterAll(() => {
+        rmSync(dir, { recursive: true, force: true });
+    });
+
+    const artist = (uri: string, source: "web-player" | "embed"): Omit<CatalogArtist, "fetchedAt"> => ({
+        uri,
+        name: uri,
+        source,
+        topTracks: [],
+        popularReleases: [],
+    });
+
+    // A harvest reads the catalogue, crawls for minutes, then saves. Saving the copy it read at the
+    // start dropped what another harvest wrote meanwhile, and let a slow embed run put its entry
+    // over a web-player one that landed during the crawl.
+    test("an entry written to disk between the load and the save survives", async () => {
+        const path = join(dir, "artist-catalog.json");
+        saveCatalog(mergeCatalog(emptyCatalog(), [artist("spotify:artist:A", "web-player")], new Date(T0)), path);
+
+        // Another harvest finishes while this one is still crawling.
+        const other = mergeCatalog(loadCatalog(path), [artist("spotify:artist:B", "web-player")], new Date(T0 + DAY));
+        saveCatalog(other, path);
+
+        await saveHarvestedArtists({
+            path,
+            fetchedAt: new Date(T0 + 2 * DAY),
+            harvested: [artist("spotify:artist:B", "embed"), artist("spotify:artist:C", "embed")],
+        });
+
+        const after = loadCatalog(path);
+        expect(Object.keys(after.artists).sort()).toEqual(["spotify:artist:A", "spotify:artist:B", "spotify:artist:C"]);
+        expect(after.artists["spotify:artist:B"]?.source).toBe("web-player");
+        expect(after.artists["spotify:artist:C"]?.fetchedAt).toBe(new Date(T0 + 2 * DAY).toISOString());
+        // The atomic write renamed its temp file and the lock was released.
+        expect(readdirSync(dir).sort()).toEqual(["artist-catalog.json"]);
+    });
+});
+
 describe("the public embed page", () => {
     const page = (data: unknown) =>
         `<html><body><script id="__NEXT_DATA__" type="application/json">${SafeJSON.stringify(data, { strict: true })}</script></body></html>`;
+
+    const artistPage = (uri: string) =>
+        page({
+            props: {
+                pageProps: {
+                    state: {
+                        data: { entity: { name: "Fresh", uri, trackList: [{ uri: "spotify:track:1", title: "One" }] } },
+                    },
+                },
+            },
+        });
+
+    // Discover and the next harvest look an artist up by the URI from Liked Songs. Stored under
+    // the page's own URI, the entry was never found and the artist was fetched again every run.
+    test("an artist is stored under the URI that was asked for, not the one its page names", async () => {
+        const realFetch = globalThis.fetch;
+        globalThis.fetch = Object.assign(async () => new Response(artistPage("spotify:artist:Canonical")), {
+            preconnect: realFetch.preconnect,
+        });
+
+        try {
+            const r = await fetchEmbedArtists({ artistUris: ["spotify:artist:Requested"], onLog: () => {} });
+
+            expect(r.errors).toEqual([]);
+            expect(r.artists.map((a) => a.uri)).toEqual(["spotify:artist:Requested"]);
+            expect(r.artists[0]?.topTracks.map((t) => t.name)).toEqual(["One"]);
+        } finally {
+            globalThis.fetch = realFetch;
+        }
+    });
 
     test("reads an artist's top tracks in order, with no play counts", () => {
         const html = page({

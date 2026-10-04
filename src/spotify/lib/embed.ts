@@ -114,7 +114,14 @@ export async function fetchEmbedArtists({
 
         const artist = parseEmbedArtist(res.body);
         if (artist) {
-            artists.push(artist);
+            if (artist.uri !== uri) {
+                log.debug({ requested: uri, page: artist.uri }, "embed page names another artist URI");
+            }
+
+            // Kept under the URI that was asked for: Discover and the next harvest look an artist
+            // up by the URI from Liked Songs, so an entry under the page's (canonical or merged)
+            // URI would never be found and would be fetched again on every run.
+            artists.push({ ...artist, uri });
         } else {
             errors.push({ uri, error: "the embed page carried no artist track list" });
         }

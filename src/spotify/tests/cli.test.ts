@@ -914,6 +914,22 @@ describe("pipeline", () => {
     });
 });
 
+describe("discover", () => {
+    // Every artist URI comes from Liked Songs, and profile b has none. This used to report "all 0
+    // Discover picks are already in the catalogue", which pointed at the wrong problem.
+    test("harvest --artists without a library says there is nothing to fetch and how to fix it", async () => {
+        const human = await okAll(["harvest", "--artists", "-p", "b"]);
+        expectContains(human, "nothing to fetch", "tools spotify harvest --auto --profile b");
+        expect(human).not.toContain("already in the catalogue");
+
+        const v = await okJson<{ requested: number; fetched: number; cached: number; errors: unknown[]; hint: string }>(
+            ["harvest", "--artists", "-p", "b", "--json"]
+        );
+        expect(v).toMatchObject({ requested: 0, fetched: 0, cached: 0, errors: [] });
+        expect(v.hint).toBe("tools spotify harvest --auto --profile b");
+    });
+});
+
 describe("export", () => {
     test("csv", async () => {
         const path = join(root, "out.csv");

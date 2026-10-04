@@ -8,21 +8,19 @@
 import { existsSync, readdirSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { common, emit } from "@app/spotify/commands/_shared";
-import { autoHarvest, autoHarvestArtists } from "@app/spotify/lib/browser/harvest";
-import { loadCatalog, mergeCatalog, saveCatalog } from "@app/spotify/lib/catalog";
+import { autoHarvest } from "@app/spotify/lib/browser/harvest";
+import { harvestArtistCatalog } from "@app/spotify/lib/catalog-harvest";
 import { type CommonOpts, dateOption, numberOption } from "@app/spotify/lib/context";
 import { toCsv } from "@app/spotify/lib/csv";
-import { fetchEmbedArtists } from "@app/spotify/lib/embed";
 import { buildArtistIndex } from "@app/spotify/lib/enrich/build-artist-index";
 import { enrichLastfm } from "@app/spotify/lib/enrich/lastfm";
 import { mergeGenres } from "@app/spotify/lib/enrich/merge-genres";
 import { type MergeHistoryGrouping, mergeHistory } from "@app/spotify/lib/enrich/merge-history";
 import { enrichMusicbrainz } from "@app/spotify/lib/enrich/musicbrainz";
 import { progress, writeJsonl } from "@app/spotify/lib/io";
-import { cacheDir, catalogPath } from "@app/spotify/lib/paths";
+import { cacheDir } from "@app/spotify/lib/paths";
 import { getProfile } from "@app/spotify/lib/profiles";
 import { doctorReport, exportReport, parseExportKind } from "@app/spotify/lib/reports/pipeline";
-import { catalogCandidates, RECOMMEND_METHODS } from "@app/spotify/lib/reports/recommend";
 import { renderDoctor, renderExportPreview, renderHarvestGuide } from "@app/spotify/render/pipeline";
 import { int } from "@app/spotify/render/text";
 import { env } from "@genesiscz/utils/env";
@@ -109,29 +107,34 @@ interface HarvestFlags {
     json?: boolean;
 }
 
-/**
- * `harvest --artists`: the artist catalogue that lets Discover name songs you never played.
- * By default from Spotify's public embed pages (no browser, no login, top tracks only); with
- * `--auto` through the signed-in web player, which adds play counts, covers and releases.
- */
+/** `harvest --artists`: parses the flags, runs `harvestArtistCatalog`, and renders what it did. */
 async function harvestArtists(o: HarvestFlags): Promise<void> {
-    const catalog = loadCatalog();
-    const perMethod = numberOption(o.perMethod, "per-method", 40, { min: 1, integer: true });
-    const candidates = catalogCandidates({
+    const result = await harvestArtistCatalog({
         profile: o.profile,
-        methods: RECOMMEND_METHODS.map((m) => m.id),
-        perMethod,
-    });
-    // `--auto` also upgrades artists that so far only have the poorer embed data.
-    const todo = candidates.filter((uri) => {
-        const entry = catalog.artists[uri];
-
-        return o.refresh || !entry || (o.auto === true && entry.source === "embed");
+        perMethod: numberOption(o.perMethod, "per-method", 40, { min: 1, integer: true }),
+        auto: o.auto === true,
+        refresh: o.refresh === true,
+        browserUrl: o.browserUrl ?? env.spotify.getBrowserUrl() ?? "http://127.0.0.1:9222",
+        onLog: (line) => out.printlnErr(pc.gray(`  ${line}`)),
     });
 
-    if (!todo.length) {
+    if (result.status === "no-candidates") {
+        // Every artist URI comes from Liked Songs, so without a harvested library there is nothing
+        // to look up. Same payload keys as the other paths, plus the command that fixes it.
+        const fix = `tools spotify harvest --auto --profile ${getProfile(o.profile).name}`;
+        const nothing = { requested: 0, fetched: 0, errors: [], cached: 0, out: result.out, hint: fix };
+        emit(o.json, nothing, () => {
+            out.println("nothing to fetch: no Discover pick has a Spotify artist URI yet.");
+            out.println("  The URIs come from your Liked Songs library. Harvest it first:");
+            out.println(`  ${fix}`);
+        });
+
+        return;
+    }
+
+    if (result.status === "up-to-date") {
         // Same payload shape as a real run, so `--json` stays parseable when there is nothing to do.
-        const nothing = { requested: 0, fetched: 0, errors: [], cached: candidates.length, out: catalogPath() };
+        const nothing = { requested: 0, fetched: 0, errors: [], cached: result.cached, out: result.out };
         emit(o.json, nothing, (r) => {
             out.println(
                 `all ${int(r.cached)} Discover picks are already in the catalogue (--refresh fetches them again)`
@@ -141,23 +144,8 @@ async function harvestArtists(o: HarvestFlags): Promise<void> {
         return;
     }
 
-    out.printlnErr(
-        pc.gray(
-            `  ${int(todo.length)} artists to fetch, ${int(candidates.length - todo.length)} already in the catalogue`
-        )
-    );
-
-    const onLog = (line: string) => out.printlnErr(pc.gray(`  ${line}`));
-    const result = o.auto
-        ? await autoHarvestArtists({
-              browserUrl: o.browserUrl ?? env.spotify.getBrowserUrl() ?? "http://127.0.0.1:9222",
-              onLog,
-              artistUris: todo,
-          }).then((r) => ({ ...r, artists: r.artists.map((a) => ({ ...a, source: "web-player" as const })) }))
-        : await fetchEmbedArtists({ artistUris: todo, onLog });
-    const path = saveCatalog(mergeCatalog(catalog, result.artists, new Date()));
-
-    emit(o.json, { ...result, artists: undefined, out: path }, (r) => {
+    const { requested, fetched, errors, out: path } = result;
+    emit(o.json, { requested, fetched, errors, out: path }, (r) => {
         out.println(`fetched ${int(r.fetched)} of ${int(r.requested)} artist pages → ${path}`);
 
         if (r.errors.length) {
