@@ -894,6 +894,19 @@ describe("ImportConflictResolver", () => {
         expect(flat(root.toSource())).toBe(`import { PageHeader } from "${PRIMARY}"; const a = <OldHeader />;`);
     });
 
+    it("removing a renamed component's import keeps every side-effect import", () => {
+        const { root, resolver } = conflictResolver(
+            `import "./styles.css";\nimport { OldHeader } from "${PRIMARY}";\nimport "./polyfill";\nconst a = <OldHeader />;`
+        );
+
+        resolver.trackResolution(resolver.resolveComponentUsage("OldHeader", "PageHeader", PRIMARY));
+        resolver.applyImportChanges();
+
+        expect(flat(root.toSource())).toBe(
+            `import "./styles.css"; import "./polyfill"; import { PageHeader } from "${PRIMARY}"; const a = <OldHeader />;`
+        );
+    });
+
     it("an app-local import that clashes with the target is aliased, JSX usages included", () => {
         // Regression test: found by this port's parity run against the original toolkit — aliasing a shorthand
         // `{ Button }` printed `{ LocalButton }`, importing a name the module does not export

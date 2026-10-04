@@ -45,8 +45,6 @@ const output = root.toSource(getRecastOptions());
 
 ## Known behaviour to keep in mind
 
-- `ImportConflictResolver.applyImportChanges()` removes every declaration left without specifiers, and that
-  includes side-effect imports such as `import "./styles.css"`.
 - `ComponentNode.renameNestedProp` rewrites an identifier or estree `Literal` key only; a `StringLiteral` key
   (the tsx parser's spelling) matches but keeps its name.
 - `ImportManagerMemoryImpl.applyChanges()` puts side-effect imports back in reverse first-seen order.

@@ -313,8 +313,8 @@ export class ImportConflictResolver {
     }
 
     /**
-     * Writes the queued changes: renames aliased imports and their JSX usages, removes queued specifiers (and
-     * any declaration left with none, side-effect-only imports included), then adds the new imports.
+     * Writes the queued changes: renames aliased imports and their JSX usages, removes queued specifiers (and a
+     * declaration whose last specifier that removed; a side-effect-only import stays), then adds the new imports.
      */
     applyImportChanges(): void {
         const importsByModule = new Map<string, Set<{ imported: string; local: string }>>();
@@ -352,6 +352,11 @@ export class ImportConflictResolver {
 
         this.pendingRemoves.forEach((name) => {
             this.root.find(this.j.ImportDeclaration).forEach((path) => {
+                // a side-effect-only import (`import "./styles.css"`) binds nothing, so no removal can concern it
+                if ((path.node.specifiers?.length ?? 0) === 0) {
+                    return;
+                }
+
                 path.node.specifiers = (path.node.specifiers || []).filter((spec) => {
                     if (spec.type === "ImportSpecifier") {
                         return !spec.local || spec.local.name !== name;
