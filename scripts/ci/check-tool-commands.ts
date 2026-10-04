@@ -16,6 +16,11 @@
  *   or an entry of a hand-routed tool's `SUBCOMMANDS` list,
  *   in `src/<tool>/**` or in a module the tool imports (`@app/<other>/…`, `@genesiscz/utils/…`).
  *
+ * Command words are checked per tool, not per parent command: a registrar gets its parent `Command` as a
+ * parameter, often from another file, so naming that parent would need call-graph resolution. So
+ * `macos calendar build` passes when both words exist anywhere under macos, and the positional-argument stop
+ * below is per tool too. A renamed or removed word still fails.
+ *
  * It stops at the first word that is not a command word (`--flag`, `<value>`) and after a command
  * that takes positional arguments (`.command("add <name>")`, or a chained `.argument(…)`), because
  * what follows is a value. A path built at runtime is skipped. Exit codes: 0 clean, 1 a stale
