@@ -55,7 +55,7 @@ describe("recommendBursts", () => {
     test("two likes within the window, right after the first play, make a burst", () => {
         const plays = [play("Fresh", "a", T0), play("Fresh", "b", T0 + DAY)];
         const library = [liked("Fresh", "a", T0 + DAY), liked("Fresh", "b", T0 + 3 * DAY)];
-        const recs = recommendBursts(buildArtistIndex(plays, library, 30_000), BURSTS);
+        const recs = recommendBursts(buildArtistIndex({ plays: plays, library: library, minMs: 30_000 }), BURSTS);
 
         expect(recs.map((r) => r.artist)).toEqual(["Fresh"]);
         expect(recs[0]?.evidence.map((e) => e.song)).toEqual(["a", "b"]);
@@ -66,13 +66,23 @@ describe("recommendBursts", () => {
         const plays = [play("Old", "a", T0 - 400 * DAY), play("Old", "b", T0)];
         const library = [liked("Old", "a", T0), liked("Old", "b", T0 + DAY)];
 
-        expect(recommendBursts(buildArtistIndex(plays, library, 30_000), BURSTS)).toEqual([]);
+        expect(recommendBursts(buildArtistIndex({ plays: plays, library: library, minMs: 30_000 }), BURSTS)).toEqual(
+            []
+        );
+    });
+
+    test("the whole history decides newness, not the filtered window", () => {
+        const old = play("Old", "a", T0 - 400 * DAY);
+        const library = [liked("Old", "a", T0), liked("Old", "b", T0 + DAY)];
+        const index = buildArtistIndex({ plays: [play("Old", "b", T0)], library, minMs: 30_000, history: [old] });
+
+        expect(recommendBursts(index, BURSTS)).toEqual([]);
     });
 
     test("likes further apart than the window are not a burst", () => {
         const library = [liked("Slow", "a", T0), liked("Slow", "b", T0 + 40 * DAY)];
 
-        expect(recommendBursts(buildArtistIndex([], library, 30_000), BURSTS)).toEqual([]);
+        expect(recommendBursts(buildArtistIndex({ plays: [], library: library, minMs: 30_000 }), BURSTS)).toEqual([]);
     });
 
     test("an artist you explored after the burst ranks below one you did not", () => {
@@ -83,7 +93,7 @@ describe("recommendBursts", () => {
             liked("Untouched", "b", T0 + DAY),
         ];
         const later = Array.from({ length: 8 }, (_, i) => play("Explored", `deep cut ${i}`, T0 + (10 + i) * DAY));
-        const recs = recommendBursts(buildArtistIndex(later, library, 30_000), BURSTS);
+        const recs = recommendBursts(buildArtistIndex({ plays: later, library: library, minMs: 30_000 }), BURSTS);
 
         expect(recs.map((r) => r.artist)).toEqual(["Untouched", "Explored"]);
     });
@@ -98,10 +108,19 @@ describe("recommendUnfinished", () => {
             ...Array.from({ length: 30 }, (_, i) => play("Wide", `song ${i}`, T0 + i * DAY)),
             ...Array.from({ length: 5 }, (_, i) => play("Rare", "one", T0 + i * DAY)),
         ];
-        const recs = recommendUnfinished(buildArtistIndex(plays, [], 30_000), UNFINISHED);
+        const recs = recommendUnfinished(buildArtistIndex({ plays: plays, library: [], minMs: 30_000 }), UNFINISHED);
 
         expect(recs.map((r) => r.artist)).toEqual(["Loop"]);
         expect(recs[0]?.evidence[0]?.detail).toBe("15 plays");
+    });
+
+    test("a full play flagged as skipped counts once, not as a play and a skip", () => {
+        const plays = Array.from({ length: 40 }, (_, i) =>
+            play("Flagged", "one", T0 + i * DAY, { ms: 60_000, skipped: true })
+        );
+        const [rec] = recommendUnfinished(buildArtistIndex({ plays, library: [], minMs: 30_000 }), UNFINISHED);
+
+        expect(rec?.reason).toContain("you skip them 100% of the time");
     });
 
     test("skips lower the score", () => {
@@ -110,7 +129,7 @@ describe("recommendUnfinished", () => {
             ...Array.from({ length: 30 }, (_, i) => play("Skipped", "one", T0 + i * DAY)),
             ...Array.from({ length: 30 }, (_, i) => play("Skipped", "one", T0 + i * DAY + 1000, { ms: 5000 })),
         ];
-        const recs = recommendUnfinished(buildArtistIndex(plays, [], 30_000), UNFINISHED);
+        const recs = recommendUnfinished(buildArtistIndex({ plays: plays, library: [], minMs: 30_000 }), UNFINISHED);
 
         expect(recs.map((r) => r.artist)).toEqual(["Kept", "Skipped"]);
     });
@@ -123,7 +142,10 @@ describe("recommendOldLoves", () => {
             ...Array.from({ length: 60 }, (_, i) => play("Still", `s${i % 6}`, T0 + i * DAY)),
             play("Still", "s1", T0 + 500 * DAY),
         ];
-        const recs = recommendOldLoves(buildArtistIndex(plays, [], 30_000), { minPlays: 50, quietMonths: 12 });
+        const recs = recommendOldLoves(buildArtistIndex({ plays: plays, library: [], minMs: 30_000 }), {
+            minPlays: 50,
+            quietMonths: 12,
+        });
 
         expect(recs.map((r) => r.artist)).toEqual(["Gone"]);
         expect(recs[0]?.reason).toContain("You have not played them for");
@@ -144,7 +166,7 @@ describe("recommendNeighbours", () => {
             plays.push(play("Busy", "b", now - i * DAY + 600_000));
         }
 
-        const recs = recommendNeighbours(buildArtistIndex(plays, [], 30_000), {
+        const recs = recommendNeighbours(buildArtistIndex({ plays: plays, library: [], minMs: 30_000 }), {
             recentDays: 180,
             topArtists: 1,
             gapMinutes: 30,
@@ -173,7 +195,7 @@ describe("the artist catalogue", () => {
     test("songs to try leave out what you played or liked, matched by title", () => {
         const plays = [play("Fresh", "Played One", T0)];
         const library = [liked("Fresh", "Liked One", T0), liked("Fresh", "Liked Two", T0 + DAY)];
-        const index = buildArtistIndex(plays, library, 30_000);
+        const index = buildArtistIndex({ plays: plays, library: library, minMs: 30_000 });
         const catalog = mergeCatalog(
             emptyCatalog(),
             [entry("spotify:artist:Fresh", ["played one", "Liked One", "New Song", "Another New"])],
@@ -187,7 +209,7 @@ describe("the artist catalogue", () => {
 
     test("a pick without a catalogue entry stays as it was, marked not fetched", () => {
         const library = [liked("Fresh", "a", T0), liked("Fresh", "b", T0 + DAY)];
-        const index = buildArtistIndex([], library, 30_000);
+        const index = buildArtistIndex({ plays: [], library: library, minMs: 30_000 });
         const [rec] = withCatalog(recommendBursts(index, BURSTS), index, emptyCatalog());
 
         expect(rec?.inCatalog).toBe(false);

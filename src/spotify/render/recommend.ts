@@ -54,10 +54,11 @@ export function renderRecommend(r: RecommendReport, limit: number): void {
         }
     }
 
-    if (r.catalog.covered < r.recommendations.length) {
+    const shown = Math.min(limit, r.recommendations.length);
+    if (r.catalog.covered < Math.min(shown, r.limit)) {
         line("");
         line(
-            `  ${c.grey(`Songs to try: ${r.catalog.covered} of ${r.recommendations.length} picks have them. Fetch the rest: tools spotify harvest --artists --auto`)}`
+            `  ${c.grey(`Songs to try: ${r.catalog.covered} of ${shown} picks have them. Fetch the rest: tools spotify harvest --artists --auto`)}`
         );
     }
 

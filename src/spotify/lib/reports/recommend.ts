@@ -8,8 +8,8 @@
  * only wires the profile in.
  */
 import { type ArtistCatalog, type CatalogArtist, type CatalogRelease, loadCatalog } from "@app/spotify/lib/catalog";
-import { type CommonOpts, context, head, numberOption, type ReportHead } from "@app/spotify/lib/context";
-import { PLAY_MS, type Play, songKey } from "@app/spotify/lib/history";
+import { type CommonOpts, context, head, minMsOf, numberOption, type ReportHead } from "@app/spotify/lib/context";
+import { type Play, songKey } from "@app/spotify/lib/history";
 import { type LibTrack, loadLibrary } from "@app/spotify/lib/library";
 import { sessionize } from "@app/spotify/lib/stats";
 
@@ -104,8 +104,10 @@ export interface ArtistStats {
     name: string;
     uri: string | null;
     plays: Play[];
-    /** Short plays (< 30 s) and explicit skips, for the skip rate. */
+    /** Short plays plus counted plays flagged as skipped: each event once, for the skip rate. */
     skips: number;
+    /** Plays under the counting threshold; with `plays` they are every event of the artist. */
+    shortPlays: number;
     first: number | null;
     last: number | null;
     liked: { name: string; addedAt: number | null; album: { name: string; uri: string } | null }[];
@@ -121,29 +123,44 @@ function stats(index: Map<string, ArtistStats>, name: string): ArtistStats {
     const key = name.toLowerCase();
     let s = index.get(key);
     if (!s) {
-        s = { key, name, uri: null, plays: [], skips: 0, first: null, last: null, liked: [] };
+        s = { key, name, uri: null, plays: [], skips: 0, shortPlays: 0, first: null, last: null, liked: [] };
         index.set(key, s);
     }
 
     return s;
 }
 
-export function buildArtistIndex(allPlays: Play[], library: LibTrack[], minMs: number): ArtistIndex {
+export interface ArtistIndexInput {
+    /** The plays the methods rank from: the report's filtered window. */
+    plays: Play[];
+    library: LibTrack[];
+    /** A play counts from this many milliseconds; shorter ones only feed the skip rate. */
+    minMs: number;
+    /**
+     * The whole history, for "when did you first hear this artist". Defaults to `plays`; a
+     * report passes the unfiltered list so a date window cannot make an old artist look new.
+     */
+    history?: Play[];
+}
+
+export function buildArtistIndex({ plays, library, minMs, history }: ArtistIndexInput): ArtistIndex {
     const artists = new Map<string, ArtistStats>();
     let now = 0;
 
-    for (const p of allPlays) {
+    for (const p of plays) {
         if (!p.artist) {
             continue;
         }
 
         const s = stats(artists, p.artist);
-        if (p.ms < minMs || p.skipped) {
+        if (p.ms < minMs) {
+            s.shortPlays++;
             s.skips++;
+            continue;
         }
 
-        if (p.ms < minMs) {
-            continue;
+        if (p.skipped) {
+            s.skips++;
         }
 
         s.plays.push(p);
@@ -168,6 +185,13 @@ export function buildArtistIndex(allPlays: Play[], library: LibTrack[], minMs: n
         });
         if (addedAt && Number.isFinite(addedAt)) {
             now = Math.max(now, addedAt);
+        }
+    }
+
+    for (const p of history ?? []) {
+        const s = p.ms >= minMs ? artists.get(p.artist.toLowerCase()) : undefined;
+        if (s) {
+            s.first = s.first === null ? p.ts : Math.min(s.first, p.ts);
         }
     }
 
@@ -357,7 +381,7 @@ export function recommendUnfinished(index: ArtistIndex, o: UnfinishedOptions): R
             continue;
         }
 
-        const skipRate = s.skips / (s.plays.length + s.skips);
+        const skipRate = s.skips / (s.plays.length + s.shortPlays);
         const perSong = s.plays.length / songs;
         out.push({
             ...base(s),
@@ -517,8 +541,10 @@ export interface RecommendReport {
     settings: { label: string; value: string }[];
     /** The method needs Liked Songs and this profile has no harvested library. */
     missingLibrary: boolean;
+    /** The whole ranking (`--json` promises every row); `limit` is how many a table shows. */
     recommendations: Recommendation[];
-    /** How many shown picks the artist catalogue covers, and how many artists it holds. */
+    limit: number;
+    /** How many of the first `limit` picks the artist catalogue covers, and how many artists it holds. */
     catalog: { artists: number; covered: number };
 }
 
@@ -526,8 +552,15 @@ export function recommendReport(o: RecommendOpts): RecommendReport {
     const id: RecommendMethod = isRecommendMethod(o.method) ? o.method : "bursts";
     const method = RECOMMEND_METHODS.find((m) => m.id === id) ?? RECOMMEND_METHODS[0];
     const ctx = context(o);
-    const library = loadLibrary(ctx.profile);
-    const index = buildArtistIndex(ctx.all, library, PLAY_MS);
+    const minMs = minMsOf(o);
+    // A filter that narrows plays (artist, genre, platform) must narrow the likes too, or a
+    // genre-filtered run would still rank liked artists from every other genre.
+    const narrowed = Boolean(o.artist || o.genre || o.platform);
+    const played = new Set(ctx.plays.map((p) => p.artist.toLowerCase()));
+    const library = loadLibrary(ctx.profile).filter(
+        (t) => !narrowed || played.has(t.artists[0]?.name.toLowerCase() ?? "")
+    );
+    const index = buildArtistIndex({ plays: ctx.plays, library, minMs, history: ctx.all });
     const top = ctx.top;
 
     const catalog = loadCatalog();
@@ -541,6 +574,7 @@ export function recommendReport(o: RecommendOpts): RecommendReport {
             settings: [],
             missingLibrary: true,
             recommendations: [],
+            limit: top,
             catalog: { artists: catalogSize, covered: 0 },
         };
     }
@@ -590,7 +624,7 @@ export function recommendReport(o: RecommendOpts): RecommendReport {
         recommendations = recommendNeighbours(index, opts);
     }
 
-    const shown = withCatalog(recommendations.slice(0, top), index, catalog);
+    const ranked = withCatalog(recommendations, index, catalog);
 
     return {
         head: head(ctx),
@@ -598,8 +632,9 @@ export function recommendReport(o: RecommendOpts): RecommendReport {
         methods: RECOMMEND_METHODS,
         settings,
         missingLibrary: false,
-        recommendations: shown,
-        catalog: { artists: catalogSize, covered: shown.filter((r) => r.inCatalog).length },
+        recommendations: ranked,
+        limit: top,
+        catalog: { artists: catalogSize, covered: ranked.slice(0, top).filter((r) => r.inCatalog).length },
     };
 }
 
@@ -607,7 +642,8 @@ export function recommendReport(o: RecommendOpts): RecommendReport {
 export function catalogCandidates(o: RecommendOpts & { methods: RecommendMethod[]; perMethod: number }): string[] {
     const uris: string[] = [];
     for (const method of o.methods) {
-        for (const rec of recommendReport({ ...o, method, top: String(o.perMethod) }).recommendations) {
+        const report = recommendReport({ ...o, method, top: String(o.perMethod) });
+        for (const rec of report.recommendations.slice(0, report.limit)) {
             if (rec.artistUri && !uris.includes(rec.artistUri)) {
                 uris.push(rec.artistUri);
             }
