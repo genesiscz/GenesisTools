@@ -19,7 +19,7 @@ import { mergeGenres } from "@app/spotify/lib/enrich/merge-genres";
 import { type MergeHistoryGrouping, mergeHistory } from "@app/spotify/lib/enrich/merge-history";
 import { enrichMusicbrainz } from "@app/spotify/lib/enrich/musicbrainz";
 import { progress, writeJsonl } from "@app/spotify/lib/io";
-import { cacheDir } from "@app/spotify/lib/paths";
+import { cacheDir, catalogPath } from "@app/spotify/lib/paths";
 import { getProfile } from "@app/spotify/lib/profiles";
 import { doctorReport, exportReport, parseExportKind } from "@app/spotify/lib/reports/pipeline";
 import { catalogCandidates, RECOMMEND_METHODS } from "@app/spotify/lib/reports/recommend";
@@ -130,9 +130,13 @@ async function harvestArtists(o: HarvestFlags): Promise<void> {
     });
 
     if (!todo.length) {
-        out.println(
-            `all ${int(candidates.length)} Discover picks are already in the catalogue (--refresh fetches them again)`
-        );
+        // Same payload shape as a real run, so `--json` stays parseable when there is nothing to do.
+        const nothing = { requested: 0, fetched: 0, errors: [], cached: candidates.length, out: catalogPath() };
+        emit(o.json, nothing, (r) => {
+            out.println(
+                `all ${int(r.cached)} Discover picks are already in the catalogue (--refresh fetches them again)`
+            );
+        });
 
         return;
     }

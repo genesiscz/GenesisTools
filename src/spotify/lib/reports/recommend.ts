@@ -108,6 +108,8 @@ export interface ArtistStats {
     skips: number;
     /** Plays under the counting threshold; with `plays` they are every event of the artist. */
     shortPlays: number;
+    /** Lower-cased titles of every counted play in the WHOLE history, not just the window. */
+    heard: Set<string>;
     first: number | null;
     last: number | null;
     liked: { name: string; addedAt: number | null; album: { name: string; uri: string } | null }[];
@@ -123,7 +125,18 @@ function stats(index: Map<string, ArtistStats>, name: string): ArtistStats {
     const key = name.toLowerCase();
     let s = index.get(key);
     if (!s) {
-        s = { key, name, uri: null, plays: [], skips: 0, shortPlays: 0, first: null, last: null, liked: [] };
+        s = {
+            key,
+            name,
+            uri: null,
+            plays: [],
+            skips: 0,
+            shortPlays: 0,
+            heard: new Set(),
+            first: null,
+            last: null,
+            liked: [],
+        };
         index.set(key, s);
     }
 
@@ -164,6 +177,7 @@ export function buildArtistIndex({ plays, library, minMs, history }: ArtistIndex
         }
 
         s.plays.push(p);
+        s.heard.add(p.name.toLowerCase());
         s.first = s.first === null ? p.ts : Math.min(s.first, p.ts);
         s.last = s.last === null ? p.ts : Math.max(s.last, p.ts);
         now = Math.max(now, p.ts);
@@ -192,6 +206,7 @@ export function buildArtistIndex({ plays, library, minMs, history }: ArtistIndex
         const s = p.ms >= minMs ? artists.get(p.artist.toLowerCase()) : undefined;
         if (s) {
             s.first = s.first === null ? p.ts : Math.min(s.first, p.ts);
+            s.heard.add(p.name.toLowerCase());
         }
     }
 
@@ -267,7 +282,7 @@ function base(s: ArtistStats): Omit<Recommendation, "score" | "reason" | "eviden
 
 /** The artist's top songs minus everything you played (30 s or more) or liked, by song title. */
 export function songsToTry(s: ArtistStats, entry: CatalogArtist, limit = 5): SongToTry[] {
-    const known = new Set([...s.plays.map((p) => p.name.toLowerCase()), ...s.liked.map((l) => l.name.toLowerCase())]);
+    const known = new Set([...s.heard, ...s.liked.map((l) => l.name.toLowerCase())]);
 
     return entry.topTracks
         .filter((t) => !known.has(t.name.toLowerCase()))

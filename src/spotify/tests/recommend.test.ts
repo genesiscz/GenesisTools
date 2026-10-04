@@ -209,6 +209,20 @@ describe("the artist catalogue", () => {
         expect(rec?.songsToTry.map((s) => s.name)).toEqual(["New Song", "Another New"]);
     });
 
+    test("a song heard outside the filtered window is not a song to try", () => {
+        const library = [liked("Fresh", "a", T0), liked("Fresh", "b", T0 + DAY)];
+        const history = [play("Fresh", "Old Hit", T0 - 2 * DAY), play("Fresh", "a", T0)];
+        const index = buildArtistIndex({ plays: [play("Fresh", "a", T0)], library, minMs: 30_000, history });
+        const catalog = mergeCatalog(
+            emptyCatalog(),
+            [entry("spotify:artist:Fresh", ["Old Hit", "Brand New"])],
+            new Date(T0)
+        );
+        const [rec] = withCatalog(recommendBursts(index, BURSTS), index, catalog);
+
+        expect(rec?.songsToTry.map((s) => s.name)).toEqual(["Brand New"]);
+    });
+
     test("a pick without a catalogue entry stays as it was, marked not fetched", () => {
         const library = [liked("Fresh", "a", T0), liked("Fresh", "b", T0 + DAY)];
         const index = buildArtistIndex({ plays: [], library: library, minMs: 30_000 });
