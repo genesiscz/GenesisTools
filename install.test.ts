@@ -337,3 +337,17 @@ describe("print_genesis_app_summary", () => {
         expect(stdout.trim()).toBe("");
     });
 });
+
+describe("print_mcp_registration_hint", () => {
+    // Regression test: #446/D4 round 2 — install.sh never mentioned registering the
+    // genesis-tools MCP server, even though neither it nor the plugin install does so.
+    test("names the canonical registration command", () => {
+        const { stdout } = runBash({
+            home: tempHome(),
+            shellValue: "/bin/zsh",
+            call: "print_mcp_registration_hint",
+        });
+
+        expect(stdout).toContain("tools genesis-tools-mcp install");
+    });
+});

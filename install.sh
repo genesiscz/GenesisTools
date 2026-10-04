@@ -128,6 +128,12 @@ print_genesis_app_summary() {
     echo "ℹ️  GenesisTools.app is not installed: permission-based tools (Calendar, Reminders, Full Disk Access, ...) use your terminal's own permissions. Build it later with: bun run build:app"
 }
 
+# D4, round 2: registration stays manual, never automatic — this is a reminder, not a check.
+# `tools update` (run just above, by `main`) also offers this interactively in a TTY.
+print_mcp_registration_hint() {
+    echo "ℹ️  Register the genesis-tools MCP server with Claude Code (optional): tools genesis-tools-mcp install"
+}
+
 # $1: a shell path ($SHELL) or a process name from `ps -o comm=` ("-zsh" for a login shell, or a
 # bare "bash"). Echoes the rc file basename this shell reads, or nothing when the shell is not
 # one we know how to configure.
@@ -306,6 +312,7 @@ main() {
 
     echo ""
     print_genesis_app_summary
+    print_mcp_registration_hint
     echo "🎉 Setup complete."
 
     if [ "$IS_WINDOWS" = true ]; then

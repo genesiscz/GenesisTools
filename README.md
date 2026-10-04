@@ -176,12 +176,12 @@ contains **6 commands**, **31 skills**, **2 subagents**, and **6 hook registrati
 
 The plugin does **not** register an MCP server — `plugin.json` has no `mcpServers` entry. The
 genesis-tools MCP server described further down is a separate opt-in step
-(`tools claude mcp install`).
+(`tools genesis-tools-mcp install`; registration is never automatic).
 
 Commands are invoked explicitly as `/gt:<name>`, which comes from each command file's own
 `name:` frontmatter. Skills load themselves when the conversation matches their trigger
 description, and they resolve by plugin and directory (`genesis-tools:<skill>`), so the `gt:`
-prefix that 14 of the 25 skill files still carry in their frontmatter has no effect on how they
+prefix that 18 of the 31 skill files still carry in their frontmatter has no effect on how they
 are addressed.
 
 ### Installation for Claude Code
@@ -197,10 +197,11 @@ Because the plugin is installed from the GitHub remote, local edits to `plugins/
 effect after you push and run `/plugin update`.
 
 That installs commands, skills, subagents and hooks only. To also register the
-**genesis-tools MCP server** with Claude Code:
+**genesis-tools MCP server** with Claude Code, run its canonical command — `tools update` also
+offers this interactively the first time it notices the server is missing:
 
 ```bash
-tools claude mcp install
+tools genesis-tools-mcp install
 ```
 
 ### Commands (6)
@@ -284,16 +285,20 @@ The session file record lands in
 ### The genesis-tools MCP server
 
 Not registered by the plugin install above — `plugin.json` has no `mcpServers` entry, so
-Claude Code never starts it on its own. Register it once with:
+Claude Code never starts it on its own, and nothing registers it automatically: `tools update`
+offers to in a TTY, but the choice is always yours. The canonical command is
+`tools genesis-tools-mcp install`; `tools claude mcp install` is only an alias of it (same code,
+registered a second time under the `claude` subcommand tree for discoverability):
 
 ```bash
-tools claude mcp install   # registers the stdio server with Claude Code
+tools genesis-tools-mcp install   # canonical — registers the stdio server with Claude Code
+tools claude mcp install          # alias of the line above
 ```
 
 The server itself runs as:
 
 ```bash
-tools claude mcp        # stdio MCP server
+tools genesis-tools-mcp   # stdio MCP server (tools claude mcp is the same, as an alias)
 ```
 
 It registers **27 tools across 4 capability groups**:
@@ -632,7 +637,7 @@ tools claude teams                          # list agent teams and re-attach tea
 tools claude cmux                           # reopen recent sessions as cmux workspaces
 tools claude code unpack                    # unpack, diff, bisect published CLI bundles
 tools claude doctor                         # find sessions billing the wrong account
-tools claude mcp                            # the MCP server described above
+tools claude mcp                            # alias of tools genesis-tools-mcp, described above
 ```
 
 `tools claude exec` runs any command with a chosen account's long-lived token in its

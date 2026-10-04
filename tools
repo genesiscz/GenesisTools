@@ -146,6 +146,13 @@ function resolveToolAlias(scriptId, srcDir) {
     return { tool: alias[0], prefixArgs: alias.slice(1) };
 }
 
+/**
+ * Plain name check, no I/O: lets every OTHER tool skip the gated-build-offer import entirely
+ * (#447/#445 D1). Only when a name is in here does `executeTool` pay for the dynamic import
+ * that does the real (still cheap: a stat and a small JSON read) gating decision.
+ */
+const GATE_CANDIDATE_NAMES = new Set(["control", "macos"]);
+
 async function executeTool(scriptId, scriptArgs) {
     const workspaceRoot = resolveWorkspaceRoot();
     const srcDir = join(workspaceRoot, SRC_DIR_NAME);
@@ -224,6 +231,16 @@ async function executeTool(scriptId, scriptArgs) {
 
             await executeTool(tool as string, scriptArgs);
             return;
+        }
+    }
+
+    if (GATE_CANDIDATE_NAMES.has(scriptId)) {
+        const { createRealBuildOfferDeps, isGatedInvocation, maybeOfferGenesisAppBuild } = await import(
+            "@app/macos/lib/permissions/build-offer"
+        );
+
+        if (isGatedInvocation(scriptId, scriptArgs)) {
+            await maybeOfferGenesisAppBuild(createRealBuildOfferDeps());
         }
     }
 

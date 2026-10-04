@@ -1,16 +1,18 @@
 import { existsSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
+import { genesisToolsMcpRegistration, installGenesisToolsMcp } from "@app/genesis-tools-mcp/lib/mcp-install";
 import { appStatus, buildApp } from "@app/macos/lib/permissions/app";
 import { discoverTools } from "@app/tools/lib/discovery";
 import * as p from "@clack/prompts";
 import { getAgentRuntimeContext } from "@genesiscz/utils/agent/runtime";
-import { execTool, execToolInteractive, isInteractive, runTool, suggestCommand } from "@genesiscz/utils/cli";
+import { execTool, execToolInteractive, isInteractive, isVerbose, runTool, suggestCommand } from "@genesiscz/utils/cli";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
 import { genesisAppBuildHint } from "@genesiscz/utils/macos/xcode";
 import { Command } from "commander";
 import pc from "picocolors";
+import { printUpdateCatalogue } from "./diff";
 import { genesisAppRefreshAction } from "./genesis-app-refresh";
 import {
     MARKETPLACE_FALLBACK_SOURCE,
@@ -20,6 +22,7 @@ import {
     PLUGIN_REF,
     planMarketplaceAction,
 } from "./marketplace";
+import { offerMcpRegistration } from "./mcp-registration-offer";
 import { recoverFromFailedPull } from "./recovery";
 
 /** Bun.spawn throws SYNCHRONOUSLY when the executable is missing, so a bare await never sees it. */
@@ -236,38 +239,47 @@ const program = new Command()
             }
         }
 
-        // 5. Show latest changelog entry
+        // 4b. The genesis-tools MCP server (D4, round 2): registration stays manual, but a TTY
+        // gets asked once it notices the server is missing.
+        await offerGenesisToolsMcpRegistration();
+
+        // 5. Show latest changelog entry (full text only with --verbose; the version line in
+        // the short summary below already says when it moved).
         const changelogPath = join(genesisPath, "CHANGELOG.md");
+        let latestVersionHeading: string | null = null;
         if (existsSync(changelogPath)) {
             const changelog = readFileSync(changelogPath, "utf-8");
             const latestEntry = extractLatestEntry(changelog);
             if (latestEntry) {
-                out.println(pc.cyan("\n  Latest changes:"));
-                out.println(pc.dim(`  ${latestEntry.split("\n").join("\n  ")}`));
+                latestVersionHeading =
+                    latestEntry
+                        .split("\n")[0]
+                        ?.replace(/^##\s*/, "")
+                        .trim() ?? null;
+
+                if (isVerbose()) {
+                    out.println(pc.cyan("\n  Latest changes:"));
+                    out.println(pc.dim(`  ${latestEntry.split("\n").join("\n  ")}`));
+                }
             }
         }
 
-        // 6. "Did you know" message
+        // 6. Catalogue summary: only what changed since the last run (D4, round 2 — the full
+        // dump every run was unreadable noise). `--verbose` prints the full lists instead.
         const tools = discoverTools(srcDir);
         const skills = discoverSkills(join(genesisPath, "plugins/genesis-tools/skills"));
 
         out.println(pc.green("\n  GenesisTools updated successfully!\n"));
-        out.println(pc.cyan("  Did you know we have a lot of Claude tools available? Install with:\n"));
-        out.println(`    claude plugin marketplace add ${MARKETPLACE_FALLBACK_SOURCE}`);
-        out.println(`    claude plugin install ${PLUGIN_REF}\n`);
 
-        out.println(pc.cyan("  Available commands:"));
-        for (const tool of tools.slice(0, 20)) {
-            out.println(`    ${pc.bold(tool.name)} - ${pc.dim(tool.description)}`);
-        }
-        if (tools.length > 20) {
-            out.println(pc.dim(`    ... and ${tools.length - 20} more. Run 'tools' to see all.`));
-        }
-
-        out.println(pc.cyan("\n  Available skills:"));
-        for (const skill of skills) {
-            out.println(`    ${pc.bold(`gt:${skill.name}`)} - ${pc.dim(skill.description)}`);
-        }
+        printUpdateCatalogue({
+            current: {
+                version: latestVersionHeading,
+                tools: tools.map((t) => ({ name: t.name, description: t.description })),
+                skills: skills.map((s) => ({ name: s.name, description: s.description })),
+            },
+            verbose: isVerbose(),
+            println: (line) => out.println(line),
+        });
 
         out.println("");
     });
@@ -361,6 +373,26 @@ async function refreshGenesisApp(): Promise<void> {
         );
         out.println(pc.dim(`  Tools keep running under the previous bundle. ${genesisAppBuildHint()}`));
     }
+}
+
+/**
+ * D4, round 2: registration stays manual (never automatic), but `tools update` is where we ask.
+ * `genesisToolsMcpRegistration` is read-only; the confirm below is the only place that mutates.
+ */
+async function offerGenesisToolsMcpRegistration(): Promise<void> {
+    await offerMcpRegistration({
+        registration: genesisToolsMcpRegistration,
+        isTty: isInteractive,
+        confirmRegister: async () => {
+            const answer = await p.confirm({
+                message: "Register the genesis-tools MCP server with Claude Code now?",
+                initialValue: false,
+            });
+            return answer === true;
+        },
+        register: () => installGenesisToolsMcp(),
+        log: (message) => out.println(pc.dim(`\n  ${message}`)),
+    });
 }
 
 function extractLatestEntry(changelog: string): string | null {
