@@ -481,6 +481,19 @@ describe("import helpers", () => {
         expect(flat(root.toSource())).toBe(`import { Button as Btn } from "new-ui"; const a = <Btn />;`);
     });
 
+    it("transformImports turns a default import into a named one of the same module, keeping its binding", () => {
+        const root = j(`import Btn from "ui";\nimport Def, { Card } from "ui-lib";\nconst a = <Btn />;`);
+
+        transformImports(j, root, [
+            { fromModule: "ui", defaultImport: { toNamed: "Button" } },
+            { fromModule: "ui-lib", defaultImport: { toNamed: "Panel" } },
+        ]);
+
+        expect(flat(root.toSource())).toBe(
+            `import { Button as Btn } from "ui"; import { Panel as Def, Card } from "ui-lib"; const a = <Btn />;`
+        );
+    });
+
     it("transformImports removes a whole module and renames another", () => {
         const root = j(`import { a } from "gone";\nimport { b } from "old-path";\nb(a);`);
 

@@ -462,6 +462,13 @@ export function areElementsIdentical(_j: JSCodeshift, elem1: JSXElement, elem2: 
 // Import Utilities
 // ============================================================================
 
+/** `{ imported }`, or `{ imported as local }` when the names differ */
+function namedImportSpecifier(j: JSCodeshift, imported: string, local: string): ImportSpecifier {
+    return imported === local
+        ? j.importSpecifier(j.identifier(imported))
+        : j.importSpecifier(j.identifier(imported), j.identifier(local));
+}
+
 /**
  * Collects all named imports from a specific module, as imported name -> local name
  */
@@ -614,9 +621,15 @@ export function transformImports(
                     } else if (defaultImport.toNamed) {
                         const targetModule = defaultImport.toModule || toModule || fromModule;
                         const localName = String(spec.local?.name ?? "default");
-                        const imports = new Map<string, string>();
-                        imports.set(defaultImport.toNamed, localName);
-                        addOrUpdateImport(j, root, targetModule, imports);
+
+                        if (targetModule === fromModule) {
+                            // this declaration is the destination, and its specifiers are rewritten below, so the
+                            // named specifier takes the default's place instead of going through addOrUpdateImport
+                            remainingSpecifiers.push(namedImportSpecifier(j, defaultImport.toNamed, localName));
+                        } else {
+                            addOrUpdateImport(j, root, targetModule, new Map([[defaultImport.toNamed, localName]]));
+                        }
+
                         hasChanges = true;
                     } else if (defaultImport.toModule && defaultImport.toModule !== fromModule) {
                         const existingImport = root
