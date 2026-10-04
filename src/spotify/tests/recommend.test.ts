@@ -19,6 +19,7 @@ import type { Play } from "@app/spotify/lib/history";
 import type { LibTrack } from "@app/spotify/lib/library";
 import {
     buildArtistIndex,
+    parseRecommendMethod,
     recommendBursts,
     recommendNeighbours,
     recommendOldLoves,
@@ -253,6 +254,21 @@ describe("the artist catalogue", () => {
         expect(Object.keys(second.artists).sort()).toEqual(["spotify:artist:A", "spotify:artist:B"]);
         expect(second.artists["spotify:artist:A"]?.topTracks.map((t) => t.name)).toEqual(["z"]);
         expect(second.artists["spotify:artist:B"]?.fetchedAt).toBe(new Date(T0).toISOString());
+    });
+});
+
+describe("the method parameter", () => {
+    test("no method is bursts, and a known id passes through", () => {
+        expect(parseRecommendMethod(undefined)).toBe("bursts");
+        expect(parseRecommendMethod("unfinished")).toBe("unfinished");
+    });
+
+    // The CLI checked `--method`, the HTTP door did not, and the report turned anything unknown
+    // into bursts: `?method=unfinsihed` answered with another method's picks and a 200.
+    test("an unknown method is an error that names the valid ones", () => {
+        expect(() => parseRecommendMethod("unfinsihed")).toThrow(
+            'unknown method "unfinsihed". Pick one of: bursts, unfinished, old-loves, neighbours'
+        );
     });
 });
 

@@ -915,6 +915,58 @@ describe("pipeline", () => {
 });
 
 describe("discover", () => {
+    interface Recs {
+        method: { id: string };
+        recommendations: { artist: string; score: number; reason: string; plays: number }[];
+    }
+
+    test("no --method picks discovery bursts", async () => {
+        const v = await okJson<Recs>(["analytics", "recommend", "-p", "a", "--json"]);
+        expect(v.method.id).toBe("bursts");
+    });
+
+    // An explicit `--min-ms` dropped the short events before the artist index saw them, so the
+    // skip rate read 0% on that path while the default counted every short play as a skip.
+    test("--min-ms 30000 gives the same picks and skip rates as the 30 s default", async () => {
+        const implicit = await okJson<Recs>(["analytics", "recommend", "-m", "unfinished", "-p", "a", "--json"]);
+        const explicit = await okJson<Recs>([
+            "analytics",
+            "recommend",
+            "-m",
+            "unfinished",
+            "-p",
+            "a",
+            "--min-ms",
+            "30000",
+            "--json",
+        ]);
+
+        expect(implicit.recommendations.length).toBeGreaterThan(0);
+        // The fixture makes about 15% of the events short skips, so a 0% rate means they were lost.
+        expect(implicit.recommendations.every((r) => !r.reason.includes("skip them 0%"))).toBe(true);
+        expect(explicit.recommendations).toEqual(implicit.recommendations);
+    });
+
+    // The negative control: the threshold still decides what counts as a play.
+    test("a higher --min-ms still counts fewer plays", async () => {
+        const base = await okJson<Recs>(["analytics", "recommend", "-m", "unfinished", "-p", "a", "--json"]);
+        const strict = await okJson<Recs>([
+            "analytics",
+            "recommend",
+            "-m",
+            "unfinished",
+            "-p",
+            "a",
+            "--min-ms",
+            "200000",
+            "--json",
+        ]);
+        const plays = (v: Recs, artist: string) => v.recommendations.find((r) => r.artist === artist)?.plays ?? 0;
+
+        expect(plays(strict, "Nocturne Drive")).toBeGreaterThan(0);
+        expect(plays(strict, "Nocturne Drive")).toBeLessThan(plays(base, "Nocturne Drive"));
+    });
+
     // Every artist URI comes from Liked Songs, and profile b has none. This used to report "all 0
     // Discover picks are already in the catalogue", which pointed at the wrong problem.
     test("harvest --artists without a library says there is nothing to fetch and how to fix it", async () => {

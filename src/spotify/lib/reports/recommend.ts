@@ -1,11 +1,18 @@
 /**
- * Discover: artists and albums you will probably like, worked out from your own plays and Liked
- * Songs. Nothing here calls Spotify, so a pick is always an ARTIST (or an album you already
- * touched), with the songs that triggered it as evidence. No local source knows an artist's full
- * catalogue, so this never claims "song X you have not heard".
+ * Discover: artists and albums you will probably like, in two layers.
  *
- * Each method is a pure function over one `ArtistIndex`, so tests feed fixtures and the report
- * only wires the profile in.
+ * 1. The ranking is offline and history-derived. Each method is a pure function over one
+ *    `ArtistIndex` built from your plays and Liked Songs, so a pick is always an ARTIST (or an
+ *    album you already touched), with the songs that triggered it as evidence. Nothing in this
+ *    layer calls Spotify, and tests feed it fixtures.
+ * 2. The unheard songs come from the artist catalogue (`lib/catalog.ts`), which holds each
+ *    artist's top songs and releases as Spotify lists them. `withCatalog` adds a pick's "songs to
+ *    try": catalogue songs you have never played (30 s or more) or liked, matched by title. A pick
+ *    whose artist is not in the catalogue has none. `tools spotify harvest --artists` fills the
+ *    catalogue from Spotify's public embed pages; `--auto` reads the signed-in web player
+ *    instead, which adds play counts, covers and releases.
+ *
+ * The report only wires the profile and the catalogue in.
  */
 import { type ArtistCatalog, type CatalogArtist, type CatalogRelease, loadCatalog } from "@app/spotify/lib/catalog";
 import { type CommonOpts, context, head, minMsOf, numberOption, type ReportHead } from "@app/spotify/lib/context";
@@ -52,6 +59,22 @@ export type RecommendMethodInfo = (typeof RECOMMEND_METHODS)[number];
 
 export function isRecommendMethod(value: string | undefined): value is RecommendMethod {
     return RECOMMEND_METHODS.some((m) => m.id === value);
+}
+
+/**
+ * No method means bursts; an unknown one is an error naming the valid ids. Turning a typo into
+ * bursts answered `?method=unfinsihed` with a different method's picks and a 200.
+ */
+export function parseRecommendMethod(value: string | undefined): RecommendMethod {
+    if (value === undefined) {
+        return "bursts";
+    }
+
+    if (isRecommendMethod(value)) {
+        return value;
+    }
+
+    throw new Error(`unknown method "${value}". Pick one of: ${RECOMMEND_METHODS.map((m) => m.id).join(", ")}`);
 }
 
 export interface Evidence {
@@ -564,10 +587,13 @@ export interface RecommendReport {
 }
 
 export function recommendReport(o: RecommendOpts): RecommendReport {
-    const id: RecommendMethod = isRecommendMethod(o.method) ? o.method : "bursts";
+    const id = parseRecommendMethod(o.method);
     const method = RECOMMEND_METHODS.find((m) => m.id === id) ?? RECOMMEND_METHODS[0];
-    const ctx = context(o);
     const minMs = minMsOf(o);
+    // Every event in the window, short ones included: `buildArtistIndex` applies `minMs` itself,
+    // counting the short ones toward the skip rate. Letting an explicit `--min-ms` drop them here
+    // made the skip rate 0 on that path, so `--min-ms 30000` disagreed with the 30 s default.
+    const ctx = context({ ...o, minMs: undefined, allPlays: undefined });
     // A filter that narrows plays (artist, genre, platform) must narrow the likes too, or a
     // genre-filtered run would still rank liked artists from every other genre.
     const narrowed = Boolean(o.artist || o.genre || o.platform);
