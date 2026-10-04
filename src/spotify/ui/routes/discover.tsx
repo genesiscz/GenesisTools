@@ -6,7 +6,7 @@ import { useFilters } from "@app/spotify/ui/lib/filters";
 import { createFileRoute } from "@tanstack/react-router";
 import { Badge } from "@ui/components/badge";
 import { Card } from "@ui/components/card";
-import { Tabs, TabsList, TabsTrigger } from "@ui/components/tabs";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@ui/components/tabs";
 import { Compass, Disc3, ExternalLink } from "lucide-react";
 import { useState } from "react";
 
@@ -42,80 +42,86 @@ function DiscoverPage() {
                 icon={<Compass className="h-5 w-5" />}
             />
 
+            {/* The results are the active tab's panel, so every trigger controls a real tabpanel. */}
             <Tabs value={method} onValueChange={(v) => setMethod(METHOD_TABS.find((m) => m.id === v)?.id ?? "bursts")}>
-                <TabsList className="mb-4 flex-wrap h-auto">
+                <TabsList className="flex-wrap h-auto">
                     {METHOD_TABS.map((m) => (
                         <TabsTrigger key={m.id} value={m.id}>
                             {m.label}
                         </TabsTrigger>
                     ))}
                 </TabsList>
+
+                <TabsContent value={method} className="block">
+                    <ReportState
+                        query={current}
+                        rows={6}
+                        isEmpty={(r) => !r.missingLibrary && r.recommendations.length === 0}
+                        emptyTitle="Nothing matched this method"
+                        emptyDescription="Try another method, or another profile."
+                    >
+                        {(r) => {
+                            const picks = r.recommendations.slice(0, r.limit);
+
+                            return (
+                                <>
+                                    <Card className="p-5 mb-6 gap-3">
+                                        <div className="text-sm font-semibold text-foreground">{r.method.title}</div>
+                                        <p className="text-sm text-muted-foreground max-w-3xl">
+                                            {r.method.description}
+                                        </p>
+                                        {r.settings.length > 0 && (
+                                            <div className="flex flex-wrap gap-2">
+                                                {r.settings.map((s) => (
+                                                    <Badge key={s.label} variant="outline" className="font-normal">
+                                                        <span className="text-muted-foreground">{s.label}:</span>{" "}
+                                                        {s.value}
+                                                    </Badge>
+                                                ))}
+                                            </div>
+                                        )}
+                                    </Card>
+
+                                    {!r.missingLibrary && r.catalog.covered < picks.length && (
+                                        <Card className="p-4 mb-6 gap-1">
+                                            <div className="text-sm font-medium text-foreground">
+                                                Songs to try come from each artist's own Spotify page
+                                            </div>
+                                            <p className="text-xs text-muted-foreground">
+                                                {r.catalog.covered} of {picks.length} picks have it. Fetch the rest from
+                                                your signed-in browser: tools spotify harvest --artists --auto
+                                            </p>
+                                        </Card>
+                                    )}
+
+                                    {r.missingLibrary ? (
+                                        <EmptyBlock
+                                            title="This method needs your Liked Songs"
+                                            description="This profile has no harvested library yet. Run: tools spotify harvest --auto"
+                                        />
+                                    ) : (
+                                        <Section
+                                            title={`${picks.length} picks`}
+                                            hint="Each pick shows why it was chosen and the songs that triggered it. Artist and album names open in Spotify."
+                                        >
+                                            <div className="grid md:grid-cols-2 gap-4">
+                                                {picks.map((rec, i) => (
+                                                    <RecommendationCard
+                                                        key={rec.artist}
+                                                        rec={rec}
+                                                        rank={i + 1}
+                                                        featured={i === 0}
+                                                    />
+                                                ))}
+                                            </div>
+                                        </Section>
+                                    )}
+                                </>
+                            );
+                        }}
+                    </ReportState>
+                </TabsContent>
             </Tabs>
-
-            <ReportState
-                query={current}
-                rows={6}
-                isEmpty={(r) => !r.missingLibrary && r.recommendations.length === 0}
-                emptyTitle="Nothing matched this method"
-                emptyDescription="Try another method, or another profile."
-            >
-                {(r) => {
-                    const picks = r.recommendations.slice(0, r.limit);
-
-                    return (
-                        <>
-                            <Card className="p-5 mb-6 gap-3">
-                                <div className="text-sm font-semibold text-foreground">{r.method.title}</div>
-                                <p className="text-sm text-muted-foreground max-w-3xl">{r.method.description}</p>
-                                {r.settings.length > 0 && (
-                                    <div className="flex flex-wrap gap-2">
-                                        {r.settings.map((s) => (
-                                            <Badge key={s.label} variant="outline" className="font-normal">
-                                                <span className="text-muted-foreground">{s.label}:</span> {s.value}
-                                            </Badge>
-                                        ))}
-                                    </div>
-                                )}
-                            </Card>
-
-                            {!r.missingLibrary && r.catalog.covered < picks.length && (
-                                <Card className="p-4 mb-6 gap-1">
-                                    <div className="text-sm font-medium text-foreground">
-                                        Songs to try come from each artist's own Spotify page
-                                    </div>
-                                    <p className="text-xs text-muted-foreground">
-                                        {r.catalog.covered} of {picks.length} picks have it. Fetch the rest from your
-                                        signed-in browser: tools spotify harvest --artists --auto
-                                    </p>
-                                </Card>
-                            )}
-
-                            {r.missingLibrary ? (
-                                <EmptyBlock
-                                    title="This method needs your Liked Songs"
-                                    description="This profile has no harvested library yet. Run: tools spotify harvest --auto"
-                                />
-                            ) : (
-                                <Section
-                                    title={`${picks.length} picks`}
-                                    hint="Each pick shows why it was chosen and the songs that triggered it. Artist and album names open in Spotify."
-                                >
-                                    <div className="grid md:grid-cols-2 gap-4">
-                                        {picks.map((rec, i) => (
-                                            <RecommendationCard
-                                                key={rec.artist}
-                                                rec={rec}
-                                                rank={i + 1}
-                                                featured={i === 0}
-                                            />
-                                        ))}
-                                    </div>
-                                </Section>
-                            )}
-                        </>
-                    );
-                }}
-            </ReportState>
         </>
     );
 }
