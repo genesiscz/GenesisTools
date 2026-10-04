@@ -24,7 +24,7 @@ import {
     type ReportHead,
     windowOptions,
 } from "@app/spotify/lib/context";
-import { applyFilter, type Play, songKey } from "@app/spotify/lib/history";
+import { applyFilter, PLAY_MS, type Play, songKey } from "@app/spotify/lib/history";
 import { type LibTrack, loadLibrary } from "@app/spotify/lib/library";
 import { sessionize } from "@app/spotify/lib/stats";
 
@@ -139,7 +139,11 @@ export interface ArtistStats {
     skips: number;
     /** Plays under the counting threshold; with `plays` they are every event of the artist. */
     shortPlays: number;
-    /** Lower-cased titles of every counted play in the WHOLE history, not just the window. */
+    /**
+     * Lower-cased titles of every play of 30 s or more (`PLAY_MS`) in the WHOLE history, not just
+     * the window. Fixed, not `--min-ms`: "a song you have heard" must not change with how the
+     * ranking counts plays.
+     */
     heard: Set<string>;
     first: number | null;
     last: number | null;
@@ -221,6 +225,10 @@ export function buildArtistIndex({ plays, library, minMs, history, now }: Artist
         }
 
         const s = stats(artists, p.artist);
+        if (p.ms >= PLAY_MS) {
+            s.heard.add(p.name.toLowerCase());
+        }
+
         if (p.ms < minMs) {
             s.shortPlays++;
             s.skips++;
@@ -232,7 +240,6 @@ export function buildArtistIndex({ plays, library, minMs, history, now }: Artist
         }
 
         s.plays.push(p);
-        s.heard.add(p.name.toLowerCase());
         s.first = s.first === null ? p.ts : Math.min(s.first, p.ts);
         s.last = s.last === null ? p.ts : Math.max(s.last, p.ts);
     }
@@ -254,9 +261,16 @@ export function buildArtistIndex({ plays, library, minMs, history, now }: Artist
     }
 
     for (const p of history ?? []) {
-        const s = p.ms >= minMs ? artists.get(p.artist.toLowerCase()) : undefined;
-        if (s) {
+        const s = artists.get(p.artist.toLowerCase());
+        if (!s) {
+            continue;
+        }
+
+        if (p.ms >= minMs) {
             s.first = s.first === null ? p.ts : Math.min(s.first, p.ts);
+        }
+
+        if (p.ms >= PLAY_MS) {
             s.heard.add(p.name.toLowerCase());
         }
     }

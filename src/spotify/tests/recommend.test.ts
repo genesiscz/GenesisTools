@@ -234,6 +234,30 @@ describe("the artist catalogue", () => {
         expect(rec?.songsToTry.map((s) => s.name)).toEqual(["Brand New"]);
     });
 
+    // "Heard" used the ranking threshold, so `--min-ms 200000` forgot every 180 s play and offered
+    // those songs as new. The contract is any play of 30 s or more, in the window or before it.
+    test("a high --min-ms does not turn a song you played into a song to try", () => {
+        const library = [liked("Fresh", "a", T0), liked("Fresh", "b", T0 + DAY)];
+        const inWindow = play("Fresh", "Window Hit", T0, { ms: 180_000 });
+        const earlier = play("Fresh", "Old Hit", T0 - 2 * DAY, { ms: 180_000 });
+        const skipped = play("Fresh", "Skipped", T0 - DAY, { ms: 10_000 });
+        const index = buildArtistIndex({
+            plays: [inWindow],
+            library,
+            minMs: 200_000,
+            history: [earlier, skipped, inWindow],
+        });
+        const catalog = mergeCatalog(
+            emptyCatalog(),
+            [entry("spotify:artist:Fresh", ["Window Hit", "Old Hit", "Skipped", "Brand New"])],
+            new Date(T0)
+        );
+        const [rec] = withCatalog(recommendBursts(index, BURSTS), index, catalog);
+
+        // A 10 s skip is not "heard", so that song is still offered.
+        expect(rec?.songsToTry.map((s) => s.name)).toEqual(["Skipped", "Brand New"]);
+    });
+
     test("a pick without a catalogue entry stays as it was, marked not fetched", () => {
         const library = [liked("Fresh", "a", T0), liked("Fresh", "b", T0 + DAY)];
         const index = buildArtistIndex({ plays: [], library: library, minMs: 30_000 });
