@@ -914,6 +914,159 @@ describe("pipeline", () => {
     });
 });
 
+describe("discover", () => {
+    interface Recs {
+        method: { id: string };
+        recommendations: { artist: string; score: number; reason: string; plays: number }[];
+    }
+
+    test("no --method picks discovery bursts", async () => {
+        const v = await okJson<Recs>(["analytics", "recommend", "-p", "a", "--json"]);
+        expect(v.method.id).toBe("bursts");
+    });
+
+    // An explicit `--min-ms` dropped the short events before the artist index saw them, so the
+    // skip rate read 0% on that path while the default counted every short play as a skip.
+    test("--min-ms 30000 gives the same picks and skip rates as the 30 s default", async () => {
+        const implicit = await okJson<Recs>(["analytics", "recommend", "-m", "unfinished", "-p", "a", "--json"]);
+        const explicit = await okJson<Recs>([
+            "analytics",
+            "recommend",
+            "-m",
+            "unfinished",
+            "-p",
+            "a",
+            "--min-ms",
+            "30000",
+            "--json",
+        ]);
+
+        expect(implicit.recommendations.length).toBeGreaterThan(0);
+        // The fixture makes about 15% of the events short skips, so a 0% rate means they were lost.
+        expect(implicit.recommendations.every((r) => !r.reason.includes("skip them 0%"))).toBe(true);
+        expect(explicit.recommendations).toEqual(implicit.recommendations);
+    });
+
+    // The negative control: the threshold still decides what counts as a play.
+    test("a higher --min-ms still counts fewer plays", async () => {
+        const base = await okJson<Recs>(["analytics", "recommend", "-m", "unfinished", "-p", "a", "--json"]);
+        const strict = await okJson<Recs>([
+            "analytics",
+            "recommend",
+            "-m",
+            "unfinished",
+            "-p",
+            "a",
+            "--min-ms",
+            "200000",
+            "--json",
+        ]);
+        const plays = (v: Recs, artist: string) => v.recommendations.find((r) => r.artist === artist)?.plays ?? 0;
+
+        expect(plays(strict, "Nocturne Drive")).toBeGreaterThan(0);
+        expect(plays(strict, "Nocturne Drive")).toBeLessThan(plays(base, "Nocturne Drive"));
+    });
+
+    // The report reads the BUILT library, and profile b has no data directory either, so naming only
+    // `harvest --auto` (without `--profile`) sent the user to fill the default profile instead.
+    test("a method that needs Liked Songs names every step that makes them, for this profile", async () => {
+        const steps = [
+            "tools spotify profile add b --data <dir>",
+            "tools spotify harvest --auto --profile b",
+            "tools spotify build --profile b",
+        ];
+        expectContains(await okAll(["analytics", "recommend", "-p", "b"]), ...steps);
+
+        const v = await okJson<{ missingLibrary: boolean; nextSteps: string[] }>([
+            "analytics",
+            "recommend",
+            "-p",
+            "b",
+            "--json",
+        ]);
+        expect(v).toMatchObject({ missingLibrary: true, nextSteps: steps });
+
+        const a = await okJson<{ missingLibrary: boolean; nextSteps: string[] }>([
+            "analytics",
+            "recommend",
+            "-p",
+            "a",
+            "--json",
+        ]);
+        expect(a).toMatchObject({ missingLibrary: false, nextSteps: [] });
+    });
+
+    // "Now" came from the filtered plays, so `--artist Gone` put the clock at Gone's own last play:
+    // zero silent months, no old love, although the export runs on for years after it.
+    test("an artist filter does not stop the clock at that artist's last play", async () => {
+        const dir = join(root, "oldlove", "history");
+        mkdirSync(dir, { recursive: true });
+        const ev = (artist: string, track: string, ts: Date): Ev => ({
+            ts: ts.toISOString().replace(".000Z", "Z"),
+            platform: "osx",
+            ms_played: 200_000,
+            conn_country: "CZ",
+            master_metadata_track_name: track,
+            master_metadata_album_artist_name: artist,
+            master_metadata_album_album_name: `${artist} album`,
+            spotify_track_uri: `spotify:track:${artist.replace(/\W/g, "")}${track.replace(/\W/g, "")}`,
+            reason_start: "clickrow",
+            reason_end: "trackdone",
+            shuffle: false,
+            skipped: false,
+            offline: false,
+            incognito_mode: false,
+        });
+        const rows = [
+            // Gone: 60 plays in early 2023, then silence.
+            ...Array.from({ length: 60 }, (_, i) =>
+                ev("Gone Band", `Gone ${i % 4}`, new Date(Date.UTC(2023, 0, 1 + i)))
+            ),
+            // Someone else keeps the export going until the end of 2025.
+            ...Array.from({ length: 36 }, (_, i) => ev("Still Band", "Still", new Date(Date.UTC(2023, i, 15)))),
+        ];
+        writeFileSync(join(dir, "Streaming_History_Audio_2023-2025.json"), SafeJSON.stringify(rows));
+        await ok(["profile", "add", "oldlove", "--history", dir]);
+
+        type Picks = { recommendations: { artist: string; reason: string }[] };
+        const all = await okJson<Picks>(["analytics", "recommend", "-m", "old-loves", "-p", "oldlove", "--json"]);
+        const filtered = await okJson<Picks>([
+            "analytics",
+            "recommend",
+            "-m",
+            "old-loves",
+            "-p",
+            "oldlove",
+            "--artist",
+            "Gone Band",
+            "--json",
+        ]);
+
+        expect(all.recommendations.map((r) => r.artist)).toEqual(["Gone Band"]);
+        expect(filtered.recommendations.map((r) => r.artist)).toEqual(["Gone Band"]);
+        // The silence is measured against the whole export in both runs (the share of the year
+        // differs on purpose: a filtered run divides by the plays the filter kept).
+        const silence = (p: Picks) =>
+            /You have not played them for \d+ months/.exec(p.recommendations[0]?.reason ?? "")?.[0];
+        expect(silence(filtered)).toBe("You have not played them for 34 months");
+        expect(silence(filtered)).toBe(silence(all));
+    });
+
+    // Every artist URI comes from Liked Songs, and profile b has none. This used to report "all 0
+    // Discover picks are already in the catalogue", which pointed at the wrong problem.
+    test("harvest --artists without a library says there is nothing to fetch and how to fix it", async () => {
+        const human = await okAll(["harvest", "--artists", "-p", "b"]);
+        expectContains(human, "nothing to fetch", "tools spotify harvest --auto --profile b");
+        expect(human).not.toContain("already in the catalogue");
+
+        const v = await okJson<{ requested: number; fetched: number; cached: number; errors: unknown[]; hint: string }>(
+            ["harvest", "--artists", "-p", "b", "--json"]
+        );
+        expect(v).toMatchObject({ requested: 0, fetched: 0, cached: 0, errors: [] });
+        expect(v.hint).toBe("tools spotify harvest --auto --profile b");
+    });
+});
+
 describe("export", () => {
     test("csv", async () => {
         const path = join(root, "out.csv");

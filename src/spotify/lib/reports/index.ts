@@ -19,6 +19,7 @@ import {
 import { dnaReport, shiftReport } from "@app/spotify/lib/reports/insight";
 import { auditReport, gemsReport, mainstreamReport, savesReport } from "@app/spotify/lib/reports/library";
 import { doctorReport, exportReport, parseExportKind } from "@app/spotify/lib/reports/pipeline";
+import { recommendReport } from "@app/spotify/lib/reports/recommend";
 import { summaryReport } from "@app/spotify/lib/reports/summary";
 import { calendarReport, clockReport, seasonsReport, timelineReport } from "@app/spotify/lib/reports/time";
 import { topReport } from "@app/spotify/lib/reports/top";
@@ -47,6 +48,8 @@ export interface ReportRequest extends CommonOpts {
     a?: string;
     b?: string;
     timeline?: boolean;
+    /** `recommend`: which method picks (bursts, unfinished, old-loves, neighbours). */
+    method?: string;
 }
 
 function requireArg(value: string | undefined, name: string): string {
@@ -87,6 +90,7 @@ export const REPORTS = {
     compatTimeline: (o: ReportRequest) => compatTimelineReport(requireArg(o.a, "a"), requireArg(o.b, "b"), o),
     blend: (o: ReportRequest) => blendReport(requireArg(o.a, "a"), requireArg(o.b, "b"), o),
     gift: (o: ReportRequest) => giftReport(requireArg(o.a, "a"), requireArg(o.b, "b"), o),
+    recommend: (o: ReportRequest) => recommendReport(o),
     export: (o: ReportRequest) => exportReport(parseExportKind(o.kind), o),
     doctor: () => doctorReport(),
 } as const;

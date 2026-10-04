@@ -20,10 +20,13 @@ async () => {
         "content-type": "application/json;charset=UTF-8",
     };
 
-    window.__gql = async (operationName, hash, variables) => {
+    // `options.signal` is optional, so callers that pass three arguments work as before. An abort
+    // also ends the body read below, which is what lets a caller put a deadline on a whole request.
+    window.__gql = async (operationName, hash, variables, options) => {
         const r = await fetch("https://api-partner.spotify.com/pathfinder/v2/query", {
             method: "POST",
             headers: window.__H,
+            signal: options?.signal,
             body: JSON.stringify({
                 variables,
                 operationName,

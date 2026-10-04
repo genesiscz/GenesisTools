@@ -395,4 +395,12 @@ describe("the report route serves real data", () => {
         const { status } = await call("summary", "profile=http&since=2025-13-01");
         expect(status).toBe(400);
     });
+
+    // The CLI checks `--method`; the URL was not checked, so `?method=nope` came back as the
+    // bursts picks with a 200.
+    test("recommend with an unknown method is a caller error naming the valid ones", async () => {
+        const { status, body } = await call("recommend", "profile=http&method=nope");
+        expect(status).toBe(400);
+        expect(body.error).toBe('unknown method "nope". Pick one of: bursts, unfinished, old-loves, neighbours');
+    });
 });

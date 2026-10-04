@@ -9,6 +9,7 @@ import { existsSync, readdirSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { common, emit } from "@app/spotify/commands/_shared";
 import { autoHarvest } from "@app/spotify/lib/browser/harvest";
+import { harvestArtistCatalog } from "@app/spotify/lib/catalog-harvest";
 import { type CommonOpts, dateOption, numberOption } from "@app/spotify/lib/context";
 import { toCsv } from "@app/spotify/lib/csv";
 import { buildArtistIndex } from "@app/spotify/lib/enrich/build-artist-index";
@@ -95,6 +96,66 @@ const reportProgress = (label: string) => {
     };
 };
 
+interface HarvestFlags {
+    auto?: boolean;
+    profile?: string;
+    out?: string;
+    browserUrl?: string;
+    artists?: boolean;
+    perMethod?: string;
+    refresh?: boolean;
+    json?: boolean;
+}
+
+/** `harvest --artists`: parses the flags, runs `harvestArtistCatalog`, and renders what it did. */
+async function harvestArtists(o: HarvestFlags): Promise<void> {
+    const result = await harvestArtistCatalog({
+        profile: o.profile,
+        perMethod: numberOption(o.perMethod, "per-method", 40, { min: 1, integer: true }),
+        auto: o.auto === true,
+        refresh: o.refresh === true,
+        browserUrl: o.browserUrl ?? env.spotify.getBrowserUrl() ?? "http://127.0.0.1:9222",
+        onLog: (line) => out.printlnErr(pc.gray(`  ${line}`)),
+    });
+
+    if (result.status === "no-candidates") {
+        // Every artist URI comes from Liked Songs, so without a harvested library there is nothing
+        // to look up. Same payload keys as the other paths, plus the command that fixes it.
+        const fix = `tools spotify harvest --auto --profile ${getProfile(o.profile).name}`;
+        const nothing = { requested: 0, fetched: 0, errors: [], cached: 0, out: result.out, hint: fix };
+        emit(o.json, nothing, () => {
+            out.println("nothing to fetch: no Discover pick has a Spotify artist URI yet.");
+            out.println("  The URIs come from your Liked Songs library. Harvest it first:");
+            out.println(`  ${fix}`);
+        });
+
+        return;
+    }
+
+    if (result.status === "up-to-date") {
+        // Same payload shape as a real run, so `--json` stays parseable when there is nothing to do.
+        const nothing = { requested: 0, fetched: 0, errors: [], cached: result.cached, out: result.out };
+        emit(o.json, nothing, (r) => {
+            out.println(
+                `all ${int(r.cached)} Discover picks are already in the catalogue (--refresh fetches them again)`
+            );
+        });
+
+        return;
+    }
+
+    const { requested, fetched, errors, out: path } = result;
+    emit(o.json, { requested, fetched, errors, out: path }, (r) => {
+        out.println(`fetched ${int(r.fetched)} of ${int(r.requested)} artist pages → ${path}`);
+
+        if (r.errors.length) {
+            out.println(pc.yellow(`  ${r.errors.length} artist(s) failed; rerun to fill the gaps`));
+        }
+
+        out.println(pc.gray("  next: open the Discover tab, or run tools spotify analytics recommend"));
+    });
+}
+
 export function registerPipeline(program: Command): void {
     program
         .command("harvest")
@@ -103,8 +164,20 @@ export function registerPipeline(program: Command): void {
         .option("-p, --profile <name>", "profile whose data directory receives the harvest")
         .option("--out <path>", "write here instead of the profile's data directory")
         .option("--browser-url <url>", "CDP endpoint of the signed-in browser")
+        .option(
+            "--artists",
+            "fetch the top songs of Discover's picks from Spotify's public embed pages (no browser); with --auto, through the signed-in web player, adding play counts, covers and releases"
+        )
+        .option("--per-method <n>", "with --artists: how many picks of each Discover method to fetch", "40")
+        .option("--refresh", "with --artists: fetch artists that are already in the catalogue again")
         .option("--json", "machine-readable output")
-        .action(async (o: { auto?: boolean; profile?: string; out?: string; browserUrl?: string; json?: boolean }) => {
+        .action(async (o: HarvestFlags) => {
+            if (o.artists) {
+                await harvestArtists(o);
+
+                return;
+            }
+
             if (!o.auto) {
                 renderHarvestGuide();
 

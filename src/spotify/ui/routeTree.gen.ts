@@ -11,6 +11,7 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as BiographyRouteImport } from './routes/biography'
+import { Route as DiscoverRouteImport } from './routes/discover'
 import { Route as DnaRouteImport } from './routes/dna'
 import { Route as ExploreRouteImport } from './routes/explore'
 import { Route as HabitsRouteImport } from './routes/habits'
@@ -31,6 +32,11 @@ const IndexRoute = IndexRouteImport.update({
 const BiographyRoute = BiographyRouteImport.update({
   id: '/biography',
   path: '/biography',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const DiscoverRoute = DiscoverRouteImport.update({
+  id: '/discover',
+  path: '/discover',
   getParentRoute: () => rootRouteImport,
 } as any)
 const DnaRoute = DnaRouteImport.update({
@@ -92,6 +98,7 @@ const ApiReportNameRoute = ApiReportNameRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/biography': typeof BiographyRoute
+  '/discover': typeof DiscoverRoute
   '/dna': typeof DnaRoute
   '/explore': typeof ExploreRoute
   '/habits': typeof HabitsRoute
@@ -107,6 +114,7 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/biography': typeof BiographyRoute
+  '/discover': typeof DiscoverRoute
   '/dna': typeof DnaRoute
   '/explore': typeof ExploreRoute
   '/habits': typeof HabitsRoute
@@ -123,6 +131,7 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/biography': typeof BiographyRoute
+  '/discover': typeof DiscoverRoute
   '/dna': typeof DnaRoute
   '/explore': typeof ExploreRoute
   '/habits': typeof HabitsRoute
@@ -140,6 +149,7 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/biography'
+    | '/discover'
     | '/dna'
     | '/explore'
     | '/habits'
@@ -155,6 +165,7 @@ export interface FileRouteTypes {
   to:
     | '/'
     | '/biography'
+    | '/discover'
     | '/dna'
     | '/explore'
     | '/habits'
@@ -170,6 +181,7 @@ export interface FileRouteTypes {
     | '__root__'
     | '/'
     | '/biography'
+    | '/discover'
     | '/dna'
     | '/explore'
     | '/habits'
@@ -186,6 +198,7 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   BiographyRoute: typeof BiographyRoute
+  DiscoverRoute: typeof DiscoverRoute
   DnaRoute: typeof DnaRoute
   ExploreRoute: typeof ExploreRoute
   HabitsRoute: typeof HabitsRoute
@@ -213,6 +226,13 @@ declare module '@tanstack/react-router' {
       path: '/biography'
       fullPath: '/biography'
       preLoaderRoute: typeof BiographyRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/discover': {
+      id: '/discover'
+      path: '/discover'
+      fullPath: '/discover'
+      preLoaderRoute: typeof DiscoverRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/dna': {
@@ -298,6 +318,7 @@ declare module '@tanstack/react-router' {
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   BiographyRoute: BiographyRoute,
+  DiscoverRoute: DiscoverRoute,
   DnaRoute: DnaRoute,
   ExploreRoute: ExploreRoute,
   HabitsRoute: HabitsRoute,
